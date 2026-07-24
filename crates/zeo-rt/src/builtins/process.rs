@@ -11,9 +11,10 @@
 use std::cell::RefCell;
 use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use crate::builtins::{arg_error, arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
@@ -29,9 +30,31 @@ ruby_module! {
     const CLOCK_MONOTONIC = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
     const CLOCK_PROCESS_CPUTIME_ID = RubyValue::Int(libc::CLOCK_PROCESS_CPUTIME_ID as i64);
     const CLOCK_THREAD_CPUTIME_ID = RubyValue::Int(libc::CLOCK_THREAD_CPUTIME_ID as i64);
+    const CLOCK_MONOTONIC_RAW = RubyValue::Int(libc::CLOCK_MONOTONIC_RAW as i64);
+    const CLOCK_MONOTONIC_RAW_APPROX = RubyValue::Int(libc::CLOCK_MONOTONIC_RAW_APPROX as i64);
+    const CLOCK_UPTIME_RAW = RubyValue::Int(libc::CLOCK_UPTIME_RAW as i64);
+    const CLOCK_UPTIME_RAW_APPROX = RubyValue::Int(libc::CLOCK_UPTIME_RAW_APPROX as i64);
     const PRIO_PROCESS = RubyValue::Int(libc::PRIO_PROCESS as i64);
     const PRIO_PGRP = RubyValue::Int(libc::PRIO_PGRP as i64);
     const PRIO_USER = RubyValue::Int(libc::PRIO_USER as i64);
+    // `waitpid`/`wait` flags.
+    const WNOHANG = RubyValue::Int(libc::WNOHANG as i64);
+    const WUNTRACED = RubyValue::Int(libc::WUNTRACED as i64);
+    // `getrlimit`/`setrlimit` resources and the "no limit" sentinel. macOS has
+    // no RLIM_SAVED_CUR/MAX distinct from RLIM_INFINITY, so all three coincide.
+    const RLIMIT_AS = RubyValue::Int(libc::RLIMIT_AS as i64);
+    const RLIMIT_CORE = RubyValue::Int(libc::RLIMIT_CORE as i64);
+    const RLIMIT_CPU = RubyValue::Int(libc::RLIMIT_CPU as i64);
+    const RLIMIT_DATA = RubyValue::Int(libc::RLIMIT_DATA as i64);
+    const RLIMIT_FSIZE = RubyValue::Int(libc::RLIMIT_FSIZE as i64);
+    const RLIMIT_MEMLOCK = RubyValue::Int(libc::RLIMIT_MEMLOCK as i64);
+    const RLIMIT_NOFILE = RubyValue::Int(libc::RLIMIT_NOFILE as i64);
+    const RLIMIT_NPROC = RubyValue::Int(libc::RLIMIT_NPROC as i64);
+    const RLIMIT_RSS = RubyValue::Int(libc::RLIMIT_RSS as i64);
+    const RLIMIT_STACK = RubyValue::Int(libc::RLIMIT_STACK as i64);
+    const RLIM_INFINITY = RubyValue::Int(libc::RLIM_INFINITY as i64);
+    const RLIM_SAVED_CUR = RubyValue::Int(libc::RLIM_INFINITY as i64);
+    const RLIM_SAVED_MAX = RubyValue::Int(libc::RLIM_INFINITY as i64);
 
     def self.pid(_recv, args, _block) {
         arity!(args, 0);
@@ -221,6 +244,228 @@ ruby_module! {
         let kids = rusage(libc::RUSAGE_CHILDREN);
         Ok(new_tms(secs(me.ru_utime), secs(me.ru_stime), secs(kids.ru_utime), secs(kids.ru_stime)))
     }
+    // `Process.getpgid(pid)` -- the process group id of `pid` (0 = this process).
+    def self.getpgid(_recv, args, _block) {
+        arity!(args, 1);
+        let pid = int_arg(&args[0])? as libc::pid_t;
+        let pgid = unsafe { libc::getpgid(pid) };
+        if pgid < 0 {
+            return Err(errno_fail("getpgid"));
+        }
+        Ok(RubyValue::Int(pgid as i64))
+    }
+    // `Process.setpgid(pid, pgrp)` -- put `pid` into process group `pgrp`.
+    def self.setpgid(_recv, args, _block) {
+        arity!(args, 2);
+        let pid = int_arg(&args[0])? as libc::pid_t;
+        let pgrp = int_arg(&args[1])? as libc::pid_t;
+        if unsafe { libc::setpgid(pid, pgrp) } != 0 {
+            return Err(errno_fail("setpgid"));
+        }
+        Ok(RubyValue::Int(0))
+    }
+    // `Process.setpgrp` -- make this process a group leader (setpgid(0, 0)).
+    def self.setpgrp(_recv, args, _block) {
+        arity!(args, 0);
+        if unsafe { libc::setpgid(0, 0) } != 0 {
+            return Err(errno_fail("setpgrp"));
+        }
+        Ok(RubyValue::Int(0))
+    }
+    // `Process.setsid` -- start a new session; answers the new session id.
+    def self.setsid(_recv, args, _block) {
+        arity!(args, 0);
+        let sid = unsafe { libc::setsid() };
+        if sid < 0 {
+            return Err(errno_fail("setsid"));
+        }
+        Ok(RubyValue::Int(sid as i64))
+    }
+    // `Process.setpriority(which, who, prio)` -- set a scheduling priority.
+    def self.setpriority(_recv, args, _block) {
+        arity!(args, 3);
+        let which = int_arg(&args[0])? as libc::c_int;
+        let who = int_arg(&args[1])? as libc::id_t;
+        let prio = int_arg(&args[2])? as libc::c_int;
+        if unsafe { libc::setpriority(which, who, prio) } != 0 {
+            return Err(errno_fail("setpriority"));
+        }
+        Ok(RubyValue::Int(0))
+    }
+    // Real/effective id setters -- each answers its Integer argument (CRuby's shape).
+    def self."uid="(_recv, args, _block) {
+        arity!(args, 1);
+        let id = int_arg(&args[0])?;
+        if unsafe { libc::setuid(id as libc::uid_t) } != 0 {
+            return Err(errno_fail("setuid"));
+        }
+        Ok(RubyValue::Int(id))
+    }
+    def self."gid="(_recv, args, _block) {
+        arity!(args, 1);
+        let id = int_arg(&args[0])?;
+        if unsafe { libc::setgid(id as libc::gid_t) } != 0 {
+            return Err(errno_fail("setgid"));
+        }
+        Ok(RubyValue::Int(id))
+    }
+    def self."euid="(_recv, args, _block) {
+        arity!(args, 1);
+        let id = int_arg(&args[0])?;
+        if unsafe { libc::seteuid(id as libc::uid_t) } != 0 {
+            return Err(errno_fail("seteuid"));
+        }
+        Ok(RubyValue::Int(id))
+    }
+    def self."egid="(_recv, args, _block) {
+        arity!(args, 1);
+        let id = int_arg(&args[0])?;
+        if unsafe { libc::setegid(id as libc::gid_t) } != 0 {
+            return Err(errno_fail("setegid"));
+        }
+        Ok(RubyValue::Int(id))
+    }
+    // `Process.groups = [gid, ...]` -- replace the supplementary groups; answers the arg.
+    def self."groups="(_recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Array(a) = &args[0] else {
+            return Err(type_error!(
+                "no implicit conversion of {} into Array",
+                crate::builtins::class_name_of(&args[0])
+            ));
+        };
+        let gids: Vec<libc::gid_t> = a
+            .lock()
+            .iter()
+            .map(|v| int_arg(v).map(|n| n as libc::gid_t))
+            .collect::<Result<_, _>>()?;
+        if unsafe { libc::setgroups(gids.len() as libc::c_int, gids.as_ptr()) } != 0 {
+            return Err(errno_fail("setgroups"));
+        }
+        Ok(args[0].clone())
+    }
+    // `Process.getrlimit(resource)` -> `[soft, hard]`.
+    def self.getrlimit(_recv, args, _block) {
+        arity!(args, 1);
+        let res = int_arg(&args[0])?;
+        // SAFETY: getrlimit fully initializes the zeroed out-param on success.
+        let mut lim: libc::rlimit = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrlimit(res as _, &mut lim) } != 0 {
+            return Err(errno_fail("getrlimit"));
+        }
+        Ok(RubyValue::Array(crate::array_new(vec![
+            RubyValue::Int(lim.rlim_cur as i64),
+            RubyValue::Int(lim.rlim_max as i64),
+        ])))
+    }
+    // `Process.setrlimit(resource, soft [, hard])` -- hard defaults to soft.
+    def self.setrlimit(_recv, args, _block) {
+        arity!(args, 2..=3);
+        let res = int_arg(&args[0])?;
+        let cur = int_arg(&args[1])?;
+        let max = match args.get(2) {
+            Some(v) => int_arg(v)?,
+            None => cur,
+        };
+        let lim = libc::rlimit {
+            rlim_cur: cur as libc::rlim_t,
+            rlim_max: max as libc::rlim_t,
+        };
+        if unsafe { libc::setrlimit(res as _, &lim) } != 0 {
+            return Err(errno_fail("setrlimit"));
+        }
+        Ok(RubyValue::Nil)
+    }
+    // `Process.maxgroups` / `maxgroups=` -- a settable ceiling CRuby keeps for
+    // `getgroups`; not a syscall, just a stored bound.
+    def self.maxgroups(_recv, args, _block) {
+        arity!(args, 0);
+        // CRuby caps the reported ceiling at the system NGROUPS_MAX (16 on
+        // macOS), so a larger stored bound reads back clamped.
+        let stored = PROCESS_MAXGROUPS.load(Ordering::Relaxed);
+        let cap = unsafe { libc::sysconf(libc::_SC_NGROUPS_MAX) };
+        Ok(RubyValue::Int(if cap > 0 { stored.min(cap) } else { stored }))
+    }
+    def self."maxgroups="(_recv, args, _block) {
+        arity!(args, 1);
+        let n = int_arg(&args[0])?;
+        PROCESS_MAXGROUPS.store(n, Ordering::Relaxed);
+        Ok(RubyValue::Int(n))
+    }
+    // `Process.argv0` -- the program name (`$0`) at startup.
+    def self.argv0(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(crate::globals::global_get(0, "$0"))
+    }
+    // `Process.setproctitle(str)` -- answers the title. macOS has no portable
+    // setproctitle, so the cosmetic title itself is a best-effort no-op.
+    def self.setproctitle(_recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::convert::to_str(&args[0])
+    }
+    // `Process.warmup` -- a JIT/heap warmup hint; nothing to warm here.
+    def self.warmup(_recv, args, _block) {
+        arity!(args, 0..=1);
+        Ok(RubyValue::Bool(true))
+    }
+    // `Process.initgroups(username, gid)` -- set the supplementary group list
+    // from the group database for `username` plus `gid`; answers the new
+    // groups. Typically root-only.
+    def self.initgroups(_recv, args, _block) {
+        arity!(args, 2);
+        let RubyValue::Str(user) = &args[0] else {
+            return Err(type_error!(
+                "no implicit conversion of {} into String",
+                crate::builtins::class_name_of(&args[0])
+            ));
+        };
+        let gid = int_arg(&args[1])? as libc::c_int;
+        let cuser = std::ffi::CString::new(user.lock().to_utf8_lossy().into_owned())
+            .map_err(|_| arg_error!("string contains null byte"))?;
+        if unsafe { libc::initgroups(cuser.as_ptr(), gid) } != 0 {
+            return Err(errno_fail("initgroups"));
+        }
+        Ok(current_groups())
+    }
+    // `Process.daemon(nochdir = nil, noclose = nil)` -- detach into the
+    // background; answers 0.
+    def self.daemon(_recv, args, _block) {
+        arity!(args, 0..=2);
+        let truthy =
+            |v: Option<&RubyValue>| matches!(v, Some(x) if !x.is_nil() && !matches!(x, RubyValue::Bool(false)));
+        let nochdir = if truthy(args.first()) { 1 } else { 0 };
+        let noclose = if truthy(args.get(1)) { 1 } else { 0 };
+        #[allow(deprecated)]
+        let ret = unsafe { libc::daemon(nochdir, noclose) };
+        if ret != 0 {
+            return Err(errno_fail("daemon"));
+        }
+        Ok(RubyValue::Int(0))
+    }
+}
+
+/// The stored `Process.maxgroups` bound. Defaults to CRuby's `RB_MAX_GROUPS`;
+/// the reader clamps it to the runtime `NGROUPS_MAX`.
+static PROCESS_MAXGROUPS: AtomicI64 = AtomicI64::new(65536);
+
+/// Raise the current `errno` as the matching `Errno::*` (via File's mapper, the
+/// single place errno -> exception-class lives).
+fn errno_fail(syscall: &str) -> crate::Signal {
+    crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), syscall, "")
+}
+
+/// The current supplementary groups as an Array of Integer -- shared by the
+/// `groups` reader and `initgroups`'s answer.
+fn current_groups() -> RubyValue {
+    let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
+    let n = unsafe { libc::getgroups(buf.len() as libc::c_int, buf.as_mut_ptr()) };
+    let list = buf
+        .iter()
+        .take(n.max(0) as usize)
+        .map(|g| RubyValue::Int(*g as i64))
+        .collect();
+    RubyValue::Array(crate::array_new(list))
 }
 
 /// One clock's current value in seconds. The ids are the OS's own
