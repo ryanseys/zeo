@@ -63,9 +63,13 @@ pub fn run_ruby_packages(
         std::thread::current().id()
     ));
     let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::backend::ensure_runtime_built(harness_profile(), runtime)
+    // Throwaway test binaries link the runtime DYNAMICALLY (one shared dylib,
+    // ~100KB each) so the golden/e2e bin-cache stays small; the dylib always
+    // sits in `target/`, where these binaries are run from.
+    let linkage = zeo::backend::Linkage::Dynamic;
+    zeo::backend::ensure_runtime_built(harness_profile(), runtime, linkage)
         .expect("building zeo-rt for the e2e harness");
-    zeo::backend::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
+    zeo::backend::build_binary(rust_source, &bin, harness_profile(), runtime, linkage).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
     let out = std::process::Command::new(&bin)
@@ -169,9 +173,13 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         std::thread::current().id()
     ));
     let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::backend::ensure_runtime_built(harness_profile(), runtime)
+    // Throwaway test binaries link the runtime DYNAMICALLY (one shared dylib,
+    // ~100KB each) so the golden/e2e bin-cache stays small; the dylib always
+    // sits in `target/`, where these binaries are run from.
+    let linkage = zeo::backend::Linkage::Dynamic;
+    zeo::backend::ensure_runtime_built(harness_profile(), runtime, linkage)
         .expect("building zeo-rt for the e2e harness");
-    zeo::backend::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
+    zeo::backend::build_binary(rust_source, &bin, harness_profile(), runtime, linkage).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
 

@@ -300,7 +300,14 @@ fn run() -> Result<(), MainError> {
         return Ok(());
     }
 
-    use zeo::backend::{Profile, Runtime, build_binary, ensure_runtime_built};
+    use zeo::backend::{Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
+
+    // The CLI always produces a SELF-CONTAINED binary -- both the run-once `-e`
+    // throwaway and the shipped `-o app` -- so it statically links the runtime.
+    // Dynamic linkage (a smaller binary against a shared dylib) is the test
+    // harness's concern, where the dylib always sits in the build tree; a CLI
+    // artifact must not depend on that.
+    let linkage = Linkage::Static;
 
     // Which runtime variant this program's binary links: the lean, parser-free
     // default, or the prism-backed `eval-vm` one iff the compiler saw a runtime
@@ -316,9 +323,9 @@ fn run() -> Result<(), MainError> {
     // mode below instead of running.
     if matches!(args.source, Source::Eval(_)) && args.output.is_none() {
         let profile = Profile::from_env_or(Profile::Debug);
-        ensure_runtime_built(profile, runtime)?;
+        ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-        build_binary(&compiled.rust_source, &bin, profile, runtime)?;
+        build_binary(&compiled.rust_source, &bin, profile, runtime, linkage)?;
         let status = std::process::Command::new(&bin)
             .status()
             .map_err(|e| format!("running compiled program: {e}"))?;
@@ -340,12 +347,13 @@ fn run() -> Result<(), MainError> {
     // build --release -p zeo-rt` on first use. Overridable to `debug` via
     // `ZEO_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
     let profile = Profile::from_env_or(Profile::Release);
-    ensure_runtime_built(profile, runtime)?;
+    ensure_runtime_built(profile, runtime, linkage)?;
     Ok(build_binary(
         &compiled.rust_source,
         &output,
         profile,
         runtime,
+        linkage,
     )?)
 }
 

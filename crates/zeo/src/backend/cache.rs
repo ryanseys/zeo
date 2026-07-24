@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use super::{Profile, Runtime, rlib_for, target_dir};
+use super::{Linkage, Profile, Runtime, runtime_artifact_fingerprint, target_dir};
 
 /// Where compiled generated programs are kept, keyed by their full input.
 ///
@@ -46,8 +46,9 @@ pub(super) fn cache_path(
     rust_source: &str,
     profile: Profile,
     runtime: Runtime,
+    linkage: Linkage,
 ) -> Result<PathBuf, String> {
-    let generation = generation_hash(profile, runtime)?;
+    let generation = generation_hash(profile, runtime, linkage)?;
     let root = cache_dir();
     std::fs::create_dir_all(&root).map_err(|e| format!("creating {}: {e}", root.display()))?;
     let dir = root.join(format!("{generation:016x}"));
@@ -62,38 +63,39 @@ pub(super) fn cache_path(
     Ok(dir.join(format!("{:016x}", fnv1a64(rust_source.as_bytes()))))
 }
 
-/// The cache generation for one (profile, runtime) combination -- shared by
-/// `cache_path` and `sweep_stale_cache_generations` so the writer and the
-/// sweeper can never disagree on a generation's name.
+/// The cache generation for one (profile, runtime, linkage) combination --
+/// shared by `cache_path` and `sweep_stale_cache_generations` so the writer and
+/// the sweeper can never disagree on a generation's name.
 ///
-/// Errors when that combination's rlib isn't built -- in which case no process
-/// can compute (and so write into) that generation either.
-fn generation_hash(profile: Profile, runtime: Runtime) -> Result<u64, String> {
-    // Profile AND runtime variant are part of the generation, not just details:
-    // the same source compiles to a debug or a release binary (profile), and to
-    // a lean or a prism-carrying binary (runtime) -- handing a caller the wrong
-    // kind would bloat their output or link a runtime whose `eval` is a
-    // `NotImplementedError` stub. Each variant's own rlib is also stat'd below
-    // (they live in different target dirs), so their mtimes already distinguish
-    // them; the tags make the intent explicit and collision-proof.
+/// Errors when that combination's runtime artifact isn't built -- in which case
+/// no process can compute (and so write into) that generation either.
+fn generation_hash(profile: Profile, runtime: Runtime, linkage: Linkage) -> Result<u64, String> {
+    // Profile, runtime variant, AND linkage are part of the generation, not just
+    // details: the same source compiles to a debug or release binary (profile),
+    // to a lean or prism-carrying binary (runtime), and to a self-contained or
+    // dylib-linked binary (linkage) -- handing a caller the wrong kind would
+    // bloat its output, link an `eval` stub, or hand it a binary that can't find
+    // its shared runtime. Each combination's own artifact is also fingerprinted
+    // below (they live in different target dirs), so their mtimes already
+    // distinguish them; the tags make the intent explicit and collision-proof.
     let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, profile.tag());
     generation = fnv1a64_with(generation, runtime.tag());
+    generation = fnv1a64_with(generation, linkage.tag());
     // The generated crate's own rustc flags are part of the generation: a
     // binary built at a different opt-level is a different artifact, and
     // serving a stale one would silently undo (or fake) the optimization.
     for flag in profile.rustc_flags() {
         generation = fnv1a64_with(generation, flag.as_bytes());
     }
-    let name = "zeo-rt";
-    let lib = rlib_for(name, profile, runtime)?;
-    let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    generation = fnv1a64_with(generation, format!("{name}:{}:{mtime};", meta.len()).as_bytes());
+    // The runtime artifact's len+mtime: generated programs bind to the exact
+    // rlib/dylib they were built against, so a rebuilt runtime must retire the
+    // old entries (a dynamic binary linked to a stale dylib ABI would fail to
+    // load outright). Cargo leaves mtimes untouched on a no-op rebuild, so this
+    // only rolls when the runtime genuinely changed.
+    generation = fnv1a64_with(
+        generation,
+        runtime_artifact_fingerprint(profile, runtime, linkage)?.as_bytes(),
+    );
     // The COMPILER's own fingerprint (this executable's len+mtime): the
     // generated program's typed fast paths and its whole codegen come from
     // `zeo`, so a recompiled compiler yields different binaries even against an
@@ -153,8 +155,10 @@ fn sweep_stale_cache_generations() {
     let mut live = Vec::new();
     for profile in [Profile::Debug, Profile::Release] {
         for runtime in [Runtime::Lean, Runtime::Eval] {
-            if let Ok(generation) = generation_hash(profile, runtime) {
-                live.push(format!("{generation:016x}"));
+            for linkage in [Linkage::Static, Linkage::Dynamic] {
+                if let Ok(generation) = generation_hash(profile, runtime, linkage) {
+                    live.push(format!("{generation:016x}"));
+                }
             }
         }
     }

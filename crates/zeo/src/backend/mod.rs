@@ -27,6 +27,13 @@
 //! against already-built deps" shape tools like `trybuild`/`compiletest` use
 //! for the identical reason.
 //!
+//! A generated program links the runtime either STATICALLY (the whole `zeo-rt`
+//! baked into a self-contained binary, for a shipped `zeo foo.rb -o app`) or
+//! DYNAMICALLY (against a shared `libzeo_rt.dylib`, for the throwaway test
+//! corpus). See [`Linkage`] -- dynamic linking is what keeps the golden/e2e
+//! bin-cache from ballooning, since the static runtime can't be dead-stripped
+//! (the builtin dispatch tables reference every method fn).
+//!
 //! `build_binary` is PURE: it only links an already-built `zeo-rt` and errors
 //! clearly if the artifact is missing. It never runs cargo and never mutates the
 //! workspace, so parallel `zeo` subprocesses never contend on Cargo's
@@ -77,19 +84,50 @@ fn target_dir() -> PathBuf {
     }
 }
 
-/// The target ROOT a runtime variant's artifacts live under (before the profile
-/// subdir). The `Lean` (default, parser-free) runtime uses the ordinary
-/// `target/`, exactly where `cargo build -p zeo-rt` puts it. The `Eval`
-/// variant CANNOT share it: cargo writes every feature-combination to the same
-/// `libzeo_rt.rlib` path, so a lean build and an `--features eval-vm` build
-/// would clobber each other on every alternation. Giving `Eval` its own
-/// `target/zeo-rt-eval/` (a `--target-dir` cargo redirect) lets both coexist,
-/// still under `target/` so `cargo clean` reaps them. See `Runtime`.
-fn variant_target_dir(runtime: Runtime) -> PathBuf {
-    match runtime {
-        Runtime::Lean => target_dir(),
-        Runtime::Eval => target_dir().join("zeo-rt-eval"),
+/// The target ROOT a (runtime, linkage) combination's artifacts live under
+/// (before the profile subdir).
+///
+/// Each combination needs its OWN dir because cargo writes every build to the
+/// same `libzeo_rt.*` path: a lean build and an `--features eval-vm` build would
+/// clobber each other, and so would a static (rlib) build and a
+/// `prefer-dynamic` dylib build. Only the lean-static default lands in the
+/// ordinary `target/` (where a plain `cargo build -p zeo-rt` puts it); the other
+/// three get a `--target-dir` redirect, all still under `target/` so `cargo
+/// clean` reaps them. See [`Runtime`] and [`Linkage`].
+fn variant_target_dir(runtime: Runtime, linkage: Linkage) -> PathBuf {
+    let base = target_dir();
+    match (linkage, runtime) {
+        (Linkage::Static, Runtime::Lean) => base,
+        (Linkage::Static, Runtime::Eval) => base.join("zeo-rt-eval"),
+        (Linkage::Dynamic, Runtime::Lean) => base.join("zeo-rt-dyn"),
+        (Linkage::Dynamic, Runtime::Eval) => base.join("zeo-rt-dyn-eval"),
     }
+}
+
+/// The toolchain directory holding the shared `libstd-<hash>.dylib`, from
+/// `rustc --print target-libdir`.
+///
+/// A dynamically-linked generated program links std as a dylib -- forced by
+/// `-C prefer-dynamic`, which a `zeo-rt` DYLIB dependency requires (a Rust dylib
+/// and its consumer must share ONE std, or upstream crates like `panic_unwind`
+/// "show up twice") -- so this dir must be on the binary's rpath for it to run
+/// standalone. Queried once. `None` if `rustc` can't be run, in which case
+/// dynamic linkage fails loudly at link time, which is the correct signal.
+fn std_libdir() -> Option<PathBuf> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let out = std::process::Command::new("rustc")
+            .arg("--print")
+            .arg("target-libdir")
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8(out.stdout).ok()?;
+        Some(PathBuf::from(s.trim()))
+    })
+    .clone()
 }
 
 /// Ensure the `zeo-rt` runtime artifact `build_binary` links against exists.
@@ -98,65 +136,63 @@ fn variant_target_dir(runtime: Runtime) -> PathBuf {
 /// entrypoint that can't assume a prior workspace build calls this first: the
 /// CLI on a fresh tree (so `zeo foo.rb` just works), and the in-process e2e
 /// harness (`cargo test -p zeo` doesn't build `zeo-rt`, since `zeo`
-/// has no cargo dependency on it). It builds AT MOST ONCE per process, and only
-/// when the artifact is missing OR STALE -- a cheap stat-only freshness gate
-/// ([`runtime_artifact_is_stale`]) compares the runtime crates' sources against
-/// the built artifact, so an edited `zeo-rt` is rebuilt rather than silently
-/// linked stale (zeo has no cargo dependency edge that would catch it). When
-/// the artifact is already current -- the common case under a driver that
-/// prebuilt the workspace (the conformance harness) -- the gate is a handful of
-/// `stat`s that skip the build, with none of the cargo build-lock contention that
-/// made an unconditional per-call `cargo build` cost the conformance suite ~153s.
-pub fn ensure_runtime_built(profile: Profile, runtime: Runtime) -> Result<(), String> {
-    // Memoized PER (PROFILE, VARIANT): a single process almost always touches
-    // one combination (the CLI's `-e` and the harness build `Debug`; only
-    // `zeo foo.rb -o app` builds `Release`; and only a program that reaches
-    // eval asks for `Eval`), but keying the once-cells by both axes keeps it
-    // correct if several are exercised, and still collapses the e2e harness's
-    // many `#[test]` threads to one build per combination.
-    static DEBUG_LEAN: OnceLock<Result<(), String>> = OnceLock::new();
-    static DEBUG_EVAL: OnceLock<Result<(), String>> = OnceLock::new();
-    static RELEASE_LEAN: OnceLock<Result<(), String>> = OnceLock::new();
-    static RELEASE_EVAL: OnceLock<Result<(), String>> = OnceLock::new();
-    let cell = match (profile, runtime) {
-        (Profile::Debug, Runtime::Lean) => &DEBUG_LEAN,
-        (Profile::Debug, Runtime::Eval) => &DEBUG_EVAL,
-        (Profile::Release, Runtime::Lean) => &RELEASE_LEAN,
-        (Profile::Release, Runtime::Eval) => &RELEASE_EVAL,
-    };
-    cell.get_or_init(|| {
-        // Fresh already -- the common case (harness prebuild, or a prior build in
-        // this tree).
-        //
-        // Freshness, not bare existence: an entrypoint here can't assume a prior
-        // `build_runtime`, and `zeo` has no cargo dependency on `zeo-rt`,
-        // so nothing else would rebuild an edited runtime. The stat gate catches
-        // that. When it reports fresh, cargo is never invoked -- so a driver that
-        // prebuilt the workspace still gets the cheap path. When stale (or
-        // missing), `build_runtime` shells `cargo build`, which does the real
-        // incremental rebuild.
-        if !runtime_artifact_is_stale(profile, runtime) {
-            return Ok(());
-        }
-        build_runtime(profile, runtime)
-    })
-    .clone()
+/// has no cargo dependency on it). It builds AT MOST ONCE per
+/// (profile, runtime, linkage), and only when the artifact is missing OR STALE
+/// -- a cheap stat-only freshness gate ([`runtime_artifact_is_stale`]) compares
+/// the runtime crates' sources against the built artifact, so an edited `zeo-rt`
+/// is rebuilt rather than silently linked stale (zeo has no cargo dependency
+/// edge that would catch it). When the artifact is already current -- the common
+/// case under a driver that prebuilt the workspace (the conformance harness) --
+/// the gate is a handful of `stat`s that skip the build, with none of the cargo
+/// build-lock contention that made an unconditional per-call `cargo build` cost
+/// the conformance suite ~153s.
+pub fn ensure_runtime_built(
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+) -> Result<(), String> {
+    // Memoized PER (PROFILE, RUNTIME, LINKAGE): a single process almost always
+    // touches one combination (the harness builds `Release`+`Dynamic`; only
+    // `zeo foo.rb -o app` builds `Release`+`Static`; only a program that reaches
+    // eval asks for `Eval`), but keying by all three axes keeps it correct if
+    // several are exercised, and still collapses the e2e harness's many `#[test]`
+    // threads to one build per combination. Eight cells = 2 profiles x 2 runtimes
+    // x 2 linkages, indexed positionally.
+    static CELLS: [OnceLock<Result<(), String>>; 8] = [const { OnceLock::new() }; 8];
+    let idx = profile.idx() * 4 + runtime.idx() * 2 + linkage.idx();
+    CELLS[idx]
+        .get_or_init(|| {
+            // Fresh already -- the common case (harness prebuild, or a prior build
+            // in this tree).
+            //
+            // Freshness, not bare existence: an entrypoint here can't assume a
+            // prior `build_runtime`, and `zeo` has no cargo dependency on
+            // `zeo-rt`, so nothing else would rebuild an edited runtime. The stat
+            // gate catches that. When it reports fresh, cargo is never invoked --
+            // so a driver that prebuilt the workspace still gets the cheap path.
+            // When stale (or missing), `build_runtime` shells cargo, which does
+            // the real incremental rebuild.
+            if !runtime_artifact_is_stale(profile, runtime, linkage) {
+                return Ok(());
+            }
+            build_runtime(profile, runtime, linkage)
+        })
+        .clone()
 }
 
 /// Whether the built `zeo-rt` artifact is missing or older than any source
 /// cargo would treat as an input to it -- a `stat`-only gate so
 /// [`ensure_runtime_built`] rebuilds a STALE runtime instead of linking it,
-/// without paying a `cargo build` lock round-trip on the already-fresh path.
+/// without paying a cargo build-lock round-trip on the already-fresh path.
 ///
 /// Scans exactly the runtime's workspace dependency closure ([`RUNTIME_CRATES`])
 /// plus the resolved lockfile (external-dep bumps), comparing the newest source
 /// mtime against the artifact's. Missing artifact -> stale (must build). This is
 /// an mtime heuristic, not cargo's full fingerprint, but it only ever
-/// over-reports staleness (a redundant `cargo build` that no-ops), never
-/// under-reports for an in-tree edit -- so it cannot reintroduce the silent-stale
-/// bug.
-fn runtime_artifact_is_stale(profile: Profile, runtime: Runtime) -> bool {
-    let Ok(artifact) = rlib_for("zeo-rt", profile, runtime) else {
+/// over-reports staleness (a redundant build that no-ops), never under-reports
+/// for an in-tree edit -- so it cannot reintroduce the silent-stale bug.
+fn runtime_artifact_is_stale(profile: Profile, runtime: Runtime, linkage: Linkage) -> bool {
+    let Ok(artifact) = runtime_artifact(profile, runtime, linkage) else {
         return true; // not built yet
     };
     let Some(artifact_mtime) = file_mtime(&artifact) else {
@@ -203,47 +239,100 @@ fn newest_mtime_under(path: &Path) -> SystemTime {
     newest
 }
 
-/// Shell out to `cargo build` for one runtime variant, unconditionally (cargo
-/// itself no-ops when the artifact is fresh and rebuilds it when stale). This is
-/// the freshness-correct entry a prebuild step calls; `ensure_runtime_built`
-/// wraps it behind an existence check for the pure-link entrypoints that can
-/// assume a prior prebuild.
+/// Shell out to cargo for one (profile, runtime, linkage) combination,
+/// unconditionally (cargo itself no-ops when the artifact is fresh and rebuilds
+/// it when stale). This is the freshness-correct entry a prebuild step calls;
+/// `ensure_runtime_built` wraps it behind a stat gate for the pure-link
+/// entrypoints that can assume a prior prebuild.
 ///
-/// The `Eval` variant is `default + eval-vm` (so prism links in), built into its
-/// OWN target dir so it never clobbers the lean `libzeo_rt` -- see
-/// `variant_target_dir`.
-pub fn build_runtime(profile: Profile, runtime: Runtime) -> Result<(), String> {
+/// STATIC builds a plain rlib via `cargo build`. DYNAMIC builds a shared
+/// `libzeo_rt.dylib` via `cargo rustc --crate-type dylib -- -C prefer-dynamic`
+/// (so it links std as a shared dylib -- see [`std_libdir`]) with an `@rpath`
+/// install name, so a consumer that adds the right rpaths finds it. The `Eval`
+/// variant adds `--features eval-vm` (so prism links in). Every non-default
+/// combination builds into its own target dir so it never clobbers another --
+/// see [`variant_target_dir`].
+pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Result<(), String> {
     let mut cmd = std::process::Command::new("cargo");
-    cmd.arg("build").arg("--quiet");
-    if let Some(flag) = profile.cargo_flag() {
-        cmd.arg(flag);
-    }
-    cmd.args(["-p", "zeo-rt"]);
-    if runtime == Runtime::Eval {
-        cmd.arg("--features").arg("eval-vm");
-        cmd.arg("--target-dir").arg(variant_target_dir(runtime));
+    match linkage {
+        Linkage::Static => {
+            cmd.arg("build").arg("--quiet");
+            if let Some(flag) = profile.cargo_flag() {
+                cmd.arg(flag);
+            }
+            cmd.args(["-p", "zeo-rt"]);
+            if runtime == Runtime::Eval {
+                cmd.arg("--features").arg("eval-vm");
+                cmd.arg("--target-dir").arg(variant_target_dir(runtime, linkage));
+            }
+        }
+        Linkage::Dynamic => {
+            // `cargo rustc` so we can force the dylib crate-type and pass
+            // `prefer-dynamic` to the FINAL crate only (its rlib deps still link
+            // normally). Always its own target dir -- a `prefer-dynamic` build
+            // must not clobber the static rlib.
+            cmd.arg("rustc").arg("--quiet");
+            if let Some(flag) = profile.cargo_flag() {
+                cmd.arg(flag);
+            }
+            cmd.args(["-p", "zeo-rt"]);
+            if runtime == Runtime::Eval {
+                cmd.arg("--features").arg("eval-vm");
+            }
+            cmd.arg("--crate-type").arg("dylib");
+            cmd.arg("--target-dir").arg(variant_target_dir(runtime, linkage));
+            cmd.arg("--");
+            cmd.arg("-C").arg("prefer-dynamic");
+            cmd.arg("-C").arg(install_name_arg());
+        }
     }
     cmd.current_dir(workspace_root());
-    let label = build_label(profile, runtime);
+    let label = build_label(profile, runtime, linkage);
     match cmd.status() {
         Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!("`cargo build {label}` exited with {status}")),
-        Err(e) => Err(format!("running `cargo build {label}`: {e}")),
+        Ok(status) => Err(format!("`{label}` exited with {status}")),
+        Err(e) => Err(format!("running `{label}`: {e}")),
     }
 }
 
-/// The human-readable `cargo build ...` invocation for an error message --
-/// reflects the profile flag and the `Eval` variant's extra args.
-fn build_label(profile: Profile, runtime: Runtime) -> String {
-    let mut label = String::new();
-    if let Some(flag) = profile.cargo_flag() {
-        label.push_str(flag);
-        label.push(' ');
+/// The `-C link-arg=...` that stamps the dylib's own name so a consumer resolves
+/// it through its rpath rather than a fixed absolute path. macOS uses an
+/// `@rpath` install name; ELF platforms use a bare soname. (Only the macOS path
+/// is exercised today; the ELF form mirrors the standard shared-object recipe.)
+fn install_name_arg() -> String {
+    let file = format!("{}zeo_rt{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    if cfg!(target_os = "macos") {
+        format!("link-arg=-Wl,-install_name,@rpath/{file}")
+    } else {
+        format!("link-arg=-Wl,-soname,{file}")
     }
-    label.push_str("-p zeo-rt");
+}
+
+/// The human-readable cargo invocation for an error message -- reflects the
+/// static (`cargo build`) vs dynamic (`cargo rustc --crate-type dylib`) shape,
+/// the profile flag, the `Eval` feature, and the redirected target dir.
+fn build_label(profile: Profile, runtime: Runtime, linkage: Linkage) -> String {
+    let mut label = String::from(match linkage {
+        Linkage::Static => "cargo build",
+        Linkage::Dynamic => "cargo rustc",
+    });
+    if let Some(flag) = profile.cargo_flag() {
+        label.push(' ');
+        label.push_str(flag);
+    }
+    label.push_str(" -p zeo-rt");
     if runtime == Runtime::Eval {
-        label.push_str(" --features eval-vm --target-dir ");
-        label.push_str(&variant_target_dir(runtime).display().to_string());
+        label.push_str(" --features eval-vm");
+    }
+    if linkage == Linkage::Dynamic {
+        label.push_str(" --crate-type dylib");
+    }
+    if runtime == Runtime::Eval || linkage == Linkage::Dynamic {
+        label.push_str(" --target-dir ");
+        label.push_str(&variant_target_dir(runtime, linkage).display().to_string());
+    }
+    if linkage == Linkage::Dynamic {
+        label.push_str(" -- -C prefer-dynamic");
     }
     label
 }
@@ -285,6 +374,14 @@ impl Profile {
         }
     }
 
+    /// Positional index for the `ensure_runtime_built` memo array.
+    fn idx(self) -> usize {
+        match self {
+            Profile::Debug => 0,
+            Profile::Release => 1,
+        }
+    }
+
     /// The `target/` subdirectory cargo writes this profile's artifacts to.
     fn subdir(self) -> &'static str {
         match self {
@@ -315,12 +412,13 @@ impl Profile {
     /// (`FrameGuard::push`, `set_line`) stay unoptimized calls. Debug keeps
     /// `-O0` for compile speed.
     ///
-    /// BOTH strip symbols from the final binary. The bulk of a generated
-    /// program's size is the statically-linked `zeo-rt` rlib's debug info (a
-    /// Debug entry was ~15MB, mostly symbols) -- worthless here because zeo
-    /// stamps its OWN Ruby backtraces (`stamp_backtrace`), never relying on
-    /// Rust-level symbols. Stripping shrinks each cached binary several-fold,
-    /// which matters across the thousands of entries the golden corpus builds.
+    /// BOTH strip symbols from the final binary. The bulk of a statically-linked
+    /// generated program's size is the `zeo-rt` rlib's debug info (a Debug entry
+    /// was ~15MB, mostly symbols) -- worthless here because zeo stamps its OWN
+    /// Ruby backtraces (`stamp_backtrace`), never relying on Rust-level symbols.
+    /// Stripping shrinks each cached binary several-fold; for dynamic linkage,
+    /// where the runtime is a shared dylib and the binary is already tiny, it
+    /// still trims the last of the per-program symbols.
     fn rustc_flags(self) -> &'static [&'static str] {
         match self {
             Profile::Debug => &["-C", "strip=symbols"],
@@ -330,7 +428,7 @@ impl Profile {
 }
 
 /// Which `zeo-rt` VARIANT a generated program links -- orthogonal to
-/// `Profile`.
+/// `Profile` and `Linkage`.
 ///
 /// `Lean` is the default runtime built by a plain `cargo build -p zeo-rt`:
 /// parser-free, no `ruby-prism`, so the vast majority of programs (which never
@@ -360,6 +458,14 @@ impl Runtime {
         }
     }
 
+    /// Positional index for the `ensure_runtime_built` memo array.
+    fn idx(self) -> usize {
+        match self {
+            Runtime::Lean => 0,
+            Runtime::Eval => 1,
+        }
+    }
+
     fn tag(self) -> &'static [u8] {
         match self {
             Runtime::Lean => b"lean;",
@@ -368,21 +474,71 @@ impl Runtime {
     }
 }
 
-/// The built `rlib` a generated program links against -- every program links
-/// the runtime statically, so the produced binary is self-contained.
-fn rlib_for(crate_name: &str, profile: Profile, runtime: Runtime) -> Result<PathBuf, String> {
-    let underscored = crate_name.replace('-', "_");
-    let dir = variant_target_dir(runtime).join(profile.subdir());
-    let rlib = dir.join(format!("lib{underscored}.rlib"));
-    if !rlib.exists() {
+/// Whether a generated program links the runtime STATICALLY or DYNAMICALLY.
+///
+/// `Static` is for a SHIPPED artifact (`zeo foo.rb -o app`): the whole `zeo-rt`
+/// is baked in, so the user gets one standalone file with no external
+/// dependency. `Dynamic` is for the TEST corpus: the golden/e2e harness compiles
+/// thousands of throwaway programs, and baking the ~6MB runtime into each --
+/// which `-Wl,-dead_strip` can't shrink, since the builtin dispatch tables
+/// reference every method fn -- cost ~14GB of bin-cache. Linking each against
+/// ONE shared `libzeo_rt.dylib` drops it to ~100KB. Those binaries are only ever
+/// run from within `target/` by the harness, so the rpaths baked in (the dylib
+/// dir and [`std_libdir`]) always resolve; a shipped binary must never depend on
+/// a dylib sitting in a build tree, hence `Static` there.
+///
+/// Passed explicitly, like `Profile`/`Runtime`: only the caller knows whether it
+/// is producing a deliverable or a disposable test binary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Linkage {
+    Static,
+    Dynamic,
+}
+
+impl Linkage {
+    /// Positional index for the `ensure_runtime_built` memo array.
+    fn idx(self) -> usize {
+        match self {
+            Linkage::Static => 0,
+            Linkage::Dynamic => 1,
+        }
+    }
+
+    fn tag(self) -> &'static [u8] {
+        match self {
+            Linkage::Static => b"static;",
+            Linkage::Dynamic => b"dynamic;",
+        }
+    }
+}
+
+/// The built runtime artifact a generated program links against: the static
+/// `libzeo_rt.rlib`, or -- for dynamic linkage -- the shared `libzeo_rt.dylib`.
+/// Errors (with the exact build command to run) when it isn't built yet.
+fn runtime_artifact(
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+) -> Result<PathBuf, String> {
+    let dir = variant_target_dir(runtime, linkage).join(profile.subdir());
+    let file = match linkage {
+        Linkage::Static => "libzeo_rt.rlib".to_string(),
+        Linkage::Dynamic => format!(
+            "{}zeo_rt{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        ),
+    };
+    let path = dir.join(&file);
+    if !path.exists() {
         return Err(format!(
-            "{crate_name} is not built: expected {} -- run `cargo build {}` \
+            "zeo-rt is not built: expected {} -- run `{}` \
              (or call `ensure_runtime_built` first)",
-            rlib.display(),
-            build_label(profile, runtime),
+            path.display(),
+            build_label(profile, runtime, linkage),
         ));
     }
-    Ok(rlib)
+    Ok(path)
 }
 
 pub fn build_binary(
@@ -390,6 +546,7 @@ pub fn build_binary(
     output: &Path,
     profile: Profile,
     runtime: Runtime,
+    linkage: Linkage,
 ) -> Result<(), String> {
     // Reclaim dead cache generations (old compiler/runtime) once per process,
     // off the hot path -- see `cache::maybe_sweep_stale_cache`.
@@ -398,12 +555,11 @@ pub fn build_binary(
     // the workspace. Callers that can't assume a prior build (`zeo`'s own
     // CLI, the e2e harness) run `ensure_runtime_built` first; a driver that
     // prebuilds (the conformance harness) needs nothing here.
-    let runtime_lib = rlib_for("zeo-rt", profile, runtime)?;
-    let deps_dir = variant_target_dir(runtime)
-        .join(profile.subdir())
-        .join("deps");
+    let runtime_lib = runtime_artifact(profile, runtime, linkage)?;
+    let variant_dir = variant_target_dir(runtime, linkage).join(profile.subdir());
+    let deps_dir = variant_dir.join("deps");
 
-    let cached = cache::cache_path(rust_source, profile, runtime)?;
+    let cached = cache::cache_path(rust_source, profile, runtime, linkage)?;
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
@@ -454,6 +610,29 @@ pub fn build_binary(
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
     cmd.args(profile.rustc_flags());
+    if linkage == Linkage::Dynamic {
+        // Share ONE std with the dylib (a Rust dylib forces this), and bake the
+        // rpaths that let the produced binary find both the runtime dylib and
+        // that shared std at run time -- so it runs standalone, not just under a
+        // DYLD_*-primed shell.
+        cmd.arg("-C").arg("prefer-dynamic");
+        cmd.arg("-C")
+            .arg(format!("link-arg=-Wl,-rpath,{}", variant_dir.display()));
+        match std_libdir() {
+            Some(std_dir) => {
+                cmd.arg("-C")
+                    .arg(format!("link-arg=-Wl,-rpath,{}", std_dir.display()));
+            }
+            None => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(
+                    "dynamic linkage needs the std lib dir, but `rustc --print \
+                     target-libdir` failed"
+                        .to_string(),
+                );
+            }
+        }
+    }
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
     if !status.success() {
@@ -485,4 +664,24 @@ pub fn build_binary(
     };
     let _ = std::fs::remove_dir_all(&staging);
     result
+}
+
+/// The runtime artifact's fingerprint (len + mtime), folded into the cache
+/// generation so a rebuilt runtime retires the old cached binaries. Exposed to
+/// the `cache` submodule, which owns the generation key. Errors when the
+/// artifact isn't built (its generation is then uncomputable, by design).
+fn runtime_artifact_fingerprint(
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+) -> Result<String, String> {
+    let lib = runtime_artifact(profile, runtime, linkage)?;
+    let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Ok(format!("zeo-rt:{}:{mtime};", meta.len()))
 }

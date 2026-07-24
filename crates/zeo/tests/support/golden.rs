@@ -164,8 +164,11 @@ fn compile_and_run(
         std::thread::current().id()
     ));
     let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::backend::ensure_runtime_built(profile(), runtime)?;
-    zeo::backend::build_binary(&compiled.rust_source, &bin, profile(), runtime)?;
+    // Golden binaries are throwaway: link the runtime DYNAMICALLY (shared dylib,
+    // ~100KB each) to keep the bin-cache small. See `run_ruby_packages`.
+    let linkage = zeo::backend::Linkage::Dynamic;
+    zeo::backend::ensure_runtime_built(profile(), runtime, linkage)?;
+    zeo::backend::build_binary(&compiled.rust_source, &bin, profile(), runtime, linkage)?;
 
     let mut cmd = Command::new(&bin);
     cmd.args(args).current_dir(run_cwd);
