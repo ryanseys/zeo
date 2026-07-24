@@ -18,6 +18,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+datatest-stable.workspace = true
 
 [lib]
 name = "zeo"
@@ -26,6 +27,14 @@ path = "src/lib.rs"
 [[bin]]
 name = "zeo"
 path = "src/main.rs"
+
+# Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
+# committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =
+# false` hands the target to datatest-stable. `ZEO_BLESS=1` rewrites goldens.
+[[test]]
+name = "gaps"
+path = "tests/gaps.rs"
+harness = false
 
 [lints]
 workspace = true
