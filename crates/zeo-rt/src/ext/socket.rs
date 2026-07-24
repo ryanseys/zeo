@@ -225,3 +225,88 @@ builtin_methods! {
         Ok(crate::builtins::io::socket_value(file, TCPSOCKET_CLASS))
     }
 }
+
+/// Install `Socket`'s address-family / socket-type / protocol / option
+/// constants at startup (`Socket::AF_INET6`, `Socket::SOCK_STREAM`, ...), the
+/// runtime half of `zeo_abi::SOCKET_CONSTANT_NAMES`. Values come from the host
+/// `libc` headers so they match the target platform exactly (Darwin's
+/// `AF_INET6 == 30`, Linux's `== 10`), matching what CRuby's C `socket`
+/// extension defines via `rb_define_const`. Called from
+/// `bootstrap::install_core_constants` when the `socket` feature is built.
+pub fn seed_socket() {
+    let cid = zeo_abi::SOCKET_CLASS.0;
+    for &name in zeo_abi::SOCKET_CONSTANT_NAMES {
+        crate::constants::const_set(cid, name, RubyValue::Int(socket_const_value(name)));
+    }
+}
+
+/// Map a `zeo_abi::SOCKET_CONSTANT_NAMES` entry to its host `libc` value. The
+/// `unreachable!` makes an abi name with no value here a loud startup failure
+/// rather than a silently-missing constant -- keeping the two halves in sync.
+fn socket_const_value(name: &str) -> i64 {
+    let v = match name {
+        "AF_UNSPEC" => libc::AF_UNSPEC,
+        "AF_INET" => libc::AF_INET,
+        "AF_INET6" => libc::AF_INET6,
+        "AF_UNIX" => libc::AF_UNIX,
+        "AF_LOCAL" => libc::AF_UNIX, // AF_LOCAL is the POSIX alias of AF_UNIX.
+        "PF_UNSPEC" => libc::PF_UNSPEC,
+        "PF_INET" => libc::PF_INET,
+        "PF_INET6" => libc::PF_INET6,
+        "PF_UNIX" => libc::PF_UNIX,
+        "PF_LOCAL" => libc::PF_LOCAL,
+        "SOCK_STREAM" => libc::SOCK_STREAM,
+        "SOCK_DGRAM" => libc::SOCK_DGRAM,
+        "SOCK_RAW" => libc::SOCK_RAW,
+        "SOCK_SEQPACKET" => libc::SOCK_SEQPACKET,
+        "SOCK_RDM" => libc::SOCK_RDM,
+        "IPPROTO_IP" => libc::IPPROTO_IP,
+        "IPPROTO_ICMP" => libc::IPPROTO_ICMP,
+        "IPPROTO_TCP" => libc::IPPROTO_TCP,
+        "IPPROTO_UDP" => libc::IPPROTO_UDP,
+        "IPPROTO_IPV6" => libc::IPPROTO_IPV6,
+        "IPPROTO_RAW" => libc::IPPROTO_RAW,
+        "SOL_SOCKET" => libc::SOL_SOCKET,
+        "SO_REUSEADDR" => libc::SO_REUSEADDR,
+        "SO_REUSEPORT" => libc::SO_REUSEPORT,
+        "SO_KEEPALIVE" => libc::SO_KEEPALIVE,
+        "SO_BROADCAST" => libc::SO_BROADCAST,
+        "SO_LINGER" => libc::SO_LINGER,
+        "SO_SNDBUF" => libc::SO_SNDBUF,
+        "SO_RCVBUF" => libc::SO_RCVBUF,
+        "SO_ERROR" => libc::SO_ERROR,
+        "SO_TYPE" => libc::SO_TYPE,
+        "SO_DONTROUTE" => libc::SO_DONTROUTE,
+        "SO_OOBINLINE" => libc::SO_OOBINLINE,
+        "TCP_NODELAY" => libc::TCP_NODELAY,
+        "IP_TTL" => libc::IP_TTL,
+        "IP_MULTICAST_TTL" => libc::IP_MULTICAST_TTL,
+        "IP_MULTICAST_LOOP" => libc::IP_MULTICAST_LOOP,
+        "IP_ADD_MEMBERSHIP" => libc::IP_ADD_MEMBERSHIP,
+        "IP_DROP_MEMBERSHIP" => libc::IP_DROP_MEMBERSHIP,
+        "IPV6_V6ONLY" => libc::IPV6_V6ONLY,
+        "IPV6_MULTICAST_HOPS" => libc::IPV6_MULTICAST_HOPS,
+        "IPV6_UNICAST_HOPS" => libc::IPV6_UNICAST_HOPS,
+        "AI_PASSIVE" => libc::AI_PASSIVE,
+        "AI_CANONNAME" => libc::AI_CANONNAME,
+        "AI_NUMERICHOST" => libc::AI_NUMERICHOST,
+        "AI_NUMERICSERV" => libc::AI_NUMERICSERV,
+        "AI_ADDRCONFIG" => libc::AI_ADDRCONFIG,
+        "AI_V4MAPPED" => libc::AI_V4MAPPED,
+        "AI_ALL" => libc::AI_ALL,
+        "NI_NUMERICHOST" => libc::NI_NUMERICHOST,
+        "NI_NUMERICSERV" => libc::NI_NUMERICSERV,
+        "NI_NOFQDN" => libc::NI_NOFQDN,
+        "NI_NAMEREQD" => libc::NI_NAMEREQD,
+        "NI_DGRAM" => libc::NI_DGRAM,
+        "SHUT_RD" => libc::SHUT_RD,
+        "SHUT_WR" => libc::SHUT_WR,
+        "SHUT_RDWR" => libc::SHUT_RDWR,
+        "MSG_OOB" => libc::MSG_OOB,
+        "MSG_PEEK" => libc::MSG_PEEK,
+        "MSG_DONTROUTE" => libc::MSG_DONTROUTE,
+        "MSG_WAITALL" => libc::MSG_WAITALL,
+        other => unreachable!("socket constant {other} has no libc value in seed_socket"),
+    };
+    v as i64
+}

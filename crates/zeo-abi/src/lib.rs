@@ -1659,6 +1659,36 @@ pub fn builtin_name(id: ClassId) -> Option<&'static str> {
         .map(|b| b.name)
 }
 
+/// The constant names the native `socket` extension defines on `Socket`
+/// (CRuby's `Socket::AF_INET6`, `Socket::SOCK_STREAM`, ...). SINGLE SOURCE OF
+/// TRUTH shared by the two halves of the compiler: `zeo-rt`'s `seed_socket`
+/// installs each name's host `libc` value at runtime (a `debug_assert` there
+/// enforces that every name below maps to a value), and the compiler registers
+/// each into `Socket`'s compile-time constant table so `Socket::X` reads,
+/// `Socket.const_defined?(:X)`, `defined?(Socket::X)`, and the platform guards
+/// gems write around them (`unless Socket.const_defined? :AF_INET6`) all resolve
+/// with CRuby parity. Values live in `zeo-rt` (it owns the `libc` dependency);
+/// only the names are needed at compile time, so this stays dependency-free.
+pub const SOCKET_CONSTANT_NAMES: &[&str] = &[
+    // Address / protocol families.
+    "AF_UNSPEC", "AF_INET", "AF_INET6", "AF_UNIX", "AF_LOCAL", "PF_UNSPEC", "PF_INET", "PF_INET6",
+    "PF_UNIX", "PF_LOCAL", // Socket types.
+    "SOCK_STREAM", "SOCK_DGRAM", "SOCK_RAW", "SOCK_SEQPACKET", "SOCK_RDM",
+    // IP protocols.
+    "IPPROTO_IP", "IPPROTO_ICMP", "IPPROTO_TCP", "IPPROTO_UDP", "IPPROTO_IPV6", "IPPROTO_RAW",
+    // Option levels and socket-level options.
+    "SOL_SOCKET", "SO_REUSEADDR", "SO_REUSEPORT", "SO_KEEPALIVE", "SO_BROADCAST", "SO_LINGER",
+    "SO_SNDBUF", "SO_RCVBUF", "SO_ERROR", "SO_TYPE", "SO_DONTROUTE", "SO_OOBINLINE",
+    // TCP / IP / IPv6 options.
+    "TCP_NODELAY", "IP_TTL", "IP_MULTICAST_TTL", "IP_MULTICAST_LOOP", "IP_ADD_MEMBERSHIP",
+    "IP_DROP_MEMBERSHIP", "IPV6_V6ONLY", "IPV6_MULTICAST_HOPS", "IPV6_UNICAST_HOPS",
+    // getaddrinfo / getnameinfo flags.
+    "AI_PASSIVE", "AI_CANONNAME", "AI_NUMERICHOST", "AI_NUMERICSERV", "AI_ADDRCONFIG",
+    "AI_V4MAPPED", "AI_ALL", "NI_NUMERICHOST", "NI_NUMERICSERV", "NI_NOFQDN", "NI_NAMEREQD",
+    "NI_DGRAM", // Shutdown directions and message flags.
+    "SHUT_RD", "SHUT_WR", "SHUT_RDWR", "MSG_OOB", "MSG_PEEK", "MSG_DONTROUTE", "MSG_WAITALL",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

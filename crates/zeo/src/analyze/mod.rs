@@ -51,6 +51,12 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
     compiler.shell_kinds = shell_kinds;
 
+    // Register native-extension constants (`Socket::AF_INET6`, ...) into their
+    // builtin class's compile-time const table so `const_defined?`/`defined?`/
+    // const-read/guard folding sees them exactly as the runtime `seed_*` will
+    // install them. Must precede the walk below, which decides class-def guards.
+    seed_ext_const_owners(&mut compiler);
+
     let mut main_statements = Vec::new();
     // `BEGIN { ... }` bodies, hoisted to run before ANY main statement --
     // collected in source order here and prepended below, which is the
@@ -298,7 +304,8 @@ fn process_top_stmt(
         // `class Object; include M; end` reopen, so `mro::materialize`
         // spreads M's instance methods (and constants) program-wide and a
         // bare `M`-method call resolves through implicit self.
-        let target = resolve_module_target(compiler, m, &[], 0)?;
+        let m = m.clone();
+        let target = resolve_module_target(compiler, &m, &[], 0)?;
         compiler.classes[OBJECT_CLASS.0 as usize]
             .includes
             .push(target);
@@ -513,8 +520,67 @@ fn cond_kind(compiler: &Compiler, id: NodeId) -> String {
     }
 }
 
+/// Register the constants each ACTIVE native extension defines onto its builtin
+/// class's compile-time `const_owners`, from the single-source name tables in
+/// `zeo-abi` (the runtime `seed_*` installs the same names' values). Gated on
+/// the feature actually being required, mirroring CRuby: `Socket::AF_INET6` is
+/// undefined until `require "socket"`. Lets `static_top_cond`/`constfold` decide
+/// the platform guards gems write (`unless Socket.const_defined? :AF_INET6`).
+fn seed_ext_const_owners(compiler: &mut Compiler) {
+    if compiler.hir.activated_features.contains("socket") {
+        let cid = crate::compiler::ClassId(zeo_abi::SOCKET_CLASS.0);
+        for &name in zeo_abi::SOCKET_CONSTANT_NAMES {
+            compiler.classes[cid.0 as usize]
+                .const_owners
+                .entry(name.to_string())
+                .or_insert(cid);
+        }
+    }
+}
+
+/// Compile-time truth of `Recv.const_defined?(:NAME)` for a resolvable class
+/// receiver and a literal symbol/string name: `Some(true)` when the constant is
+/// known-defined (a nested class/module, or a value constant in the receiver's
+/// own const table -- user-written or `seed_ext_const_owners`'d). Returns `None`
+/// (undecidable) when absent, so a guard over a genuinely-missing constant fails
+/// loudly rather than silently taking the wrong branch -- surfacing a constant
+/// zeo still needs to seed rather than mis-compiling.
+fn static_const_defined(compiler: &Compiler, recv: NodeId, args: &[ArrayElem]) -> Option<bool> {
+    let HirNode::ClassRef(recv_name) = &compiler.hir[recv] else {
+        return None;
+    };
+    let target = compiler.resolve_class(recv_name, &[], 0)?;
+    let [ArrayElem::Single(arg)] = args else {
+        return None;
+    };
+    let cname = match &compiler.hir[*arg] {
+        HirNode::SymbolLit(s) => s.clone(),
+        // A single-literal string (`const_defined?("AF_INET6")`); interpolated
+        // or multi-part strings aren't compile-time names.
+        HirNode::StringLit(parts) => match parts.as_slice() {
+            [StrPart::Lit(s)] => s.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let nested = format!("{}::{cname}", compiler.fq_name(target));
+    let defined = compiler.resolve_class(&nested, &[], 0).is_some()
+        || compiler.class(target).const_owners.contains_key(&cname);
+    defined.then_some(true)
+}
+
 fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
     match &compiler.hir[id] {
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            ..
+        } if name == "const_defined?" && kwargs.is_empty() && block.is_none() => {
+            static_const_defined(compiler, *recv, args)
+        }
         HirNode::Defined(inner) => match &compiler.hir[*inner] {
             HirNode::ClassRef(name) => {
                 if compiler.resolve_class(name, &[], 0).is_some() {
@@ -845,6 +911,54 @@ fn resolve_or_create_container(compiler: &mut Compiler, path: &str, box_id: u32)
     Some(cid)
 }
 
+/// Like `resolve_or_create_container`, but for a SUPERCLASS or include/prepend/
+/// extend module TARGET that may be a bare name resolved through the enclosing
+/// lexical chain (`< Error` / `prepend BetterPermissionError` inside
+/// `Gem::CompactIndexClient::Updater` meaning the `Gem::…`-scoped one). Walks
+/// `cref` innermost-first, then the top level, for the first candidate
+/// fully-qualified name the program defines (in `shell_kinds`), and creates it
+/// as a forward shell. A later real definition reopens the shell -- adding its
+/// methods (seen at `mro::materialize` time) and establishing its superclass
+/// through `register_class`'s reopen arm.
+fn resolve_or_create_lexical(
+    compiler: &mut Compiler,
+    name: &str,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Option<ClassId> {
+    // Lexical scopes to try, innermost first: each `cref` entry, then the
+    // innermost class's LEXICAL-PARENT chain -- the enclosing namespaces a
+    // NESTED reopen sees (`module Gem; class StubSpecification; prepend X`)
+    // that `cref_of` drops when the class was FIRST defined compact
+    // (`class Gem::StubSpecification`, `qualified_def`). Real Ruby resolves the
+    // bare name against the reopen site's `Module.nesting`, not the first
+    // definition's.
+    let mut scopes: Vec<ClassId> = cref.iter().rev().copied().collect();
+    let mut parent = cref.last().and_then(|&c| compiler.class(c).lexical_parent);
+    while let Some(c) = parent {
+        if !scopes.contains(&c) {
+            scopes.push(c);
+        }
+        parent = compiler.class(c).lexical_parent;
+    }
+    let mut candidates: Vec<String> = scopes
+        .iter()
+        .map(|&s| format!("{}::{name}", compiler.fq_name(s)))
+        .collect();
+    candidates.push(name.to_string());
+    for cand in candidates {
+        // Already registered under this scope (the lexical-parent walk found it)
+        // -> use it; else a forward shell if the program defines it elsewhere.
+        if let Some(cid) = compiler.resolve_class(&cand, &[], box_id) {
+            return Some(cid);
+        }
+        if compiler.shell_kinds.contains_key(&(box_id, cand.clone())) {
+            return resolve_or_create_container(compiler, &cand, box_id);
+        }
+    }
+    None
+}
+
 // Every parameter is a distinct piece of the definition site (same
 // posture as `register_method`); `def_node` is the site's own `ClassDef`
 // marker for document-order body execution (`Compiler::class_body_sites`).
@@ -866,11 +980,13 @@ fn register_class(
         Some(prefix) => {
             let parent = compiler
                 .resolve_class(prefix, cref, box_id)
-                // A container defined LATER in the flattened statement list
-                // than this definition (a deferred require's reopen preceding
-                // the forward-declaration it depends on) is created on demand as
-                // a shell -- see `resolve_or_create_container`.
-                .or_else(|| resolve_or_create_container(compiler, prefix, box_id))
+                // A container defined LATER in the flattened statement list than
+                // this definition (a deferred require's reopen preceding the
+                // forward-declaration it depends on), or one reached through the
+                // enclosing lexical scope (`class CLI::Common` inside
+                // `module Bundler` -> `Bundler::CLI`), is resolved or created as
+                // a shell -- see `resolve_or_create_lexical`.
+                .or_else(|| resolve_or_create_lexical(compiler, prefix, cref, box_id))
                 .ok_or_else(|| {
                     format!(
                         "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
@@ -1024,11 +1140,19 @@ fn register_class(
                     // class being opened): real Ruby evaluates the
                     // superclass expression before the new class exists.
                     Some(s) => {
-                        let cid = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
-                            format!(
-                                "unknown superclass `{s}` (must be defined earlier in the file)"
-                            )
-                        })?;
+                        let cid = compiler
+                            .resolve_class(s, cref, box_id)
+                            // A superclass defined LATER in the flattened list
+                            // (a hoisted deferred require whose subclass precedes
+                            // its base, e.g. `class MismatchedChecksumError <
+                            // Error` before `class Error`): create the base as a
+                            // forward shell, resolving the bare name lexically.
+                            .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
+                            .ok_or_else(|| {
+                                format!(
+                                    "unknown superclass `{s}` (must be defined earlier in the file)"
+                                )
+                            })?;
                         // Subclassable builtins (D3):
                         //  - `Struct`/`Data`: subclasses are ordinary
                         //    ivar-carrying objects (generated struct).
@@ -1158,11 +1282,13 @@ fn register_class(
                 )?;
             }
             HirNode::Include(m) => {
-                let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
+                let m = m.clone();
+                let target = resolve_module_target(compiler, &m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].includes.push(target);
             }
             HirNode::Extend(m) => {
-                let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
+                let m = m.clone();
+                let target = resolve_module_target(compiler, &m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].extends.push(target);
             }
             // `undef foo, bar` -- recorded here, honored by
@@ -1195,7 +1321,8 @@ fn register_class(
                     .push((name.clone(), *visibility));
             }
             HirNode::Prepend(m) => {
-                let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
+                let m = m.clone();
+                let target = resolve_module_target(compiler, &m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
             }
             // `IvarWrite`: a bare `@x = expr` in a class body is an ivar on
@@ -1370,13 +1497,17 @@ fn register_conditional_defs(
 }
 
 fn resolve_module_target(
-    compiler: &Compiler,
+    compiler: &mut Compiler,
     name: &str,
     cref: &[ClassId],
     box_id: u32,
 ) -> Result<ClassId, String> {
     compiler
         .resolve_class(name, cref, box_id)
+        // A module defined LATER in the flattened list (hoisted deferred
+        // require) is created as a forward shell; its methods are added when the
+        // real definition reopens the shell (seen at `mro::materialize`).
+        .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id))
         .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
 }
 
