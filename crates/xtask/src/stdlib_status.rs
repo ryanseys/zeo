@@ -25,7 +25,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::conformance::exec::run_with_timeout;
+use crate::exec::run_with_timeout;
 
 /// Codegen of a single file is fast and terminating; the timeout only guards
 /// against a pathological compiler hang so one bad file can't stall the sweep.
