@@ -12,7 +12,7 @@ mod golden;
 use std::path::Path;
 
 fn gap(rb: &Path) -> datatest_stable::Result<()> {
-    golden::run_golden(rb, golden::Mode::Xfail, &golden::gaps_run_cwd())
+    golden::run_golden(rb, golden::Mode::Xfail, &golden::gaps_run_cwd(), true)
 }
 
 datatest_stable::harness! {

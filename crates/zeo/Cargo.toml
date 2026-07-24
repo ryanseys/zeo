@@ -36,5 +36,10 @@ name = "gaps"
 path = "tests/gaps.rs"
 harness = false
 
+[[test]]
+name = "examples"
+path = "tests/examples.rs"
+harness = false
+
 [lints]
 workspace = true

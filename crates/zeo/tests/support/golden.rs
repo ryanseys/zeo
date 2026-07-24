@@ -257,16 +257,25 @@ fn run_oracle(
 }
 
 /// `ZEO_BLESS=1`: (re)write `<rb>.expected` (+ `.err.expected`) from the oracle.
-fn bless(rb: &Path, source: &str, sc: &Sidecars, run_cwd: &Path) -> datatest_stable::Result<()> {
+/// A stdout-only suite (`check_stderr == false`, i.e. examples) never keeps a
+/// stderr golden -- ruby's parse warnings / experimental notices / thread
+/// exception reports aren't part of the contract there.
+fn bless(
+    rb: &Path,
+    source: &str,
+    sc: &Sidecars,
+    run_cwd: &Path,
+    check_stderr: bool,
+) -> datatest_stable::Result<()> {
     let (stdout, stderr) = run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd)?;
     let out = norm(&stdout, rb, run_cwd);
-    let err = norm(&stderr, rb, run_cwd);
     std::fs::write(format!("{}.expected", rb.display()), &out)?;
     let err_path = format!("{}.err.expected", rb.display());
-    if err.is_empty() {
-        let _ = std::fs::remove_file(&err_path); // absent => "stderr must be empty"
-    } else {
+    let err = norm(&stderr, rb, run_cwd);
+    if check_stderr && !err.is_empty() {
         std::fs::write(&err_path, &err)?;
+    } else {
+        let _ = std::fs::remove_file(&err_path); // absent => "stderr must be empty"
     }
     Ok(())
 }
@@ -274,7 +283,15 @@ fn bless(rb: &Path, source: &str, sc: &Sidecars, run_cwd: &Path) -> datatest_sta
 // ---- the entry point ----
 
 /// Run one golden case. See the module docs for the per-`Mode` contract.
-pub fn run_golden(rb: &Path, mode: Mode, run_cwd: &Path) -> datatest_stable::Result<()> {
+/// `check_stderr` is false for the stdout-only examples suite, true for the
+/// corpus/gaps (full stdout+stderr fidelity, matching the old conformance
+/// harness).
+pub fn run_golden(
+    rb: &Path,
+    mode: Mode,
+    run_cwd: &Path,
+    check_stderr: bool,
+) -> datatest_stable::Result<()> {
     // datatest-stable hands us a path relative to the crate manifest dir (the
     // test process's cwd); absolutize it so ruby/the binary find it after we
     // `current_dir(run_cwd)`, and so source-path normalization matches.
@@ -283,7 +300,7 @@ pub fn run_golden(rb: &Path, mode: Mode, run_cwd: &Path) -> datatest_stable::Res
     let sc = sidecars(rb)?;
 
     if std::env::var_os("ZEO_BLESS").is_some() && mode != Mode::CompileFail {
-        return bless(rb, &source, &sc, run_cwd);
+        return bless(rb, &source, &sc, run_cwd, check_stderr);
     }
 
     if mode == Mode::CompileFail {
@@ -321,7 +338,7 @@ pub fn run_golden(rb: &Path, mode: Mode, run_cwd: &Path) -> datatest_stable::Res
     let matched = match &actual {
         Ok((out, err)) => {
             norm(out, rb, run_cwd) == norm(&expected_out, rb, run_cwd)
-                && norm(err, rb, run_cwd) == norm(&expected_err, rb, run_cwd)
+                && (!check_stderr || norm(err, rb, run_cwd) == norm(&expected_err, rb, run_cwd))
         }
         Err(_) => false, // zeo couldn't produce/run a binary: it diverges.
     };
