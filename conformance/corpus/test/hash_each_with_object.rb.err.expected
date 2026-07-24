@@ -1,4 +1,0 @@
-test/hash_each_with_object.rb:15:in 'block in <main>': undefined method '<<' for nil (NoMethodError)
-	from test/hash_each_with_object.rb:15:in 'Hash#each'
-	from test/hash_each_with_object.rb:15:in 'Enumerable#each_with_object'
-	from test/hash_each_with_object.rb:15:in '<main>'

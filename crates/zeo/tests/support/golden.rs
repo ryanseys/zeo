@@ -1,5 +1,5 @@
 //! Shared golden-file test helper for the datatest-stable suites
-//! (`tests/gaps.rs`, `tests/examples.rs`, `tests/corpus.rs`).
+//! (`tests/gaps.rs`, `tests/examples.rs`, `tests/spinel.rs`).
 //!
 //! One function, [`run_golden`], drives every `.rb` the same way the e2e
 //! `run_ruby` helper does -- `zeo::compile_to_rust_with` ->
@@ -40,15 +40,16 @@ pub fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Working directory a suite's programs run in (and the base its source paths
-/// are relativized against). The corpus/gaps `.args` use paths relative to
-/// these, matching how the old conformance harness ran them.
-pub fn corpus_run_cwd() -> PathBuf {
-    workspace_root().join("conformance/corpus")
+/// Working directory every golden suite's programs run in (and the base their
+/// source paths are relativized against, so backtraces read `spinel/x.rb`,
+/// `gaps/x.rb`, or `x.rb`). The `.args` fixture paths (e.g. the ARGF input) are
+/// relative to this too. All three suites live under `tests/`, so they share it.
+pub fn tests_run_cwd() -> PathBuf {
+    workspace_root().join("tests")
 }
-pub fn gaps_run_cwd() -> PathBuf {
-    workspace_root().join("conformance")
-}
+/// Examples still live at the repo-root `examples/` (relocated to `tests/` in a
+/// follow-up); run them from the workspace root so their backtraces relativize
+/// to `examples/x.rb`.
 pub fn examples_run_cwd() -> PathBuf {
     workspace_root()
 }
@@ -349,8 +350,8 @@ pub fn run_golden(
         Mode::Pass if matched => Ok(()),
         Mode::Pass => Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into()),
         Mode::Xfail if matched => Err(format!(
-            "GAP FIXED -- {} now matches ruby. Promote it: `git mv` its .rb (+ sidecars) \
-             from conformance/gaps/ to conformance/corpus/test/.",
+            "GAP FIXED -- {} now matches ruby. Promote it: move its .rb (+ sidecars) \
+             from tests/gaps/ to tests/spinel/.",
             rb.file_name().unwrap_or(rb.as_os_str()).to_string_lossy()
         )
         .into()),

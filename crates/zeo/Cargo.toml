@@ -42,8 +42,8 @@ path = "tests/examples.rs"
 harness = false
 
 [[test]]
-name = "corpus"
-path = "tests/corpus.rs"
+name = "spinel"
+path = "tests/spinel.rs"
 harness = false
 
 [lints]

@@ -1,0 +1,4 @@
+spinel/hash_each_with_object.rb:15:in 'block in <main>': undefined method '<<' for nil (NoMethodError)
+	from spinel/hash_each_with_object.rb:15:in 'Hash#each'
+	from spinel/hash_each_with_object.rb:15:in 'Enumerable#each_with_object'
+	from spinel/hash_each_with_object.rb:15:in '<main>'

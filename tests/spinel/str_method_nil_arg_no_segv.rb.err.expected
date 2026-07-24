@@ -1,0 +1,2 @@
+spinel/str_method_nil_arg_no_segv.rb:19:in 'String#count': wrong number of arguments (given 0, expected 1+) (ArgumentError)
+	from spinel/str_method_nil_arg_no_segv.rb:19:in '<main>'

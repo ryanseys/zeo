@@ -1,0 +1,2 @@
+spinel/string_split_inline_arg_gc_root.rb:7:in 'Object#churn_gc': undefined method '<=' for nil (NoMethodError)
+	from spinel/string_split_inline_arg_gc_root.rb:43:in '<main>'

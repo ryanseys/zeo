@@ -1,8 +1,0 @@
-test/source_file.rb
-true
-[test/source_file.rb]
-got: test/source_file.rb
-true
-true
-true
-param: test/source_file.rb

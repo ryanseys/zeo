@@ -1,0 +1,2 @@
+spinel/param_lengthlike_body_widen.rb:32:in 'Object#consume_length': undefined method 'length' for nil (NoMethodError)
+	from spinel/param_lengthlike_body_widen.rb:44:in '<main>'
