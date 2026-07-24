@@ -148,10 +148,15 @@ with the Struct-like `members`/`to_a`/`to_h`/`each`/`[]`; `sysconf`/`confstr`/
 `tests/etc.rb`, oracle-matched. Doc divergence: `sysconfdir` -> `/etc` (build
 prefix, like rbconfig) vs CRuby's install-prefix path — rubygems rescues it.
 
-**Current blocker (STDLIB):** `cannot load such file -- fileutils` (via
-`rubygems/config_file.rb`). The require graph now clears config_file.rb past
-`Etc`; **`fileutils`** is the biggest pure-Ruby stdlib (40 requires; `mkdir_p`/
-`cp_r`/`rm_rf`/`mv` over File/Dir) — vendor it into `gems/`.
+**Current blocker (2026-07-24):** the require graph now clears the whole
+networking stack + erb (including erb/compiler.rb's `class << self` with a
+conditional `def`, now fixed — zeo statically decides the version/`defined?`
+guard and registers only the taken branch's class methods; see
+`tests/spinel/class_self_conditional_def.rb`). It stops in `analyze` at a
+**conditional class/module DEFINITION with a non-decidable guard** ("class/module
+definition inside a top-level `if` is only supported when the condition is
+compile-time decidable"). Next: extend the static-guard handling to cover this
+class-def case (or make the specific guard decidable).
 
 **Missing pure-Ruby stdlib — vendor into `gems/`** (each sits on File/Dir/
 Process/IO that zeo largely has; ordered by the `bundle --version` → install

@@ -12,7 +12,7 @@ use super::ffi::{
     as_ffi_layout, is_extend_ffi_library, lower_ffi_directive, synthesize_ffi_struct,
 };
 use super::{PResult, lower_node, parse_and_lower_into};
-use crate::hir::{ArrayElem, Hir, HirNode, KeywordParam, NodeId, Params, Visibility};
+use crate::hir::{ArrayElem, Hir, HirNode, KeywordParam, NodeId, Params, StrPart, Visibility};
 use ruby_prism::{Node, ParseResult};
 
 /// Lowers the branch a statically-folded class-body `if`/`unless` selected --
@@ -176,7 +176,9 @@ fn desugar_singleton_items(
             }
             Item::Const => out.push(id),
             Item::Nested(name, superclass, body, is_module) => {
-                out.push(runtime_nested_class(hir, name, superclass, body, is_module)?);
+                out.push(runtime_nested_class(
+                    hir, name, superclass, body, is_module,
+                )?);
             }
             Item::Cond(cond, then_body, else_body) => {
                 let then_body = desugar_singleton_items(result, hir, recv_node, then_body)?;
@@ -242,6 +244,166 @@ fn desugar_singleton_items(
         }
     }
     Ok(out)
+}
+
+/// Maps each lowered `class << self` body node onto the ENCLOSING class (the
+/// `self`-receiver singleton path in `lower_class_body_stmt`): a `def` is
+/// retagged as a class method, an `include` becomes an `extend`, a constant
+/// passes through, a conditional guarding definitions keeps its runtime `if`
+/// with each branch mapped the same way. Recursive so a nested
+/// `if defined?(Ractor); def register_scanner ...` (erb/compiler.rb) composes;
+/// the branch that runs at load time defines the class method, and
+/// `analyze::register_conditional_defs` makes the names visible to compile-time
+/// reflection either way.
+fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) -> PResult<()> {
+    // Classify without holding the `&hir[id]` borrow across the mutations below.
+    enum Item {
+        Method,
+        ClassAlias,
+        Passthrough,
+        Extend(String),
+        Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        Skip,
+        Reject,
+    }
+    for &id in ids {
+        let item = match &hir[id] {
+            HirNode::DefMethod { .. } => Item::Method,
+            // `alias new old` here aliases a SINGLETON method (`class <<
+            // self; alias split shellsplit`) -- retag it so analyze/mro
+            // resolve it against `own_class_methods`. A same-body target
+            // was already cloned as a class-method `DefMethod` by
+            // `push_alias` (it preserves `is_class_method`); only a
+            // cross-body/inherited source reaches here as an `AliasMethod`.
+            HirNode::AliasMethod { .. } => Item::ClassAlias,
+            HirNode::ConstWrite { .. } => Item::Passthrough,
+            HirNode::Include(m) => Item::Extend(m.clone()),
+            // A conditional guarding class-method defs (erb/compiler.rb's
+            // `class << self; if defined?(Ractor); def register_scanner ...`):
+            // map each branch the same way and KEEP the runtime `if`, so the
+            // branch that executes at load time defines the class method.
+            HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => Item::Cond(*cond, then_body.clone(), else_body.clone()),
+            // A visibility directive (`public :a`) or a runtime call
+            // (`public(*METHODS)`) inside `class << self` would run at load
+            // in the enclosing MODULE's context, not the singleton's -- so
+            // `public(*METHODS)` over names the singleton doesn't yet carry
+            // would wrongly raise. It is a documented best-effort NO-OP
+            // (fileutils' Verbose/NoWrite/DryRun are load-time convenience
+            // wrappers; the singleton-visibility nuance is bundler-irrelevant).
+            HirNode::MethodVisibility { .. } | HirNode::Call { .. } => Item::Skip,
+            _ => Item::Reject,
+        };
+        match item {
+            Item::Method => {
+                hir.set_method_is_class_method(id);
+                out.push(id);
+            }
+            Item::ClassAlias => {
+                hir.set_alias_is_class_method(id);
+                out.push(id);
+            }
+            Item::Passthrough => out.push(id),
+            Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
+            Item::Cond(cond, then_body, else_body) => match eval_static_class_self_guard(hir, cond)
+            {
+                // A statically-decidable version/`defined?` guard: register ONLY
+                // the taken branch's class methods, exactly the branch real Ruby
+                // runs. (A runtime `if` would leave BOTH branches registered and
+                // static dispatch would resolve to the last-wins body -- wrong
+                // when the branches differ, e.g. erb's Ractor vs non-Ractor
+                // `register_scanner`.)
+                Some(true) => map_class_self_items(hir, &then_body, out)?,
+                Some(false) => map_class_self_items(hir, &else_body, out)?,
+                // Runtime-dependent guard: keep the `if` and map each branch
+                // (best-effort -- the guard genuinely can't be decided here).
+                None => {
+                    let mut then_out = Vec::with_capacity(then_body.len());
+                    map_class_self_items(hir, &then_body, &mut then_out)?;
+                    let mut else_out = Vec::with_capacity(else_body.len());
+                    map_class_self_items(hir, &else_body, &mut else_out)?;
+                    out.push(hir.push(HirNode::If {
+                        cond,
+                        then_body: then_out,
+                        else_body: else_out,
+                    }));
+                }
+            },
+            Item::Skip => {}
+            Item::Reject => {
+                return Err(
+                    "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, visibility directives, conditionals, and `attr_*`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The Ruby version zeo targets -- kept in lockstep with `zeo_rt::bootstrap`'s
+/// `VERSION` (the value of the runtime `RUBY_VERSION` constant). Mirrors the
+/// loader's hardcoded `RUBY_ENGINE`: zeo compiles to one fixed target, so a
+/// `RUBY_VERSION`-gated definition is statically decidable.
+const TARGET_RUBY_VERSION: &str = "4.0.5";
+
+/// Toplevel constants zeo's runtime ALWAYS defines, so `defined?(C)` is
+/// statically true. Used to pick the live branch of a feature-probe like
+/// erb/compiler.rb's `if defined?(Ractor)`. Extend as more `defined?`-gated
+/// definitions surface in the require graph.
+const ALWAYS_DEFINED_CONSTS: &[&str] = &["Ractor"];
+
+/// Three-valued static evaluation of a `class << self` conditional-def guard,
+/// enough for the platform/version probes that gate class-method definitions in
+/// the stdlib/gem graph: literal `true`/`false`/`nil`, `defined?(C)` for a
+/// runtime-provided constant, and `RUBY_VERSION <cmp> "x"` (String#<=>
+/// lexicographic, matching how Ruby compares these version strings). `None` when
+/// the guard depends on runtime state -- the caller then keeps the runtime `if`.
+fn eval_static_class_self_guard(hir: &Hir, cond: NodeId) -> Option<bool> {
+    match &hir[cond] {
+        HirNode::BoolLit(b) => Some(*b),
+        HirNode::NilLit => Some(false),
+        HirNode::Defined(inner) => match &hir[*inner] {
+            HirNode::ClassRef(name) => Some(ALWAYS_DEFINED_CONSTS.contains(&name.as_str())),
+            _ => None,
+        },
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } => {
+            let HirNode::ClassRef(cname) = &hir[*recv] else {
+                return None;
+            };
+            if cname != "RUBY_VERSION" {
+                return None;
+            }
+            let [ArrayElem::Single(arg)] = args.as_slice() else {
+                return None;
+            };
+            let HirNode::StringLit(parts) = &hir[*arg] else {
+                return None;
+            };
+            let [StrPart::Lit(rhs)] = parts.as_slice() else {
+                return None;
+            };
+            let ord = TARGET_RUBY_VERSION.cmp(rhs.as_str());
+            use std::cmp::Ordering::{Equal, Greater, Less};
+            Some(match name.as_str() {
+                ">=" => ord != Less,
+                ">" => ord == Greater,
+                "<" => ord == Less,
+                "<=" => ord != Greater,
+                "==" => ord == Equal,
+                "!=" => ord != Equal,
+                _ => return None,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Whether the program ASSIGNS this constant a value anywhere already lowered
@@ -333,7 +495,11 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
 /// does not misroute a fresh nested `class C` onto the runtime-reopen path.
 pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
     hir.nodes().iter().any(|node| match node {
-        HirNode::ConstWrite { scope, name: n, value } => {
+        HirNode::ConstWrite {
+            scope,
+            name: n,
+            value,
+        } => {
             let matches_name = match scope {
                 Some(s) => format!("{s}::{n}") == name,
                 None => n == name,
@@ -347,7 +513,12 @@ pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
 /// Whether `value` is a `Data.define(...)` / `Struct.new(...)` / `Class.new(...)`
 /// call -- an expression that produces a class object at runtime.
 fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {
-    let HirNode::Call { receiver: Some(r), name, .. } = &hir[value] else {
+    let HirNode::Call {
+        receiver: Some(r),
+        name,
+        ..
+    } = &hir[value]
+    else {
         return false;
     };
     let HirNode::ClassRef(recv) = &hir[*r] else {
@@ -403,8 +574,13 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
         else {
             unreachable!("guarded by the `find` above")
         };
-        let (params, body, is_class_method, visibility, is_def) =
-            (params.clone(), body.clone(), *is_class_method, *visibility, *is_def);
+        let (params, body, is_class_method, visibility, is_def) = (
+            params.clone(),
+            body.clone(),
+            *is_class_method,
+            *visibility,
+            *is_def,
+        );
         out.push(hir.push(HirNode::DefMethod {
             name: new_name,
             params,
@@ -1087,57 +1263,7 @@ fn lower_class_body_statement(
             return Ok(());
         }
         let inner = lower_class_body(result, hir, singleton.body(), None)?;
-        for &id in &inner {
-            // Classify without holding the `&hir[id]` borrow across the
-            // mutations below (`include` re-pushes a fresh `Extend` node).
-            enum Item {
-                Method,
-                ClassAlias,
-                Passthrough,
-                Extend(String),
-                Skip,
-                Reject,
-            }
-            let item = match &hir[id] {
-                HirNode::DefMethod { .. } => Item::Method,
-                // `alias new old` here aliases a SINGLETON method (`class <<
-                // self; alias split shellsplit`) -- retag it so analyze/mro
-                // resolve it against `own_class_methods`. A same-body target
-                // was already cloned as a class-method `DefMethod` by
-                // `push_alias` (it preserves `is_class_method`); only a
-                // cross-body/inherited source reaches here as an `AliasMethod`.
-                HirNode::AliasMethod { .. } => Item::ClassAlias,
-                HirNode::ConstWrite { .. } => Item::Passthrough,
-                HirNode::Include(m) => Item::Extend(m.clone()),
-                // A visibility directive (`public :a`) or a runtime call
-                // (`public(*METHODS)`) inside `class << self` would run at load
-                // in the enclosing MODULE's context, not the singleton's -- so
-                // `public(*METHODS)` over names the singleton doesn't yet carry
-                // would wrongly raise. It is a documented best-effort NO-OP
-                // (fileutils' Verbose/NoWrite/DryRun are load-time convenience
-                // wrappers; the singleton-visibility nuance is bundler-irrelevant).
-                HirNode::MethodVisibility { .. } | HirNode::Call { .. } => Item::Skip,
-                _ => Item::Reject,
-            };
-            match item {
-                Item::Method => {
-                    hir.set_method_is_class_method(id);
-                    out.push(id);
-                }
-                Item::ClassAlias => {
-                    hir.set_alias_is_class_method(id);
-                    out.push(id);
-                }
-                Item::Passthrough => out.push(id),
-                Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
-                Item::Skip => {}
-                Item::Reject => {
-                    return Err(
-                        "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, visibility directives, and `attr_*`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
-                    );
-                }
-            }
-        }
+        map_class_self_items(hir, &inner, out)?;
         return Ok(());
     }
 

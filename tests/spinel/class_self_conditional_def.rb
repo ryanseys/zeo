@@ -1,7 +1,7 @@
 # A conditional `def` inside `class << self` -- erb/compiler.rb's
 # `class << self; if defined?(Ractor); def register_scanner ...; else; ...`.
-# zeo's static `class << self` handler rejects the `if`, so it does not yet
-# match ruby here.
+# zeo statically decides the version/`defined?` guard and registers ONLY the
+# taken branch's class methods, matching ruby (which runs one branch).
 class Scanner
   class << self
     if RUBY_VERSION >= "3.0"
