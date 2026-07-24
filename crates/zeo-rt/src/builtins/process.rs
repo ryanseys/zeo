@@ -9,7 +9,7 @@
 //! matching how a program writes them: `Process::CLOCK_MONOTONIC`.
 
 use std::cell::RefCell;
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::Command;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -551,6 +551,29 @@ ruby_module! {
         });
         Ok(crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new()))
     }
+    // `Process.spawn([env,] command... [,options])` -- start a child WITHOUT
+    // waiting (unlike `system`), answering its pid; the child is reapable with
+    // `Process.wait`. `build_spawn_command` handles the leading env hash, the
+    // command forms (shell string / direct argv / `[cmdname, argv0]`), and the
+    // trailing options hash (`:chdir`, `:unsetenv_others`, `:in`/`:out`/`:err`
+    // redirects to files or to each other). Std fds are inherited unless
+    // redirected. See that helper for the options not yet honored.
+    def self.spawn(_recv, args, _block) {
+        let mut cmd = build_spawn_command(args)?;
+        match cmd.spawn() {
+            Ok(child) => Ok(RubyValue::Int(child.id() as i64)),
+            Err(e) => Err(spawn_error(&e)),
+        }
+    }
+    // `Process.exec([env,] command... [,options])` -- REPLACE the current
+    // process image (execvp), never returning on success. Shares spawn's
+    // argument parsing, so env/chdir/redirects apply to THIS process in the
+    // instant before the exec. A failure to exec raises the matching Errno.
+    def self.exec(_recv, args, _block) {
+        let mut cmd = build_spawn_command(args)?;
+        // `CommandExt::exec` returns only on failure (it diverges on success).
+        Err(spawn_error(&cmd.exec()))
+    }
 
     // `Process::Status` -- the object `$?` holds after a wait/system/backtick.
     // Its instances are the `RProcessStatus` payload (defined below); the
@@ -1005,6 +1028,302 @@ fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `Process.spawn`/`Process.exec` -- the fuller launcher: an optional leading
+// `env` hash and trailing `options` hash bracket the command words.
+// ---------------------------------------------------------------------------
+
+/// Whether an options-hash symbol key (`:unsetenv_others`) is present with a
+/// truthy value.
+fn hash_truthy(h: &crate::collections::RHash, key: &str) -> bool {
+    let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(key)));
+    !v.is_nil() && !matches!(v, RubyValue::Bool(false))
+}
+
+/// Turn a `spawn`/`exec` argument list into a ready `Command`: peel an optional
+/// leading `env` Hash and trailing `options` Hash (CRuby keys on POSITION, not
+/// key type), build the command from what's left, then layer env + options on.
+fn build_spawn_command(args: &[RubyValue]) -> Result<Command, Signal> {
+    let mut rest = args;
+
+    // A leading Hash is the environment; a trailing Hash is the options. Order,
+    // not key type, is what tells them apart (`spawn(env, cmd, opts)`).
+    let env = match rest.first() {
+        Some(v @ RubyValue::Hash(_)) => {
+            let v = v.clone();
+            rest = &rest[1..];
+            Some(v)
+        }
+        _ => None,
+    };
+    let opts = match rest.last() {
+        Some(v @ RubyValue::Hash(_)) => {
+            let v = v.clone();
+            rest = &rest[..rest.len() - 1];
+            Some(v)
+        }
+        _ => None,
+    };
+    if rest.is_empty() {
+        return Err(arg_error!("no command given"));
+    }
+
+    let mut cmd = build_exec_argv(rest)?;
+
+    // `:unsetenv_others` wipes the inherited environment before the explicit
+    // pairs are applied; a nil value unsets a single variable.
+    if let Some(RubyValue::Hash(o)) = &opts {
+        if hash_truthy(o, "unsetenv_others") {
+            cmd.env_clear();
+        }
+    }
+    if let Some(RubyValue::Hash(e)) = &env {
+        for (k, v) in crate::collections::hash_pairs(e) {
+            let key = cmd_str(&k)?;
+            if v.is_nil() {
+                cmd.env_remove(&key);
+            } else {
+                cmd.env(&key, cmd_str(&v)?);
+            }
+        }
+    }
+    if let Some(RubyValue::Hash(o)) = &opts {
+        apply_spawn_options(&mut cmd, o)?;
+    }
+    Ok(cmd)
+}
+
+/// Build the `Command` for the command WORDS (env/options already stripped). A
+/// lone string runs through the shell when it holds a metacharacter, else it is
+/// exec'd directly; a `[cmdname, argv0]` first element sets an explicit argv[0];
+/// multiple arguments always exec directly.
+fn build_exec_argv(args: &[RubyValue]) -> Result<Command, Signal> {
+    // A `[cmdname, argv0]` pair anywhere a program name is expected.
+    let program = |v: &RubyValue| -> Result<Command, Signal> {
+        if let RubyValue::Array(a) = v {
+            let a = a.lock();
+            if a.len() != 2 {
+                return Err(arg_error!("wrong first argument"));
+            }
+            let mut c = Command::new(cmd_str(&a[0])?);
+            c.arg0(cmd_str(&a[1])?);
+            return Ok(c);
+        }
+        Ok(Command::new(cmd_str(v)?))
+    };
+
+    if args.len() == 1 {
+        if let RubyValue::Str(_) = &args[0] {
+            let s = cmd_str(&args[0])?;
+            if needs_shell(&s) {
+                let mut c = Command::new("/bin/sh");
+                c.arg("-c").arg(&s);
+                return Ok(c);
+            }
+            let words: Vec<&str> = s.split_whitespace().collect();
+            let Some((prog, rest)) = words.split_first() else {
+                return Err(arg_error!("empty command"));
+            };
+            let mut c = Command::new(prog);
+            c.args(rest);
+            return Ok(c);
+        }
+        // A single `[cmdname, argv0]` with no further arguments.
+        return program(&args[0]);
+    }
+
+    let mut c = program(&args[0])?;
+    for a in &args[1..] {
+        c.arg(cmd_str(a)?);
+    }
+    Ok(c)
+}
+
+/// Apply the `options` hash to `cmd`: `:chdir`, and `:in`/`:out`/`:err` (or the
+/// `[:out, :err]` pair) redirects to a file, or to each other
+/// (`:err => :out` / `[:child, :out]`). File targets are collected first and
+/// wired up after the loop so an `:err => :out` written before `:out => file`
+/// still lands on the file. Options this does not model yet (`:pgroup`,
+/// `:umask`, `:close_others`, bare-fd-number keys, IO-object targets) are
+/// ignored rather than raising, keeping more programs runnable.
+fn apply_spawn_options(cmd: &mut Command, opts: &crate::collections::RHash) -> Result<(), Signal> {
+    use std::process::Stdio;
+
+    let mut out: Option<std::fs::File> = None;
+    let mut err: Option<std::fs::File> = None;
+    let mut err_to_out = false;
+    let mut out_to_err = false;
+
+    for (k, v) in crate::collections::hash_pairs(opts) {
+        match option_key(&k) {
+            OptKey::UnsetenvOthers => {} // applied in build_spawn_command
+            OptKey::Chdir => {
+                cmd.current_dir(cmd_str(&v)?);
+            }
+            OptKey::In => {
+                cmd.stdin(Stdio::from(open_redirect_file(&v, false)?));
+            }
+            // `merge_fd` catches `:out => :err` / `[:child, :err]`; anything else
+            // is a file (or `[name, mode]`) target.
+            OptKey::Out => match merge_fd(&v) {
+                Some(2) => out_to_err = true,
+                Some(_) => {}
+                None => out = Some(open_redirect_file(&v, true)?),
+            },
+            OptKey::Err => match merge_fd(&v) {
+                Some(1) => err_to_out = true,
+                Some(_) => {}
+                None => err = Some(open_redirect_file(&v, true)?),
+            },
+            OptKey::OutErr => {
+                let f = open_redirect_file(&v, true)?;
+                // A dup (try_clone) shares the file offset, so the two streams
+                // interleave into one file as CRuby's shared-fd redirect does.
+                out = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
+                err = Some(f);
+            }
+            OptKey::Unsupported => {}
+        }
+    }
+
+    // fd->fd merges resolve against whatever the other stream became, whichever
+    // order the keys appeared in.
+    if err_to_out {
+        if let Some(f) = &out {
+            err = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
+        }
+    }
+    if out_to_err {
+        if let Some(f) = &err {
+            out = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
+        }
+    }
+    if let Some(f) = out {
+        cmd.stdout(Stdio::from(f));
+    }
+    if let Some(f) = err {
+        cmd.stderr(Stdio::from(f));
+    }
+    Ok(())
+}
+
+/// The recognized `options`-hash keys.
+enum OptKey {
+    Chdir,
+    UnsetenvOthers,
+    In,
+    Out,
+    Err,
+    OutErr,
+    Unsupported,
+}
+
+/// Classify an options-hash KEY: the `:chdir`/`:unsetenv_others` symbols, the
+/// `:in`/`:out`/`:err` redirect symbols (or their fd-number equals 0/1/2), and
+/// the `[:out, :err]` pair. Everything else is `Unsupported` (ignored).
+fn option_key(k: &RubyValue) -> OptKey {
+    match k {
+        RubyValue::Symbol(s) => match s.name().as_str() {
+            "chdir" => OptKey::Chdir,
+            "unsetenv_others" => OptKey::UnsetenvOthers,
+            "in" => OptKey::In,
+            "out" => OptKey::Out,
+            "err" => OptKey::Err,
+            _ => OptKey::Unsupported,
+        },
+        RubyValue::Int(0) => OptKey::In,
+        RubyValue::Int(1) => OptKey::Out,
+        RubyValue::Int(2) => OptKey::Err,
+        RubyValue::Array(a) => {
+            // `[:out, :err] => target` -- both streams to one destination.
+            let a = a.lock();
+            let names: Vec<String> = a
+                .iter()
+                .filter_map(|e| match e {
+                    RubyValue::Symbol(s) => Some(s.name()),
+                    _ => None,
+                })
+                .collect();
+            if names.len() == 2 && names.contains(&"out".to_string()) && names.contains(&"err".to_string())
+            {
+                OptKey::OutErr
+            } else {
+                OptKey::Unsupported
+            }
+        }
+        _ => OptKey::Unsupported,
+    }
+}
+
+/// If a redirect VALUE names another standard stream (`:in`/`:out`/`:err`, an
+/// fd number 0/1/2, or a `[:child, :out]`-style pair), answer that fd -- an
+/// fd->fd merge rather than a file target.
+fn merge_fd(v: &RubyValue) -> Option<i32> {
+    let fd_of = |name: &str| match name {
+        "in" => Some(0),
+        "out" => Some(1),
+        "err" => Some(2),
+        _ => None,
+    };
+    match v {
+        RubyValue::Symbol(s) => fd_of(&s.name()),
+        RubyValue::Int(n @ (0..=2)) => Some(*n as i32),
+        RubyValue::Array(a) => {
+            // `[:child, :out]` / `[:child, 1]` -- the child's own fd.
+            let a = a.lock();
+            match (a.first(), a.get(1)) {
+                (Some(RubyValue::Symbol(c)), Some(target)) if c.name() == "child" => match target {
+                    RubyValue::Symbol(s) => fd_of(&s.name()),
+                    RubyValue::Int(n @ (0..=2)) => Some(*n as i32),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Open a redirect target for `spawn`/`exec`. The spec is a filename String, or
+/// a `[name, mode]` / `[name, mode, perm]` Array; `write` picks the default mode
+/// (`"w"` create+truncate vs `"r"`) when none is given.
+fn open_redirect_file(spec: &RubyValue, write: bool) -> Result<std::fs::File, Signal> {
+    let (path, mode) = match spec {
+        RubyValue::Array(a) => {
+            let a = a.lock();
+            let path = cmd_str(a.first().ok_or_else(|| arg_error!("empty redirect"))?)?;
+            let mode = match a.get(1) {
+                Some(m) => cmd_str(m)?,
+                None => String::new(),
+            };
+            (path, mode)
+        }
+        _ => (cmd_str(spec)?, String::new()),
+    };
+
+    let mut o = std::fs::OpenOptions::new();
+    match mode.as_str() {
+        "r" => o.read(true),
+        "w" => o.write(true).create(true).truncate(true),
+        "a" => o.append(true).create(true),
+        "r+" => o.read(true).write(true),
+        "w+" => o.read(true).write(true).create(true).truncate(true),
+        "a+" => o.read(true).append(true).create(true),
+        // No explicit mode: read for `:in`, create+truncate-for-write otherwise.
+        _ if write => o.write(true).create(true).truncate(true),
+        _ => o.read(true),
+    };
+    o.open(&path)
+        .map_err(|e| crate::builtins::file::raise_errno(&e, "open", &path))
+}
+
+/// Map a `spawn`/`exec` failure (`Command::spawn`/`exec`) to the matching
+/// `Errno` exception, CRuby's own behaviour (a missing program is
+/// `Errno::ENOENT`).
+fn spawn_error(e: &std::io::Error) -> Signal {
+    crate::builtins::file::raise_errno(e, "exec", "")
+}
+
 /// `Kernel#system` -- runs the command with stdout/stderr inherited, sets `$?`,
 /// and answers `true` (exit 0) / `false` (any other exit or a signal) / `nil`
 /// (the command could not be executed). Does not raise on a nonzero exit.
@@ -1383,11 +1702,151 @@ mod tests {
             "wait2", "waitpid2", "waitall", "detach", "last_status", "getpgid", "setpgid",
             "getrlimit", "setrlimit", "maxgroups", "maxgroups=", "setproctitle", "warmup",
             "daemon", "getpriority", "setpriority", "clock_gettime", "clock_getres", "times",
+            "spawn", "exec",
         ] {
             assert!(present.contains(expected), "Process.{expected} missing from the surface");
         }
         // The nested classes are registered as their own tables.
         assert!(crate::builtins::registered_table(PROCESS_STATUS_CLASS).is_some());
         assert!(crate::builtins::registered_table(PROCESS_TMS_CLASS).is_some());
+    }
+
+    // -- spawn/exec argument parsing ----------------------------------------
+
+    fn rstr(s: &str) -> RubyValue {
+        RubyValue::Str(crate::string_new(s.to_string()))
+    }
+    fn sym(s: &str) -> RubyValue {
+        RubyValue::Symbol(crate::Symbol::intern(s))
+    }
+    fn hash(pairs: Vec<(RubyValue, RubyValue)>) -> RubyValue {
+        RubyValue::Hash(crate::collections::hash_new(pairs))
+    }
+    fn program_of(c: &Command) -> String {
+        c.get_program().to_string_lossy().into_owned()
+    }
+    fn args_of(c: &Command) -> Vec<String> {
+        c.get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+    }
+
+    /// Multiple arguments always exec directly: the first is the program, the
+    /// rest its argv.
+    #[test]
+    fn exec_argv_direct_multi_arg() {
+        let c = build_exec_argv(&[rstr("echo"), rstr("hi"), rstr("there")]).unwrap();
+        assert_eq!(program_of(&c), "echo");
+        assert_eq!(args_of(&c), ["hi", "there"]);
+    }
+
+    /// A lone string execs directly when plain, but runs through `/bin/sh -c`
+    /// the moment it holds a shell metacharacter.
+    #[test]
+    fn exec_argv_single_string_splits_or_shells() {
+        let plain = build_exec_argv(&[rstr("echo hi")]).unwrap();
+        assert_eq!(program_of(&plain), "echo");
+        assert_eq!(args_of(&plain), ["hi"]);
+
+        let shelled = build_exec_argv(&[rstr("echo *")]).unwrap();
+        assert_eq!(program_of(&shelled), "/bin/sh");
+        assert_eq!(args_of(&shelled), ["-c", "echo *"]);
+    }
+
+    /// A `[cmdname, argv0]` first element runs `cmdname` -- the explicit argv[0]
+    /// is not observable through `Command`'s getters, so we assert the program.
+    #[test]
+    fn exec_argv_cmdname_argv0_pair() {
+        let pair = RubyValue::Array(crate::array_new(vec![rstr("/bin/ls"), rstr("myname")]));
+        let c = build_exec_argv(&[pair, rstr("-l")]).unwrap();
+        assert_eq!(program_of(&c), "/bin/ls");
+        assert_eq!(args_of(&c), ["-l"]);
+    }
+
+    /// `build_spawn_command` peels a LEADING env hash and a TRAILING options
+    /// hash off the command words (by position), applying both.
+    #[test]
+    fn spawn_command_peels_env_and_options() {
+        let env = hash(vec![(rstr("FOO"), rstr("bar"))]);
+        let opts = hash(vec![(sym("chdir"), rstr("/tmp"))]);
+        let cmd = build_spawn_command(&[env, rstr("echo"), rstr("hi"), opts]).unwrap();
+        assert_eq!(program_of(&cmd), "echo");
+        assert_eq!(args_of(&cmd), ["hi"]);
+        assert!(
+            cmd.get_envs().any(|(k, v)| k.to_str() == Some("FOO")
+                && v.map(|x| x.to_string_lossy().into_owned()) == Some("bar".to_string())),
+            "FOO=bar should be set"
+        );
+        assert_eq!(cmd.get_current_dir().unwrap().to_string_lossy(), "/tmp");
+    }
+
+    /// A nil env value unsets that variable rather than setting it.
+    #[test]
+    fn spawn_command_nil_env_value_unsets() {
+        let env = hash(vec![(rstr("DROP"), RubyValue::Nil)]);
+        let cmd = build_spawn_command(&[env, rstr("true")]).unwrap();
+        assert!(
+            cmd.get_envs().any(|(k, v)| k.to_str() == Some("DROP") && v.is_none()),
+            "DROP should be marked for removal"
+        );
+    }
+
+    /// No command at all (just an env/options hash) is an ArgumentError --
+    /// registry-less in a unit test, `arg_error!` surfaces as a panic.
+    #[test]
+    fn spawn_command_requires_a_command() {
+        let r = std::panic::catch_unwind(|| build_spawn_command(&[hash(vec![])]));
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn option_key_classifies_redirect_keys() {
+        assert!(matches!(option_key(&sym("chdir")), OptKey::Chdir));
+        assert!(matches!(option_key(&sym("unsetenv_others")), OptKey::UnsetenvOthers));
+        assert!(matches!(option_key(&sym("in")), OptKey::In));
+        assert!(matches!(option_key(&sym("out")), OptKey::Out));
+        assert!(matches!(option_key(&RubyValue::Int(2)), OptKey::Err));
+        assert!(matches!(option_key(&sym("pgroup")), OptKey::Unsupported));
+        let pair = RubyValue::Array(crate::array_new(vec![sym("out"), sym("err")]));
+        assert!(matches!(option_key(&pair), OptKey::OutErr));
+    }
+
+    #[test]
+    fn merge_fd_reads_stream_targets() {
+        assert_eq!(merge_fd(&sym("out")), Some(1));
+        assert_eq!(merge_fd(&sym("err")), Some(2));
+        assert_eq!(merge_fd(&RubyValue::Int(0)), Some(0));
+        // `[:child, :out]` and `[:child, 1]` both name fd 1.
+        let child_sym = RubyValue::Array(crate::array_new(vec![sym("child"), sym("out")]));
+        assert_eq!(merge_fd(&child_sym), Some(1));
+        let child_int = RubyValue::Array(crate::array_new(vec![sym("child"), RubyValue::Int(1)]));
+        assert_eq!(merge_fd(&child_int), Some(1));
+        // A filename is a file target, not a merge.
+        assert_eq!(merge_fd(&rstr("log.txt")), None);
+    }
+
+    /// `open_redirect_file` creates+truncates for write and honours a
+    /// `[name, mode]` append form.
+    #[test]
+    fn open_redirect_file_write_and_append_modes() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("zeo_spawn_redir_{}.txt", std::process::id()));
+        let p = path.to_string_lossy().into_owned();
+
+        let f = open_redirect_file(&rstr(&p), true).unwrap();
+        (&f).write_all(b"first").unwrap();
+        drop(f);
+        // A second write mode ("w") truncates.
+        let f = open_redirect_file(&rstr(&p), true).unwrap();
+        (&f).write_all(b"hi").unwrap();
+        drop(f);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hi");
+
+        // `[name, "a"]` appends rather than truncating.
+        let append = RubyValue::Array(crate::array_new(vec![rstr(&p), rstr("a")]));
+        let f = open_redirect_file(&append, true).unwrap();
+        (&f).write_all(b"!").unwrap();
+        drop(f);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hi!");
+
+        std::fs::remove_file(&path).ok();
     }
 }
