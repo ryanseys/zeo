@@ -25,6 +25,20 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(std::process::id() as i64))
     }
+    // `Process._fork` (process.c) -- the low-level primitive `Process.fork` /
+    // `Kernel#fork` build on. Gems hook fork by prepending a module onto
+    // `Process.singleton_class` and overriding `_fork` (connection_pool's
+    // `ForkTracker`, whose `super` lands here). Performs the real fork(2) and
+    // answers the child pid (0 in the child), matching CRuby on a fork-capable
+    // platform; it only ever runs if the program actually forks.
+    "_fork" => fn _fork(_recv, args, _block) {
+        arity!(args, 0);
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            return Err(raise_error("SystemCallError", std::io::Error::last_os_error().to_string()));
+        }
+        Ok(RubyValue::Int(pid as i64))
+    }
     // `Process.kill(sig, *pids)` -- resolve the signal, deliver to each pid,
     // answer how many were signaled. Self-delivery of a signal whose `trap`
     // registered a Proc runs that handler synchronously INSTEAD of a real

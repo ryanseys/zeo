@@ -363,14 +363,45 @@ fn respond_to_fold(
             None => false,
         });
     }
-    if let HirNode::ClassRef(name) = &compiler.hir[receiver] {
-        if let Some(cls) = compiler.resolve_class(name, cref, box_id) {
-            if compiler.class_method_in_chain(cls, &m).is_some() {
-                return Some(true);
-            }
+    // A class receiver: a bare `Process` (`ClassRef`) or a top-anchored
+    // `::Process` (which reads as `QualifiedConstRead("Object", "Process")` --
+    // a top-level constant lives on `Object`), both resolved at the root scope.
+    let resolved = match &compiler.hir[receiver] {
+        HirNode::ClassRef(name) => match name.strip_prefix("::") {
+            Some(rooted) => compiler.resolve_class(rooted, &[], box_id),
+            None => compiler.resolve_class(name, cref, box_id),
+        },
+        HirNode::QualifiedConstRead(scope, name) if scope == "Object" => {
+            compiler.resolve_class(name, &[], box_id)
+        }
+        HirNode::QualifiedConstRead(scope, name) => {
+            compiler.resolve_class(&format!("{scope}::{name}"), cref, box_id)
+        }
+        _ => None,
+    };
+    if let Some(cls) = resolved {
+        if compiler.class_method_in_chain(cls, &m).is_some()
+            || target_provides_class_method(compiler, cls, &m)
+        {
+            return Some(true);
         }
     }
     None
+}
+
+/// Builtin class methods the compile TARGET (ruby 4.0.5 on this platform)
+/// provides NATIVELY, which the compiler's own `class_methods` tables don't list
+/// (they live in zeo-rt, never linked into `zeo`). Consulted by `respond_to?`
+/// folding so a platform/version gate written against one decides the way it
+/// does on the target. Currently just `Process._fork` (MRI 3.1+, present on
+/// every fork-capable platform zeo targets) -- gems gate a fork hook on it
+/// (`if ::Process.respond_to?(:_fork)`, connection_pool). Keep in sync with what
+/// zeo-rt actually implements; the class-method analogue of `ALWAYS_DEFINED_CONSTS`.
+fn target_provides_class_method(compiler: &Compiler, cls: ClassId, name: &str) -> bool {
+    matches!(
+        (compiler.fq_name(cls).as_str(), name),
+        ("Process", "fork") | ("Process", "_fork")
+    )
 }
 
 /// Compile-time truth of `Recv.method_defined?(:m)` / bare `method_defined?(:m)`

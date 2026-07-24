@@ -393,7 +393,7 @@ fn process_top_stmt(
         for s in live {
             process_top_stmt(compiler, s, false, main_statements, pre_exec)?;
         }
-    } else if try_prepend_call_edit(compiler, stmt) {
+    } else if try_prepend_call_edit(compiler, stmt, &[], 0) {
         // A reachable `C.prepend(M)` -- recorded as a compile-time ancestry edit
         // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
         // class-body `prepend M` produces no runtime statement.
@@ -467,7 +467,12 @@ fn splice_dead_rescues(compiler: &Compiler, stmts: &[NodeId]) -> Vec<NodeId> {
 /// an ordinary runtime call. Returns `true` when it recorded the edit, so the
 /// caller drops the call from the emitted stream (`prepend` returns its
 /// receiver, virtually never used at these statement-position load-time sites).
-fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
+fn try_prepend_call_edit(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) -> bool {
     // Resolve the receiver class and every module argument while `compiler` is
     // only shared-borrowed (reading the HIR + the class registry), then apply
     // the ancestry edit under a fresh mutable borrow.
@@ -510,12 +515,12 @@ fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
                 && block_arg.is_none()
                 && !*safe =>
             {
-                match const_node_class(compiler, *inner) {
+                match const_node_class(compiler, *inner, cref, box_id) {
                     Some(c) => (c, true),
                     None => return false,
                 }
             }
-            _ => match const_node_class(compiler, *recv) {
+            _ => match const_node_class(compiler, *recv, cref, box_id) {
                 Some(c) => (c, false),
                 None => return false,
             },
@@ -525,7 +530,7 @@ fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
             let ArrayElem::Single(node) = a else {
                 return false;
             };
-            match const_node_class(compiler, *node) {
+            match const_node_class(compiler, *node, cref, box_id) {
                 Some(cid) => modules.push(cid),
                 None => return false,
             }
@@ -550,14 +555,30 @@ fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
     true
 }
 
-/// The class/module a bare-constant expression names, or `None` for anything
-/// that isn't a compile-time-resolvable class reference. Used to statically
-/// resolve a `prepend` call's receiver and module arguments.
-fn const_node_class(compiler: &Compiler, node: NodeId) -> Option<ClassId> {
+/// The class/module a bare-constant expression names (resolved in `cref`), or
+/// `None` for anything that isn't a compile-time-resolvable class reference.
+/// Used to statically resolve a `prepend` call's receiver and module arguments.
+fn const_node_class(
+    compiler: &Compiler,
+    node: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Option<ClassId> {
     match &compiler.hir[node] {
-        HirNode::ClassRef(name) => compiler.resolve_class(name, &[], 0),
+        // A top-anchored `::Process` reads as an ordinary name at the root scope
+        // -- resolvable against an empty cref regardless of the enclosing one.
+        // As a value it lowers to `QualifiedConstRead("Object", "Process")` (a
+        // top-level constant lives on `Object`); as a definition target it can
+        // be `ClassRef("::Process")`.
+        HirNode::ClassRef(name) => match name.strip_prefix("::") {
+            Some(rooted) => compiler.resolve_class(rooted, &[], box_id),
+            None => compiler.resolve_class(name, cref, box_id),
+        },
+        HirNode::QualifiedConstRead(scope, name) if scope == "Object" => {
+            compiler.resolve_class(name, &[], box_id)
+        }
         HirNode::QualifiedConstRead(scope, name) => {
-            compiler.resolve_class(&format!("{scope}::{name}"), &[], 0)
+            compiler.resolve_class(&format!("{scope}::{name}"), cref, box_id)
         }
         _ => None,
     }
@@ -1593,6 +1614,15 @@ fn register_class(
             // DROPPED, so a class-body `[:a].each { define_method(...) }`
             // never ran.
             _ => {
+                // A reachable `C.prepend(M)` / `C.singleton_class.prepend(M)` in
+                // a class body (e.g. connection_pool's
+                // `Process.singleton_class.prepend(ForkTracker)`) is a static
+                // ancestry edit on `C`, independent of the enclosing class --
+                // recorded here (resolving names in this body's cref), emitting
+                // nothing, exactly as at the top level.
+                if try_prepend_call_edit(compiler, stmt, &child_cref, box_id) {
+                    continue;
+                }
                 // A `def` nested in an `if`/`case` branch also runs at document
                 // position (the taken branch's runtime `define_method` gives the
                 // real body), but must ALSO be registered as an own method so
