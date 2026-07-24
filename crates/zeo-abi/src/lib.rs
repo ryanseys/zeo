@@ -1600,6 +1600,14 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         superclass: Some(exc_id(4)),
         is_module: false,
     },
+    // `Errno::ECHILD` -- `Process.wait`/`waitpid` with no child left to reap, a
+    // SystemCallError like its Errno siblings.
+    ExceptionClass {
+        id: exc_id(62),
+        name: "Errno::ECHILD",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

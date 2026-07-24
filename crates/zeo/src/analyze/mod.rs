@@ -1016,6 +1016,9 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         // `WeakRef::RefError` -- nests under the `WeakRef` builtin, a plain
         // `StandardError` (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(61)).
         ("WeakRef::RefError", "StandardError"),
+        // `Errno::ECHILD` -- `Process.wait` with no children (matches
+        // `zeo-abi::EXCEPTION_CLASSES` exc_id(62)).
+        ("Errno::ECHILD", "SystemCallError"),
     ] {
         register_class(
             compiler,

@@ -1,0 +1,7 @@
+wait: true status=7 last=7
+waitpid: true status=4
+wait2: true exit=3 success=false
+waitpid2: true exit=5
+waitall: count=3 codes=[0, 1, 2]
+detach: value_exit=9
+echild: raised

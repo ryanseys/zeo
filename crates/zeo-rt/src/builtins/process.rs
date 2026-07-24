@@ -460,6 +460,97 @@ ruby_module! {
         }
         Ok(RubyValue::Int(0))
     }
+    // `Process.wait([pid = -1, flags = 0])` / its alias `Process.waitpid` --
+    // reap one child, answer its pid, and set `$?` to its `Process::Status`.
+    // A default pid of -1 waits for any child; `WNOHANG` makes a not-yet-exited
+    // child answer `nil` (with `$?` cleared) instead of blocking. No children
+    // at all raises `Errno::ECHILD`, CRuby's own behaviour.
+    def self."wait" | "waitpid"(_recv, args, _block) {
+        arity!(args, 0..=2);
+        let pid = args.first().map(int_arg).transpose()?.unwrap_or(-1);
+        let flags = args.get(1).map(int_arg).transpose()?.unwrap_or(0);
+        match raw_waitpid(pid, flags)? {
+            Some((reaped, raw)) => {
+                set_last_child_status(new_status(reaped, raw));
+                Ok(RubyValue::Int(reaped))
+            }
+            None => {
+                set_last_child_status(RubyValue::Nil);
+                Ok(RubyValue::Nil)
+            }
+        }
+    }
+    // `Process.wait2` / `Process.waitpid2` -- like `wait`, but the answer is the
+    // `[pid, Process::Status]` pair (still setting `$?`), or `nil` under
+    // `WNOHANG` with no ready child.
+    def self."wait2" | "waitpid2"(_recv, args, _block) {
+        arity!(args, 0..=2);
+        let pid = args.first().map(int_arg).transpose()?.unwrap_or(-1);
+        let flags = args.get(1).map(int_arg).transpose()?.unwrap_or(0);
+        match raw_waitpid(pid, flags)? {
+            Some((reaped, raw)) => {
+                let status = new_status(reaped, raw);
+                set_last_child_status(status.clone());
+                Ok(RubyValue::Array(crate::array_new(vec![
+                    RubyValue::Int(reaped),
+                    status,
+                ])))
+            }
+            None => {
+                set_last_child_status(RubyValue::Nil);
+                Ok(RubyValue::Nil)
+            }
+        }
+    }
+    // `Process.waitall` -- reap EVERY child, answering an Array of
+    // `[pid, Process::Status]` pairs (empty when there were none). `$?` ends as
+    // the last reaped child's status, matching CRuby.
+    def self.waitall(_recv, args, _block) {
+        arity!(args, 0);
+        let mut pairs = Vec::new();
+        loop {
+            match raw_waitpid(-1, 0) {
+                Ok(Some((reaped, raw))) => {
+                    let status = new_status(reaped, raw);
+                    set_last_child_status(status.clone());
+                    pairs.push(RubyValue::Array(crate::array_new(vec![
+                        RubyValue::Int(reaped),
+                        status,
+                    ])));
+                }
+                // ECHILD is the normal "no more children" terminator, not an
+                // error here -- every other errno propagates.
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(pairs)))
+    }
+    // `Process.last_status` -- the `$?` of the current thread: the
+    // `Process::Status` of the last child this thread waited on, or `nil`.
+    def self.last_status(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(last_child_status())
+    }
+    // `Process.detach(pid)` -- reap `pid` in the BACKGROUND so it never lingers
+    // as a zombie, answering a Thread whose `#value` is the child's
+    // `Process::Status`. CRuby returns a `Process::Waiter` (a Thread subclass
+    // exposing `#pid`); zeo returns a plain Thread, which covers the usual
+    // `detach(pid).join` / `.value` contract. The reaper runs on its own
+    // thread, so it does not touch the caller's `$?`.
+    def self.detach(_recv, args, _block) {
+        arity!(args, 1);
+        let pid = int_arg(&args[0])?;
+        let reaper = crate::RProc::new(move |_args: &[RubyValue]| {
+            match raw_waitpid(pid, 0) {
+                Ok(Some((reaped, raw))) => Ok(new_status(reaped, raw)),
+                // A pid that is already gone (or never ours) yields nil rather
+                // than propagating ECHILD out of the detached thread.
+                _ => Ok(RubyValue::Nil),
+            }
+        });
+        Ok(crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new()))
+    }
 }
 
 /// The stored `Process.maxgroups` bound. Defaults to CRuby's `RB_MAX_GROUPS`;
@@ -470,6 +561,34 @@ static PROCESS_MAXGROUPS: AtomicI64 = AtomicI64::new(65536);
 /// single place errno -> exception-class lives).
 fn errno_fail(syscall: &str) -> crate::Signal {
     crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), syscall, "")
+}
+
+/// One `waitpid(2)`, in zeo's terms: `Ok(Some((pid, raw)))` for a reaped child,
+/// `Ok(None)` when `WNOHANG` finds no child ready yet (`ret == 0`), and an
+/// `Err` otherwise. No children left is `Errno::ECHILD` ("No child processes"),
+/// which `raise_errno` does not name, so it is raised explicitly; `EINTR` is
+/// retried, as CRuby's own wait loop does. The syscall runs GVL-released so a
+/// blocking wait cannot stall sibling threads.
+fn raw_waitpid(pid: i64, flags: i64) -> Result<Option<(i64, i32)>, Signal> {
+    loop {
+        let mut raw: libc::c_int = 0;
+        let ret = crate::gvl::without_gvl(|| unsafe {
+            libc::waitpid(pid as libc::pid_t, &mut raw, flags as libc::c_int)
+        });
+        if ret > 0 {
+            return Ok(Some((ret as i64, raw)));
+        }
+        if ret == 0 {
+            return Ok(None);
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EINTR) => continue,
+            Some(libc::ECHILD) => {
+                return Err(raise_error("Errno::ECHILD", "No child processes".to_string()));
+            }
+            _ => return Err(errno_fail("waitpid")),
+        }
+    }
 }
 
 /// The current supplementary groups as an Array of Integer -- shared by the
@@ -962,15 +1081,28 @@ mod tests {
         RubyValue::Class(zeo_abi::PROCESS_CLASS)
     }
 
+    /// The `ruby_module!`-generated class methods are reachable only through
+    /// the dispatch table (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through `Process`'s registered
+    /// class-method `lookup`.
+    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::PROCESS_CLASS)
+            .expect("Process is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("Process has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Process.{name} is defined"))
+    }
+
     #[test]
     fn pid_answers_this_process() {
-        let got = pid(&process_module(), &[], None).unwrap();
+        let got = cmethod("pid")(&process_module(), &[], None).unwrap();
         assert!(matches!(got, RubyValue::Int(p) if p == std::process::id() as i64));
     }
 
     #[test]
     fn ppid_is_a_positive_integer() {
-        let got = ppid(&process_module(), &[], None).unwrap();
+        let got = cmethod("ppid")(&process_module(), &[], None).unwrap();
         assert!(matches!(got, RubyValue::Int(p) if p > 0));
     }
 
@@ -980,12 +1112,12 @@ mod tests {
     fn the_monotonic_clock_advances() {
         let m = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
         let RubyValue::Float(a) =
-            clock_gettime(&process_module(), std::slice::from_ref(&m), None).unwrap()
+            cmethod("clock_gettime")(&process_module(), std::slice::from_ref(&m), None).unwrap()
         else {
             panic!("expected a Float")
         };
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let RubyValue::Float(b) = clock_gettime(&process_module(), &[m], None).unwrap() else {
+        let RubyValue::Float(b) = cmethod("clock_gettime")(&process_module(), &[m], None).unwrap() else {
             panic!("expected a Float")
         };
         assert!(b > a, "monotonic clock went backwards: {a} -> {b}");
@@ -996,8 +1128,7 @@ mod tests {
     #[test]
     fn the_unit_argument_scales_and_types_the_answer() {
         let m = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
-        let ms = clock_gettime(
-            &process_module(),
+        let ms = cmethod("clock_gettime")(&process_module(),
             &[
                 m.clone(),
                 RubyValue::Symbol(crate::Symbol::intern("millisecond")),
@@ -1007,8 +1138,7 @@ mod tests {
         .unwrap();
         assert!(matches!(ms, RubyValue::Int(_)));
 
-        let fs = clock_gettime(
-            &process_module(),
+        let fs = cmethod("clock_gettime")(&process_module(),
             &[m, RubyValue::Symbol(crate::Symbol::intern("float_second"))],
             None,
         )
@@ -1020,8 +1150,7 @@ mod tests {
     #[test]
     fn an_unknown_unit_raises() {
         let r = std::panic::catch_unwind(|| {
-            clock_gettime(
-                &process_module(),
+            cmethod("clock_gettime")(&process_module(),
                 &[
                     RubyValue::Int(libc::CLOCK_MONOTONIC as i64),
                     RubyValue::Symbol(crate::Symbol::intern("fortnights")),
@@ -1035,8 +1164,14 @@ mod tests {
 
     #[test]
     fn lookup_finds_the_process_names() {
-        assert!(lookup_class("pid").is_some());
-        assert!(lookup_class("clock_gettime").is_some());
-        assert!(lookup_class("nope").is_none());
+        let tbl = crate::builtins::registered_table(zeo_abi::PROCESS_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap();
+        assert!((tbl.lookup)("pid").is_some());
+        assert!((tbl.lookup)("clock_gettime").is_some());
+        assert!((tbl.lookup)("wait").is_some());
+        assert!((tbl.lookup)("nope").is_none());
     }
 }
