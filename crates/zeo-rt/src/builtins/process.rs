@@ -149,6 +149,24 @@ ruby_module! {
         }
         Ok(RubyValue::Int(pids.len() as i64))
     }
+    // `Process.exit`, `Process.exit!`, `Process.abort` are the module-function
+    // twins of the `Kernel#` forms and share their exact semantics, so they
+    // delegate rather than reimplement: `exit` raises a catchable `SystemExit`
+    // that unwinds `ensure`/runs `at_exit`; `exit!` is the uncatchable immediate
+    // `_exit(2)` (no unwinding, no `at_exit`); `abort` writes its message to
+    // stderr first, then raises `SystemExit` with status 1.
+    def self.exit(_recv, args, _block) {
+        arity!(args, 0..=1);
+        Err(crate::builtins::kernel::kernel_exit(args))
+    }
+    def self."exit!"(_recv, args, _block) {
+        arity!(args, 0..=1);
+        crate::builtins::kernel::kernel_exit_bang(args)
+    }
+    def self.abort(_recv, args, _block) {
+        arity!(args, 0..=1);
+        Err(crate::builtins::kernel::kernel_abort(args))
+    }
     // `Process.ppid` has no portable std equivalent; libc's getppid is the
     // honest answer rather than a fabricated one.
     def self.ppid(_recv, args, _block) {
