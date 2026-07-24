@@ -1,0 +1,8 @@
+# Spinel corpus tests deliberately NOT vendored into zeo's corpus (see
+# UPSTREAM.md "Removed tests"). `xtask conformance import` skips these.
+compile_time_attribute_singular
+compile_time_attribute_wrapped_record
+compile_time_attributes
+compile_time_define_method_predicates
+native_binding_poc
+regexp_inline_options

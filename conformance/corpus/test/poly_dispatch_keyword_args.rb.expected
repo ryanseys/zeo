@@ -1,0 +1,6 @@
+[[:str, ["--a", "--b"], "x", true]]
+[[:str, ["--c"], nil, false]]
+[[:num, 7, 2]]
+[[:num, 7, 5]]
+[[:any, {a: 1, b: "two"}]]
+[[:mix, 1, [2, 3], true, {other: "x"}]]

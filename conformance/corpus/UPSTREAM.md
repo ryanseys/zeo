@@ -57,3 +57,8 @@ The corpus is run by `cargo test --test corpus` (datatest-stable; see
 `.rb`, diffing zeo's stdout+stderr against the committed ruby-oracle
 `.rb.expected`. `ZEO_BLESS=1 cargo test --test corpus` re-records the goldens.
 The old bespoke `xtask conformance run`/scoreboard harness was retired.
+
+New spinel tests are imported by `scripts/import-spinel-corpus.sh
+[SPINEL_TEST_DIR]`, which TRIAGES each against zeo: a test zeo matches `ruby` on
+lands here (a passing corpus case), one it diverges on lands in `../gaps/` (an
+XFAIL gap). It skips tests already vendored and the `REMOVED.txt` list.
