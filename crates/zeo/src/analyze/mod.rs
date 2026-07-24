@@ -440,6 +440,46 @@ fn splice_dead_rescues(compiler: &Compiler, stmts: &[NodeId]) -> Vec<NodeId> {
     out
 }
 
+/// Inline a class-body `if`/`unless` whose guard is compile-time decidable
+/// (`guard_fold::static_cond`, resolved in this class body's `cref`) AND whose
+/// taken branch holds a nested `class`/`module`/`include`/`prepend` definition
+/// -- the class-body analogue of `process_top_stmt`'s top-level conditional-def
+/// handling. Only the taken branch's statements survive, registered exactly as
+/// if written directly in the class body; codegen's own `static_cond` drops the
+/// same guard, so emission agrees. A `def`-only branch is left alone (its
+/// runtime `define_method` handles it via `register_conditional_defs`), and an
+/// UNDECIDABLE guard over a definition is left to fail loudly downstream rather
+/// than silently mis-registered. This is what lets a target-version /
+/// feature-probe gate wrapping a module def (bundler's `ForkTracker`) register.
+fn splice_decidable_ifs(
+    compiler: &Compiler,
+    stmts: &[NodeId],
+    cref: &[ClassId],
+    box_id: u32,
+) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for &s in stmts {
+        if let HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } = &compiler.hir[s]
+        {
+            let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
+            if branch_has_top_defs(compiler, &then_body) || branch_has_top_defs(compiler, &else_body)
+            {
+                if let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond) {
+                    let branch = if taken { then_body } else { else_body };
+                    out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
+                    continue;
+                }
+            }
+        }
+        out.push(s);
+    }
+    out
+}
+
 /// Whether every statement in `body` is provably non-raising -- the folded
 /// `require`(s) a `begin; require "x"; rescue LoadError` guard lowers to when
 /// the feature IS resolvable, making the rescue dead. Deliberately narrow
@@ -1327,8 +1367,11 @@ fn register_class(
         });
 
     // Expand any dead-rescue `begin` (a resolved `require` guard) so a fallback
-    // def inside it registers/emits like an ordinary class-body definition.
+    // def inside it registers/emits like an ordinary class-body definition, and
+    // inline any decidable-guard `if` wrapping a nested definition (a
+    // target-version / feature-probe compat gate) into its taken branch.
     let body = splice_dead_rescues(compiler, body);
+    let body = splice_decidable_ifs(compiler, &body, &child_cref, box_id);
     for &stmt in &body {
         match &compiler.hir[stmt] {
             HirNode::DefMethod { .. } => {
