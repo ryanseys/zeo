@@ -10,12 +10,12 @@
 //! no fabricated statistics.
 
 use crate::RubyValue;
-use crate::builtins::builtin_methods;
+use zeo_macros::ruby_module;
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    GC = zeo_abi::GC_CLASS;
 
-    "start" | "compact" => fn gc_start(_recv, _args, _block) {
+    def self."start" | "compact"(_recv, _args, _block) {
         // No tracing collector to drive, but this is the honest moment to run
         // finalizers for objects whose last strong reference has dropped.
         crate::builtins::weak::run_finalizers_for_dead();
@@ -23,16 +23,16 @@ builtin_methods! {
     }
     // Real Ruby answers the PREVIOUS enabled state. Always-false is
     // truthful here: the collector is never enabled, because there isn't one.
-    "enable" | "disable" => fn gc_enable(_recv, _args, _block) {
+    def self."enable" | "disable"(_recv, _args, _block) {
         Ok(RubyValue::Bool(false))
     }
-    "stress" => fn gc_stress(_recv, _args, _block) {
+    def self."stress"(_recv, _args, _block) {
         Ok(RubyValue::Bool(false))
     }
-    "count" => fn gc_count(_recv, _args, _block) {
+    def self."count"(_recv, _args, _block) {
         Ok(RubyValue::Int(0))
     }
-    "stat" => fn gc_stat(_recv, _args, _block) {
+    def self."stat"(_recv, _args, _block) {
         Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
     }
 }
@@ -41,16 +41,29 @@ builtin_methods! {
 mod tests {
     use super::*;
 
+    /// The `ruby_module!`-generated class methods are reachable only through
+    /// the dispatch table (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through `GC`'s registered
+    /// class-method `lookup`.
+    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::GC_CLASS)
+            .expect("GC is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("GC has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("GC.{name} is defined"))
+    }
+
     #[test]
     fn gc_rows_are_no_ops_that_answer_ruby_shapes() {
         let cls = RubyValue::Class(zeo_abi::GC_CLASS);
-        assert!(matches!(gc_start(&cls, &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(cmethod("start")(&cls, &[], None).unwrap(), RubyValue::Nil));
         assert!(matches!(
-            gc_count(&cls, &[], None).unwrap(),
+            cmethod("count")(&cls, &[], None).unwrap(),
             RubyValue::Int(0)
         ));
         assert!(matches!(
-            gc_enable(&cls, &[], None).unwrap(),
+            cmethod("enable")(&cls, &[], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
@@ -59,7 +72,7 @@ mod tests {
     #[test]
     fn gc_stat_is_an_empty_hash() {
         let cls = RubyValue::Class(zeo_abi::GC_CLASS);
-        let RubyValue::Hash(h) = gc_stat(&cls, &[], None).unwrap() else {
+        let RubyValue::Hash(h) = cmethod("stat")(&cls, &[], None).unwrap() else {
             panic!("expected a Hash")
         };
         assert_eq!(h.lock().len(), 0);
@@ -67,8 +80,14 @@ mod tests {
 
     #[test]
     fn lookup_finds_the_gc_names() {
-        assert!(lookup_class("start").is_some());
-        assert!(lookup_class("stat").is_some());
-        assert!(lookup_class("nope").is_none());
+        let tbl = crate::builtins::registered_table(zeo_abi::GC_CLASS)
+            .expect("GC registered")
+            .class
+            .as_ref()
+            .expect("GC has class methods");
+        assert!((tbl.lookup)("start").is_some());
+        assert!((tbl.lookup)("stat").is_some());
+        assert!((tbl.lookup)("compact").is_some());
+        assert!((tbl.lookup)("nope").is_none());
     }
 }
