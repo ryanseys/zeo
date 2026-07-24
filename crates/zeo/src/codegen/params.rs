@@ -78,7 +78,9 @@ fn signature_param_items(params: &Params, needs_block: bool) -> Vec<TokenStream>
     }
     if let Some(Some(name)) = &params.keyword_rest {
         let ident = safe_ident(name);
-        items.push(quote! { #ident: Vec<(zeo_rt::Symbol, zeo_rt::RubyValue)> });
+        // `(RubyValue, RubyValue)`, not `(Symbol, RubyValue)`: a `**kwrest` hash
+        // can hold non-symbol keys (`method HELP_MAPPINGS => :help`).
+        items.push(quote! { #ident: Vec<(zeo_rt::RubyValue, zeo_rt::RubyValue)> });
     }
     if needs_block {
         items.push(quote! { __blk: Option<zeo_rt::RubyValue> });
@@ -212,7 +214,7 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
         pieces.push(quote! {
             #[allow(unused_mut)]
             let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Hash(zeo_rt::hash_new(
-                #ident.into_iter().map(|(k, v)| (zeo_rt::RubyValue::Symbol(k), v)).collect()
+                #ident.into_iter().collect()
             ));
         });
         pieces.extend(wrap_if_captured(name));
@@ -329,6 +331,21 @@ impl Callee {
             Callee::FreeFn { path, recv } => quote! { #path(#recv, #arg_list) },
             Callee::Bare(path) => quote! { #path(#arg_list) },
         }
+    }
+}
+
+/// A best-effort label for a NON-symbol keyword key in an "unknown keyword"
+/// error (the rare "named keywords, no `**kwrest`, a non-symbol key" path). Real
+/// Ruby prints the key's `inspect` (`unknown keyword: "s"`); a string literal
+/// reproduces that exactly, other shapes fall back to a placeholder.
+fn kw_key_label(cx: &Ctx, key: NodeId) -> String {
+    match &cx.compiler.hir[key] {
+        HirNode::StringLit(parts) => match parts.as_slice() {
+            [crate::hir::StrPart::Lit(s)] => format!("{s:?}"),
+            _ => "(expr)".to_string(),
+        },
+        HirNode::ClassRef(name) => name.clone(),
+        _ => "(expr)".to_string(),
     }
 }
 
@@ -458,17 +475,21 @@ pub fn emit_call_args_to(
             quote! { let #t = #e; }
         })
         .collect();
-    let kw_names: Vec<String> = kwargs
+    // `Some(name)` for a literal-symbol key (`k: v` / `:k => v`), which can
+    // bind a named keyword parameter; `None` for a NON-symbol key (`CONST => v`,
+    // `"s" => v`), which -- like real Ruby -- can only land in `**kwrest` (a
+    // keyword parameter name is always a symbol). `kw_as_positional` above
+    // already handled the no-keyword/no-kwrest case, so a `None` reaching the
+    // binding below means a keyword-declaring callee.
+    let kw_names: Vec<Option<String>> = kwargs
         .iter()
         .map(|kw| {
             let KwArg::Pair(k, _) = kw else {
                 unreachable!("a `**` double-splat routes to emit_splat_call, never Path 1")
             };
             match &cx.compiler.hir[*k] {
-                HirNode::SymbolLit(s) => s.clone(),
-                _ => panic!(
-                    "`{method_name}`: keyword argument names must be literal symbols (zeo limitation)"
-                ),
+                HirNode::SymbolLit(s) => Some(s.clone()),
+                _ => None,
             }
         })
         .collect();
@@ -507,19 +528,31 @@ pub fn emit_call_args_to(
     }
     for kw in &params.keywords {
         if let KeywordParam::Required(name) = kw {
-            if !kw_names.iter().any(|n| n == name) {
+            if !kw_names.iter().any(|n| n.as_deref() == Some(name.as_str())) {
                 return raise_argument_error(format!("missing keyword: :{name}"));
             }
         }
     }
     if params.keyword_rest.is_none() {
-        let declared = |n: &String| {
+        let declared = |n: &str| {
             params.keywords.iter().any(|kw| match kw {
                 KeywordParam::Required(k) | KeywordParam::Optional(k, _) => k == n,
             })
         };
-        if let Some(unknown) = kw_names.iter().find(|n| !declared(n)) {
-            return raise_argument_error(format!("unknown keyword: :{unknown}"));
+        // With no `**kwrest`, a symbol key must name a declared keyword, and a
+        // non-symbol key can't bind at all (real Ruby: `unknown keyword: "s"`).
+        for (i, name) in kw_names.iter().enumerate() {
+            match name {
+                Some(n) if declared(n) => {}
+                Some(n) => return raise_argument_error(format!("unknown keyword: :{n}")),
+                None => {
+                    let KwArg::Pair(k, _) = &kwargs[i] else { unreachable!() };
+                    return raise_argument_error(format!(
+                        "unknown keyword: {}",
+                        kw_key_label(cx, *k)
+                    ));
+                }
+            }
         }
     }
 
@@ -529,10 +562,13 @@ pub fn emit_call_args_to(
 
     let mut kw_used = vec![false; kwargs.len()];
     let find_kw = |name: &str, used: &mut Vec<bool>| -> Option<syn::Ident> {
-        kw_names.iter().position(|n| n == name).map(|i| {
-            used[i] = true;
-            kw_temps[i].clone()
-        })
+        kw_names
+            .iter()
+            .position(|n| n.as_deref() == Some(name))
+            .map(|i| {
+                used[i] = true;
+                kw_temps[i].clone()
+            })
     };
 
     let required_args = pos_temps[..nreq].iter().map(|t| quote! { #t.clone() });
@@ -592,9 +628,24 @@ pub fn emit_call_args_to(
             let leftover: Vec<TokenStream> = (0..kwargs.len())
                 .filter(|&i| !kw_used[i])
                 .map(|i| {
-                    let name = &kw_names[i];
                     let t = &kw_temps[i];
-                    quote! { (zeo_rt::Symbol::intern(#name), #t.clone()) }
+                    // A `**kwrest` hash keeps its keys as full values -- a symbol
+                    // key stays a `:sym`, but a non-symbol key (`HELP_MAPPINGS =>
+                    // :help`, an options-hash idiom) keeps its real object, so the
+                    // pair type is `(RubyValue, RubyValue)`. The non-symbol key is
+                    // evaluated here in call position, AFTER the value temporaries
+                    // -- a value/key order difference only observable for a
+                    // side-effecting key (in practice always a constant/literal).
+                    let key = match &kw_names[i] {
+                        Some(name) => {
+                            quote! { zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)) }
+                        }
+                        None => {
+                            let KwArg::Pair(k, _) = &kwargs[i] else { unreachable!() };
+                            box_if_object_typed(cx, *k, emit_expr(cx, *k))
+                        }
+                    };
+                    quote! { (#key, #t.clone()) }
                 })
                 .collect();
             quote! { vec![#(#leftover),*], }

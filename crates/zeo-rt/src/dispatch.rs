@@ -269,7 +269,7 @@ pub type BoundKwargs<'a> = (
     &'a [RubyValue],
     Vec<RubyValue>,
     Vec<Option<RubyValue>>,
-    Vec<(Symbol, RubyValue)>,
+    Vec<(RubyValue, RubyValue)>,
 );
 
 /// Binds a DYNAMIC call's keyword arguments for a keyword-declaring callee
@@ -329,17 +329,20 @@ pub fn bind_dynamic_kwargs<'a>(
                 continue;
             }
             if has_kwrest {
-                rest_pairs.push((*s, v.clone()));
+                rest_pairs.push((k.clone(), v.clone()));
                 continue;
             }
             unknown.push(n.to_string());
             continue;
         }
-        // A non-Symbol key in the trailing hash: without kwrest it can't
-        // bind anywhere -- real Ruby treats the hash as positional then,
-        // but this convention already committed it as keywords (the
-        // documented no-ruby2_keywords approximation).
-        if !has_kwrest {
+        // A non-Symbol key in the trailing hash lands in `**kwrest` as-is (Ruby
+        // allows non-symbol keys there); without kwrest it can't bind as a
+        // keyword -- real Ruby treats the hash as positional then, but this
+        // convention already committed it as keywords (the documented
+        // no-ruby2_keywords approximation).
+        if has_kwrest {
+            rest_pairs.push((k.clone(), v.clone()));
+        } else {
             return Err(arg_error!("wrong number of arguments (in `{method}')"));
         }
     }

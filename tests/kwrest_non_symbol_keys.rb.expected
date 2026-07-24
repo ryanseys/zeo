@@ -1,0 +1,6 @@
+m=nil kw={["-h", "--help"] => :help}
+m=nil kw={a: 1, b: 2}
+m=nil kw={"s" => 1, x: 2}
+m={z: 9} kw={}
+{["-h", "--help"] => :help}
+{a: 1}
