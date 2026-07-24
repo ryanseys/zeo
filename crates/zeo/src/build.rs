@@ -307,10 +307,17 @@ impl Profile {
     /// live, and at `-O0` those and every cross-crate `#[inline]` hint
     /// (`FrameGuard::push`, `set_line`) stay unoptimized calls. Debug keeps
     /// `-O0` for compile speed.
+    ///
+    /// BOTH strip symbols from the final binary. The bulk of a generated
+    /// program's size is the statically-linked `zeo-rt` rlib's debug info (a
+    /// Debug entry was ~15MB, mostly symbols) -- worthless here because zeo
+    /// stamps its OWN Ruby backtraces (`stamp_backtrace`), never relying on
+    /// Rust-level symbols. Stripping shrinks each cached binary several-fold,
+    /// which matters across the thousands of entries the golden corpus builds.
     fn rustc_flags(self) -> &'static [&'static str] {
         match self {
-            Profile::Debug => &[],
-            Profile::Release => &["-C", "opt-level=2"],
+            Profile::Debug => &["-C", "strip=symbols"],
+            Profile::Release => &["-C", "opt-level=2", "-C", "strip=symbols"],
         }
     }
 }
@@ -377,6 +384,9 @@ pub fn build_binary(
     profile: Profile,
     runtime: Runtime,
 ) -> Result<(), String> {
+    // Reclaim dead cache generations (old compiler/runtime) once per process,
+    // off the hot path -- see `maybe_sweep_stale_cache`.
+    maybe_sweep_stale_cache();
     // Pure: only LINKS the already-built runtime, never runs cargo or mutates
     // the workspace. Callers that can't assume a prior build (`zeo`'s own
     // CLI, the e2e harness) run `ensure_runtime_built` first; a driver that
@@ -585,10 +595,28 @@ fn generation_hash(profile: Profile, runtime: Runtime) -> Result<u64, String> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    Ok(fnv1a64_with(
-        generation,
-        format!("{name}:{}:{mtime};", meta.len()).as_bytes(),
-    ))
+    generation = fnv1a64_with(generation, format!("{name}:{}:{mtime};", meta.len()).as_bytes());
+    // The COMPILER's own fingerprint (this executable's len+mtime): the
+    // generated program's typed fast paths and its whole codegen come from
+    // `zeo`, so a recompiled compiler yields different binaries even against an
+    // unchanged runtime rlib. Folding it in ROLLS the generation on a compiler
+    // rebuild, so the old compiler's entries become a dead generation
+    // `sweep_stale_cache_generations` reclaims -- instead of piling up forever
+    // under a still-"live" runtime generation (the dominant leak in a
+    // compiler-dev loop). All of `cargo nextest`'s per-test processes share one
+    // test binary, so they agree on this within a run.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Ok(m) = std::fs::metadata(&exe) {
+            let exe_mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            generation = fnv1a64_with(generation, format!("exe:{}:{exe_mtime};", m.len()).as_bytes());
+        }
+    }
+    Ok(generation)
 }
 
 /// Removes every cache generation no current runtime artifact can produce,
@@ -605,6 +633,20 @@ fn generation_hash(profile: Profile, runtime: Runtime) -> Result<u64, String> {
 /// prebuild); a caller must exclude concurrent sweeps/builds of the SAME
 /// generations. Best-effort throughout: a failed removal costs disk, never a
 /// build.
+/// Runs `sweep_stale_cache_generations` at most ONCE per process, on a detached
+/// background thread so a multi-GB `remove_dir_all` never blocks (or times out)
+/// the build/test that triggered it. Safe to race with concurrent builds: the
+/// sweep only removes NON-live generations, which no live build ever writes
+/// into; concurrent sweeps racing on the same dead dir is idempotent
+/// (best-effort removal). Called from `build_binary`'s hot path -- cheap after
+/// the first process cleans up (a bare readdir once nothing is stale).
+fn maybe_sweep_stale_cache() {
+    static SWEPT: OnceLock<()> = OnceLock::new();
+    SWEPT.get_or_init(|| {
+        std::thread::spawn(sweep_stale_cache_generations);
+    });
+}
+
 pub fn sweep_stale_cache_generations() {
     let root = cache_dir();
     let Ok(entries) = std::fs::read_dir(&root) else {
