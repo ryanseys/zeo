@@ -23,6 +23,13 @@
 //! (`crate::RubyValue`, `crate::builtins::BuiltinMethodFn`, ...), exactly like
 //! `builtin_methods!`, so a class file just calls `ruby_class! { ... }`.
 //!
+//! A body may NEST `class`/`module` items with a braced body (mirroring Ruby's
+//! `module Process; class Status; end; end`). Each nested class expands
+//! recursively into its own private submodule (`use super::*` re-exposes the
+//! file's helpers), so several classes can share one file without their fixed
+//! table fn names colliding -- the natural home for a class plus the small
+//! helper classes it owns (`Process` + `Process::Status` + `Process::Tms`).
+//!
 //! Phase note: the SHAPE the DSL header declares (module/class, superclass,
 //! includes) is parsed but NOT yet emitted here -- during migration the shape
 //! still lives in `zeo_abi::BUILTINS` (the compiler asserts `ClassId`
@@ -175,6 +182,23 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
             };
     };
 
+    // Nested classes/modules (`class Status = … { … }` inside this body) each
+    // expand recursively into their OWN private submodule, so the fixed table
+    // fn names (`lookup`/`lookup_class`/…) never collide with this class's or a
+    // sibling's. `use super::*` re-exposes the file's helper fns and imports the
+    // nested bodies rely on; the `linkme` registration works from any module.
+    let nested_mods = spec.nested.iter().map(|n| {
+        let mod_ident = format_ident!("__ruby_class_{}", n.name.to_string().to_lowercase());
+        let inner = expand(n);
+        quote! {
+            #[allow(non_snake_case)]
+            mod #mod_ident {
+                use super::*;
+                #inner
+            }
+        }
+    });
+
     quote! {
         #( #fn_items )*
         #instance_items
@@ -182,6 +206,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         #const_items
         #register
         #( #alias_errors )*
+        #( #nested_mods )*
     }
 }
 

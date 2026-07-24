@@ -1,8 +1,9 @@
 //! The shared grammar for the `ruby_class! { ... }` DSL.
 //!
-//! ONE Ruby core class/module per file, declared in a Ruby-like syntax whose
-//! method bodies stay real Rust. Parsed here with `syn` so the exact same
-//! grammar backs both consumers and they can never drift:
+//! One Ruby core class/module per file (plus any it namespaces via nested
+//! `class`/`module` items), declared in a Ruby-like syntax whose method bodies
+//! stay real Rust. Parsed here with `syn` so the exact same grammar backs both
+//! consumers and they can never drift:
 //!
 //! - `zeo-macros`' `ruby_class!` proc-macro emits the runtime code (the method
 //!   fns, the `ClassId`-keyed lookup tables, the constant installers, the
@@ -32,6 +33,10 @@
 //!     def self.pid(recv, args, block) { .. }             // class/singleton method
 //!
 //!     alias cmp = "<=>";                                 // late alias (new = existing)
+//!
+//!     class Status = STATUS_CLASS < OBJECT_CLASS {        // nested, braced body
+//!         def "exitstatus"(recv, args, block) { .. }      //   -> Process::Status
+//!     }
 //! }
 //! ```
 //!
@@ -57,6 +62,13 @@ pub struct ClassSpec {
     pub consts: Vec<ConstDef>,
     pub methods: Vec<MethodDef>,
     pub aliases: Vec<AliasDef>,
+    /// Nested classes/modules declared inside this one with a braced body
+    /// (`class Status = PROCESS_STATUS_CLASS < OBJECT_CLASS { ... }`), mirroring
+    /// Ruby's `module Process; class Status; end; end` namespacing. Each is a
+    /// full `ClassSpec` in its own right -- own `ClassId`, methods, constants,
+    /// and (recursively) nesting -- that the proc-macro emits into a private
+    /// submodule so sibling classes never collide.
+    pub nested: Vec<ClassSpec>,
 }
 
 /// Module vs class -- a class additionally carries its superclass `ClassId`.
@@ -146,17 +158,40 @@ impl ClassSpec {
             consts: Vec::new(),
             methods: Vec::new(),
             aliases: Vec::new(),
+            nested: Vec::new(),
         };
         while !input.is_empty() {
             parse_item(input, &mut spec)?;
         }
         Ok(spec)
     }
+
+    /// Parse a NESTED class/module: a braced-body form the parent's item loop
+    /// reaches on a `class`/`module` keyword. `class NAME = ID < SUPER { ... }`
+    /// or `module NAME = ID { ... }` -- the header mirrors the top-level one but
+    /// the body is `{ ... }`-delimited rather than running to end-of-input.
+    fn parse_nested(input: ParseStream) -> syn::Result<Self> {
+        let keyword: Ident = input.parse()?; // `class` or `module`
+        let name: Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        let id = Path::parse_mod_style(input)?;
+        let kind = if keyword == "class" {
+            input.parse::<Token![<]>()?;
+            ClassKind::Class {
+                superclass: Path::parse_mod_style(input)?,
+            }
+        } else {
+            ClassKind::Module
+        };
+        let body;
+        braced!(body in input);
+        Self::finish(&body, kind, name, id)
+    }
 }
 
-/// Parse one top-level item (after the header) into `spec`. Items are
-/// keyword-led: `include`, `const`, `alias`, an optional `private`/`protected`
-/// visibility prefix, then `def`.
+/// Parse one item (after the header) into `spec`. Items are keyword-led:
+/// `include`, `const`, `alias`, an optional `private`/`protected` visibility
+/// prefix then `def`, or a nested `class`/`module` with a braced body.
 fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
     // `const` is a real Rust keyword, so it can't be peeked as an `Ident` like
     // the (non-keyword) `include`/`alias`/`private`/`protected`/`def` leads.
@@ -170,7 +205,9 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
         return Ok(());
     }
     let lookahead: Ident = input.fork().parse().map_err(|_| {
-        input.error("expected `include`, `const`, `alias`, `private`, `protected`, or `def`")
+        input.error(
+            "expected `include`, `const`, `alias`, `private`, `protected`, `def`, `class`, or `module`",
+        )
     })?;
     match lookahead.to_string().as_str() {
         "include" => {
@@ -197,6 +234,9 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
         }
         "def" => {
             spec.methods.push(parse_def(input, Visibility::Public)?);
+        }
+        "class" | "module" => {
+            spec.nested.push(ClassSpec::parse_nested(input)?);
         }
         other => {
             return Err(syn::Error::new(
@@ -367,6 +407,40 @@ mod tests {
         assert_eq!(spec.aliases.len(), 1);
         assert_eq!(spec.aliases[0].new_name, "cmp");
         assert_eq!(spec.aliases[0].old_name, "<=>");
+    }
+
+    #[test]
+    fn nested_classes_namespace_under_the_outer_module() {
+        let spec = parse_module(quote! {
+            Process = PROCESS_CLASS;
+            def self."pid"(_recv, _args, _block) { pid() }
+
+            class Status = PROCESS_STATUS_CLASS < OBJECT_CLASS {
+                def "exitstatus"(recv, _args, _block) { code(recv) }
+                def "success?"(recv, _args, _block) { ok(recv) }
+            }
+            module Sub = SUB_MODULE {
+                def "helper"(_recv, _args, _block) { Ok(RubyValue::Nil) }
+            }
+        });
+        // The outer keeps its own members.
+        assert_eq!(spec.methods.len(), 1);
+        assert_eq!(spec.nested.len(), 2);
+        // A nested class carries its own kind, id, superclass, and methods.
+        let status = &spec.nested[0];
+        assert_eq!(status.name.to_string(), "Status");
+        assert_eq!(status.id.segments.last().unwrap().ident, "PROCESS_STATUS_CLASS");
+        match &status.kind {
+            ClassKind::Class { superclass } => {
+                assert_eq!(superclass.segments.last().unwrap().ident, "OBJECT_CLASS")
+            }
+            ClassKind::Module => panic!("Status should be a class"),
+        }
+        assert_eq!(status.methods.len(), 2);
+        assert_eq!(status.methods[0].names[0].ruby, "exitstatus");
+        // A nested `module` has no superclass.
+        assert!(matches!(spec.nested[1].kind, ClassKind::Module));
+        assert_eq!(spec.nested[1].name.to_string(), "Sub");
     }
 
     #[test]

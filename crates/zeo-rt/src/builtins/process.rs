@@ -14,7 +14,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
@@ -551,6 +551,129 @@ ruby_module! {
         });
         Ok(crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new()))
     }
+
+    // `Process::Status` -- the object `$?` holds after a wait/system/backtick.
+    // Its instances are the `RProcessStatus` payload (defined below); the
+    // accessors read the raw wait-status word it carries. Nested here so the one
+    // process.rs owns the whole `Process` namespace, Ruby-style.
+    class Status = zeo_abi::PROCESS_STATUS_CLASS < zeo_abi::OBJECT_CLASS {
+        def "exitstatus"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(match recv_status(recv).exitstatus() {
+                Some(code) => RubyValue::Int(code as i64),
+                None => RubyValue::Nil,
+            })
+        }
+        // `nil` (not `false`) when the child was signalled rather than exiting --
+        // CRuby's own three-valued answer.
+        def "success?"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(match recv_status(recv).exitstatus() {
+                Some(code) => RubyValue::Bool(code == 0),
+                None => RubyValue::Nil,
+            })
+        }
+        def "pid"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Int(recv_status(recv).pid))
+        }
+        def "to_i"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Int(recv_status(recv).raw as i64))
+        }
+        def "exited?"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Bool(recv_status(recv).exitstatus().is_some()))
+        }
+        def "signaled?"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Bool(recv_status(recv).termsig().is_some()))
+        }
+        def "termsig"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(match recv_status(recv).termsig() {
+                Some(sig) => RubyValue::Int(sig as i64),
+                None => RubyValue::Nil,
+            })
+        }
+        def "stopped?"(recv, args, _block) {
+            arity!(args, 0);
+            // A reaped child is never in the stopped state (that needs WUNTRACED,
+            // which `wait()` doesn't set), so this is always false here.
+            let _ = recv_status(recv);
+            Ok(RubyValue::Bool(false))
+        }
+        // `$? == 0` (an Integer) and `$? == other_status` both compare the raw
+        // status word, CRuby's rule.
+        def "=="(recv, args, _block) {
+            arity!(args, 1);
+            let me = recv_status(recv).raw as i64;
+            Ok(RubyValue::Bool(match &args[0] {
+                RubyValue::Int(i) => *i == me,
+                RubyValue::Object(o) => o
+                    .as_any()
+                    .downcast_ref::<RProcessStatus>()
+                    .is_some_and(|s| s.raw as i64 == me),
+                _ => false,
+            }))
+        }
+        def "to_s"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Str(crate::string_new(status_describe(recv_status(recv)))))
+        }
+        def "inspect"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Str(crate::string_new(format!(
+                "#<Process::Status: {}>",
+                status_describe(recv_status(recv))
+            ))))
+        }
+    }
+
+    // `Process::Tms` -- the CPU-times struct `Process.times` answers. Instances
+    // are the `RTms` payload (defined below) carrying utime/stime/cutime/cstime
+    // as Float seconds.
+    class Tms = zeo_abi::PROCESS_TMS_CLASS < zeo_abi::OBJECT_CLASS {
+        include zeo_abi::COMPARABLE_CLASS;
+
+        def "utime"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Float(recv_tms(recv).utime))
+        }
+        def "stime"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Float(recv_tms(recv).stime))
+        }
+        def "cutime"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Float(recv_tms(recv).cutime))
+        }
+        def "cstime"(recv, args, _block) {
+            arity!(args, 0);
+            Ok(RubyValue::Float(recv_tms(recv).cstime))
+        }
+        def "to_a" | "values"(recv, args, _block) {
+            arity!(args, 0);
+            let t = recv_tms(recv);
+            Ok(RubyValue::Array(crate::array_new(vec![
+                RubyValue::Float(t.utime),
+                RubyValue::Float(t.stime),
+                RubyValue::Float(t.cutime),
+                RubyValue::Float(t.cstime),
+            ])))
+        }
+        def "to_s" | "inspect"(recv, args, _block) {
+            arity!(args, 0);
+            let t = recv_tms(recv);
+            // Ruby renders a whole-valued Float as `1.0`; `inspect_string` on a
+            // Float value is exactly that formatter, so the struct line matches.
+            let f = |v: f64| RubyValue::Float(v).inspect_string();
+            Ok(RubyValue::Str(crate::string_new(format!(
+                "#<struct Process::Tms utime={}, stime={}, cutime={}, cstime={}>",
+                f(t.utime), f(t.stime), f(t.cutime), f(t.cstime),
+            ))))
+        }
+    }
 }
 
 /// The stored `Process.maxgroups` bound. Defaults to CRuby's `RB_MAX_GROUPS`;
@@ -746,82 +869,6 @@ fn status_describe(s: &RProcessStatus) -> String {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_status;
-
-    "exitstatus" => fn status_exitstatus(recv, args, _block) {
-        arity!(args, 0);
-        Ok(match recv_status(recv).exitstatus() {
-            Some(code) => RubyValue::Int(code as i64),
-            None => RubyValue::Nil,
-        })
-    }
-    // `nil` (not `false`) when the child was signalled rather than exiting --
-    // CRuby's own three-valued answer.
-    "success?" => fn status_success(recv, args, _block) {
-        arity!(args, 0);
-        Ok(match recv_status(recv).exitstatus() {
-            Some(code) => RubyValue::Bool(code == 0),
-            None => RubyValue::Nil,
-        })
-    }
-    "pid" => fn status_pid(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Int(recv_status(recv).pid))
-    }
-    "to_i" => fn status_to_i(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Int(recv_status(recv).raw as i64))
-    }
-    "exited?" => fn status_exited(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Bool(recv_status(recv).exitstatus().is_some()))
-    }
-    "signaled?" => fn status_signaled(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Bool(recv_status(recv).termsig().is_some()))
-    }
-    "termsig" => fn status_termsig(recv, args, _block) {
-        arity!(args, 0);
-        Ok(match recv_status(recv).termsig() {
-            Some(sig) => RubyValue::Int(sig as i64),
-            None => RubyValue::Nil,
-        })
-    }
-    "stopped?" => fn status_stopped(recv, args, _block) {
-        arity!(args, 0);
-        // A reaped child is never in the stopped state (that needs WUNTRACED,
-        // which `wait()` doesn't set), so this is always false here.
-        let _ = recv_status(recv);
-        Ok(RubyValue::Bool(false))
-    }
-    // `$? == 0` (an Integer) and `$? == other_status` both compare the raw
-    // status word, CRuby's rule.
-    "==" => fn status_eq(recv, args, _block) {
-        arity!(args, 1);
-        let me = recv_status(recv).raw as i64;
-        Ok(RubyValue::Bool(match &args[0] {
-            RubyValue::Int(i) => *i == me,
-            RubyValue::Object(o) => o
-                .as_any()
-                .downcast_ref::<RProcessStatus>()
-                .is_some_and(|s| s.raw as i64 == me),
-            _ => false,
-        }))
-    }
-    "to_s" => fn status_to_s(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Str(crate::string_new(status_describe(recv_status(recv)))))
-    }
-    "inspect" => fn status_inspect(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Str(crate::string_new(format!(
-            "#<Process::Status: {}>",
-            status_describe(recv_status(recv))
-        ))))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // `Process::Tms` -- the CPU-times struct `Process.times` answers (utime/stime/
 // cutime/cstime, all Float seconds). CRuby makes it an actual Struct; here it
@@ -881,47 +928,6 @@ fn recv_tms(recv: &RubyValue) -> &RTms {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_tms;
-
-    "utime" => fn tms_utime(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Float(recv_tms(recv).utime))
-    }
-    "stime" => fn tms_stime(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Float(recv_tms(recv).stime))
-    }
-    "cutime" => fn tms_cutime(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Float(recv_tms(recv).cutime))
-    }
-    "cstime" => fn tms_cstime(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Float(recv_tms(recv).cstime))
-    }
-    "to_a" | "values" => fn tms_to_a(recv, args, _block) {
-        arity!(args, 0);
-        let t = recv_tms(recv);
-        Ok(RubyValue::Array(crate::array_new(vec![
-            RubyValue::Float(t.utime),
-            RubyValue::Float(t.stime),
-            RubyValue::Float(t.cutime),
-            RubyValue::Float(t.cstime),
-        ])))
-    }
-    "to_s" | "inspect" => fn tms_inspect(recv, args, _block) {
-        arity!(args, 0);
-        let t = recv_tms(recv);
-        // Ruby renders a whole-valued Float as `1.0`; `inspect_string` on a
-        // Float value is exactly that formatter, so the struct line matches.
-        let f = |v: f64| RubyValue::Float(v).inspect_string();
-        Ok(RubyValue::Str(crate::string_new(format!(
-            "#<struct Process::Tms utime={}, stime={}, cutime={}, cstime={}>",
-            f(t.utime), f(t.stime), f(t.cutime), f(t.cstime),
-        ))))
-    }
-}
 
 // ---------------------------------------------------------------------------
 // `$?` -- the last child status, thread-local like CRuby's own special global.
@@ -1173,5 +1179,215 @@ mod tests {
         assert!((tbl.lookup)("clock_gettime").is_some());
         assert!((tbl.lookup)("wait").is_some());
         assert!((tbl.lookup)("nope").is_none());
+    }
+
+    /// Reach a NESTED class's (`Process::Status`/`Process::Tms`) instance method
+    /// through its own registered instance table -- the same dispatch path real
+    /// code takes, and proof the nested `ruby_class!` blocks register at all.
+    fn imethod(id: ClassId, name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(id)
+            .unwrap_or_else(|| panic!("class {id:?} is registered"))
+            .instance
+            .as_ref()
+            .expect("class has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("#{name} is defined"))
+    }
+
+    fn call(f: crate::builtins::BuiltinMethodFn, recv: &RubyValue, args: &[RubyValue]) -> RubyValue {
+        f(recv, args, None).expect("method should not raise")
+    }
+
+    // `RubyValue` has no Rust `PartialEq` (equality is dispatched), so the tests
+    // project each result to a primitive to assert on.
+    fn int(v: &RubyValue) -> i64 {
+        match v {
+            RubyValue::Int(i) => *i,
+            other => panic!("expected an Integer, got {}", other.inspect_string()),
+        }
+    }
+    fn float(v: &RubyValue) -> f64 {
+        match v {
+            RubyValue::Float(f) => *f,
+            other => panic!("expected a Float, got {}", other.inspect_string()),
+        }
+    }
+    fn boolean(v: &RubyValue) -> bool {
+        match v {
+            RubyValue::Bool(b) => *b,
+            other => panic!("expected a Boolean, got {}", other.inspect_string()),
+        }
+    }
+    fn text(v: &RubyValue) -> String {
+        match v {
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => panic!("expected a String, got {}", other.inspect_string()),
+        }
+    }
+
+    // -- Process::Status (nested class) -------------------------------------
+
+    /// A normal exit: `raw = code << 8` on every Unix, so `WEXITSTATUS` reads
+    /// the code back and `WIFSIGNALED` is false.
+    #[test]
+    fn status_reads_a_normal_exit() {
+        let s = new_status(4242, 7 << 8);
+        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &s, &[])), 7);
+        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "success?"), &s, &[])));
+        assert!(boolean(&call(imethod(PROCESS_STATUS_CLASS, "exited?"), &s, &[])));
+        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "signaled?"), &s, &[])));
+        assert!(call(imethod(PROCESS_STATUS_CLASS, "termsig"), &s, &[]).is_nil());
+        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "stopped?"), &s, &[])));
+        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "pid"), &s, &[])), 4242);
+        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "to_i"), &s, &[])), (7 << 8) as i64);
+        assert_eq!(text(&call(imethod(PROCESS_STATUS_CLASS, "to_s"), &s, &[])), "pid 4242 exit 7");
+    }
+
+    /// Exit code 0 is the only `success? == true` case.
+    #[test]
+    fn status_zero_exit_is_the_only_success() {
+        let ok = new_status(1, 0);
+        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &ok, &[])), 0);
+        assert!(boolean(&call(imethod(PROCESS_STATUS_CLASS, "success?"), &ok, &[])));
+    }
+
+    /// A signal death: `raw = signo`, so `exitstatus`/`success?` are nil (the
+    /// three-valued answer) and `termsig` carries the number.
+    #[test]
+    fn status_reads_a_signal_death() {
+        let s = new_status(5, 9); // SIGKILL
+        assert!(call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &s, &[]).is_nil());
+        assert!(call(imethod(PROCESS_STATUS_CLASS, "success?"), &s, &[]).is_nil());
+        assert!(boolean(&call(imethod(PROCESS_STATUS_CLASS, "signaled?"), &s, &[])));
+        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "termsig"), &s, &[])), 9);
+        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "exited?"), &s, &[])));
+    }
+
+    /// `$? == int` and `$? == other_status` both compare the raw status word.
+    #[test]
+    fn status_equality_compares_the_raw_word() {
+        let s = new_status(1, 7 << 8);
+        let eq = imethod(PROCESS_STATUS_CLASS, "==");
+        assert!(boolean(&call(eq, &s, &[RubyValue::Int((7 << 8) as i64)])));
+        assert!(!boolean(&call(eq, &s, &[RubyValue::Int(0)])));
+        // A different pid but the same raw word still compares equal.
+        assert!(boolean(&call(eq, &s, &[new_status(999, 7 << 8)])));
+        assert!(!boolean(&call(eq, &s, &[RubyValue::Nil])));
+    }
+
+    // -- Process::Tms (nested class) ----------------------------------------
+
+    #[test]
+    fn tms_exposes_the_four_cpu_times() {
+        let t = new_tms(1.0, 2.0, 3.0, 4.0);
+        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "utime"), &t, &[])), 1.0);
+        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "stime"), &t, &[])), 2.0);
+        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "cutime"), &t, &[])), 3.0);
+        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "cstime"), &t, &[])), 4.0);
+        // `to_a`/`values` share one body -- both answer the four in order.
+        for name in ["to_a", "values"] {
+            let RubyValue::Array(a) = call(imethod(PROCESS_TMS_CLASS, name), &t, &[]) else {
+                panic!("{name} is an Array")
+            };
+            let a = a.lock();
+            assert_eq!(a.len(), 4);
+            assert_eq!(float(&a[0]), 1.0);
+            assert_eq!(float(&a[3]), 4.0);
+        }
+        assert_eq!(
+            text(&call(imethod(PROCESS_TMS_CLASS, "inspect"), &t, &[])),
+            "#<struct Process::Tms utime=1.0, stime=2.0, cutime=3.0, cstime=4.0>"
+        );
+    }
+
+    /// `Process.times` answers a live `Process::Tms` whose accessors work.
+    #[test]
+    fn times_answers_a_tms_struct() {
+        let t = call(cmethod("times"), &process_module(), &[]);
+        assert!(matches!(&t, RubyValue::Object(o) if o.class_id() == PROCESS_TMS_CLASS));
+        assert!(matches!(call(imethod(PROCESS_TMS_CLASS, "utime"), &t, &[]), RubyValue::Float(_)));
+    }
+
+    // -- resource limits / groups / pgrp ------------------------------------
+
+    /// `getrlimit` answers a `[soft, hard]` Integer pair with `soft <= hard`
+    /// (RLIM_INFINITY comparing greater than any finite soft limit).
+    #[test]
+    fn getrlimit_answers_a_soft_hard_pair() {
+        let lim = call(cmethod("getrlimit"), &process_module(),
+            &[RubyValue::Int(libc::RLIMIT_NOFILE as i64)]);
+        let RubyValue::Array(a) = lim else { panic!("getrlimit is an Array") };
+        let a = a.lock();
+        assert_eq!(a.len(), 2);
+        let (soft, hard) = (int(&a[0]), int(&a[1]));
+        assert!(soft <= hard, "soft {soft} should not exceed hard {hard}");
+    }
+
+    /// `maxgroups=` stores the request but the reader clamps it to the OS
+    /// `NGROUPS_MAX`, so a huge write never reads back larger than the ceiling,
+    /// and a small write round-trips.
+    #[test]
+    fn maxgroups_write_is_clamped_on_read() {
+        let ceiling = unsafe { libc::sysconf(libc::_SC_NGROUPS_MAX) };
+        call(cmethod("maxgroups="), &process_module(), &[RubyValue::Int(1_000_000)]);
+        let capped = int(&call(cmethod("maxgroups"), &process_module(), &[]));
+        assert!(capped > 0 && capped <= ceiling, "{capped} should be within (0, {ceiling}]");
+
+        call(cmethod("maxgroups="), &process_module(), &[RubyValue::Int(8)]);
+        assert_eq!(int(&call(cmethod("maxgroups"), &process_module(), &[])), 8);
+    }
+
+    /// `getpgrp`/`getpgid(0)` agree and are positive.
+    #[test]
+    fn process_group_queries_agree() {
+        let pgrp = int(&call(cmethod("getpgrp"), &process_module(), &[]));
+        let pgid = int(&call(cmethod("getpgid"), &process_module(), &[RubyValue::Int(0)]));
+        assert_eq!(pgrp, pgid);
+        assert!(pgrp > 0);
+    }
+
+    // -- constants ----------------------------------------------------------
+
+    /// The `install_constants` thunk seeds every declared `Process::*` constant
+    /// under `PROCESS_CLASS` with the OS's own value.
+    #[test]
+    fn constants_install_with_the_os_values() {
+        let install = crate::builtins::registered_table(zeo_abi::PROCESS_CLASS)
+            .unwrap()
+            .install_constants
+            .expect("Process seeds constants");
+        install();
+        let owner = zeo_abi::PROCESS_CLASS.0;
+        let get = |n: &str| crate::constants::const_get(owner, n).expect("constant seeded");
+        assert_eq!(int(&get("WNOHANG")), libc::WNOHANG as i64);
+        assert_eq!(int(&get("RLIMIT_NOFILE")), libc::RLIMIT_NOFILE as i64);
+        assert_eq!(int(&get("CLOCK_MONOTONIC")), libc::CLOCK_MONOTONIC as i64);
+        assert_eq!(int(&get("PRIO_PROCESS")), libc::PRIO_PROCESS as i64);
+    }
+
+    // -- surface completeness -----------------------------------------------
+
+    /// Every method this batch series added is present on the class-method
+    /// table (a regression guard against a `def` being dropped in a refactor),
+    /// and the nested classes register under their own ids.
+    #[test]
+    fn the_class_method_surface_is_complete() {
+        let names = crate::builtins::registered_table(zeo_abi::PROCESS_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .names;
+        let present: std::collections::HashSet<&str> = names().iter().copied().collect();
+        for expected in [
+            "pid", "fork", "_fork", "kill", "ppid", "exit", "exit!", "abort", "wait", "waitpid",
+            "wait2", "waitpid2", "waitall", "detach", "last_status", "getpgid", "setpgid",
+            "getrlimit", "setrlimit", "maxgroups", "maxgroups=", "setproctitle", "warmup",
+            "daemon", "getpriority", "setpriority", "clock_gettime", "clock_getres", "times",
+        ] {
+            assert!(present.contains(expected), "Process.{expected} missing from the surface");
+        }
+        // The nested classes are registered as their own tables.
+        assert!(crate::builtins::registered_table(PROCESS_STATUS_CLASS).is_some());
+        assert!(crate::builtins::registered_table(PROCESS_TMS_CLASS).is_some());
     }
 }

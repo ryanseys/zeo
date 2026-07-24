@@ -17,6 +17,8 @@ pub struct Signal;
 pub struct ClassId(pub u32);
 
 pub const COMPARABLE_CLASS: ClassId = ClassId(22);
+pub const NESTED_CLASS: ClassId = ClassId(23);
+pub const OBJECT_CLASS: ClassId = ClassId(0);
 
 pub mod builtins {
     use super::{ClassId, RubyValue, Signal};
@@ -74,6 +76,14 @@ mod comparable {
         }
 
         alias lteq = "<";
+
+        // A nested class sharing the same file: its own id, its own `lookup`
+        // table (in a private submodule, so no collision with the outer one).
+        class Nested = crate::NESTED_CLASS < crate::OBJECT_CLASS {
+            def "ping"(_recv, _args, _block) {
+                Ok(RubyValue::Int(42))
+            }
+        }
     }
 }
 
@@ -122,6 +132,37 @@ fn constants_install_through_the_thunk() {
         seeded.iter().any(|(owner, name)| *owner == 22 && name == "SENTINEL"),
         "expected SENTINEL seeded under COMPARABLE_CLASS(22), got {seeded:?}"
     );
+}
+
+#[test]
+fn nested_class_registers_separately_without_colliding() {
+    // The nested `Nested` class gets its OWN BUILTIN_TABLES entry, keyed by its
+    // own id, distinct from the outer Comparable module -- proof that two
+    // classes in one file don't clobber each other's fixed table fn names.
+    let outer = crate::builtins::BUILTIN_TABLES
+        .iter()
+        .find(|t| t.id.0 == 22)
+        .expect("Comparable registered");
+    let nested = crate::builtins::BUILTIN_TABLES
+        .iter()
+        .find(|t| t.id.0 == 23)
+        .expect("Nested registered under its own id");
+
+    // The nested instance method resolves and runs.
+    let ping = nested
+        .instance
+        .as_ref()
+        .expect("Nested has an instance table")
+        .lookup;
+    assert_eq!(
+        ping("ping").expect("`ping` defined")(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(42)
+    );
+
+    // The two tables are genuinely distinct: the outer's `<` is not on the
+    // nested table, and the nested's `ping` is not on the outer.
+    assert!((outer.instance.as_ref().unwrap().lookup)("ping").is_none());
+    assert!((nested.instance.as_ref().unwrap().lookup)("<").is_none());
 }
 
 #[test]
