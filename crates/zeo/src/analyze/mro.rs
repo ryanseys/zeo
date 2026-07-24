@@ -545,7 +545,7 @@ fn own_const_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
 /// here (a narrow, documented approximation; a bare assignment inside a
 /// METHOD body is a Ruby SyntaxError -- "dynamic constant assignment" --
 /// so class bodies are genuinely the only place to look).
-fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
+pub(super) fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
     compiler.class(class_id).class_body_stmts.iter().any(|&n| {
         matches!(&compiler.hir[n], HirNode::ConstWrite { scope: None, name: w, .. } if w == name)
     })

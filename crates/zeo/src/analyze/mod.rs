@@ -404,11 +404,18 @@ fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
                         let fq = format!("{}::{name}", compiler.fq_name(sid));
                         if compiler.resolve_class(&fq, &[], 0).is_some()
                             || compiler.resolve_class(name, &[], 0).is_some()
+                            // A VALUE constant `scope` assigns in its OWN body
+                            // (`module Psych; VERSION = "5.4.0"`) IS defined here,
+                            // even though value constants aren't fully resolved
+                            // until `resolve_consts` -- the `ConstWrite` is
+                            // already in `scope`'s registered body. Lets a
+                            // `defined?(Psych::VERSION)`-gated definition fold.
+                            || mro::directly_defines_const(compiler, sid, name)
                         {
                             Some(true)
                         } else {
-                            // Could name a VALUE constant on `scope` -- not
-                            // visible until `resolve_consts` runs.
+                            // Could name a VALUE constant on `scope` assigned
+                            // elsewhere/at runtime -- not decidable here.
                             None
                         }
                     }
