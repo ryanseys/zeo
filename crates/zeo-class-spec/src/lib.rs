@@ -12,11 +12,14 @@
 //!   method/constant NAMES the compiler folds `respond_to?`/`is_a?`/const
 //!   lookups against. (It reads only the headers; method bodies are opaque.)
 //!
-//! Grammar:
+//! Grammar (the opening macro fixes the kind, so the header carries no
+//! `module`/`class` keyword -- just `NAME = ID`, plus `< SUPER` for a class):
 //! ```text
-//! ruby_class! {
-//!     module Comparable = COMPARABLE_CLASS;              // module, own ClassId const
-//!     // class String = STRING_CLASS < OBJECT_CLASS;     // or: class + superclass const
+//! ruby_module! { Comparable = COMPARABLE_CLASS; ... }    // module, own ClassId const
+//! ruby_class!  { String = STRING_CLASS < OBJECT_CLASS; ... }  // class + superclass const
+//!
+//! ruby_module! {
+//!     Comparable = COMPARABLE_CLASS;
 //!
 //!     include ENUMERABLE_CLASS;                          // 0+ mixins (ClassId consts)
 //!
@@ -38,7 +41,7 @@
 //! evaluating a const itself. Only the header NAME is a plain identifier.
 
 use proc_macro2::TokenStream;
-use syn::parse::{Parse, ParseStream};
+use syn::parse::ParseStream;
 use syn::{braced, parenthesized, Expr, Ident, LitInt, LitStr, Path, Token};
 
 /// A fully-parsed `ruby_class! { ... }` body.
@@ -108,39 +111,33 @@ pub struct AliasDef {
     pub old_name: String,
 }
 
-impl Parse for ClassSpec {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // Header: `module NAME = ID;` or `class NAME = ID < SUPER;`. `module`
-        // and `class` are not Rust keywords, so they arrive as plain idents.
-        let header: Ident = input.parse()?;
-        let (kind, name, id) = match header.to_string().as_str() {
-            "module" => {
-                let name: Ident = input.parse()?;
-                input.parse::<Token![=]>()?;
-                // `parse_mod_style`: the id is a plain `a::b::CONST` path with no
-                // generics, so the parser stops at a following `<` rather than
-                // mistaking `ID < SUPER` for `ID<SUPER>` generic arguments.
-                let id = Path::parse_mod_style(input)?;
-                input.parse::<Token![;]>()?;
-                (ClassKind::Module, name, id)
-            }
-            "class" => {
-                let name: Ident = input.parse()?;
-                input.parse::<Token![=]>()?;
-                let id = Path::parse_mod_style(input)?;
-                input.parse::<Token![<]>()?;
-                let superclass = Path::parse_mod_style(input)?;
-                input.parse::<Token![;]>()?;
-                (ClassKind::Class { superclass }, name, id)
-            }
-            other => {
-                return Err(syn::Error::new(
-                    header.span(),
-                    format!("expected `module` or `class` to open ruby_class!, found `{other}`"),
-                ));
-            }
-        };
+impl ClassSpec {
+    /// Parse a `ruby_module!` body: a `NAME = ID;` header (no superclass), then
+    /// items. The opening macro, not a keyword, is what fixed the kind.
+    pub fn parse_module(input: ParseStream) -> syn::Result<Self> {
+        let name: Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        // `parse_mod_style`: the id is a plain `a::b::CONST` path with no
+        // generics, so the parser stops at a following `<` rather than mistaking
+        // `ID < SUPER` for `ID<SUPER>` generic arguments.
+        let id = Path::parse_mod_style(input)?;
+        input.parse::<Token![;]>()?;
+        Self::finish(input, ClassKind::Module, name, id)
+    }
 
+    /// Parse a `ruby_class!` body: a `NAME = ID < SUPER;` header, then items.
+    pub fn parse_class(input: ParseStream) -> syn::Result<Self> {
+        let name: Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        let id = Path::parse_mod_style(input)?;
+        input.parse::<Token![<]>()?;
+        let superclass = Path::parse_mod_style(input)?;
+        input.parse::<Token![;]>()?;
+        Self::finish(input, ClassKind::Class { superclass }, name, id)
+    }
+
+    /// Consume the item list after a header into a finished `ClassSpec`.
+    fn finish(input: ParseStream, kind: ClassKind, name: Ident, id: Path) -> syn::Result<Self> {
         let mut spec = ClassSpec {
             kind,
             name,
@@ -150,7 +147,6 @@ impl Parse for ClassSpec {
             methods: Vec::new(),
             aliases: Vec::new(),
         };
-
         while !input.is_empty() {
             parse_item(input, &mut spec)?;
         }
@@ -291,15 +287,24 @@ fn peek_ident(input: ParseStream, word: &str) -> bool {
 mod tests {
     use super::*;
     use quote::quote;
+    use syn::parse::Parser;
 
-    fn parse(ts: TokenStream) -> ClassSpec {
-        syn::parse2(ts).expect("ruby_class! body should parse")
+    fn parse_module(ts: TokenStream) -> ClassSpec {
+        ClassSpec::parse_module
+            .parse2(ts)
+            .expect("ruby_module! body should parse")
+    }
+
+    fn parse_class(ts: TokenStream) -> ClassSpec {
+        ClassSpec::parse_class
+            .parse2(ts)
+            .expect("ruby_class! body should parse")
     }
 
     #[test]
     fn a_pure_mixin_module_with_operator_methods() {
-        let spec = parse(quote! {
-            module Comparable = COMPARABLE_CLASS;
+        let spec = parse_module(quote! {
+            Comparable = COMPARABLE_CLASS;
             def "<" arity 1 (recv, args, _block) { lt_impl(recv, args) }
             def "<=" arity 1 (recv, args, _block) { le_impl(recv, args) }
             def "between?" arity 2 (recv, args, _block) { between(recv, args) }
@@ -317,8 +322,8 @@ mod tests {
 
     #[test]
     fn a_class_with_superclass_constants_and_class_methods() {
-        let spec = parse(quote! {
-            class Float = FLOAT_CLASS < NUMERIC_CLASS;
+        let spec = parse_class(quote! {
+            Float = FLOAT_CLASS < NUMERIC_CLASS;
             include COMPARABLE_CLASS;
             const INFINITY = f64::INFINITY;
             const NAN = f64::NAN;
@@ -343,8 +348,8 @@ mod tests {
 
     #[test]
     fn shared_body_aliases_visibility_and_late_alias() {
-        let spec = parse(quote! {
-            module Process = PROCESS_CLASS;
+        let spec = parse_module(quote! {
+            Process = PROCESS_CLASS;
             def self."pid"(_recv, _args, _block) { pid() }
             def self."succ" | "next"(_recv, _args, _block) { succ() }
             private def helper(_recv, _args, _block) { helper_impl() }
@@ -366,8 +371,8 @@ mod tests {
 
     #[test]
     fn default_arity_is_none_meaning_variadic() {
-        let spec = parse(quote! {
-            module M = MATH_CLASS;
+        let spec = parse_module(quote! {
+            M = MATH_CLASS;
             def "sqrt"(_recv, _args, _block) { Ok(RubyValue::Nil) }
         });
         assert_eq!(spec.methods[0].names[0].arity, None);

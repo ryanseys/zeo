@@ -1,4 +1,10 @@
-//! The `ruby_class! { ... }` proc-macro.
+//! The `ruby_class! { ... }` / `ruby_module! { ... }` proc-macros.
+//!
+//! Two macros mirroring Ruby's own `class`/`module` keywords: a class file
+//! opens `ruby_class! { NAME = ID < SUPER; ... }`, a module file opens
+//! `ruby_module! { NAME = ID; ... }`. They share one expansion (the kind only
+//! feeds the deferred shape projection), so the emitted code is identical given
+//! the same methods/constants.
 //!
 //! Parses the DSL with the shared [`zeo_class_spec`] grammar and emits, for one
 //! Ruby core class/module, everything the RUNTIME needs -- drift-free with the
@@ -26,14 +32,26 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use syn::parse::Parser;
 use syn::Ident;
 use zeo_class_spec::ClassSpec;
 
-/// See the crate docs. `ruby_class! { module Foo = FOO_CLASS; def ... }`.
+/// A Ruby class: `ruby_class! { Float = FLOAT_CLASS < NUMERIC_CLASS; def ... }`.
 #[proc_macro]
 pub fn ruby_class(input: TokenStream) -> TokenStream {
-    let spec = syn::parse_macro_input!(input as ClassSpec);
-    expand(&spec).into()
+    match ClassSpec::parse_class.parse(input) {
+        Ok(spec) => expand(&spec).into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// A Ruby module: `ruby_module! { Comparable = COMPARABLE_CLASS; def ... }`.
+#[proc_macro]
+pub fn ruby_module(input: TokenStream) -> TokenStream {
+    match ClassSpec::parse_module.parse(input) {
+        Ok(spec) => expand(&spec).into(),
+        Err(e) => e.to_compile_error().into(),
+    }
 }
 
 /// One resolved method entry: a Ruby name bound to the Rust fn that implements

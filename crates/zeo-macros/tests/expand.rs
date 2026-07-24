@@ -57,8 +57,8 @@ pub mod constants {
 mod comparable {
     use crate::RubyValue;
 
-    zeo_macros::ruby_class! {
-        module Comparable = crate::COMPARABLE_CLASS;
+    zeo_macros::ruby_module! {
+        Comparable = crate::COMPARABLE_CLASS;
 
         const SENTINEL = RubyValue::Int(7);
 
