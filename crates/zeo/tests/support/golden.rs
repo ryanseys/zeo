@@ -304,14 +304,16 @@ pub fn run_golden(
     }
 
     if mode == Mode::CompileFail {
-        let opts = zeo::CompileOptions {
-            input_path: Some(rb.to_path_buf()),
-            ..Default::default()
-        };
-        return match zeo::compile_to_rust_with(&source, &opts) {
-            Err(_) => Ok(()), // rejected, as required
+        // "Rejected" means zeo can't produce a RUNNABLE binary -- a clean
+        // analyze/codegen error OR generated Rust that rustc refuses (the old
+        // CLI-based harness treated a nonzero `zeo <src> -o bin` exit, from
+        // either stage, as the rejection). `compile_and_run` returns `Err`
+        // exactly when compile or link fails (a program that builds and then
+        // crashes at runtime returns `Ok`, so it does NOT count as rejected).
+        return match compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd) {
+            Err(_) => Ok(()),
             Ok(_) => Err(format!(
-                "{}: expected zeo to REJECT this program, but it compiled",
+                "{}: expected zeo to REJECT this program, but it built and ran",
                 rb.display()
             )
             .into()),

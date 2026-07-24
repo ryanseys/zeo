@@ -73,13 +73,12 @@ jobs:
       - run: cargo nextest run --workspace
       # nextest doesn't run doctests; keep them covered.
       - run: cargo test --workspace --doc
-      # The examples/ golden suite + the gaps XFAIL tracker now run under
-      # `cargo nextest run --workspace` above (datatest-stable targets:
-      # tests/examples.rs, tests/gaps.rs) -- committed .expected, no ruby in CI.
-      # The conformance smoke tier: ~150 representative tests from the
-      # vendored corpus (committed .expected snapshots, so no ruby needed).
-      # The full 2,295-test run is the nightly job.
-      - run: cargo run -p xtask -- conformance run --smoke
+      # The examples/ golden suite, the full ~2335-test conformance corpus, and
+      # the gaps XFAIL tracker all run under `cargo nextest run --workspace`
+      # above (datatest-stable targets tests/{examples,corpus,gaps}.rs) --
+      # committed ruby-oracle .expected, no ruby in CI. The `golden` test-group
+      # (.config/nextest.toml) caps their concurrency so a cold zeo-bin-cache
+      # doesn't overload rustc. A fixed gap fails CI as an XPASS (promote it).
 
   msrv:
     name: MSRV check

@@ -1,0 +1,17 @@
+# nextest configuration.
+#
+# The golden suites (corpus/examples/gaps) each compile their `.rb` with zeo and
+# invoke `rustc` on a cache MISS. On a cold `target/zeo-bin-cache` (a fresh
+# checkout, or after a `zeo-rt` change invalidates the cache generation), running
+# all ~2600 at the machine's full thread count launches that many concurrent
+# rustc processes and the memory pressure sporadically fails a build. Capping the
+# concurrency of these build-heavy tests (the old `xtask conformance run -j8`
+# used the same bound) keeps a cold run reliable; a warm run just hard-links from
+# the cache and is unaffected.
+
+[test-groups]
+golden = { max-threads = 8 }
+
+[[profile.default.overrides]]
+filter = "binary(corpus) | binary(examples) | binary(gaps)"
+test-group = "golden"

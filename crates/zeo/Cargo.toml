@@ -41,5 +41,10 @@ name = "examples"
 path = "tests/examples.rs"
 harness = false
 
+[[test]]
+name = "corpus"
+path = "tests/corpus.rs"
+harness = false
+
 [lints]
 workspace = true

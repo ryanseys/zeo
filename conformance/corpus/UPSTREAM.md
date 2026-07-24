@@ -40,3 +40,20 @@ Oniguruma binding fundamentally cannot produce, plus Onigmo-specific conditional
 validation. The regex ENGINE semantics it also touched (inline `(?m:)` DOTALL,
 the absence operator `(?~...)`, line anchors) are covered by `Engine::Onig` and
 the `regexp_onig` example/e2e.
+
+## `analyze_fail/` retired
+
+Both `analyze_fail/` cases (`dynamic_define_method`, `nonliteral_define_method_each`)
+were spinel-SUBSET rejections of dynamic `define_method(name)`. zeo, targeting
+full CRuby, COMPILES and runs those (empty output, matching `ruby`), so they moved
+to the corpus proper as passing tests and the `analyze_fail/` harness entry was
+dropped. Compile-rejection coverage lives in the e2e suite
+(`compile_project(...).unwrap_err()`).
+
+## How the corpus runs
+
+The corpus is run by `cargo test --test corpus` (datatest-stable; see
+`crates/zeo/tests/corpus.rs` + `tests/support/golden.rs`), one nextest case per
+`.rb`, diffing zeo's stdout+stderr against the committed ruby-oracle
+`.rb.expected`. `ZEO_BLESS=1 cargo test --test corpus` re-records the goldens.
+The old bespoke `xtask conformance run`/scoreboard harness was retired.
