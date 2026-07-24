@@ -1,0 +1,3 @@
+ArgumentError: boom from ArgumentError
+TypeError: boom from TypeError
+RuntimeError: boom from RuntimeError

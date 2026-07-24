@@ -2488,6 +2488,30 @@ pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
     }
 }
 
+/// `raise <class-or-exception>, message` with a RUNTIME-computed first operand
+/// (a variable/call zeo couldn't resolve to a literal class). Mirrors
+/// `Kernel#raise`'s two-arg coercion: an Exception CLASS or INSTANCE becomes
+/// `obj.exception(msg)` (running any custom `#exception`/`#initialize`), and
+/// anything else is CRuby's `TypeError`. Returns the exception value to raise.
+pub fn coerce_raise_arg_with_message(
+    value: RubyValue,
+    msg: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let msg = std::slice::from_ref(&msg);
+    let is_exc = match &value {
+        RubyValue::Class(cid) => is_a(*cid, zeo_abi::EXCEPTION_CLASS),
+        RubyValue::Object(o) => is_a(o.class_id(), zeo_abi::EXCEPTION_CLASS),
+        _ => false,
+    };
+    if !is_exc {
+        return Err(raise_error(
+            "TypeError",
+            "exception class/object expected".to_string(),
+        ));
+    }
+    send_value(&value, Symbol::intern("exception"), msg, None)
+}
+
 /// The exhausted-iteration raise: a rescuable `StopIteration`
 /// whose `result` is `result` (a fresh instance per raise -- CRuby rebuilds
 /// one from `stop_exc` each time too). Constructs `StopIteration.new(msg)` via

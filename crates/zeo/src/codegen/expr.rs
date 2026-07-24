@@ -1426,7 +1426,6 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         return emit_boxed_new(cx, class_name, args);
     }
     if let Some(msg_id) = explicit_msg {
-        let _ = msg_id;
         // `raise <expr>, message` where `<expr>` didn't resolve to a class
         // above. A constant-SHAPED operand that failed to resolve is an
         // undefined constant: CRuby evaluates it -- and raises `uninitialized
@@ -1437,9 +1436,13 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         if const_path_of(cx, node).is_some() {
             return emit_expr(cx, node);
         }
-        panic!(
-            "`raise <expr>, message` with a computed (non-constant) class operand isn't supported (zeo limitation) -- name the exception class as a literal constant"
-        );
+        // A genuinely COMPUTED class/exception operand (`raise klass, msg`):
+        // coerce at runtime like `Kernel#raise` (`klass.exception(msg)`).
+        let class_expr = emit_expr(cx, node);
+        let msg_expr = emit_expr(cx, msg_id);
+        return quote! {
+            zeo_rt::coerce_raise_arg_with_message(#class_expr, #msg_expr)?
+        };
     }
     match infer(cx, node) {
         TyKind::Str => {

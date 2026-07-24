@@ -1097,10 +1097,7 @@ pub fn emit_call(
                 "keyword arguments on a safe-navigation (`&.`) call aren't supported yet (zeo limitation)"
             );
         }
-        if block.is_some() || block_arg.is_some() {
-            panic!("a block on a safe-navigation (`&.`) call isn't supported yet (zeo limitation)");
-        }
-        return path2::emit_safe_call(cx, recv_id, name, args);
+        return path2::emit_safe_call(cx, recv_id, name, args, block, block_arg);
     }
 
     let recv_expr = emit_expr(cx, recv_id);

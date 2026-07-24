@@ -25,6 +25,8 @@ pub(super) fn emit_safe_call(
     recv_id: NodeId,
     name: &str,
     args: &[NodeId],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> TokenStream {
     let __bx = cx.box_id;
     let boxed_recv = match infer_class(cx, recv_id) {
@@ -40,18 +42,19 @@ pub(super) fn emit_safe_call(
         let e = emit_expr(cx, a);
         box_if_object_typed(cx, a, e)
     });
+    // `recv&.name(args) { block }` -- the block rides the same `send_value_in`
+    // block slot a plain dynamic dispatch uses (nil short-circuits before it is
+    // ever entered, matching Ruby).
+    let block_value = super::emit_block_option(cx, block, block_arg);
     quote! {
         {
             let __safe_recv = #boxed_recv;
             if __safe_recv.is_nil() {
                 zeo_rt::RubyValue::Nil
             } else {
-                // `&.` doesn't accept a block yet (zeo limitation --
-                // narrower than real Ruby, matches
-                // this call's existing kwargs restriction). `send_value`
-                // handles Object AND builtin receivers
-                // uniformly, so the old non-Object panic is gone.
-                zeo_rt::send_value_in(#__bx, &__safe_recv, #name_expr, &[#(#arg_exprs),*], None)?
+                // `send_value` handles Object AND builtin receivers uniformly,
+                // so the old non-Object panic is gone.
+                zeo_rt::send_value_in(#__bx, &__safe_recv, #name_expr, &[#(#arg_exprs),*], #block_value)?
             }
         }
     }
