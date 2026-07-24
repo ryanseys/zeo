@@ -464,9 +464,20 @@ fn emit_if(cx: &Ctx, cond: NodeId, then_body: &[NodeId], else_body: &[NodeId]) -
     // away at compile time: the dead branch is never EMITTED (its body may be
     // MRI-only/uncompilable code), matching CRuby's own reachability. The
     // condition itself is a pure guard, so dropping it elides no side effect.
+    // A block wrapper (`{ ... }`) around the surviving branch: `emit_body_boxed`
+    // returns a STATEMENT SEQUENCE ending in a tail expression, which is only
+    // valid Rust in an expression slot once braced -- an `if` expression can sit
+    // in a value position (`x = if COND ...`), and a multi-statement branch
+    // would otherwise splice bare statements where an expression is expected.
     match super::constfold::static_cond(cx, cond) {
-        Some(true) => return super::stmt::emit_body_boxed(cx, then_body),
-        Some(false) => return super::stmt::emit_body_boxed(cx, else_body),
+        Some(true) => {
+            let body = super::stmt::emit_body_boxed(cx, then_body);
+            return quote! { { #body } };
+        }
+        Some(false) => {
+            let body = super::stmt::emit_body_boxed(cx, else_body);
+            return quote! { { #body } };
+        }
         None => {}
     }
     // Boxed: an Object-typed condition is an unboxed `Arc<Concrete>` with
