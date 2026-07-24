@@ -15,8 +15,9 @@
 //! real rescuable raise. A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
 use crate::{RubyValue, Signal, Symbol};
+use zeo_macros::ruby_module;
 
 /// The receiver's own `<=>`, reduced to a sign -- `Ok(None)` is Ruby's
 /// `nil` (incomparable).
@@ -38,22 +39,22 @@ fn cmp_or_fail(recv: &RubyValue, other: &RubyValue) -> Result<i64, Signal> {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_module! {
+    Comparable = zeo_abi::COMPARABLE_CLASS;
 
-    "<"[1] => fn lt(recv, args, _block) {
+    def "<" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? < 0))
     }
-    "<="[1] => fn le(recv, args, _block) {
+    def "<=" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? <= 0))
     }
-    ">"[1] => fn gt(recv, args, _block) {
+    def ">" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? > 0))
     }
-    ">="[1] => fn ge(recv, args, _block) {
+    def ">=" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? >= 0))
     }
@@ -62,7 +63,7 @@ builtin_methods! {
     // pair (`<=>` answering nil) as `false` -- real Ruby's one nil-tolerant
     // Comparable method; a non-numeric result raises (via `cmp`'s
     // `rb_cmpint`).
-    "=="[1] => fn eq(recv, args, _block) {
+    def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
         match (recv, &args[0]) {
             (RubyValue::Object(a), RubyValue::Object(b)) if std::sync::Arc::ptr_eq(a, b) => {
@@ -71,7 +72,7 @@ builtin_methods! {
             _ => Ok(RubyValue::Bool(cmp(recv, &args[0])? == Some(0))),
         }
     }
-    "between?"[2] => fn between_p(recv, args, _block) {
+    def "between?" arity 2 (recv, args, _block) {
         arity!(args, 2);
         let lo = cmp_or_fail(recv, &args[0])?;
         let hi = cmp_or_fail(recv, &args[1])?;
@@ -82,7 +83,7 @@ builtin_methods! {
     // beginless/endless range form; an exclusive bounded range is CRuby's
     // ArgumentError. Two present bounds must be ordered (CRuby rejects a
     // reversed pair).
-    "clamp" => fn clamp(recv, args, _block) {
+    def "clamp" (recv, args, _block) {
         arity!(args, 1..=2);
         let (lo, hi): (Option<RubyValue>, Option<RubyValue>) = if args.len() == 2 {
             let open = |v: &RubyValue| if v.is_nil() { None } else { Some(v.clone()) };

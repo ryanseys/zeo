@@ -82,12 +82,58 @@ pub(crate) mod weak;
 pub type BuiltinMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
+/// One method surface (instance OR class): the same drift-free trio every
+/// `builtin_methods!`/`ruby_class!` table derives from a single row set.
+pub struct MethodTable {
+    pub lookup: fn(&str) -> Option<BuiltinMethodFn>,
+    pub names: fn() -> &'static [&'static str],
+    pub arity: fn(&str) -> Option<i64>,
+}
+
+/// One builtin class/module's tables, registered by the `ruby_class!`/
+/// `ruby_module!` macro and collected at link time into [`BUILTIN_TABLES`].
+///
+/// This is the data-driven replacement for the hand-written `ClassId`->lookup
+/// `match` arms below: the routing fns (`class_table` etc.) consult the
+/// registered table FIRST and fall back to the match only for classes not yet
+/// migrated to the macro -- so a class is fully described by its own file the
+/// moment it is registered here.
+pub struct BuiltinClassTable {
+    pub id: ClassId,
+    /// Instance methods (`class_table`/`class_arity_table`/`class_table_names`).
+    pub instance: Option<MethodTable>,
+    /// Class/singleton methods (`class_method_table`/`class_method_table_names`).
+    pub class: Option<MethodTable>,
+    /// Seeds this class's constants at startup; `None` when it declares none.
+    pub install_constants: Option<fn()>,
+}
+
+/// Every `ruby_class!`/`ruby_module!` class self-registers here; linkme
+/// gathers them into one slice at final link (whether the runtime is linked as
+/// an rlib or a dylib -- all elements live inside `zeo-rt`, so the slice is
+/// self-contained either way).
+#[linkme::distributed_slice]
+pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
+
+/// The registered tables indexed by `ClassId` for O(1) routing, built once
+/// from the link-time-collected slice.
+fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
+    static MAP: LazyLock<HashMap<u32, &'static BuiltinClassTable>> =
+        LazyLock::new(|| BUILTIN_TABLES.iter().map(|t| (t.id.0, t)).collect());
+    MAP.get(&id.0).copied()
+}
+
 /// The static ClassId -> method-table map. A plain match (rustc compiles it
 /// to a jump table); `None` for user classes and for builtins with no table
 /// yet. `Enumerable`/`Comparable` are ordinary rows here too -- the MRO
 /// walk reaches them as ancestors of Array/Hash/Range and of any user class
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
+    // A macro-registered class is fully described by its own table -- its match
+    // arm below is deleted, so consult the registry first.
+    if let Some(t) = registered_table(id) {
+        return t.instance.as_ref().map(|m| m.lookup);
+    }
     Some(match id {
         zeo_abi::INTEGER_CLASS => integer::lookup,
         zeo_abi::FLOAT_CLASS => float::lookup,
@@ -109,7 +155,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::KERNEL_CLASS => kernel::lookup,
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup,
-        zeo_abi::COMPARABLE_CLASS => comparable::lookup,
+        // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup,
         zeo_abi::ENUMERATOR_CLASS
         | zeo_abi::ENUMERATOR_CHAIN_CLASS
@@ -173,6 +219,9 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// `Method#arity` consults this for a builtin-receiver method object, walking
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
+    if let Some(t) = registered_table(id) {
+        return t.instance.as_ref().map(|m| m.arity);
+    }
     Some(match id {
         zeo_abi::INTEGER_CLASS => integer::lookup_arity,
         zeo_abi::FLOAT_CLASS => float::lookup_arity,
@@ -191,7 +240,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::MODULE_CLASS => class_module::lookup_module_arity,
         zeo_abi::NIL_CLASS => object::lookup_nil_arity,
         zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool_arity,
-        zeo_abi::COMPARABLE_CLASS => comparable::lookup_arity,
+        // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup_arity,
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_arity,
         zeo_abi::KERNEL_CLASS => kernel::lookup_arity,
@@ -268,6 +317,9 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// instance -- rows generally ignore it (`Time.now` needs no receiver), but
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
+    if let Some(t) = registered_table(id) {
+        return t.class.as_ref().map(|m| m.lookup);
+    }
     Some(match id {
         zeo_abi::INTEGER_CLASS => integer::lookup_class,
         zeo_abi::ARRAY_CLASS => array::lookup_class,
@@ -349,6 +401,9 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
 /// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
 /// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.
 pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
+    if let Some(t) = registered_table(id) {
+        return t.instance.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
+    }
     match id {
         zeo_abi::INTEGER_CLASS => integer::lookup_names(),
         zeo_abi::FLOAT_CLASS => float::lookup_names(),
@@ -395,7 +450,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),
         zeo_abi::MUTEX_CLASS => mutex::lookup_names(),
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_names(),
-        zeo_abi::COMPARABLE_CLASS => comparable::lookup_names(),
+        // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup_names(),
         zeo_abi::MATH_CLASS => math::NAMES,
         #[cfg(feature = "ext-stringio")]
@@ -427,6 +482,9 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
 /// `class_method_table`'s reflection companion: the CLASS-method NAMES a
 /// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
 pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
+    if let Some(t) = registered_table(id) {
+        return t.class.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
+    }
     match id {
         zeo_abi::INTEGER_CLASS => integer::lookup_class_names(),
         zeo_abi::ARRAY_CLASS => array::lookup_class_names(),

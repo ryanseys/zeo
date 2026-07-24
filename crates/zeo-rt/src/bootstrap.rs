@@ -77,6 +77,16 @@ pub fn install_core_constants() {
         crate::builtins::thread_group::default_group(),
     );
     seed_ruby_constants();
+    // Macro-migrated classes seed their own constants via the ruby_class!/
+    // ruby_module! `install_constants` thunk, collected in BUILTIN_TABLES --
+    // the data-driven replacement for the per-class `seed_*` calls above, run
+    // as each class moves off them. Independent per class, so ordering after
+    // the legacy seeders is fine.
+    for table in crate::builtins::BUILTIN_TABLES {
+        if let Some(install) = table.install_constants {
+            install();
+        }
+    }
 }
 
 /// Top-level `RUBY_*` version/build constants (owner `Object`, id 0) plus the

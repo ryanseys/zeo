@@ -1631,6 +1631,7 @@ dependencies = [
  "jiff",
  "libc",
  "libffi",
+ "linkme",
  "md-5",
  "num-bigint",
  "num-integer",
@@ -1649,6 +1650,7 @@ dependencies = [
  "zeo-abi",
  "zeo-enc",
  "zeo-fiber",
+ "zeo-macros",
 ]
 
 [[package]]
