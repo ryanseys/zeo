@@ -129,9 +129,19 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             .find(|s| s.def_node == Some(stmt))
             .map(|s| crate::codegen::emit_class_body_site(cx.compiler, s))
             .unwrap_or_else(|| {
+                // Name the definition + source location: this fires deep in a
+                // require graph (a `class`/`module` inside a `begin` or an
+                // undecided body-level `if`), and the identity is what makes
+                // the next blocker legible.
+                let nm = match &cx.compiler.hir[stmt] {
+                    HirNode::ClassDef { name, .. } => name.as_str(),
+                    _ => "?",
+                };
+                let loc = crate::codegen::source_location(cx.compiler, stmt);
                 panic!(
                     "`class`/`module` in a position the analyze walk doesn't register \
-                     (e.g. inside a top-level `begin`) isn't supported yet (zeo limitation)"
+                     (e.g. inside a top-level `begin`) isn't supported yet (zeo limitation): \
+                     {nm} at {loc:?}"
                 )
             });
         return if is_tail {

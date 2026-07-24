@@ -74,6 +74,12 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
 /// operand of a folded `&&` is always a pure `defined?` guard, so dropping the
 /// unreached right operand never elides a side effect.
 pub(super) fn static_cond(cx: &Ctx, id: NodeId) -> Option<bool> {
+    // A build-time version-gate guard (`Gem.rubygems_version < Gem::Version
+    // .new("3.5.22")`, `RUBY_VERSION < "3.0"`) folds against zeo's fixed target
+    // version -- see `crate::guard_fold`.
+    if let Some(b) = crate::guard_fold::static_cmp(cx.compiler, cx.box_id, id) {
+        return Some(b);
+    }
     match &cx.compiler.hir[id] {
         HirNode::Defined(inner) => const_form_resolves(cx, *inner),
         HirNode::And(l, r) => match static_cond(cx, *l) {

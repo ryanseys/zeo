@@ -41,6 +41,13 @@ pub struct ClassId(pub u32);
 /// walking resolution instead of the frozen flat-table fast path).
 pub const RUNTIME_CLASS_ID_BASE: u32 = 1 << 30;
 
+/// The Ruby language/library level zeo targets, single-sourced here so the
+/// runtime's `RUBY_VERSION`/`RUBY_ENGINE_VERSION` seeding (`zeo-rt`'s
+/// `bootstrap`) and the compiler's compile-time version-gate folding
+/// (`zeo`'s `version_fold`) agree byte-for-byte -- a `RUBY_VERSION < "x"`
+/// guard must fold against the SAME string the running program reports.
+pub const RUBY_VERSION: &str = "4.0.5";
+
 /// One reserved built-in class/module -- see [`BUILTINS`].
 pub struct BuiltinClass {
     pub id: ClassId,

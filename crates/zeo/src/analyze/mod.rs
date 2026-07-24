@@ -636,6 +636,12 @@ fn static_const_defined(compiler: &Compiler, recv: NodeId, args: &[ArrayElem]) -
 }
 
 fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
+    // A build-time version-gate guard folds the same way here (deciding what a
+    // top-level conditional REGISTERS) as it does at emission -- see
+    // `crate::guard_fold` and `codegen::constfold::static_cond`.
+    if let Some(b) = crate::guard_fold::static_cmp(compiler, 0, id) {
+        return Some(b);
+    }
     match &compiler.hir[id] {
         HirNode::Call {
             receiver: Some(recv),

@@ -98,7 +98,7 @@ fn seed_ruby_constants() {
     // star is byte-for-byte MRI parity, so zeo reports the MRI identity
     // rather than a distinct engine name (a gem's `RUBY_ENGINE`-branch takes
     // its CRuby path, which is what zeo implements).
-    const VERSION: &str = "4.0.5";
+    const VERSION: &str = zeo_abi::RUBY_VERSION;
     const ENGINE: &str = "ruby";
     const ENGINE_VERSION: &str = VERSION;
     const RELEASE_DATE: &str = "2026-05-20";
