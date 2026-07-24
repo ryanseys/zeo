@@ -1065,6 +1065,9 @@ fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
         "rbconfig" => Some(include_str!("shims/rbconfig.rb")),
         "securerandom" => Some(include_str!("shims/securerandom.rb")),
         "gem-securerandom" => Some(include_str!("shims/gem_securerandom.rb")),
+        // CRuby's C `erb/escape` extension -- defined as a pure-Ruby shim over
+        // the native `CGI.escapeHTML` (see `shims/erb_escape.rb`).
+        "erb/escape" => Some(include_str!("shims/erb_escape.rb")),
         _ => None,
     }
 }

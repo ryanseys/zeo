@@ -385,10 +385,76 @@ fn process_top_stmt(
         for s in taken {
             process_top_stmt(compiler, s, false, main_statements, pre_exec)?;
         }
+    } else if let Some(live) = dead_rescue_live_body(compiler, stmt) {
+        // A top-level `begin; require "x"; rescue LoadError; <fallback def>`
+        // whose body cannot raise has DEAD rescue clauses (see
+        // `dead_rescue_live_body`); walk the live begin/else/ensure statements
+        // and drop the rescues.
+        for s in live {
+            process_top_stmt(compiler, s, false, main_statements, pre_exec)?;
+        }
     } else {
         main_statements.push(stmt);
     }
     Ok(())
+}
+
+/// If `stmt` is a `begin/rescue` whose body provably cannot raise -- the
+/// `require` a `begin; require "x"; rescue LoadError` guard lowers to when the
+/// feature RESOLVED (a shim/builtin/file folded it to a bool), so the rescue is
+/// DEAD, exactly CRuby's behavior when the extension IS present -- returns the
+/// LIVE statements (begin + else + ensure), the rescue clauses dropped. `None`
+/// for anything else, so a `begin` that can raise is kept whole. Dropping the
+/// dead rescue keeps its unregistered fallback defs from reaching codegen.
+fn dead_rescue_live_body(compiler: &Compiler, stmt: NodeId) -> Option<Vec<NodeId>> {
+    let HirNode::Begin {
+        body,
+        rescues,
+        else_body,
+        ensure_body,
+    } = &compiler.hir[stmt]
+    else {
+        return None;
+    };
+    if rescues.is_empty() || !body_cannot_raise(compiler, body) {
+        return None;
+    }
+    let mut live = body.clone();
+    live.extend(else_body.clone().unwrap_or_default());
+    live.extend(ensure_body.clone().unwrap_or_default());
+    Some(live)
+}
+
+/// Expand every dead-rescue `begin` (see `dead_rescue_live_body`) in `stmts`
+/// to its live statements, recursively, leaving all other statements in place.
+/// Applied to a class body before the walk so a `begin; require "strscan";
+/// rescue LoadError; class SimpleScanner` fallback registers/emits correctly.
+fn splice_dead_rescues(compiler: &Compiler, stmts: &[NodeId]) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for &s in stmts {
+        match dead_rescue_live_body(compiler, s) {
+            Some(live) => out.extend(splice_dead_rescues(compiler, &live)),
+            None => out.push(s),
+        }
+    }
+    out
+}
+
+/// Whether every statement in `body` is provably non-raising -- the folded
+/// `require`(s) a `begin; require "x"; rescue LoadError` guard lowers to when
+/// the feature IS resolvable, making the rescue dead. Deliberately narrow
+/// (literals only): a false negative just keeps the `begin` whole.
+fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
+    body.iter().all(|&s| {
+        matches!(
+            &compiler.hir[s],
+            HirNode::BoolLit(_)
+                | HirNode::NilLit
+                | HirNode::IntegerLit(_)
+                | HirNode::FloatLit(_)
+                | HirNode::SymbolLit(_)
+        )
+    })
 }
 
 /// Whether any statement in `body` (descending nested `if` branches) is a
@@ -1069,9 +1135,12 @@ fn register_class(
             // Object`); CRuby accepts a matching clause and raises `superclass
             // mismatch` on a wrong one (D3). Mirrors the user-class reopen guard.
             if let Some(s) = &superclass {
-                let want = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
-                    format!("unknown superclass `{s}` (must be defined earlier in the file)")
-                })?;
+                let want = compiler
+                    .resolve_class(s, cref, box_id)
+                    .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
+                    .ok_or_else(|| {
+                        format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                    })?;
                 if compiler.class(cid).parent != Some(want) {
                     return Err(format!("superclass mismatch for class {name}"));
                 }
@@ -1103,9 +1172,12 @@ fn register_class(
                 compiler.classes[cid.0 as usize].feature_gate = None;
             }
             if let Some(s) = &superclass {
-                let want = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
-                    format!("unknown superclass `{s}` (must be defined earlier in the file)")
-                })?;
+                let want = compiler
+                    .resolve_class(s, cref, box_id)
+                    .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
+                    .ok_or_else(|| {
+                        format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                    })?;
                 if compiler.class(cid).parent != Some(want) {
                     // A class opened BARE first (`class Sub`, often just to
                     // hold a nested class) defaulted its parent to Object
@@ -1248,7 +1320,10 @@ fn register_class(
             stmts: Vec::new(),
         });
 
-    for &stmt in body {
+    // Expand any dead-rescue `begin` (a resolved `require` guard) so a fallback
+    // def inside it registers/emits like an ordinary class-body definition.
+    let body = splice_dead_rescues(compiler, body);
+    for &stmt in &body {
         match &compiler.hir[stmt] {
             HirNode::DefMethod { .. } => {
                 register_body_def_method(compiler, class_id, stmt)?;
