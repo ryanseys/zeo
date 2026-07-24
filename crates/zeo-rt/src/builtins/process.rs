@@ -4,9 +4,9 @@
 //!
 //! `clock_gettime` answers a Float of SECONDS (CRuby's default unit), which
 //! is what `Process.clock_gettime(Process::CLOCK_MONOTONIC)` benchmark
-//! idioms subtract. The clock CONSTANTS are seeded as ordinary constants
-//! under the Process module (see `seed_process`), matching how a program
-//! writes them: `Process::CLOCK_MONOTONIC`.
+//! idioms subtract. The clock CONSTANTS are declared as ordinary constants
+//! under the Process module (the `const` rows in the `ruby_module!` below),
+//! matching how a program writes them: `Process::CLOCK_MONOTONIC`.
 
 use std::cell::RefCell;
 use std::os::unix::process::ExitStatusExt;
@@ -17,11 +17,23 @@ use crate::builtins::{arg_error, arity, builtin_methods};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
+use zeo_macros::ruby_module;
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    Process = zeo_abi::PROCESS_CLASS;
 
-    "pid" => fn pid(_recv, args, _block) {
+    // The clock ids `Process.clock_gettime` accepts, and the
+    // `getpriority`/`setpriority` `which` selectors -- the OS's own values (see
+    // `clock_seconds`), published as `Process::CLOCK_*` / `Process::PRIO_*`.
+    const CLOCK_REALTIME = RubyValue::Int(libc::CLOCK_REALTIME as i64);
+    const CLOCK_MONOTONIC = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
+    const CLOCK_PROCESS_CPUTIME_ID = RubyValue::Int(libc::CLOCK_PROCESS_CPUTIME_ID as i64);
+    const CLOCK_THREAD_CPUTIME_ID = RubyValue::Int(libc::CLOCK_THREAD_CPUTIME_ID as i64);
+    const PRIO_PROCESS = RubyValue::Int(libc::PRIO_PROCESS as i64);
+    const PRIO_PGRP = RubyValue::Int(libc::PRIO_PGRP as i64);
+    const PRIO_USER = RubyValue::Int(libc::PRIO_USER as i64);
+
+    def self.pid(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(std::process::id() as i64))
     }
@@ -31,7 +43,7 @@ builtin_methods! {
     // `ForkTracker`, whose `super` lands here). Performs the real fork(2) and
     // answers the child pid (0 in the child), matching CRuby on a fork-capable
     // platform; it only ever runs if the program actually forks.
-    "_fork" => fn _fork(_recv, args, _block) {
+    def self._fork(_recv, args, _block) {
         arity!(args, 0);
         let pid = unsafe { libc::fork() };
         if pid < 0 {
@@ -47,7 +59,7 @@ builtin_methods! {
     // signal's default disposition and terminate the very program that
     // trapped it. Signal 0 (existence probe) and other-process delivery go
     // through the real syscall.
-    "kill" => fn kill(_recv, args, _block) {
+    def self.kill(_recv, args, _block) {
         let Some((sig, pids)) = args.split_first() else {
             return Err(arg_error!("wrong number of arguments (given 0, expected at least 1)"));
         };
@@ -83,46 +95,46 @@ builtin_methods! {
     }
     // `Process.ppid` has no portable std equivalent; libc's getppid is the
     // honest answer rather than a fabricated one.
-    "ppid" => fn ppid(_recv, args, _block) {
+    def self.ppid(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { libc::getppid() } as i64))
     }
-    "clock_gettime" => fn clock_gettime(_recv, args, _block) {
+    def self.clock_gettime(_recv, args, _block) {
         arity!(args, 1..=2);
         let clock = int_arg(&args[0])?;
         clock_in_unit(clock_seconds(clock)?, args.get(1))
     }
     // `Process.clock_getres(clock_id [, unit])` -- the clock's resolution, in the
     // same units `clock_gettime` accepts (default a Float of seconds).
-    "clock_getres" => fn clock_getres(_recv, args, _block) {
+    def self.clock_getres(_recv, args, _block) {
         arity!(args, 1..=2);
         let clock = int_arg(&args[0])?;
         clock_in_unit(clock_res_seconds(clock)?, args.get(1))
     }
     // Real/effective user and group ids (libc getuid/geteuid/getgid/getegid).
-    "uid" => fn uid(_recv, args, _block) {
+    def self.uid(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { libc::getuid() } as i64))
     }
-    "euid" => fn euid(_recv, args, _block) {
+    def self.euid(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { libc::geteuid() } as i64))
     }
-    "gid" => fn gid(_recv, args, _block) {
+    def self.gid(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { libc::getgid() } as i64))
     }
-    "egid" => fn egid(_recv, args, _block) {
+    def self.egid(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { libc::getegid() } as i64))
     }
     // `Process.getpgrp` -- the current process group id.
-    "getpgrp" => fn getpgrp(_recv, args, _block) {
+    def self.getpgrp(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { libc::getpgrp() } as i64))
     }
     // `Process.getsid([pid])` -- the session id of `pid` (0/none = this process).
-    "getsid" => fn getsid(_recv, args, _block) {
+    def self.getsid(_recv, args, _block) {
         arity!(args, 0..=1);
         let pid = match args.first() {
             None | Some(RubyValue::Nil) => 0,
@@ -137,7 +149,7 @@ builtin_methods! {
     // `Process.getpriority(which, who)` -- the scheduling priority. `getpriority`
     // returns -1 both for a real -1 priority and on error, so errno is cleared
     // first and checked after (CRuby does the same).
-    "getpriority" => fn getpriority(_recv, args, _block) {
+    def self.getpriority(_recv, args, _block) {
         arity!(args, 2);
         let which = int_arg(&args[0])? as libc::c_int;
         let who = int_arg(&args[1])? as libc::id_t;
@@ -149,7 +161,7 @@ builtin_methods! {
         Ok(RubyValue::Int(prio as i64))
     }
     // `Process.groups` -- the supplementary group ids, as an Array of Integer.
-    "groups" => fn groups(_recv, args, _block) {
+    def self.groups(_recv, args, _block) {
         arity!(args, 0);
         let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
         let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
@@ -163,7 +175,7 @@ builtin_methods! {
     }
     // `Process.times` -- a Process::Tms of CPU seconds, from `getrusage` for
     // this process (utime/stime) and its reaped children (cutime/cstime).
-    "times" => fn times(_recv, args, _block) {
+    def self.times(_recv, args, _block) {
         arity!(args, 0);
         // SAFETY: each `getrusage` fully initializes its zeroed out-param.
         let rusage = |who: libc::c_int| -> libc::rusage {
@@ -179,7 +191,7 @@ builtin_methods! {
 }
 
 /// One clock's current value in seconds. The ids are the OS's own
-/// (`libc::CLOCK_*`), which is exactly what `seed_process` publishes as
+/// (`libc::CLOCK_*`), which is exactly what the `CLOCK_*` constants publish as
 /// `Process::CLOCK_*` -- so a program that passes the constant through gets
 /// the clock it named, and one that passes a bare integer gets whatever that
 /// integer means to this OS, as in CRuby.
@@ -240,24 +252,6 @@ fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate
 /// Coerce an argument to an `i64` through the `to_int` protocol.
 fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
     crate::builtins::convert::to_index(v)
-}
-
-/// Installs the `Process` clock constants -- called once from generated
-/// `main()`. Values are the OS's own ids (see `clock_seconds`).
-pub fn seed_process() {
-    let cid = zeo_abi::PROCESS_CLASS.0;
-    let set = |name: &str, v: libc::clockid_t| {
-        crate::constants::const_set(cid, name, RubyValue::Int(v as i64));
-    };
-    set("CLOCK_REALTIME", libc::CLOCK_REALTIME);
-    set("CLOCK_MONOTONIC", libc::CLOCK_MONOTONIC);
-    set("CLOCK_PROCESS_CPUTIME_ID", libc::CLOCK_PROCESS_CPUTIME_ID);
-    set("CLOCK_THREAD_CPUTIME_ID", libc::CLOCK_THREAD_CPUTIME_ID);
-    // `Process.getpriority`/`setpriority`'s `which` selectors.
-    let seti = |name: &str, v: i64| crate::constants::const_set(cid, name, RubyValue::Int(v));
-    seti("PRIO_PROCESS", libc::PRIO_PROCESS as i64);
-    seti("PRIO_PGRP", libc::PRIO_PGRP as i64);
-    seti("PRIO_USER", libc::PRIO_USER as i64);
 }
 
 // ---------------------------------------------------------------------------

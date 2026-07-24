@@ -61,7 +61,6 @@ pub fn install_core_constants() {
     crate::builtins::io::seed_stdio();
     crate::builtins::io::seed_io_constants();
     crate::builtins::env::seed_env();
-    crate::builtins::process::seed_process();
     crate::builtins::file::seed_file();
     #[cfg(feature = "ext-etc")]
     crate::ext::etc::seed_etc();
