@@ -1,0 +1,375 @@
+//! The shared grammar for the `ruby_class! { ... }` DSL.
+//!
+//! ONE Ruby core class/module per file, declared in a Ruby-like syntax whose
+//! method bodies stay real Rust. Parsed here with `syn` so the exact same
+//! grammar backs both consumers and they can never drift:
+//!
+//! - `zeo-macros`' `ruby_class!` proc-macro emits the runtime code (the method
+//!   fns, the `ClassId`-keyed lookup tables, the constant installers, the
+//!   `linkme` registration).
+//! - `zeo`'s build.rs re-parses the same invocations out of the runtime source
+//!   and projects `CLASS_SURFACE` -- the shape (name/superclass/includes) and
+//!   method/constant NAMES the compiler folds `respond_to?`/`is_a?`/const
+//!   lookups against. (It reads only the headers; method bodies are opaque.)
+//!
+//! Grammar:
+//! ```text
+//! ruby_class! {
+//!     module Comparable = COMPARABLE_CLASS;              // module, own ClassId const
+//!     // class String = STRING_CLASS < OBJECT_CLASS;     // or: class + superclass const
+//!
+//!     include ENUMERABLE_CLASS;                          // 0+ mixins (ClassId consts)
+//!
+//!     const INFINITY = f64::INFINITY;                    // 0+ constants (RHS is a Rust expr)
+//!
+//!     def "<=>"(recv, args, block) { /* real Rust */ }   // instance method (name: str or ident)
+//!     def "between?" arity 2 (recv, args, block) { .. }  // optional per-name arity
+//!     def "succ" | "next" (recv, args, block) { .. }     // aliases sharing one body
+//!     private def helper(recv, args, block) { .. }       // visibility prefix
+//!     def self.pid(recv, args, block) { .. }             // class/singleton method
+//!
+//!     alias cmp = "<=>";                                 // late alias (new = existing)
+//! }
+//! ```
+//!
+//! Superclass and `include` targets are written as `ClassId` CONSTS (the one
+//! hard-ABI token), not names -- so the build.rs projection can emit them
+//! symbolically (`zeo_abi::OBJECT_CLASS`) and let rustc resolve them, never
+//! evaluating a const itself. Only the header NAME is a plain identifier.
+
+use proc_macro2::TokenStream;
+use syn::parse::{Parse, ParseStream};
+use syn::{braced, parenthesized, Expr, Ident, LitInt, LitStr, Path, Token};
+
+/// A fully-parsed `ruby_class! { ... }` body.
+pub struct ClassSpec {
+    pub kind: ClassKind,
+    /// The Ruby-visible name (`Comparable`, `String`) -- the header identifier.
+    pub name: Ident,
+    /// The class's own reserved `ClassId` const (e.g. `COMPARABLE_CLASS`), the
+    /// single hard-ABI token.
+    pub id: Path,
+    /// Mixins in source order, as `ClassId` consts.
+    pub includes: Vec<Path>,
+    pub consts: Vec<ConstDef>,
+    pub methods: Vec<MethodDef>,
+    pub aliases: Vec<AliasDef>,
+}
+
+/// Module vs class -- a class additionally carries its superclass `ClassId`.
+pub enum ClassKind {
+    Module,
+    Class { superclass: Path },
+}
+
+/// `const NAME = <expr>;` -- the value is real Rust the proc-macro passes
+/// through; the build.rs projection needs only the name.
+pub struct ConstDef {
+    pub name: Ident,
+    pub value: Expr,
+}
+
+/// A method's Ruby-level visibility, mirroring `rb_define_method` vs
+/// `rb_define_private_method`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Visibility {
+    Public,
+    Private,
+    Protected,
+}
+
+/// One `def`. Several Ruby NAMES can share a single Rust body (aliases that
+/// live at the same definition site, e.g. `succ`/`next`); each name carries its
+/// own optional arity, matching `builtin_methods!`'s per-name `[n]` column.
+pub struct MethodDef {
+    /// `def self.foo` (a class/singleton method) vs `def foo` (instance).
+    pub is_class_method: bool,
+    pub visibility: Visibility,
+    /// One or more Ruby names, in declaration order (first is the primary).
+    pub names: Vec<MethodName>,
+    /// The three body parameters, spelled by the author (`recv`/`_recv`, ...).
+    pub recv: Ident,
+    pub args: Ident,
+    pub block: Ident,
+    /// The `{ ... }` body -- real Rust, kept verbatim for the proc-macro.
+    pub body: TokenStream,
+}
+
+/// One Ruby method name plus its declared `Method#arity` (defaulting to CRuby's
+/// variadic `-1` when omitted).
+pub struct MethodName {
+    pub ruby: String,
+    pub arity: Option<i64>,
+}
+
+/// `alias new = old;` -- a second name for an already-defined method.
+pub struct AliasDef {
+    pub new_name: String,
+    pub old_name: String,
+}
+
+impl Parse for ClassSpec {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // Header: `module NAME = ID;` or `class NAME = ID < SUPER;`. `module`
+        // and `class` are not Rust keywords, so they arrive as plain idents.
+        let header: Ident = input.parse()?;
+        let (kind, name, id) = match header.to_string().as_str() {
+            "module" => {
+                let name: Ident = input.parse()?;
+                input.parse::<Token![=]>()?;
+                // `parse_mod_style`: the id is a plain `a::b::CONST` path with no
+                // generics, so the parser stops at a following `<` rather than
+                // mistaking `ID < SUPER` for `ID<SUPER>` generic arguments.
+                let id = Path::parse_mod_style(input)?;
+                input.parse::<Token![;]>()?;
+                (ClassKind::Module, name, id)
+            }
+            "class" => {
+                let name: Ident = input.parse()?;
+                input.parse::<Token![=]>()?;
+                let id = Path::parse_mod_style(input)?;
+                input.parse::<Token![<]>()?;
+                let superclass = Path::parse_mod_style(input)?;
+                input.parse::<Token![;]>()?;
+                (ClassKind::Class { superclass }, name, id)
+            }
+            other => {
+                return Err(syn::Error::new(
+                    header.span(),
+                    format!("expected `module` or `class` to open ruby_class!, found `{other}`"),
+                ));
+            }
+        };
+
+        let mut spec = ClassSpec {
+            kind,
+            name,
+            id,
+            includes: Vec::new(),
+            consts: Vec::new(),
+            methods: Vec::new(),
+            aliases: Vec::new(),
+        };
+
+        while !input.is_empty() {
+            parse_item(input, &mut spec)?;
+        }
+        Ok(spec)
+    }
+}
+
+/// Parse one top-level item (after the header) into `spec`. Items are
+/// keyword-led: `include`, `const`, `alias`, an optional `private`/`protected`
+/// visibility prefix, then `def`.
+fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
+    // `const` is a real Rust keyword, so it can't be peeked as an `Ident` like
+    // the (non-keyword) `include`/`alias`/`private`/`protected`/`def` leads.
+    if input.peek(Token![const]) {
+        input.parse::<Token![const]>()?;
+        let name: Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        let value: Expr = input.parse()?;
+        input.parse::<Token![;]>()?;
+        spec.consts.push(ConstDef { name, value });
+        return Ok(());
+    }
+    let lookahead: Ident = input.fork().parse().map_err(|_| {
+        input.error("expected `include`, `const`, `alias`, `private`, `protected`, or `def`")
+    })?;
+    match lookahead.to_string().as_str() {
+        "include" => {
+            input.parse::<Ident>()?; // `include`
+            spec.includes.push(Path::parse_mod_style(input)?);
+            input.parse::<Token![;]>()?;
+        }
+        "alias" => {
+            input.parse::<Ident>()?; // `alias`
+            let new_name = parse_method_name(input)?;
+            input.parse::<Token![=]>()?;
+            let old_name = parse_method_name(input)?;
+            input.parse::<Token![;]>()?;
+            spec.aliases.push(AliasDef { new_name, old_name });
+        }
+        "private" | "protected" => {
+            let vis_ident: Ident = input.parse()?;
+            let visibility = if vis_ident == "private" {
+                Visibility::Private
+            } else {
+                Visibility::Protected
+            };
+            spec.methods.push(parse_def(input, visibility)?);
+        }
+        "def" => {
+            spec.methods.push(parse_def(input, Visibility::Public)?);
+        }
+        other => {
+            return Err(syn::Error::new(
+                lookahead.span(),
+                format!("unexpected `{other}` in ruby_class! body"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Parse a `def` (the `def` keyword is still on `input`), given the visibility
+/// already consumed by the caller.
+fn parse_def(input: ParseStream, visibility: Visibility) -> syn::Result<MethodDef> {
+    input.parse::<Ident>()?; // `def`
+
+    // `self .` marks a class/singleton method.
+    let is_class_method = input.peek(Token![self]) && input.peek2(Token![.]);
+    if is_class_method {
+        input.parse::<Token![self]>()?;
+        input.parse::<Token![.]>()?;
+    }
+
+    // One or more `NAME [arity N]`, separated by `|`, sharing one body.
+    let mut names = Vec::new();
+    loop {
+        let ruby = parse_method_name(input)?;
+        let arity = if peek_ident(input, "arity") {
+            input.parse::<Ident>()?; // `arity`
+            let lit: LitInt = input.parse()?;
+            Some(lit.base10_parse::<i64>()?)
+        } else {
+            None
+        };
+        names.push(MethodName { ruby, arity });
+        if input.peek(Token![|]) {
+            input.parse::<Token![|]>()?;
+        } else {
+            break;
+        }
+    }
+
+    // `(recv, args, block)`.
+    let params;
+    parenthesized!(params in input);
+    let recv: Ident = params.parse()?;
+    params.parse::<Token![,]>()?;
+    let args: Ident = params.parse()?;
+    params.parse::<Token![,]>()?;
+    let block: Ident = params.parse()?;
+
+    // The body block, captured verbatim (braces stripped) as real Rust.
+    let body_buf;
+    braced!(body_buf in input);
+    let body: TokenStream = body_buf.parse()?;
+
+    Ok(MethodDef {
+        is_class_method,
+        visibility,
+        names,
+        recv,
+        args,
+        block,
+        body,
+    })
+}
+
+/// A Ruby method/alias name: either a string literal (operators, `?`/`!`
+/// suffixes -- `"<=>"`, `"between?"`) or a bare identifier (`pid`, `succ`).
+fn parse_method_name(input: ParseStream) -> syn::Result<String> {
+    if input.peek(LitStr) {
+        Ok(input.parse::<LitStr>()?.value())
+    } else {
+        Ok(input.parse::<Ident>()?.to_string())
+    }
+}
+
+/// Whether the next token is the identifier `word` (a contextual keyword like
+/// `arity`, which is not a real Rust keyword).
+fn peek_ident(input: ParseStream, word: &str) -> bool {
+    input
+        .fork()
+        .parse::<Ident>()
+        .is_ok_and(|id| id == word)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    fn parse(ts: TokenStream) -> ClassSpec {
+        syn::parse2(ts).expect("ruby_class! body should parse")
+    }
+
+    #[test]
+    fn a_pure_mixin_module_with_operator_methods() {
+        let spec = parse(quote! {
+            module Comparable = COMPARABLE_CLASS;
+            def "<" arity 1 (recv, args, _block) { lt_impl(recv, args) }
+            def "<=" arity 1 (recv, args, _block) { le_impl(recv, args) }
+            def "between?" arity 2 (recv, args, _block) { between(recv, args) }
+        });
+        assert!(matches!(spec.kind, ClassKind::Module));
+        assert_eq!(spec.name.to_string(), "Comparable");
+        assert_eq!(spec.id.segments.last().unwrap().ident, "COMPARABLE_CLASS");
+        assert_eq!(spec.methods.len(), 3);
+        assert!(spec.methods.iter().all(|m| !m.is_class_method));
+        assert_eq!(spec.methods[0].names[0].ruby, "<");
+        assert_eq!(spec.methods[0].names[0].arity, Some(1));
+        assert_eq!(spec.methods[2].names[0].ruby, "between?");
+        assert_eq!(spec.methods[2].names[0].arity, Some(2));
+    }
+
+    #[test]
+    fn a_class_with_superclass_constants_and_class_methods() {
+        let spec = parse(quote! {
+            class Float = FLOAT_CLASS < NUMERIC_CLASS;
+            include COMPARABLE_CLASS;
+            const INFINITY = f64::INFINITY;
+            const NAN = f64::NAN;
+            def "nan?"(recv, _args, _block) { Ok(is_nan(recv)) }
+            def self.pi(_recv, _args, _block) { Ok(RubyValue::Float(std::f64::consts::PI)) }
+        });
+        match &spec.kind {
+            ClassKind::Class { superclass } => {
+                assert_eq!(superclass.segments.last().unwrap().ident, "NUMERIC_CLASS");
+            }
+            ClassKind::Module => panic!("expected a class"),
+        }
+        assert_eq!(spec.includes.len(), 1);
+        assert_eq!(spec.includes[0].segments.last().unwrap().ident, "COMPARABLE_CLASS");
+        assert_eq!(spec.consts.len(), 2);
+        assert_eq!(spec.consts[0].name.to_string(), "INFINITY");
+        assert_eq!(spec.methods.len(), 2);
+        assert!(!spec.methods[0].is_class_method);
+        assert!(spec.methods[1].is_class_method);
+        assert_eq!(spec.methods[1].names[0].ruby, "pi");
+    }
+
+    #[test]
+    fn shared_body_aliases_visibility_and_late_alias() {
+        let spec = parse(quote! {
+            module Process = PROCESS_CLASS;
+            def self."pid"(_recv, _args, _block) { pid() }
+            def self."succ" | "next"(_recv, _args, _block) { succ() }
+            private def helper(_recv, _args, _block) { helper_impl() }
+            alias cmp = "<=>";
+        });
+        assert_eq!(spec.methods.len(), 3);
+        // Shared-body aliases: two names, one def.
+        assert_eq!(spec.methods[1].names.len(), 2);
+        assert_eq!(spec.methods[1].names[0].ruby, "succ");
+        assert_eq!(spec.methods[1].names[1].ruby, "next");
+        // Visibility prefix.
+        assert_eq!(spec.methods[2].visibility, Visibility::Private);
+        assert_eq!(spec.methods[2].names[0].ruby, "helper");
+        // Late alias.
+        assert_eq!(spec.aliases.len(), 1);
+        assert_eq!(spec.aliases[0].new_name, "cmp");
+        assert_eq!(spec.aliases[0].old_name, "<=>");
+    }
+
+    #[test]
+    fn default_arity_is_none_meaning_variadic() {
+        let spec = parse(quote! {
+            module M = MATH_CLASS;
+            def "sqrt"(_recv, _args, _block) { Ok(RubyValue::Nil) }
+        });
+        assert_eq!(spec.methods[0].names[0].arity, None);
+    }
+}

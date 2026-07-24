@@ -1,0 +1,19 @@
+[package]
+name = "zeo-class-spec"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# The shared grammar for the `ruby_class! { ... }` DSL, parsed with `syn` so
+# the SAME parser serves both the `zeo-macros` proc-macro (which emits runtime
+# code) and `zeo`'s build.rs (which projects the compiler's `CLASS_SURFACE`) --
+# one grammar, no drift between what the runtime registers and what the
+# compiler folds against.
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+[lints]
+workspace = true

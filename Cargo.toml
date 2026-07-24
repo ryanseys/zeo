@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/zeo",
     "crates/zeo-abi",
+    "crates/zeo-class-spec",
     "crates/zeo-enc",
     "crates/zeo-hir",
     "crates/zeo-rt",
@@ -26,6 +27,7 @@ license = "MIT OR Apache-2.0"
 # Path deps between workspace crates, so members spell them uniformly.
 zeo = { path = "crates/zeo" }
 zeo-abi = { path = "crates/zeo-abi" }
+zeo-class-spec = { path = "crates/zeo-class-spec" }
 zeo-enc = { path = "crates/zeo-enc" }
 zeo-fiber = { path = "crates/zeo-fiber" }
 zeo-hir = { path = "crates/zeo-hir" }

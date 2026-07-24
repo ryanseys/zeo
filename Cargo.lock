@@ -1557,6 +1557,15 @@ name = "zeo-abi"
 version = "0.1.0"
 
 [[package]]
+name = "zeo-class-spec"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "zeo-enc"
 version = "0.1.0"
 dependencies = [
