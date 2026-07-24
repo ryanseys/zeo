@@ -321,7 +321,7 @@ impl Hir {
     }
 
     /// Whether this program can reach the RUNTIME eval VM -- the signal
-    /// `build::Runtime` uses to decide whether the final binary must link the
+    /// `backend::Runtime` uses to decide whether the final binary must link the
     /// prism-backed `eval-vm` runtime variant, or can stay lean (parser-free).
     ///
     /// Only two builtins funnel into `zeo_rt::eval_value`/`eval_string` (the

@@ -3,7 +3,7 @@
 //!
 //! One function, [`run_golden`], drives every `.rb` the same way the e2e
 //! `run_ruby` helper does -- `zeo::compile_to_rust_with` ->
-//! `zeo::build::build_binary` (content-addressed cache) -> spawn -- then diffs
+//! `zeo::backend::build_binary` (content-addressed cache) -> spawn -- then diffs
 //! stdout/stderr against the committed **ruby-oracle** golden `.expected`
 //! (+ `.err.expected`/`.args`/`.stdin` sidecars).
 //!
@@ -138,8 +138,8 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
 
 // ---- compile + run via the zeo library (same path as e2e `run_ruby`) ----
 
-fn profile() -> zeo::build::Profile {
-    zeo::build::Profile::from_env_or(zeo::build::Profile::Release)
+fn profile() -> zeo::backend::Profile {
+    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Release)
 }
 
 /// Compile `source` with zeo and run the produced binary in `run_cwd` with
@@ -163,9 +163,9 @@ fn compile_and_run(
         std::process::id(),
         std::thread::current().id()
     ));
-    let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::build::ensure_runtime_built(profile(), runtime)?;
-    zeo::build::build_binary(&compiled.rust_source, &bin, profile(), runtime)?;
+    let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
+    zeo::backend::ensure_runtime_built(profile(), runtime)?;
+    zeo::backend::build_binary(&compiled.rust_source, &bin, profile(), runtime)?;
 
     let mut cmd = Command::new(&bin);
     cmd.args(args).current_dir(run_cwd);

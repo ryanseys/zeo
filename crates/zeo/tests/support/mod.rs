@@ -22,8 +22,8 @@ pub struct RunResult {
 /// (the release runtime is `strip = "symbols"`). Reading the env from many
 /// `#[test]` threads is safe: the data race `from_env_or` warns about is
 /// `set_var` vs `var_os`, and this only ever reads.
-fn harness_profile() -> zeo::build::Profile {
-    zeo::build::Profile::from_env_or(zeo::build::Profile::Release)
+fn harness_profile() -> zeo::backend::Profile {
+    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Release)
 }
 
 pub fn run_ruby(source: &str) -> RunResult {
@@ -62,10 +62,10 @@ pub fn run_ruby_packages(
         std::process::id(),
         std::thread::current().id()
     ));
-    let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::build::ensure_runtime_built(harness_profile(), runtime)
+    let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
+    zeo::backend::ensure_runtime_built(harness_profile(), runtime)
         .expect("building zeo-rt for the e2e harness");
-    zeo::build::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
+    zeo::backend::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
     let out = std::process::Command::new(&bin)
@@ -168,10 +168,10 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         std::process::id(),
         std::thread::current().id()
     ));
-    let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::build::ensure_runtime_built(harness_profile(), runtime)
+    let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
+    zeo::backend::ensure_runtime_built(harness_profile(), runtime)
         .expect("building zeo-rt for the e2e harness");
-    zeo::build::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
+    zeo::backend::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
 

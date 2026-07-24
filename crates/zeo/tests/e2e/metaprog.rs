@@ -214,7 +214,7 @@ fn eval_of_a_non_literal_argument_runs_in_the_vm() {
     assert_eq!(result.stdout, "42\n");
 }
 
-/// The `needs_eval_vm` verdict drives `build::Runtime` selection: `true` links
+/// The `needs_eval_vm` verdict drives `backend::Runtime` selection: `true` links
 /// the prism-backed runtime, `false` keeps the binary lean. This asserts the
 /// decision itself (not just that programs run), because a false negative would
 /// ship a lean binary whose `eval` is a `NotImplementedError` stub, and a false

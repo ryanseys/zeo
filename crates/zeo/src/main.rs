@@ -1,5 +1,5 @@
 //! The `zeo` CLI: argument parsing plus calling into the `zeo`
-//! library's `compile_to_rust`/`build::build_binary` -- see `lib.rs` for the
+//! library's `compile_to_rust`/`backend::build_binary` -- see `lib.rs` for the
 //! actual parse -> analyze -> codegen -> build pipeline.
 
 use std::path::PathBuf;
@@ -300,7 +300,7 @@ fn run() -> Result<(), MainError> {
         return Ok(());
     }
 
-    use zeo::build::{Profile, Runtime, build_binary, ensure_runtime_built};
+    use zeo::backend::{Profile, Runtime, build_binary, ensure_runtime_built};
 
     // Which runtime variant this program's binary links: the lean, parser-free
     // default, or the prism-backed `eval-vm` one iff the compiler saw a runtime

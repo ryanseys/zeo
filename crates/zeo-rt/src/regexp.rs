@@ -65,7 +65,7 @@ impl RegexpData {
 
 /// Link-path proof for the vendored Oniguruma C archive: compiles and runs an
 /// onig pattern so generated programs (linked by bare `rustc` against the
-/// prebuilt rlib, `zeo::build`) demonstrably resolve the bundled C archive.
+/// prebuilt rlib, `zeo::backend`) demonstrably resolve the bundled C archive.
 /// Onig now backs the `Engine::Onig` matching path (see `Engine`); this stays
 /// as a cheap, dependency-free link smoke test exercised by an e2e.
 pub fn onig_linkcheck() -> bool {

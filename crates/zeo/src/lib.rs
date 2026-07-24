@@ -7,13 +7,13 @@
 //!
 //! Exposed as a library (not just a `main.rs` binary) so both the CLI and
 //! the in-process test suite (`tests/`) can call `compile_to_rust` and
-//! `build::build_binary` directly -- no subprocess spawn needed just to
+//! `backend::build_binary` directly -- no subprocess spawn needed just to
 //! invoke the compiler itself; a subprocess is only unavoidable for the
 //! final `cargo build` of the *generated* program (and running the
 //! resulting binary), since that's a genuinely separate compilation unit.
 
 pub mod analyze;
-pub mod build;
+pub mod backend;
 pub mod codegen;
 pub mod compiler;
 pub mod diagnostics;
@@ -67,15 +67,15 @@ pub struct CompileOptions {
 }
 
 /// A compiled program: the generated Rust source, ready for
-/// `build::build_binary`.
+/// `backend::build_binary`.
 #[derive(Debug)]
 pub struct CompileOutput {
     pub rust_source: String,
     /// Whether this program can reach the runtime eval VM (see
-    /// `Hir::uses_runtime_eval`). Selects which `build::Runtime` variant the
+    /// `Hir::uses_runtime_eval`). Selects which `backend::Runtime` variant the
     /// binary links: `true` -> the prism-backed `eval-vm` runtime, `false` ->
     /// the lean, parser-free default. The build step maps it via
-    /// `build::Runtime::for_eval`.
+    /// `backend::Runtime::for_eval`.
     pub needs_eval_vm: bool,
 }
 
