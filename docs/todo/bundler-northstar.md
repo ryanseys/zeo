@@ -100,7 +100,7 @@ native module:
    `def self.x` outranks the mixin (`dispatch::class_defines_own_class_method`).
 
 Verified vs oracle: full API shapes match; 3 unit + 11 e2e tests +
-`examples/securerandom.rb` + `examples/extend_class_and_module.rb`.
+`tests/securerandom.rb` + `tests/extend_class_and_module.rb`.
 
 ## The grind, in the order zeo hits it (post-securerandom)
 
@@ -145,7 +145,7 @@ structs (all portable members + the BSD `change`/`uclass`/`expire` on Darwin)
 with the Struct-like `members`/`to_a`/`to_h`/`each`/`[]`; `sysconf`/`confstr`/
 `uname`/`nprocessors`/`getlogin`/`sysconfdir`/`systmpdir`; and the portable
 `SC_*`/`PC_*`/`CS_*` constant set libc exposes. 5 unit + 7 e2e tests +
-`examples/etc.rb`, oracle-matched. Doc divergence: `sysconfdir` -> `/etc` (build
+`tests/etc.rb`, oracle-matched. Doc divergence: `sysconfdir` -> `/etc` (build
 prefix, like rbconfig) vs CRuby's install-prefix path — rubygems rescues it.
 
 **Current blocker (STDLIB):** `cannot load such file -- fileutils` (via

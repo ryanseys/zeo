@@ -67,8 +67,8 @@ fixed-width `:int8`…`:int64`), their unsigned twins and `:size_t`,
 `:float`/`:double`, `:bool`, `:string` (a `const char *` — a NUL-terminated copy
 in, a Ruby String out), and `:pointer` (below). A wrong argument type is a
 `TypeError`, exactly as the gem raises. Verified byte-for-byte against
-`ffi 1.17.4` — see `examples/ffi_libc.rb`, `examples/ffi_memory.rb`,
-`examples/ffi_struct.rb`.
+`ffi 1.17.4` — see `tests/ffi_libc.rb`, `tests/ffi_memory.rb`,
+`tests/ffi_struct.rb`.
 
 **Memory — `FFI::Pointer` / `FFI::MemoryPointer`.** Real runtime classes over a
 native heap buffer. `MemoryPointer.new(:int, 3)` / `.new(bytes)` /

@@ -11,9 +11,8 @@ description = "Run zeo cli"
 run = "cargo run"
 
 [tasks.conformance]
-description = "Run conformance checks"
-env = { "SPINEL_TEST_DIR" = "/Users/ryanseys/dev/spinel/test" }
-run = "cargo run -p xtask conformance run --update-scoreboard"
+description = "Run the golden conformance suites (spinel corpus + examples + gaps)"
+run = "cargo nextest run -p zeo --test spinel --test examples --test gaps"
 
 # The e2e suite links generated programs against the RELEASE runtime; prebuild
 # both variants first so nextest's per-test processes don't race `cargo build`

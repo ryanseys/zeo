@@ -90,7 +90,7 @@ Two Rust idioms did almost all of the work:
 All 7 example programs compile through the full pipeline (`ruby-prism` parse
 → `Hir` lowering → `analyze` registration → `codegen` Rust-text emission →
 `cargo build` against `zeo-rt`) and produce byte-identical stdout to real
-`ruby`, verified by `cargo run -p xtask -- test`:
+`ruby`, verified by `cargo test -p zeo --test examples`:
 
 | Example | Proves |
 |---|---|

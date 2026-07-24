@@ -20,10 +20,10 @@ $ ./hello
 
 zeo's compatibility contract is **oracle-verified behavior, with every
 divergence documented** — never silent wrongness. The conformance suite
-compiles ~2,300 golden-output programs and diffs them against real `ruby`
-(currently 4.0.5); the scoreboard lives in
-[`conformance/SCOREBOARD.md`](conformance/SCOREBOARD.md) (**93%** passing and
-climbing). Where zeo substitutes its own implementation for a gem or C
+(`tests/spinel/`) compiles ~2,368 golden-output programs and diffs them against
+real `ruby` (currently 4.0.5) as `cargo nextest` cases; a green run is the
+record, and known-not-yet-matching programs are tracked as XFAIL gaps in
+`tests/gaps/`. Where zeo substitutes its own implementation for a gem or C
 extension (`json`, `psych`, `zlib`, …), the compile says so — a warning at
 build time and a machine-readable `zeo-gems.json` ledger next to every
 artifact. The catalogue of substitutions and known divergences is
@@ -55,8 +55,8 @@ foo.rb ──prism──▶ HIR arena ──analyze──▶ typed classes/MRO �
 ## Building from source
 
 Requirements: Rust ≥ 1.87 (see `rust-version`), a C compiler (for the vendored
-Prism and Oniguruma), and — only for running the conformance suite against the
-oracle — a real Ruby matching `conformance/SCOREBOARD.md`'s version.
+Prism and Oniguruma), and — only for re-blessing goldens from the oracle — a
+real Ruby matching `mise.toml`'s pinned version.
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
@@ -67,12 +67,15 @@ $ target/release/zeo yourprogram.rb -o yourprogram
 Development workflow:
 
 ```console
-$ cargo test --workspace                          # unit + e2e suites
-$ cargo run -p xtask -- test                      # examples/ golden suite
-$ cargo run -p xtask -- conformance run --smoke   # 153-test quick tier
-$ cargo run -p xtask -- conformance run           # the full corpus
+$ cargo nextest run --workspace                   # unit + e2e + all golden suites
+$ cargo nextest run -p zeo --test spinel          # the full ruby-oracle corpus
+$ cargo nextest run -p zeo --test examples --test gaps
+$ ZEO_BLESS=1 cargo test -p zeo --test spinel     # re-record goldens from ruby
 $ cargo run -p xtask -- bench                     # golden-output benchmarks
 ```
+
+The golden-file suites (examples, the spinel corpus, and the XFAIL gaps tracker)
+live under `tests/` and run as datatest-stable `cargo test`/nextest targets.
 
 ## Status
 
@@ -90,5 +93,5 @@ zeo by you, as defined in the Apache-2.0 license, shall be dual licensed as
 above, without any additional terms or conditions.
 
 Vendored components keep their own (compatible) licenses — see
-`gems/UPSTREAM.md`, `conformance/corpus/UPSTREAM.md`, and
+`gems/UPSTREAM.md`, `tests/spinel/UPSTREAM.md`, and
 `bench/UPSTREAM.md` for provenance.

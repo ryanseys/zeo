@@ -2,9 +2,13 @@
 
 Ruby programs zeo does **not yet** match `ruby` on — checked in and tracked so
 we can grind them down over time. Same file format as
-[`../corpus/test/`](../corpus/test) (`<name>.rb` + `<name>.rb.expected` stdout
-golden, plus optional `.err.expected` / `.args` / `.stdin` sidecars), so
-promoting a fixed gap is a plain `git mv` into the corpus.
+[`../spinel/`](../spinel) (`<name>.rb` + `<name>.rb.expected` stdout golden,
+plus optional `.err.expected` / `.args` / `.stdin` sidecars), so promoting a
+fixed gap is a plain move into the corpus.
+
+Some gaps are stderr-only divergences on output zeo intentionally won't
+reproduce (ruby's experimental-API / duplicate-key warnings, thread exception
+dumps) — those stay parked here rather than in the passing suite.
 
 ## The XFAIL contract
 
@@ -17,9 +21,9 @@ in **`Mode::Xfail`**:
   promote" message. That's the signal to move it into the corpus:
 
   ```sh
-  git mv conformance/gaps/foo.rb* conformance/corpus/test/
+  git mv tests/gaps/foo.rb* tests/spinel/
   # if foo's output embeds its source path, re-bless under its new home:
-  ZEO_BLESS=1 cargo test -p zeo --test corpus -- foo
+  ZEO_BLESS=1 cargo test -p zeo --test spinel -- foo
   ```
 
 ## Goldens are recorded from ruby, never hand-written
@@ -37,4 +41,4 @@ ZEO_BLESS=1 cargo test -p zeo --test gaps -- foo   # one gap
 Drop in `foo.rb`, then `ZEO_BLESS=1 cargo test -p zeo --test gaps -- foo` to
 capture its golden. If zeo already matches ruby, the test will tell you it's not
 a gap — put it in the corpus instead. New gaps usually arrive via
-`cargo xtask conformance import` (spinel triage).
+`scripts/import-spinel-corpus.sh` (spinel triage).

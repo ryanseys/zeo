@@ -2,8 +2,8 @@
 //! Compiles each snippet with `zeo` in-process, builds and runs the
 //! generated program, and asserts stdout/stderr/exit status separately, plus a
 //! zero-subprocess negative-path tier (`compile_project(...).unwrap_err()`) for
-//! compile errors. `examples/*.rb` with `.expected` remain as a smaller "real
-//! CLI, real `ruby`-oracle" smoke suite driven by `cargo run -p xtask -- test`;
+//! compile errors. The `tests/*.rb` example programs with `.rb.expected` remain
+//! as a smaller ruby-oracle golden smoke suite (`cargo test --test examples`);
 //! this is the default place to add coverage.
 //!
 //! Split by subject into the sibling modules below. This is ONE test binary --

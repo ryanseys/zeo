@@ -4,9 +4,9 @@
 
 - Rust ≥ 1.87 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
   used in development) and a C compiler.
-- A real Ruby matching the oracle version in `conformance/SCOREBOARD.md`
-  (via `mise install`) — only needed when regenerating expected output or
-  oracle-verifying; the committed snapshots cover ordinary runs.
+- A real Ruby matching the oracle version pinned in `mise.toml`
+  (via `mise install`) — only needed when re-blessing golden output from the
+  oracle (`ZEO_BLESS=1`); the committed snapshots cover ordinary runs.
 
 ## The one rule: oracle-verified, divergence-documented
 
@@ -23,15 +23,17 @@ zeo's house style is *approximation is fine, silent wrongness is not*:
 ## Workflow
 
 ```console
-$ cargo test --workspace                          # unit + e2e
-$ cargo run -p xtask -- conformance run --smoke   # quick tier (per-PR CI runs this)
-$ cargo run -p xtask -- conformance run           # full corpus (nightly CI)
-$ cargo run -p xtask -- conformance triage --bucket <name>   # inspect a failure cluster
+$ cargo nextest run --workspace                   # unit + e2e + all golden suites
+$ cargo nextest run -p zeo --test spinel          # the full ruby-oracle corpus
+$ cargo nextest run -p zeo --test examples --test gaps
+$ ZEO_BLESS=1 cargo test -p zeo --test <suite>    # re-record goldens from ruby
 $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
 ```
 
-- The conformance scoreboard (`conformance/SCOREBOARD.md`) must not regress;
-  update it with `--update-scoreboard` when your change moves it.
+- The golden suites live under `tests/` (examples + the spinel corpus + the
+  XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
+  a green `cargo nextest` is the conformance record. A fixed gap fails CI as an
+  XPASS — promote it into `tests/spinel/`.
 - Perf-sensitive changes report their `xtask bench` delta; intentional shifts
   are banked by committing `--update-baseline`'s diff.
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets` (zero
@@ -53,5 +55,5 @@ $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
 ## Commits
 
 Small and focused; present-tense summary line; the body says *why*. The full
-gate (fmt + clippy + tests + conformance + bench) runs at review boundaries —
-per-commit, run the focused checks for what you touched.
+gate (fmt + clippy + nextest + bench) runs at review boundaries — per-commit,
+run the focused checks for what you touched.

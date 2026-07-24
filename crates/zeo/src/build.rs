@@ -528,13 +528,13 @@ fn cache_dir() -> PathBuf {
 /// Split in two so a generation can be swept wholesale. Every entry under a
 /// generation dies the moment the runtime is rebuilt -- generated programs link
 /// `libzeo_rt.rlib` statically -- and a generation runs to several GB across
-/// the conformance corpus (measured 2026-07: ~5.5MB per release entry, ~15MB
+/// the golden corpus (measured 2026-07: ~5.5MB per release entry, ~15MB
 /// per debug entry), so a flat keyspace grew by that much per runtime rebuild
 /// and never shrank. `sweep_stale_cache_generations` reclaims dead generations
-/// at conformance-prebuild time.
+/// when tooling invokes it between runs.
 ///
 /// The rlibs are keyed by len+mtime rather than content: `zeo` runs as a
-/// fresh process per case under the conformance harness, so a content hash of
+/// fresh process per case under the golden harness, so a content hash of
 /// the 32MB rlib could not be amortized and would cost more than it saves.
 /// Cargo does not touch mtimes on a no-op rebuild, so this only
 /// over-invalidates when the runtime genuinely got rebuilt.
@@ -548,9 +548,8 @@ fn cache_path(rust_source: &str, profile: Profile, runtime: Runtime) -> Result<P
     // swept here -- a `remove_dir_all` in the build hot path could delete a
     // directory a sibling process is still writing rustc output into (seen as
     // spurious FAIL_RUSTC across the corpus). Reclamation happens between runs
-    // instead: automatically by `sweep_stale_cache_generations` (the
-    // conformance prebuild, under its run lock), or wholesale by
-    // `xtask conformance clean-cache`.
+    // instead, via `sweep_stale_cache_generations` (or by wiping the cache dir
+    // wholesale).
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     Ok(dir.join(format!("{:016x}", fnv1a64(rust_source.as_bytes()))))
 }
@@ -597,15 +596,15 @@ fn generation_hash(profile: Profile, runtime: Runtime) -> Result<u64, String> {
 /// orphaned multi-GB generation per runtime rebuild.
 ///
 /// The keep-set is every (profile, runtime) combination whose rlib exists RIGHT
-/// NOW -- not just the caller's own combination -- so a concurrent harness
-/// using a different profile (e.g. an e2e run's Debug generation during a
-/// Release conformance sweep) keeps its entries. A combination whose rlib is
-/// missing has an uncomputable generation name, so its old dirs are dead weight
-/// by construction.
+/// NOW -- not just the caller's own combination -- so a concurrent build using a
+/// different profile (e.g. an e2e run's Debug generation during a Release golden
+/// sweep) keeps its entries. A combination whose rlib is missing has an
+/// uncomputable generation name, so its old dirs are dead weight by construction.
 ///
-/// Callers must hold whatever excludes concurrent sweeps/builds of the SAME
-/// generations (the conformance harness's run lock). Best-effort throughout:
-/// a failed removal costs disk, never a build.
+/// Not wired into a run today (its previous caller was the retired conformance
+/// prebuild); a caller must exclude concurrent sweeps/builds of the SAME
+/// generations. Best-effort throughout: a failed removal costs disk, never a
+/// build.
 pub fn sweep_stale_cache_generations() {
     let root = cache_dir();
     let Ok(entries) = std::fs::read_dir(&root) else {
