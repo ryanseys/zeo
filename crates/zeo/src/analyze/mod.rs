@@ -507,7 +507,11 @@ fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
         }
         (target, modules)
     };
-    for m in modules {
+    // Registered in REVERSE argument order so `mro`'s uniform
+    // "later-registered-is-closer" flatten yields source order in the ancestry
+    // (`prepend A, B` -> [A, B, self]) -- the same rule the class-body multi-arg
+    // lowering follows (see `zeo-hir/lower/defs.rs`).
+    for m in modules.into_iter().rev() {
         compiler.classes[target.0 as usize].prepends.push(m);
     }
     true

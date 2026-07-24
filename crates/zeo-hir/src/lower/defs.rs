@@ -1402,7 +1402,24 @@ fn lower_class_body_statement(
                         .collect::<PResult<Vec<_>>>()
                     {
                         if !names.is_empty() {
-                            out.extend(names.into_iter().map(|n| {
+                            // A single multi-arg `include`/`prepend` keeps its
+                            // arguments in SOURCE order in the ancestry
+                            // (`include A, B` -> [self, A, B]; `prepend A, B` ->
+                            // [A, B, self]). `analyze::mro` flattens the
+                            // registered mixin list with a uniform
+                            // "later-registered-is-closer" reversal -- correct
+                            // for SEPARATE statements (`include A; include B` ->
+                            // [self, B, A]) -- so one statement's args must be
+                            // registered in REVERSE to survive that reversal in
+                            // source order. `extend` uses a distinct singleton
+                            // path (`runtime_extend`) that already dispatches
+                            // first-arg-wins, so it keeps source order.
+                            let ordered: Vec<_> = if name == "extend" {
+                                names
+                            } else {
+                                names.into_iter().rev().collect()
+                            };
+                            out.extend(ordered.into_iter().map(|n| {
                                 hir.push(match name.as_str() {
                                     "include" => HirNode::Include(n),
                                     "extend" => HirNode::Extend(n),
