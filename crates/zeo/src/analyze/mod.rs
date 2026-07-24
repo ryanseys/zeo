@@ -342,13 +342,27 @@ fn process_top_stmt(
                 else_body
             }
             None => {
+                // A conditional REOPENING of an already-defined class
+                // (`class Set ... end if set_pp`) doesn't need a decidable
+                // guard: push the guard INTO the class body and let the ordinary
+                // class-body walk register its methods conditionally.
+                if let Some(rewritten) =
+                    try_conditional_reopen(compiler, cond, &then_body, &else_body)
+                {
+                    tracing::debug!(
+                        guard = cond_kind(compiler, cond),
+                        "top-level conditional def: undecidable guard over a class REOPENING -- pushing the guard into the class body"
+                    );
+                    return process_top_stmt(compiler, rewritten, false, main_statements, pre_exec);
+                }
                 tracing::debug!(
                     guard = cond_kind(compiler, cond),
                     "top-level conditional def: guard UNDECIDABLE -- compile error"
                 );
                 return Err(
                     "class/module definition inside a top-level `if` is only supported when \
-                     the condition is compile-time decidable (e.g. `defined?(SomeConstant)`)"
+                     the condition is compile-time decidable (e.g. `defined?(SomeConstant)`), \
+                     or a reopening of an already-defined class that only adds methods"
                         .to_string(),
                 );
             }
@@ -399,6 +413,65 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// name that might be one -- any name the program `ConstWrite`s, or a
 /// qualified read whose scope resolves without a nested class match --
 /// degrades to `None` (undecidable) rather than a confident `false`.
+/// If an undecidable-guard top-level `if` is exactly a conditional REOPENING of
+/// an already-registered class -- `class Existing ... end if cond` (one branch a
+/// lone `ClassDef` naming a known class, the other empty) -- rewrite it by
+/// pushing the guard INTO the class body: `class Existing; if cond; <body>; end;
+/// end`. The ordinary class-body walk already handles that shape (a conditional
+/// `def` becomes a runtime `define_method`, still registered for reflection via
+/// `register_conditional_defs` -- the fileutils platform-`def` path), so no new
+/// codegen is needed. Returns the rewritten `ClassDef`, or `None` when the
+/// pattern doesn't match -- a NEW class, multiple statements, or a non-`ClassDef`
+/// branch stay a clean compile error.
+///
+/// Valid ONLY for a reopening: for a NEW class the transform would define it
+/// unconditionally (`class X; if cond; ...` always creates `X`), changing
+/// semantics. pp.rb's `class Set ... end if set_pp` monkeypatch is the case.
+fn try_conditional_reopen(
+    compiler: &mut Compiler,
+    cond: NodeId,
+    then_body: &[NodeId],
+    else_body: &[NodeId],
+) -> Option<NodeId> {
+    // Exactly one branch is a lone statement; the other is empty (a modifier
+    // `class ... end if/unless cond`, which is all this idiom ever is).
+    let (def_stmt, on_then) = match (then_body, else_body) {
+        ([only], []) => (*only, true),
+        ([], [only]) => (*only, false),
+        _ => return None,
+    };
+    // Clone the ClassDef's parts so the `&compiler.hir` borrow ends before the
+    // `resolve_class` read and the `hir.push` writes below.
+    let (name, superclass, body, is_module) = match &compiler.hir[def_stmt] {
+        HirNode::ClassDef {
+            name,
+            superclass,
+            body,
+            is_module,
+        } => (name.clone(), superclass.clone(), body.clone(), *is_module),
+        _ => return None,
+    };
+    // Must REOPEN an already-registered class (top-level cref/box). A new class
+    // can't be defined conditionally -- codegen has no runtime create form here.
+    compiler.resolve_class(&name, &[], 0)?;
+    let (then_body, else_body) = if on_then {
+        (body, Vec::new())
+    } else {
+        (Vec::new(), body)
+    };
+    let guarded = compiler.hir.push(HirNode::If {
+        cond,
+        then_body,
+        else_body,
+    });
+    Some(compiler.hir.push(HirNode::ClassDef {
+        name,
+        superclass,
+        body: vec![guarded],
+        is_module,
+    }))
+}
+
 /// A short, human-readable label for a guard expression -- what shape of
 /// condition gated a top-level definition. Only for `tracing` output when
 /// debugging why `static_top_cond` couldn't decide a guard (turn it on with
