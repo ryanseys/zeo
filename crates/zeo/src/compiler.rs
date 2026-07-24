@@ -89,6 +89,15 @@ pub struct ClassInfo {
     /// all (extend only affects this class's own `class_methods`
     /// materialization, never instance-method resolution or `is_a?`).
     pub extends: Vec<ClassId>,
+    /// Modules `prepend`ed onto this class's SINGLETON class
+    /// (`C.singleton_class.prepend(M)` / `class << self; prepend M; end`) --
+    /// their INSTANCE methods become this class's class methods, at HIGHER
+    /// priority than its own `def self.x` (which they may override, with
+    /// `super` reaching the original). The class-method analogue of `prepends`;
+    /// like `extends` it affects only `class_methods` materialization, never
+    /// instance resolution. Source order; most recently prepended wins (closest
+    /// to the front of the singleton chain).
+    pub class_method_prepends: Vec<ClassId>,
     /// Names this class's body `undef`'d -- see `HirNode::Undef`.
     /// `mro::materialize_methods` refuses to materialize them onto this
     /// class, which is what makes an INHERITED name disappear here while
@@ -320,6 +329,7 @@ impl Compiler {
                 prepends: Vec::new(),
                 includes: Vec::new(),
                 extends: Vec::new(),
+                class_method_prepends: Vec::new(),
                 undefined: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
                 builtin_aliases: Vec::new(),
@@ -590,6 +600,7 @@ impl Compiler {
             prepends: Vec::new(),
             includes: Vec::new(),
             extends: Vec::new(),
+            class_method_prepends: Vec::new(),
             undefined: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
             builtin_aliases: Vec::new(),

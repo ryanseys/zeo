@@ -343,13 +343,49 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
     let mut level = Some(class_id);
 
     while let Some(cid) = level {
+        // Singleton-PREPENDED modules (`C.singleton_class.prepend(M)`): their
+        // INSTANCE methods become this level's class methods at HIGHER priority
+        // than its own `def self.x`, which they shadow (`super` reaching the
+        // original). Processed BEFORE own_class_methods so they win -- the
+        // class-method mirror of `prepends` on the instance side. Most recently
+        // prepended is closest (reverse, as `extends`/`prepends` expand). Every
+        // position's own copy joins `singleton_targets` so a `super` chain finds
+        // the receiver's own copy at any position.
+        for &m in compiler.class(cid).class_method_prepends.clone().iter().rev() {
+            for sid in compiler.class(m).own_methods.clone() {
+                let name = compiler.scope(sid).name.clone();
+                let is_winner = seen.insert(name.clone());
+                let scope = compiler.scope(sid);
+                let (def_node, params, body, visibility) = (
+                    scope.def_node,
+                    scope.params.clone(),
+                    scope.body.clone(),
+                    scope.visibility,
+                );
+                let new_id = register_method(
+                    compiler, class_id, m, name, def_node, params, body, visibility,
+                )?;
+                if is_winner {
+                    materialized.push(new_id);
+                }
+                singleton_targets.push((m, new_id));
+            }
+        }
         for sid in compiler.class(cid).own_class_methods.clone() {
             let name = compiler.scope(sid).name.clone();
-            if !seen.insert(name.clone()) {
-                continue;
-            }
+            let is_winner = seen.insert(name.clone());
             if cid == class_id {
-                materialized.push(sid); // this class's own definition -- reuse verbatim
+                if is_winner {
+                    materialized.push(sid); // this class's own definition -- reuse verbatim
+                } else {
+                    // SHADOWED by a singleton prepend above: this class's own
+                    // `def self.x` is no longer the dispatched method, but the
+                    // prepended module's `super` resolves to it. Keep it as a
+                    // super TARGET keyed under this class's OWN id (the
+                    // module_instance-side lookup `call_singleton_super_target`
+                    // consults; see `codegen`'s shadowed-target registration).
+                    singleton_targets.push((class_id, sid));
+                }
             } else {
                 let scope = compiler.scope(sid);
                 let (def_node, params, body, visibility) = (
@@ -361,7 +397,11 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 let new_id = register_method(
                     compiler, class_id, cid, name, def_node, params, body, visibility,
                 )?;
-                materialized.push(new_id);
+                if is_winner {
+                    materialized.push(new_id);
+                } else {
+                    singleton_targets.push((cid, new_id));
+                }
             }
         }
         for &m in compiler.class(cid).extends.clone().iter().rev() {

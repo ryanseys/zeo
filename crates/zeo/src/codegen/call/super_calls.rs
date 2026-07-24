@@ -246,6 +246,13 @@ fn extended_singleton_super(
         if i > 0 && info.is_module {
             continue;
         }
+        // Singleton-PREPENDED modules sit BEFORE this ancestor's own class
+        // methods (they override `def self.x`, `super` reaching the original),
+        // most recently prepended first -- the class-method mirror of `prepend`
+        // on the instance chain.
+        for &m in info.class_method_prepends.iter().rev() {
+            chain.push((m, true));
+        }
         chain.push((anc, false));
         for &m in info.extends.iter().rev() {
             chain.push((m, true));
@@ -264,7 +271,23 @@ fn extended_singleton_super(
         };
         pool.iter()
             .find(|&&s| cx.compiler.scope(s).name == mname)
-            .map(|&sid| (anc, sid, instance_pool))
+            .map(|&sid| {
+                // A class's OWN `def self.x` that a singleton PREPEND shadows is
+                // no longer in the live class-methods row (the prepend won), so
+                // `super` must reach it through the super-TARGET table -- the
+                // `module_instance` side of `call_singleton_super_target`, which
+                // `mro::materialize_class_methods` populated with the shadowed
+                // own copy. Report it there instead of the (occupied) class row.
+                let shadowed_by_prepend = !instance_pool
+                    && info.class_method_prepends.iter().any(|&pm| {
+                        cx.compiler
+                            .class(pm)
+                            .own_methods
+                            .iter()
+                            .any(|&s| cx.compiler.scope(s).name == mname)
+                    });
+                (anc, sid, instance_pool || shadowed_by_prepend)
+            })
     })
 }
 

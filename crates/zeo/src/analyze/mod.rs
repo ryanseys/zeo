@@ -444,31 +444,34 @@ fn splice_dead_rescues(compiler: &Compiler, stmts: &[NodeId]) -> Vec<NodeId> {
     out
 }
 
-/// Recognizes a reachable `C.prepend(M, ...)` CALL and applies it as the same
-/// compile-time ancestry edit a class-body `prepend M` makes -- pushing each
-/// module onto `C`'s `prepends`, which `mro` flattens BEFORE `C` (so `M`'s
-/// instance methods override `C`'s own and `super` inside `M` reaches `C`).
+/// Recognizes a reachable `C.prepend(M, ...)` / `C.singleton_class.prepend(M,
+/// ...)` CALL and applies it as the same compile-time ancestry edit the
+/// corresponding class-body form makes:
+///  - `C.prepend(M)` pushes each module onto `C`'s `prepends`, which `mro`
+///    flattens BEFORE `C` (M's INSTANCE methods override C's own, `super`
+///    reaching C).
+///  - `C.singleton_class.prepend(M)` pushes onto `C`'s `class_method_prepends`,
+///    so M's instance methods become C's CLASS methods at higher priority than
+///    its own `def self.x` (`super` reaching the original -- the ForkTracker /
+///    fork-hook shape).
 ///
 /// A whole-program AOT target has a FIXED load-time reachability, so a reachable
 /// `prepend` call is a static structural fact about the class ancestry, not a
-/// runtime metaprogramming event -- exactly as static as the class-body form,
-/// which lowers to the identical `prepends` edit. Recognizing the call form here
-/// (instead of leaving it a runtime send, which zeo has no static MRO to honor)
-/// means dispatch and `super` see the prepend through the ordinary flattened MRO.
+/// runtime metaprogramming event. Recognizing the call form here (instead of
+/// leaving it a runtime send, which zeo has no static MRO to honor) means
+/// dispatch and `super` see the prepend through the ordinary flattened tables.
 ///
-/// Precise: the receiver must resolve to a known class/module and EVERY argument
-/// must be a bare module constant (no splat, block, kwargs, or `&.`). Anything
-/// else returns `false`, leaving it an ordinary runtime call. Returns `true` when
-/// it recorded the edit, so the caller drops the call from the emitted stream
-/// (`prepend` returns its receiver, virtually never used at these statement-
-/// position load-time sites). Ordering matches the class-body form: arguments are
-/// pushed left-to-right, identical to `prepend A, B` lowering to `[Prepend(A),
-/// Prepend(B)]`.
+/// Precise: the receiver must resolve to a known class/module (optionally via a
+/// bare `.singleton_class`) and EVERY argument must be a bare module constant
+/// (no splat, block, kwargs, or `&.`). Anything else returns `false`, leaving it
+/// an ordinary runtime call. Returns `true` when it recorded the edit, so the
+/// caller drops the call from the emitted stream (`prepend` returns its
+/// receiver, virtually never used at these statement-position load-time sites).
 fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
     // Resolve the receiver class and every module argument while `compiler` is
     // only shared-borrowed (reading the HIR + the class registry), then apply
     // the ancestry edit under a fresh mutable borrow.
-    let (target, modules) = {
+    let (target, on_singleton, modules) = {
         let HirNode::Call {
             receiver: Some(recv),
             name,
@@ -489,8 +492,33 @@ fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
         {
             return false;
         }
-        let Some(target) = const_node_class(compiler, *recv) else {
-            return false;
+        // The receiver is either a class constant (instance-side prepend) or a
+        // bare `CONST.singleton_class` (class-method-side prepend).
+        let (target, on_singleton) = match &compiler.hir[*recv] {
+            HirNode::Call {
+                receiver: Some(inner),
+                name,
+                args,
+                kwargs,
+                block,
+                block_arg,
+                safe,
+            } if name == "singleton_class"
+                && args.is_empty()
+                && kwargs.is_empty()
+                && block.is_none()
+                && block_arg.is_none()
+                && !*safe =>
+            {
+                match const_node_class(compiler, *inner) {
+                    Some(c) => (c, true),
+                    None => return false,
+                }
+            }
+            _ => match const_node_class(compiler, *recv) {
+                Some(c) => (c, false),
+                None => return false,
+            },
         };
         let mut modules = Vec::with_capacity(args.len());
         for a in args {
@@ -505,14 +533,19 @@ fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
         if modules.is_empty() {
             return false;
         }
-        (target, modules)
+        (target, on_singleton, modules)
     };
     // Registered in REVERSE argument order so `mro`'s uniform
     // "later-registered-is-closer" flatten yields source order in the ancestry
     // (`prepend A, B` -> [A, B, self]) -- the same rule the class-body multi-arg
     // lowering follows (see `zeo-hir/lower/defs.rs`).
     for m in modules.into_iter().rev() {
-        compiler.classes[target.0 as usize].prepends.push(m);
+        let ci = &mut compiler.classes[target.0 as usize];
+        if on_singleton {
+            ci.class_method_prepends.push(m);
+        } else {
+            ci.prepends.push(m);
+        }
     }
     true
 }
