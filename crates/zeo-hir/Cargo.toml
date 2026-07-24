@@ -11,6 +11,7 @@ ruby-prism.workspace = true
 # features straight from the ABI table, so the loader and the constant
 # resolver never drift -- see `lower::features`.
 zeo-abi.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

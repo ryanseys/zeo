@@ -327,9 +327,25 @@ fn process_top_stmt(
         }
         let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
         let taken = match static_top_cond(compiler, cond) {
-            Some(true) => then_body,
-            Some(false) => else_body,
+            Some(true) => {
+                tracing::debug!(
+                    guard = cond_kind(compiler, cond),
+                    "top-level conditional def: guard TRUE, taking then-branch"
+                );
+                then_body
+            }
+            Some(false) => {
+                tracing::debug!(
+                    guard = cond_kind(compiler, cond),
+                    "top-level conditional def: guard FALSE, taking else-branch"
+                );
+                else_body
+            }
             None => {
+                tracing::debug!(
+                    guard = cond_kind(compiler, cond),
+                    "top-level conditional def: guard UNDECIDABLE -- compile error"
+                );
                 return Err(
                     "class/module definition inside a top-level `if` is only supported when \
                      the condition is compile-time decidable (e.g. `defined?(SomeConstant)`)"
@@ -383,6 +399,39 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// name that might be one -- any name the program `ConstWrite`s, or a
 /// qualified read whose scope resolves without a nested class match --
 /// degrades to `None` (undecidable) rather than a confident `false`.
+/// A short, human-readable label for a guard expression -- what shape of
+/// condition gated a top-level definition. Only for `tracing` output when
+/// debugging why `static_top_cond` couldn't decide a guard (turn it on with
+/// `ZEO_LOG=zeo::analyze=debug`); names the idiom (e.g. `defined?(Foo::BAR)`,
+/// `RUBY_VERSION.<cmp>`, `local(x)`) so a new require-graph blocker is legible.
+fn cond_kind(compiler: &Compiler, id: NodeId) -> String {
+    match &compiler.hir[id] {
+        HirNode::Defined(inner) => match &compiler.hir[*inner] {
+            HirNode::ClassRef(n) => format!("defined?({n})"),
+            HirNode::QualifiedConstRead(s, n) => format!("defined?({s}::{n})"),
+            HirNode::Call { name, .. } => format!("defined?(.{name})"),
+            _ => "defined?(expr)".to_string(),
+        },
+        HirNode::Call { receiver, name, .. } => {
+            let recv = match receiver.map(|r| &compiler.hir[r]) {
+                Some(HirNode::ClassRef(n)) => n.as_str(),
+                Some(_) => "expr",
+                None => "self",
+            };
+            format!("{recv}.{name}")
+        }
+        HirNode::And(..) => "&&".to_string(),
+        HirNode::Or(..) => "||".to_string(),
+        HirNode::BoolLit(b) => format!("literal {b}"),
+        HirNode::ClassRef(n) => format!("const {n}"),
+        HirNode::QualifiedConstRead(s, n) => format!("{s}::{n}"),
+        HirNode::IvarRead(n) => format!("ivar {n}"),
+        HirNode::GlobalRead(n) => format!("global {n}"),
+        HirNode::LocalRead(n) => format!("local {n}"),
+        _ => "other".to_string(),
+    }
+}
+
 fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
     match &compiler.hir[id] {
         HirNode::Defined(inner) => match &compiler.hir[*inner] {

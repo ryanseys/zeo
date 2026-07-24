@@ -44,6 +44,9 @@ struct Args {
     ///. Explicit opt-in, must be given together.
     gem_path: Option<PathBuf>,
     lockfile: Option<PathBuf>,
+    /// `--log-level <off|error|warn|info|debug|trace>`: install a `tracing`
+    /// subscriber for the compiler at this level (overrides `ZEO_LOG`/`RUST_LOG`).
+    log_level: Option<String>,
 }
 
 enum Source {
@@ -79,11 +82,16 @@ options:
   --no-report           suppress the `zeo-gems.json` disclosure record
   --nowarn <slug>       suppress a disclosure warning category
                         (repeatable; `--nowarn=<slug>` also accepted)
+  --log-level <level>   log the compiler's internals to stderr at this level:
+                        off|error|warn|info|debug|trace (`--log-level=<level>`
+                        also accepted; overrides ZEO_LOG/RUST_LOG)
   -h, --help            show this message
 
 environment:
   ZEO_RUNTIME_PROFILE   `debug` or `release` -- override the runtime profile
                         (default: debug for -e, release for -o compiles)
+  ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for finer control than
+                        --log-level, e.g. `zeo::analyze=debug,zeo_hir=trace`
 ";
 
 fn parse_args() -> Result<Args, String> {
@@ -97,6 +105,7 @@ fn parse_args() -> Result<Args, String> {
     let mut nowarn = std::collections::HashSet::new();
     let mut gem_path = None;
     let mut lockfile = None;
+    let mut log_level = None;
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -147,6 +156,12 @@ fn parse_args() -> Result<Args, String> {
                     iter.next().ok_or("--lockfile requires a path")?,
                 ));
             }
+            // Compiler log level (installs a `tracing` stderr subscriber).
+            "--log-level" => {
+                log_level = Some(validate_log_level(
+                    &iter.next().ok_or("--log-level requires a level")?,
+                )?);
+            }
             "--help" | "-h" => {
                 print!("{HELP}");
                 std::process::exit(0);
@@ -158,6 +173,9 @@ fn parse_args() -> Result<Args, String> {
                 } else if let Some(slug) = other.strip_prefix("--nowarn=") {
                     // Attached `--nowarn=<slug>` spelling.
                     nowarn.insert(slug.to_string());
+                } else if let Some(level) = other.strip_prefix("--log-level=") {
+                    // Attached `--log-level=<level>` spelling.
+                    log_level = Some(validate_log_level(level)?);
                 } else if input.is_some() {
                     return Err(format!("unexpected argument `{other}`"));
                 } else {
@@ -193,7 +211,19 @@ fn parse_args() -> Result<Args, String> {
         nowarn,
         gem_path,
         lockfile,
+        log_level,
     })
+}
+
+/// Accept only the standard `tracing` levels, so a typo (`--log-level dbeug`)
+/// is a clear error rather than a silently-ignored filter directive.
+fn validate_log_level(level: &str) -> Result<String, String> {
+    match level {
+        "off" | "error" | "warn" | "info" | "debug" | "trace" => Ok(level.to_string()),
+        other => Err(format!(
+            "--log-level: unknown level `{other}` (expected off|error|warn|info|debug|trace)"
+        )),
+    }
 }
 
 /// The default package-dir candidates appended AFTER any explicit
@@ -217,6 +247,7 @@ fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
 
 fn run() -> Result<(), MainError> {
     let args = parse_args()?;
+    init_tracing(args.log_level.as_deref());
     let (source, input_path) = match &args.source {
         Source::File(path) => {
             let text = std::fs::read_to_string(path)
@@ -316,6 +347,34 @@ fn run() -> Result<(), MainError> {
         profile,
         runtime,
     )?)
+}
+
+/// Install a `tracing` subscriber (stderr) for the compiler pipeline. Sources,
+/// highest precedence first: the `--log-level` flag (a bare level applied to the
+/// `zeo`/`zeo_hir` crates), then `ZEO_LOG`, then `RUST_LOG` (both full
+/// `EnvFilter` directives, for finer per-module control). With none of them set,
+/// no subscriber is installed, so every `trace!`/`debug!`/`instrument` in the
+/// pipeline compiles to a cheap disabled check -- a normal compile stays silent
+/// and never interleaves with the miette diagnostics. Examples:
+///   zeo prog.rb --log-level debug
+///   ZEO_LOG=zeo::analyze=trace zeo prog.rb
+fn init_tracing(log_level: Option<&str>) {
+    let directive = match log_level {
+        Some(level) => format!("zeo={level},zeo_hir={level}"),
+        None => match std::env::var("ZEO_LOG")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("RUST_LOG").ok().filter(|s| !s.is_empty()))
+        {
+            Some(directive) => directive,
+            None => return,
+        },
+    };
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(directive))
+        .with_writer(std::io::stderr)
+        .without_time()
+        .init();
 }
 
 fn main() -> ExitCode {

@@ -15,6 +15,8 @@ syn.workspace = true
 prettyplease.workspace = true
 miette.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

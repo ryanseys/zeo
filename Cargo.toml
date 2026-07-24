@@ -37,6 +37,11 @@ ruby-prism = "1.9.0"
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 insta = "1"
+# Compiler instrumentation: level-gated `trace!`/`debug!`/`instrument` spans
+# across the pipeline (loader -> lower -> analyze -> codegen). Zero output by
+# default; the CLI installs a subscriber only when `ZEO_LOG`/`RUST_LOG` is set.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Data-driven tests: one `cargo test`/nextest case per golden `.rb` file
 # (conformance corpus, examples, gaps). By nextest-rs, same ecosystem as the
 # `cargo nextest` we already run.
