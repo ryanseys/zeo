@@ -14,6 +14,7 @@
 
 pub mod analyze;
 pub mod backend;
+pub mod builtin_surface;
 pub mod codegen;
 pub mod compiler;
 pub mod diagnostics;

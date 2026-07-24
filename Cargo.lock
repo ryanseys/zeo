@@ -1569,6 +1569,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zeo-abi",
+ "zeo-class-spec",
  "zeo-hir",
 ]
 

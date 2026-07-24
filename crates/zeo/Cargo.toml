@@ -18,6 +18,15 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[build-dependencies]
+# The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the
+# runtime's ruby_class!/ruby_module! headers with the SAME grammar the macro
+# uses -- so the compiler's folding view can't drift from what the runtime
+# registers. See build.rs.
+zeo-class-spec.workspace = true
+syn.workspace = true
+proc-macro2.workspace = true
+
 [dev-dependencies]
 insta.workspace = true
 datatest-stable.workspace = true
