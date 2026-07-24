@@ -47,12 +47,6 @@ pub fn workspace_root() -> PathBuf {
 pub fn tests_run_cwd() -> PathBuf {
     workspace_root().join("tests")
 }
-/// Examples still live at the repo-root `examples/` (relocated to `tests/` in a
-/// follow-up); run them from the workspace root so their backtraces relativize
-/// to `examples/x.rb`.
-pub fn examples_run_cwd() -> PathBuf {
-    workspace_root()
-}
 
 // ---- normalization (ported verbatim from xtask/src/conformance/{util,runner}.rs) ----
 

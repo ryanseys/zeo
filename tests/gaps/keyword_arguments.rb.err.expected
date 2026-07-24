@@ -1,0 +1,3 @@
+keyword_arguments.rb:24: warning: key :k is duplicated and overwritten on line 24
+keyword_arguments.rb:25: warning: key :k is duplicated and overwritten on line 25
+keyword_arguments.rb:31: warning: key :x is duplicated and overwritten on line 31
