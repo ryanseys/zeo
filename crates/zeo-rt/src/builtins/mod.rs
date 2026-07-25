@@ -154,7 +154,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool,
         zeo_abi::KERNEL_CLASS => kernel::lookup,
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
-        zeo_abi::ENUMERABLE_CLASS => enumerable::lookup,
+        // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENUMERATOR_CLASS
@@ -240,7 +240,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool_arity,
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_arity,
+        // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::KERNEL_CLASS => kernel::lookup_arity,
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_arity,
         zeo_abi::ENUMERATOR_CLASS
@@ -443,7 +443,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_names(),
+        // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         zeo_abi::MATH_CLASS => math::NAMES,

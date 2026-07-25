@@ -47,7 +47,8 @@
 //! numeric tower doesn't exist here.
 
 use crate::builtins::block_or_enum;
-use crate::builtins::{arg_error, builtin_methods, type_error};
+use crate::builtins::{arg_error, type_error};
+use zeo_macros::ruby_module;
 use crate::collections::array_new;
 use crate::dispatch::send_value;
 use crate::signal::Signal;
@@ -720,12 +721,26 @@ fn slice_before_after(
 // (select/reject, the any? family, min/max, take/drop, ...) live in the
 // discriminator-parameter fns above; their rows are thin `enum_*`
 // forwarders. Everything else is defined directly in its row.
-builtin_methods! {
-    pub(crate) fn lookup;
+/// `Enumerable#to_a` as a plain fn: drive `#each` and collect. Shared by the
+/// `to_a`/`entries` rows and by the sort/uniq/group rows that need the whole
+/// materialized sequence internally (they can't call the mangled row fn).
+fn collect_to_a(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let out2 = out.clone();
+    for_each(recv, move |yielded| {
+        out2.lock().push(pack(yielded));
+        Ok(RubyValue::Nil)
+    })?;
+    let items = std::mem::take(&mut *out.lock());
+    Ok(RubyValue::Array(array_new(items)))
+}
+
+ruby_module! {
+    Enumerable = zeo_abi::ENUMERABLE_CLASS;
 
     // map/collect: the user block receives the RAW yielded values
     // (`rb_yield_values2`, enum.c:631-633); results collect into an Array.
-    "map"[0] | "collect"[0] => fn map(recv, args, block) {
+    def "map" arity 0 | "collect" arity 0 (recv, args, block) {
         reject_args(args, "map", "arguments");
         let blk = block_or_enum!(recv, "map", args, block);
         let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
@@ -743,25 +758,18 @@ builtin_methods! {
         let items = std::mem::take(&mut *out.lock());
         Ok(RubyValue::Array(array_new(items)))
     }
-    "select"[0] | "filter"[0] | "find_all"[0] => fn enum_select(recv, args, block) {
+    def "select" arity 0 | "filter" arity 0 | "find_all" arity 0 (recv, args, block) {
         select(recv, args, block, true)
     }
-    "reject"[0] => fn enum_reject(recv, args, block) {
+    def "reject" arity 0 (recv, args, block) {
         select(recv, args, block, false)
     }
-    "to_a" | "entries" => fn to_a(recv, args, _block) {
+    def "to_a" | "entries"(recv, args, _block) {
         reject_args(args, "to_a", "arguments (forwarding them to #each)");
-        let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
-        let out2 = out.clone();
-        for_each(recv, move |yielded| {
-            out2.lock().push(pack(yielded));
-            Ok(RubyValue::Nil)
-        })?;
-        let items = std::mem::take(&mut *out.lock());
-        Ok(RubyValue::Array(array_new(items)))
+        collect_to_a(recv)
     }
     // `==`-based membership (`rb_equal`, enum.c:2960) with break-on-hit.
-    "include?"[1] | "member?"[1] => fn include(recv, args, _block) {
+    def "include?" arity 1 | "member?" arity 1 (recv, args, _block) {
         if args.len() != 1 {
             panic!("Enumerable#include? takes exactly one argument");
         }
@@ -782,7 +790,7 @@ builtin_methods! {
     // 1-arg counts `==` matches (arg + block: the arg wins, block ignored --
     // CRuby warns "given block not used", enum.c:320). Always iterates
     // (Enumerable#count has no size fast path -- enum.c:302-328).
-    "count" => fn count(recv, args, block) {
+    def "count"(recv, args, block) {
         let n = Arc::new(Mutex::new(0i64));
         let n2 = n.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -817,23 +825,23 @@ builtin_methods! {
         let result = *n.lock();
         Ok(RubyValue::Int(result))
     }
-    "any?" => fn enum_any(recv, args, block) {
+    def "any?"(recv, args, block) {
         any_all(recv, args, block, Quantifier::Any)
     }
-    "all?" => fn enum_all(recv, args, block) {
+    def "all?"(recv, args, block) {
         any_all(recv, args, block, Quantifier::All)
     }
-    "none?" => fn enum_none(recv, args, block) {
+    def "none?"(recv, args, block) {
         any_all(recv, args, block, Quantifier::None)
     }
-    "one?" => fn enum_one(recv, args, block) {
+    def "one?"(recv, args, block) {
         any_all(recv, args, block, Quantifier::One)
     }
     // find/detect: first PACKED element whose raw-yield block result is truthy.
     // The optional `ifnone` callable argument is invoked (with no arguments) only
     // when NO element matches, and its result becomes the answer; a match --
     // including a `nil` element -- ignores it. With no `ifnone` and no match, nil.
-    "find" | "detect" => fn find(recv, args, block) {
+    def "find" | "detect"(recv, args, block) {
         let ifnone = args.first().cloned();
         let blk = block_or_enum!(recv, "find", &[], block);
         let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -861,7 +869,7 @@ builtin_methods! {
     }
     // first / first(n): break-on-first(-nth) yield; `first(0)` returns `[]`
     // WITHOUT calling `each` at all (enum.c:3585); `first` on empty -> nil.
-    "first" => fn first(recv, args, _block) {
+    def "first"(recv, args, _block) {
         match args.len() {
             0 => {
                 let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -907,7 +915,7 @@ builtin_methods! {
     // first element seeds the accumulator WITHOUT invoking the block; empty
     // with no init -> nil. The block is always called with exactly
     // `(acc, packed_element)`.
-    "reduce" | "inject" => fn reduce(recv, args, block) {
+    def "reduce" | "inject"(recv, args, block) {
         enum Step {
             Block(RProc),
             Op(Symbol),
@@ -964,7 +972,7 @@ builtin_methods! {
     }
     // each_with_index: yields `(packed_element, index)` as TWO args
     // (enum.c:2993-3000) and returns the receiver itself, not an array.
-    "each_with_index" => fn each_with_index(recv, args, block) {
+    def "each_with_index"(recv, args, block) {
         reject_args(
             args,
             "each_with_index",
@@ -996,7 +1004,7 @@ builtin_methods! {
     // algorithm), and to generic `+` dispatch on the first non-numeric
     // (sticking there). The optional block is applied to the PACKED element
     // (single argument -- `rb_yield(i)`, enum.c:4712-4746).
-    "sum" => fn sum(recv, args, block) {
+    def "sum"(recv, args, block) {
         enum Acc {
             Int(i64),
             Float { sum: f64, compensation: f64 },
@@ -1097,19 +1105,19 @@ builtin_methods! {
             .finish();
         Ok(result)
     }
-    "min" => fn enum_min(recv, args, block) {
+    def "min"(recv, args, block) {
         min_max(recv, args, block, true)
     }
-    "max" => fn enum_max(recv, args, block) {
+    def "max"(recv, args, block) {
         min_max(recv, args, block, false)
     }
-    "sort"[0] => fn sort(recv, args, block) {
+    def "sort" arity 0 (recv, args, block) {
         reject_args(args, "sort", "arguments");
         let mut items = collect_packed(recv)?;
         crate::builtins::array::sort_items(&mut items, &block)?;
         Ok(RubyValue::Array(array_new(items)))
     }
-    "sort_by"[0] => fn sort_by(recv, args, block) {
+    def "sort_by" arity 0 (recv, args, block) {
         reject_args(args, "sort_by", "arguments");
         let blk = block_or_enum!(recv, "sort_by", args, block);
         let items = collect_elements(recv)?;
@@ -1134,19 +1142,19 @@ builtin_methods! {
             decorated.into_iter().map(|(_, e)| e).collect(),
         )))
     }
-    "min_by" => fn enum_min_by(recv, args, block) {
+    def "min_by"(recv, args, block) {
         min_max_by(recv, args, block, true)
     }
-    "max_by" => fn enum_max_by(recv, args, block) {
+    def "max_by"(recv, args, block) {
         min_max_by(recv, args, block, false)
     }
-    "minmax"[0] => fn minmax(recv, args, block) {
+    def "minmax" arity 0 (recv, args, block) {
         reject_args(args, "minmax", "arguments");
         let lo = min_max(recv, &[], block.clone(), true)?;
         let hi = min_max(recv, &[], block, false)?;
         Ok(RubyValue::Array(array_new(vec![lo, hi])))
     }
-    "group_by"[0] => fn group_by(recv, args, block) {
+    def "group_by" arity 0 (recv, args, block) {
         reject_args(args, "group_by", "arguments");
         let blk = block_or_enum!(recv, "group_by", args, block);
         let items = collect_elements(recv)?;
@@ -1166,7 +1174,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Hash(groups))
     }
-    "partition"[0] => fn partition(recv, args, block) {
+    def "partition" arity 0 (recv, args, block) {
         reject_args(args, "partition", "arguments");
         let blk = block_or_enum!(recv, "partition", args, block);
         let items = collect_elements(recv)?;
@@ -1183,7 +1191,7 @@ builtin_methods! {
             RubyValue::Array(array_new(no)),
         ])))
     }
-    "flat_map"[0] | "collect_concat"[0] => fn flat_map(recv, args, block) {
+    def "flat_map" arity 0 | "collect_concat" arity 0 (recv, args, block) {
         reject_args(args, "flat_map", "arguments");
         let blk = block_or_enum!(recv, "flat_map", args, block);
         let items = collect_elements(recv)?;
@@ -1197,7 +1205,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(array_new(out)))
     }
-    "filter_map"[0] => fn filter_map(recv, args, block) {
+    def "filter_map" arity 0 (recv, args, block) {
         reject_args(args, "filter_map", "arguments");
         let blk = block_or_enum!(recv, "filter_map", args, block);
         let items = collect_elements(recv)?;
@@ -1210,7 +1218,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(array_new(out)))
     }
-    "each_slice"[1] => fn each_slice(recv, args, block) {
+    def "each_slice" arity 1 (recv, args, block) {
         let n = slice_size(args, "each_slice")?;
         let blk = block_or_enum!(recv, "each_slice", args, block);
         let items = collect_packed(recv)?;
@@ -1220,7 +1228,7 @@ builtin_methods! {
         // The block form answers the receiver (Ruby 3.1+), not nil.
         Ok(recv.clone())
     }
-    "each_cons"[1] => fn each_cons(recv, args, block) {
+    def "each_cons" arity 1 (recv, args, block) {
         let n = slice_size(args, "each_cons")?;
         let blk = block_or_enum!(recv, "each_cons", args, block);
         let items = collect_packed(recv)?;
@@ -1232,7 +1240,7 @@ builtin_methods! {
         // The block form answers the receiver (Ruby 3.1+), not nil.
         Ok(recv.clone())
     }
-    "each_with_object"[1] => fn each_with_object(recv, args, block) {
+    def "each_with_object" arity 1 (recv, args, block) {
         if args.len() != 1 {
             panic!("Enumerable#each_with_object takes exactly one argument");
         }
@@ -1255,20 +1263,20 @@ builtin_methods! {
         }
         Ok(memo)
     }
-    "take"[1] => fn enum_take(recv, args, _block) {
+    def "take" arity 1 (recv, args, _block) {
         take_drop(recv, args, true)
     }
-    "drop"[1] => fn enum_drop(recv, args, _block) {
+    def "drop" arity 1 (recv, args, _block) {
         take_drop(recv, args, false)
     }
-    "take_while"[0] => fn enum_take_while(recv, args, block) {
+    def "take_while" arity 0 (recv, args, block) {
         take_drop_while(recv, args, block, true)
     }
-    "drop_while"[0] => fn enum_drop_while(recv, args, block) {
+    def "drop_while" arity 0 (recv, args, block) {
         take_drop_while(recv, args, block, false)
     }
     // `find_index(value)` / `find_index { |e| ... }`.
-    "find_index" => fn enum_find_index(recv, args, block) {
+    def "find_index"(recv, args, block) {
         let items = collect_elements(recv)?;
         if let Some(RubyValue::Proc(p)) = &block {
             for (i, e) in items.iter().enumerate() {
@@ -1288,7 +1296,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Nil)
     }
-    "tally" => fn tally(recv, args, _block) {
+    def "tally"(recv, args, _block) {
         // Optional accumulator hash: counts add onto its existing values and the
         // same hash is returned (Enumerable#tally(hash), #2533). No arg -> a fresh
         // hash.
@@ -1306,7 +1314,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Hash(counts))
     }
-    "uniq"[0] => fn uniq(recv, args, _block) {
+    def "uniq" arity 0 (recv, args, _block) {
         reject_args(args, "uniq", "arguments");
         let items = collect_packed(recv)?;
         let mut out: Vec<RubyValue> = Vec::new();
@@ -1317,13 +1325,13 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(array_new(out)))
     }
-    "to_h" => fn enum_to_h(recv, args, block) {
+    def "to_h"(recv, args, block) {
         reject_args(args, "to_h", "arguments");
         let items = collect_elements(recv)?;
         let pairs = to_h_pairs(items.iter().map(|e| (e.raw.as_slice(), &e.packed)), &block)?;
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
-    "reverse_each" => fn reverse_each(recv, args, block) {
+    def "reverse_each"(recv, args, block) {
         reject_args(args, "reverse_each", "arguments");
         let blk = block_or_enum!(recv, "reverse_each", args, block);
         let items = collect_elements(recv)?;
@@ -1332,28 +1340,28 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "grep"[1] => fn enum_grep(recv, args, block) {
+    def "grep" arity 1 (recv, args, block) {
         grep(recv, args, block, true)
     }
-    "grep_v"[1] => fn enum_grep_v(recv, args, block) {
+    def "grep_v" arity 1 (recv, args, block) {
         grep(recv, args, block, false)
     }
-    "chunk_while"[0] => fn enum_chunk_while(recv, args, block) {
+    def "chunk_while" arity 0 (recv, args, block) {
         chunk_while(recv, args, block, false)
     }
-    "slice_when"[0] => fn enum_slice_when(recv, args, block) {
+    def "slice_when" arity 0 (recv, args, block) {
         chunk_while(recv, args, block, true)
     }
-    "slice_before" => fn enum_slice_before(recv, args, block) {
+    def "slice_before"(recv, args, block) {
         slice_before_after(recv, args, block, true)
     }
-    "slice_after" => fn enum_slice_after(recv, args, block) {
+    def "slice_after"(recv, args, block) {
         slice_before_after(recv, args, block, false)
     }
     // `minmax_by { |e| ... }` -- `[min_by, max_by]`, computed in ONE pass so
     // the block runs once per element, as CRuby's does. `[nil, nil]` for an
     // empty receiver (not `[]`).
-    "minmax_by"[0] => fn minmax_by(recv, args, block) {
+    def "minmax_by" arity 0 (recv, args, block) {
         reject_args(args, "minmax_by", "arguments");
         let blk = block_or_enum!(recv, "minmax_by", args, block);
         let mut lo: Option<(RubyValue, RubyValue)> = None;
@@ -1386,7 +1394,7 @@ builtin_methods! {
     //   each       { |x| }  sees  1,  2,     nil
     //
     // Answers the receiver.
-    "each_entry" => fn each_entry(recv, args, block) {
+    def "each_entry"(recv, args, block) {
         reject_args(args, "each_entry", "arguments");
         let blk = block_or_enum!(recv, "each_entry", args, block);
         for e in collect_packed(recv)? {
@@ -1398,7 +1406,7 @@ builtin_methods! {
     // block key into `[key, [elements...]]` pairs. Like the other slicing
     // methods here, the result materializes as an Array (responding to the
     // Array/Enumerable surface a real Enumerator would).
-    "chunk"[0] => fn chunk(recv, args, block) {
+    def "chunk" arity 0 (recv, args, block) {
         reject_args(args, "chunk", "arguments");
         let blk = block_or_enum!(recv, "chunk", args, block);
         let items = collect_packed(recv)?;
@@ -1439,8 +1447,8 @@ builtin_methods! {
     // `zip(*others)` -- pairs each element of the receiver with the same-index
     // element of every `other` (nil past an `other`'s end), returning the Array
     // of tuples, or yielding each tuple to a block and answering nil.
-    "zip" => fn zip(recv, args, block) {
-        let RubyValue::Array(base) = to_a(recv, &[], None)? else {
+    def "zip"(recv, args, block) {
+        let RubyValue::Array(base) = collect_to_a(recv)? else {
             unreachable!("to_a always answers an Array")
         };
         let base = base.lock().clone();
@@ -1479,9 +1487,9 @@ builtin_methods! {
         Ok(RubyValue::Array(array_new(tuples)))
     }
     // `compact` -- the receiver's elements as an Array with every `nil` dropped.
-    "compact"[0] => fn compact(recv, args, _block) {
+    def "compact" arity 0 (recv, args, _block) {
         reject_args(args, "compact", "arguments");
-        let RubyValue::Array(all) = to_a(recv, &[], None)? else {
+        let RubyValue::Array(all) = collect_to_a(recv)? else {
             unreachable!("to_a always answers an Array")
         };
         let kept: Vec<RubyValue> = all.lock().iter().filter(|e| !e.is_nil()).cloned().collect();
@@ -1490,13 +1498,13 @@ builtin_methods! {
     // `cycle([n]) { ... }` -- yields every element `n` times (forever when `n`
     // is omitted); a blockless call answers an Enumerator. An empty receiver
     // (or `n <= 0`) yields nothing and returns nil.
-    "cycle" => fn cycle(recv, args, block) {
+    def "cycle"(recv, args, block) {
         let times = match args.first() {
             None | Some(RubyValue::Nil) => None,
             Some(v) => Some(crate::builtins::convert::to_index(v)?),
         };
         let p = block_or_enum!(recv, "cycle", args, block);
-        let RubyValue::Array(all) = to_a(recv, &[], None)? else {
+        let RubyValue::Array(all) = collect_to_a(recv)? else {
             unreachable!("to_a always answers an Array")
         };
         let items = all.lock().clone();
@@ -1521,22 +1529,22 @@ builtin_methods! {
     }
     // `chain(*others)` -- an Enumerator over this collection's elements followed
     // by each `other`'s (materialized eagerly; the enumerator drives `each`).
-    "chain" => fn chain(recv, args, _block) {
+    def "chain"(recv, args, _block) {
         let mut sources = Vec::with_capacity(args.len() + 1);
         sources.push(recv.clone());
         sources.extend(args.iter().cloned());
         Ok(crate::builtins::enumerator::chain_of(sources))
     }
     // `to_set` -- a `Set` of the receiver's elements (deduplicated on insert).
-    "to_set" => fn to_set(recv, args, _block) {
+    def "to_set"(recv, args, _block) {
         reject_args(args, "to_set", "arguments");
-        let RubyValue::Array(all) = to_a(recv, &[], None)? else {
+        let RubyValue::Array(all) = collect_to_a(recv)? else {
             unreachable!("to_a always answers an Array")
         };
         let items = all.lock().clone();
         Ok(crate::builtins::set::set_from(items))
     }
-    "lazy"[0] => fn lazy(recv, _args, _block) {
+    def "lazy" arity 0 (recv, _args, _block) {
         Ok(crate::builtins::lazy::make_lazy(recv))
     }
 }
