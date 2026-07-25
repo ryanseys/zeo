@@ -71,10 +71,11 @@ pub struct ClassSpec {
     pub nested: Vec<ClassSpec>,
 }
 
-/// Module vs class -- a class additionally carries its superclass `ClassId`.
+/// Module vs class -- a class additionally carries its superclass `ClassId`,
+/// except the root (`BasicObject`), whose header omits `< SUPER` (`None`).
 pub enum ClassKind {
     Module,
-    Class { superclass: Path },
+    Class { superclass: Option<Path> },
 }
 
 /// `const NAME = <expr>;` -- the value is real Rust the proc-macro passes
@@ -144,13 +145,19 @@ impl ClassSpec {
         Self::finish(input, ClassKind::Module, name, id)
     }
 
-    /// Parse a `ruby_class!` body: a `NAME = ID < SUPER;` header, then items.
+    /// Parse a `ruby_class!` body: a `NAME = ID [< SUPER];` header, then items.
+    /// `< SUPER` is optional so the root class `BasicObject` (no superclass) can
+    /// use the DSL; every other class declares its superclass.
     pub fn parse_class(input: ParseStream) -> syn::Result<Self> {
         let name: Ident = input.parse()?;
         input.parse::<Token![=]>()?;
         let id = Path::parse_mod_style(input)?;
-        input.parse::<Token![<]>()?;
-        let superclass = Path::parse_mod_style(input)?;
+        let superclass = if input.peek(Token![<]) {
+            input.parse::<Token![<]>()?;
+            Some(Path::parse_mod_style(input)?)
+        } else {
+            None
+        };
         input.parse::<Token![;]>()?;
         Self::finish(input, ClassKind::Class { superclass }, name, id)
     }
@@ -183,10 +190,13 @@ impl ClassSpec {
         input.parse::<Token![=]>()?;
         let id = Path::parse_mod_style(input)?;
         let kind = if keyword == "class" {
-            input.parse::<Token![<]>()?;
-            ClassKind::Class {
-                superclass: Path::parse_mod_style(input)?,
-            }
+            let superclass = if input.peek(Token![<]) {
+                input.parse::<Token![<]>()?;
+                Some(Path::parse_mod_style(input)?)
+            } else {
+                None
+            };
+            ClassKind::Class { superclass }
         } else {
             ClassKind::Module
         };
@@ -404,7 +414,8 @@ mod tests {
         });
         match &spec.kind {
             ClassKind::Class { superclass } => {
-                assert_eq!(superclass.segments.last().unwrap().ident, "NUMERIC_CLASS");
+                let sup = superclass.as_ref().expect("Float declares a superclass");
+                assert_eq!(sup.segments.last().unwrap().ident, "NUMERIC_CLASS");
             }
             ClassKind::Module => panic!("expected a class"),
         }
@@ -416,6 +427,22 @@ mod tests {
         assert!(!spec.methods[0].is_class_method);
         assert!(spec.methods[1].is_class_method);
         assert_eq!(spec.methods[1].names[0].ruby, "pi");
+    }
+
+    #[test]
+    fn the_root_class_may_omit_its_superclass() {
+        // `BasicObject` is the root: its header has no `< SUPER`, so the parsed
+        // superclass is `None` (every other class carries `Some`).
+        let spec = parse_class(quote! {
+            BasicObject = BASIC_OBJECT_CLASS;
+            def "!"(recv, _args, _block) { Ok(negate(recv)) }
+        });
+        match &spec.kind {
+            ClassKind::Class { superclass } => assert!(superclass.is_none()),
+            ClassKind::Module => panic!("expected a class"),
+        }
+        assert_eq!(spec.methods.len(), 1);
+        assert_eq!(spec.methods[0].names[0].ruby, "!");
     }
 
     #[test]
@@ -464,7 +491,8 @@ mod tests {
         assert_eq!(status.id.segments.last().unwrap().ident, "PROCESS_STATUS_CLASS");
         match &status.kind {
             ClassKind::Class { superclass } => {
-                assert_eq!(superclass.segments.last().unwrap().ident, "OBJECT_CLASS")
+                let sup = superclass.as_ref().expect("Status declares a superclass");
+                assert_eq!(sup.segments.last().unwrap().ident, "OBJECT_CLASS")
             }
             ClassKind::Module => panic!("Status should be a class"),
         }

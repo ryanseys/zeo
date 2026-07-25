@@ -13,18 +13,20 @@
 //! STRING form (`instance_eval("@x + 1")`), which genuinely needs the eval
 //! VM -- it raises NotImplementedError below, like every other eval path.
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use std::sync::Arc;
+use zeo_macros::ruby_class;
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    // The root class: no `< SUPER` (BasicObject has no superclass).
+    BasicObject = zeo_abi::BASIC_OBJECT_CLASS;
 
-    "==" => fn eq(recv, args, _block) {
+    def "==" (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
-    "!=" => fn neq(recv, args, _block) {
+    def "!=" (recv, args, _block) {
         arity!(args, 1);
         // CRuby's `!=` is `!(self == other)` -- it dispatches the receiver's
         // OWN `==` (a Struct's value equality, a user override), not the
@@ -32,11 +34,11 @@ builtin_methods! {
         let eq = crate::dispatch::send_value(recv, crate::Symbol::intern("=="), args, None)?;
         Ok(RubyValue::Bool(!eq.truthy()))
     }
-    "!" => fn not(recv, args, _block) {
+    def "!" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(!recv.truthy()))
     }
-    "equal?" => fn equal(recv, args, _block) {
+    def "equal?" (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(value_identity(recv, &args[0])))
     }
@@ -52,7 +54,7 @@ builtin_methods! {
     // permissive signature here would silently accept programs CRuby rejects.
     // `super()` (explicit empty parens) is the way to reach it from a method
     // that takes parameters.
-    "initialize" => fn initialize(_recv, args, _block) {
+    def "initialize" (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }
@@ -61,7 +63,7 @@ builtin_methods! {
     // real NoMethodError for the ORIGINAL call, whose name arrives as the
     // first argument (the send-miss fallback prepends it) with the call's
     // own arguments after it. Hidden-private, like `initialize`.
-    "method_missing" => fn bo_method_missing(recv, args, _block) {
+    def "method_missing" (recv, args, _block) {
         let Some((name, rest)) = args.split_first() else {
             return Err(arg_error!("no id given"));
         };
@@ -81,21 +83,21 @@ builtin_methods! {
     // sees -- so `BO.new.send(:x)` must raise while `BO.new.__send__(:x)`
     // works. Ordinary objects still reach both through Kernel's own table,
     // which shares this implementation.
-    "__send__" => fn bo_send(recv, args, block) {
+    def "__send__" (recv, args, block) {
         dynamic_send(recv, args, block)
     }
     // `instance_exec(*args) { |*a| ... }` -- run the block with `self`
     // rebound to the receiver, forwarding args to the block's params.
     // Arity is NOT checked against the block's params: a non-lambda block is
     // lenient (extra args dropped, missing ones nil), exactly as `yield` is.
-    "instance_exec" => fn instance_exec(recv, args, block) {
+    def "instance_exec" (recv, args, block) {
         let blk = block_proc(block, "instance_exec")?;
         blk.call_with_self(recv, args)
     }
     // `instance_eval { ... }` -- the block form only. Real Ruby yields the
     // receiver to the block as well as rebinding self, which is what makes
     // `obj.instance_eval { |o| o == self }` true.
-    "instance_eval" => fn instance_eval(recv, args, block) {
+    def "instance_eval" (recv, args, block) {
         if let Some(arg) = args.first() {
             // The string form (`obj.instance_eval("...")`) runs the source
             // through the eval VM (#97 stage 2) with `self` rebound to the
@@ -202,6 +204,17 @@ pub(crate) fn dynamic_send(
 mod tests {
     use super::*;
 
+    /// The `==`/`!` rows are `ruby_class!`-generated (mangled Rust fn names), so
+    /// reach them the way dispatch does -- through the registered table.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::BASIC_OBJECT_CLASS)
+            .expect("BasicObject is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("BasicObject has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("BasicObject#{name} is defined"))
+    }
+
     #[test]
     fn equal_is_reference_identity_with_immediate_value_identity() {
         let five = RubyValue::Int(5);
@@ -217,11 +230,11 @@ mod tests {
     #[test]
     fn bang_negates_truthiness() {
         assert!(matches!(
-            not(&RubyValue::Int(5), &[], None).unwrap(),
+            imethod("!")(&RubyValue::Int(5), &[], None).unwrap(),
             RubyValue::Bool(false)
         ));
         assert!(matches!(
-            not(&RubyValue::Nil, &[], None).unwrap(),
+            imethod("!")(&RubyValue::Nil, &[], None).unwrap(),
             RubyValue::Bool(true)
         ));
     }
@@ -230,7 +243,7 @@ mod tests {
     fn eq_row_rejects_wrong_arity_registryless_by_panicking() {
         // No exception factory in unit tests: raise_error panics loudly.
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            eq(&RubyValue::Int(1), &[], None)
+            imethod("==")(&RubyValue::Int(1), &[], None)
         }));
         assert!(r.is_err());
     }

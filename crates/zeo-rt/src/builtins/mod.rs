@@ -158,7 +158,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
         // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
-        zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
+        // BASIC_OBJECT_CLASS migrated to ruby_class! -- served via registered_table.
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
@@ -241,7 +241,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
-        zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_arity,
+        // BASIC_OBJECT_CLASS migrated to ruby_class! -- served via registered_table.
         // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
         // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
@@ -413,7 +413,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
         // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
-        zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_names(),
+        // BASIC_OBJECT_CLASS migrated to ruby_class! -- served via registered_table.
         // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
         // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
