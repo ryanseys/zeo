@@ -201,8 +201,6 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_lookup,
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group,
-        #[cfg(feature = "ext-pathname")]
-        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup,
         _ => return None,
     })
 }
@@ -273,8 +271,6 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::lookup_passwd_arity,
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_arity,
-        #[cfg(feature = "ext-pathname")]
-        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_arity,
         _ => return None,
     })
 }
@@ -337,8 +333,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
-        #[cfg(feature = "ext-pathname")]
-        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_class,
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
@@ -416,8 +410,6 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         // MATH_CLASS migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-pathname")]
-        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_names(),
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
         | zeo_abi::DIGEST_SHA1_CLASS
@@ -476,8 +468,6 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_names(),
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_names(),
-        #[cfg(feature = "ext-pathname")]
-        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_class_names(),
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
