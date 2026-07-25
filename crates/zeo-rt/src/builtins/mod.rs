@@ -183,11 +183,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         // In-tree `ext/` extensions with instances (modules like CGI/JSON have
         // none -- they appear only in `class_method_table`).
-        #[cfg(feature = "ext-digest")]
-        zeo_abi::DIGEST_MD5_CLASS
-        | zeo_abi::DIGEST_SHA1_CLASS
-        | zeo_abi::DIGEST_SHA256_CLASS
-        | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup,
+        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
+        // registered_table (MD5 carries the shared table; the SHA ids alias it).
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup, // DATE_CLASS served via registered_table
         // TCPSocket has no own instance table -- it inherits IO's read/write via
@@ -250,11 +247,8 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        #[cfg(feature = "ext-digest")]
-        zeo_abi::DIGEST_MD5_CLASS
-        | zeo_abi::DIGEST_SHA1_CLASS
-        | zeo_abi::DIGEST_SHA256_CLASS
-        | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_arity,
+        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
+        // registered_table.
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity, // DATE_CLASS served via registered_table
         // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
@@ -326,13 +320,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-digest")]
-        zeo_abi::DIGEST_MD5_CLASS
-        | zeo_abi::DIGEST_SHA1_CLASS
-        | zeo_abi::DIGEST_SHA256_CLASS
-        | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_class,
-        #[cfg(feature = "ext-digest")]
-        zeo_abi::DIGEST_MODULE => crate::ext::digest::lookup_module,
+        // Digest::MD5/SHA1/SHA256/SHA512 + the Digest module migrated to
+        // ruby_class!/ruby_module! -- served via registered_table.
         // JSON_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class, // DATE_CLASS served via registered_table
@@ -397,10 +386,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         // MATH_CLASS migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
-        zeo_abi::DIGEST_MD5_CLASS
-        | zeo_abi::DIGEST_SHA1_CLASS
-        | zeo_abi::DIGEST_SHA256_CLASS
-        | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_names(),
+        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
+        // registered_table.
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(), // DATE_CLASS served via registered_table
         // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
@@ -450,11 +437,8 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_names(),
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-digest")]
-        zeo_abi::DIGEST_MD5_CLASS
-        | zeo_abi::DIGEST_SHA1_CLASS
-        | zeo_abi::DIGEST_SHA256_CLASS
-        | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_class_names(),
+        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
+        // registered_table.
         // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
         // registered_table.
         _ => &[],

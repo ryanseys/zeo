@@ -3,25 +3,66 @@
 //! `require "digest"` activates them. Hashing is RustCrypto (pure Rust, no
 //! system libs; pulled in only by the `ext-digest` cargo feature).
 //!
+//! The four algorithm classes are ONE implementation parameterized by [`Algo`]
+//! (each method reads the algorithm off its receiver), so they share a single
+//! instance + class table rather than duplicating it four ways. `Digest::MD5`
+//! carries that table via `algorithm.rs`'s `ruby_class!`; the other three ids
+//! alias it through the linkme registrations below. The `Digest` framework
+//! module (`Digest.hexencode`/`bubblebabble`) lives in `digest_module.rs`.
+//!
 //! The class methods (`Digest::SHA256.hexdigest(str)`) and the streaming
 //! instance API (`new`/`update`/`<<`/`hexdigest`/`digest`/`base64digest`/
 //! `reset`) are oracle-verified against ruby 4.0.5. An instance stores the
 //! accumulated message and hashes it on demand -- simpler than cloning a live
-//! hasher, and identical in result. The metadata/comparison surface
-//! (`digest_length`/`block_length`/`==`/`bubblebabble`/`hexencode`) is built (see
-//! docs/EXTENSIONS.md).
+//! hasher, and identical in result.
 
-use crate::builtins::{arity, builtin_methods};
+mod algorithm;
+mod digest_module;
+
+use crate::builtins::arity;
+use crate::builtins::{BUILTIN_TABLES, BuiltinClassTable, MethodTable};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use digest::Digest as _;
+use linkme::distributed_slice;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use zeo_abi::{DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS};
+use zeo_abi::{
+    DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS,
+};
+
+// `Digest::MD5` self-registers its (shared) table through `algorithm.rs`'s
+// `ruby_class!`; SHA1/SHA256/SHA512 are the same table under a different id.
+#[distributed_slice(BUILTIN_TABLES)]
+static SHA1_TABLE: BuiltinClassTable = alias_table(DIGEST_SHA1_CLASS);
+#[distributed_slice(BUILTIN_TABLES)]
+static SHA256_TABLE: BuiltinClassTable = alias_table(DIGEST_SHA256_CLASS);
+#[distributed_slice(BUILTIN_TABLES)]
+static SHA512_TABLE: BuiltinClassTable = alias_table(DIGEST_SHA512_CLASS);
+
+/// One of the SHA algorithm classes, routed at `id` to the shared MD5-carried
+/// table (the methods read the algorithm off the receiver, so the same fns
+/// serve every algorithm).
+const fn alias_table(id: ClassId) -> BuiltinClassTable {
+    BuiltinClassTable {
+        id,
+        instance: Some(MethodTable {
+            lookup: algorithm::lookup,
+            names: algorithm::lookup_names,
+            arity: algorithm::lookup_arity,
+        }),
+        class: Some(MethodTable {
+            lookup: algorithm::lookup_class,
+            names: algorithm::lookup_class_names,
+            arity: algorithm::lookup_class_arity,
+        }),
+        install_constants: None,
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
-enum Algo {
+pub(crate) enum Algo {
     Md5,
     Sha1,
     Sha256,
@@ -47,7 +88,7 @@ impl Algo {
         }
     }
     /// The raw digest bytes of `data` under this algorithm.
-    fn raw(self, data: &[u8]) -> Vec<u8> {
+    pub(crate) fn raw(self, data: &[u8]) -> Vec<u8> {
         match self {
             Algo::Md5 => md5::Md5::digest(data).to_vec(),
             Algo::Sha1 => sha1::Sha1::digest(data).to_vec(),
@@ -75,7 +116,7 @@ impl Algo {
 
 /// The "bubble babble" encoding of `data` (`Digest.bubblebabble`), the
 /// pseudo-word format from the original SSH fingerprint scheme.
-fn bubble_babble(data: &[u8]) -> String {
+pub(crate) fn bubble_babble(data: &[u8]) -> String {
     const VOWELS: &[u8; 6] = b"aeiouy";
     const CONSONANTS: &[u8; 17] = b"bcdfghklmnprstvzx";
     let mut out = vec![b'x'];
@@ -153,7 +194,7 @@ impl RubyObject for RDigest {
     }
 }
 
-fn digest_of(recv: &RubyValue) -> &RDigest {
+pub(crate) fn digest_of(recv: &RubyValue) -> &RDigest {
     match recv {
         RubyValue::Object(o) => o
             .as_any()
@@ -163,21 +204,21 @@ fn digest_of(recv: &RubyValue) -> &RDigest {
     }
 }
 
-fn algo_of_class(recv: &RubyValue) -> Algo {
+pub(crate) fn algo_of_class(recv: &RubyValue) -> Algo {
     match recv {
         RubyValue::Class(id) => Algo::from_class_id(*id),
         _ => unreachable!("a Digest class method's receiver is its class"),
     }
 }
 
-fn in_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
+pub(crate) fn in_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
     Ok(crate::builtins::convert::to_rstr(v)?
         .lock()
         .bytes()
         .to_vec())
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -185,7 +226,7 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 
 /// Standard RFC 4648 base64 with padding -- inlined so `ext-digest` doesn't
 /// depend on the (separately gated) `ext-base64` module.
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let n = (u32::from(chunk[0]) << 16)
@@ -210,7 +251,7 @@ fn base64(bytes: &[u8]) -> String {
 /// Shared body of the instance `hexdigest`/`digest`/`base64digest`: an optional
 /// string arg is appended, the buffer hashed, and (per CRuby) the object reset
 /// when an arg was supplied.
-fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
+pub(crate) fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
     arity!(args, 0..=1);
     let d = digest_of(recv);
     let mut buf = d.buf.lock();
@@ -224,111 +265,76 @@ fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
     Ok(out)
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+/// A fresh streaming digest object for `algo` (the shared `.new` body).
+pub(crate) fn new_digest(algo: Algo) -> RubyValue {
+    RubyValue::Object(Arc::new(RDigest::new(algo)))
+}
 
-    "update" | "<<" => fn update(recv, args, _block) {
-        arity!(args, 1);
-        digest_of(recv).buf.lock().extend_from_slice(&in_bytes(&args[0])?);
-        Ok(recv.clone())
-    }
-    "hexdigest" | "to_s" => fn hexdigest(recv, args, _block) {
-        Ok(RubyValue::Str(string_new(hex(&finalize(recv, args)?))))
-    }
-    "digest" => fn digest(recv, args, _block) {
-        Ok(RubyValue::Str(crate::string_from_bytes(finalize(recv, args)?, crate::encoding::ASCII_8BIT)))
-    }
-    "base64digest" => fn base64digest(recv, args, _block) {
-        Ok(RubyValue::Str(string_new(base64(&finalize(recv, args)?))))
-    }
-    "reset" => fn reset(recv, args, _block) {
-        arity!(args, 0);
-        digest_of(recv).buf.lock().clear();
-        Ok(recv.clone())
-    }
+pub(crate) fn digest_length_of(recv: &RubyValue) -> i64 {
+    digest_of(recv).algo.digest_length()
+}
 
-    "digest_length" | "length" | "size" => fn digest_length(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Int(digest_of(recv).algo.digest_length()))
-    }
-    "block_length" => fn block_length(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Int(digest_of(recv).algo.block_length()))
-    }
-    // `d == other`: another Digest compares by raw digest; anything else is
-    // compared to `d`'s hexdigest (CRuby's `to_str` path).
-    "==" => fn eq(recv, args, _block) {
-        arity!(args, 1);
-        let mine = digest_of(recv);
-        let my_raw = mine.algo.raw(&mine.buf.lock());
-        let equal = match &args[0] {
-            RubyValue::Object(o) if o.as_any().downcast_ref::<RDigest>().is_some() => {
-                let other = digest_of(&args[0]);
-                my_raw == other.algo.raw(&other.buf.lock())
-            }
-            RubyValue::Str(s) => hex(&my_raw) == s.lock().to_utf8_lossy(),
-            _ => false,
-        };
-        Ok(RubyValue::Bool(equal))
-    }
-    // The bubble babble of this object's current digest.
-    "bubblebabble" => fn bubblebabble(recv, args, _block) {
-        arity!(args, 0);
-        let d = digest_of(recv);
-        Ok(RubyValue::Str(string_new(bubble_babble(&d.algo.raw(&d.buf.lock())))))
+pub(crate) fn block_length_of(recv: &RubyValue) -> i64 {
+    digest_of(recv).algo.block_length()
+}
+
+/// `d == other`: another Digest compares by raw digest; anything else is
+/// compared to `d`'s hexdigest (CRuby's `to_str` path).
+pub(crate) fn digest_eq(recv: &RubyValue, other: &RubyValue) -> bool {
+    let mine = digest_of(recv);
+    let my_raw = mine.algo.raw(&mine.buf.lock());
+    match other {
+        RubyValue::Object(o) if o.as_any().downcast_ref::<RDigest>().is_some() => {
+            let other = digest_of(other);
+            my_raw == other.algo.raw(&other.buf.lock())
+        }
+        RubyValue::Str(s) => hex(&my_raw) == s.lock().to_utf8_lossy(),
+        _ => false,
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" => fn new_m(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Object(Arc::new(RDigest::new(algo_of_class(recv)))))
-    }
-    "hexdigest" => fn hexdigest_c(recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Str(string_new(hex(&algo_of_class(recv).raw(&in_bytes(&args[0])?)))))
-    }
-    "digest" => fn digest_c(recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Str(crate::string_from_bytes(
-            algo_of_class(recv).raw(&in_bytes(&args[0])?),
-            crate::encoding::ASCII_8BIT,
-        )))
-    }
-    "base64digest" => fn base64digest_c(recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Str(string_new(base64(&algo_of_class(recv).raw(&in_bytes(&args[0])?)))))
-    }
+/// The bubble babble of a receiver's current digest.
+pub(crate) fn digest_bubblebabble(recv: &RubyValue) -> String {
+    let d = digest_of(recv);
+    bubble_babble(&d.algo.raw(&d.buf.lock()))
 }
 
-builtin_methods! {
-    // The `Digest` framework module itself (`Digest.hexencode`, etc.) -- not
-    // yet implemented; `require "digest"` and the algorithm classes work.
-    pub(crate) fn lookup_module;
+/// Append `bytes` to a receiver's buffer (the shared `update`/`<<` body).
+pub(crate) fn push_bytes(recv: &RubyValue, bytes: &[u8]) {
+    digest_of(recv).buf.lock().extend_from_slice(bytes);
+}
 
-    // `Digest.hexencode(str)` -- the lowercase hex of the raw bytes (no hashing).
-    "hexencode" => fn hexencode(_recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Str(string_new(hex(&in_bytes(&args[0])?))))
-    }
-    // `Digest.bubblebabble(str)` -- the bubble babble of the raw bytes.
-    "bubblebabble" => fn bubblebabble_mod(_recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Str(string_new(bubble_babble(&in_bytes(&args[0])?))))
-    }
+/// Clear a receiver's buffer (`reset`).
+pub(crate) fn reset_buf(recv: &RubyValue) {
+    digest_of(recv).buf.lock().clear();
+}
+
+pub(crate) fn str(s: String) -> RubyValue {
+    RubyValue::Str(string_new(s))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::registered_table;
 
     fn s(text: &str) -> RubyValue {
         RubyValue::Str(string_new(text.to_string()))
     }
     fn cls(id: ClassId) -> RubyValue {
         RubyValue::Class(id)
+    }
+    fn im(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let table = registered_table(DIGEST_MD5_CLASS)
+            .and_then(|t| t.instance.as_ref())
+            .expect("Digest registers an instance table");
+        (table.lookup)(name).expect("instance method exists")
+    }
+    fn cm(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let table = registered_table(DIGEST_MD5_CLASS)
+            .and_then(|t| t.class.as_ref())
+            .expect("Digest registers a class table");
+        (table.lookup)(name).expect("class method exists")
     }
     fn t(v: Result<RubyValue, Signal>) -> String {
         match v.unwrap() {
@@ -340,30 +346,30 @@ mod tests {
     #[test]
     fn class_hexdigest_matches_ruby() {
         assert_eq!(
-            t(hexdigest_c(&cls(DIGEST_MD5_CLASS), &[s("")], None)),
+            t(cm("hexdigest")(&cls(DIGEST_MD5_CLASS), &[s("")], None)),
             "d41d8cd98f00b204e9800998ecf8427e"
         );
         assert_eq!(
-            t(hexdigest_c(&cls(DIGEST_SHA1_CLASS), &[s("abc")], None)),
+            t(cm("hexdigest")(&cls(DIGEST_SHA1_CLASS), &[s("abc")], None)),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
         assert_eq!(
-            t(hexdigest_c(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
+            t(cm("hexdigest")(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(
-            t(base64digest_c(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
+            t(cm("base64digest")(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
             "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
         );
     }
 
     #[test]
     fn streaming_update_matches_oneshot() {
-        let d = new_m(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
-        update(&d, &[s("a")], None).unwrap();
-        update(&d, &[s("bc")], None).unwrap();
+        let d = cm("new")(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
+        im("update")(&d, &[s("a")], None).unwrap();
+        im("update")(&d, &[s("bc")], None).unwrap();
         assert_eq!(
-            t(hexdigest(&d, &[], None)),
+            t(im("hexdigest")(&d, &[], None)),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
@@ -376,28 +382,30 @@ mod tests {
             (DIGEST_SHA256_CLASS, 32, 64),
             (DIGEST_SHA512_CLASS, 64, 128),
         ] {
-            let d = new_m(&cls(id), &[], None).unwrap();
+            let d = cm("new")(&cls(id), &[], None).unwrap();
             assert!(
-                matches!(digest_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == dlen)
+                matches!(im("digest_length")(&d, &[], None).unwrap(), RubyValue::Int(n) if n == dlen)
             );
-            assert!(matches!(block_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == blen));
+            assert!(
+                matches!(im("block_length")(&d, &[], None).unwrap(), RubyValue::Int(n) if n == blen)
+            );
         }
     }
 
     #[test]
     fn equality_compares_digest_or_hexdigest() {
-        let a = new_m(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
-        update(&a, &[s("hello")], None).unwrap();
-        let b = new_m(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
-        update(&b, &[s("hello")], None).unwrap();
-        assert!(matches!(eq(&a, &[b], None).unwrap(), RubyValue::Bool(true)));
-        let hexed = t(hexdigest(&a, &[], None));
+        let a = cm("new")(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
+        im("update")(&a, &[s("hello")], None).unwrap();
+        let b = cm("new")(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
+        im("update")(&b, &[s("hello")], None).unwrap();
+        assert!(matches!(im("==")(&a, &[b], None).unwrap(), RubyValue::Bool(true)));
+        let hexed = t(im("hexdigest")(&a, &[], None));
         assert!(matches!(
-            eq(&a, &[s(&hexed)], None).unwrap(),
+            im("==")(&a, &[s(&hexed)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            eq(&a, &[s("nope")], None).unwrap(),
+            im("==")(&a, &[s("nope")], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
