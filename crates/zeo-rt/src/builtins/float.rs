@@ -5,8 +5,9 @@
 //! `[Float, Numeric, Comparable, ...]`. The Tier A breadth
 //! (`nan?`/`round(n)`/`to_r`/...) lands with stage C's generics pass.
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
 use crate::{RubyValue, Signal};
+use zeo_macros::ruby_class;
 
 /// CRuby's coercion TypeError shape (`1.0 + "x"` -> `String can't be
 /// coerced into Float`).
@@ -19,51 +20,66 @@ fn coerce_error(arg: &RubyValue) -> Signal {
 
 use crate::builtins::numeric::num_op_row;
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Float = zeo_abi::FLOAT_CLASS < zeo_abi::NUMERIC_CLASS;
 
-    "+"[1] => fn add(recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
-    "-"[1] => fn sub(recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
-    "*"[1] => fn mul(recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
-    "/"[1] => fn div(recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
-    "%"[1] | "modulo"[1] => fn modulo(recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
-    "**"[1] => fn pow(recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
-    "-@"[0] => fn neg(recv, args, _block) {
+    // The IEEE-754 double constants, colocated here (formerly seeded from
+    // `numeric.rs`'s `seed_numeric_constants`). Values are CRuby's exactly.
+    const INFINITY = RubyValue::Float(f64::INFINITY);
+    const NAN = RubyValue::Float(f64::NAN);
+    const EPSILON = RubyValue::Float(f64::EPSILON);
+    const MAX = RubyValue::Float(f64::MAX);
+    const MIN = RubyValue::Float(f64::MIN_POSITIVE);
+    const DIG = RubyValue::Int(15);
+    const MANT_DIG = RubyValue::Int(53);
+    const MAX_EXP = RubyValue::Int(1024);
+    const MIN_EXP = RubyValue::Int(-1021);
+    const MAX_10_EXP = RubyValue::Int(308);
+    const MIN_10_EXP = RubyValue::Int(-307);
+    const RADIX = RubyValue::Int(2);
+
+    def "+" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
+    def "-" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
+    def "*" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
+    def "/" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
+    def "%" | "modulo" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
+    def "**" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
+    def "-@" arity 0 (recv, args, _block) {
         arity!(args, 0);
         match recv {
             RubyValue::Float(f) => Ok(RubyValue::Float(-f)),
             _ => unreachable!("Float table row dispatched on a non-Float receiver"),
         }
     }
-    "+@"[0] => fn pos(recv, args, _block) {
+    def "+@" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "<=>"[1] => fn spaceship(recv, args, _block) {
+    def "<=>" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(match crate::builtins::numeric::num_cmp(recv, &args[0]) {
             Some(Some(c)) => RubyValue::Int(c),
             _ => RubyValue::Nil,
         })
     }
-    "=="[1] => fn eq(recv, args, _block) {
+    def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
-    "abs"[0] | "magnitude"[0] => fn abs(recv, args, _block) {
+    def "abs" | "magnitude" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Float(recv_f64(recv).abs()))
     }
-    "nan?"[0] => fn nan_p(recv, args, _block) {
+    def "nan?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_f64(recv).is_nan()))
     }
-    "finite?"[0] => fn finite_p(recv, args, _block) {
+    def "finite?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_f64(recv).is_finite()))
     }
     // 1 / -1 / nil, real Ruby's exact shape.
-    "infinite?"[0] => fn infinite_p(recv, args, _block) {
+    def "infinite?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let f = recv_f64(recv);
         Ok(if f == f64::INFINITY {
@@ -75,16 +91,16 @@ builtin_methods! {
         })
     }
     // The adjacent representable doubles toward +/-infinity.
-    "next_float"[0] => fn next_float(recv, args, _block) {
+    def "next_float" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Float(recv_f64(recv).next_up()))
     }
-    "prev_float"[0] => fn prev_float(recv, args, _block) {
+    def "prev_float" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Float(recv_f64(recv).next_down()))
     }
     // `coerce(other)` promotes both operands to Float (`[Float(other), self]`).
-    "coerce"[1] => fn coerce(recv, args, _block) {
+    def "coerce" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = numeric_f64_arg(&args[0], "can't coerce")?;
         Ok(RubyValue::Array(crate::array_new(vec![
@@ -93,37 +109,37 @@ builtin_methods! {
         ])))
     }
     // `div` -- floored division returning an Integer (`7.0.div(2) == 3`).
-    "div"[1] => fn floored_div(recv, args, _block) {
+    def "div" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let d = numeric_f64_arg(&args[0], "can't coerce")?;
         float_to_integer((recv_f64(recv) / d).floor())
     }
     // `n.i` -- the pure-imaginary Complex `0 + n*i`.
-    "i"[0] => fn imaginary(recv, args, _block) {
+    def "i" arity 0 (recv, args, _block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
     }
-    "to_f"[0] => fn to_f(recv, args, _block) {
+    def "to_f" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "to_i"[0] | "to_int"[0] => fn to_i(recv, args, _block) {
+    def "to_i" | "to_int" arity 0 (recv, args, _block) {
         arity!(args, 0);
         float_to_integer(recv_f64(recv).trunc())
     }
     // EXACT: every finite double is a dyadic rational (mantissa * 2^exp).
-    "to_r"[0] => fn to_r(recv, args, _block) {
+    def "to_r" arity 0 (recv, args, _block) {
         arity!(args, 0);
         float_to_rational(recv_f64(recv))
     }
     // `rationalize([eps])` -- the SIMPLEST rational within half a ULP of this
     // double (no arg), or within `eps` (with arg). Port of CRuby's
     // `float_rationalize` (numeric.c) + `nurat_rationalize_internal`.
-    "rationalize" => fn rationalize(recv, args, _block) {
+    def "rationalize" (recv, args, _block) {
         arity!(args, 0..=1);
         float_rationalize(recv_f64(recv), args.first())
     }
-    "numerator"[0] => fn numerator(recv, args, _block) {
+    def "numerator" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let f = recv_f64(recv);
         // Infinity/NaN have no rational form, so CRuby skips the conversion
@@ -137,7 +153,7 @@ builtin_methods! {
             other => Ok(other),
         }
     }
-    "denominator"[0] => fn denominator(recv, args, _block) {
+    def "denominator" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let f = recv_f64(recv);
         if !f.is_finite() {
@@ -152,18 +168,18 @@ builtin_methods! {
     // Naive power-of-ten scaling -- CRuby switches to exact rational
     // arithmetic when double precision is insufficient (`2.675.round(2)`),
     // a documented divergence.
-    "round" => fn round(recv, args, _block) {
+    def "round" (recv, args, _block) {
         // A trailing `half:` keyword selects the tie-break mode (:up default).
         let (positional, mode) = split_round_half(args)?;
         float_round_family(recv, positional, move |x| round_half(x, mode))
     }
-    "floor" => fn floor(recv, args, _block) {
+    def "floor" (recv, args, _block) {
         float_round_family(recv, args, f64::floor)
     }
-    "ceil" => fn ceil(recv, args, _block) {
+    def "ceil" (recv, args, _block) {
         float_round_family(recv, args, f64::ceil)
     }
-    "truncate" => fn truncate(recv, args, _block) {
+    def "truncate" (recv, args, _block) {
         float_round_family(recv, args, f64::trunc)
     }
 }
@@ -476,17 +492,28 @@ fn float_round_family(
 mod tests {
     use super::*;
 
+    /// The Float rows are `ruby_class!`-generated (mangled Rust fn names), so
+    /// reach them the way dispatch does -- through the registered table.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::FLOAT_CLASS)
+            .expect("Float is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Float has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Float#{name} is defined"))
+    }
+
     #[test]
     fn nan_compares_as_nil() {
-        let r = spaceship(&RubyValue::Float(f64::NAN), &[RubyValue::Int(1)], None).unwrap();
+        let r = imethod("<=>")(&RubyValue::Float(f64::NAN), &[RubyValue::Int(1)], None).unwrap();
         assert!(matches!(r, RubyValue::Nil));
     }
 
     #[test]
     fn arithmetic_rows_join_the_float_lane() {
-        let r = add(&RubyValue::Float(1.5), &[RubyValue::Int(1)], None).unwrap();
+        let r = imethod("+")(&RubyValue::Float(1.5), &[RubyValue::Int(1)], None).unwrap();
         assert!(matches!(r, RubyValue::Float(f) if f == 2.5));
-        let r = div(&RubyValue::Float(1.0), &[RubyValue::Int(0)], None).unwrap();
+        let r = imethod("/")(&RubyValue::Float(1.0), &[RubyValue::Int(0)], None).unwrap();
         assert!(matches!(r, RubyValue::Float(f) if f.is_infinite()));
     }
 
@@ -494,7 +521,7 @@ mod tests {
     fn coercion_failures_carry_cruby_shape() {
         let s = RubyValue::Str(crate::string_new("x".to_string()));
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            add(&RubyValue::Float(1.0), &[s], None)
+            imethod("+")(&RubyValue::Float(1.0), &[s], None)
         }));
         assert!(r.is_err());
     }

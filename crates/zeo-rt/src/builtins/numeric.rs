@@ -284,26 +284,13 @@ pub fn num_eq(a: &RubyValue, b: &RubyValue) -> Option<bool> {
     })
 }
 
-/// Seeds `Float::INFINITY`/`NAN`/`EPSILON`/... and `Math::PI`/`E` into the
-/// constant store -- called once from generated `main()` alongside the
-/// registry install (the 15.3 `const_owners` read path resolves
-/// `Float::INFINITY` to owner `FLOAT_CLASS` at compile time; only the
-/// VALUES need seeding here). Values are CRuby's exactly (oracle-verified).
+/// Seeds `Complex::I` and `Math::PI`/`E` into the constant store -- called once
+/// at startup. The `Float::*` constants moved onto Float's `ruby_class!` `const`
+/// rows (installed by the `BUILTIN_TABLES` loop); `Math` stays a bespoke
+/// dispatcher (not a `ruby_class!`), so its constants keep seeding here.
+/// Values are CRuby's exactly (oracle-verified).
 pub fn seed_numeric_constants() {
     use crate::const_set;
-    let float = zeo_abi::FLOAT_CLASS.0;
-    const_set(float, "INFINITY", RubyValue::Float(f64::INFINITY));
-    const_set(float, "NAN", RubyValue::Float(f64::NAN));
-    const_set(float, "EPSILON", RubyValue::Float(f64::EPSILON));
-    const_set(float, "MAX", RubyValue::Float(f64::MAX));
-    const_set(float, "MIN", RubyValue::Float(f64::MIN_POSITIVE));
-    const_set(float, "DIG", RubyValue::Int(15));
-    const_set(float, "MANT_DIG", RubyValue::Int(53));
-    const_set(float, "MAX_EXP", RubyValue::Int(1024));
-    const_set(float, "MIN_EXP", RubyValue::Int(-1021));
-    const_set(float, "MAX_10_EXP", RubyValue::Int(308));
-    const_set(float, "MIN_10_EXP", RubyValue::Int(-307));
-    const_set(float, "RADIX", RubyValue::Int(2));
     // `Complex::I` -- the imaginary unit, `Complex(0, 1)`.
     const_set(
         zeo_abi::COMPLEX_CLASS.0,
