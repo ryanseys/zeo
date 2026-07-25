@@ -4,7 +4,8 @@
 //! The remaining Tier A rows land in stage E.
 
 use crate::RubyValue;
-use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, range_error, type_error};
+use crate::builtins::{arg_error, arity, block_or_enum, range_error, type_error};
+use zeo_macros::ruby_class;
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
     match recv {
@@ -143,8 +144,9 @@ fn int_in_range(i: i64, end: Option<&RubyValue>, exclusive: bool) -> bool {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Range = zeo_abi::RANGE_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     // Materializing an UNBOUNDED range would spin forever growing a vector
     // until the process died, so CRuby guards `Range#to_a` specifically
@@ -154,7 +156,7 @@ builtin_methods! {
     //
     // The test is on the END only, matching CRuby: a BEGINLESS range isn't
     // caught here and instead fails in `each`, which cannot start.
-    "to_a"[0] | "entries"[0] => fn to_a(recv, args, _block) {
+    def "to_a" arity 0 | "entries" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         let unbounded = match end {
@@ -169,7 +171,7 @@ builtin_methods! {
             .expect("Enumerable implements to_a")
     }
 
-    "each"[0] => fn each(recv, args, block) {
+    def "each" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         let (start, end, exclusive) = range_parts(recv);
@@ -245,7 +247,7 @@ builtin_methods! {
     // find-any for a Numeric comparator result (`0` hits, negative searches
     // low, positive high; `nil` on no hit). Binary search on the bounds -- no
     // materialization, so a huge range is fine.
-    "bsearch"[0] => fn bsearch(recv, args, block) {
+    def "bsearch" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = crate::builtins::need_block!(block);
         let (start, end, exclusive) = range_parts(recv);
@@ -284,7 +286,7 @@ builtin_methods! {
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this runtime supports the
     // cover check is the faithful behavior for all four names.
-    "==="[1] | "include?"[1] | "member?"[1] => fn case_eq(recv, args, _block) {
+    def "===" arity 1 | "include?" arity 1 | "member?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
@@ -293,7 +295,7 @@ builtin_methods! {
     }
     // `cover?` alone accepts a RANGE argument (range containment); `===`/
     // `include?`/`member?` treat a Range as an ordinary value (never covered).
-    "cover?"[1] => fn cover_p(recv, args, _block) {
+    def "cover?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let (start, end, exclusive) = range_parts(recv);
         if matches!(&args[0], RubyValue::Range(..)) {
@@ -304,7 +306,7 @@ builtin_methods! {
     // `overlap?(other)` -- do two ranges share at least one element? False
     // when either range lies wholly beyond the other's end (CRuby range.c's
     // empty-region test); a beginless/endless bound never bounds that side.
-    "overlap?"[1] => fn overlap_p(recv, args, _block) {
+    def "overlap?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Range(ob, oe, ox) = &args[0] else {
             return Err(type_error!("wrong argument type {} (expected Range)",
@@ -327,7 +329,7 @@ builtin_methods! {
             !empty_region(sb, oe, ox) && !empty_region(ob, se, sx),
         ))
     }
-    "last" => fn last_m(recv, args, _block) {
+    def "last"(recv, args, _block) {
         arity!(args, 0..=1);
         let (start, end, exclusive) = range_parts(recv);
         match args.first() {
@@ -347,7 +349,7 @@ builtin_methods! {
             }
         }
     }
-    "size"[0] => fn size(recv, args, _block) {
+    def "size" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let (start, end, exclusive) = range_parts(recv);
         // The begin must be an Integer (CRuby iterates from it via `succ`).
@@ -380,7 +382,7 @@ builtin_methods! {
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
     // `step(n)`: the blockless form returns an Enumerator.
-    "step" | "%"[1] => fn step(recv, args, block) {
+    def "step" | "%" arity 1 (recv, args, block) {
         arity!(args, 1);
         let p = block_or_enum!(recv, "step", args, block);
         let (start, end, exclusive) = range_parts(recv);
@@ -450,12 +452,12 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "exclude_end?"[0] => fn exclude_end_p(recv, args, _block) {
+    def "exclude_end?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let (_, _, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(exclusive))
     }
-    "begin"[0] | "first" => fn begin_m(recv, args, _block) {
+    def "begin" arity 0 | "first"(recv, args, _block) {
         // `first` with an argument is Enumerable's n-form; only the 0-arg
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:
@@ -471,7 +473,7 @@ builtin_methods! {
         let (start, _, _) = range_parts(recv);
         Ok(start.cloned().unwrap_or(RubyValue::Nil))
     }
-    "end"[0] => fn end_m(recv, args, _block) {
+    def "end" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         Ok(end.cloned().unwrap_or(RubyValue::Nil))
@@ -480,7 +482,7 @@ builtin_methods! {
     // iterated (`each`/`to_a` raise), so the Enumerable fallback would fail.
     // Other element types keep iterating through Enumerable, whose behavior is
     // already correct (and whose exclusive-`max` differs by type).
-    "min" => fn range_min(recv, args, block) {
+    def "min"(recv, args, block) {
         let (start, end, _) = range_parts(recv);
         // A beginless range has no minimum -- CRuby raises rather than iterate
         // (which a bare `enumerable_send` would attempt endlessly). Holds
@@ -511,7 +513,7 @@ builtin_methods! {
         crate::builtins::enumerable::enumerable_send(recv, "min", args, block)
             .expect("Enumerable implements min")
     }
-    "max" => fn range_max(recv, args, block) {
+    def "max"(recv, args, block) {
         let (start, end, exclusive) = range_parts(recv);
         // An endless range has no maximum -- CRuby raises before iterating
         // (which would loop forever). Holds regardless of arg/block (verified
@@ -544,6 +546,18 @@ builtin_methods! {
 mod tests {
     use super::*;
 
+    /// The `ruby_class!`-generated methods are reachable only through the
+    /// dispatch table (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through Range's registered lookup.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::RANGE_CLASS)
+            .expect("Range is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Range has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Range#{name} is defined"))
+    }
+
     fn int_range(s: i64, e: i64, exclusive: bool) -> RubyValue {
         RubyValue::Range(
             Some(Box::new(RubyValue::Int(s))),
@@ -556,27 +570,27 @@ mod tests {
     fn case_eq_covers_the_oracle_matrix() {
         let r = int_range(1, 5, false);
         assert!(matches!(
-            case_eq(&r, &[RubyValue::Int(3)], None).unwrap(),
+            imethod("===")(&r, &[RubyValue::Int(3)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            case_eq(&r, &[RubyValue::Float(5.5)], None).unwrap(),
+            imethod("===")(&r, &[RubyValue::Float(5.5)], None).unwrap(),
             RubyValue::Bool(false)
         ));
         let r6 = int_range(1, 6, false);
         assert!(matches!(
-            case_eq(&r6, &[RubyValue::Float(5.5)], None).unwrap(),
+            imethod("===")(&r6, &[RubyValue::Float(5.5)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         let excl = int_range(1, 5, true);
         assert!(matches!(
-            case_eq(&excl, &[RubyValue::Int(5)], None).unwrap(),
+            imethod("===")(&excl, &[RubyValue::Int(5)], None).unwrap(),
             RubyValue::Bool(false)
         ));
         // Incomparable subject: false, not an error.
         let s = RubyValue::Str(crate::string_new("x".to_string()));
         assert!(matches!(
-            case_eq(&r, &[s], None).unwrap(),
+            imethod("===")(&r, &[s], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
@@ -584,10 +598,10 @@ mod tests {
     #[test]
     fn endpoints_and_exclusion_report() {
         let r = int_range(1, 5, true);
-        assert!(matches!(begin_m(&r, &[], None).unwrap(), RubyValue::Int(1)));
-        assert!(matches!(end_m(&r, &[], None).unwrap(), RubyValue::Int(5)));
+        assert!(matches!(imethod("begin")(&r, &[], None).unwrap(), RubyValue::Int(1)));
+        assert!(matches!(imethod("end")(&r, &[], None).unwrap(), RubyValue::Int(5)));
         assert!(matches!(
-            exclude_end_p(&r, &[], None).unwrap(),
+            imethod("exclude_end?")(&r, &[], None).unwrap(),
             RubyValue::Bool(true)
         ));
     }
