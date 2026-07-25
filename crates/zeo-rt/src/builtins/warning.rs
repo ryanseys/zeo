@@ -10,6 +10,7 @@ use crate::Symbol;
 use crate::builtins::{arg_error, type_error};
 use crate::signal::Signal;
 use crate::value::RubyValue;
+use zeo_macros::ruby_module;
 
 static DEPRECATED: AtomicBool = AtomicBool::new(false);
 static EXPERIMENTAL: AtomicBool = AtomicBool::new(true);
@@ -33,69 +34,60 @@ fn category_flag(v: &RubyValue) -> Result<&'static AtomicBool, Signal> {
     }
 }
 
-fn c_aref(
-    _recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
-    Ok(RubyValue::Bool(
-        category_flag(&args[0])?.load(Ordering::Relaxed),
-    ))
-}
+ruby_module! {
+    Warning = zeo_abi::WARNING_MODULE;
 
-fn c_aset(
-    _recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 2);
-    let on = args[1].truthy();
-    category_flag(&args[0])?.store(on, Ordering::Relaxed);
-    Ok(args[1].clone())
-}
-
-/// `Warning.warn(msg)` -- writes `msg` to stderr AS-IS (no added newline;
-/// `Kernel#warn` is the one that appends). The optional `category:`
-/// keyword arrives as a trailing Hash and only gates on its flag.
-fn c_warn(
-    _recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1..=2);
-    if let Some(RubyValue::Hash(h)) = args.get(1) {
-        let cat = crate::hash_get(h, &RubyValue::Symbol(Symbol::intern("category")));
-        if !matches!(cat, RubyValue::Nil) && !category_flag(&cat)?.load(Ordering::Relaxed) {
-            return Ok(RubyValue::Nil);
-        }
+    def self."[]"(_recv, args, _blk) {
+        crate::builtins::arity!(args, 1);
+        Ok(RubyValue::Bool(category_flag(&args[0])?.load(Ordering::Relaxed)))
     }
-    let msg = args[0].try_display_string()?;
-    eprint!("{msg}");
-    Ok(RubyValue::Nil)
-}
-
-pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
-    Some(match name {
-        "[]" => c_aref,
-        "[]=" => c_aset,
-        "warn" => c_warn,
-        _ => return None,
-    })
-}
-
-pub fn lookup_class_names() -> &'static [&'static str] {
-    &["[]", "[]=", "warn"]
+    def self."[]="(_recv, args, _blk) {
+        crate::builtins::arity!(args, 2);
+        let on = args[1].truthy();
+        category_flag(&args[0])?.store(on, Ordering::Relaxed);
+        Ok(args[1].clone())
+    }
+    // `Warning.warn(msg)` -- writes `msg` to stderr AS-IS (no added newline;
+    // `Kernel#warn` is the one that appends). The optional `category:`
+    // keyword arrives as a trailing Hash and only gates on its flag.
+    def self."warn"(_recv, args, _blk) {
+        crate::builtins::arity!(args, 1..=2);
+        if let Some(RubyValue::Hash(h)) = args.get(1) {
+            let cat = crate::hash_get(h, &RubyValue::Symbol(Symbol::intern("category")));
+            if !matches!(cat, RubyValue::Nil) && !category_flag(&cat)?.load(Ordering::Relaxed) {
+                return Ok(RubyValue::Nil);
+            }
+        }
+        let msg = args[0].try_display_string()?;
+        eprint!("{msg}");
+        Ok(RubyValue::Nil)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The `ruby_module!`-generated class methods are reachable only through
+    /// the dispatch table (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through `Warning`'s registered
+    /// class-method `lookup`.
+    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::WARNING_MODULE)
+            .expect("Warning is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("Warning has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Warning.{name} is defined"))
+    }
+
+    // Defaults and the flag round-trip share process-global category statics,
+    // so they live in ONE test -- as two parallel tests they'd race on
+    // `PERFORMANCE` (one toggling it while the other reads the default).
     #[test]
-    fn category_defaults_match_a_plain_cruby_run() {
-        let f = |name: &str| {
-            c_aref(
+    fn category_defaults_and_flag_writes() {
+        let aref = |name: &str| {
+            cmethod("[]")(
                 &RubyValue::Nil,
                 &[RubyValue::Symbol(Symbol::intern(name))],
                 None,
@@ -103,21 +95,18 @@ mod tests {
             .unwrap()
             .truthy()
         };
-        assert!(!f("deprecated"));
-        assert!(f("experimental"));
-        assert!(!f("performance"));
-    }
 
-    #[test]
-    fn setting_a_flag_round_trips_and_answers_the_operand() {
+        // Defaults match a plain (no `-w`) ruby 4.0.5 run.
+        assert!(!aref("deprecated"));
+        assert!(aref("experimental"));
+        assert!(!aref("performance"));
+
+        // Setting a flag round-trips and answers the assigned operand.
         let cat = RubyValue::Symbol(Symbol::intern("performance"));
-        let set = c_aset(&RubyValue::Nil, &[cat.clone(), RubyValue::Bool(true)], None).unwrap();
+        let set = cmethod("[]=")(&RubyValue::Nil, &[cat.clone(), RubyValue::Bool(true)], None).unwrap();
         assert!(set.truthy());
-        assert!(
-            c_aref(&RubyValue::Nil, std::slice::from_ref(&cat), None)
-                .unwrap()
-                .truthy()
-        );
-        c_aset(&RubyValue::Nil, &[cat, RubyValue::Bool(false)], None).unwrap();
+        assert!(aref("performance"));
+        cmethod("[]=")(&RubyValue::Nil, &[cat, RubyValue::Bool(false)], None).unwrap();
+        assert!(!aref("performance"));
     }
 }
