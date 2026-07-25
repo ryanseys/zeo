@@ -12,7 +12,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use crate::Signal;
-use crate::builtins::{arity, builtin_methods, type_error};
+use crate::builtins::{arity, type_error};
+use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ARGF_CLASS, ClassId};
@@ -116,12 +117,13 @@ fn all_lines(argf: &RArgf) -> Result<Vec<RubyValue>, Signal> {
     Ok(crate::builtins::string::split_lines(&text))
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Argf = zeo_abi::ARGF_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     // `#filename`/`#path` -- the current file (`"-"` = stdin). Before reading
     // begins, it is `ARGV[0]` (or `"-"` when `ARGV` is empty).
-    "filename" | "path" => fn argf_filename(recv, args, _blk) {
+    def "filename" | "path"(recv, args, _blk) {
         arity!(args, 0);
         let argf = recv_argf(recv)?;
         if argf.started.load(Ordering::Relaxed) {
@@ -129,7 +131,7 @@ builtin_methods! {
         }
         Ok(str_val(argv_files().into_iter().next().unwrap_or_else(|| "-".to_string())))
     }
-    "each_line" | "each" => fn argf_each_line(recv, args, blk) {
+    def "each_line" | "each"(recv, args, blk) {
         arity!(args, 0..=1);
         let Some(RubyValue::Proc(p)) = blk else {
             return Err(crate::dispatch::raise_no_block_yield());
@@ -141,21 +143,21 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "readlines" | "to_a" => fn argf_readlines(recv, args, _blk) {
+    def "readlines" | "to_a"(recv, args, _blk) {
         arity!(args, 0..=1);
         let lines = all_lines(recv_argf(recv)?)?;
         Ok(RubyValue::Array(crate::collections::array_new(lines)))
     }
-    "read" => fn argf_read(recv, args, _blk) {
+    def "read"(recv, args, _blk) {
         arity!(args, 0..=1);
         let bytes = read_all(recv_argf(recv)?)?;
         Ok(str_val(String::from_utf8_lossy(&bytes).into_owned()))
     }
-    "lineno" => fn argf_lineno(recv, args, _blk) {
+    def "lineno"(recv, args, _blk) {
         arity!(args, 0);
         Ok(RubyValue::Int(recv_argf(recv)?.lineno.load(Ordering::Relaxed)))
     }
-    "to_s" | "inspect" => fn argf_to_s(recv, args, _blk) {
+    def "to_s" | "inspect"(recv, args, _blk) {
         arity!(args, 0);
         let _ = recv_argf(recv)?;
         Ok(str_val("ARGF".to_string()))
@@ -164,4 +166,24 @@ builtin_methods! {
 
 fn str_val(s: String) -> RubyValue {
     RubyValue::Str(crate::collections::string_new(s))
+}
+
+#[cfg(test)]
+mod tests {
+    /// `ARGF.class`'s `ruby_class!` table self-registers via linkme; this pins
+    /// that its instance surface (including the pipe-aliases) resolves through
+    /// the registry, the path real dispatch uses now the fn names are mangled.
+    #[test]
+    fn the_table_resolves_the_argf_surface() {
+        let tbl = crate::builtins::registered_table(zeo_abi::ARGF_CLASS)
+            .expect("ARGF.class is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("ARGF.class has instance methods");
+        assert!((tbl.lookup)("each").is_some());
+        assert!((tbl.lookup)("each_line").is_some()); // aliased with each
+        assert!((tbl.lookup)("path").is_some()); // aliased with filename
+        assert!((tbl.lookup)("read").is_some());
+        assert!((tbl.lookup)("nope").is_none());
+    }
 }

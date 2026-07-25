@@ -144,7 +144,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup,
         zeo_abi::HASH_CLASS => hash::lookup,
-        zeo_abi::RANGE_CLASS => range::lookup,
+        // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup,
         zeo_abi::REGEXP_CLASS => regexp::lookup,
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
@@ -164,7 +164,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup,
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::DIR_CLASS => dir::lookup,
-        zeo_abi::ARGF_CLASS => argf::lookup,
+        // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::METHOD_CLASS => method_obj::lookup,
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         zeo_abi::FIBER_CLASS => fiber::lookup,
@@ -230,7 +230,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup_arity,
         zeo_abi::HASH_CLASS => hash::lookup_arity,
-        zeo_abi::RANGE_CLASS => range::lookup_arity,
+        // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup_arity,
         zeo_abi::REGEXP_CLASS => regexp::lookup_arity,
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
@@ -250,7 +250,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::DIR_CLASS => dir::lookup_arity,
-        zeo_abi::ARGF_CLASS => argf::lookup_arity,
+        // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::METHOD_CLASS => method_obj::lookup_arity,
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_arity,
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
@@ -339,7 +339,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::DATA_CLASS => rstruct::lookup_class_data,
         zeo_abi::COMPLEX_CLASS => complex::lookup_class,
         zeo_abi::RANDOM_CLASS => random::lookup_class,
-        zeo_abi::MARSHAL_MODULE => marshal::lookup_class,
+        // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class,
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class,
@@ -410,7 +410,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup_names(),
         zeo_abi::HASH_CLASS => hash::lookup_names(),
-        zeo_abi::RANGE_CLASS => range::lookup_names(),
+        // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup_names(),
         zeo_abi::REGEXP_CLASS => regexp::lookup_names(),
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
@@ -427,7 +427,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::DIR_CLASS => dir::lookup_names(),
-        zeo_abi::ARGF_CLASS => argf::lookup_names(),
+        // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::METHOD_CLASS => method_obj::lookup_names(),
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
@@ -499,7 +499,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::ENCODING_CLASS => encoding::lookup_class_names(),
         zeo_abi::SET_CLASS => set::lookup_class_names(),
         zeo_abi::COMPLEX_CLASS => complex::lookup_class_names(),
-        zeo_abi::MARSHAL_MODULE => marshal::lookup_class_names(),
+        // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class_names(),
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class_names(),
