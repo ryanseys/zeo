@@ -10,12 +10,13 @@
 //! On wake (or timeout) the Ruby mutex is re-acquired before returning.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, thread_error, type_error};
+use crate::builtins::{arity, thread_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use zeo_abi::CONDITION_VARIABLE_CLASS;
+use zeo_macros::ruby_class;
 
 pub struct RConditionVariable {
     /// Guards the wait/signal handoff -- see the module docs' no-lost-wakeup
@@ -81,12 +82,17 @@ fn cv_of(recv: &RubyValue) -> &RConditionVariable {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    ConditionVariable = zeo_abi::CONDITION_VARIABLE_CLASS < zeo_abi::OBJECT_CLASS;
+
+    def self."new"(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(new_cv())
+    }
 
     // `wait(mutex, timeout=nil)` -- release `mutex`, park until signaled or
     // `timeout` seconds elapse, re-acquire `mutex`, return self.
-    "wait" => fn wait(recv, args, _block) {
+    def "wait"(recv, args, _block) {
         arity!(args, 1..=2);
         let RubyValue::Mutex(rm) = &args[0] else {
             return Err(type_error!("no implicit conversion into Mutex"));
@@ -124,7 +130,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     // Wake at most one waiter; returns self.
-    "signal" => fn signal(recv, args, _block) {
+    def "signal"(recv, args, _block) {
         arity!(args, 0);
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
@@ -132,7 +138,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     // Wake all waiters; returns self.
-    "broadcast" => fn broadcast(recv, args, _block) {
+    def "broadcast"(recv, args, _block) {
         arity!(args, 0);
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
@@ -141,18 +147,21 @@ builtin_methods! {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" => fn new_m(_recv, args, _block) {
-        arity!(args, 0);
-        Ok(new_cv())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ConditionVariable`'s `ruby_class!`-generated instance methods are
+    /// reachable only through the dispatch table (their Rust fn names are
+    /// mangled), so the tests call them through the registered lookup.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(CONDITION_VARIABLE_CLASS)
+            .expect("ConditionVariable is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("ConditionVariable has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("ConditionVariable#{name} is defined"))
+    }
 
     #[test]
     fn new_produces_a_condition_variable_object() {
@@ -164,9 +173,9 @@ mod tests {
     fn signal_and_broadcast_return_self_and_dont_block_without_waiters() {
         let cv = new_cv();
         // Signaling/broadcasting a waiter-less CV is a no-op that returns self.
-        let r = signal(&cv, &[], None).unwrap();
+        let r = imethod("signal")(&cv, &[], None).unwrap();
         assert!(matches!(&r, RubyValue::Object(o) if o.class_id() == CONDITION_VARIABLE_CLASS));
-        let r = broadcast(&cv, &[], None).unwrap();
+        let r = imethod("broadcast")(&cv, &[], None).unwrap();
         assert!(matches!(&r, RubyValue::Object(o) if o.class_id() == CONDITION_VARIABLE_CLASS));
     }
 

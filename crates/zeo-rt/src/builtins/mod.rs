@@ -177,7 +177,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::STRUCT_CLASS => rstruct::lookup,
         zeo_abi::DATA_CLASS => rstruct::lookup_data,
         zeo_abi::LAZY_CLASS => lazy::lookup,
-        zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup,
+        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup,
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         // In-tree `ext/` extensions with instances (modules like CGI/JSON have
@@ -263,7 +263,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::STRUCT_CLASS => rstruct::lookup_arity,
         zeo_abi::DATA_CLASS => rstruct::lookup_data_arity,
         zeo_abi::LAZY_CLASS => lazy::lookup_arity,
-        zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_arity,
+        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_arity,
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         #[cfg(feature = "ext-stringio")]
@@ -341,7 +341,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::RANDOM_CLASS => random::lookup_class,
         zeo_abi::MARSHAL_MODULE => marshal::lookup_class,
         zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class,
-        zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
+        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class,
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
         zeo_abi::QUEUE_CLASS => queue::lookup_class,
@@ -440,7 +440,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::STRUCT_CLASS => rstruct::lookup_names(),
         zeo_abi::DATA_CLASS => rstruct::lookup_data_names(),
         zeo_abi::LAZY_CLASS => lazy::lookup_names(),
-        zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_names(),
+        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_names(),
@@ -501,7 +501,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::COMPLEX_CLASS => complex::lookup_class_names(),
         zeo_abi::MARSHAL_MODULE => marshal::lookup_class_names(),
         zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class_names(),
-        zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class_names(),
+        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),
         zeo_abi::QUEUE_CLASS => queue::lookup_class_names(),
