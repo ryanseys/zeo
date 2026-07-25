@@ -189,7 +189,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         | zeo_abi::DIGEST_SHA256_CLASS
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup,
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATE_CLASS | zeo_abi::DATETIME_CLASS => crate::ext::date::lookup,
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup, // DATE_CLASS served via registered_table
         #[cfg(feature = "ext-socket")]
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup,
         // TCPSocket has no own instance table -- it inherits IO's read/write via
@@ -261,7 +261,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         | zeo_abi::DIGEST_SHA256_CLASS
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_arity,
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATE_CLASS | zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity, // DATE_CLASS served via registered_table
         #[cfg(feature = "ext-socket")]
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_arity,
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_arity,
@@ -349,7 +349,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::DIGEST_MODULE => crate::ext::digest::lookup_module,
         // JSON_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATE_CLASS | zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class,
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class, // DATE_CLASS served via registered_table
         // ZLIB_MODULE migrated to ruby_module! -- served via registered_table.
         // PSYCH_MODULE migrated to ruby_module! -- served via registered_table;
         // the `YAML` alias id has no table of its own, so it routes here.
@@ -424,7 +424,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         | zeo_abi::DIGEST_SHA256_CLASS
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_names(),
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATE_CLASS | zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(), // DATE_CLASS served via registered_table
         #[cfg(feature = "ext-socket")]
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_names(),
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_names(),
