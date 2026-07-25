@@ -187,8 +187,6 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup,
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup,
-        #[cfg(feature = "ext-strscan")]
-        zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup,
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
         | zeo_abi::DIGEST_SHA1_CLASS
@@ -265,8 +263,6 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_arity,
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_arity,
-        #[cfg(feature = "ext-strscan")]
-        zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_arity,
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
         | zeo_abi::DIGEST_SHA1_CLASS
@@ -355,8 +351,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class,
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class,
-        #[cfg(feature = "ext-strscan")]
-        zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class,
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
@@ -440,8 +434,6 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_names(),
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_names(),
-        #[cfg(feature = "ext-strscan")]
-        zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_names(),
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
         | zeo_abi::DIGEST_SHA1_CLASS
@@ -506,8 +498,6 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class_names(),
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class_names(),
-        #[cfg(feature = "ext-strscan")]
-        zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class_names(),
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS

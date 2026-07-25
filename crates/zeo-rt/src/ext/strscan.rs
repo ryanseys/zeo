@@ -8,9 +8,10 @@
 //! surface -- including `exist?`/`check_until`/`get_byte`/`unscan` -- is
 //! oracle-verified against ruby 4.0.5.
 
-use crate::builtins::{arity, builtin_methods, type_error};
+use crate::builtins::{arity, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal, string_new};
+use zeo_macros::ruby_class;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -110,11 +111,11 @@ fn str_val(text: &str) -> RubyValue {
     RubyValue::Str(string_new(text.to_string()))
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    StringScanner = zeo_abi::STRING_SCANNER_CLASS < zeo_abi::OBJECT_CLASS;
 
     // Anchored scan: on a hit, consume and return the matched text; else nil.
-    "scan" => fn scan(recv, args, _block) {
+    def "scan" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -130,7 +131,7 @@ builtin_methods! {
         }
     }
     // Like `scan` but returns the matched LENGTH (or nil), still advancing.
-    "skip" => fn skip(recv, args, _block) {
+    def "skip" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -145,7 +146,7 @@ builtin_methods! {
         }
     }
     // Anchored length probe -- does NOT advance. Returns the length or nil.
-    "match?" => fn match_p(recv, args, _block) {
+    def "match?" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -155,7 +156,7 @@ builtin_methods! {
         }
     }
     // Like `scan` but does NOT advance (peek the matched text).
-    "check" => fn check(recv, args, _block) {
+    def "check" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -169,7 +170,7 @@ builtin_methods! {
     }
     // Scan forward to and including the next match; consume and return the
     // text from the old position through the match, or nil.
-    "scan_until" => fn scan_until(recv, args, _block) {
+    def "scan_until" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -194,7 +195,7 @@ builtin_methods! {
             None => { st.last = None; st.prev_pos = None; Ok(RubyValue::Nil) }
         }
     }
-    "getch" => fn getch(recv, args, _block) {
+    def "getch" (recv, args, _block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         if st.pos >= st.string.len() {
@@ -209,79 +210,79 @@ builtin_methods! {
         st.pos = m1;
         Ok(str_val(&st.string[m0..m1]))
     }
-    "peek" => fn peek(recv, args, _block) {
+    def "peek" (recv, args, _block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         let st = sc_of(recv).state.lock();
         let end = (st.pos + (*n).max(0) as usize).min(st.string.len());
         Ok(str_val(&st.string[st.pos..end]))
     }
-    "rest" => fn rest(recv, args, _block) {
+    def "rest" (recv, args, _block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(str_val(&st.string[st.pos..]))
     }
-    "eos?" => fn eos(recv, args, _block) {
+    def "eos?" (recv, args, _block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Bool(st.pos >= st.string.len()))
     }
-    "pos" | "charpos" => fn pos(recv, args, _block) {
+    def "pos" | "charpos" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(sc_of(recv).state.lock().pos as i64))
     }
-    "pos=" => fn set_pos(recv, args, _block) {
+    def "pos=" (recv, args, _block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         sc_of(recv).state.lock().pos = (*n).max(0) as usize;
         Ok(args[0].clone())
     }
-    "reset" => fn reset(recv, args, _block) {
+    def "reset" (recv, args, _block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         st.pos = 0;
         st.last = None;
         Ok(recv.clone())
     }
-    "terminate" => fn terminate(recv, args, _block) {
+    def "terminate" (recv, args, _block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         st.pos = st.string.len();
         st.last = None;
         Ok(recv.clone())
     }
-    "matched" => fn matched(recv, args, _block) {
+    def "matched" (recv, args, _block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(st.last.map(|(a, b)| str_val(&st.string[a..b])).unwrap_or(RubyValue::Nil))
     }
-    "matched?" => fn matched_p(recv, args, _block) {
+    def "matched?" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(sc_of(recv).state.lock().last.is_some()))
     }
-    "pre_match" => fn pre_match(recv, args, _block) {
+    def "pre_match" (recv, args, _block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(st.last.map(|(a, _)| str_val(&st.string[..a])).unwrap_or(RubyValue::Nil))
     }
-    "post_match" => fn post_match(recv, args, _block) {
+    def "post_match" (recv, args, _block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(st.last.map(|(_, b)| str_val(&st.string[b..])).unwrap_or(RubyValue::Nil))
     }
-    "beginning_of_line?" | "bol?" => fn bol(recv, args, _block) {
+    def "beginning_of_line?" | "bol?" (recv, args, _block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Bool(st.pos == 0 || st.string.as_bytes().get(st.pos - 1) == Some(&b'\n')))
     }
-    "string" => fn string(recv, args, _block) {
+    def "string" (recv, args, _block) {
         arity!(args, 0);
         Ok(str_val(&sc_of(recv).state.lock().string))
     }
 
     // `exist?(pattern)` -- look ahead for the next match WITHOUT advancing;
     // returns the byte count from the current position to the match end, or nil.
-    "exist?" => fn exist(recv, args, _block) {
+    def "exist?" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -295,7 +296,7 @@ builtin_methods! {
     }
     // Like `scan_until` but does NOT advance -- peek the text from the current
     // position through the next match, or nil.
-    "check_until" => fn check_until(recv, args, _block) {
+    def "check_until" (recv, args, _block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -309,7 +310,7 @@ builtin_methods! {
     }
     // `unscan` -- back the pointer up to before the most recent advancing scan
     // (CRuby remembers exactly one); a ScanError if there is none.
-    "unscan" => fn unscan(recv, args, _block) {
+    def "unscan" (recv, args, _block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         match st.prev_pos.take() {
@@ -331,7 +332,7 @@ builtin_methods! {
         }
     }
     // `get_byte` -- one BYTE (not char), advancing by one; nil at end.
-    "get_byte" => fn get_byte(recv, args, _block) {
+    def "get_byte" (recv, args, _block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         if st.pos >= st.string.len() {
@@ -345,6 +346,13 @@ builtin_methods! {
         // A single raw byte -- lossily UTF-8 for a continuation byte, matching
         // this runtime's Str model (documented divergence, like the rest here).
         Ok(str_val(&String::from_utf8_lossy(&st.string.as_bytes()[m0..m1])))
+    }
+
+    def self."new" (_recv, args, _block) {
+        arity!(args, 1..=2); // (string[, opts]) -- opts ignored
+        let s = &crate::builtins::convert::to_rstr(&args[0])?;
+        let text = s.lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Object(Arc::new(RStringScanner::new(text))))
     }
 }
 
@@ -364,17 +372,6 @@ fn find_forward(pattern: &RubyValue, tail: &str) -> Result<Option<(usize, usize)
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" => fn new_m(_recv, args, _block) {
-        arity!(args, 1..=2); // (string[, opts]) -- opts ignored
-        let s = &crate::builtins::convert::to_rstr(&args[0])?;
-        let text = s.lock().to_utf8_lossy().into_owned();
-        Ok(RubyValue::Object(Arc::new(RStringScanner::new(text))))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,24 +388,38 @@ mod tests {
             other => panic!("expected Str, got {other:?}"),
         }
     }
+    /// `StringScanner`'s `ruby_class!`-generated methods have mangled Rust
+    /// idents, so the tests reach them through the registered tables.
+    fn tbl() -> &'static crate::builtins::BuiltinClassTable {
+        crate::builtins::registered_table(zeo_abi::STRING_SCANNER_CLASS)
+            .expect("StringScanner is a registered builtin table")
+    }
+    fn im(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let t = tbl().instance.as_ref().expect("StringScanner has instance methods");
+        (t.lookup)(name).unwrap_or_else(|| panic!("StringScanner#{name} is defined"))
+    }
+    fn cm(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let t = tbl().class.as_ref().expect("StringScanner has class methods");
+        (t.lookup)(name).unwrap_or_else(|| panic!("StringScanner.{name} is defined"))
+    }
 
     #[test]
     fn scan_advances_and_anchors() {
-        let sc = new_m(&RubyValue::Nil, &[s("foo123")], None).unwrap();
-        assert_eq!(text(&scan(&sc, &[re("[a-z]+")], None).unwrap()), "foo");
+        let sc = cm("new")(&RubyValue::Nil, &[s("foo123")], None).unwrap();
+        assert_eq!(text(&im("scan")(&sc, &[re("[a-z]+")], None).unwrap()), "foo");
         // Anchored: a digit pattern won't match starting mid-"123"? it does now.
-        assert_eq!(text(&scan(&sc, &[re("\\d+")], None).unwrap()), "123");
+        assert_eq!(text(&im("scan")(&sc, &[re("\\d+")], None).unwrap()), "123");
         assert!(matches!(
-            eos(&sc, &[], None).unwrap(),
+            im("eos?")(&sc, &[], None).unwrap(),
             RubyValue::Bool(true)
         ));
     }
 
     #[test]
     fn scan_miss_returns_nil_without_advancing() {
-        let sc = new_m(&RubyValue::Nil, &[s("foo")], None).unwrap();
+        let sc = cm("new")(&RubyValue::Nil, &[s("foo")], None).unwrap();
         assert!(matches!(
-            scan(&sc, &[re("\\d+")], None).unwrap(),
+            im("scan")(&sc, &[re("\\d+")], None).unwrap(),
             RubyValue::Nil
         ));
         assert_eq!(sc_of(&sc).state.lock().pos, 0);
@@ -416,8 +427,8 @@ mod tests {
 
     #[test]
     fn scan_until_consumes_through_match() {
-        let sc = new_m(&RubyValue::Nil, &[s("a=1;b=2")], None).unwrap();
-        assert_eq!(text(&scan_until(&sc, &[re(";")], None).unwrap()), "a=1;");
-        assert_eq!(text(&rest(&sc, &[], None).unwrap()), "b=2");
+        let sc = cm("new")(&RubyValue::Nil, &[s("a=1;b=2")], None).unwrap();
+        assert_eq!(text(&im("scan_until")(&sc, &[re(";")], None).unwrap()), "a=1;");
+        assert_eq!(text(&im("rest")(&sc, &[], None).unwrap()), "b=2");
     }
 }
