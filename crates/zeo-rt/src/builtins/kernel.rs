@@ -12,10 +12,11 @@
 //! would shadow the post-walk numeric `<=>` today.
 
 use crate::builtins::{
-    arg_error, arity, block_or_enum, builtin_methods, local_jump_error, need_block, not_impl_error,
+    arg_error, arity, block_or_enum, local_jump_error, need_block, not_impl_error,
     type_error,
 };
 use crate::{RubyValue, Signal, Symbol};
+use zeo_macros::ruby_module;
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
 fn syms_to_array(names: Vec<Symbol>) -> RubyValue {
@@ -31,8 +32,8 @@ fn dedup_syms(names: Vec<Symbol>) -> Vec<Symbol> {
     names.into_iter().filter(|s| seen.insert(*s)).collect()
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_module! {
+    Kernel = zeo_abi::KERNEL_CLASS;
 
     // `send`/`public_send` are KERNEL's, not BasicObject's (vm_eval.c:2961,
     // :2963) -- which is what makes them absent on a blank-slate receiver
@@ -42,26 +43,26 @@ builtin_methods! {
     // `public_send`'s visibility gate lives in `dispatch::send_value_public_in`
     // and is applied by codegen at the call site, so this row is the
     // visibility-blind path both names funnel through once that check passes.
-    "send" | "public_send" => fn kernel_send(recv, args, block) {
+    def "send" | "public_send"(recv, args, block) {
         crate::builtins::basic_object::dynamic_send(recv, args, block)
     }
 
     // The print family as REAL Kernel methods (Path 2): `obj.send(:puts,
     // ...)`, `self.puts` on `main`, and any dynamic dispatch reach these;
     // the receiver is ignored, exactly like CRuby's private Kernel#puts.
-    "puts" => fn puts(_recv, args, _block) {
+    def "puts"(_recv, args, _block) {
         kernel_puts(args)
     }
-    "print" => fn print(_recv, args, _block) {
+    def "print"(_recv, args, _block) {
         kernel_print(args)
     }
-    "p" => fn p(_recv, args, _block) {
+    def "p"(_recv, args, _block) {
         kernel_p(args)
     }
     // `Kernel#open(path, mode = "r")` -- opens a File (the `"|command"` pipe
     // form is out of scope); delegates to `File.open` so the block-closes-file
     // contract and mode handling are shared, never divergent.
-    "open" => fn kernel_open(_recv, args, block) {
+    def "open"(_recv, args, block) {
         crate::builtins::file::lookup_class("open").unwrap()(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
             args,
@@ -76,7 +77,7 @@ builtin_methods! {
     // shape -- honest, and rescuable by `begin; require dyn; rescue LoadError`
     // -- rather than a silent no-op. A non-String-convertible argument raises
     // the same TypeError CRuby's path coercion does.
-    "require" | "require_relative" | "load" => fn kernel_require(_recv, args, _block) {
+    def "require" | "require_relative" | "load"(_recv, args, _block) {
         arity!(args, 1..=2);
         let path = crate::builtins::convert::to_rstr(&args[0])?
             .lock()
@@ -87,26 +88,26 @@ builtin_methods! {
             format!("cannot load such file -- {path}"),
         ))
     }
-    "pp" => fn pp(_recv, args, _block) {
+    def "pp"(_recv, args, _block) {
         kernel_pp(args)
     }
-    "warn" => fn warn(_recv, args, _block) {
+    def "warn"(_recv, args, _block) {
         kernel_warn(args)
     }
     // Spawning a child. `system` inherits stdout/stderr and answers a
     // true/false/nil verdict; the backtick captures stdout and answers it as a
     // String. Both set `$?` (see `builtins::process`). Private Kernel methods,
     // so `respond_to?`'s default hides them (see `is_hidden_builtin_private`).
-    "system" => fn system(recv, args, block) {
+    def "system"(recv, args, block) {
         crate::builtins::process::system(recv, args, block)
     }
-    "`" => fn backquote(recv, args, block) {
+    def "`"(recv, args, block) {
         crate::builtins::process::backquote(recv, args, block)
     }
     // `putc` -- writes one character to `$stdout` and returns its argument.
     // An Integer writes the low byte (`n & 0xff`); a String writes its first
     // character.
-    "putc" => fn putc(_recv, args, _block) {
+    def "putc"(_recv, args, _block) {
         arity!(args, 1);
         let out = crate::builtins::io::current_stdout();
         // Shared with `IO#putc`: first character in the string's own
@@ -118,32 +119,32 @@ builtin_methods! {
     }
     // `public_method(:name)` -- a bound Method restricted to the public
     // surface (a private/protected name raises NameError).
-    "public_method" => fn public_method(recv, args, _block) {
+    def "public_method"(recv, args, _block) {
         arity!(args, 1);
         crate::builtins::method_obj::public_method_new(recv, &args[0])
     }
     // `Kernel#method(:name)` -- a bound Method object (see
     // `builtins::method_obj`). Reaches every receiver via the MRO walk's
     // Kernel row, including the top-level `main` object.
-    "method" => fn method(recv, args, _block) {
+    def "method"(recv, args, _block) {
         arity!(args, 1);
         crate::builtins::method_obj::method_new(recv, &args[0])
     }
-    "singleton_method" => fn singleton_method(recv, args, _block) {
+    def "singleton_method"(recv, args, _block) {
         arity!(args, 1);
         crate::builtins::method_obj::singleton_method_new(recv, &args[0])
     }
     // `obj.singleton_class` -- the per-object singleton class as a real Class
     // value; defining a method on it installs a per-object singleton (see
     // `runtime_meta::runtime_singleton_class`).
-    "singleton_class" => fn singleton_class(recv, args, _block) {
+    def "singleton_class"(recv, args, _block) {
         arity!(args, 0);
         crate::runtime_meta::runtime_singleton_class(recv)
     }
     // `obj.extend(Mod, ...)` -- mix each module's instance methods into the
     // receiver's singleton. The bare `extend Mod` STATEMENT form (no receiver)
     // is a separate parse-level mixin; this row is the method-call form only.
-    "extend" => fn extend_obj(recv, args, _block) {
+    def "extend"(recv, args, _block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
@@ -157,7 +158,7 @@ builtin_methods! {
     // receiver is a `Class`. Universal (this Kernel row is reached by every
     // receiver's MRO walk, including a class value). A singleton on an
     // immediate (Integer/Symbol/nil/...) is a `TypeError`, like CRuby.
-    "define_singleton_method" => fn define_singleton_method(recv, args, block) {
+    def "define_singleton_method"(recv, args, block) {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
         if let Some(src) = args.get(1) {
@@ -177,7 +178,7 @@ builtin_methods! {
     // receiver's. The binding/filename/lineno arguments are the next
     // increment: an explicit non-nil binding is a clean NotImplementedError,
     // filename/lineno are accepted and ignored.
-    "eval" => fn eval(recv, args, _block) {
+    def "eval"(recv, args, _block) {
         arity!(args, 1..=4);
         if let Some(binding) = args.get(1) {
             if !binding.is_nil() {
@@ -190,7 +191,7 @@ builtin_methods! {
     // `sleep(secs)` -- universal Kernel methods. The static codegen fast path
     // handles the literal `catch {}`/`throw` forms; these rows serve dynamic
     // dispatch (a `send :catch`, a `catch` reached through the MRO walk).
-    "catch" => fn catch_m(_recv, args, block) {
+    def "catch"(_recv, args, block) {
         arity!(args, 0..=1);
         // A bare `catch` mints a fresh, unique tag object (passed to the block).
         let tag = args
@@ -202,7 +203,7 @@ builtin_methods! {
         })?;
         crate::kernel_catch(tag, blk)
     }
-    "throw" => fn throw_m(_recv, args, _block) {
+    def "throw"(_recv, args, _block) {
         crate::kernel_throw(args)
     }
     // `Kernel#raise`/`#fail` as REAL dispatch rows -- reached by
@@ -219,7 +220,7 @@ builtin_methods! {
     // `cause:` doesn't reach this row (kwargs ride as a trailing Hash that
     // 2-arg shapes would misread; the automatic `$!` chaining below is
     // what dynamic callers get).
-    "raise" | "fail" => fn kernel_raise(_recv, args, _block) {
+    def "raise" | "fail"(_recv, args, _block) {
         arity!(args, 0..=3);
         let exc = match args {
             // Bare re-raise: the exception being rescued, exactly (same
@@ -265,10 +266,10 @@ builtin_methods! {
         };
         Err(Signal::Raise(crate::dispatch::raise_with_cause(exc)))
     }
-    "sleep" => fn sleep_m(_recv, args, _block) {
+    def "sleep"(_recv, args, _block) {
         crate::kernel_sleep(args)
     }
-    "class" => fn class(recv, args, _block) {
+    def "class"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))
     }
@@ -276,7 +277,7 @@ builtin_methods! {
     // pointer; immediates use CRuby's fixed/derived shapes (Integers
     // `2n+1`, nil/true/false their reserved slots). Strings/Arrays/Hashes
     // use their cell pointer -- identity, not content.
-    "object_id" | "__id__" => fn object_id(recv, args, _block) {
+    def "object_id" | "__id__"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(match recv {
             RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
@@ -295,15 +296,15 @@ builtin_methods! {
             _ => recv as *const _ as i64,
         }))
     }
-    "nil?"[0] => fn nil_p(recv, args, _block) {
+    def "nil?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv.is_nil()))
     }
-    "itself" => fn itself(recv, args, _block) {
+    def "itself"(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "caller" => fn caller_m(_recv, args, _block) {
+    def "caller"(_recv, args, _block) {
         // The formatted frames above the calling frame (this builtin has no
         // frame of its own, so `start = 1` -- the default -- skips exactly
         // the caller). `caller(0)` includes the caller itself; a `start`
@@ -345,7 +346,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(window)))
     }
-    "caller_locations" => fn caller_locations_m(_recv, args, _block) {
+    def "caller_locations"(_recv, args, _block) {
         // Location OBJECTS (`#path`/`#lineno`/`#label`) aren't modeled yet;
         // the same formatted strings as `caller` keep the
         // `caller_locations(..)&.first` and iteration idioms working -- a
@@ -358,52 +359,52 @@ builtin_methods! {
     // `method(:Integer)`, `send`, a curry -- not only the codegen fast-path that
     // intercepts a direct literal call. Each delegates to the same runtime
     // routine that fast-path emits, so behavior is identical however it's reached.
-    "format" | "sprintf" => fn format_m(_recv, args, _block) {
+    def "format" | "sprintf"(_recv, args, _block) {
         kernel_format(args)
     }
-    "Integer" => fn integer_m(_recv, args, _block) {
+    def "Integer"(_recv, args, _block) {
         kernel_integer(args)
     }
-    "Float" => fn float_m(_recv, args, _block) {
+    def "Float"(_recv, args, _block) {
         kernel_float(args)
     }
-    "String" => fn string_conv_m(_recv, args, _block) {
+    def "String"(_recv, args, _block) {
         kernel_string(args)
     }
-    "Array" => fn array_conv_m(_recv, args, _block) {
+    def "Array"(_recv, args, _block) {
         kernel_array(args)
     }
-    "Hash" => fn hash_conv_m(_recv, args, _block) {
+    def "Hash"(_recv, args, _block) {
         kernel_hash(args)
     }
-    "Rational" => fn rational_m(_recv, args, _block) {
+    def "Rational"(_recv, args, _block) {
         kernel_rational(args)
     }
-    "Complex" => fn complex_m(_recv, args, _block) {
+    def "Complex"(_recv, args, _block) {
         kernel_complex(args)
     }
     // Private `Kernel#trap` -- the receiverless spelling of `Signal.trap`, same
     // validated no-op that records the action and returns the prior one.
-    "trap" => fn trap_m(_recv, args, block) {
+    def "trap"(_recv, args, block) {
         crate::builtins::signal::trap_impl(args, block)
     }
     // `proc(&b)` / `proc { }` -- answer the passed block as a Proc (it already IS
     // one at the ABI level). No block is CRuby's `ArgumentError`.
-    "proc" => fn proc_m(_recv, args, block) {
+    def "proc"(_recv, args, block) {
         arity!(args, 0);
         match block {
             Some(b @ RubyValue::Proc(_)) => Ok(b),
             _ => Err(arg_error!("tried to create Proc object without a block")),
         }
     }
-    "dup" => fn dup(recv, args, _block) {
+    def "dup"(recv, args, _block) {
         arity!(args, 0);
         Ok(match recv {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?,
             _ => recv.dup_value(false)?,
         })
     }
-    "clone" => fn clone_m(recv, args, _block) {
+    def "clone"(recv, args, _block) {
         arity!(args, 0..=1);
         // `clone(freeze: nil)` PRESERVES the original's frozen state (the
         // default), `freeze: true` forces the copy frozen, `freeze: false`
@@ -443,30 +444,30 @@ builtin_methods! {
         }
         Ok(copy)
     }
-    "frozen?" => fn frozen_p(recv, args, _block) {
+    def "frozen?"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv.is_frozen()))
     }
-    "freeze" => fn freeze(recv, args, _block) {
+    def "freeze"(recv, args, _block) {
         arity!(args, 0);
         recv.freeze_value()
     }
-    "hash" => fn hash(recv, args, _block) {
+    def "hash"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(crate::value_hash_code(recv)))
     }
-    "to_s"[0] => fn to_s(recv, args, _block) {
+    def "to_s" arity 0 (recv, args, _block) {
         arity!(args, 0);
         // Fallible: `[obj].to_s` re-enters a user `inspect` per element,
         // and a raising one propagates (catchable, CRuby's rule).
         Ok(RubyValue::Str(crate::string_new(recv.try_display_string()?)))
     }
-    "inspect"[0] => fn inspect(recv, args, _block) {
+    def "inspect" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv.try_inspect_string()?)))
     }
     // Kernel's default `===` is `==` (case subjects fall back to equality).
-    "===" => fn case_eq(recv, args, _block) {
+    def "==="(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
@@ -475,7 +476,7 @@ builtin_methods! {
     // define their own `<=>`, which the MRO walk reaches before this Kernel
     // fallback, so this only answers for the un-ordered types (Hash, Range,
     // Regexp, nil, true/false, Proc, Complex).
-    "<=>" => fn spaceship(recv, args, _block) {
+    def "<=>"(recv, args, _block) {
         arity!(args, 1);
         Ok(if recv.rb_eq(&args[0]) {
             RubyValue::Int(0)
@@ -485,20 +486,20 @@ builtin_methods! {
     }
     // `eql?`: same class AND `==` (what makes `1.eql?(1.0)` false while
     // `1 == 1.0` is true -- oracle-verified).
-    "eql?" => fn eql_p(recv, args, _block) {
+    def "eql?"(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(
             recv.class_id() == args[0].class_id() && recv.rb_eq(&args[0]),
         ))
     }
-    "is_a?" | "kind_of?" => fn is_a_p(recv, args, _block) {
+    def "is_a?" | "kind_of?"(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Class(target) = &args[0] else {
             return Err(type_error!("class or module required"));
         };
         Ok(RubyValue::Bool(crate::dispatch::is_a(recv.class_id(), *target)))
     }
-    "instance_of?" => fn instance_of_p(recv, args, _block) {
+    def "instance_of?"(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Class(target) = &args[0] else {
             return Err(type_error!("class or module required"));
@@ -507,7 +508,7 @@ builtin_methods! {
     }
     // `respond_to?(name, include_all = false)` -- the second parameter
     // opts private methods back in (CRuby's default ignores them).
-    "respond_to?" => fn respond_to_p(recv, args, _block) {
+    def "respond_to?"(recv, args, _block) {
         arity!(args, 1..=2);
         let sym = match &args[0] {
             RubyValue::Symbol(s) => *s,
@@ -526,7 +527,7 @@ builtin_methods! {
     // `Object#respond_to_missing?` default: false for every name -- what a
     // user override's `super` reaches (CRuby's
     // `rb_obj_respond_to_missing`). Hidden-private, like `initialize`.
-    "respond_to_missing?" => fn respond_to_missing_default(_recv, args, _block) {
+    def "respond_to_missing?"(_recv, args, _block) {
         arity!(args, 1..=2);
         Ok(RubyValue::Bool(false))
     }
@@ -535,23 +536,23 @@ builtin_methods! {
     // these on Kernel is also what makes `respond_to?(:instance_variable_get)`
     // and a dynamic `send(:instance_variables)` resolve them uniformly -- the
     // static codegen path (call.rs) is just a fast path over the same helpers.
-    "instance_variables" => fn instance_variables_m(recv, args, _block) {
+    def "instance_variables"(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::dispatch::instance_variables(recv))
     }
-    "instance_variable_get" => fn instance_variable_get_m(recv, args, _block) {
+    def "instance_variable_get"(recv, args, _block) {
         arity!(args, 1);
         crate::dispatch::instance_variable_get(recv, &args[0])
     }
-    "instance_variable_set" => fn instance_variable_set_m(recv, args, _block) {
+    def "instance_variable_set"(recv, args, _block) {
         arity!(args, 2);
         crate::dispatch::instance_variable_set(recv, &args[0], args[1].clone())
     }
-    "remove_instance_variable" => fn remove_instance_variable_m(recv, args, _block) {
+    def "remove_instance_variable"(recv, args, _block) {
         arity!(args, 1);
         crate::dispatch::remove_instance_variable(recv, &args[0])
     }
-    "instance_variable_defined?" => fn instance_variable_defined_m(recv, args, _block) {
+    def "instance_variable_defined?"(recv, args, _block) {
         arity!(args, 1);
         let name = crate::dispatch::ivar_name_arg(&args[0])?;
         let sym = Symbol::intern(&format!("@{name}"));
@@ -569,7 +570,7 @@ builtin_methods! {
     // receiver) that class's own `def self.` methods. A builtin's list is a
     // subset of CRuby's (this runtime implements a subset), so callers assert
     // membership; a plain user object's list is exact.
-    "methods" | "public_methods" => fn methods_m(recv, args, _block) {
+    def "methods" | "public_methods"(recv, args, _block) {
         arity!(args, 0..=1);
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let mut names = Vec::new();
@@ -584,7 +585,7 @@ builtin_methods! {
         ));
         Ok(syms_to_array(dedup_syms(names)))
     }
-    "private_methods" => fn private_methods_m(recv, args, _block) {
+    def "private_methods"(recv, args, _block) {
         arity!(args, 0..=1);
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let names = crate::dispatch::instance_method_names(
@@ -594,7 +595,7 @@ builtin_methods! {
         );
         Ok(syms_to_array(names))
     }
-    "protected_methods" => fn protected_methods_m(recv, args, _block) {
+    def "protected_methods"(recv, args, _block) {
         arity!(args, 0..=1);
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let names = crate::dispatch::instance_method_names(
@@ -607,7 +608,7 @@ builtin_methods! {
     // A class/module receiver's own singleton methods are its `def self.`
     // methods; other receivers have no per-object singletons in this runtime's
     // value model, so they report an empty list.
-    "singleton_methods" => fn singleton_methods_m(recv, args, _block) {
+    def "singleton_methods"(recv, args, _block) {
         arity!(args, 0..=1);
         let names = match recv {
             RubyValue::Class(cid) => crate::dispatch::class_method_names(*cid),
@@ -618,25 +619,25 @@ builtin_methods! {
     // `Object#display([port])` -- writes `self.to_s` (no newline) to stdout
     // and answers nil. The optional port argument is accepted but ignored
     // (only the process stdout is modeled).
-    "display" => fn display(recv, args, _block) {
+    def "display"(recv, args, _block) {
         arity!(args, 0..=1);
         kernel_print(std::slice::from_ref(recv))
     }
     // `Object#!~` -- the negation of `=~`, dispatched to the receiver's own
     // `=~` (so a receiver without one raises NoMethodError, exactly as CRuby
     // does since `Object#=~` was removed).
-    "!~" => fn not_match(recv, args, _block) {
+    def "!~"(recv, args, _block) {
         arity!(args, 1);
         let matched = crate::dispatch::send_value(recv, crate::Symbol::intern("=~"), args, None)?;
         Ok(RubyValue::Bool(!matched.truthy()))
     }
-    "tap" => fn tap(recv, args, block) {
+    def "tap"(recv, args, block) {
         arity!(args, 0);
         let p = need_block!(block);
         p.call(std::slice::from_ref(recv))?;
         Ok(recv.clone())
     }
-    "then" | "yield_self" => fn then_m(recv, args, block) {
+    def "then" | "yield_self"(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "then", args, block);
         p.call(std::slice::from_ref(recv))
@@ -645,7 +646,7 @@ builtin_methods! {
     // loops forever, rescuing StopIteration and returning its `#result`
     // (a literal `loop do…end` is desugared in the lowerer, so this handles
     // the blockless and block-pass forms + the Enumerator re-invoke).
-    "loop" => fn loop_m(recv, args, block) {
+    def "loop"(recv, args, block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = &block else {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "loop", args));
@@ -672,7 +673,7 @@ builtin_methods! {
     // args), CRuby's obj_to_enum. The block-as-size-proc
     // form is Tier B (rare; the stored-size Enumerator.new form covers
     // the practical cases).
-    "to_enum" | "enum_for" => fn to_enum(recv, args, _block) {
+    def "to_enum" | "enum_for"(recv, args, _block) {
         let meth = match args.first() {
             None => "each".to_string(),
             Some(RubyValue::Symbol(s)) => s.name().as_str().to_string(),
@@ -1531,20 +1532,29 @@ pub fn system_exit_status(exc: &RubyValue) -> Option<i32> {
 mod tests {
     use super::*;
 
+    /// Kernel's `ruby_module!` methods have mangled fn names, so tests reach
+    /// them through the registered instance lookup (as real dispatch does).
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::KERNEL_CLASS)
+            .expect("Kernel is registered")
+            .instance.as_ref().expect("Kernel has instance methods")
+            .lookup)(name).unwrap_or_else(|| panic!("Kernel#{name} is defined"))
+    }
+
     #[test]
     fn eql_requires_same_class_and_equality() {
-        let t = eql_p(&RubyValue::Int(1), &[RubyValue::Int(1)], None).unwrap();
+        let t = imethod("eql?")(&RubyValue::Int(1), &[RubyValue::Int(1)], None).unwrap();
         assert!(matches!(t, RubyValue::Bool(true)));
-        let f = eql_p(&RubyValue::Int(1), &[RubyValue::Float(1.0)], None).unwrap();
+        let f = imethod("eql?")(&RubyValue::Int(1), &[RubyValue::Float(1.0)], None).unwrap();
         assert!(matches!(f, RubyValue::Bool(false)));
     }
 
     #[test]
     fn to_s_and_inspect_render_like_puts_and_p() {
-        let s = to_s(&RubyValue::Nil, &[], None).unwrap();
+        let s = imethod("to_s")(&RubyValue::Nil, &[], None).unwrap();
         let RubyValue::Str(s) = s else { panic!() };
         assert_eq!(&*s.lock().to_utf8_lossy(), "");
-        let i = inspect(&RubyValue::Nil, &[], None).unwrap();
+        let i = imethod("inspect")(&RubyValue::Nil, &[], None).unwrap();
         let RubyValue::Str(i) = i else { panic!() };
         assert_eq!(&*i.lock().to_utf8_lossy(), "nil");
     }
@@ -1552,21 +1562,21 @@ mod tests {
     #[test]
     fn itself_returns_the_receiver_and_freeze_reports_frozen() {
         assert!(matches!(
-            itself(&RubyValue::Int(7), &[], None).unwrap(),
+            imethod("itself")(&RubyValue::Int(7), &[], None).unwrap(),
             RubyValue::Int(7)
         ));
         assert!(matches!(
-            frozen_p(&RubyValue::Int(7), &[], None).unwrap(),
+            imethod("frozen?")(&RubyValue::Int(7), &[], None).unwrap(),
             RubyValue::Bool(true) // immediates are frozen
         ));
         let s = RubyValue::Str(crate::string_new("x".to_string()));
         assert!(matches!(
-            frozen_p(&s, &[], None).unwrap(),
+            imethod("frozen?")(&s, &[], None).unwrap(),
             RubyValue::Bool(false)
         ));
-        freeze(&s, &[], None).unwrap();
+        imethod("freeze")(&s, &[], None).unwrap();
         assert!(matches!(
-            frozen_p(&s, &[], None).unwrap(),
+            imethod("frozen?")(&s, &[], None).unwrap(),
             RubyValue::Bool(true)
         ));
     }
