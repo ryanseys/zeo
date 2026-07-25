@@ -138,7 +138,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::INTEGER_CLASS => integer::lookup,
         zeo_abi::FLOAT_CLASS => float::lookup,
         zeo_abi::NUMERIC_CLASS => numeric::lookup,
-        zeo_abi::RATIONAL_CLASS => rational::lookup,
+        // RATIONAL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::COMPLEX_CLASS => complex::lookup,
         zeo_abi::STRING_CLASS => string::lookup,
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
@@ -224,7 +224,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::INTEGER_CLASS => integer::lookup_arity,
         zeo_abi::FLOAT_CLASS => float::lookup_arity,
         zeo_abi::NUMERIC_CLASS => numeric::lookup_arity,
-        zeo_abi::RATIONAL_CLASS => rational::lookup_arity,
+        // RATIONAL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::COMPLEX_CLASS => complex::lookup_arity,
         zeo_abi::STRING_CLASS => string::lookup_arity,
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
@@ -404,7 +404,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::INTEGER_CLASS => integer::lookup_names(),
         zeo_abi::FLOAT_CLASS => float::lookup_names(),
         zeo_abi::NUMERIC_CLASS => numeric::lookup_names(),
-        zeo_abi::RATIONAL_CLASS => rational::lookup_names(),
+        // RATIONAL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::COMPLEX_CLASS => complex::lookup_names(),
         zeo_abi::STRING_CLASS => string::lookup_names(),
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
