@@ -53,7 +53,6 @@ prettyplease = "0.2"
 parking_lot = "0.12"
 indexmap = "2"
 libc = "0.2"
-pastey = "0.1"
 # Link-time auto-registration: the `ruby_class!` macro registers each class's
 # method/constant table into a `BUILTIN_TABLES` distributed slice the runtime
 # collects, replacing the hand-written `ClassId`->lookup match tables.

@@ -522,61 +522,6 @@ pub(crate) fn convert_name_of(v: &RubyValue) -> String {
     }
 }
 
-/// Declares one Ruby class/module's method table: each row is a named
-/// function (unit-testable, a real frame in backtraces) plus one generated
-/// `lookup` match from Ruby method name(s) to it. Aliases share an
-/// implementation via `"a" | "b"`. Rows spell an unused block parameter
-/// `_block` like any Rust binding.
-macro_rules! builtin_methods {
-    (
-        $lookup_vis:vis fn $lookup:ident;
-        $( $($mname:literal $([$arity:literal])?)|+ => fn $fname:ident($recv:tt, $args:tt, $block:tt) $body:block )*
-    ) => {
-        $(
-            pub(crate) fn $fname(
-                $recv: &crate::RubyValue,
-                $args: &[crate::RubyValue],
-                $block: Option<crate::RubyValue>,
-            ) -> Result<crate::RubyValue, crate::Signal> $body
-        )*
-        $lookup_vis fn $lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
-            match name {
-                $( $($mname)|+ => Some($fname), )*
-                _ => None,
-            }
-        }
-        pastey::paste! {
-            /// Every method name this table exposes (each alias enumerated) --
-            /// the reflection surface for `instance_methods`/`methods`. Derived
-            /// from the same rows as the `lookup` above, so it can't drift.
-            /// `allow(dead_code)`: a few tables (e.g. the `ENV` singleton, whose
-            /// class is `Object`) never feed reflection, so their slice is unused.
-            #[allow(dead_code)]
-            $lookup_vis fn [<$lookup _names>]() -> &'static [&'static str] {
-                &[ $( $($mname),+ ),* ]
-            }
-            /// `Method#arity` for each method this table defines -- CRuby's
-            /// per-method argc, DECLARED at the definition site as an optional
-            /// `[n]` after each NAME literal (per-name, since aliases can differ:
-            /// `Array#<<` is 1 but `#push` is -1). Mirrors `rb_define_method`'s
-            /// argc column; an un-annotated name defaults to `-1`, CRuby's
-            /// variadic-cfunc arity. `None` when this table does not define
-            /// `name`.
-            #[allow(dead_code)]
-            $lookup_vis fn [<$lookup _arity>](name: &str) -> Option<i64> {
-                match name {
-                    $( $( $mname => Some({
-                        let _a: i64 = -1;
-                        $( let _a: i64 = $arity; )?
-                        _a
-                    }), )+ )*
-                    _ => None,
-                }
-            }
-        }
-    };
-}
-pub(crate) use builtin_methods;
 
 /// The typed error constructors: `type_error!("no implicit conversion...")`
 /// over `raise_error("TypeError", format!(...))`, so the class name is spelled
