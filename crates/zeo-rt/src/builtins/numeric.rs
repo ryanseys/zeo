@@ -19,9 +19,10 @@ use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
-use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, block_or_enum, type_error};
 use crate::{RubyValue, Signal};
 use num_traits::ToPrimitive;
+use zeo_macros::ruby_class;
 
 /// One binary numeric-operator table row, shared by every numeric class
 /// (`Integer`/`Float`/`Rational`/`Complex`): check arity, compute the operation
@@ -317,22 +318,23 @@ pub(crate) fn num_mul_or_panic(a: &RubyValue, b: &RubyValue) -> Result<RubyValue
 // The GENERIC Numeric rows (CRuby's `Numeric` ownership: methods defined
 // once, driving the receiver's own core operations) -- found via the MRO
 // walk on any numeric receiver whose own class doesn't override them.
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Numeric = zeo_abi::NUMERIC_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::COMPARABLE_CLASS;
 
-    "zero?"[0] => fn zero_p(recv, args, _block) {
+    def "zero?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(num_eq(recv, &RubyValue::Int(0)).unwrap_or(false)))
     }
-    "positive?"[0] => fn positive_p(recv, args, _block) {
+    def "positive?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(1)))))
     }
-    "negative?"[0] => fn negative_p(recv, args, _block) {
+    def "negative?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1)))))
     }
-    "nonzero?"[0] => fn nonzero_p(recv, args, _block) {
+    def "nonzero?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(if num_eq(recv, &RubyValue::Int(0)).unwrap_or(false) {
             RubyValue::Nil
@@ -340,33 +342,33 @@ builtin_methods! {
             recv.clone()
         })
     }
-    "integer?"[0] => fn integer_p(recv, args, _block) {
+    def "integer?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(recv, RubyValue::Int(_) | RubyValue::BigInt(_))))
     }
-    "real?"[0] => fn real_p(recv, args, _block) {
+    def "real?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(!matches!(recv, RubyValue::Complex(_))))
     }
-    "real"[0] => fn real(recv, args, _block) {
+    def "real" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "imag"[0] | "imaginary"[0] => fn imag(_recv, args, _block) {
+    def "imag" | "imaginary" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(0))
     }
-    "to_c"[0] => fn to_c(recv, args, _block) {
+    def "to_c" arity 0 (recv, args, _block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
     // A real number's cartesian view is `[self, 0]`.
-    "rect"[0] | "rectangular"[0] => fn rect(recv, args, _block) {
+    def "rect" | "rectangular" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
     }
     // Polar view: magnitude `|self|`, angle `0` (non-negative) or `pi` (negative).
-    "polar"[0] => fn polar(recv, args, _block) {
+    def "polar" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let magnitude =
             crate::dispatch::send_value(recv, crate::Symbol::intern("abs"), &[], None)?;
@@ -377,15 +379,15 @@ builtin_methods! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![magnitude, angle])))
     }
-    "abs2"[0] => fn abs2(recv, args, _block) {
+    def "abs2" arity 0 (recv, args, _block) {
         arity!(args, 0);
         num_mul(recv, recv).expect("numeric receiver")
     }
-    "conj"[0] | "conjugate"[0] => fn conj(recv, args, _block) {
+    def "conj" | "conjugate" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "angle"[0] | "arg"[0] | "phase"[0] => fn arg(recv, args, _block) {
+    def "angle" | "arg" | "phase" arity 0 (recv, args, _block) {
         arity!(args, 0);
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
         // only for the negative case; 0 stays Integer).
@@ -395,7 +397,7 @@ builtin_methods! {
             RubyValue::Int(0)
         })
     }
-    "divmod"[1] => fn divmod(recv, args, _block) {
+    def "divmod" arity 1 (recv, args, _block) {
         arity!(args, 1);
         // Float lane: CRuby's coupled `flo_divmod` adjusts the quotient and the
         // remainder together at a sign boundary, so `7.0.divmod(-Infinity)` is
@@ -459,7 +461,7 @@ builtin_methods! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![q, r])))
     }
-    "fdiv"[1] => fn fdiv(recv, args, _block) {
+    def "fdiv" arity 1 (recv, args, _block) {
         arity!(args, 1);
         if lane(&args[0]).is_none() || matches!(args[0], RubyValue::Complex(_)) {
             return Err(coercion_error(recv, &args[0]));
@@ -468,11 +470,11 @@ builtin_methods! {
             num_to_f64_unchecked(recv) / num_to_f64_unchecked(&args[0]),
         ))
     }
-    "quo"[1] => fn quo(recv, args, _block) {
+    def "quo" arity 1 (recv, args, _block) {
         arity!(args, 1);
         num_quo(recv, &args[0]).ok_or_else(|| coercion_error(recv, &args[0]))?
     }
-    "remainder"[1] => fn remainder(recv, args, _block) {
+    def "remainder" arity 1 (recv, args, _block) {
         arity!(args, 1);
         // a - b*(a/b).truncate -- the truncated-division counterpart of %
         // (sign follows the DIVIDEND). BigInt's own `/` truncates.
@@ -513,7 +515,7 @@ builtin_methods! {
     // `step(limit, step = 1)`; the blockless form returns an Enumerator.
     // Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
-    "step" => fn step(recv, args, block) {
+    def "step" (recv, args, block) {
         arity!(args, 0..=2);
         let p = block_or_enum!(recv, "step", args, block);
         // `step` accepts positional (`1.step(10, 2)`) and/or keyword
@@ -625,6 +627,26 @@ mod tests {
     use super::*;
     use crate::builtins::integer::int_value;
     use num_bigint::BigInt;
+
+    /// The Numeric rows are `ruby_class!`-generated (mangled Rust fn names), so
+    /// reach them the way dispatch does -- through the registered table.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::NUMERIC_CLASS)
+            .expect("Numeric is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Numeric has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Numeric#{name} is defined"))
+    }
+    fn divmod(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("divmod")(recv, args, block)
+    }
+    fn remainder(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("remainder")(recv, args, block)
+    }
+    fn step(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("step")(recv, args, block)
+    }
 
     fn big(s: &str) -> RubyValue {
         int_value(s.parse::<BigInt>().unwrap())
