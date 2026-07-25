@@ -19,7 +19,8 @@
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
+use zeo_macros::ruby_module;
 use crate::dispatch::send_value;
 use crate::encoding::ASCII_8BIT;
 use crate::{RubyValue, Signal, Symbol, string_new};
@@ -177,56 +178,56 @@ fn default_alnum() -> Vec<RubyValue> {
     chars
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_module! {
+    Formatter = zeo_abi::RANDOM_FORMATTER_MODULE;
 
     // A default `gen_random` for a host that supplied only `bytes` -- bridges
     // back to it. A host defining its own `gen_random` (SecureRandom) shadows
     // this, so it is normally unused; it exists so `entropy`'s `gen_random`
     // send resolves for a `bytes`-only host too.
-    "gen_random" => fn gen_random(recv, args, _block) {
+    def "gen_random"(recv, args, _block) {
         arity!(args, 1);
         send_value(recv, Symbol::intern("bytes"), std::slice::from_ref(&args[0]), None)
     }
     // `random_bytes(n = 16)` -- n raw bytes (ASCII-8BIT).
-    "random_bytes" => fn random_bytes(recv, args, _block) {
+    def "random_bytes"(recv, args, _block) {
         arity!(args, 0..=1);
         let bytes = entropy(recv, count(args, 16)?)?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, ASCII_8BIT)))
     }
     // `hex(n = 16)` -- 2n lowercase hex chars.
-    "hex" => fn hex(recv, args, _block) {
+    def "hex"(recv, args, _block) {
         arity!(args, 0..=1);
         let bytes = entropy(recv, count(args, 16)?)?;
         Ok(RubyValue::Str(string_new(hex_encode(&bytes))))
     }
     // `base64(n = 16)` -- RFC 4648 base64, padded.
-    "base64" => fn base64(recv, args, _block) {
+    def "base64"(recv, args, _block) {
         arity!(args, 0..=1);
         let bytes = entropy(recv, count(args, 16)?)?;
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, STD, true))))
     }
     // `urlsafe_base64(n = 16, padding = false)` -- URL/filename-safe alphabet;
     // padding stripped unless the second argument is truthy.
-    "urlsafe_base64" => fn urlsafe_base64(recv, args, _block) {
+    def "urlsafe_base64"(recv, args, _block) {
         arity!(args, 0..=2);
         let bytes = entropy(recv, count(&args[..args.len().min(1)], 16)?)?;
         let padding = matches!(args.get(1), Some(v) if v.truthy());
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, URL, padding))))
     }
     // `uuid` / `uuid_v4` -- a random RFC 9562 version-4 UUID.
-    "uuid" => fn uuid(recv, args, _block) {
+    def "uuid"(recv, args, _block) {
         arity!(args, 0);
         uuid_v4(recv)
     }
-    "uuid_v4" => fn uuid_v4_method(recv, args, _block) {
+    def "uuid_v4"(recv, args, _block) {
         arity!(args, 0);
         uuid_v4(recv)
     }
     // `random_number(n = 0)` -- an integer in `[0, n)` for a positive Integer,
     // a float in `[0.0, n)` for a positive Float, a value inside a Range, and a
     // float in `[0.0, 1.0)` for `0`/absent/non-positive (CRuby's fallback).
-    "random_number" => fn random_number(recv, args, _block) {
+    def "random_number"(recv, args, _block) {
         arity!(args, 0..=1);
         match args.first() {
             None | Some(RubyValue::Nil) => Ok(RubyValue::Float(rand_float_unit(recv)?)),
@@ -244,7 +245,7 @@ builtin_methods! {
         }
     }
     // `alphanumeric(n = 16, chars: [A-Za-z0-9])`.
-    "alphanumeric" => fn alphanumeric(recv, args, _block) {
+    def "alphanumeric"(recv, args, _block) {
         arity!(args, 0..=2);
         // A trailing `chars:` keyword hash carries the alphabet.
         let (positional, chars) = split_chars_kwarg(args)?;
@@ -252,7 +253,7 @@ builtin_methods! {
         choose(recv, &chars, n)
     }
     // `choose(source, n)` -- public in CRuby's formatter.
-    "choose" => fn choose_method(recv, args, _block) {
+    def "choose"(recv, args, _block) {
         arity!(args, 2);
         let RubyValue::Array(a) = &args[0] else {
             return Err(type_error!("no implicit conversion into Array"));
