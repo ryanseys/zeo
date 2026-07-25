@@ -309,7 +309,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::RACTOR_CLASS => crate::ractor::lookup_class,
+        // RACTOR_CLASS migrated to ruby_class! -- served via registered_table.
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
         // BASE64_MODULE migrated to ruby_module! -- served via registered_table.

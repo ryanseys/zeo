@@ -342,15 +342,17 @@ fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
 // `Ractor` class methods reached DYNAMICALLY (`::Ractor.make_shareable(p)`
 // in ostruct's `new_ostruct_member!` -- the cpath/computed forms the static
 // recognizer in codegen doesn't fold). Same helpers as the static emission,
-// same `RactorError` mapping.
-crate::builtins::builtin_methods! {
-    pub(crate) fn lookup_class;
+// same `RactorError` mapping. The `ruby_class!` registers this table into
+// `BUILTIN_TABLES`; `Ractor#send` stays a compiler intrinsic (its `TyKind`
+// shadow), untouched by these class methods.
+zeo_macros::ruby_class! {
+    Ractor = zeo_abi::RACTOR_CLASS < zeo_abi::OBJECT_CLASS;
 
-    "make_shareable" => fn make_shareable_m(_recv, args, _block) {
+    def self."make_shareable"(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
         make_shareable(&args[0]).map_err(|msg| crate::dispatch::raise_error("RactorError", msg))
     }
-    "shareable?" => fn shareable_p(_recv, args, _block) {
+    def self."shareable?"(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
         Ok(RubyValue::Bool(shareable(&args[0])))
     }
