@@ -51,7 +51,7 @@ pub(crate) mod lazy;
 pub(crate) mod marshal;
 pub(crate) mod matchdata;
 pub(crate) mod math;
-pub(crate) mod method_obj;
+pub(crate) mod method;
 pub(crate) mod mutex;
 pub(crate) mod nil_class;
 pub(crate) mod numeric;
@@ -74,6 +74,7 @@ pub(crate) mod thread;
 pub(crate) mod thread_group;
 pub(crate) mod time;
 pub(crate) mod true_class;
+pub(crate) mod unbound_method;
 pub(crate) mod value_subclass;
 pub(crate) mod warning;
 pub(crate) mod weak;
@@ -167,8 +168,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::METHOD_CLASS => method_obj::lookup,
-        zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
+        // METHOD_CLASS / UNBOUND_METHOD_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FIBER_CLASS => fiber::lookup,
         zeo_abi::THREAD_CLASS => thread::lookup,
         // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
@@ -252,8 +252,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::METHOD_CLASS => method_obj::lookup_arity,
-        zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_arity,
+        // METHOD_CLASS / UNBOUND_METHOD_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
         zeo_abi::THREAD_CLASS => thread::lookup_arity,
         // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
@@ -427,8 +426,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::METHOD_CLASS => method_obj::lookup_names(),
-        zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
+        // METHOD_CLASS / UNBOUND_METHOD_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_names(),
         // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.

@@ -66,7 +66,7 @@ pub(super) fn emit_universal_implicit_form(
         });
     }
     // `method(:name)` -- a bound Method object on the implicit self,
-    // dispatched through the Kernel row (see `builtins::method_obj`).
+    // dispatched through the Kernel row (see `builtins::method`).
     if name == "method" && args.len() == 1 && kwargs.is_empty() && block.is_none() {
         if let Some(recv) = super::boxed_implicit_self(cx) {
             let __bx = cx.box_id;

@@ -121,18 +121,18 @@ ruby_module! {
     // surface (a private/protected name raises NameError).
     def "public_method"(recv, args, _block) {
         arity!(args, 1);
-        crate::builtins::method_obj::public_method_new(recv, &args[0])
+        crate::builtins::method::public_method_new(recv, &args[0])
     }
     // `Kernel#method(:name)` -- a bound Method object (see
-    // `builtins::method_obj`). Reaches every receiver via the MRO walk's
+    // `builtins::method`). Reaches every receiver via the MRO walk's
     // Kernel row, including the top-level `main` object.
     def "method"(recv, args, _block) {
         arity!(args, 1);
-        crate::builtins::method_obj::method_new(recv, &args[0])
+        crate::builtins::method::method_new(recv, &args[0])
     }
     def "singleton_method"(recv, args, _block) {
         arity!(args, 1);
-        crate::builtins::method_obj::singleton_method_new(recv, &args[0])
+        crate::builtins::method::singleton_method_new(recv, &args[0])
     }
     // `obj.singleton_class` -- the per-object singleton class as a real Class
     // value; defining a method on it installs a per-object singleton (see
@@ -162,7 +162,7 @@ ruby_module! {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
         if let Some(src) = args.get(1) {
-            if let Some((owner, src_name)) = crate::builtins::method_obj::method_source(src) {
+            if let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
                 return crate::runtime_meta::runtime_define_singleton_from_method(
                     recv, name, owner, src_name);
             }

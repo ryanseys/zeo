@@ -404,7 +404,7 @@ builtin_methods! {
     // `Module#instance_method(:name)` -> an UnboundMethod for the module/class.
     "instance_method" => fn instance_method(recv, args, _block) {
         arity!(args, 1);
-        crate::builtins::method_obj::unbound_method_new(recv_cid(recv), &args[0])
+        crate::builtins::unbound_method::unbound_method_new(recv_cid(recv), &args[0])
     }
     // `Module#define_method(name) { body }` (#97) -- install/override an
     // instance method AT RUNTIME (a computed name, or inside an `each` loop).
@@ -416,7 +416,7 @@ builtin_methods! {
         // A `Method`/`UnboundMethod` second argument installs that method's
         // own definition under `name` (not a Proc body).
         if let Some(src) = args.get(1) {
-            if let Some((owner, src_name)) = crate::builtins::method_obj::method_source(src) {
+            if let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
                 return crate::runtime_meta::runtime_define_method_from_method(
                     recv_cid(recv), name, owner, src_name);
             }
