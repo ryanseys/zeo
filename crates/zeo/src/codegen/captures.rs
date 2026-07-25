@@ -253,7 +253,7 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
                     if body_contains_escaping_return_in(compiler, body, true))
             }) || args.iter().any(|a| sub(a.node_id()))
                 || kwargs.iter().flat_map(|kw| kw.node_ids()).any(&sub)
-                || block_arg.is_some_and(|b| sub(b))
+                || block_arg.is_some_and(&sub)
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;

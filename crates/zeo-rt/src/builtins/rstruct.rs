@@ -576,7 +576,7 @@ pub(crate) fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) 
         if let Some(RubyValue::Hash(h)) = args.last() {
             let all_symbol_keys = {
                 let g = h.lock();
-                g.len() > 0 && g.values().all(|(k, _)| matches!(k, RubyValue::Symbol(_)))
+                !g.is_empty() && g.values().all(|(k, _)| matches!(k, RubyValue::Symbol(_)))
             };
             if all_symbol_keys {
                 return Err(arg_error!(

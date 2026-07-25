@@ -759,7 +759,7 @@ fn parse_int_lenient(text: &str, default_base: u32) -> RubyValue {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '_' {
-            let next_is_digit = chars.peek().is_some_and(|n| n.to_digit(base).is_some());
+            let next_is_digit = chars.peek().is_some_and(|n| n.is_digit(base));
             if prev_digit && next_is_digit {
                 prev_digit = false; // so a second `_` in a row stops the parse
                 continue;

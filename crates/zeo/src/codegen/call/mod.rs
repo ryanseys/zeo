@@ -361,7 +361,6 @@ pub(super) fn emit_block_option(
 // nav), not incidental duplication a struct would meaningfully collapse --
 // bundling them would just move the same count behind one more layer.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn emit_call(
     cx: &Ctx,
     receiver: Option<NodeId>,

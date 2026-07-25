@@ -81,6 +81,10 @@ fn desugar_singleton_items(
     ids: Vec<NodeId>,
 ) -> PResult<Vec<NodeId>> {
     // Classify without holding the `&hir[id]` borrow across the node-building.
+    // A short-lived local `Vec<Item>` built and consumed in this one function;
+    // boxing the wide `Def` variant to shave the enum would trade a real
+    // allocation per def for a lint that doesn't matter at this lifetime.
+    #[allow(clippy::large_enum_variant)]
     enum Item {
         Def(String, Params, Vec<NodeId>),
         Const,

@@ -304,6 +304,7 @@ fn extended_singleton_super(
 /// bare `super`, the current method's own positional parameters (required /
 /// optional / splatted `*rest` / post) -- with keyword arguments appended as
 /// one trailing Hash (the runtime's G2 convention).
+#[allow(clippy::too_many_arguments)]
 fn emit_runtime_super(
     cx: &Ctx,
     mname: &str,
@@ -399,6 +400,7 @@ fn emit_super_dynamic(
 /// runs the root builtin method (`Array#push` ...) against the payload and
 /// re-wraps a self-return. No HIR to splice (the builtin has no `own_methods`).
 /// Argument forwarding is shared with the exception path.
+#[allow(clippy::too_many_arguments)]
 fn emit_value_super(
     cx: &Ctx,
     mname: &str,
