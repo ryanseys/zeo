@@ -9,9 +9,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::builtins::{arg_error, arity, builtin_methods, class_name_of};
+use crate::builtins::{arg_error, arity, class_name_of};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
+use zeo_macros::ruby_module;
 
 /// The Darwin/BSD signal set zeo targets, canonical name (no `SIG` prefix)
 /// -> number, plus the `EXIT` pseudo-signal (0). Canonical-only (no `IOT`/`CLD`
@@ -115,11 +116,11 @@ fn resolve_signal_name(name: &str) -> Result<i32, Signal> {
     })
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    Signal = zeo_abi::SIGNAL_MODULE;
 
     // `Signal.list` -> {name => number}, the canonical table as a fresh Hash.
-    "list" => fn list(_recv, args, _block) {
+    def self."list"(_recv, args, _block) {
         arity!(args, 0);
         let pairs = SIGNAL_TABLE
             .iter()
@@ -131,7 +132,7 @@ builtin_methods! {
     }
     // `Signal.signame(n)` -> the canonical name (no `SIG` prefix) or nil. A Float
     // truncates toward zero; a non-numeric argument is a TypeError.
-    "signame" => fn signame(_recv, args, _block) {
+    def self."signame"(_recv, args, _block) {
         arity!(args, 1);
         let no = crate::builtins::convert::to_index(&args[0])? as i32;
         match name_from_signo(no) {
@@ -141,7 +142,7 @@ builtin_methods! {
     }
     // `Signal.trap(sig, action = nil) { block }` -> the PREVIOUS action for
     // `sig` (`"DEFAULT"` if never set). See `trap_impl`.
-    "trap" => fn trap(_recv, args, block) {
+    def self."trap"(_recv, args, block) {
         trap_impl(args, block)
     }
 }
@@ -167,4 +168,65 @@ pub(crate) fn trap_impl(args: &[RubyValue], block: Option<RubyValue>) -> Result<
     };
     TRAP_STATE.with(|s| s.borrow_mut().insert(no, handler));
     Ok(prev.unwrap_or_else(|| RubyValue::Str(string_new("DEFAULT".to_string()))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `ruby_module!`-generated class methods are reachable only through
+    /// the dispatch table (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through `Signal`'s registered
+    /// class-method `lookup`.
+    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::SIGNAL_MODULE)
+            .expect("Signal is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("Signal has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Signal.{name} is defined"))
+    }
+
+    fn sym(name: &str) -> RubyValue {
+        RubyValue::Symbol(crate::Symbol::intern(name))
+    }
+
+    #[test]
+    fn list_maps_canonical_names_to_numbers() {
+        let RubyValue::Hash(h) = cmethod("list")(&RubyValue::Nil, &[], None).unwrap() else {
+            panic!("Signal.list is a Hash")
+        };
+        // A representative canonical entry resolves to its number.
+        let int = crate::hash_get(&h, &RubyValue::Str(string_new("INT".to_string())));
+        assert!(matches!(int, RubyValue::Int(2)));
+        assert!(h.lock().len() == SIGNAL_TABLE.len());
+    }
+
+    #[test]
+    fn signame_answers_the_canonical_name_or_nil() {
+        let got = cmethod("signame")(&RubyValue::Nil, &[RubyValue::Int(9)], None).unwrap();
+        assert!(matches!(got, RubyValue::Str(ref s) if s.lock().to_utf8_lossy() == "KILL"));
+        // An out-of-table number is nil, not an error.
+        let miss = cmethod("signame")(&RubyValue::Nil, &[RubyValue::Int(99)], None).unwrap();
+        assert!(matches!(miss, RubyValue::Nil));
+    }
+
+    #[test]
+    fn trap_returns_the_previous_action_and_records_the_new_one() {
+        // First trap on a fresh signal reads back "DEFAULT".
+        let prev = cmethod("trap")(&RubyValue::Nil, &[sym("USR1"), RubyValue::Nil], None).unwrap();
+        assert!(matches!(prev, RubyValue::Str(ref s) if s.lock().to_utf8_lossy() == "DEFAULT"));
+        // The second call sees the action the first one stored (here Nil).
+        let again = cmethod("trap")(&RubyValue::Nil, &[sym("USR1"), RubyValue::Nil], None).unwrap();
+        assert!(matches!(again, RubyValue::Nil));
+    }
+
+    #[test]
+    fn trap_on_an_untrappable_signal_is_einval() {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cmethod("trap")(&RubyValue::Nil, &[sym("KILL"), RubyValue::Nil], None)
+        }));
+        // Errno::EINVAL raised; registry-less in a bare unit test, so it panics.
+        assert!(r.is_err() || r.unwrap().is_err());
+    }
 }
