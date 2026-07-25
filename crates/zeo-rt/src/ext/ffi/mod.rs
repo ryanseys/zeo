@@ -1,11 +1,17 @@
-//! The `ffi` gem's memory classes (#204 follow-ons): `FFI::Pointer` and
-//! `FFI::MemoryPointer`. Unlike the `attach_function` machinery (which is a
-//! pure compile-time `extern "C"` emission -- see `zeo`'s `emit_ffi_call`
-//! and this crate's `crate::ffi` marshaling), these are real runtime values
-//! that flow through Ruby code: a `MemoryPointer` allocates a heap buffer and
-//! answers `read_int`/`write_int`/`[]`/`+`, and a `:pointer` return from a C
-//! function is wrapped as an `FFI::Pointer`. The surface is oracle-verified
-//! against `ffi 1.17.4`.
+//! The `ffi` gem's memory classes: `FFI::Pointer` and `FFI::MemoryPointer`.
+//! Unlike the `attach_function` machinery (which is a pure compile-time
+//! `extern "C"` emission -- see `zeo`'s `emit_ffi_call` and this crate's
+//! `crate::ffi` marshaling), these are real runtime values that flow through
+//! Ruby code: a `MemoryPointer` allocates a heap buffer and answers
+//! `read_int`/`write_int`/`[]`/`+`, and a `:pointer` return from a C function is
+//! wrapped as an `FFI::Pointer`. The surface is oracle-verified against
+//! `ffi 1.17.4`.
+//!
+//! This module holds the shared payload (`RPointer` + its owned-buffer memory
+//! model) and the read/write helpers; the two classes each live in their own
+//! file. `MemoryPointer < Pointer` in the ABI, so it needs no instance table of
+//! its own -- the ancestry walk reaches `Pointer`'s registered methods -- and
+//! contributes only its class methods (`new`/`from_string`).
 //!
 //! Memory model: an `RPointer` is a raw C address (`base`) plus an optional
 //! owned heap buffer (`owner`) that keeps that address alive. A `MemoryPointer`
@@ -20,11 +26,13 @@
 //! marshaling has). (2) `#address`/`#inspect` expose a real heap address for an
 //! owned buffer, so they are non-deterministic and never golden-tested.
 
-use crate::builtins::{arg_error, arity, builtin_methods, index_error, type_error};
+mod memory_pointer;
+mod pointer;
+
+use crate::builtins::{arg_error, arity, index_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
-use crate::{ClassId, RubyValue, Signal, Symbol};
+use crate::{ClassId, RubyValue, Signal};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::os::raw::c_char;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeo_abi::{FFI_MEMORY_POINTER_CLASS, FFI_POINTER_CLASS};
@@ -369,209 +377,6 @@ fn bytes_to_str(bytes: Vec<u8>) -> RubyValue {
     ))
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
-
-    // -- signed/unsigned integer reads (offset 0) --
-    "read_int8" | "read_char" => fn read_int8(r, a, _b) { read_int_m(r, a, 1, true, false) }
-    "read_uint8" | "read_uchar" => fn read_uint8(r, a, _b) { read_int_m(r, a, 1, false, false) }
-    "read_int16" | "read_short" => fn read_int16(r, a, _b) { read_int_m(r, a, 2, true, false) }
-    "read_uint16" | "read_ushort" => fn read_uint16(r, a, _b) { read_int_m(r, a, 2, false, false) }
-    "read_int32" | "read_int" => fn read_int32(r, a, _b) { read_int_m(r, a, 4, true, false) }
-    "read_uint32" | "read_uint" => fn read_uint32(r, a, _b) { read_int_m(r, a, 4, false, false) }
-    "read_int64" | "read_long" | "read_long_long" => fn read_int64(r, a, _b) { read_int_m(r, a, 8, true, false) }
-    "read_uint64" | "read_ulong" | "read_ulong_long" => fn read_uint64(r, a, _b) { read_int_m(r, a, 8, false, false) }
-
-    // -- integer reads at an offset --
-    "get_int8" | "get_char" => fn get_int8(r, a, _b) { read_int_m(r, a, 1, true, true) }
-    "get_uint8" | "get_uchar" => fn get_uint8(r, a, _b) { read_int_m(r, a, 1, false, true) }
-    "get_int16" | "get_short" => fn get_int16(r, a, _b) { read_int_m(r, a, 2, true, true) }
-    "get_uint16" | "get_ushort" => fn get_uint16(r, a, _b) { read_int_m(r, a, 2, false, true) }
-    "get_int32" | "get_int" => fn get_int32(r, a, _b) { read_int_m(r, a, 4, true, true) }
-    "get_uint32" | "get_uint" => fn get_uint32(r, a, _b) { read_int_m(r, a, 4, false, true) }
-    "get_int64" | "get_long" | "get_long_long" => fn get_int64(r, a, _b) { read_int_m(r, a, 8, true, true) }
-    "get_uint64" | "get_ulong" | "get_ulong_long" => fn get_uint64(r, a, _b) { read_int_m(r, a, 8, false, true) }
-
-    // -- integer writes (offset 0) --
-    "write_int8" | "write_char" => fn write_int8(r, a, _b) { write_int_m(r, a, 1, false) }
-    "write_uint8" | "write_uchar" => fn write_uint8(r, a, _b) { write_int_m(r, a, 1, false) }
-    "write_int16" | "write_short" => fn write_int16(r, a, _b) { write_int_m(r, a, 2, false) }
-    "write_uint16" | "write_ushort" => fn write_uint16(r, a, _b) { write_int_m(r, a, 2, false) }
-    "write_int32" | "write_int" => fn write_int32(r, a, _b) { write_int_m(r, a, 4, false) }
-    "write_uint32" | "write_uint" => fn write_uint32(r, a, _b) { write_int_m(r, a, 4, false) }
-    "write_int64" | "write_long" | "write_long_long" => fn write_int64(r, a, _b) { write_int_m(r, a, 8, false) }
-    "write_uint64" | "write_ulong" | "write_ulong_long" => fn write_uint64(r, a, _b) { write_int_m(r, a, 8, false) }
-
-    // -- integer writes at an offset --
-    "put_int8" | "put_char" => fn put_int8(r, a, _b) { write_int_m(r, a, 1, true) }
-    "put_uint8" | "put_uchar" => fn put_uint8(r, a, _b) { write_int_m(r, a, 1, true) }
-    "put_int16" | "put_short" => fn put_int16(r, a, _b) { write_int_m(r, a, 2, true) }
-    "put_uint16" | "put_ushort" => fn put_uint16(r, a, _b) { write_int_m(r, a, 2, true) }
-    "put_int32" | "put_int" => fn put_int32(r, a, _b) { write_int_m(r, a, 4, true) }
-    "put_uint32" | "put_uint" => fn put_uint32(r, a, _b) { write_int_m(r, a, 4, true) }
-    "put_int64" | "put_long" | "put_long_long" => fn put_int64(r, a, _b) { write_int_m(r, a, 8, true) }
-    "put_uint64" | "put_ulong" | "put_ulong_long" => fn put_uint64(r, a, _b) { write_int_m(r, a, 8, true) }
-
-    // -- floats --
-    "read_float" => fn read_float32(r, a, _b) { read_float_m(r, a, 4, false) }
-    "read_double" => fn read_float64(r, a, _b) { read_float_m(r, a, 8, false) }
-    "get_float32" | "get_float" => fn get_float32(r, a, _b) { read_float_m(r, a, 4, true) }
-    "get_float64" | "get_double" => fn get_float64(r, a, _b) { read_float_m(r, a, 8, true) }
-    "write_float" => fn write_float32(r, a, _b) { write_float_m(r, a, 4, false) }
-    "write_double" => fn write_float64(r, a, _b) { write_float_m(r, a, 8, false) }
-    "put_float32" | "put_float" => fn put_float32(r, a, _b) { write_float_m(r, a, 4, true) }
-    "put_float64" | "put_double" => fn put_float64(r, a, _b) { write_float_m(r, a, 8, true) }
-
-    // -- pointers (read/write an address-sized word, wrapped as a Pointer) --
-    "read_pointer" | "get_pointer" => fn read_pointer(recv, args, _b) {
-        arity!(args, 0..=1);
-        let off = off_arg(args, 0)?;
-        let p = ptr_of(recv);
-        p.check_bounds(off, 8)?;
-        Ok(wrap_address(unsafe { p.read_int(off, 8, false) } as usize))
-    }
-    "write_pointer" | "put_pointer" => fn write_pointer(recv, args, _b) {
-        arity!(args, 1..=2);
-        let (off, target) = if args.len() == 2 { (off_arg(args, 0)?, &args[1]) } else { (0, &args[0]) };
-        let addr = address_of(target).ok_or_else(|| type_error!("wrong argument type (expected a pointer)"))?;
-        let p = ptr_of(recv);
-        p.check_bounds(off, 8)?;
-        unsafe { p.write_int(off, 8, addr as i64) };
-        Ok(recv.clone())
-    }
-
-    // -- strings & raw bytes --
-    // `read_string` -> up to the first NUL; `read_string(len)` -> exactly len bytes.
-    "read_string" => fn read_string(recv, args, _b) {
-        arity!(args, 0..=1);
-        let p = ptr_of(recv);
-        match args.first() {
-            None | Some(RubyValue::Nil) => {
-                let bytes = unsafe { std::ffi::CStr::from_ptr(p.base as *const c_char) }.to_bytes().to_vec();
-                Ok(bytes_to_str(bytes))
-            }
-            Some(len) => {
-                let n = crate::ffi::to_i64(len)? as usize;
-                p.check_bounds(0, n)?;
-                let bytes = unsafe { std::slice::from_raw_parts(p.base, n) }.to_vec();
-                Ok(bytes_to_str(bytes))
-            }
-        }
-    }
-    // `get_string(offset, length = nil)` -- NUL-terminated at offset, or fixed length.
-    "get_string" => fn get_string(recv, args, _b) {
-        arity!(args, 1..=2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let p = ptr_of(recv);
-        match args.get(1) {
-            None | Some(RubyValue::Nil) => {
-                let bytes = unsafe { std::ffi::CStr::from_ptr(p.base.add(off) as *const c_char) }.to_bytes().to_vec();
-                Ok(bytes_to_str(bytes))
-            }
-            Some(len) => {
-                let n = crate::ffi::to_i64(len)? as usize;
-                p.check_bounds(off, n)?;
-                let bytes = unsafe { std::slice::from_raw_parts(p.base.add(off), n) }.to_vec();
-                Ok(bytes_to_str(bytes))
-            }
-        }
-    }
-    // `put_string(offset, str)` writes the bytes plus a terminating NUL.
-    "put_string" => fn put_string(recv, args, _b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let bytes = str_bytes(&args[1])?;
-        let p = ptr_of(recv);
-        p.check_bounds(off, bytes.len() + 1)?;
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.base.add(off), bytes.len());
-            p.base.add(off + bytes.len()).write(0);
-        }
-        Ok(recv.clone())
-    }
-    // `read_bytes(len)` / `get_bytes(offset, len)` -- raw bytes, NUL-agnostic.
-    "read_bytes" => fn read_bytes(recv, args, _b) {
-        arity!(args, 1);
-        let n = crate::ffi::to_i64(&args[0])? as usize;
-        let p = ptr_of(recv);
-        p.check_bounds(0, n)?;
-        Ok(bytes_to_str(unsafe { std::slice::from_raw_parts(p.base, n) }.to_vec()))
-    }
-    "get_bytes" => fn get_bytes(recv, args, _b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let n = crate::ffi::to_i64(&args[1])? as usize;
-        let p = ptr_of(recv);
-        p.check_bounds(off, n)?;
-        Ok(bytes_to_str(unsafe { std::slice::from_raw_parts(p.base.add(off), n) }.to_vec()))
-    }
-    // `put_bytes(offset, str)` / `write_bytes(str)` -- raw bytes, no NUL.
-    "put_bytes" => fn put_bytes(recv, args, _b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let bytes = str_bytes(&args[1])?;
-        let p = ptr_of(recv);
-        p.check_bounds(off, bytes.len())?;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.base.add(off), bytes.len()) };
-        Ok(recv.clone())
-    }
-    "write_bytes" => fn write_bytes(recv, args, _b) {
-        arity!(args, 1);
-        let bytes = str_bytes(&args[0])?;
-        let p = ptr_of(recv);
-        p.check_bounds(0, bytes.len())?;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.base, bytes.len()) };
-        Ok(recv.clone())
-    }
-
-    // -- typed arrays --
-    "read_array_of_int8" => fn raoi8(r, a, _b) { read_int_array(r, a, 1, true) }
-    "read_array_of_uint8" => fn raou8(r, a, _b) { read_int_array(r, a, 1, false) }
-    "read_array_of_int16" => fn raoi16(r, a, _b) { read_int_array(r, a, 2, true) }
-    "read_array_of_int32" | "read_array_of_int" => fn raoi32(r, a, _b) { read_int_array(r, a, 4, true) }
-    "read_array_of_uint32" | "read_array_of_uint" => fn raou32(r, a, _b) { read_int_array(r, a, 4, false) }
-    "read_array_of_int64" | "read_array_of_long" => fn raoi64(r, a, _b) { read_int_array(r, a, 8, true) }
-    "write_array_of_int8" => fn waoi8(r, a, _b) { write_int_array(r, a, 1) }
-    "write_array_of_int16" => fn waoi16(r, a, _b) { write_int_array(r, a, 2) }
-    "write_array_of_int32" | "write_array_of_int" => fn waoi32(r, a, _b) { write_int_array(r, a, 4) }
-    "write_array_of_int64" | "write_array_of_long" => fn waoi64(r, a, _b) { write_int_array(r, a, 8) }
-    "read_array_of_double" => fn raod(r, a, _b) { read_float_array(r, a, 8) }
-    "read_array_of_float" => fn raof(r, a, _b) { read_float_array(r, a, 4) }
-    "write_array_of_double" => fn waod(r, a, _b) { write_float_array(r, a, 8) }
-    "write_array_of_float" => fn waof(r, a, _b) { write_float_array(r, a, 4) }
-
-    // -- identity / arithmetic --
-    "null?" => fn is_null(recv, args, _b) {
-        arity!(args, 0);
-        Ok(RubyValue::Bool(ptr_of(recv).address() == 0))
-    }
-    "address" | "to_i" => fn address(recv, args, _b) {
-        arity!(args, 0);
-        Ok(RubyValue::Int(ptr_of(recv).address() as i64))
-    }
-    "size" | "total" => fn size(recv, args, _b) {
-        arity!(args, 0);
-        Ok(RubyValue::Int(ptr_of(recv).size.unwrap_or(0) as i64))
-    }
-    "+" => fn add(recv, args, _b) {
-        arity!(args, 1);
-        let delta = crate::ffi::to_i64(&args[0])? as usize;
-        Ok(RubyValue::Object(Arc::new(ptr_of(recv).offset(delta))))
-    }
-    "==" | "eql?" => fn eq(recv, args, _b) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(address_of(&args[0]) == Some(ptr_of(recv).address())))
-    }
-    "slice" => fn slice(recv, args, _b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let len = crate::ffi::to_i64(&args[1])? as usize;
-        let mut p = ptr_of(recv).offset(off);
-        p.size = Some(len);
-        Ok(RubyValue::Object(Arc::new(p)))
-    }
-}
-
 /// `read_array_of_<int>(count)` -> an `Array` of `count` integers.
 fn read_int_array(
     recv: &RubyValue,
@@ -643,58 +448,6 @@ fn array_elems(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
         .collect())
 }
 
-// ---- FFI::Pointer class methods ----
-
-builtin_methods! {
-    pub(crate) fn lookup_class_pointer;
-
-    // `FFI::Pointer.new(address)` or `FFI::Pointer.new(type, address)` (the
-    // type governs `[]` element size, which we don't model -- the address is
-    // what matters). A Pointer argument copies its address.
-    "new" => fn new_pointer(_recv, args, _b) {
-        arity!(args, 1..=2);
-        let addr_arg = args.last().expect("arity checked");
-        let addr = match address_of(addr_arg) {
-            Some(a) => a,
-            None => crate::ffi::to_i64(addr_arg)? as usize,
-        };
-        Ok(RubyValue::Object(Arc::new(RPointer::raw(addr, FFI_POINTER_CLASS))))
-    }
-}
-
-// ---- FFI::MemoryPointer class methods ----
-
-builtin_methods! {
-    pub(crate) fn lookup_class_memory;
-
-    // `MemoryPointer.new(type, count = 1, clear = true)`. `type` is a type
-    // symbol (`:int` -> 4 bytes) or an Integer element size in bytes. A block
-    // form yields the pointer and returns the block's value (the gem also
-    // auto-frees afterward; our pointer is GC-managed, so the buffer simply
-    // lives as long as it is referenced).
-    "new" => fn new_memory_m(_recv, args, block) {
-        arity!(args, 1..=3);
-        let elem = memptr_elem_size(&args[0])?;
-        let count = match args.get(1) {
-            None | Some(RubyValue::Nil) => 1,
-            Some(v) => crate::ffi::to_i64(v)? as usize,
-        };
-        let ptr = new_memory(elem * count);
-        match block {
-            Some(p @ RubyValue::Proc(_)) => {
-                crate::dispatch::send_value(&p, Symbol::intern("call"), &[ptr], None)
-            }
-            _ => Ok(ptr),
-        }
-    }
-    // `MemoryPointer.from_string(str)` -- an owned buffer holding the bytes + NUL.
-    "from_string" => fn from_string(_recv, args, _b) {
-        arity!(args, 1);
-        let bytes = str_bytes(&args[0])?;
-        Ok(RubyValue::Object(Arc::new(RPointer::from_bytes_nul(&bytes))))
-    }
-}
-
 /// The element size (bytes) for a `MemoryPointer.new` first argument: a type
 /// symbol maps by `type_size`, an Integer is a literal byte size.
 fn memptr_elem_size(v: &RubyValue) -> Result<usize, Signal> {
@@ -726,8 +479,13 @@ pub fn type_size(sym: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::registered_table;
 
     fn call(recv: &RubyValue, name: &str, args: &[RubyValue]) -> RubyValue {
+        let lookup = registered_table(FFI_POINTER_CLASS)
+            .and_then(|t| t.instance.as_ref())
+            .expect("Pointer registers an instance table")
+            .lookup;
         lookup(name).expect("method exists")(recv, args, None).expect("no error")
     }
     fn as_int(v: RubyValue) -> i64 {
