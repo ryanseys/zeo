@@ -42,7 +42,7 @@ ruby_class! {
     def "-" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
     def "*" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
     def "/" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
-    def "%" | "modulo" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
+    def "%" arity 1 | "modulo" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
     def "**" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
     def "-@" arity 0 (recv, args, _block) {
         arity!(args, 0);
@@ -66,7 +66,7 @@ ruby_class! {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
-    def "abs" | "magnitude" arity 0 (recv, args, _block) {
+    def "abs" arity 0 | "magnitude" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Float(recv_f64(recv).abs()))
     }
@@ -123,7 +123,7 @@ ruby_class! {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "to_i" | "to_int" arity 0 (recv, args, _block) {
+    def "to_i" arity 0 | "to_int" arity 0 (recv, args, _block) {
         arity!(args, 0);
         float_to_integer(recv_f64(recv).trunc())
     }

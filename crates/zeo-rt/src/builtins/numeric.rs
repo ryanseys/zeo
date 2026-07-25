@@ -354,7 +354,7 @@ ruby_class! {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "imag" | "imaginary" arity 0 (_recv, args, _block) {
+    def "imag" arity 0 | "imaginary" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(0))
     }
@@ -363,7 +363,7 @@ ruby_class! {
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
     // A real number's cartesian view is `[self, 0]`.
-    def "rect" | "rectangular" arity 0 (recv, args, _block) {
+    def "rect" arity 0 | "rectangular" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
     }
@@ -383,11 +383,11 @@ ruby_class! {
         arity!(args, 0);
         num_mul(recv, recv).expect("numeric receiver")
     }
-    def "conj" | "conjugate" arity 0 (recv, args, _block) {
+    def "conj" arity 0 | "conjugate" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "angle" | "arg" | "phase" arity 0 (recv, args, _block) {
+    def "angle" arity 0 | "arg" arity 0 | "phase" arity 0 (recv, args, _block) {
         arity!(args, 0);
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
         // only for the negative case; 0 stays Integer).
