@@ -13,9 +13,10 @@
 //! bytes), matching this runtime's default `Str` -- CRuby's StringIO preserves
 //! arbitrary bytes with an encoding.
 
-use crate::builtins::{arity, builtin_methods, eof_error};
+use crate::builtins::{arity, eof_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, string_new};
+use zeo_macros::ruby_class;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,15 +110,16 @@ fn write_at(state: &mut State, data: &[u8]) {
     state.pos = end;
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    StringIO = zeo_abi::STRINGIO_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     // The whole buffer as a String, independent of position.
-    "string" => fn string(recv, args, _block) {
+    def "string" (recv, args, _block) {
         arity!(args, 0);
         Ok(bytes_to_str(&io_of(recv).state.lock().bytes))
     }
-    "read" => fn read(recv, args, _block) {
+    def "read" (recv, args, _block) {
         arity!(args, 0..=1);
         let mut s = io_of(recv).state.lock();
         match args.first() {
@@ -142,7 +144,7 @@ builtin_methods! {
             }
         }
     }
-    "write" => fn write(recv, args, _block) {
+    def "write" (recv, args, _block) {
         let mut written = 0usize;
         let mut s = io_of(recv).state.lock();
         for a in args {
@@ -152,20 +154,20 @@ builtin_methods! {
         }
         Ok(RubyValue::Int(written as i64))
     }
-    "<<" => fn push(recv, args, _block) {
+    def "<<" (recv, args, _block) {
         arity!(args, 1);
         let mut s = io_of(recv).state.lock();
         write_at(&mut s, &arg_bytes(&args[0]));
         Ok(recv.clone())
     }
-    "print" => fn print(recv, args, _block) {
+    def "print" (recv, args, _block) {
         let mut s = io_of(recv).state.lock();
         for a in args {
             write_at(&mut s, &arg_bytes(a));
         }
         Ok(RubyValue::Nil)
     }
-    "puts" => fn puts(recv, args, _block) {
+    def "puts" (recv, args, _block) {
         let mut s = io_of(recv).state.lock();
         if args.is_empty() {
             write_at(&mut s, b"\n");
@@ -175,7 +177,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Nil)
     }
-    "gets" => fn gets(recv, args, _block) {
+    def "gets" as gets (recv, args, _block) {
         arity!(args, 0..=1);
         let sep = match args.first() {
             None | Some(RubyValue::Nil) => "\n".to_string(),
@@ -194,7 +196,7 @@ builtin_methods! {
         s.pos = end;
         Ok(bytes_to_str(&line))
     }
-    "each_line" => fn each_line(recv, args, block) {
+    def "each_line" (recv, args, block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = block else {
             return Err(crate::dispatch::raise_no_block_yield());
@@ -208,43 +210,43 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "eof?" | "eof" => fn eof(recv, args, _block) {
+    def "eof?" | "eof" (recv, args, _block) {
         arity!(args, 0);
         let s = io_of(recv).state.lock();
         Ok(RubyValue::Bool(s.pos >= s.bytes.len()))
     }
-    "rewind" => fn rewind(recv, args, _block) {
+    def "rewind" (recv, args, _block) {
         arity!(args, 0);
         io_of(recv).state.lock().pos = 0;
         Ok(RubyValue::Int(0))
     }
-    "pos" | "tell" => fn pos(recv, args, _block) {
+    def "pos" | "tell" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(io_of(recv).state.lock().pos as i64))
     }
-    "pos=" => fn set_pos(recv, args, _block) {
+    def "pos=" (recv, args, _block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         io_of(recv).state.lock().pos = (*n).max(0) as usize;
         Ok(args[0].clone())
     }
-    "size" | "length" => fn size(recv, args, _block) {
+    def "size" | "length" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(io_of(recv).state.lock().bytes.len() as i64))
     }
-    "close" => fn close(recv, args, _block) {
+    def "close" (recv, args, _block) {
         arity!(args, 0);
         io_of(recv).state.lock().closed = true;
         Ok(RubyValue::Nil)
     }
-    "closed?" => fn closed(recv, args, _block) {
+    def "closed?" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(io_of(recv).state.lock().closed))
     }
 
     // `seek(offset, whence = SEEK_SET)` -- reposition; whence 0/1/2 =
     // absolute/relative/from-end. Returns 0, like CRuby's IO#seek.
-    "seek" => fn seek(recv, args, _block) {
+    def "seek" (recv, args, _block) {
         arity!(args, 1..=2);
         let off = &crate::builtins::convert::to_index(&args[0])?;
         let whence = match args.get(1) {
@@ -266,7 +268,7 @@ builtin_methods! {
         Ok(RubyValue::Int(0))
     }
     // `getc` -- one character (the next whole UTF-8 char), or nil at EOF.
-    "getc" => fn getc(recv, args, _block) {
+    def "getc" (recv, args, _block) {
         arity!(args, 0);
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
@@ -278,7 +280,7 @@ builtin_methods! {
         Ok(bytes_to_str(&ch))
     }
     // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
-    "readline" => fn readline(recv, args, _block) {
+    def "readline" (recv, args, _block) {
         arity!(args, 0..=1);
         match gets(recv, args, None)? {
             RubyValue::Nil => Err(eof_error!("end of file reached")),
@@ -286,7 +288,7 @@ builtin_methods! {
         }
     }
     // `readlines(sep = "\n")` -- every remaining line as an Array.
-    "readlines" => fn readlines(recv, args, _block) {
+    def "readlines" (recv, args, _block) {
         arity!(args, 0..=1);
         let mut lines = Vec::new();
         loop {
@@ -299,7 +301,7 @@ builtin_methods! {
     }
     // `truncate(len)` -- resize the buffer, zero-padding when it grows.
     // Returns 0 (CRuby's IO#truncate result).
-    "truncate" => fn truncate(recv, args, _block) {
+    def "truncate" (recv, args, _block) {
         arity!(args, 1);
         let len = &crate::builtins::convert::to_index(&args[0])?;
         if *len < 0 {
@@ -307,6 +309,15 @@ builtin_methods! {
         }
         io_of(recv).state.lock().bytes.resize(*len as usize, 0);
         Ok(RubyValue::Int(0))
+    }
+
+    def self."new" | "open" (_recv, args, _block) {
+        arity!(args, 0..=2); // (string=""[, mode]) -- mode ignored for now
+        let bytes = match args.first() {
+            None | Some(RubyValue::Nil) => Vec::new(),
+            Some(v) => crate::builtins::convert::to_rstr(v)?.lock().bytes().to_vec(),
+        };
+        Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes))))
     }
 }
 
@@ -347,19 +358,6 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" | "open" => fn new_m(_recv, args, _block) {
-        arity!(args, 0..=2); // (string=""[, mode]) -- mode ignored for now
-        let bytes = match args.first() {
-            None | Some(RubyValue::Nil) => Vec::new(),
-            Some(v) => crate::builtins::convert::to_rstr(v)?.lock().bytes().to_vec(),
-        };
-        Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes))))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,57 +371,71 @@ mod tests {
             other => panic!("expected Str, got {other:?}"),
         }
     }
+    /// `StringIO`'s `ruby_class!`-generated methods have mangled Rust idents, so
+    /// the tests reach them through the registered instance/class tables.
+    fn tbl() -> &'static crate::builtins::BuiltinClassTable {
+        crate::builtins::registered_table(zeo_abi::STRINGIO_CLASS)
+            .expect("StringIO is a registered builtin table")
+    }
+    fn im(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let t = tbl().instance.as_ref().expect("StringIO has instance methods");
+        (t.lookup)(name).unwrap_or_else(|| panic!("StringIO#{name} is defined"))
+    }
+    fn cm(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let t = tbl().class.as_ref().expect("StringIO has class methods");
+        (t.lookup)(name).unwrap_or_else(|| panic!("StringIO.{name} is defined"))
+    }
 
     #[test]
     fn puts_then_string_matches_ruby() {
-        let io = new_m(&RubyValue::Nil, &[], None).unwrap();
-        puts(&io, &[s("a")], None).unwrap();
-        push(&io, &[s("b")], None).unwrap();
-        assert_eq!(text(&string(&io, &[], None).unwrap()), "a\nb");
+        let io = cm("new")(&RubyValue::Nil, &[], None).unwrap();
+        im("puts")(&io, &[s("a")], None).unwrap();
+        im("<<")(&io, &[s("b")], None).unwrap();
+        assert_eq!(text(&im("string")(&io, &[], None).unwrap()), "a\nb");
     }
 
     #[test]
     fn read_and_rewind_track_position() {
-        let io = new_m(&RubyValue::Nil, &[s("hello")], None).unwrap();
-        assert_eq!(text(&read(&io, &[RubyValue::Int(3)], None).unwrap()), "hel");
-        assert_eq!(text(&read(&io, &[], None).unwrap()), "lo");
+        let io = cm("new")(&RubyValue::Nil, &[s("hello")], None).unwrap();
+        assert_eq!(text(&im("read")(&io, &[RubyValue::Int(3)], None).unwrap()), "hel");
+        assert_eq!(text(&im("read")(&io, &[], None).unwrap()), "lo");
         assert!(matches!(
-            eof(&io, &[], None).unwrap(),
+            im("eof?")(&io, &[], None).unwrap(),
             RubyValue::Bool(true)
         ));
-        rewind(&io, &[], None).unwrap();
-        assert_eq!(text(&read(&io, &[], None).unwrap()), "hello");
+        im("rewind")(&io, &[], None).unwrap();
+        assert_eq!(text(&im("read")(&io, &[], None).unwrap()), "hello");
     }
 
     #[test]
     fn gets_returns_lines_then_nil() {
-        let io = new_m(&RubyValue::Nil, &[s("a\nb")], None).unwrap();
-        assert_eq!(text(&gets(&io, &[], None).unwrap()), "a\n");
-        assert_eq!(text(&gets(&io, &[], None).unwrap()), "b");
-        assert!(matches!(gets(&io, &[], None).unwrap(), RubyValue::Nil));
+        let io = cm("new")(&RubyValue::Nil, &[s("a\nb")], None).unwrap();
+        assert_eq!(text(&im("gets")(&io, &[], None).unwrap()), "a\n");
+        assert_eq!(text(&im("gets")(&io, &[], None).unwrap()), "b");
+        assert!(matches!(im("gets")(&io, &[], None).unwrap(), RubyValue::Nil));
     }
 
     #[test]
     fn getc_reads_one_char_then_nil() {
-        let io = new_m(&RubyValue::Nil, &[s("hé")], None).unwrap();
-        assert_eq!(text(&getc(&io, &[], None).unwrap()), "h");
-        assert_eq!(text(&getc(&io, &[], None).unwrap()), "é");
-        assert!(matches!(getc(&io, &[], None).unwrap(), RubyValue::Nil));
+        let io = cm("new")(&RubyValue::Nil, &[s("hé")], None).unwrap();
+        assert_eq!(text(&im("getc")(&io, &[], None).unwrap()), "h");
+        assert_eq!(text(&im("getc")(&io, &[], None).unwrap()), "é");
+        assert!(matches!(im("getc")(&io, &[], None).unwrap(), RubyValue::Nil));
     }
 
     #[test]
     fn seek_repositions_by_whence() {
-        let io = new_m(&RubyValue::Nil, &[s("abcdef")], None).unwrap();
-        seek(&io, &[RubyValue::Int(2)], None).unwrap();
-        assert_eq!(text(&read(&io, &[RubyValue::Int(2)], None).unwrap()), "cd");
-        seek(&io, &[RubyValue::Int(-1), RubyValue::Int(2)], None).unwrap();
-        assert_eq!(text(&read(&io, &[], None).unwrap()), "f");
+        let io = cm("new")(&RubyValue::Nil, &[s("abcdef")], None).unwrap();
+        im("seek")(&io, &[RubyValue::Int(2)], None).unwrap();
+        assert_eq!(text(&im("read")(&io, &[RubyValue::Int(2)], None).unwrap()), "cd");
+        im("seek")(&io, &[RubyValue::Int(-1), RubyValue::Int(2)], None).unwrap();
+        assert_eq!(text(&im("read")(&io, &[], None).unwrap()), "f");
     }
 
     #[test]
     fn readlines_collects_every_line() {
-        let io = new_m(&RubyValue::Nil, &[s("a\nb\nc")], None).unwrap();
-        let RubyValue::Array(a) = readlines(&io, &[], None).unwrap() else {
+        let io = cm("new")(&RubyValue::Nil, &[s("a\nb\nc")], None).unwrap();
+        let RubyValue::Array(a) = im("readlines")(&io, &[], None).unwrap() else {
             panic!("expected an Array")
         };
         let lines: Vec<String> = a.lock().iter().map(text).collect();
@@ -432,8 +444,8 @@ mod tests {
 
     #[test]
     fn truncate_resizes_the_buffer() {
-        let io = new_m(&RubyValue::Nil, &[s("hello world")], None).unwrap();
-        truncate(&io, &[RubyValue::Int(5)], None).unwrap();
-        assert_eq!(text(&string(&io, &[], None).unwrap()), "hello");
+        let io = cm("new")(&RubyValue::Nil, &[s("hello world")], None).unwrap();
+        im("truncate")(&io, &[RubyValue::Int(5)], None).unwrap();
+        assert_eq!(text(&im("string")(&io, &[], None).unwrap()), "hello");
     }
 }

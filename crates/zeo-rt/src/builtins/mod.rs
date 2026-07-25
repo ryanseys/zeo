@@ -183,8 +183,6 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         // In-tree `ext/` extensions with instances (modules like CGI/JSON have
         // none -- they appear only in `class_method_table`).
-        #[cfg(feature = "ext-stringio")]
-        zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup,
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup,
         #[cfg(feature = "ext-digest")]
@@ -259,8 +257,6 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        #[cfg(feature = "ext-stringio")]
-        zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_arity,
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_arity,
         #[cfg(feature = "ext-digest")]
@@ -347,8 +343,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
         #[cfg(feature = "ext-pathname")]
         zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_class,
-        #[cfg(feature = "ext-stringio")]
-        zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class,
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class,
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
@@ -428,8 +422,6 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         // MATH_CLASS migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-stringio")]
-        zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
         #[cfg(feature = "ext-pathname")]
         zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_names(),
         #[cfg(feature = "ext-monitor")]
@@ -494,8 +486,6 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_names(),
         #[cfg(feature = "ext-pathname")]
         zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_class_names(),
-        #[cfg(feature = "ext-stringio")]
-        zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class_names(),
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class_names(),
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
