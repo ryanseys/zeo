@@ -81,7 +81,12 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
     let mut alias_errors: Vec<TokenStream2> = Vec::new();
 
     for (idx, method) in spec.methods.iter().enumerate() {
-        let fn_ident = mangle(&method.names[0].ruby, idx);
+        // An explicit `as X` gives the impl a callable Rust name (so sibling
+        // bodies can call it directly); otherwise a mangled, unreachable ident.
+        let fn_ident = match &method.bound_name {
+            Some(bound) => bound.clone(),
+            None => mangle(&method.names[0].ruby, idx),
+        };
         let (recv, args, block) = (&method.recv, &method.args, &method.block);
         let body = &method.body;
         fn_items.push(quote! {

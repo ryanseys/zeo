@@ -77,6 +77,15 @@ mod comparable {
 
         alias lteq = "<";
 
+        // A `def ... as X` binds a callable Rust fn name, so a sibling body can
+        // call it DIRECTLY (not through the table). `clamp` calls `cmp_impl`.
+        def "cmp" as cmp_impl (_recv, _args, _block) {
+            Ok(RubyValue::Int(5))
+        }
+        def "clamp" (recv, args, block) {
+            cmp_impl(recv, args, block)
+        }
+
         // A nested class sharing the same file: its own id, its own `lookup`
         // table (in a private submodule, so no collision with the outer one).
         class Nested = crate::NESTED_CLASS < crate::OBJECT_CLASS {
@@ -85,6 +94,23 @@ mod comparable {
             }
         }
     }
+}
+
+#[test]
+fn a_bound_name_is_callable_by_its_rust_name_and_via_the_table() {
+    // Direct Rust call by the bound name -- the point of `as X`: a sibling body
+    // (`clamp`) reached `cmp_impl` directly, and it's callable from here too.
+    assert_eq!(
+        comparable::cmp_impl(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(5)
+    );
+    // The `clamp` row, which delegates to `cmp_impl`, resolves through the table
+    // and returns the same thing -- proving the direct call and the Ruby-name
+    // dispatch reach one shared implementation.
+    let clamp = comparable::lookup("clamp").expect("`clamp` defined");
+    assert_eq!(clamp(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(5));
+    // And the bound name is still reachable by its Ruby name "cmp".
+    assert!(comparable::lookup("cmp").is_some());
 }
 
 #[test]

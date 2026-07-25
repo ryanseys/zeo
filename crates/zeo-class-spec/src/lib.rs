@@ -102,6 +102,13 @@ pub struct MethodDef {
     pub visibility: Visibility,
     /// One or more Ruby names, in declaration order (first is the primary).
     pub names: Vec<MethodName>,
+    /// An explicit callable Rust fn name for this def (`def "x" as X (...)`),
+    /// so sibling method bodies in the same file can call it DIRECTLY by name
+    /// (`X(recv, args, blk)`) instead of through the dispatch table. `None`
+    /// falls back to the mangled `rc_*` ident (unreachable by Rust name). Only
+    /// affects the Rust symbol -- Ruby dispatch (`send`, `respond_to?`) always
+    /// resolves by the Ruby name through the lookup table, bound or not.
+    pub bound_name: Option<Ident>,
     /// The three body parameters, spelled by the author (`recv`/`_recv`, ...).
     pub recv: Ident,
     pub args: Ident,
@@ -279,6 +286,15 @@ fn parse_def(input: ParseStream, visibility: Visibility) -> syn::Result<MethodDe
         }
     }
 
+    // Optional `as X`: bind a callable Rust fn name (for direct in-file sibling
+    // calls). Comes after all `|`-joined names, before the params.
+    let bound_name = if input.peek(Token![as]) {
+        input.parse::<Token![as]>()?;
+        Some(input.parse::<Ident>()?)
+    } else {
+        None
+    };
+
     // `(recv, args, block)`.
     let params;
     parenthesized!(params in input);
@@ -297,6 +313,7 @@ fn parse_def(input: ParseStream, visibility: Visibility) -> syn::Result<MethodDe
         is_class_method,
         visibility,
         names,
+        bound_name,
         recv,
         args,
         block,
@@ -358,6 +375,21 @@ mod tests {
         assert_eq!(spec.methods[0].names[0].arity, Some(1));
         assert_eq!(spec.methods[2].names[0].ruby, "between?");
         assert_eq!(spec.methods[2].names[0].arity, Some(2));
+    }
+
+    #[test]
+    fn a_bound_name_binds_a_callable_rust_fn_for_the_def() {
+        let spec = parse_class(quote! {
+            Set = SET_CLASS < OBJECT_CLASS;
+            def "add" | "<<" as set_add (recv, args, _block) { do_add(recv, args) }
+            def "union"(recv, args, _block) { set_add(recv, args) }
+        });
+        // The `as X` binds the FIRST def's fn name; aliases still share it.
+        assert_eq!(spec.methods[0].bound_name.as_ref().unwrap().to_string(), "set_add");
+        assert_eq!(spec.methods[0].names.len(), 2);
+        assert_eq!(spec.methods[0].names[1].ruby, "<<");
+        // A def without `as` leaves the fn name to the mangler.
+        assert!(spec.methods[1].bound_name.is_none());
     }
 
     #[test]
