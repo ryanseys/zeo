@@ -2,7 +2,8 @@
 //! case/succ rows delegate to `string.rs`'s shared helpers and re-intern;
 //! `to_proc` builds the `&:name` block (one dynamic dispatch per call).
 
-use crate::builtins::{arg_error, arity, builtin_methods};
+use crate::builtins::{arg_error, arity};
+use zeo_macros::ruby_class;
 use crate::{RProc, RubyValue, Symbol};
 
 fn recv_sym(recv: &RubyValue) -> Symbol {
@@ -142,43 +143,44 @@ pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
     RubyValue::Proc(p)
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Symbol = zeo_abi::SYMBOL_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::COMPARABLE_CLASS;
 
-    "to_s"[0] | "id2name"[0] => fn to_s(recv, args, _block) {
+    def "to_s" arity 0 | "id2name" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv_sym(recv).name())))
     }
     // `Symbol#name` returns a FROZEN String (unlike `to_s`, which is a fresh
     // mutable copy) -- CRuby caches and freezes it.
-    "name"[0] => fn name(recv, args, _block) {
+    def "name" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let s = crate::string_new(recv_sym(recv).name());
         s.set_frozen();
         Ok(RubyValue::Str(s))
     }
-    "to_sym"[0] | "intern"[0] => fn to_sym(recv, args, _block) {
+    def "to_sym" arity 0 | "intern" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "encoding"[0] => fn encoding_m(recv, args, _block) {
+    def "encoding" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let id = crate::builtins::encoding::computed_encoding_of(&recv_sym(recv).name());
         Ok(crate::builtins::encoding::encoding_value(id))
     }
-    "inspect"[0] => fn inspect(recv, args, _block) {
+    def "inspect" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(inspect_name(&recv_sym(recv).name()))))
     }
-    "length"[0] | "size"[0] => fn length(recv, args, _block) {
+    def "length" arity 0 | "size" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(recv_sym(recv).name().chars().count() as i64))
     }
-    "empty?"[0] => fn empty_p(recv, args, _block) {
+    def "empty?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_sym(recv).name().is_empty()))
     }
-    "<=>"[1] => fn spaceship(recv, args, _block) {
+    def "<=>" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Symbol(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -187,27 +189,27 @@ builtin_methods! {
             recv_sym(recv).name().cmp(&other.name()) as i64
         ))
     }
-    "=="[1] => fn eq(recv, args, _block) {
+    def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
     // `sym[...]` reads a substring of the symbol's NAME, returning a String
     // (or nil) -- identical to `sym.to_s[...]`, so it delegates to `String#[]`
     // for the full index/length/range/regexp surface.
-    "[]" | "slice" => fn index(recv, args, _block) {
+    def "[]" | "slice"(recv, args, _block) {
         let name = RubyValue::Str(crate::string_new(recv_sym(recv).name()));
         crate::dispatch::send_value(&name, crate::Symbol::intern("[]"), args, None)
     }
     // These read the symbol's NAME as a string, so they delegate to the
     // matching `String` method (a Symbol is name-plus-identity).
-    "=~"[1] => fn match_op(recv, args, block) { sym_via_name(recv, "=~", args, block) }
-    "match" => fn match_m(recv, args, block) { sym_via_name(recv, "match", args, block) }
-    "match?" => fn match_p(recv, args, block) { sym_via_name(recv, "match?", args, block) }
-    "start_with?" => fn start_with_p(recv, args, block) { sym_via_name(recv, "start_with?", args, block) }
-    "end_with?" => fn end_with_p(recv, args, block) { sym_via_name(recv, "end_with?", args, block) }
+    def "=~" arity 1 (recv, args, block) { sym_via_name(recv, "=~", args, block) }
+    def "match"(recv, args, block) { sym_via_name(recv, "match", args, block) }
+    def "match?"(recv, args, block) { sym_via_name(recv, "match?", args, block) }
+    def "start_with?"(recv, args, block) { sym_via_name(recv, "start_with?", args, block) }
+    def "end_with?"(recv, args, block) { sym_via_name(recv, "end_with?", args, block) }
     // Case-insensitive name comparison. `casecmp` answers -1/0/1 (nil if the
     // argument isn't a Symbol); `casecmp?` answers true/false/nil.
-    "casecmp"[1] => fn casecmp(recv, args, _block) {
+    def "casecmp" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Symbol(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -218,7 +220,7 @@ builtin_methods! {
             .cmp(&other.name().to_lowercase());
         Ok(RubyValue::Int(ord as i64))
     }
-    "casecmp?"[1] => fn casecmp_p(recv, args, _block) {
+    def "casecmp?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Symbol(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -227,37 +229,37 @@ builtin_methods! {
             recv_sym(recv).name().to_lowercase() == other.name().to_lowercase(),
         ))
     }
-    "upcase" => fn upcase(recv, args, _block) {
+    def "upcase"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(Symbol::intern(
             &recv_sym(recv).name().to_uppercase(),
         )))
     }
-    "downcase" => fn downcase(recv, args, _block) {
+    def "downcase"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(Symbol::intern(
             &recv_sym(recv).name().to_lowercase(),
         )))
     }
-    "capitalize" => fn capitalize(recv, args, _block) {
+    def "capitalize"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(Symbol::intern(
             &crate::builtins::string::capitalize_str(&recv_sym(recv).name()),
         )))
     }
-    "swapcase" => fn swapcase(recv, args, _block) {
+    def "swapcase"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(Symbol::intern(
             &crate::builtins::string::swapcase_str(&recv_sym(recv).name()),
         )))
     }
-    "succ"[0] | "next"[0] => fn succ(recv, args, _block) {
+    def "succ" arity 0 | "next" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(Symbol::intern(
             &crate::builtins::string::succ_str(&recv_sym(recv).name()),
         )))
     }
-    "to_proc"[0] => fn to_proc(recv, args, _block) {
+    def "to_proc" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(symbol_to_proc(recv_sym(recv)))
     }
@@ -271,17 +273,29 @@ mod tests {
         RubyValue::Symbol(Symbol::intern(s))
     }
 
+    /// The `ruby_class!`-generated instance methods are reachable only through
+    /// the dispatch table (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through Symbol's registered lookup.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::SYMBOL_CLASS)
+            .expect("Symbol is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Symbol has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Symbol#{name} is defined"))
+    }
+
     #[test]
     fn reflection_rows_match_the_oracle() {
-        let r = inspect(&sym("he"), &[], None).unwrap();
+        let r = imethod("inspect")(&sym("he"), &[], None).unwrap();
         assert_eq!(r.to_display_string(), ":he");
-        let r = length(&sym("hello"), &[], None).unwrap();
+        let r = imethod("length")(&sym("hello"), &[], None).unwrap();
         assert!(matches!(r, RubyValue::Int(5)));
-        let r = spaceship(&sym("b"), &[sym("a")], None).unwrap();
+        let r = imethod("<=>")(&sym("b"), &[sym("a")], None).unwrap();
         assert!(matches!(r, RubyValue::Int(1)));
-        let r = upcase(&sym("he"), &[], None).unwrap();
+        let r = imethod("upcase")(&sym("he"), &[], None).unwrap();
         assert_eq!(r.inspect_string(), ":HE");
-        let r = succ(&sym("a"), &[], None).unwrap();
+        let r = imethod("succ")(&sym("a"), &[], None).unwrap();
         assert_eq!(r.inspect_string(), ":b");
     }
 
