@@ -173,7 +173,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup,
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::SET_CLASS => set::lookup,
+        // SET_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::STRUCT_CLASS => rstruct::lookup,
         zeo_abi::DATA_CLASS => rstruct::lookup_data,
         // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
@@ -259,7 +259,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup_arity,
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::SET_CLASS => set::lookup_arity,
+        // SET_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::STRUCT_CLASS => rstruct::lookup_arity,
         zeo_abi::DATA_CLASS => rstruct::lookup_data_arity,
         // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
@@ -334,7 +334,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // OBJECTSPACE_MODULE migrated to ruby_module! -- served via registered_table.
         // GC_CLASS migrated to ruby_module! -- served via registered_table.
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::SET_CLASS => set::lookup_class,
+        // SET_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::STRUCT_CLASS => rstruct::lookup_class,
         zeo_abi::DATA_CLASS => rstruct::lookup_class_data,
         // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
@@ -436,7 +436,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup_names(),
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::SET_CLASS => set::lookup_names(),
+        // SET_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::STRUCT_CLASS => rstruct::lookup_names(),
         zeo_abi::DATA_CLASS => rstruct::lookup_data_names(),
         // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
@@ -497,7 +497,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         // OBJECTSPACE_MODULE migrated to ruby_module! -- served via registered_table.
         // GC_CLASS migrated to ruby_module! -- served via registered_table.
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::SET_CLASS => set::lookup_class_names(),
+        // SET_CLASS migrated to ruby_class! -- served via registered_table.
         // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
         // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class_names(),

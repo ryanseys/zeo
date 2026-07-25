@@ -6,7 +6,8 @@
 //! iteration method (`map`/`select`/`count`/...) drives the `each` row below;
 //! only the set-specific surface lives here.
 
-use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods};
+use crate::builtins::{arg_error, arity, block_or_enum};
+use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RHash, RubyValue, Signal};
 use std::sync::Arc;
@@ -268,17 +269,43 @@ fn strongly_connected_components(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
     out
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Set = zeo_abi::SET_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
-    "add"[1] | "<<"[1] => fn add(recv, args, _block) {
+    // `Set.new` / `Set.new(enum)` / `Set.new(enum) { |o| transform(o) }`.
+    def self."new"(_recv, args, block) {
+        arity!(args, 0..=1);
+        let out = empty_set();
+        if let Some(source) = args.first() {
+            if !source.is_nil() {
+                let s = set_of(&out);
+                for e in arg_elements(source)? {
+                    let e = match &block {
+                        Some(p @ RubyValue::Proc(_)) => {
+                            crate::dispatch::send_value(p, crate::Symbol::intern("call"), &[e], None)?
+                        }
+                        _ => e,
+                    };
+                    s.insert(e);
+                }
+            }
+        }
+        Ok(out)
+    }
+    // `Set[a, b, c]` -- every argument is a member (deduplicated).
+    def self."[]"(_recv, args, _block) {
+        Ok(set_from(args.iter().cloned()))
+    }
+
+    def "add" arity 1 | "<<" arity 1 (recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         set_of(recv).insert(args[0].clone());
         Ok(recv.clone())
     }
     // `add?`: nil if the element was already present, else self (post-add).
-    "add?"[1] => fn add_p(recv, args, _block) {
+    def "add?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         if set_of(recv).insert(args[0].clone()) {
@@ -287,18 +314,18 @@ builtin_methods! {
             Ok(RubyValue::Nil)
         }
     }
-    "include?"[1] | "member?"[1] | "==="[1] | "contain?" => fn include_p(recv, args, _block) {
+    def "include?" arity 1 | "member?" arity 1 | "===" arity 1 | "contain?"(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(set_of(recv).contains(&args[0])))
     }
-    "delete"[1] => fn delete(recv, args, _block) {
+    def "delete" arity 1 (recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         crate::hash_delete(&set_of(recv).hash, &args[0]);
         Ok(recv.clone())
     }
     // `delete?`: self if the element was present and removed, else nil.
-    "delete?"[1] => fn delete_p(recv, args, _block) {
+    def "delete?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         let s = set_of(recv);
@@ -311,7 +338,7 @@ builtin_methods! {
     }
     // `subtract(enum)` -- removes every element of `enum`, returning self
     // (the in-place counterpart of `-`).
-    "subtract"[1] => fn subtract(recv, args, _block) {
+    def "subtract" arity 1 (recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         let s = set_of(recv);
@@ -322,7 +349,7 @@ builtin_methods! {
     }
     // `replace(enum)` -- discards the current members and re-seeds from
     // `enum`, returning self.
-    "replace"[1] => fn replace(recv, args, _block) {
+    def "replace" arity 1 (recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         let elements = arg_elements(&args[0])?;
@@ -330,7 +357,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     // `flatten` -- a NEW Set with every nested Set expanded recursively.
-    "flatten"[0] => fn flatten(recv, args, _block) {
+    def "flatten" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let mut out = Vec::new();
         flatten_into(set_of(recv), &mut out);
@@ -338,7 +365,7 @@ builtin_methods! {
     }
     // `flatten!` -- flattens in place; self if it held any nested Set, else
     // nil (nothing to flatten).
-    "flatten!"[0] => fn flatten_bang(recv, args, _block) {
+    def "flatten!" arity 0 (recv, args, _block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let s = set_of(recv);
@@ -352,7 +379,7 @@ builtin_methods! {
     }
     // `map!`/`collect!` -- replaces each element with the block's result,
     // in place, returning self (dedup applies to the mapped values).
-    "map!"[0] | "collect!"[0] => fn map_bang(recv, args, block) {
+    def "map!" arity 0 | "collect!" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "map!", args, block);
@@ -366,7 +393,7 @@ builtin_methods! {
     }
     // `select!`/`filter!` -- keep the elements the block likes; self if any
     // were dropped, else nil.
-    "select!"[0] | "filter!"[0] => fn select_bang(recv, args, block) {
+    def "select!" arity 0 | "filter!" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "select!", args, block);
@@ -374,7 +401,7 @@ builtin_methods! {
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `keep_if` -- like `select!` but always returns self.
-    "keep_if"[0] => fn keep_if(recv, args, block) {
+    def "keep_if" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "keep_if", args, block);
@@ -383,7 +410,7 @@ builtin_methods! {
     }
     // `reject!` -- drop the elements the block likes; self if any were
     // dropped, else nil.
-    "reject!"[0] => fn reject_bang(recv, args, block) {
+    def "reject!" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "reject!", args, block);
@@ -391,7 +418,7 @@ builtin_methods! {
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `delete_if` -- like `reject!` but always returns self.
-    "delete_if"[0] => fn delete_if(recv, args, block) {
+    def "delete_if" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "delete_if", args, block);
@@ -399,7 +426,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     // `classify { |o| key }` -- a `Hash{ key => Set }` grouping by block value.
-    "classify"[0] => fn classify(recv, args, block) {
+    def "classify" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "classify", args, block);
         Ok(RubyValue::Hash(classify_groups(recv, &p)?))
@@ -407,7 +434,7 @@ builtin_methods! {
     // `divide` -- partition into a Set of Sets. A one-arg block groups by its
     // value (`classify`'s values); a two-arg block treats `block.call(u,v)` as
     // a directed edge and returns the strongly-connected components.
-    "divide"[0] => fn divide(recv, args, block) {
+    def "divide" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "divide", args, block);
         if p.arity() == 2 {
@@ -432,7 +459,7 @@ builtin_methods! {
             Ok(set_from(values))
         }
     }
-    "each"[0] => fn each(recv, args, block) {
+    def "each" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         for e in set_of(recv).elements() {
@@ -440,42 +467,42 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "size"[0] | "length"[0] => fn size(recv, args, _block) {
+    def "size" arity 0 | "length" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(set_of(recv).len() as i64))
     }
     // `Set#reset` rebuilds the internal index after elements have been mutated
     // in place. This Set keys elements structurally, so there is nothing to
     // re-index; it answers self, matching CRuby's return.
-    "reset"[0] => fn reset(recv, args, _block) {
+    def "reset" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "empty?"[0] => fn empty_p(recv, args, _block) {
+    def "empty?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(set_of(recv).len() == 0))
     }
-    "to_a"[0] => fn to_a(recv, args, _block) {
+    def "to_a" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(set_of(recv).elements())))
     }
     // `Set#join(sep = "")` -- delegates to the element array's join.
-    "join" => fn join(recv, args, _block) {
+    def "join"(recv, args, _block) {
         arity!(args, 0..=1);
         let arr = RubyValue::Array(crate::array_new(set_of(recv).elements()));
         crate::dispatch::send_value(&arr, crate::Symbol::intern("join"), args, None)
     }
-    "to_set" => fn to_set(recv, args, _block) {
+    def "to_set"(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "clear"[0] => fn clear(recv, args, _block) {
+    def "clear" arity 0 (recv, args, _block) {
         arity!(args, 0);
         check_frozen(recv)?;
         set_of(recv).hash.lock().clear();
         Ok(recv.clone())
     }
-    "merge" => fn merge(recv, args, _block) {
+    def "merge"(recv, args, _block) {
         check_frozen(recv)?;
         let s = set_of(recv);
         for a in args {
@@ -485,13 +512,13 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "|"[1] | "union"[1] | "+"[1] | "merge_new" => fn union(recv, args, _block) {
+    def "|" arity 1 | "union" arity 1 | "+" arity 1 | "merge_new"(recv, args, _block) {
         arity!(args, 1);
         let mut out = set_of(recv).elements();
         out.extend(arg_elements(&args[0])?);
         Ok(set_from(out))
     }
-    "&"[1] | "intersection"[1] => fn intersection(recv, args, _block) {
+    def "&" arity 1 | "intersection" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = set_from(arg_elements(&args[0])?);
         let keep: Vec<RubyValue> = set_of(recv)
@@ -501,7 +528,7 @@ builtin_methods! {
             .collect();
         Ok(set_from(keep))
     }
-    "-"[1] | "difference"[1] => fn difference(recv, args, _block) {
+    def "-" arity 1 | "difference" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = set_from(arg_elements(&args[0])?);
         let keep: Vec<RubyValue> = set_of(recv)
@@ -511,7 +538,7 @@ builtin_methods! {
             .collect();
         Ok(set_from(keep))
     }
-    "^"[1] => fn symmetric_difference(recv, args, _block) {
+    def "^" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let recv_elems = set_of(recv).elements();
         let recv_set = set_from(recv_elems.clone());
@@ -529,7 +556,7 @@ builtin_methods! {
     // `Set#hash` delegates to the internal Hash in CRuby, whose hash is
     // order-independent; XOR-folding the element hashes reproduces that, so two
     // sets with the same members hash equal regardless of insertion order.
-    "hash"[0] => fn set_hash(recv, args, _block) {
+    def "hash" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let mut acc: i64 = 0x5e7 ^ (SET_CLASS.0 as i64);
         for e in set_of(recv).elements() {
@@ -537,7 +564,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Int(acc))
     }
-    "=="[1] => fn eq(recv, args, _block) {
+    def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -551,7 +578,7 @@ builtin_methods! {
     }
     // `Set#<=>`: -1 if a proper subset, 1 if a proper superset, 0 if equal,
     // nil if neither set contains the other (or the argument isn't a Set).
-    "<=>"[1] => fn spaceship(recv, args, _block) {
+    def "<=>" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -569,48 +596,48 @@ builtin_methods! {
         };
         Ok(r.map_or(RubyValue::Nil, RubyValue::Int))
     }
-    "subset?"[1] | "<="[1] => fn subset_p(recv, args, _block) {
+    def "subset?" arity 1 | "<=" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let a = set_of(recv);
         Ok(RubyValue::Bool(a.elements().iter().all(|e| set_of(&other).contains(e))))
     }
-    "proper_subset?"[1] | "<"[1] => fn proper_subset_p(recv, args, _block) {
+    def "proper_subset?" arity 1 | "<" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let a = set_of(recv);
         let os = set_of(&other);
         Ok(RubyValue::Bool(a.len() < os.len() && a.elements().iter().all(|e| os.contains(e))))
     }
-    "superset?"[1] | ">="[1] => fn superset_p(recv, args, _block) {
+    def "superset?" arity 1 | ">=" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let os = set_of(&other);
         let a = set_of(recv);
         Ok(RubyValue::Bool(os.elements().iter().all(|e| a.contains(e))))
     }
-    "proper_superset?"[1] | ">"[1] => fn proper_superset_p(recv, args, _block) {
+    def "proper_superset?" arity 1 | ">" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let os = set_of(&other);
         let a = set_of(recv);
         Ok(RubyValue::Bool(a.len() > os.len() && os.elements().iter().all(|e| a.contains(e))))
     }
-    "disjoint?"[1] => fn disjoint_p(recv, args, _block) {
+    def "disjoint?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let a = set_of(recv);
         Ok(RubyValue::Bool(arg_elements(&args[0])?.iter().all(|e| !a.contains(e))))
     }
-    "intersect?"[1] => fn intersect_p(recv, args, _block) {
+    def "intersect?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let a = set_of(recv);
         Ok(RubyValue::Bool(arg_elements(&args[0])?.iter().any(|e| a.contains(e))))
     }
-    "dup"[0] | "clone" => fn dup(recv, args, _block) {
+    def "dup" arity 0 | "clone"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Object(set_of(recv).dup_object(false)))
     }
-    "inspect"[0] | "to_s"[0] => fn inspect(recv, args, _block) {
+    def "inspect" arity 0 | "to_s" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let parts: Vec<String> =
             set_of(recv).elements().iter().map(|e| e.inspect_string()).collect();
@@ -627,38 +654,19 @@ fn coerce_set(v: &RubyValue) -> Result<RubyValue, Signal> {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    // `Set.new` / `Set.new(enum)` / `Set.new(enum) { |o| transform(o) }`.
-    "new" => fn new_m(_recv, args, block) {
-        arity!(args, 0..=1);
-        let out = empty_set();
-        if let Some(source) = args.first() {
-            if !source.is_nil() {
-                let s = set_of(&out);
-                for e in arg_elements(source)? {
-                    let e = match &block {
-                        Some(p @ RubyValue::Proc(_)) => {
-                            crate::dispatch::send_value(p, crate::Symbol::intern("call"), &[e], None)?
-                        }
-                        _ => e,
-                    };
-                    s.insert(e);
-                }
-            }
-        }
-        Ok(out)
-    }
-    // `Set[a, b, c]` -- every argument is a member (deduplicated).
-    "[]" => fn brackets(_recv, args, _block) {
-        Ok(set_from(args.iter().cloned()))
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::SET_CLASS).unwrap()
+            .instance.as_ref().unwrap().lookup)(name).unwrap()
+    }
+    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::SET_CLASS).unwrap()
+            .class.as_ref().unwrap().lookup)(name).unwrap()
+    }
 
     fn ints(xs: &[i64]) -> RubyValue {
         set_from(xs.iter().map(|&i| RubyValue::Int(i)))
@@ -666,7 +674,7 @@ mod tests {
 
     #[test]
     fn new_deduplicates_and_preserves_insertion_order() {
-        let s = new_m(
+        let s = cmethod("new")(
             &RubyValue::Nil,
             &[RubyValue::Array(crate::array_new(
                 [3, 1, 3, 2, 1].iter().map(|&i| RubyValue::Int(i)).collect(),
@@ -674,7 +682,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let RubyValue::Array(a) = to_a(&s, &[], None).unwrap() else {
+        let RubyValue::Array(a) = imethod("to_a")(&s, &[], None).unwrap() else {
             panic!()
         };
         let got: Vec<i64> = a
@@ -692,47 +700,47 @@ mod tests {
     fn membership_and_size() {
         let s = ints(&[1, 2, 3]);
         assert!(matches!(
-            include_p(&s, &[RubyValue::Int(2)], None).unwrap(),
+            imethod("include?")(&s, &[RubyValue::Int(2)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            include_p(&s, &[RubyValue::Int(9)], None).unwrap(),
+            imethod("include?")(&s, &[RubyValue::Int(9)], None).unwrap(),
             RubyValue::Bool(false)
         ));
-        assert!(matches!(size(&s, &[], None).unwrap(), RubyValue::Int(3)));
+        assert!(matches!(imethod("size")(&s, &[], None).unwrap(), RubyValue::Int(3)));
     }
 
     #[test]
     fn set_algebra() {
         let a = ints(&[1, 2, 3]);
-        let union = union(&a, &[ints(&[3, 4])], None).unwrap();
+        let union = imethod("|")(&a, &[ints(&[3, 4])], None).unwrap();
         assert!(matches!(
-            size(&union, &[], None).unwrap(),
+            imethod("size")(&union, &[], None).unwrap(),
             RubyValue::Int(4)
         ));
-        let inter = intersection(&a, &[ints(&[2, 3, 4])], None).unwrap();
+        let inter = imethod("&")(&a, &[ints(&[2, 3, 4])], None).unwrap();
         assert!(matches!(
-            size(&inter, &[], None).unwrap(),
+            imethod("size")(&inter, &[], None).unwrap(),
             RubyValue::Int(2)
         ));
-        let diff = difference(&a, &[ints(&[2])], None).unwrap();
-        assert!(matches!(size(&diff, &[], None).unwrap(), RubyValue::Int(2)));
-        let sym = symmetric_difference(&a, &[ints(&[2, 3, 4])], None).unwrap();
-        assert!(matches!(size(&sym, &[], None).unwrap(), RubyValue::Int(2)));
+        let diff = imethod("-")(&a, &[ints(&[2])], None).unwrap();
+        assert!(matches!(imethod("size")(&diff, &[], None).unwrap(), RubyValue::Int(2)));
+        let sym = imethod("^")(&a, &[ints(&[2, 3, 4])], None).unwrap();
+        assert!(matches!(imethod("size")(&sym, &[], None).unwrap(), RubyValue::Int(2)));
     }
 
     #[test]
     fn equality_is_structural_and_order_independent() {
         assert!(matches!(
-            eq(&ints(&[1, 2, 3]), &[ints(&[3, 2, 1])], None).unwrap(),
+            imethod("==")(&ints(&[1, 2, 3]), &[ints(&[3, 2, 1])], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            eq(&ints(&[1, 2]), &[ints(&[1, 2, 3])], None).unwrap(),
+            imethod("==")(&ints(&[1, 2]), &[ints(&[1, 2, 3])], None).unwrap(),
             RubyValue::Bool(false)
         ));
         assert!(matches!(
-            eq(&ints(&[1]), &[RubyValue::Int(1)], None).unwrap(),
+            imethod("==")(&ints(&[1]), &[RubyValue::Int(1)], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
@@ -741,11 +749,11 @@ mod tests {
     fn add_p_reports_novelty_and_frozen_is_enforced() {
         let s = ints(&[1, 2]);
         assert!(matches!(
-            add_p(&s, &[RubyValue::Int(2)], None).unwrap(),
+            imethod("add?")(&s, &[RubyValue::Int(2)], None).unwrap(),
             RubyValue::Nil
         ));
         assert!(matches!(
-            add_p(&s, &[RubyValue::Int(3)], None).unwrap(),
+            imethod("add?")(&s, &[RubyValue::Int(3)], None).unwrap(),
             RubyValue::Object(_)
         ));
         set_of(&s).set_frozen();
@@ -753,7 +761,7 @@ mod tests {
         // panics rather than building the exception (the comparable-test
         // convention), so assert the raise via `catch_unwind`.
         let frozen = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            add(&s, &[RubyValue::Int(4)], None)
+            imethod("add")(&s, &[RubyValue::Int(4)], None)
         }));
         assert!(frozen.is_err());
     }
@@ -763,22 +771,22 @@ mod tests {
         // `select!` returns self when it removed something, nil when it did not.
         let s = ints(&[1, 2, 3, 4]);
         assert!(matches!(
-            select_bang(&s, &[], pred(|x| x % 2 == 0)).unwrap(),
+            imethod("select!")(&s, &[], pred(|x| x % 2 == 0)).unwrap(),
             RubyValue::Object(_)
         ));
         let done = ints(&[2, 4]);
         assert!(matches!(
-            select_bang(&done, &[], pred(|x| x % 2 == 0)).unwrap(),
+            imethod("select!")(&done, &[], pred(|x| x % 2 == 0)).unwrap(),
             RubyValue::Nil
         ));
         // `flatten!` returns nil on a flat Set.
         assert!(matches!(
-            flatten_bang(&ints(&[1, 2]), &[], None).unwrap(),
+            imethod("flatten!")(&ints(&[1, 2]), &[], None).unwrap(),
             RubyValue::Nil
         ));
         let nested = set_from([ints(&[1, 2]), ints(&[3])]);
         assert!(matches!(
-            flatten_bang(&nested, &[], None).unwrap(),
+            imethod("flatten!")(&nested, &[], None).unwrap(),
             RubyValue::Object(_)
         ));
         assert_eq!(elems_sorted(&nested), vec![1, 2, 3]);
@@ -787,15 +795,15 @@ mod tests {
     #[test]
     fn divide_by_value_and_by_connected_components() {
         // One-arg block groups by return value.
-        let by_value = divide(&ints(&[1, 2, 3, 4]), &[], block(|x| x % 3)).unwrap();
+        let by_value = imethod("divide")(&ints(&[1, 2, 3, 4]), &[], block(|x| x % 3)).unwrap();
         assert!(matches!(
-            size(&by_value, &[], None).unwrap(),
+            imethod("size")(&by_value, &[], None).unwrap(),
             RubyValue::Int(3)
         ));
         // Two-arg block: 1-2-3-4 chain is one strongly-connected component.
-        let chain = divide(&ints(&[1, 2, 3, 4]), &[], block2(|x, y| (x - y).abs() == 1)).unwrap();
+        let chain = imethod("divide")(&ints(&[1, 2, 3, 4]), &[], block2(|x, y| (x - y).abs() == 1)).unwrap();
         assert!(matches!(
-            size(&chain, &[], None).unwrap(),
+            imethod("size")(&chain, &[], None).unwrap(),
             RubyValue::Int(1)
         ));
     }
@@ -854,11 +862,11 @@ mod tests {
 
     #[test]
     fn inspect_renders_bracket_form() {
-        let RubyValue::Str(s) = inspect(&ints(&[1, 2, 3]), &[], None).unwrap() else {
+        let RubyValue::Str(s) = imethod("inspect")(&ints(&[1, 2, 3]), &[], None).unwrap() else {
             panic!()
         };
         assert_eq!(s.lock().to_utf8_lossy(), "Set[1, 2, 3]");
-        let RubyValue::Str(e) = inspect(&ints(&[]), &[], None).unwrap() else {
+        let RubyValue::Str(e) = imethod("inspect")(&ints(&[]), &[], None).unwrap() else {
             panic!()
         };
         assert_eq!(e.lock().to_utf8_lossy(), "Set[]");
