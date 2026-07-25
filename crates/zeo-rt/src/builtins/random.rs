@@ -6,6 +6,7 @@
 //! values.
 
 use std::sync::Arc;
+use zeo_macros::ruby_class;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use num_bigint::BigInt;
@@ -288,14 +289,60 @@ fn new_random(seed_arg: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     })))
 }
 
-crate::builtins::builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Random = zeo_abi::RANDOM_CLASS < zeo_abi::OBJECT_CLASS;
 
-    "rand" => fn rand(recv, args, _block) {
+    def self."new"(_recv, args, _block) {
+        crate::builtins::arity!(args, 0..=1);
+        new_random(args.first())
+    }
+    def self."rand"(_recv, args, _block) {
+        crate::builtins::arity!(args, 0..=1);
+        rand_with(&default_state().state, args.first())
+    }
+    def self."bytes"(_recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let n = &bytes_count(&args[0])?;
+        if *n < 0 {
+            return Err(arg_error!("negative string size (or size too big)"));
+        }
+        Ok(random_bytes(&default_state().state, *n as usize))
+    }
+    // `Random.urandom(n)` -- n bytes drawn from the OS CSPRNG (getrandom(2) /
+    // SecRandomCopyBytes), NOT the seedable PRNG. This is the entropy source
+    // SecureRandom sits on, so it must be genuinely cryptographic; a seeded
+    // generator would make SecureRandom predictable.
+    def self."urandom"(_recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let n = &bytes_count(&args[0])?;
+        if *n < 0 {
+            return Err(arg_error!("negative string size (or size too big)"));
+        }
+        os_urandom(*n as usize)
+    }
+    // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),
+    // suitable for `Random.new`. Drawn from the default generator.
+    def self."new_seed"(_recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        let r = next_u64(&default_state().state);
+        Ok(RubyValue::Int((r >> 1) as i64 | 1))
+    }
+    // `Random.srand(seed = clock)` -- reseeds the DEFAULT generator, answering
+    // the previous seed.
+    def self."srand"(_recv, args, _block) {
+        crate::builtins::arity!(args, 0..=1);
+        let (word, seed) = seed_from(args.first())?;
+        let mut guard = DEFAULT.lock();
+        let previous = guard.as_ref().map(|r| r.seed.clone()).unwrap_or(RubyValue::Int(0));
+        *guard = Some(Arc::new(RandomObj { state: Mutex::new(word), seed, frozen: AtomicBool::new(false) }));
+        Ok(previous)
+    }
+
+    def "rand"(recv, args, _block) {
         crate::builtins::arity!(args, 0..=1);
         rand_with(&as_random(recv).state, args.first())
     }
-    "bytes" => fn bytes(recv, args, _block) {
+    def "bytes"(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let n = &bytes_count(&args[0])?;
         if *n < 0 {
@@ -303,14 +350,14 @@ crate::builtins::builtin_methods! {
         }
         Ok(random_bytes(&as_random(recv).state, *n as usize))
     }
-    "seed" => fn seed(recv, args, _block) {
+    def "seed"(recv, args, _block) {
         crate::builtins::arity!(args, 0);
         Ok(as_random(recv).seed.clone())
     }
     // `Random#==`: two generators are equal when their seed AND current stream
     // position match (so two fresh `Random.new(1)` are equal, but diverge once
     // either draws) -- CRuby compares state, not object identity.
-    "==" => fn eq(recv, args, _block) {
+    def "=="(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -348,55 +395,6 @@ fn default_state() -> Arc<RandomObj> {
     guard.clone().expect("default Random installed")
 }
 
-crate::builtins::builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" => fn random_new(_recv, args, _block) {
-        crate::builtins::arity!(args, 0..=1);
-        new_random(args.first())
-    }
-    "rand" => fn rand_c(_recv, args, _block) {
-        crate::builtins::arity!(args, 0..=1);
-        rand_with(&default_state().state, args.first())
-    }
-    "bytes" => fn bytes_c(_recv, args, _block) {
-        crate::builtins::arity!(args, 1);
-        let n = &bytes_count(&args[0])?;
-        if *n < 0 {
-            return Err(arg_error!("negative string size (or size too big)"));
-        }
-        Ok(random_bytes(&default_state().state, *n as usize))
-    }
-    // `Random.urandom(n)` -- n bytes drawn from the OS CSPRNG (getrandom(2) /
-    // SecRandomCopyBytes), NOT the seedable PRNG. This is the entropy source
-    // SecureRandom sits on, so it must be genuinely cryptographic; a seeded
-    // generator would make SecureRandom predictable.
-    "urandom" => fn urandom_c(_recv, args, _block) {
-        crate::builtins::arity!(args, 1);
-        let n = &bytes_count(&args[0])?;
-        if *n < 0 {
-            return Err(arg_error!("negative string size (or size too big)"));
-        }
-        os_urandom(*n as usize)
-    }
-    // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),
-    // suitable for `Random.new`. Drawn from the default generator.
-    "new_seed" => fn new_seed_c(_recv, args, _block) {
-        crate::builtins::arity!(args, 0);
-        let r = next_u64(&default_state().state);
-        Ok(RubyValue::Int((r >> 1) as i64 | 1))
-    }
-    // `Random.srand(seed = clock)` -- reseeds the DEFAULT generator, answering
-    // the previous seed.
-    "srand" => fn srand_c(_recv, args, _block) {
-        crate::builtins::arity!(args, 0..=1);
-        let (word, seed) = seed_from(args.first())?;
-        let mut guard = DEFAULT.lock();
-        let previous = guard.as_ref().map(|r| r.seed.clone()).unwrap_or(RubyValue::Int(0));
-        *guard = Some(Arc::new(RandomObj { state: Mutex::new(word), seed, frozen: AtomicBool::new(false) }));
-        Ok(previous)
-    }
-}
 
 #[cfg(test)]
 mod tests {

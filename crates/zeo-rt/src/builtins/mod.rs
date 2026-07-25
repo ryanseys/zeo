@@ -170,7 +170,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::FIBER_CLASS => fiber::lookup,
         zeo_abi::THREAD_CLASS => thread::lookup,
         // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::RANDOM_CLASS => random::lookup,
+        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup,
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::SET_CLASS => set::lookup,
@@ -256,7 +256,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
         zeo_abi::THREAD_CLASS => thread::lookup_arity,
         // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::RANDOM_CLASS => random::lookup_arity,
+        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup_arity,
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::SET_CLASS => set::lookup_arity,
@@ -338,7 +338,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::STRUCT_CLASS => rstruct::lookup_class,
         zeo_abi::DATA_CLASS => rstruct::lookup_class_data,
         zeo_abi::COMPLEX_CLASS => complex::lookup_class,
-        zeo_abi::RANDOM_CLASS => random::lookup_class,
+        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class,
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
@@ -433,7 +433,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_names(),
         // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::RANDOM_CLASS => random::lookup_names(),
+        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup_names(),
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::SET_CLASS => set::lookup_names(),
