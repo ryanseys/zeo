@@ -318,7 +318,10 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         // PROC_CLASS migrated to ruby_class! -- served via registered_table.
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::FILE_CLASS => file::lookup_class,
+        // FILE_CLASS migrated to ruby_class! -- served via registered_table.
+        // FileTest shares File's class-method table (the macro still emits
+        // `file::lookup_class`); it is a module, not a File subclass, so it
+        // keeps its own arm rather than inheriting through an ancestry walk.
         zeo_abi::FILE_TEST_MODULE => file::lookup_class,
         zeo_abi::IO_CLASS => io::lookup_class,
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
@@ -473,7 +476,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         // PROC_CLASS migrated to ruby_class! -- served via registered_table.
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::FILE_CLASS => file::lookup_class_names(),
+        // FILE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
         zeo_abi::IO_CLASS => io::lookup_class_names(),
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
