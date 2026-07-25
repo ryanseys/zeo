@@ -11,7 +11,8 @@
 //! demotes.
 
 use crate::builtins::numeric::{num_add_or_panic, num_mul_or_panic, num_sub_or_panic};
-use crate::builtins::{arity, builtin_methods, range_error, type_error};
+use zeo_macros::ruby_class;
+use crate::builtins::{arity, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_traits::One;
@@ -467,6 +468,11 @@ pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> String {
 mod tests {
     use super::*;
 
+    fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::COMPLEX_CLASS).unwrap()
+            .class.as_ref().unwrap().lookup)(name).unwrap()
+    }
+
     fn cpx(r: i64, i: i64) -> RubyValue {
         complex_new(RubyValue::Int(r), RubyValue::Int(i)).unwrap()
     }
@@ -474,7 +480,7 @@ mod tests {
     #[test]
     fn polar_class_constructor_builds_a_complex() {
         // `Complex.polar(3, 0)` == `3 * (cos 0 + i sin 0)` == (3+0i).
-        let c = polar_c(
+        let c = cmethod("polar")(
             &RubyValue::Nil,
             &[RubyValue::Int(3), RubyValue::Int(0)],
             None,
@@ -482,7 +488,7 @@ mod tests {
         .unwrap();
         assert!(matches!(c, RubyValue::Complex(_)));
         // Zero magnitude collapses to the origin regardless of the angle.
-        let z = polar_c(
+        let z = cmethod("polar")(
             &RubyValue::Nil,
             &[RubyValue::Int(0), RubyValue::Int(5)],
             None,
@@ -600,44 +606,64 @@ fn complex_abs_value(c: &RComplexData) -> RubyValue {
     RubyValue::Float(num_to_f64_unchecked(other).abs())
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Complex = zeo_abi::COMPLEX_CLASS < zeo_abi::NUMERIC_CLASS;
 
-    "+"[1] => fn add(recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
-    "-"[1] => fn sub(recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
-    "*"[1] => fn mul(recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
-    "/"[1] => fn div(recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
-    "**"[1] => fn pow(recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
-    "-@"[0] => fn neg(recv, args, _block) {
+    // `Complex.rect(real, imag = 0)` / `.rectangular(...)`: the direct
+    // cartesian constructor (the class-method mirror of the `Complex(...)`
+    // Kernel form). `Complex.polar` is a separate gap (its CRuby type-exact
+    // trig is tracked with the numeric-exactness work).
+    def self."rect" arity 0 | "rectangular" arity 0 (_recv, args, _block) {
+        arity!(args, 1..=2);
+        let real = args[0].clone();
+        let imag = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
+        complex_new(real, imag)
+    }
+    // `Complex.polar(abs, arg = 0)`: the polar constructor -- `abs * (cos arg
+    // + i sin arg)`, computed by the shared `complex_new_polar` the string
+    // parser already uses for the `r@theta` form.
+    def self."polar" arity 0 (_recv, args, _block) {
+        arity!(args, 1..=2);
+        let mag = args[0].clone();
+        let angle = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
+        complex_new_polar(mag, angle)
+    }
+
+    def "+" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
+    def "-" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
+    def "*" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
+    def "/" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
+    def "**" arity 1 (recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
+    def "-@" arity 0 (recv, args, _block) {
         arity!(args, 0);
         cpx_sub(&complex_new(RubyValue::Int(0), RubyValue::Int(0))?, recv)
     }
-    "+@"[0] => fn pos(recv, args, _block) {
+    def "+@" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "=="[1] => fn eq(recv, args, _block) {
+    def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
-    "real"[0] => fn real(recv, args, _block) {
+    def "real" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv_complex(recv).real.clone())
     }
-    "imag"[0] | "imaginary"[0] => fn imag(recv, args, _block) {
+    def "imag" arity 0 | "imaginary" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv_complex(recv).imag.clone())
     }
-    "real?"[0] => fn real_p(recv, args, _block) {
+    def "real?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let _ = recv;
         Ok(RubyValue::Bool(false))
     }
-    "abs"[0] | "magnitude"[0] => fn abs(recv, args, _block) {
+    def "abs" arity 0 | "magnitude" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(complex_abs_value(recv_complex(recv)))
     }
-    "abs2"[0] => fn abs2(recv, args, _block) {
+    def "abs2" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         num_add_or_panic(
@@ -645,7 +671,7 @@ builtin_methods! {
             &num_mul_or_panic(&c.imag, &c.imag)?,
         )
     }
-    "arg"[0] | "angle"[0] | "phase"[0] => fn arg(recv, args, _block) {
+    def "arg" arity 0 | "angle" arity 0 | "phase" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         Ok(RubyValue::Float(
@@ -653,7 +679,7 @@ builtin_methods! {
                 .atan2(crate::builtins::numeric::num_to_f64_unchecked(&c.real)),
         ))
     }
-    "polar"[0] => fn polar(recv, args, _block) {
+    def "polar" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
@@ -664,7 +690,7 @@ builtin_methods! {
             ),
         ])))
     }
-    "rect"[0] | "rectangular"[0] => fn rect(recv, args, _block) {
+    def "rect" arity 0 | "rectangular" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
@@ -672,26 +698,26 @@ builtin_methods! {
             c.imag.clone(),
         ])))
     }
-    "conj"[0] | "conjugate"[0] => fn conj(recv, args, _block) {
+    def "conj" arity 0 | "conjugate" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         let neg_imag = crate::builtins::numeric::num_sub_or_panic(&RubyValue::Int(0), &c.imag)?;
         complex_new(c.real.clone(), neg_imag)
     }
-    "to_c"[0] => fn to_c(recv, args, _block) {
+    def "to_c" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
     // A Complex is finite iff both components are (only a Float component can
     // be infinite/NaN); a real Complex reports `nil` from `infinite?`.
-    "finite?"[0] => fn finite_p(recv, args, _block) {
+    def "finite?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         Ok(RubyValue::Bool(
             component_finite(&c.real) && component_finite(&c.imag),
         ))
     }
-    "infinite?"[0] => fn infinite_p(recv, args, _block) {
+    def "infinite?" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         Ok(if component_finite(&c.real) && component_finite(&c.imag) {
@@ -702,7 +728,7 @@ builtin_methods! {
     }
     // `coerce(other)`: lift a real numeric to `Complex(other, 0)`, pass a
     // Complex through unchanged; the result is `[coerced_other, self]`.
-    "coerce"[1] => fn coerce(recv, args, _block) {
+    def "coerce" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = match &args[0] {
             RubyValue::Complex(_) => args[0].clone(),
@@ -717,29 +743,29 @@ builtin_methods! {
     // The real-projection conversions raise CRuby's RangeError unless the
     // imaginary part is an exact zero (an Integer or Rational `0`; a Float
     // `0.0` still raises).
-    "to_f"[0] => fn to_f(recv, args, _block) {
+    def "to_f" arity 0 (recv, args, _block) {
         arity!(args, 0);
         real_projection(recv, "to_f")
     }
-    "to_i"[0] | "to_int"[0] => fn to_i(recv, args, _block) {
+    def "to_i" arity 0 | "to_int" arity 0 (recv, args, _block) {
         arity!(args, 0);
         real_projection(recv, "to_i")
     }
-    "to_r"[0] => fn to_r(recv, args, _block) {
+    def "to_r" arity 0 (recv, args, _block) {
         arity!(args, 0);
         real_projection(recv, "to_r")
     }
-    "rationalize" => fn rationalize(recv, args, _block) {
+    def "rationalize"(recv, args, _block) {
         arity!(args, 0..=1);
         real_projection(recv, "to_r")
     }
     // `denominator` = lcm of the two components' denominators; `numerator`
     // scales both components up to that shared denominator (CRuby complex.c).
-    "denominator"[0] => fn denominator(recv, args, _block) {
+    def "denominator" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::builtins::integer::int_value(complex_denominator(recv_complex(recv))?))
     }
-    "numerator"[0] => fn numerator(recv, args, _block) {
+    def "numerator" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let c = recv_complex(recv);
         let cd = complex_denominator(c)?;
@@ -750,7 +776,7 @@ builtin_methods! {
     // `Complex#<=>`: only real-valued complexes are ordered. If self's
     // imaginary part is zero and the operand is real (a real-valued Complex or
     // a plain real Numeric), compare the real parts; otherwise nil.
-    "<=>"[1] => fn spaceship(recv, args, _block) {
+    def "<=>" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let c = recv_complex(recv);
         if !is_exact_zero(&c.imag) {
@@ -770,7 +796,7 @@ builtin_methods! {
     // `Complex#fdiv(other)` -- complex division carried out in floating point,
     // so `(2+3i).fdiv(2)` is `(1.0+1.5i)` (each component divided) and a
     // Complex divisor gets the full `(ar*br+ai*bi + (ai*br-ar*bi)i)/|b|^2`.
-    "fdiv"[1] => fn fdiv(recv, args, _block) {
+    def "fdiv" arity 1 (recv, args, _block) {
         arity!(args, 1);
         if !matches!(&args[0], RubyValue::Complex(_)) && !is_component(&args[0]) {
             return Err(type_error!(
@@ -850,26 +876,3 @@ fn conv_target(conv: &str) -> &'static str {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    // `Complex.rect(real, imag = 0)` / `.rectangular(...)`: the direct
-    // cartesian constructor (the class-method mirror of the `Complex(...)`
-    // Kernel form). `Complex.polar` is a separate gap (its CRuby type-exact
-    // trig is tracked with the numeric-exactness work).
-    "rect"[0] | "rectangular"[0] => fn rect_c(_recv, args, _block) {
-        arity!(args, 1..=2);
-        let real = args[0].clone();
-        let imag = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
-        complex_new(real, imag)
-    }
-    // `Complex.polar(abs, arg = 0)`: the polar constructor -- `abs * (cos arg
-    // + i sin arg)`, computed by the shared `complex_new_polar` the string
-    // parser already uses for the `r@theta` form.
-    "polar"[0] => fn polar_c(_recv, args, _block) {
-        arity!(args, 1..=2);
-        let mag = args[0].clone();
-        let angle = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
-        complex_new_polar(mag, angle)
-    }
-}
