@@ -163,7 +163,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup,
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::DIR_CLASS => dir::lookup,
+        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::METHOD_CLASS => method_obj::lookup,
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
@@ -249,7 +249,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder_arity,
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::DIR_CLASS => dir::lookup_arity,
+        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::METHOD_CLASS => method_obj::lookup_arity,
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_arity,
@@ -326,7 +326,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::FILE_CLASS => file::lookup_class,
         zeo_abi::FILE_TEST_MODULE => file::lookup_class,
         zeo_abi::IO_CLASS => io::lookup_class,
-        zeo_abi::DIR_CLASS => dir::lookup_class,
+        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup_class,
         // PROCESS_CLASS migrated to ruby_module! -- served via registered_table.
         // SIGNAL_MODULE migrated to ruby_module! -- served via registered_table.
@@ -426,7 +426,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::DIR_CLASS => dir::lookup_names(),
+        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::METHOD_CLASS => method_obj::lookup_names(),
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
@@ -489,7 +489,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::FILE_CLASS => file::lookup_class_names(),
         zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
         zeo_abi::IO_CLASS => io::lookup_class_names(),
-        zeo_abi::DIR_CLASS => dir::lookup_class_names(),
+        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::TIME_CLASS => time::lookup_class_names(),
         // PROCESS_CLASS migrated to ruby_module! -- served via registered_table.
         // SIGNAL_MODULE migrated to ruby_module! -- served via registered_table.
