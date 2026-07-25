@@ -30,6 +30,7 @@ pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod condition_variable;
 pub(crate) mod convert;
+pub(crate) mod data;
 pub(crate) mod dir;
 pub(crate) mod encoding;
 pub(crate) mod enumerable;
@@ -176,8 +177,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // TIME_CLASS migrated to ruby_class! -- served via registered_table.
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::STRUCT_CLASS => rstruct::lookup,
-        zeo_abi::DATA_CLASS => rstruct::lookup_data,
+        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
         // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
@@ -260,8 +260,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // TIME_CLASS migrated to ruby_class! -- served via registered_table.
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::STRUCT_CLASS => rstruct::lookup_arity,
-        zeo_abi::DATA_CLASS => rstruct::lookup_data_arity,
+        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
         // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
@@ -335,8 +334,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // GC_CLASS migrated to ruby_module! -- served via registered_table.
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::STRUCT_CLASS => rstruct::lookup_class,
-        zeo_abi::DATA_CLASS => rstruct::lookup_class_data,
+        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
         // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
         // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
@@ -434,8 +432,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // TIME_CLASS migrated to ruby_class! -- served via registered_table.
         // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
         // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::STRUCT_CLASS => rstruct::lookup_names(),
-        zeo_abi::DATA_CLASS => rstruct::lookup_data_names(),
+        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
         // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.

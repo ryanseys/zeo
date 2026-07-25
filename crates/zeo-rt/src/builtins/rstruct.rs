@@ -34,13 +34,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use parking_lot::Mutex;
-use zeo_abi::{ClassId, DATA_CLASS, STRUCT_CLASS};
+use zeo_abi::{ClassId, STRUCT_CLASS};
 
 use crate::builtins::{
-    arg_error, arity, block_or_enum, builtin_methods, index_error, name_error,
-    type_error,
+    arg_error, arity, block_or_enum, index_error, name_error, type_error,
 };
 use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
+use zeo_macros::ruby_class;
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -63,7 +63,7 @@ pub struct StructMeta {
 }
 
 impl StructMeta {
-    fn index_of(&self, sym: Symbol) -> Option<usize> {
+    pub(crate) fn index_of(&self, sym: Symbol) -> Option<usize> {
         self.members.iter().position(|&m| m == sym)
     }
 }
@@ -152,7 +152,7 @@ pub struct StructInstance {
 }
 
 impl StructInstance {
-    fn new_robj(class_id: ClassId, slots: Vec<RubyValue>) -> RObj {
+    pub(crate) fn new_robj(class_id: ClassId, slots: Vec<RubyValue>) -> RObj {
         Arc::new(StructInstance {
             class_id,
             frozen: AtomicBool::new(false),
@@ -218,7 +218,7 @@ impl RubyObject for StructInstance {
 }
 
 /// Downcast a struct-table receiver -- the `class_table` keying guarantees it.
-fn recv_struct(recv: &RubyValue) -> &StructInstance {
+pub(crate) fn recv_struct(recv: &RubyValue) -> &StructInstance {
     match recv {
         RubyValue::Object(o) => o
             .as_any()
@@ -228,8 +228,17 @@ fn recv_struct(recv: &RubyValue) -> &StructInstance {
     }
 }
 
-fn slots_of(recv: &RubyValue) -> Vec<RubyValue> {
+pub(crate) fn slots_of(recv: &RubyValue) -> Vec<RubyValue> {
     recv_struct(recv).slots.lock().clone()
+}
+
+/// The member-symbol array shared by `Struct#members`/`Data#members`.
+pub(crate) fn build_members(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    let inst = recv_struct(recv);
+    let meta = meta_of(inst.class_id).expect("struct instance has meta");
+    Ok(RubyValue::Array(array_new(
+        meta.members.iter().map(|m| RubyValue::Symbol(*m)).collect(),
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +298,7 @@ fn build_to_h(recv: &RubyValue) -> RubyValue {
 /// `Struct#to_h`/`Data#to_h`: the plain member-keyed Hash, or -- with a block --
 /// a Hash built from the `[key, value]` pairs the block returns for each
 /// `(member_sym, value)` pair (CRuby's `rb_struct_to_h` block form).
-fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub(crate) fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(build_to_h(recv));
     };
@@ -317,7 +326,7 @@ fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<RubyValue, 
     Ok(RubyValue::Hash(hash_new(pairs)))
 }
 
-fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
+pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let inst = recv_struct(recv);
     let meta = meta_of(inst.class_id).expect("struct instance has meta");
     let slots = inst.slots.lock().clone();
@@ -341,7 +350,7 @@ fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     ))))
 }
 
-fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
+pub(crate) fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
     let me = recv_struct(recv);
     let RubyValue::Object(o) = other else {
         return false;
@@ -362,7 +371,7 @@ fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.rb_eq(y))
 }
 
-fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<RubyValue, Signal> {
+pub(crate) fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<RubyValue, Signal> {
     if matches!(keys, RubyValue::Nil) {
         return Ok(build_to_h(recv));
     }
@@ -393,30 +402,31 @@ fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<RubyValue, Sig
 // STRUCT_CLASS instance methods (the mutable, Enumerable kind)
 // ---------------------------------------------------------------------------
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Struct = zeo_abi::STRUCT_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
-    "initialize" => fn struct_initialize(recv, args, _block) {
+    // `Struct.new(:a, :b)` / `Struct.new("Name", :a, :b, keyword_init: true)`
+    // MINTS a real subclass at runtime; `Struct[...]` is the same constructor.
+    def self."new" | "[]" (_recv, args, block) {
+        define_value_class(STRUCT_CLASS, false, args, block)
+    }
+
+    def "initialize"(recv, args, _block) {
         bind_members(recv, args, false)?;
         Ok(RubyValue::Nil)
     }
-
-    "members" => fn members(recv, _args, _block) {
-        let inst = recv_struct(recv);
-        let meta = meta_of(inst.class_id).expect("struct instance has meta");
-        Ok(RubyValue::Array(array_new(meta.members.iter().map(|m| RubyValue::Symbol(*m)).collect())))
+    def "members"(recv, _args, _block) {
+        build_members(recv)
     }
-
-    "to_a" | "values" | "deconstruct" => fn to_a(recv, _args, _block) {
+    def "to_a" | "values" | "deconstruct" (recv, _args, _block) {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
-
-    "to_h" => fn to_h(recv, args, block) {
+    def "to_h"(recv, args, block) {
         arity!(args, 0);
         struct_to_h(recv, block)
     }
-
-    "each" => fn each(recv, args, block) {
+    def "each"(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         for v in slots_of(recv) {
@@ -424,8 +434,7 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-
-    "each_pair" => fn each_pair(recv, args, block) {
+    def "each_pair"(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_pair", args, block);
         let inst = recv_struct(recv);
@@ -436,14 +445,12 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-
-    "[]" => fn index(recv, args, _block) {
+    def "[]"(recv, args, _block) {
         arity!(args, 1);
         let i = member_index(recv, &args[0])?;
         Ok(recv_struct(recv).slots.lock()[i].clone())
     }
-
-    "[]=" => fn index_set(recv, args, _block) {
+    def "[]="(recv, args, _block) {
         arity!(args, 2);
         let inst = recv_struct(recv);
         if inst.is_frozen() {
@@ -453,13 +460,11 @@ builtin_methods! {
         inst.slots.lock()[i] = args[1].clone();
         Ok(args[1].clone())
     }
-
-    "values_at" => fn values_at(recv, args, block) {
+    def "values_at"(recv, args, block) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("values_at"), args, block)
     }
-
-    "dig" => fn dig(recv, args, _block) {
+    def "dig"(recv, args, _block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
@@ -472,112 +477,28 @@ builtin_methods! {
         }
         send_value(&value, Symbol::intern("dig"), &args[1..], None)
     }
-
-    "size" | "length" => fn size(recv, _args, _block) {
+    def "size" | "length" (recv, _args, _block) {
         let inst = recv_struct(recv);
         let meta = meta_of(inst.class_id).expect("struct instance has meta");
         Ok(RubyValue::Int(meta.members.len() as i64))
     }
-
-    "==" => fn eq(recv, args, _block) {
+    def "=="(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
     }
-
-    "eql?" => fn eql(recv, args, _block) {
+    def "eql?"(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
     }
-
-    "hash" => fn hash(recv, _args, _block) {
+    def "hash"(recv, _args, _block) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("hash"), &[], None)
     }
-
-    "deconstruct_keys" => fn deconstruct_keys_m(recv, args, _block) {
+    def "deconstruct_keys"(recv, args, _block) {
         arity!(args, 1);
         deconstruct_keys(recv, &args[0])
     }
-
-    "inspect" | "to_s" => fn inspect(recv, _args, _block) {
-        build_inspect(recv)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DATA_CLASS instance methods (immutable, no Enumerable / `[]` / writers)
-// ---------------------------------------------------------------------------
-
-builtin_methods! {
-    pub(crate) fn lookup_data;
-
-    "initialize" => fn data_initialize(recv, args, _block) {
-        bind_members(recv, args, true)?;
-        Ok(RubyValue::Nil)
-    }
-
-    "members" => fn data_members(recv, _args, _block) {
-        members(recv, &[], None)
-    }
-
-    "to_h" => fn data_to_h(recv, args, block) {
-        arity!(args, 0);
-        struct_to_h(recv, block)
-    }
-
-    "deconstruct" => fn data_deconstruct(recv, _args, _block) {
-        Ok(RubyValue::Array(array_new(slots_of(recv))))
-    }
-
-    "deconstruct_keys" => fn data_deconstruct_keys(recv, args, _block) {
-        arity!(args, 1);
-        deconstruct_keys(recv, &args[0])
-    }
-
-    "with" => fn data_with(recv, args, _block) {
-        // `d.with(x: 1)` -- a copy with the named members replaced. Changes
-        // arrive as a trailing keyword hash (the G2 convention).
-        let inst = recv_struct(recv);
-        let meta = meta_of(inst.class_id).expect("data instance has meta");
-        let mut slots = inst.slots.lock().clone();
-        if let Some(RubyValue::Hash(h)) = args.last() {
-            for (k, v) in h.lock().values() {
-                let RubyValue::Symbol(s) = k else {
-                    return Err(arg_error!("unknown keyword"));
-                };
-                match meta.index_of(*s) {
-                    Some(i) => slots[i] = v.clone(),
-                    None => {
-                        return Err(arg_error!("unknown keyword: :{}", s.name()))
-                    }
-                }
-            }
-        }
-        let copy = StructInstance::new_robj(inst.class_id, slots);
-        copy.set_frozen();
-        Ok(RubyValue::Object(copy))
-    }
-
-    "==" => fn data_eq(recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
-    }
-
-    "eql?" => fn data_eql(recv, args, _block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
-    }
-
-    "hash" => fn data_hash(recv, _args, _block) {
-        // Hash the slots ARRAY (structural), NOT a fresh `to_h` Hash -- a Hash
-        // keys by object identity here, so equal Data would otherwise hash
-        // apart, breaking their use as Hash keys and their `Array#==`/`uniq`.
-        // Matches `struct`'s own value-based `hash` and `struct_equal`.
-        let arr = RubyValue::Array(array_new(slots_of(recv)));
-        send_value(&arr, Symbol::intern("hash"), &[], None)
-    }
-
-    "inspect" | "to_s" => fn data_inspect(recv, _args, _block) {
+    def "inspect" | "to_s" (recv, _args, _block) {
         build_inspect(recv)
     }
 }
@@ -594,7 +515,7 @@ fn frozen_error(recv: &RubyValue) -> Signal {
 /// The default member-setter shared by `Struct#initialize`/`Data#initialize`:
 /// bind constructor args to slots. Positional (nil-filling for a plain Struct,
 /// exact-arity for keyword_init/Data) or by keyword (a trailing Hash).
-fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(), Signal> {
+pub(crate) fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(), Signal> {
     let inst = recv_struct(recv);
     let meta = meta_of(inst.class_id).expect("struct instance has meta");
     let n = meta.members.len();
@@ -788,7 +709,7 @@ fn parse_members(args: &[RubyValue], is_data: bool) -> Result<ParsedMembers, Sig
 /// Mint the class: allocate a runtime id rooted at `STRUCT_CLASS`/`DATA_CLASS`,
 /// register its metadata + per-member accessor methods, run any class-body
 /// block, and return the class value.
-fn define_value_class(
+pub(crate) fn define_value_class(
     root: ClassId,
     is_data: bool,
     args: &[RubyValue],
@@ -835,8 +756,12 @@ fn define_value_class(
     // `class_table`) would be shadowed by `Object#inspect` et al. Install them
     // as overlay deltas on THIS class id -- the first ancestor walked -- so
     // they win, forwarding to the one shared `class_table` implementation.
-    let table: fn(&str) -> Option<crate::builtins::BuiltinMethodFn> =
-        if is_data { lookup_data } else { lookup };
+    // Struct's rows live in `builtins::rstruct`, Data's in `builtins::data`;
+    // both self-register via linkme, so reach the root's instance table by id
+    // rather than naming the sibling module's generated `lookup`.
+    let root_table = crate::builtins::registered_table(root)
+        .and_then(|t| t.instance.as_ref())
+        .expect("Struct/Data root has a registered instance table");
     // `==`/`eql?` are installed as overlays too so the low-level
     // `call_user_method` fallback (`RubyValue::rb_eq`, and thus `Array#==`/
     // `#include?`/`#index`/`Hash#==`) reaches the struct's VALUE comparison
@@ -849,7 +774,7 @@ fn define_value_class(
         if members.contains(&Symbol::intern(shadowed)) {
             continue;
         }
-        if let Some(f) = table(shadowed) {
+        if let Some(f) = (root_table.lookup)(shadowed) {
             methods.insert(
                 Symbol::intern(shadowed),
                 MethodImpl::Dynamic(Arc::new(move |recv: &RObj, a: &[RubyValue], b| {
@@ -879,22 +804,6 @@ fn define_value_class(
         p.call_with_self(&class_val, &[])?;
     }
     Ok(class_val)
-}
-
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" | "[]" => fn struct_new(_recv, args, block) {
-        define_value_class(STRUCT_CLASS, false, args, block)
-    }
-}
-
-builtin_methods! {
-    pub(crate) fn lookup_class_data;
-
-    "define" => fn data_define(_recv, args, block) {
-        define_value_class(DATA_CLASS, true, args, block)
-    }
 }
 
 // ---------------------------------------------------------------------------
