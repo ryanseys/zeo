@@ -147,7 +147,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::RANGE_CLASS => range::lookup,
         zeo_abi::PROC_CLASS => rproc::lookup,
         zeo_abi::REGEXP_CLASS => regexp::lookup,
-        zeo_abi::MATCH_DATA_CLASS => matchdata::lookup,
+        // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::CLASS_CLASS => class_module::lookup_class,
         zeo_abi::MODULE_CLASS => class_module::lookup_module,
         zeo_abi::NIL_CLASS => object::lookup_nil,
@@ -233,7 +233,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::RANGE_CLASS => range::lookup_arity,
         zeo_abi::PROC_CLASS => rproc::lookup_arity,
         zeo_abi::REGEXP_CLASS => regexp::lookup_arity,
-        zeo_abi::MATCH_DATA_CLASS => matchdata::lookup_arity,
+        // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::CLASS_CLASS => class_module::lookup_class_arity,
         zeo_abi::MODULE_CLASS => class_module::lookup_module_arity,
         zeo_abi::NIL_CLASS => object::lookup_nil_arity,
@@ -413,7 +413,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::RANGE_CLASS => range::lookup_names(),
         zeo_abi::PROC_CLASS => rproc::lookup_names(),
         zeo_abi::REGEXP_CLASS => regexp::lookup_names(),
-        zeo_abi::MATCH_DATA_CLASS => matchdata::lookup_names(),
+        // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::CLASS_CLASS => class_module::lookup_class_names(),
         zeo_abi::MODULE_CLASS => class_module::lookup_module_names(),
         zeo_abi::NIL_CLASS => object::lookup_nil_names(),

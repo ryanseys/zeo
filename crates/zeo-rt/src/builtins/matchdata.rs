@@ -11,7 +11,8 @@
 //! The rows delegate rather than reimplement, so the two paths cannot drift.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, type_error};
+use crate::builtins::{arity, type_error};
+use zeo_macros::ruby_class;
 
 /// One end (`idx` 0 = begin, 1 = end) of a group's `offset`/`byteoffset` pair,
 /// nil when the group didn't participate.
@@ -31,13 +32,13 @@ fn recv_md(recv: &RubyValue) -> crate::regexp::RMatchData {
     recv.as_matchdata_unchecked()
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    MatchData = zeo_abi::MATCH_DATA_CLASS < zeo_abi::OBJECT_CLASS;
 
     // Two MatchData are equal when they cover the same string with the same
     // group spans (CRuby also checks the regexp; same-string-same-spans is the
     // observable equivalent here).
-    "=="[1] | "eql?"[1] => fn eq(recv, args, _block) {
+    def "==" arity 1 | "eql?" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let RubyValue::MatchData(other) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -47,7 +48,7 @@ builtin_methods! {
     }
     // `md[i]` / `md[name]` -- a single group; `md[start, length]` / `md[range]`
     // slice the group array (delegated to `Array#[]`, like CRuby).
-    "[]" => fn get(recv, args, _block) {
+    def "[]"(recv, args, _block) {
         arity!(args, 1..=2);
         let md = recv_md(recv);
         if args.len() == 2 || matches!(&args[0], RubyValue::Range(..)) {
@@ -56,25 +57,25 @@ builtin_methods! {
         }
         crate::regexp::matchdata_get(&md, &args[0])
     }
-    "pre_match"[0] => fn pre_match(recv, args, _block) {
+    def "pre_match" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_pre_match(&recv_md(recv)))
     }
-    "post_match"[0] => fn post_match(recv, args, _block) {
+    def "post_match" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_post_match(&recv_md(recv)))
     }
-    "to_a"[0] => fn to_a(recv, args, _block) {
+    def "to_a" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_a(&recv_md(recv)))
     }
-    "captures"[0] => fn captures(recv, args, _block) {
+    def "captures" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
     // `#size`/`#length` -- the number of elements (whole match + every group),
     // i.e. `to_a.length`.
-    "size"[0] | "length"[0] => fn size(recv, args, _block) {
+    def "size" arity 0 | "length" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let arr = crate::regexp::matchdata_to_a(&recv_md(recv));
         let n = match &arr {
@@ -85,7 +86,7 @@ builtin_methods! {
     }
     // `values_at(*indices)` -- the groups at those indices (`0` is the whole
     // match), each resolved the same way `[]` does, gathered into an Array.
-    "values_at" => fn values_at(recv, args, _block) {
+    def "values_at"(recv, args, _block) {
         let md = recv_md(recv);
         let out = args
             .iter()
@@ -93,7 +94,7 @@ builtin_methods! {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "named_captures" => fn named_captures(recv, args, _block) {
+    def "named_captures"(recv, args, _block) {
         arity!(args, 0..=1);
         let nc = crate::regexp::matchdata_named_captures(&recv_md(recv));
         // `named_captures(symbolize_names: true)` keys the result with Symbols.
@@ -115,49 +116,49 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))
     }
-    "string"[0] => fn string(recv, args, _block) {
+    def "string" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_string(&recv_md(recv)))
     }
-    "to_s"[0] => fn to_s(recv, args, _block) {
+    def "to_s" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_s(&recv_md(recv)))
     }
     // `offset(n)`/`byteoffset(n)` -- the char/byte `[start, end]` of group `n`
     // (index or named-group Symbol/String).
-    "offset"[1] => fn offset(recv, args, _block) {
+    def "offset" arity 1 (recv, args, _block) {
         arity!(args, 1);
         crate::regexp::matchdata_offset(&recv_md(recv), &args[0], false)
     }
-    "byteoffset"[1] => fn byteoffset(recv, args, _block) {
+    def "byteoffset" arity 1 (recv, args, _block) {
         arity!(args, 1);
         crate::regexp::matchdata_offset(&recv_md(recv), &args[0], true)
     }
     // `begin`/`end` are the character start/end of a group; `bytebegin`/`byteend`
     // the byte start/end. Each is one end of the corresponding `offset` pair.
-    "begin"[1] => fn md_begin(recv, args, _block) {
+    def "begin" arity 1 (recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], false, 0)
     }
-    "end"[1] => fn md_end(recv, args, _block) {
+    def "end" arity 1 (recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], false, 1)
     }
-    "bytebegin"[1] => fn md_bytebegin(recv, args, _block) {
+    def "bytebegin" arity 1 (recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], true, 0)
     }
-    "byteend"[1] => fn md_byteend(recv, args, _block) {
+    def "byteend" arity 1 (recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], true, 1)
     }
     // `MatchData#match(n)` -- the n-th group (like `[n]`); `match_length(n)` its
     // character length, or nil when the group didn't participate.
-    "match"[1] => fn md_match(recv, args, _block) {
+    def "match" arity 1 (recv, args, _block) {
         arity!(args, 1);
         crate::regexp::matchdata_get(&recv_md(recv), &args[0])
     }
-    "match_length"[1] => fn md_match_length(recv, args, _block) {
+    def "match_length" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(match crate::regexp::matchdata_get(&recv_md(recv), &args[0])? {
             RubyValue::Str(s) => RubyValue::Int(s.lock().char_len() as i64),
@@ -165,14 +166,14 @@ builtin_methods! {
         })
     }
     // `deconstruct` -> the captures array (pattern-matching's array form).
-    "deconstruct"[0] => fn md_deconstruct(recv, args, _block) {
+    def "deconstruct" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
     // `deconstruct_keys(keys)` -> the named captures as a Symbol-keyed Hash; with
     // an Array of keys, only those that name a capture (in the given order); with
     // nil, all of them (pattern-matching's hash form).
-    "deconstruct_keys"[1] => fn md_deconstruct_keys(recv, args, _block) {
+    def "deconstruct_keys" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let md = recv_md(recv);
         let named: Vec<(String, RubyValue)> = md
@@ -209,7 +210,7 @@ builtin_methods! {
     }
     // `#<MatchData "whole" 1:"a" name:"b" ...>` -- groups labeled by name when
     // named, by 1-based index otherwise.
-    "inspect"[0] => fn md_inspect(recv, args, _block) {
+    def "inspect" arity 0 (recv, args, _block) {
         arity!(args, 0);
         let md = recv_md(recv);
         let RubyValue::Array(a) = crate::regexp::matchdata_to_a(&md) else { unreachable!() };
@@ -227,12 +228,37 @@ builtin_methods! {
         s.push('>');
         Ok(RubyValue::Str(crate::string_new(s)))
     }
-    "names"[0] => fn names(recv, args, _block) {
+    def "names" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_names(&recv_md(recv)))
     }
-    "regexp"[0] => fn regexp(recv, args, _block) {
+    def "regexp" arity 0 (recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_regexp(&recv_md(recv)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The `ruby_class!`-generated table projects the per-name `arity N`
+    /// annotations (the old `"name"[N]` columns) into `Method#arity`, so this
+    /// pins that mapping -- the riskiest part of the mechanical conversion.
+    #[test]
+    fn the_table_resolves_methods_and_projects_arity() {
+        let tbl = crate::builtins::registered_table(zeo_abi::MATCH_DATA_CLASS)
+            .expect("MatchData is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("MatchData has instance methods");
+        // Named methods resolve; a stranger does not.
+        assert!((tbl.lookup)("==").is_some());
+        assert!((tbl.lookup)("eql?").is_some());
+        assert!((tbl.lookup)("named_captures").is_some());
+        assert!((tbl.lookup)("nope").is_none());
+        // Declared arities carry over; an un-annotated method is variadic (-1).
+        assert_eq!((tbl.arity)("=="), Some(1));
+        assert_eq!((tbl.arity)("size"), Some(0));
+        assert_eq!((tbl.arity)("offset"), Some(1));
+        assert_eq!((tbl.arity)("values_at"), Some(-1));
     }
 }
