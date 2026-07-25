@@ -124,7 +124,7 @@ pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 
 /// The registered tables indexed by `ClassId` for O(1) routing, built once
 /// from the link-time-collected slice.
-fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
+pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
     static MAP: LazyLock<HashMap<u32, &'static BuiltinClassTable>> =
         LazyLock::new(|| BUILTIN_TABLES.iter().map(|t| (t.id.0, t)).collect());
     MAP.get(&id.0).copied()
@@ -346,8 +346,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::RACTOR_CLASS => crate::ractor::lookup_class,
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
-        #[cfg(feature = "ext-base64")]
-        zeo_abi::BASE64_MODULE => crate::ext::base64::lookup_class,
+        // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
         #[cfg(feature = "ext-pathname")]
@@ -496,8 +495,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        #[cfg(feature = "ext-base64")]
-        zeo_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
+        // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class_names(),
         #[cfg(feature = "ext-etc")]

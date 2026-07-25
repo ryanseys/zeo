@@ -15,8 +15,9 @@
 //! divergence retained from the port: decoded non-UTF-8 bytes are lossily
 //! replaced (this runtime's default `Str` is UTF-8; CRuby returns BINARY).
 
-use crate::builtins::{arg_error, arity, builtin_methods};
+use crate::builtins::{arg_error, arity};
 use crate::{RubyValue, Signal, string_new};
+use zeo_macros::ruby_module;
 
 const STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -39,10 +40,13 @@ fn bytes_arg(v: &RubyValue) -> Result<Vec<u8>, Signal> {
     Ok(crate::builtins::convert::to_rstr(v)?.lock().bytes().to_vec())
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    Base64 = zeo_abi::BASE64_MODULE;
 
-    "encode64" => fn encode64(_recv, args, _block) {
+    // `module_function` in CRuby's base64.rb: each is BOTH a public method on the
+    // `Base64` module (`Base64.encode64`) and a private instance method reachable
+    // through `include Base64` -- so both dispatch paths route here.
+    module_function def "encode64" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let data = bytes_arg(&args[0])?;
         let raw = encode(&data, STD);
@@ -53,12 +57,12 @@ builtin_methods! {
         }
         Ok(RubyValue::Str(string_new(out)))
     }
-    "strict_encode64" => fn strict_encode64(_recv, args, _block) {
+    module_function def "strict_encode64" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let data = bytes_arg(&args[0])?;
         Ok(RubyValue::Str(string_new(encode(&data, STD))))
     }
-    "urlsafe_encode64" => fn urlsafe_encode64(_recv, args, _block) {
+    module_function def "urlsafe_encode64" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2);
         let data = bytes_arg(&args[0])?;
         let mut out = encode(&data, URL);
@@ -71,7 +75,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Str(string_new(out)))
     }
-    "decode64" => fn decode64(_recv, args, _block) {
+    module_function def "decode64" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let text = str_arg(&args[0], "decode64")?;
         // Liberal: keep only alphabet/padding characters (like `unpack1("m")`).
@@ -83,12 +87,12 @@ builtin_methods! {
             .expect("liberal decode only sees pre-filtered alphabet chars");
         Ok(RubyValue::Str(string_new(String::from_utf8_lossy(&bytes).into_owned())))
     }
-    "strict_decode64" => fn strict_decode64(_recv, args, _block) {
+    module_function def "strict_decode64" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let text = str_arg(&args[0], "strict_decode64")?;
         Ok(RubyValue::Str(string_new(strict_decode(&text, STD)?)))
     }
-    "urlsafe_decode64" => fn urlsafe_decode64(_recv, args, _block) {
+    module_function def "urlsafe_decode64" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let mut text = str_arg(&args[0], "urlsafe_decode64")?;
         // Ruby (2.3+) accepts unpadded urlsafe input; re-pad before decoding.
@@ -174,13 +178,24 @@ mod tests {
             other => panic!("expected Str, got {other:?}"),
         }
     }
+    /// `Base64`'s `ruby_module!`-generated functions have mangled Rust idents, so
+    /// the tests call them the way real dispatch does -- through the registered
+    /// module-function `lookup` (the class-method bucket).
+    fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::BASE64_MODULE)
+            .expect("Base64 is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("Base64 has module functions");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Base64.{name} is defined"))
+    }
 
     #[test]
     fn encode_variants_match_ruby() {
-        assert_eq!(out(encode64(&RubyValue::Nil, &[s("hi")], None)), "aGk=\n");
-        assert_eq!(out(encode64(&RubyValue::Nil, &[s("")], None)), "");
+        assert_eq!(out(f("encode64")(&RubyValue::Nil, &[s("hi")], None)), "aGk=\n");
+        assert_eq!(out(f("encode64")(&RubyValue::Nil, &[s("")], None)), "");
         assert_eq!(
-            out(strict_encode64(&RubyValue::Nil, &[s("hello world!")], None)),
+            out(f("strict_encode64")(&RubyValue::Nil, &[s("hello world!")], None)),
             "aGVsbG8gd29ybGQh"
         );
         assert_eq!(encode(&[0xFB, 0xEF, 0xBE], URL), "----");
@@ -188,13 +203,13 @@ mod tests {
 
     #[test]
     fn decode_variants_match_ruby() {
-        assert_eq!(out(decode64(&RubyValue::Nil, &[s("YWJj\n")], None)), "abc");
+        assert_eq!(out(f("decode64")(&RubyValue::Nil, &[s("YWJj\n")], None)), "abc");
         assert_eq!(
-            out(strict_decode64(&RubyValue::Nil, &[s("YWJj")], None)),
+            out(f("strict_decode64")(&RubyValue::Nil, &[s("YWJj")], None)),
             "abc"
         );
         assert_eq!(
-            out(urlsafe_decode64(&RubyValue::Nil, &[s("YWI")], None)),
+            out(f("urlsafe_decode64")(&RubyValue::Nil, &[s("YWI")], None)),
             "ab"
         );
     }
