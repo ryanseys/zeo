@@ -79,6 +79,7 @@ pub(crate) mod unbound_method;
 pub(crate) mod value_subclass;
 pub(crate) mod warning;
 pub(crate) mod weak;
+pub(crate) mod yielder;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
 /// to be the right variant), positional args, optional block. Deliberately
@@ -161,10 +162,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::ENUMERATOR_CLASS
-        | zeo_abi::ENUMERATOR_CHAIN_CLASS
-        | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup,
-        zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder,
+        // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
+        // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup,
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
@@ -244,10 +243,8 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_arity,
-        zeo_abi::ENUMERATOR_CLASS
-        | zeo_abi::ENUMERATOR_CHAIN_CLASS
-        | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup_arity,
-        zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder_arity,
+        // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
+        // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
@@ -338,7 +335,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
         // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
         // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class,
+        // ENUMERATOR_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class,
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
@@ -416,10 +413,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_names(),
-        zeo_abi::ENUMERATOR_CLASS
-        | zeo_abi::ENUMERATOR_CHAIN_CLASS
-        | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup_names(),
-        zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
+        // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
+        // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
         // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         // DIR_CLASS migrated to ruby_class! -- served via registered_table.
@@ -494,7 +489,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         // SET_CLASS migrated to ruby_class! -- served via registered_table.
         // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
         // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::ENUMERATOR_CLASS => enumerator::lookup_class_names(),
+        // ENUMERATOR_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),

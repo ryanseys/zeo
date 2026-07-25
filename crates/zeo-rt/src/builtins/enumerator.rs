@@ -39,7 +39,8 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
+use zeo_macros::ruby_class;
 use crate::collections::array_new;
 use crate::dispatch::{raise_stop_iteration, send_value};
 use crate::signal::Signal;
@@ -268,48 +269,10 @@ pub(crate) fn enumerator_new(
     })))
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    // `Enumerator.produce([initial]) { |prev| ... }` -- an endless generator
-    // (#2483). With `initial`, that value is yielded first; then each block
-    // result is yielded, forever (bounded by the consumer, e.g. `take`/`first`).
-    "produce" => fn produce(_recv, args, block) {
-        arity!(args, 0..=1);
-        let Some(RubyValue::Proc(generator)) = block else {
-            return Err(arg_error!("tried to create Producer without a block"));
-        };
-        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
-            source: EnumSource::Produce { initial: args.first().cloned(), block: generator },
-            size_hint: None,
-            state: Mutex::new(ExternState::default()),
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })))
-    }
-
-    // `Enumerator.product(*enums)` -- every combination as an Array, rightmost
-    // source varying fastest (#2484). No args yields one empty combination.
-    "product" => fn product(_recv, args, _block) {
-        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
-            source: EnumSource::Product { sources: args.to_vec() },
-            size_hint: None,
-            state: Mutex::new(ExternState::default()),
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })))
-    }
-}
-
 fn recv_enum(recv: &RubyValue) -> &REnumerator {
     match recv {
         RubyValue::Enumerator(e) => e,
         _ => unreachable!("Enumerator table row dispatched on a non-Enumerator receiver"),
-    }
-}
-
-fn recv_yielder(recv: &RubyValue) -> &RProc {
-    match recv {
-        RubyValue::Yielder(p) => p,
-        _ => unreachable!("Yielder table row dispatched on a non-Yielder receiver"),
     }
 }
 
@@ -726,10 +689,38 @@ fn drive_with_object(
     Ok(memo)
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Enumerator = zeo_abi::ENUMERATOR_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
-    "each" => fn each(recv, args, block) {
+    // `Enumerator.produce([initial]) { |prev| ... }` -- an endless generator
+    // (#2483). With `initial`, that value is yielded first; then each block
+    // result is yielded, forever (bounded by the consumer, e.g. `take`/`first`).
+    def self."produce"(_recv, args, block) {
+        arity!(args, 0..=1);
+        let Some(RubyValue::Proc(generator)) = block else {
+            return Err(arg_error!("tried to create Producer without a block"));
+        };
+        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
+            source: EnumSource::Produce { initial: args.first().cloned(), block: generator },
+            size_hint: None,
+            state: Mutex::new(ExternState::default()),
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        })))
+    }
+
+    // `Enumerator.product(*enums)` -- every combination as an Array, rightmost
+    // source varying fastest (#2484). No args yields one empty combination.
+    def self."product"(_recv, args, _block) {
+        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
+            source: EnumSource::Product { sources: args.to_vec() },
+            size_hint: None,
+            state: Mutex::new(ExternState::default()),
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        })))
+    }
+
+    def "each"(recv, args, block) {
         let e = recv_enum(recv);
         if !args.is_empty() {
             panic!("Enumerator#each with extra arguments isn't supported yet (zeo limitation; CRuby appends them to the captured args on a dup)");
@@ -745,27 +736,27 @@ builtin_methods! {
 
     // `e + other` -- an `Enumerator::Chain` over the two, in order. Chaining
     // a chain nests rather than flattens, matching CRuby.
-    "+" => fn plus(recv, args, _block) {
+    def "+"(recv, args, _block) {
         arity!(args, 1);
         Ok(chain_of(vec![recv.clone(), args[0].clone()]))
     }
 
-    "next" => fn next(recv, args, _block) {
+    def "next"(recv, args, _block) {
         arity!(args, 0);
         Ok(ary2sv(take_next(recv_enum(recv))?))
     }
 
-    "next_values" => fn next_values(recv, args, _block) {
+    def "next_values"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(array_new(take_next(recv_enum(recv))?)))
     }
 
-    "peek" => fn peek(recv, args, _block) {
+    def "peek"(recv, args, _block) {
         arity!(args, 0);
         Ok(ary2sv(fill_peek(recv_enum(recv))?))
     }
 
-    "peek_values" => fn peek_values(recv, args, _block) {
+    def "peek_values"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(array_new(fill_peek(recv_enum(recv))?)))
     }
@@ -773,7 +764,7 @@ builtin_methods! {
     // `#feed(value)` -- set the value the generator's paused `y.yield` returns
     // on the next `#next`. Setting it twice before a `#next` consumes it is a
     // TypeError; the call itself answers nil.
-    "feed" => fn feed(recv, args, _block) {
+    def "feed"(recv, args, _block) {
         arity!(args, 1);
         let mut st = recv_enum(recv).state.lock();
         if st.feed.is_some() {
@@ -783,7 +774,7 @@ builtin_methods! {
         Ok(RubyValue::Nil)
     }
 
-    "rewind" => fn rewind(recv, args, _block) {
+    def "rewind"(recv, args, _block) {
         arity!(args, 0);
         let e = recv_enum(recv);
         let mut st = e.state.lock();
@@ -805,7 +796,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
 
-    "size" => fn size(recv, args, _block) {
+    def "size"(recv, args, _block) {
         arity!(args, 0);
         Ok(enum_size(recv_enum(recv)))
     }
@@ -813,12 +804,12 @@ builtin_methods! {
     // `Enumerator#to_s` is inherited `Object#to_s` in CRuby but prints the
     // same `#<Enumerator: ...>` shape via #inspect in practice; sharing
     // one implementation matches the observable output.
-    "inspect" | "to_s" => fn inspect(recv, args, _block) {
+    def "inspect" | "to_s" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(enum_inspect(recv_enum(recv)))))
     }
 
-    "with_index" => fn with_index(recv, args, block) {
+    def "with_index"(recv, args, block) {
         arity!(args, 0..=1);
         let e = recv_enum(recv);
         let offset = match args.first() {
@@ -835,7 +826,7 @@ builtin_methods! {
         }
     }
 
-    "each_with_index" => fn each_with_index(recv, args, block) {
+    def "each_with_index"(recv, args, block) {
         arity!(args, 0);
         let e = recv_enum(recv);
         match block {
@@ -844,39 +835,42 @@ builtin_methods! {
         }
     }
 
-    "with_object" => fn with_object(recv, args, block) {
+    def "with_object"(recv, args, block) {
         drive_with_object(recv, args, block, "with_object")
     }
 
-    "each_with_object" => fn each_with_object(recv, args, block) {
+    def "each_with_object"(recv, args, block) {
         drive_with_object(recv, args, block, "each_with_object")
-    }
-}
-
-builtin_methods! {
-    pub(crate) fn lookup_yielder;
-
-    // `y << v` forwards to the consumer's block and returns the yielder
-    // (chainable: `y << 1 << 2`).
-    "<<" => fn yielder_push(recv, args, _block) {
-        recv_yielder(recv).call(args)?;
-        Ok(recv.clone())
-    }
-
-    // `y.yield(*vs)` forwards and returns the block's own return value.
-    "yield" => fn yielder_yield(recv, args, _block) {
-        recv_yielder(recv).call(args)
-    }
-
-    "to_proc" => fn yielder_to_proc(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Proc(recv_yielder(recv).clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `Enumerator` instance methods are `ruby_class!`-generated (their
+    /// Rust fn names are mangled), so the tests reach them the way dispatch
+    /// does -- through the registered instance table.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::ENUMERATOR_CLASS)
+            .expect("Enumerator is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Enumerator has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Enumerator#{name} is defined"))
+    }
+    fn each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("each")(recv, args, block)
+    }
+    fn rewind(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("rewind")(recv, args, block)
+    }
+    fn size(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("size")(recv, args, block)
+    }
+    fn with_index(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+        imethod("with_index")(recv, args, block)
+    }
 
     fn ints(ns: &[i64]) -> RubyValue {
         RubyValue::Array(array_new(ns.iter().map(|&n| RubyValue::Int(n)).collect()))
@@ -1057,18 +1051,6 @@ mod tests {
         });
         with_index(&e, &[RubyValue::Int(5)], Some(RubyValue::Proc(blk))).unwrap();
         assert_eq!(&*out.lock(), &[(10, 5), (20, 6)]);
-    }
-
-    #[test]
-    fn yielder_push_chains_and_yield_returns_the_block_value() {
-        let blk: RProc = RProc::new(|_raw| Ok(RubyValue::Int(42)));
-        let y = RubyValue::Yielder(blk);
-        let back = yielder_push(&y, &[RubyValue::Int(1)], None).unwrap();
-        assert!(matches!(back, RubyValue::Yielder(_)));
-        assert!(matches!(
-            yielder_yield(&y, &[RubyValue::Int(1)], None).unwrap(),
-            RubyValue::Int(42)
-        ));
     }
 
     #[test]
