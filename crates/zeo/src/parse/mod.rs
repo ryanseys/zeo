@@ -1,9 +1,9 @@
 //! The compiler's front-end DRIVER: the top-level parse -> lower entry
 //! points plus everything `require` resolution needs (the loader, gemspecs,
 //! lockfiles, the external gem store). The lowering itself -- prism tree ->
-//! typed HIR -- lives in the `zeo-hir` crate (`zeo_hir::lower`); this module
-//! is the filesystem-touching layer that drives it file-by-file, feeding
-//! per-file state through `zeo_hir::lower::context`.
+//! typed HIR -- lives in `crate::lower` (never touches the filesystem); this
+//! module is the filesystem-touching layer that drives it file-by-file, feeding
+//! per-file state through `crate::lower::context`.
 
 pub mod gem_compat;
 mod gem_store;
@@ -13,7 +13,7 @@ mod lockfile;
 
 use crate::diagnostics::CompileError;
 use crate::hir::{Hir, HirNode, NodeId};
-use zeo_hir::lower::{encoding_const_name, parse_and_lower_into};
+use crate::lower::{encoding_const_name, parse_and_lower_into};
 
 /// The built-in exception hierarchy (originally a minimal "raise/exception
 /// foundation", extended to zeo's own ~20-class set) --
@@ -263,7 +263,7 @@ pub fn parse_and_lower_with(
         Ok(stmts) => stmts,
         Err(e) => {
             return Err(CompileError::lower(
-                zeo_hir::lower_error::LowerError {
+                crate::lower_error::LowerError {
                     message: format!(
                         "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
                     ),

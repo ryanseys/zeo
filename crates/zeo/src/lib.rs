@@ -22,9 +22,16 @@ pub mod gem_report;
 
 pub use diagnostics::CompileError;
 
-// The front end (HIR + lowering) lives in the `zeo-hir` crate; re-exported
-// under the old module paths so the rest of the compiler reads unchanged.
-pub use zeo_hir::{constpath, hir, lower_error};
+// The front end: the typed HIR arena (`hir`) plus the prism-tree -> HIR
+// lowering (`lower`), formerly the standalone `zeo-hir` crate, folded in as
+// ordinary modules (§ crate consolidation). It never touches the filesystem;
+// `require` resolution/gems/search paths stay in the compiler's loader
+// (`parse`), which drives lowering file-by-file via `lower::context`.
+pub mod constpath;
+pub mod hir;
+pub mod lower;
+pub mod lower_error;
+pub mod rename;
 
 pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
 pub mod parse;

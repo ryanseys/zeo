@@ -91,7 +91,7 @@ environment:
   ZEO_RUNTIME_PROFILE   `debug` or `release` -- override the runtime profile
                         (default: debug for -e, release for -o compiles)
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for finer control than
-                        --log-level, e.g. `zeo::analyze=debug,zeo_hir=trace`
+                        --log-level, e.g. `zeo::analyze=debug,zeo::lower=trace`
 ";
 
 fn parse_args() -> Result<Args, String> {
@@ -359,7 +359,8 @@ fn run() -> Result<(), MainError> {
 
 /// Install a `tracing` subscriber (stderr) for the compiler pipeline. Sources,
 /// highest precedence first: the `--log-level` flag (a bare level applied to the
-/// `zeo`/`zeo_hir` crates), then `ZEO_LOG`, then `RUST_LOG` (both full
+/// `zeo` crate -- the front end's `zeo::hir`/`zeo::lower` spans included, now
+/// that it is folded in), then `ZEO_LOG`, then `RUST_LOG` (both full
 /// `EnvFilter` directives, for finer per-module control). With none of them set,
 /// no subscriber is installed, so every `trace!`/`debug!`/`instrument` in the
 /// pipeline compiles to a cheap disabled check -- a normal compile stays silent
@@ -368,7 +369,7 @@ fn run() -> Result<(), MainError> {
 ///   ZEO_LOG=zeo::analyze=trace zeo prog.rb
 fn init_tracing(log_level: Option<&str>) {
     let directive = match log_level {
-        Some(level) => format!("zeo={level},zeo_hir={level}"),
+        Some(level) => format!("zeo={level}"),
         None => match std::env::var("ZEO_LOG")
             .ok()
             .filter(|s| !s.is_empty())

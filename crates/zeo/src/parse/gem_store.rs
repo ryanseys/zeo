@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::gem_report::{GemRecord, SatisfiedBy};
 use crate::parse::lockfile::{GemSource, LockedGem, Lockfile};
-use zeo_hir::lower::PResult;
+use crate::lower::PResult;
 
 /// What an installed store yields for a lockfile: the pure-Ruby gems zeo can
 /// compile (as `(name, roots)`), and disclosure entries for the rest.
@@ -54,7 +54,7 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
         // zeo already provides this under its own name -- a static ext
         // (`json`) or a default gem it reimplements. Its own implementation
         // wins; record the divergence and add no store root.
-        if zeo_hir::lower::features::is_builtin_feature(&name) {
+        if crate::lower::features::is_builtin_feature(&name) {
             disclosures.push(GemRecord {
                 name: name.clone(),
                 by: SatisfiedBy::BuiltinExt { feature: name },

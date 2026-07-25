@@ -1,22 +1,23 @@
 //! The compiler's typed error surface, and how the CLI renders it.
 //!
 //! `CompileError` says which STAGE failed; the `Lower` variant additionally
-//! carries the registered source file and byte span `zeo-hir` stamped on the
-//! way out, so `main.rs` can render a miette source excerpt pointing at the
+//! carries the registered source file and byte span the lowering (`crate::
+//! lower`) stamped on the way out, so `main.rs` can render a miette source
+//! excerpt pointing at the
 //! offending construct. Analyze/codegen errors are typed but message-only
 //! for now -- `Analyze` reserves an `Option<Span>` field so individual sites
 //! can be located incrementally without another signature migration.
 //!
 //! Rendering lives at the CLI boundary ONLY (miette is not a dependency of
-//! `zeo-hir` or the runtime): the library API converts to plain `String`s
+//! the front end or the runtime): the library API converts to plain `String`s
 //! via `Display`/`From`, so the in-process harnesses keep asserting on the
 //! exact message text they always have.
 
 use miette::{Diagnostic, LabeledSpan, NamedSource, SourceCode};
 use std::fmt;
 use thiserror::Error;
-use zeo_hir::hir::{SourceFile, Span};
-use zeo_hir::lower_error::{LowerError, LowerErrorKind};
+use crate::hir::{SourceFile, Span};
+use crate::lower_error::{LowerError, LowerErrorKind};
 
 /// A located lowering failure: the `LowerError` plus everything a renderer
 /// needs (file name, source text, byte span). Built at the driver boundary

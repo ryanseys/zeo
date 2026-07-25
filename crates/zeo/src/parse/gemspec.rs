@@ -37,7 +37,7 @@
 
 use crate::lower_error::LowerError;
 use std::path::Path;
-use zeo_hir::lower::PResult;
+use crate::lower::PResult;
 
 /// The gemspec fields that determine load-path resolution. Deliberately the
 /// same shape `Gem::StubSpecification` exposes.

@@ -67,10 +67,10 @@ use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use crate::lower_error::LowerError;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use zeo_hir::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
-use zeo_hir::lower::features::{canonical_ext_feature, is_builtin_feature};
-use zeo_hir::lower::{PResult, lower_node};
-use zeo_hir::rename;
+use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
+use crate::lower::features::{canonical_ext_feature, is_builtin_feature};
+use crate::lower::{PResult, lower_node};
+use crate::rename;
 
 /// One gem: a named directory with a `.gemspec`, contributing one or more
 /// `require` search roots.
@@ -294,7 +294,7 @@ impl Loader {
                 .unwrap_or_default();
             let [arg] = arg_list.as_slice() else { continue };
             let arg_id = lower_node(result, hir, arg)?;
-            let Some(feature) = zeo_hir::lower::eval_splice::literal_string_text(hir, arg_id) else {
+            let Some(feature) = crate::lower::eval_splice::literal_string_text(hir, arg_id) else {
                 continue;
             };
             if !self.require_resolvable(&feature) {
@@ -350,7 +350,7 @@ impl Loader {
                                 continue;
                             }
                             if name == "eval" {
-                                let node = zeo_hir::lower::eval_splice::lower_box_eval(
+                                let node = crate::lower::eval_splice::lower_box_eval(
                                     hir, result, &call, bx, true,
                                 )?;
                                 combined.push(node);
@@ -365,7 +365,7 @@ impl Loader {
             // handle VALUE (the box's top-level surrogate as a Class), so
             // `p box` works.
             if let Some(lw) = n.as_local_variable_write_node() {
-                if zeo_hir::lower::eval_splice::is_ruby_box_new(&lw.value()) {
+                if crate::lower::eval_splice::is_ruby_box_new(&lw.value()) {
                     let lname = String::from_utf8_lossy(lw.name().as_slice()).into_owned();
                     hir.boxes += 1;
                     let box_id = hir.boxes;
@@ -395,7 +395,7 @@ impl Loader {
                         });
                     if all_constants {
                         for a in &arg_list {
-                            let module = zeo_hir::lower::consts::constant_path_name(a)?;
+                            let module = crate::lower::consts::constant_path_name(a)?;
                             let id = hir.push(crate::hir::HirNode::Include(module));
                             combined.push(id);
                             own.push(id);
@@ -415,7 +415,7 @@ impl Loader {
                 let names = undef
                     .names()
                     .iter()
-                    .map(|name| zeo_hir::lower::defs::alias_target_name(&name))
+                    .map(|name| crate::lower::defs::alias_target_name(&name))
                     .collect::<PResult<Vec<_>>>()?;
                 let id = hir.push(crate::hir::HirNode::Undef(names));
                 combined.push(id);
@@ -427,8 +427,8 @@ impl Loader {
                 // at top level the target may be an inherited Kernel method,
                 // which only `mro::resolve_aliases` can see.
                 let id = hir.push(crate::hir::HirNode::AliasMethod {
-                    new_name: zeo_hir::lower::defs::alias_target_name(&alias.new_name())?,
-                    old_name: zeo_hir::lower::defs::alias_target_name(&alias.old_name())?,
+                    new_name: crate::lower::defs::alias_target_name(&alias.new_name())?,
+                    old_name: crate::lower::defs::alias_target_name(&alias.old_name())?,
                     is_class_method: false,
                 });
                 combined.push(id);
@@ -460,7 +460,7 @@ impl Loader {
             collect_autoloads(&n, &mut autoloads);
         }
         for call in &autoloads {
-            let feature = zeo_hir::lower::autoload_feature(call)?;
+            let feature = crate::lower::autoload_feature(call)?;
             let spliced =
                 self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
             combined.extend(spliced);
@@ -534,7 +534,7 @@ impl Loader {
         // up for free, and the one throwaway node on the accepted path is
         // harmless append-only arena bookkeeping.
         let arg_id = lower_node(result, hir, &arg_list[0])?;
-        let Some(feature) = zeo_hir::lower::eval_splice::literal_string_text(hir, arg_id) else {
+        let Some(feature) = crate::lower::eval_splice::literal_string_text(hir, arg_id) else {
             return Ok(None);
         };
         // A plain `require` the resolvability pre-scan marked unresolvable is not

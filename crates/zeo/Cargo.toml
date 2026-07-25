@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 zeo-abi.workspace = true
-zeo-hir.workspace = true
 ruby-prism.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true

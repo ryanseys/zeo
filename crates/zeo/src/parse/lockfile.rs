@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use zeo_hir::lower::PResult;
+use crate::lower::PResult;
 
 /// The parsed lockfile: every locked gem, and the declared platforms.
 #[derive(Debug, Default, PartialEq)]

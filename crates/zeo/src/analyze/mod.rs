@@ -543,7 +543,7 @@ fn try_prepend_call_edit(
     // Registered in REVERSE argument order so `mro`'s uniform
     // "later-registered-is-closer" flatten yields source order in the ancestry
     // (`prepend A, B` -> [A, B, self]) -- the same rule the class-body multi-arg
-    // lowering follows (see `zeo-hir/lower/defs.rs`).
+    // lowering follows (see `lower/defs.rs`).
     for m in modules.into_iter().rev() {
         let ci = &mut compiler.classes[target.0 as usize];
         if on_singleton {

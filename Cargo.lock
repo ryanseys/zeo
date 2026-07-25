@@ -1570,7 +1570,6 @@ dependencies = [
  "tracing-subscriber",
  "zeo-abi",
  "zeo-class-spec",
- "zeo-hir",
 ]
 
 [[package]]
@@ -1584,15 +1583,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "zeo-hir"
-version = "0.1.0"
-dependencies = [
- "ruby-prism",
- "tracing",
- "zeo-abi",
 ]
 
 [[package]]

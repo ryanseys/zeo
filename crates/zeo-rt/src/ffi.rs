@@ -209,7 +209,7 @@ fn promote(k: FfiKind) -> FfiKind {
 }
 
 /// Map a varargs `:type` Symbol name to its kind, mirroring the compile-time
-/// `ffi_type_of` table in `zeo-hir`.
+/// `ffi_type_of` table in `zeo`'s `lower/ffi.rs`.
 #[cfg(feature = "ext-ffi")]
 fn kind_from_symbol(name: &str) -> Result<FfiKind, Signal> {
     use FfiKind::*;
