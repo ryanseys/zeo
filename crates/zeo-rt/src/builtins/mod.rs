@@ -176,7 +176,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::SET_CLASS => set::lookup,
         zeo_abi::STRUCT_CLASS => rstruct::lookup,
         zeo_abi::DATA_CLASS => rstruct::lookup_data,
-        zeo_abi::LAZY_CLASS => lazy::lookup,
+        // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup,
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
@@ -262,7 +262,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::SET_CLASS => set::lookup_arity,
         zeo_abi::STRUCT_CLASS => rstruct::lookup_arity,
         zeo_abi::DATA_CLASS => rstruct::lookup_data_arity,
-        zeo_abi::LAZY_CLASS => lazy::lookup_arity,
+        // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_arity,
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
@@ -439,7 +439,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::SET_CLASS => set::lookup_names(),
         zeo_abi::STRUCT_CLASS => rstruct::lookup_names(),
         zeo_abi::DATA_CLASS => rstruct::lookup_data_names(),
-        zeo_abi::LAZY_CLASS => lazy::lookup_names(),
+        // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
         // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.

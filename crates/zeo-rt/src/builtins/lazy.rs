@@ -15,7 +15,8 @@
 //! makes `take`/`first`/`take_while` terminate an infinite source).
 
 use crate::builtins::enumerator::{enumerator_for, pull_next};
-use crate::builtins::{arg_error, arity, builtin_methods};
+use crate::builtins::{arg_error, arity};
+use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;
@@ -398,13 +399,14 @@ fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal>
     Ok(out)
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Lazy = zeo_abi::LAZY_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     // `size` never iterates: it takes the source's size and folds the ops that
     // have a knowable effect on it. A filtering op makes the result unknown
     // (nil) -- CRuby's rule, since it can't be answered without running.
-    "size" => fn size(recv, args, _block) {
+    def "size"(recv, args, _block) {
         arity!(args, 0);
         let lz = lazy_of(recv);
         let mut size = source_size(&lz.source);
@@ -425,14 +427,14 @@ builtin_methods! {
         Ok(size)
     }
 
-    "map" | "collect" => fn map(recv, args, block) {
+    def "map" | "collect"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Map(need_block(block, "map")?)))
     }
     // `with_index([offset]) { |item, idx| ... }` -- lazily pairs each value with
     // an incrementing index; blockless it yields the `[item, idx]` pairs, with a
     // block it maps each pair through it (the block auto-splats the pair).
-    "with_index" | "each_with_index" => fn with_index(recv, args, block) {
+    def "with_index" | "each_with_index"(recv, args, block) {
         arity!(args, 0..=1);
         let offset = match args.first() {
             Some(v) => crate::builtins::convert::to_index(v)?,
@@ -444,63 +446,63 @@ builtin_methods! {
             _ => Ok(indexed),
         }
     }
-    "flat_map" | "collect_concat" => fn flat_map(recv, args, block) {
+    def "flat_map" | "collect_concat"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::FlatMap(need_block(block, "flat_map")?)))
     }
-    "filter_map" => fn filter_map(recv, args, block) {
+    def "filter_map"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::FilterMap(need_block(block, "filter_map")?)))
     }
-    "select" | "filter" | "find_all" => fn select(recv, args, block) {
+    def "select" | "filter" | "find_all"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Select(need_block(block, "select")?)))
     }
-    "reject" => fn reject(recv, args, block) {
+    def "reject"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Reject(need_block(block, "reject")?)))
     }
-    "take_while" => fn take_while(recv, args, block) {
+    def "take_while"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::TakeWhile(need_block(block, "take_while")?)))
     }
-    "drop_while" => fn drop_while(recv, args, block) {
+    def "drop_while"(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::DropWhile(need_block(block, "drop_while")?)))
     }
-    "take" => fn take(recv, args, _block) {
+    def "take"(recv, args, _block) {
         arity!(args, 1);
         Ok(extend(recv, LazyOp::Take(count_arg(&args[0], "take")?)))
     }
-    "drop" => fn drop(recv, args, _block) {
+    def "drop"(recv, args, _block) {
         arity!(args, 1);
         Ok(extend(recv, LazyOp::Drop(count_arg(&args[0], "drop")?)))
     }
-    "grep" => fn grep(recv, args, block) {
+    def "grep"(recv, args, block) {
         arity!(args, 1);
         let blk = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
         Ok(extend(recv, LazyOp::Grep(args[0].clone(), false, blk)))
     }
-    "grep_v" => fn grep_v(recv, args, block) {
+    def "grep_v"(recv, args, block) {
         arity!(args, 1);
         let blk = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
         Ok(extend(recv, LazyOp::Grep(args[0].clone(), true, blk)))
     }
-    "uniq" => fn uniq(recv, args, block) {
+    def "uniq"(recv, args, block) {
         arity!(args, 0);
         let key = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
         Ok(extend(recv, LazyOp::Uniq(key)))
     }
-    "compact" => fn compact(recv, args, _block) {
+    def "compact"(recv, args, _block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Compact))
     }
-    "lazy" => fn lazy(recv, args, _block) {
+    def "lazy"(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
     // Terminal operations: these run the chain.
-    "first" => fn first(recv, args, _block) {
+    def "first"(recv, args, _block) {
         arity!(args, 0..=1);
         match args.first() {
             None => Ok(collect(lazy_of(recv), Some(1))?.into_iter().next().unwrap_or(RubyValue::Nil)),
@@ -510,11 +512,11 @@ builtin_methods! {
             }
         }
     }
-    "to_a" | "force" | "entries" => fn to_a(recv, args, _block) {
+    def "to_a" | "force" | "entries"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(array_new(collect(lazy_of(recv), None)?)))
     }
-    "each" => fn each(recv, args, block) {
+    def "each"(recv, args, block) {
         arity!(args, 0);
         match block {
             Some(RubyValue::Proc(p)) => {
@@ -525,7 +527,7 @@ builtin_methods! {
             _ => Ok(recv.clone()),
         }
     }
-    "inspect" | "to_s" => fn inspect(recv, args, _block) {
+    def "inspect" | "to_s"(recv, args, _block) {
         arity!(args, 0);
         let _ = recv;
         // CRuby renders the full source+ops chain; this stable placeholder
@@ -537,6 +539,15 @@ builtin_methods! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lazy's `ruby_class!` methods have mangled fn names, so tests reach
+    /// them through the registered instance lookup (as real dispatch does).
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::LAZY_CLASS)
+            .expect("Lazy is registered")
+            .instance.as_ref().expect("Lazy has instance methods")
+            .lookup)(name).unwrap_or_else(|| panic!("Lazy#{name} is defined"))
+    }
 
     fn arr(xs: &[i64]) -> RubyValue {
         RubyValue::Array(array_new(xs.iter().map(|&i| RubyValue::Int(i)).collect()))
@@ -576,28 +587,28 @@ mod tests {
     // The registry-free unit tier can't drive a source to natural exhaustion
     // (constructing the terminating `StopIteration` needs a registry and
     // panics without one), so these exercise the transducer through
-    // `first(n)`, which stops before the exhausting pull. The exhaustion path
+    // `imethod("first")(n)`, which stops before the exhausting pull. The exhaustion path
     // (`to_a`/`force`) is covered by the e2e suite, which runs with a registry.
     fn first_n(l: &RubyValue, n: i64) -> Vec<i64> {
-        ints(&first(l, &[RubyValue::Int(n)], None).unwrap())
+        ints(&imethod("first")(l, &[RubyValue::Int(n)], None).unwrap())
     }
 
     #[test]
     fn map_transforms_every_element() {
-        let mapped = map(&make_lazy(&arr(&[1, 2, 3])), &[], Some(times_two())).unwrap();
+        let mapped = imethod("map")(&make_lazy(&arr(&[1, 2, 3])), &[], Some(times_two())).unwrap();
         assert_eq!(first_n(&mapped, 3), vec![2, 4, 6]);
     }
 
     #[test]
     fn select_then_map_chains_left_to_right() {
-        let sel = select(&make_lazy(&arr(&[1, 2, 3, 4, 5, 6])), &[], Some(is_even())).unwrap();
-        let mapped = map(&sel, &[], Some(times_two())).unwrap();
+        let sel = imethod("select")(&make_lazy(&arr(&[1, 2, 3, 4, 5, 6])), &[], Some(is_even())).unwrap();
+        let mapped = imethod("map")(&sel, &[], Some(times_two())).unwrap();
         assert_eq!(first_n(&mapped, 3), vec![4, 8, 12]);
     }
 
     #[test]
     fn take_bounds_the_pull() {
-        let taken = take(
+        let taken = imethod("take")(
             &make_lazy(&arr(&[10, 20, 30, 40, 50])),
             &[RubyValue::Int(2)],
             None,
@@ -608,19 +619,19 @@ mod tests {
 
     #[test]
     fn first_without_arg_returns_one_element() {
-        let mapped = map(&make_lazy(&arr(&[1, 2, 3, 4])), &[], Some(times_two())).unwrap();
+        let mapped = imethod("map")(&make_lazy(&arr(&[1, 2, 3, 4])), &[], Some(times_two())).unwrap();
         assert!(matches!(
-            first(&mapped, &[], None).unwrap(),
+            imethod("first")(&mapped, &[], None).unwrap(),
             RubyValue::Int(2)
         ));
     }
 
     #[test]
     fn drop_uniq_and_compact() {
-        let dropped = drop(&make_lazy(&arr(&[1, 2, 3, 4])), &[RubyValue::Int(2)], None).unwrap();
+        let dropped = imethod("drop")(&make_lazy(&arr(&[1, 2, 3, 4])), &[RubyValue::Int(2)], None).unwrap();
         assert_eq!(first_n(&dropped, 2), vec![3, 4]);
 
-        let uniqued = uniq(&make_lazy(&arr(&[1, 1, 2, 2, 3, 1])), &[], None).unwrap();
+        let uniqued = imethod("uniq")(&make_lazy(&arr(&[1, 1, 2, 2, 3, 1])), &[], None).unwrap();
         assert_eq!(first_n(&uniqued, 3), vec![1, 2, 3]);
 
         let with_nils = RubyValue::Array(array_new(vec![
@@ -630,7 +641,7 @@ mod tests {
             RubyValue::Nil,
             RubyValue::Int(3),
         ]));
-        let compacted = compact(&make_lazy(&with_nils), &[], None).unwrap();
+        let compacted = imethod("compact")(&make_lazy(&with_nils), &[], None).unwrap();
         assert_eq!(first_n(&compacted, 2), vec![1, 2]);
     }
 }
