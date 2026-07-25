@@ -143,7 +143,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::STRING_CLASS => string::lookup,
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup,
-        zeo_abi::HASH_CLASS => hash::lookup,
+        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup,
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
@@ -229,7 +229,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::STRING_CLASS => string::lookup_arity,
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup_arity,
-        zeo_abi::HASH_CLASS => hash::lookup_arity,
+        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup_arity,
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
@@ -320,7 +320,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup_class,
         zeo_abi::STRING_CLASS => string::lookup_class,
-        zeo_abi::HASH_CLASS => hash::lookup_class,
+        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup_class,
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FILE_CLASS => file::lookup_class,
@@ -409,7 +409,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::STRING_CLASS => string::lookup_names(),
         // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup_names(),
-        zeo_abi::HASH_CLASS => hash::lookup_names(),
+        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup_names(),
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
@@ -483,7 +483,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ARRAY_CLASS => array::lookup_class_names(),
         zeo_abi::STRING_CLASS => string::lookup_class_names(),
-        zeo_abi::HASH_CLASS => hash::lookup_class_names(),
+        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::PROC_CLASS => rproc::lookup_class_names(),
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FILE_CLASS => file::lookup_class_names(),
