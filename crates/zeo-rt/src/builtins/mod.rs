@@ -37,6 +37,7 @@ pub(crate) mod formatter;
 pub(crate) mod enumerator;
 pub(crate) mod env;
 pub(crate) mod exception;
+pub(crate) mod false_class;
 pub(crate) mod fiber;
 pub(crate) mod file;
 pub(crate) mod float;
@@ -52,8 +53,8 @@ pub(crate) mod matchdata;
 pub(crate) mod math;
 pub(crate) mod method_obj;
 pub(crate) mod mutex;
+pub(crate) mod nil_class;
 pub(crate) mod numeric;
-pub(crate) mod object;
 pub(crate) mod pack;
 pub(crate) mod process;
 pub(crate) mod queue;
@@ -72,6 +73,7 @@ pub(crate) mod symbol;
 pub(crate) mod thread;
 pub(crate) mod thread_group;
 pub(crate) mod time;
+pub(crate) mod true_class;
 pub(crate) mod value_subclass;
 pub(crate) mod warning;
 pub(crate) mod weak;
@@ -151,8 +153,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::CLASS_CLASS => class_module::lookup_class,
         zeo_abi::MODULE_CLASS => class_module::lookup_module,
-        zeo_abi::NIL_CLASS => object::lookup_nil,
-        zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool,
+        // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
@@ -237,8 +238,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::CLASS_CLASS => class_module::lookup_class_arity,
         zeo_abi::MODULE_CLASS => class_module::lookup_module_arity,
-        zeo_abi::NIL_CLASS => object::lookup_nil_arity,
-        zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool_arity,
+        // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
@@ -416,8 +416,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::CLASS_CLASS => class_module::lookup_class_names(),
         zeo_abi::MODULE_CLASS => class_module::lookup_module_names(),
-        zeo_abi::NIL_CLASS => object::lookup_nil_names(),
-        zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool_names(),
+        // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_names(),
         zeo_abi::ENUMERATOR_CLASS
