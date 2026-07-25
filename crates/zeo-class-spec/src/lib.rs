@@ -100,6 +100,11 @@ pub enum Visibility {
 pub struct MethodDef {
     /// `def self.foo` (a class/singleton method) vs `def foo` (instance).
     pub is_class_method: bool,
+    /// `module_function def foo` -- a module function: defined as BOTH an
+    /// instance method and a class/singleton method (CRuby's `module_function`,
+    /// e.g. every `Math.sqrt` also reachable as a private `sqrt` via
+    /// `include Math`). The macro emits it into both lookup tables.
+    pub is_module_function: bool,
     pub visibility: Visibility,
     /// One or more Ruby names, in declaration order (first is the primary).
     pub names: Vec<MethodName>,
@@ -223,7 +228,7 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
     }
     let lookahead: Ident = input.fork().parse().map_err(|_| {
         input.error(
-            "expected `include`, `const`, `alias`, `private`, `protected`, `def`, `class`, or `module`",
+            "expected `include`, `const`, `alias`, `private`, `protected`, `module_function`, `def`, `class`, or `module`",
         )
     })?;
     match lookahead.to_string().as_str() {
@@ -251,6 +256,15 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
         }
         "def" => {
             spec.methods.push(parse_def(input, Visibility::Public)?);
+        }
+        "module_function" => {
+            // `module_function def foo(...)` -- a module function: emitted into
+            // BOTH the instance and class tables (CRuby's `module_function`).
+            // Private as an instance method, public as a singleton.
+            input.parse::<Ident>()?; // `module_function`
+            let mut def = parse_def(input, Visibility::Private)?;
+            def.is_module_function = true;
+            spec.methods.push(def);
         }
         "class" | "module" => {
             spec.nested.push(ClassSpec::parse_nested(input)?);
@@ -321,6 +335,7 @@ fn parse_def(input: ParseStream, visibility: Visibility) -> syn::Result<MethodDe
 
     Ok(MethodDef {
         is_class_method,
+        is_module_function: false,
         visibility,
         names,
         bound_name,

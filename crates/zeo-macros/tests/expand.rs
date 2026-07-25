@@ -86,6 +86,12 @@ mod comparable {
             cmp_impl(recv, args, block)
         }
 
+        // A `module_function` is emitted into BOTH the instance and class
+        // tables (like `Math.sqrt` / `include Math; sqrt`).
+        module_function def "mf" (_recv, _args, _block) {
+            Ok(RubyValue::Int(77))
+        }
+
         // A nested class sharing the same file: its own id, its own `lookup`
         // table (in a private submodule, so no collision with the outer one).
         class Nested = crate::NESTED_CLASS < crate::OBJECT_CLASS {
@@ -111,6 +117,16 @@ fn a_bound_name_is_callable_by_its_rust_name_and_via_the_table() {
     assert_eq!(clamp(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(5));
     // And the bound name is still reachable by its Ruby name "cmp".
     assert!(comparable::lookup("cmp").is_some());
+}
+
+#[test]
+fn a_module_function_lands_in_both_the_instance_and_class_tables() {
+    // `mf` resolves as an instance method AND as a class method, both running
+    // the one shared body -- CRuby's `module_function` shape.
+    let inst = comparable::lookup("mf").expect("mf is an instance method");
+    assert_eq!(inst(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(77));
+    let cls = comparable::lookup_class("mf").expect("mf is a class method");
+    assert_eq!(cls(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(77));
 }
 
 #[test]

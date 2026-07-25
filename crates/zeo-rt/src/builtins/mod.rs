@@ -436,7 +436,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::MATH_CLASS => math::NAMES,
+        // MATH_CLASS migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
         #[cfg(feature = "ext-pathname")]

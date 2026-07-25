@@ -2812,14 +2812,6 @@ fn send_value_in_reason(
                 return f(recv, args, block);
             }
         }
-        // Math predates the table shape (it answers `Option<Result<..>>` from
-        // one `math_call` fn rather than per-name rows), so it keeps its own
-        // probe rather than being reshaped for no behavior change.
-        if *cid == MATH_CLASS {
-            if let Some(r) = crate::builtins::math::math_call(n, args) {
-                return r;
-            }
-        }
     }
     // THE MRO WALK -- the receiver's real ancestor chain, most
     // derived first. Per ancestor: user reopens (the value
@@ -2837,22 +2829,12 @@ fn send_value_in_reason(
         if let Some(f) = value_method(anc, box_id, name) {
             return f(recv, args, block);
         }
-        match anc {
-            // `Math`'s module functions become private instance methods when
-            // `Math` is mixed in (`include Math` -> `sqrt(x)`), reached here as
-            // an ancestor of the receiver. Same `math_call` probe the class-
-            // value dispatch uses, since Math predates the per-name table.
-            MATH_CLASS => {
-                if let Some(r) = crate::builtins::math::math_call(n, args) {
-                    return r;
-                }
-            }
-            _ => {
-                if let Some(table) = crate::builtins::class_table(anc) {
-                    if let Some(f) = table(n) {
-                        return f(recv, args, block);
-                    }
-                }
+        // `Math`'s module functions reach here too when `Math` is mixed in
+        // (`include Math` -> a private `sqrt(x)`), as an ordinary `class_table`
+        // hit on its registered instance table -- no special arm needed.
+        if let Some(table) = crate::builtins::class_table(anc) {
+            if let Some(f) = table(n) {
+                return f(recv, args, block);
             }
         }
     }
@@ -2956,30 +2938,21 @@ fn send_in_reason(
         if let Some(f) = value_method(anc, box_id, name) {
             return f(&boxed, args, block);
         }
-        match anc {
-            // `include Math` -> its module functions as private instance
-            // methods (see the same arm in `send_value_in`).
-            MATH_CLASS => {
-                if let Some(r) = crate::builtins::math::math_call(n, args) {
-                    return r;
-                }
-            }
-            _ => {
-                if let Some(table) = crate::builtins::class_table(anc) {
-                    if let Some(f) = table(n) {
-                        // At the payload root, run against the wrapped value and
-                        // re-wrap a self-return (`push`/`<<`) back to the subclass.
-                        if payload_root == Some(anc) {
-                            if let Some(ref p) = payload {
-                                let result = f(p, args, block)?;
-                                return Ok(crate::builtins::value_subclass::rewrap_self_return(
-                                    result, p, recv, n,
-                                ));
-                            }
-                        }
-                        return f(&boxed, args, block);
+        // `include Math` reaches its module functions here as an ordinary
+        // `class_table` hit on Math's registered instance table.
+        if let Some(table) = crate::builtins::class_table(anc) {
+            if let Some(f) = table(n) {
+                // At the payload root, run against the wrapped value and
+                // re-wrap a self-return (`push`/`<<`) back to the subclass.
+                if payload_root == Some(anc) {
+                    if let Some(ref p) = payload {
+                        let result = f(p, args, block)?;
+                        return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                            result, p, recv, n,
+                        ));
                     }
                 }
+                return f(&boxed, args, block);
             }
         }
     }

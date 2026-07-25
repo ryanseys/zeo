@@ -285,11 +285,11 @@ pub fn num_eq(a: &RubyValue, b: &RubyValue) -> Option<bool> {
     })
 }
 
-/// Seeds `Complex::I` and `Math::PI`/`E` into the constant store -- called once
-/// at startup. The `Float::*` constants moved onto Float's `ruby_class!` `const`
-/// rows (installed by the `BUILTIN_TABLES` loop); `Math` stays a bespoke
-/// dispatcher (not a `ruby_class!`), so its constants keep seeding here.
-/// Values are CRuby's exactly (oracle-verified).
+/// Seeds `Complex::I` into the constant store -- called once at startup. The
+/// `Float::*` and `Math::PI`/`E` constants moved onto their classes' `const`
+/// rows (installed by the `BUILTIN_TABLES` loop); only `Complex::I` remains
+/// here (it could likewise move onto Complex's `const` row -- a small
+/// follow-up).
 pub fn seed_numeric_constants() {
     use crate::const_set;
     // `Complex::I` -- the imaginary unit, `Complex(0, 1)`.
@@ -298,9 +298,6 @@ pub fn seed_numeric_constants() {
         "I",
         crate::builtins::complex::complex_from_literal(RubyValue::Int(1)),
     );
-    let math = zeo_abi::MATH_CLASS.0;
-    const_set(math, "PI", RubyValue::Float(std::f64::consts::PI));
-    const_set(math, "E", RubyValue::Float(std::f64::consts::E));
 }
 
 /// Infallible views for Complex's internal component arithmetic (whose

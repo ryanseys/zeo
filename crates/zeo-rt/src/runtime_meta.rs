@@ -26,7 +26,7 @@
 
 use crate::builtins::{arg_error, name_error, runtime_error, type_error};
 use crate::dispatch::{
-    ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, raise_error,
+    ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value,
     registry_lookup_cloned, send_super_from,
 };
 use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
@@ -837,33 +837,15 @@ fn module_own_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
 
 /// The `MethodImpl` a BUILTIN module (`Comparable`/`Enumerable`/`Math`, or any
 /// module with a hardcoded `class_table`) defines for `name`. These don't live
-/// in the registry -- their bodies are static method-table rows (or, for
-/// `Math`, the pre-table `math_call` dispatcher) -- so each is wrapped in a
-/// `Dynamic` closure that re-dispatches by name. This is what lets
-/// `obj.extend(Comparable)` install `clamp`/`between?` etc.
+/// in the registry -- their bodies are static method-table rows -- so each is
+/// wrapped in a `Dynamic` closure that re-dispatches by name. This is what lets
+/// `obj.extend(Comparable)` install `clamp`/`between?` etc. (`Math`'s module
+/// functions are ordinary instance-table rows now, reached the same way.)
 fn builtin_module_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
-    use zeo_abi::MATH_CLASS;
-    let miss = move || {
-        raise_error(
-            "NoMethodError",
-            format!("undefined method '{}'", name.name()),
-        )
-    };
-    match mid {
-        MATH_CLASS => Some(MethodImpl::Dynamic(std::sync::Arc::new(
-            move |_recv: &RObj, args: &[RubyValue], _b| {
-                crate::builtins::math::math_call(&name.name(), args).unwrap_or_else(|| Err(miss()))
-            },
-        ))),
-        _ => {
-            let f = crate::builtins::class_table(mid)?(&name.name())?;
-            Some(MethodImpl::Dynamic(std::sync::Arc::new(
-                move |recv: &RObj, args: &[RubyValue], b| {
-                    f(&RubyValue::Object(recv.clone()), args, b)
-                },
-            )))
-        }
-    }
+    let f = crate::builtins::class_table(mid)?(&name.name())?;
+    Some(MethodImpl::Dynamic(std::sync::Arc::new(
+        move |recv: &RObj, args: &[RubyValue], b| f(&RubyValue::Object(recv.clone()), args, b),
+    )))
 }
 
 /// `obj.singleton_class` -- the per-object singleton class as a real `Class`

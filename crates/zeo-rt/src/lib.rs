@@ -53,7 +53,6 @@ pub use builtins::kernel::{
     kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
     kernel_string, kernel_throw, kernel_warn, system_exit_status,
 };
-pub use builtins::math::math_call;
 pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
 pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use builtins::weak::run_finalizers;

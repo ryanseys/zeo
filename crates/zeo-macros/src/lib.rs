@@ -63,6 +63,7 @@ pub fn ruby_module(input: TokenStream) -> TokenStream {
 
 /// One resolved method entry: a Ruby name bound to the Rust fn that implements
 /// it (shared across a `def`'s aliases) and its declared arity.
+#[derive(Clone)]
 struct Entry {
     ruby: String,
     fn_ident: Ident,
@@ -98,17 +99,22 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 #body
             }
         });
-        let bucket = if method.is_class_method {
-            &mut class
-        } else {
-            &mut instance
-        };
+        // A `module_function` lands in BOTH tables (instance + class); an
+        // ordinary method lands in exactly one, chosen by `def` vs `def self.`.
         for name in &method.names {
-            bucket.push(Entry {
+            let entry = Entry {
                 ruby: name.ruby.clone(),
                 fn_ident: fn_ident.clone(),
                 arity: name.arity,
-            });
+            };
+            if method.is_module_function {
+                instance.push(entry.clone());
+                class.push(entry);
+            } else if method.is_class_method {
+                class.push(entry);
+            } else {
+                instance.push(entry);
+            }
         }
     }
 

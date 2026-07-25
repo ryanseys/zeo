@@ -8,6 +8,7 @@ use crate::builtins::numeric::num_to_f64_unchecked;
 use crate::builtins::{arg_error, type_error};
 use crate::collections::array_new;
 use crate::{RubyValue, Signal};
+use zeo_macros::ruby_module;
 
 // System libm -- the same C math library CRuby's own `Math` methods call, so
 // `gamma`/`lgamma`/`erf`/`erfc`/`frexp`/`ldexp` match the oracle bit-for-bit.
@@ -46,142 +47,107 @@ fn math_arity(given: usize, expected: &str) -> Signal {
     arg_error!("wrong number of arguments (given {given}, expected {expected})")
 }
 
-/// Every Math module function -- the reflection surface for
-/// `Math.instance_methods` / `include Math` name enumeration. Must mirror
-/// `math_call`'s match arms (the single dispatch source of truth).
-pub(crate) const NAMES: &[&str] = &[
-    "sqrt", "cbrt", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh",
-    "acosh", "atanh", "exp", "log2", "log10", "log", "atan2", "hypot", "frexp", "ldexp", "gamma",
-    "lgamma", "erf", "erfc",
-];
+/// A one-argument libm call: coerce the single argument to `f64` and apply `f`.
+/// A wrong argument count is CRuby's ArgumentError.
+fn unary(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<f64, Signal> {
+    if args.len() != 1 {
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 1)",
+            args.len()
+        ));
+    }
+    Ok(f(arg_f64(&args[0])?))
+}
 
-/// One Math module function -- `None` when `name` isn't one (the caller
-/// falls to its NoMethodError path). Arity is validated per function.
-pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {
-    fn unary(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<f64, Signal> {
-        if args.len() != 1 {
+/// [`unary`] wrapped as a `Float` result -- the common case.
+fn plain(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<RubyValue, Signal> {
+    unary(args, f).map(RubyValue::Float)
+}
+
+/// [`unary`] with a NaN-result domain check: `sqrt`/`asin`/`log2`/... of an
+/// out-of-domain argument is a `Math::DomainError` rather than a NaN Float.
+fn checked(args: &[RubyValue], f: impl Fn(f64) -> f64, name: &str) -> Result<RubyValue, Signal> {
+    let r = unary(args, f)?;
+    if r.is_nan() {
+        Err(domain_error(name))
+    } else {
+        Ok(RubyValue::Float(r))
+    }
+}
+
+ruby_module! {
+    Math = zeo_abi::MATH_CLASS;
+
+    const PI = RubyValue::Float(std::f64::consts::PI);
+    const E = RubyValue::Float(std::f64::consts::E);
+
+    // Every function is a `module_function`: reachable as `Math.sqrt(x)` AND,
+    // after `include Math`, as a private `sqrt(x)`. Every argument coerces
+    // through the numeric tower's `f64` view; domain violations raise
+    // `Math::DomainError` with CRuby's exact message.
+    module_function def "sqrt"(_recv, args, _block) { checked(args, f64::sqrt, "sqrt") }
+    module_function def "cbrt"(_recv, args, _block) { plain(args, f64::cbrt) }
+    module_function def "sin"(_recv, args, _block) { plain(args, f64::sin) }
+    module_function def "cos"(_recv, args, _block) { plain(args, f64::cos) }
+    module_function def "tan"(_recv, args, _block) { plain(args, f64::tan) }
+    module_function def "asin"(_recv, args, _block) { checked(args, f64::asin, "asin") }
+    module_function def "acos"(_recv, args, _block) { checked(args, f64::acos, "acos") }
+    module_function def "atan"(_recv, args, _block) { plain(args, f64::atan) }
+    module_function def "exp"(_recv, args, _block) { plain(args, f64::exp) }
+    module_function def "log2"(_recv, args, _block) { checked(args, f64::log2, "log2") }
+    module_function def "log10"(_recv, args, _block) { checked(args, f64::log10, "log10") }
+    // `log(x)` natural; `log(x, base)` arbitrary-base.
+    module_function def "log"(_recv, args, _block) {
+        if args.is_empty() || args.len() > 2 {
             return Err(arg_error!(
-                "wrong number of arguments (given {}, expected 1)",
+                "wrong number of arguments (given {}, expected 1..2)",
                 args.len()
             ));
         }
-        Ok(f(arg_f64(&args[0])?))
+        let x = arg_f64(&args[0])?;
+        let r = match args.get(1) {
+            Some(base) => x.log(arg_f64(base)?),
+            None => x.ln(),
+        };
+        if r.is_nan() {
+            return Err(domain_error("log"));
+        }
+        Ok(RubyValue::Float(r))
     }
-    // `frexp`/`lgamma` return a two-element Array, so they can't flow through
-    // the float-mapping tail (`Some(result.map(RubyValue::Float))`) below.
-    match name {
-        "frexp" => return Some(math_frexp(args)),
-        "lgamma" => return Some(math_lgamma(args)),
-        _ => {}
+    module_function def "atan2"(_recv, args, _block) {
+        if args.len() != 2 {
+            return Err(arg_error!("wrong number of arguments (given {}, expected 2)", args.len()));
+        }
+        Ok(RubyValue::Float(arg_f64(&args[0])?.atan2(arg_f64(&args[1])?)))
     }
-    let result = match name {
-        "sqrt" => unary(args, f64::sqrt).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("sqrt"))
-            } else {
-                Ok(r)
-            }
-        }),
-        "cbrt" => unary(args, f64::cbrt),
-        "sin" => unary(args, f64::sin),
-        "cos" => unary(args, f64::cos),
-        "tan" => unary(args, f64::tan),
-        "asin" => unary(args, f64::asin).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("asin"))
-            } else {
-                Ok(r)
-            }
-        }),
-        "acos" => unary(args, f64::acos).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("acos"))
-            } else {
-                Ok(r)
-            }
-        }),
-        "atan" => unary(args, f64::atan),
-        "exp" => unary(args, f64::exp),
-        "log2" => unary(args, f64::log2).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("log2"))
-            } else {
-                Ok(r)
-            }
-        }),
-        "log10" => unary(args, f64::log10).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("log10"))
-            } else {
-                Ok(r)
-            }
-        }),
-        // `log(x)` natural; `log(x, base)` arbitrary-base.
-        "log" => (|| {
-            if args.is_empty() || args.len() > 2 {
-                return Err(arg_error!(
-                    "wrong number of arguments (given {}, expected 1..2)",
-                    args.len()
-                ));
-            }
-            let x = arg_f64(&args[0])?;
-            let r = match args.get(1) {
-                Some(base) => x.log(arg_f64(base)?),
-                None => x.ln(),
-            };
-            if r.is_nan() {
-                return Err(domain_error("log"));
-            }
-            Ok(r)
-        })(),
-        "atan2" | "hypot" => (|| {
-            if args.len() != 2 {
-                return Err(arg_error!(
-                    "wrong number of arguments (given {}, expected 2)",
-                    args.len()
-                ));
-            }
-            let (a, b) = (arg_f64(&args[0])?, arg_f64(&args[1])?);
-            Ok(if name == "atan2" {
-                a.atan2(b)
-            } else {
-                a.hypot(b)
-            })
-        })(),
-        "sinh" => unary(args, f64::sinh),
-        "cosh" => unary(args, f64::cosh),
-        "tanh" => unary(args, f64::tanh),
-        "asinh" => unary(args, f64::asinh),
-        // `acosh(x<1)` and `atanh(|x|>1)` are NaN -> DomainError; `atanh(±1)`
-        // is ±Infinity, which passes through (oracle-verified).
-        "acosh" => unary(args, f64::acosh).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("acosh"))
-            } else {
-                Ok(r)
-            }
-        }),
-        "atanh" => unary(args, f64::atanh).and_then(|r| {
-            if r.is_nan() {
-                Err(domain_error("atanh"))
-            } else {
-                Ok(r)
-            }
-        }),
-        "erf" => unary(args, |x| unsafe { erf(x) }),
-        "erfc" => unary(args, |x| unsafe { erfc(x) }),
-        "gamma" => math_gamma(args),
-        "ldexp" => (|| {
-            if args.len() != 2 {
-                return Err(math_arity(args.len(), "2"));
-            }
-            let fraction = arg_f64(&args[0])?;
-            let exponent = arg_f64(&args[1])? as i32;
-            Ok(unsafe { ldexp(fraction, exponent) })
-        })(),
-        _ => return None,
-    };
-    Some(result.map(RubyValue::Float))
+    module_function def "hypot"(_recv, args, _block) {
+        if args.len() != 2 {
+            return Err(arg_error!("wrong number of arguments (given {}, expected 2)", args.len()));
+        }
+        Ok(RubyValue::Float(arg_f64(&args[0])?.hypot(arg_f64(&args[1])?)))
+    }
+    module_function def "sinh"(_recv, args, _block) { plain(args, f64::sinh) }
+    module_function def "cosh"(_recv, args, _block) { plain(args, f64::cosh) }
+    module_function def "tanh"(_recv, args, _block) { plain(args, f64::tanh) }
+    module_function def "asinh"(_recv, args, _block) { plain(args, f64::asinh) }
+    // `acosh(x<1)` and `atanh(|x|>1)` are NaN -> DomainError; `atanh(±1)` is
+    // ±Infinity, which passes through (oracle-verified).
+    module_function def "acosh"(_recv, args, _block) { checked(args, f64::acosh, "acosh") }
+    module_function def "atanh"(_recv, args, _block) { checked(args, f64::atanh, "atanh") }
+    module_function def "erf"(_recv, args, _block) { plain(args, |x| unsafe { erf(x) }) }
+    module_function def "erfc"(_recv, args, _block) { plain(args, |x| unsafe { erfc(x) }) }
+    module_function def "gamma"(_recv, args, _block) { math_gamma(args).map(RubyValue::Float) }
+    module_function def "ldexp"(_recv, args, _block) {
+        if args.len() != 2 {
+            return Err(math_arity(args.len(), "2"));
+        }
+        let fraction = arg_f64(&args[0])?;
+        let exponent = arg_f64(&args[1])? as i32;
+        Ok(RubyValue::Float(unsafe { ldexp(fraction, exponent) }))
+    }
+    // `frexp`/`lgamma` answer a two-element Array, not a Float.
+    module_function def "frexp"(_recv, args, _block) { math_frexp(args) }
+    module_function def "lgamma"(_recv, args, _block) { math_lgamma(args) }
 }
 
 /// `Math.frexp(x) -> [fraction, exponent]` with `x == fraction * 2**exponent`
@@ -296,6 +262,19 @@ const FACT_TABLE: [f64; 23] = [
 mod tests {
     use super::*;
 
+    /// The Math functions are `ruby_module!`-generated `module_function`s
+    /// (mangled Rust fn names), so reach them the way dispatch does -- through
+    /// the registered instance table. `Math.sqrt` (the class side) shares the
+    /// same body, verified by `expand.rs`'s module_function test.
+    fn call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {
+        let tbl = crate::builtins::registered_table(zeo_abi::MATH_CLASS)
+            .expect("Math is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Math has module functions");
+        (tbl.lookup)(name).map(|f| f(&RubyValue::Nil, args, None))
+    }
+
     fn f(r: Option<Result<RubyValue, Signal>>) -> f64 {
         match r.unwrap().unwrap() {
             RubyValue::Float(f) => f,
@@ -305,21 +284,21 @@ mod tests {
 
     #[test]
     fn functions_coerce_across_the_tower() {
-        assert_eq!(f(math_call("sqrt", &[RubyValue::Int(4)])), 2.0);
-        assert_eq!(f(math_call("log2", &[RubyValue::Int(8)])), 3.0);
+        assert_eq!(f(call("sqrt", &[RubyValue::Int(4)])), 2.0);
+        assert_eq!(f(call("log2", &[RubyValue::Int(8)])), 3.0);
         assert_eq!(
-            f(math_call("hypot", &[RubyValue::Int(3), RubyValue::Int(4)])),
+            f(call("hypot", &[RubyValue::Int(3), RubyValue::Int(4)])),
             5.0
         );
         let quarter = crate::builtins::rational::rational_new(1.into(), 4.into()).unwrap();
-        assert_eq!(f(math_call("sqrt", &[quarter])), 0.5);
-        assert!(math_call("nope", &[]).is_none());
+        assert_eq!(f(call("sqrt", &[quarter])), 0.5);
+        assert!(call("nope", &[]).is_none());
     }
 
     #[test]
     fn negative_sqrt_is_a_domain_error() {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            math_call("sqrt", &[RubyValue::Int(-1)])
+            call("sqrt", &[RubyValue::Int(-1)])
         }));
         assert!(r.is_err()); // Math::DomainError, panicking registry-less
     }
