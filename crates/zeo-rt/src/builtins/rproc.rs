@@ -5,8 +5,8 @@
 //! default would be silent wrongness.
 
 use crate::RubyValue;
+use zeo_macros::ruby_class;
 use crate::builtins::arg_error;
-use crate::builtins::builtin_methods;
 
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     match recv {
@@ -15,17 +15,27 @@ fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Proc = zeo_abi::PROC_CLASS < zeo_abi::OBJECT_CLASS;
+
+    // `Proc.new { ... }` / `Proc.new(&b)` -- the block IS the proc, so return
+    // it. Without a block, CRuby (3.0+) raises ArgumentError rather than
+    // capturing the enclosing method's block.
+    def self."new"(_recv, _args, block) {
+        match block {
+            Some(p @ RubyValue::Proc(_)) => Ok(p),
+            _ => Err(arg_error!("tried to create Proc object without a block")),
+        }
+    }
 
     // `Proc#==`/`#eql?`: same underlying block. `dup`/`clone` share the block,
     // so a copy compares equal (unlike `equal?`, which is allocation identity).
-    "=="[1] | "eql?"[1] => fn proc_eq(recv, args, _block) {
+    def "==" arity 1 | "eql?" arity 1 (recv, args, _block) {
         let eq = matches!(&args[0], RubyValue::Proc(other) if recv_proc(recv).block_eq(other));
         Ok(RubyValue::Bool(eq))
     }
 
-    "call" | "()" | "[]" | "yield" | "===" => fn call(recv, args, block) {
+    def "call" | "()" | "[]" | "yield" | "==="(recv, args, block) {
         let p = recv_proc(recv);
         // Forward the call-site block to the proc's own `&block` param
         // (`->(&b) { b.call }.call { ... }`); `None` when no block, exactly
@@ -50,17 +60,17 @@ builtin_methods! {
             other => other,
         }
     }
-    "to_proc" => fn to_proc(recv, args, _block) {
+    def "to_proc"(recv, args, _block) {
         crate::builtins::arity!(args, 0);
         Ok(recv.clone())
     }
     // Both read the metadata codegen recorded from the block/lambda's own
     // static `Params` (see `RProc::with_meta`).
-    "arity" => fn proc_arity(recv, args, _block) {
+    def "arity"(recv, args, _block) {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Int(recv_proc(recv).arity() as i64))
     }
-    "lambda?" => fn lambda_p(recv, args, _block) {
+    def "lambda?"(recv, args, _block) {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
@@ -68,7 +78,7 @@ builtin_methods! {
     // the conformance harness disables the line map, so a proc's exact
     // origin isn't tracked; the pair's SHAPE and element types match CRuby
     // (`[String, Integer]`), which is what proc introspection relies on.
-    "source_location" => fn source_location(recv, args, _block) {
+    def "source_location"(recv, args, _block) {
         crate::builtins::arity!(args, 0);
         let _ = recv_proc(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
@@ -79,7 +89,7 @@ builtin_methods! {
     // `parameters` -- `[[kind, name], ...]` from the static signature codegen
     // recorded. A kind-only entry (anonymous `*`/`**`/`&`) is a one-element
     // array, matching CRuby.
-    "parameters" => fn parameters(recv, args, _block) {
+    def "parameters"(recv, args, _block) {
         crate::builtins::arity!(args, 0..=1);
         let p = recv_proc(recv);
         // `parameters(lambda:)` forces the reporting view (#2693): true reports
@@ -117,7 +127,7 @@ builtin_methods! {
     // application answers a FRESH curried proc -- `add.curry[1]` is reusable,
     // never mutating shared state (CRuby's `proc_curry` builds a new proc
     // per step the same way).
-    "curry" => fn curry(recv, args, _block) {
+    def "curry"(recv, args, _block) {
         crate::builtins::arity!(args, 0..=1);
         let p = recv_proc(recv).clone();
         let n = match args.first() {
@@ -137,7 +147,7 @@ builtin_methods! {
     // `(f << g).call(x)` is `f.call(g.call(x))`. The other operand is any
     // callable (Proc, Method, ...), invoked through its own `call`; the
     // result is a var-args lambda.
-    ">>" => fn compose_forward(recv, args, _block) {
+    def ">>"(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let f = recv_proc(recv).clone();
         // The composed proc's lambda-ness follows the FIRST function to run:
@@ -153,7 +163,7 @@ builtin_methods! {
             is_lambda,
         )))
     }
-    "<<" => fn compose_backward(recv, args, _block) {
+    def "<<"(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let f = recv_proc(recv).clone();
         let g = args[0].clone();
@@ -175,19 +185,6 @@ builtin_methods! {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    // `Proc.new { ... }` / `Proc.new(&b)` -- the block IS the proc, so return
-    // it. Without a block, CRuby (3.0+) raises ArgumentError rather than
-    // capturing the enclosing method's block.
-    "new" => fn new_m(_recv, _args, block) {
-        match block {
-            Some(p @ RubyValue::Proc(_)) => Ok(p),
-            _ => Err(arg_error!("tried to create Proc object without a block")),
-        }
-    }
-}
 
 /// One step of `Proc#curry`: a proc that either invokes the target (enough
 /// arguments collected) or answers the next curried step.
@@ -217,6 +214,11 @@ fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> Ruby
 mod tests {
     use super::*;
 
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::PROC_CLASS).unwrap()
+            .instance.as_ref().unwrap().lookup)(name).unwrap()
+    }
+
     #[test]
     fn case_eq_invokes_the_proc() {
         let doubler: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
@@ -226,7 +228,7 @@ mod tests {
             Ok(RubyValue::Int(i * 2))
         });
         let p = RubyValue::Proc(doubler);
-        let r = call(&p, &[RubyValue::Int(21)], None).unwrap();
+        let r = imethod("call")(&p, &[RubyValue::Int(21)], None).unwrap();
         assert!(matches!(r, RubyValue::Int(42)));
         assert!(lookup("===").is_some());
     }
@@ -254,7 +256,7 @@ mod tests {
         assert!(lookup("[]").is_some());
         assert!(lookup("()").is_some());
         assert!(lookup("yield").is_some());
-        let r = call(&adder3(), &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
+        let r = imethod("call")(&adder3(), &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
         assert!(matches!(r, RubyValue::Int(3)));
     }
 
@@ -264,16 +266,16 @@ mod tests {
     #[test]
     fn arity_and_lambda_p_read_the_recorded_metadata() {
         let p = adder3();
-        assert_eq!(proc_arity(&p, &[], None).unwrap().inspect_string(), "3");
-        assert_eq!(lambda_p(&p, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(imethod("arity")(&p, &[], None).unwrap().inspect_string(), "3");
+        assert_eq!(imethod("lambda?")(&p, &[], None).unwrap().inspect_string(), "true");
 
         let plain = RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)));
         assert_eq!(
-            proc_arity(&plain, &[], None).unwrap().inspect_string(),
+            imethod("arity")(&plain, &[], None).unwrap().inspect_string(),
             "-1"
         );
         assert_eq!(
-            lambda_p(&plain, &[], None).unwrap().inspect_string(),
+            imethod("lambda?")(&plain, &[], None).unwrap().inspect_string(),
             "false"
         );
     }
@@ -281,10 +283,10 @@ mod tests {
     /// `curry` collects arguments until the arity is satisfied, then calls.
     #[test]
     fn curry_collects_arguments_across_calls() {
-        let curried = curry(&adder3(), &[], None).unwrap();
-        let step1 = call(&curried, &[RubyValue::Int(1)], None).unwrap();
-        let step2 = call(&step1, &[RubyValue::Int(2)], None).unwrap();
-        let out = call(&step2, &[RubyValue::Int(3)], None).unwrap();
+        let curried = imethod("curry")(&adder3(), &[], None).unwrap();
+        let step1 = imethod("call")(&curried, &[RubyValue::Int(1)], None).unwrap();
+        let step2 = imethod("call")(&step1, &[RubyValue::Int(2)], None).unwrap();
+        let out = imethod("call")(&step2, &[RubyValue::Int(3)], None).unwrap();
         assert!(matches!(out, RubyValue::Int(6)));
     }
 
@@ -292,13 +294,13 @@ mod tests {
     /// immediately.
     #[test]
     fn curry_accepts_grouped_arguments() {
-        let curried = curry(&adder3(), &[], None).unwrap();
-        let step = call(&curried, &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
-        let out = call(&step, &[RubyValue::Int(3)], None).unwrap();
+        let curried = imethod("curry")(&adder3(), &[], None).unwrap();
+        let step = imethod("call")(&curried, &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
+        let out = imethod("call")(&step, &[RubyValue::Int(3)], None).unwrap();
         assert!(matches!(out, RubyValue::Int(6)));
 
-        let at_once = call(
-            &curry(&adder3(), &[], None).unwrap(),
+        let at_once = imethod("call")(
+            &imethod("curry")(&adder3(), &[], None).unwrap(),
             &[RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)],
             None,
         )
@@ -310,20 +312,20 @@ mod tests {
     /// accumulate arguments from a previous chain.
     #[test]
     fn each_curry_step_is_independent() {
-        let step = call(
-            &curry(&adder3(), &[], None).unwrap(),
+        let step = imethod("call")(
+            &imethod("curry")(&adder3(), &[], None).unwrap(),
             &[RubyValue::Int(10)],
             None,
         )
         .unwrap();
-        let a = call(
-            &call(&step, &[RubyValue::Int(1)], None).unwrap(),
+        let a = imethod("call")(
+            &imethod("call")(&step, &[RubyValue::Int(1)], None).unwrap(),
             &[RubyValue::Int(2)],
             None,
         )
         .unwrap();
-        let b = call(
-            &call(&step, &[RubyValue::Int(3)], None).unwrap(),
+        let b = imethod("call")(
+            &imethod("call")(&step, &[RubyValue::Int(3)], None).unwrap(),
             &[RubyValue::Int(4)],
             None,
         )
@@ -336,13 +338,13 @@ mod tests {
     /// each from a C function taking `*args`) -- oracle-verified.
     #[test]
     fn a_curried_proc_reports_var_args_arity_and_is_a_lambda() {
-        let curried = curry(&adder3(), &[], None).unwrap();
+        let curried = imethod("curry")(&adder3(), &[], None).unwrap();
         assert_eq!(
-            proc_arity(&curried, &[], None).unwrap().inspect_string(),
+            imethod("arity")(&curried, &[], None).unwrap().inspect_string(),
             "-1"
         );
         assert_eq!(
-            lambda_p(&curried, &[], None).unwrap().inspect_string(),
+            imethod("lambda?")(&curried, &[], None).unwrap().inspect_string(),
             "true"
         );
     }
@@ -353,9 +355,9 @@ mod tests {
         let var_args = RubyValue::Proc(crate::RProc::new(|args: &[RubyValue]| {
             Ok(RubyValue::Int(args.len() as i64))
         }));
-        let curried = curry(&var_args, &[RubyValue::Int(2)], None).unwrap();
-        let step = call(&curried, &[RubyValue::Int(1)], None).unwrap();
-        let out = call(&step, &[RubyValue::Int(2)], None).unwrap();
+        let curried = imethod("curry")(&var_args, &[RubyValue::Int(2)], None).unwrap();
+        let step = imethod("call")(&curried, &[RubyValue::Int(1)], None).unwrap();
+        let out = imethod("call")(&step, &[RubyValue::Int(2)], None).unwrap();
         assert!(matches!(out, RubyValue::Int(2)));
     }
 
@@ -369,7 +371,7 @@ mod tests {
             false,
         ));
         // min = 1, so one argument completes it.
-        let out = call(&curry(&p, &[], None).unwrap(), &[RubyValue::Int(9)], None).unwrap();
+        let out = imethod("call")(&imethod("curry")(&p, &[], None).unwrap(), &[RubyValue::Int(9)], None).unwrap();
         assert!(matches!(out, RubyValue::Int(1)));
     }
 }
