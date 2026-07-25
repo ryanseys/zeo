@@ -72,7 +72,7 @@ const RUNTIME_CRATES: &[&str] = &[
     // the generated runtime, and `zeo` has no cargo edge to catch it, so the
     // stat-gate must watch them too.
     "zeo-macros",
-    "zeo-class-spec",
+    "zeo-dsl",
 ];
 
 /// The workspace root -- two levels up from `crates/zeo` (this crate's

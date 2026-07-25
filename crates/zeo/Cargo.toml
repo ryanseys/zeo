@@ -22,7 +22,7 @@ tracing-subscriber.workspace = true
 # runtime's ruby_class!/ruby_module! headers with the SAME grammar the macro
 # uses -- so the compiler's folding view can't drift from what the runtime
 # registers. See build.rs.
-zeo-class-spec.workspace = true
+zeo-dsl.workspace = true
 syn.workspace = true
 proc-macro2.workspace = true
 

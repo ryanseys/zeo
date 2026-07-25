@@ -1569,7 +1569,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zeo-abi",
- "zeo-class-spec",
+ "zeo-dsl",
 ]
 
 [[package]]
@@ -1577,7 +1577,7 @@ name = "zeo-abi"
 version = "0.1.0"
 
 [[package]]
-name = "zeo-class-spec"
+name = "zeo-dsl"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -1593,7 +1593,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
- "zeo-class-spec",
+ "zeo-dsl",
 ]
 
 [[package]]

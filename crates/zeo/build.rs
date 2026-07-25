@@ -6,7 +6,7 @@
 //! build script bridges the gap WITHOUT a cargo dependency edge (which would be
 //! a cycle): it reads `zeo-rt/src/builtins/*.rs` as SOURCE, finds every
 //! `ruby_class!`/`ruby_module!` invocation, and parses each with the SHARED
-//! `zeo-class-spec` grammar -- the exact parser the proc-macro uses, so the
+//! `zeo-dsl` grammar -- the exact parser the proc-macro uses, so the
 //! compiler's folding view can never drift from what the runtime registers.
 //!
 //! It emits `$OUT_DIR/class_surface.rs`: a `CLASS_SURFACE` table written
@@ -20,7 +20,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use syn::parse::Parser;
-use zeo_class_spec::ClassSpec;
+use zeo_dsl::ClassSpec;
 
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");

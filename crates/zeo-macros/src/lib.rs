@@ -6,7 +6,7 @@
 //! feeds the deferred shape projection), so the emitted code is identical given
 //! the same methods/constants.
 //!
-//! Parses the DSL with the shared [`zeo_class_spec`] grammar and emits, for one
+//! Parses the DSL with the shared [`zeo_dsl`] grammar and emits, for one
 //! Ruby core class/module, everything the RUNTIME needs -- drift-free with the
 //! hand-written `builtin_methods!` it replaces:
 //!
@@ -41,7 +41,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse::Parser;
 use syn::Ident;
-use zeo_class_spec::ClassSpec;
+use zeo_dsl::ClassSpec;
 
 /// A Ruby class: `ruby_class! { Float = FLOAT_CLASS < NUMERIC_CLASS; def ... }`.
 #[proc_macro]

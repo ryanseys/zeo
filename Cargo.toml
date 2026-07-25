@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/zeo",
     "crates/zeo-abi",
-    "crates/zeo-class-spec",
+    "crates/zeo-dsl",
     "crates/zeo-macros",
     "crates/zeo-rt",
     "crates/xtask",
@@ -25,7 +25,7 @@ license = "MIT OR Apache-2.0"
 # Path deps between workspace crates, so members spell them uniformly.
 zeo = { path = "crates/zeo" }
 zeo-abi = { path = "crates/zeo-abi" }
-zeo-class-spec = { path = "crates/zeo-class-spec" }
+zeo-dsl = { path = "crates/zeo-dsl" }
 zeo-macros = { path = "crates/zeo-macros" }
 # The parser: prism, CRuby's own default parser since 3.4.
 ruby-prism = "1.9.0"

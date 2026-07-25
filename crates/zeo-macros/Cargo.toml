@@ -10,10 +10,10 @@ proc-macro = true
 
 [dependencies]
 # The `ruby_class! { ... }` proc-macro: parses the DSL with the shared
-# zeo-class-spec grammar and emits the runtime code (method fns, ClassId-keyed
+# zeo-dsl grammar and emits the runtime code (method fns, ClassId-keyed
 # lookup tables, constant installers, and the linkme registration). See
 # src/lib.rs.
-zeo-class-spec.workspace = true
+zeo-dsl.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
