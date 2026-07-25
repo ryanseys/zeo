@@ -4,9 +4,10 @@
 //! bytes and the constant-time comparison helpers. The `Cipher`/`PKey`/`SSL`
 //! surface still needs an FFI or rustls backend (see docs/EXTENSIONS.md).
 
-use crate::builtins::{arg_error, arity, builtin_methods};
+use crate::builtins::{arg_error, arity};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
+use zeo_macros::ruby_module;
 
 /// The bytes of a String argument, through the `to_str` protocol.
 fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
@@ -38,12 +39,15 @@ fn fill_random(buf: &mut [u8]) -> Result<(), Signal> {
         .map_err(|e| raise_error("OpenSSL::Random::RandomError", format!("RAND_bytes: {e}")))
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    OpenSSL = zeo_abi::OPENSSL_MODULE;
 
+    // `random_bytes` belongs to the `OpenSSL::Random` module and the two
+    // compares to `OpenSSL` itself; zeo collapses both onto OPENSSL_MODULE and
+    // dispatches them as class methods, so all three migrate as `def self.`.
     // `OpenSSL::Random.random_bytes(n)` -- n cryptographically random bytes
     // (ASCII-8BIT), drawn from the OS CSPRNG.
-    "random_bytes" => fn random_bytes(_recv, args, _block) {
+    def self."random_bytes" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         if *n < 0 {
@@ -55,7 +59,7 @@ builtin_methods! {
     }
     // `OpenSSL.fixed_length_secure_compare(a, b)` -- constant-time equality;
     // raises ArgumentError when the lengths differ.
-    "fixed_length_secure_compare" => fn fixed_length_secure_compare(_recv, args, _block) {
+    def self."fixed_length_secure_compare" arity 2 (_recv, args, _block) {
         arity!(args, 2);
         let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
         if a.len() != b.len() {
@@ -65,7 +69,7 @@ builtin_methods! {
     }
     // `OpenSSL.secure_compare(a, b)` -- length-independent constant-time
     // equality (true iff the strings are equal).
-    "secure_compare" => fn secure_compare(_recv, args, _block) {
+    def self."secure_compare" arity 2 (_recv, args, _block) {
         arity!(args, 2);
         let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
         Ok(RubyValue::Bool(constant_time_eq(&a, &b)))
@@ -80,10 +84,20 @@ mod tests {
     fn s(text: &str) -> RubyValue {
         RubyValue::Str(string_new(text.to_string()))
     }
+    /// `OpenSSL`'s `ruby_module!`-generated functions have mangled Rust idents,
+    /// so the tests call them through the registered class-method `lookup`.
+    fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::OPENSSL_MODULE)
+            .expect("OpenSSL is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("OpenSSL has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("OpenSSL.{name} is defined"))
+    }
 
     #[test]
     fn random_bytes_returns_requested_length() {
-        let r = random_bytes(&RubyValue::Nil, &[RubyValue::Int(16)], None).unwrap();
+        let r = f("random_bytes")(&RubyValue::Nil, &[RubyValue::Int(16)], None).unwrap();
         let RubyValue::Str(bytes) = r else {
             panic!("expected a String")
         };
@@ -93,16 +107,16 @@ mod tests {
     #[test]
     fn secure_compare_matches_equality() {
         assert!(matches!(
-            secure_compare(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(),
+            f("secure_compare")(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            secure_compare(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(),
+            f("secure_compare")(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(),
             RubyValue::Bool(false)
         ));
         // Different lengths compare unequal (never raise, unlike fixed_length).
         assert!(matches!(
-            secure_compare(&RubyValue::Nil, &[s("abc"), s("abcd")], None).unwrap(),
+            f("secure_compare")(&RubyValue::Nil, &[s("abc"), s("abcd")], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
@@ -112,11 +126,11 @@ mod tests {
         // The unequal-length ArgumentError path needs a class registry (it
         // panics registry-less), so it is exercised by the e2e example instead.
         assert!(matches!(
-            fixed_length_secure_compare(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(),
+            f("fixed_length_secure_compare")(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            fixed_length_secure_compare(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(),
+            f("fixed_length_secure_compare")(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }

@@ -377,8 +377,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_class,
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_class,
         zeo_abi::TCPSOCKET_CLASS => crate::ext::socket::lookup_tcpsocket_class,
-        #[cfg(feature = "ext-openssl")]
-        zeo_abi::OPENSSL_MODULE => crate::ext::openssl::lookup_class,
+        // OPENSSL_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-ffi")]
         zeo_abi::FFI_POINTER_CLASS => crate::ext::ffi::lookup_class_pointer,
         #[cfg(feature = "ext-ffi")]
