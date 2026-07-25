@@ -1,10 +1,10 @@
 //! The built-in exception hierarchy, hand-written natively.
 //!
-//! Every generated program used to embed ~6,600 lines of `ruby_class!`-expanded
-//! exception classes (`Exception`, `StandardError`, the whole tree) plus a
-//! factory -- ~76% of the smallest program, recompiled cold once per binary.
-//! Those classes are FIXED (the same in every program), so they belong compiled
-//! once, here. `register_exceptions` installs them into a program's
+//! The exception classes (`Exception`, `StandardError`, the whole tree) are
+//! FIXED -- identical in every program -- so they are compiled once here
+//! instead of embedding ~6,600 lines of `ruby_class!`-expanded classes plus a
+//! factory into every binary (~76% of the smallest program, recompiled cold
+//! once per binary). `register_exceptions` installs them into a program's
 //! `ClassRegistry` at the ids `zeo-abi` reserves for them (`EXCEPTION_CLASSES`),
 //! which the compiler independently assigns the same way and asserts.
 //!
@@ -13,8 +13,8 @@
 //! `backtrace`/`full_message`/`inspect`) plus `StopIteration`'s two are shared
 //! fn pointers that read the receiver's class dynamically. The compiler keeps the
 //! exception HIR (for resolving names, inlining `super`, and materializing user
-//! subclasses), so a `class MyError < StandardError` is unchanged -- only the
-//! fixed classes themselves move here.
+//! subclasses), so a `class MyError < StandardError` works normally; only the
+//! fixed classes live here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1051,10 +1051,10 @@ fn exc_class_to_tty(
 }
 
 /// Install the whole built-in exception hierarchy into `registry`. Called from
-/// `ClassRegistry::with_core` in place of the ~6,600 lines of `ruby_class!`
-/// blocks each program used to emit. Ancestors come from the single core-class
-/// linearizer (`declared_ancestors`), so `rescue`/`is_a?` agree with the
-/// compiler's own materialized `ancestors`.
+/// `ClassRegistry::with_core`, so the fixed classes install here instead of
+/// emitting ~6,600 lines of `ruby_class!` blocks into each program. Ancestors
+/// come from the single core-class linearizer (`declared_ancestors`), so
+/// `rescue`/`is_a?` agree with the compiler's own materialized `ancestors`.
 pub fn register_exceptions(registry: &mut ClassRegistry) {
     for row in EXCEPTION_CLASSES {
         let ancestors = declared_ancestors(row.id);

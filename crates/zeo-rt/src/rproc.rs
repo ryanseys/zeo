@@ -320,8 +320,7 @@ impl RProc {
 
     /// This proc's allocation address, as `Hash`-key identity and
     /// `#object_id` need it -- the same notion `ptr_eq` compares, exposed as
-    /// a value. (Previously spelled `&**p` at the call sites, via a `Deref`
-    /// that no longer exists.)
+    /// a value.
     pub fn ptr_id(&self) -> usize {
         Arc::as_ptr(&self.0) as *const () as usize
     }

@@ -25,7 +25,7 @@ fn an_escaping_block_can_mutate_an_ivar_via_self_capture() {
     // is written inside `Box#run` (so `self`/`@sum` are in scope there) and
     // passed to a call on an EXPLICIT other receiver (`c`, a Collector
     // constructed directly as a LOCAL, not taken as a method parameter --
-    // method params are always statically `Poly` in this spike, a separate
+    // method params are always statically `Poly`, a separate
     // pre-existing gap; a `New`-assigned local's class IS statically known,
     // so this routes around that while still exercising real self-capture.
     // Implicit-self calls to a user method are ALSO a separate, unrelated,
@@ -655,7 +655,7 @@ fn class_shift_self_methods_can_read_and_write_class_variables() {
 
 #[test]
 fn class_shift_a_constant_object_defines_its_singleton() {
-    // #97 F3: `class << CONST` on a constant-bound object installs per-object
+    // `class << CONST` on a constant-bound object installs per-object
     // singleton methods on it (previously a clean rejection).
     let result = run_ruby(
         r#"
@@ -676,7 +676,7 @@ fn class_shift_a_constant_object_defines_its_singleton() {
 
 #[test]
 fn class_shift_self_constants_are_visible_to_the_singletons_class_methods() {
-    // #96 harness-surfaced: the dominant `class << self` stdlib idiom (e.g.
+    // The dominant `class << self` stdlib idiom (e.g.
     // URI's `class << self; RESERVED = ...; def escape; ...RESERVED...; end`)
     // defines constants alongside the class methods that reference them. The
     // constant is spliced onto the enclosing class, whose class methods resolve
@@ -791,7 +791,7 @@ fn compound_assignment_on_a_plain_non_class_constant_dispatches_correctly() {
 
 #[test]
 fn module_metaprogramming_attr_class_eval_exec_and_invented_ivars() {
-    // Batch 2: attr (== attr_reader), class_eval/module_exec block forms whose
+    // attr (== attr_reader), class_eval/module_exec block forms whose
     // added methods are inherited by subclasses and includers, and an
     // invented ivar (assigned by a class_eval/instance_exec body, never
     // declared on the struct) surviving in the per-object overflow map.
@@ -832,7 +832,7 @@ fn module_metaprogramming_attr_class_eval_exec_and_invented_ivars() {
 
 #[test]
 fn object_protocol_remove_ivar_singleton_class_method_and_extend() {
-    // Batch 1 object/Kernel protocol: remove_instance_variable (value + NameError),
+    // Object/Kernel protocol: remove_instance_variable (value + NameError),
     // singleton_class (on an object and a builtin value), singleton_method, and
     // extend across every module kind -- a user compile-time module and a builtin
     // module (Comparable) -- reaching the object's singleton table.
@@ -1217,10 +1217,10 @@ fn const_struct_matches_the_oracle() {
     );
 }
 
-/// The Batch-E flip retired compile-time Struct synthesis, so the constant form
-/// is the SAME runtime mint as the anonymous form -- and the runtime
-/// `Struct.new("Name", :a)` accepts the legacy string-name argument instead of
-/// rejecting it at compile time. zeo names the class `Name`; CRuby's legacy
+/// The constant form is the SAME runtime mint as the anonymous form (no
+/// compile-time Struct synthesis), so the runtime `Struct.new("Name", :a)`
+/// accepts the legacy string-name argument instead of rejecting it at compile
+/// time. zeo names the class `Name`; CRuby's legacy
 /// behaviour namespaces it `Struct::Name` -- a known divergence shared with the
 /// anonymous path, not worth reintroducing a compile-time special case for.
 #[test]

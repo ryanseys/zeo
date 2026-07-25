@@ -1,6 +1,6 @@
 //! The runtime's view of the encoding engine -- a re-export of the `crate::enc`
-//! module (formerly the `zeo-enc` crate), so the builtins keep reading
-//! `crate::encoding::X` unchanged, plus the ONE piece that cannot live there:
+//! module, so the builtins read `crate::encoding::X`, plus the ONE piece that
+//! cannot live there:
 //! mapping the engine's plain error values onto real Ruby exceptions
 //! (`Signal`). `crate::enc` knows nothing of the runtime's dispatch layer.
 

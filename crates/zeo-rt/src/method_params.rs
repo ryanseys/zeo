@@ -79,8 +79,9 @@ pub fn arity(class: ClassId, name: Symbol) -> Option<i64> {
         return Some(arity_of(&d));
     }
     // A builtin (C-defined) method has no `Params` descriptor -- its arity is
-    // the argc declared at its `builtin_methods!` definition site. Walk the
-    // receiver's ancestry so an inherited builtin resolves against its owner.
+    // the argc declared in its class's `ruby_class!`/`ruby_module!` definition.
+    // Walk the receiver's ancestry so an inherited builtin resolves against its
+    // owner.
     let n = name.name();
     let n = n.as_str();
     crate::dispatch::ancestors_of_value(class)

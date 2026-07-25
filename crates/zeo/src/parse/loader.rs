@@ -1,16 +1,13 @@
-//! Compile-time `require`/`require_relative`/`load` resolution (Phase
-//! 14.1): an HIR-level graft, not text surgery. When the FILE-LEVEL
+//! Compile-time `require`/`require_relative`/`load` resolution: an
+//! HIR-level graft, not text surgery. When the FILE-LEVEL
 //! statement loop below hits one of the three call shapes (receiver-less,
 //! single string-literal argument, direct top-level statement position --
 //! anywhere else, `lower_node`'s unconditional rejection fires instead),
 //! the target file is resolved, parsed, and lowered into the SAME `Hir`
 //! arena, its statements spliced into the requiring file's statement list
-//! at the call's position, in document order -- the same contract as the
-//! reference zeo's `sp_included_paths` textual splice, with two
-//! deliberate improvements over it: dedup + provenance are per-`Hir`
-//! (`Hir::loaded_files`) instead of process-global C statics, and each
-//! spliced file's top-level locals are renamed for real per-file isolation
-//! (see `parse::rename`) where zeo's text splice silently leaks them.
+//! at the call's position, in document order. Dedup and provenance are
+//! per-`Hir` (`Hir::loaded_files`), and each spliced file's top-level locals
+//! are renamed for real per-file isolation (see `parse::rename`).
 //!
 //! Faithfulness contract (each verified against CRuby source and/or
 //! empirically -- see the plan's Part 12 addendum):
@@ -523,8 +520,8 @@ impl Loader {
         // `wrap` form -- has no compile-time meaning. `Ok(None)` signals the
         // caller to leave the call in place so the ordinary lowering dispatches
         // it to the runtime `Kernel#{require,load}` (which raises `LoadError`
-        // when actually run); the whole compile no longer fails on a guarded
-        // dynamic load. A LITERAL one-arg `require`/`require_relative`/`load`
+        // when actually run); a guarded dynamic load never fails the whole
+        // compile. A LITERAL one-arg `require`/`require_relative`/`load`
         // still resolves and splices at compile time below.
         if arg_list.len() != 1 {
             return Ok(None);
@@ -1216,7 +1213,7 @@ fn cannot_load(name: &str) -> String {
     // mruby's unclaimed win: when the name is a well-known gem with a NATIVE
     // half zeo has no static ext for, say so -- otherwise it reads like an
     // unsupported language feature rather than "this gem isn't linked in".
-    // FFI (#161/#204) is the future escape hatch this points at.
+    // FFI is the future escape hatch this points at.
     if is_known_native_gem(name) {
         return format!(
             "cannot load such file -- {name}: this gem has a native (C) extension \
@@ -1234,8 +1231,8 @@ fn cannot_load(name: &str) -> String {
 fn is_known_native_gem(name: &str) -> bool {
     matches!(
         name,
-        // `ffi` is NOT here: zeo provides it (the compile-time FFI frontend,
-        // #204), so `require "ffi"` succeeds via `is_builtin_feature`.
+        // `ffi` is NOT here: zeo provides it (the compile-time FFI frontend),
+        // so `require "ffi"` succeeds via `is_builtin_feature`.
         "sqlite3"
             | "nokogiri"
             | "pg"

@@ -693,7 +693,7 @@ pub fn emit_call_args_to(
 /// The Path 2 (dynamic `send`/`method_missing`) trampoline body for a
 /// method declaring `params` -- a full closure expression spliced into the
 /// `dispatch { name => expr }` section of a `ruby_class!` invocation (see
-/// `zeo_rt::ruby_class!`'s docs for why the macro no longer DERIVES this
+/// `zeo_rt::ruby_class!`'s docs for why the macro does NOT DERIVE this
 /// from the method's own Rust signature: an exact-length slice-pattern
 /// match can't express "these two are optional" the way ordinary Rust
 /// control flow can, so zeo authors this once, here, using the same
@@ -960,8 +960,8 @@ pub fn emit_value_trampoline(
     }
 }
 
-/// The `MethodFn` trampoline for a native-exception reopen/subclass method
-/// (D3): identical arity/keyword handling to `emit_value_trampoline`, but the
+/// The `MethodFn` trampoline for a native-exception reopen/subclass method:
+/// identical arity/keyword handling to `emit_value_trampoline`, but the
 /// receiver is a `&RObj` (the flat `methods` table `define_method` registers
 /// into) rather than a `&RubyValue`, so it BOXES the object into the
 /// `RubyValue::Object` self the `emit_builtin_method_fn`-shaped body takes.
@@ -1056,7 +1056,7 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
 /// The runtime remaps leading requireds to `:opt` for a proc-view report (see
 /// `builtins::rproc::parameters`), which also lets `#parameters(lambda:)` force
 /// either view. A parenthesized destructuring slot (`__destr_<i>`) reports no
-/// name; `is_lambda` no longer affects the stored kinds.
+/// name; `is_lambda` does not affect the stored kinds.
 pub(super) fn proc_parameters(params: &Params, _is_lambda: bool) -> TokenStream {
     fn mk(kind: &str, name: Option<&str>) -> TokenStream {
         let name_tok = match name {

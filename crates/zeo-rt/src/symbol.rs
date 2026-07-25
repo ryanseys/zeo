@@ -1,14 +1,9 @@
-//! A Ruby symbol. Mirrors zeo's `sp_sym` (`lib/sp_types.h`) -- an interned
-//! integer id -- but simplified here to pure runtime interning via a
-//! `HashMap`, rather than zeo's split of a codegen-baked static name table
-//! plus a small dynamic intern pool (`sp_sym_names`/`sp_dyn_syms`,
-//! `codegen.c:4460-4478`). Every literal AND every runtime-computed symbol
-//! goes through the same `Symbol::intern`, so two occurrences of the same
-//! name -- however they were produced -- always compare equal. A
-//! codegen-baked static table (matching zeo exactly) is a straightforward
-//! later optimization; see `docs/PORTING_ANALYSIS.md`.
+//! A Ruby symbol: an interned integer id. Interning is pure runtime via a
+//! `HashMap` -- every literal and every runtime-computed symbol goes through
+//! the same `Symbol::intern`, so two occurrences of the same name always
+//! compare equal, however they were produced.
 //!
-//! Genuinely process-wide-shared (Part 9), not per-thread: real CRuby's
+//! Genuinely process-wide-shared, not per-thread: real CRuby's
 //! Symbol table is shared across every `Thread`/`Ractor` -- two threads
 //! interning `:foo` must get the SAME id, which a `thread_local!` interner
 //! could never guarantee (each thread would build its own independent
@@ -31,8 +26,7 @@ struct Interner {
 static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(|| Mutex::new(Interner::default()));
 
 impl Symbol {
-    /// Mirrors `sp_sym_intern` (codegen.c:4470): look up or insert `name`,
-    /// returning a stable id either way.
+    /// Look up or insert `name`, returning a stable id either way.
     pub fn intern(name: &str) -> Symbol {
         let mut i = INTERNER.lock();
         if let Some(&id) = i.by_name.get(name) {
@@ -44,7 +38,6 @@ impl Symbol {
         Symbol(id)
     }
 
-    /// Mirrors `sp_sym_to_s`.
     /// The raw interner id -- stable for the process lifetime (the basis of
     /// `Symbol#object_id`'s derived value).
     pub fn to_u32(self) -> u32 {

@@ -1,6 +1,5 @@
-//! Native `Struct`/`Data` (Batch E) -- the CRuby-faithful RUNTIME model, the
-//! single path for `Struct.new`/`Data.define` in every position (the old
-//! compile-time source-text synthesis for the constant form has been retired).
+//! Native `Struct`/`Data` -- the CRuby-faithful RUNTIME model, the single path
+//! for `Struct.new`/`Data.define` in every position.
 //!
 //! `Struct.new(:a, :b)` and `Data.define(:a, :b)` MINT A REAL CLASS at runtime
 //! (an overlay class id rooted at `STRUCT_CLASS`/`DATA_CLASS`), so a struct is a
@@ -17,11 +16,11 @@
 //! are the only per-class methods: native `MethodImpl::Dynamic` closures that
 //! index a captured slot, installed on the minted class's overlay entry.
 //!
-//! DIVERGENCE (the cost of the flip): because a struct class is a RUNTIME value
-//! rather than a compile-time class, it cannot be a STATIC superclass. A
-//! two-step `Point = Struct.new(:x, :y); class Foo < Point` fails to compile
-//! (`unknown superclass Point`), where the old compile-time synthesis allowed
-//! it. The commoner inline idiom `class Foo < Struct.new(...)` was never
+//! DIVERGENCE: because a struct class is a RUNTIME value rather than a
+//! compile-time class, it cannot be a STATIC superclass. A two-step
+//! `Point = Struct.new(:x, :y); class Foo < Point` fails to compile
+//! (`unknown superclass Point`). The commoner inline idiom
+//! `class Foo < Struct.new(...)` was never
 //! supported anyway (a superclass expression isn't statically resolvable), and
 //! runtime struct subclasses (`class Bar < baz` for a runtime `baz`) inherit
 //! members correctly via `meta_of`'s ancestor walk. Full compile-time
@@ -205,7 +204,7 @@ impl RubyObject for StructInstance {
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         // A `Data` instance is frozen by construction and stays frozen through
-        // every copy -- dup and clone(freeze: false) alike (#2716); a `Struct`
+        // every copy -- dup and clone(freeze: false) alike; a `Struct`
         // copy follows the ordinary rule (dup never freezes, clone copies it).
         let is_data = meta_of(self.class_id).is_some_and(|m| m.is_data);
         Arc::new(StructInstance {

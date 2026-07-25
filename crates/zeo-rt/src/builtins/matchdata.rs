@@ -241,8 +241,7 @@ ruby_class! {
 #[cfg(test)]
 mod tests {
     /// The `ruby_class!`-generated table projects the per-name `arity N`
-    /// annotations (the old `"name"[N]` columns) into `Method#arity`, so this
-    /// pins that mapping -- the riskiest part of the mechanical conversion.
+    /// annotations into `Method#arity`; this pins that mapping.
     #[test]
     fn the_table_resolves_methods_and_projects_arity() {
         let tbl = crate::builtins::registered_table(zeo_abi::MATCH_DATA_CLASS)

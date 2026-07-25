@@ -92,7 +92,7 @@ ruby_class! {
     def "parameters"(recv, args, _block) {
         crate::builtins::arity!(args, 0..=1);
         let p = recv_proc(recv);
-        // `parameters(lambda:)` forces the reporting view (#2693): true reports
+        // `parameters(lambda:)` forces the reporting view: true reports
         // plain positionals as :req, false as :opt, nil/absent follows the
         // receiver's own lambda-ness. Kinds are stored canonically (lambda
         // style), so a proc-view report demotes every mandatory positional

@@ -5,11 +5,9 @@ use crate::enc::table::EncKind;
 use crate::enc::transcode::{Unit, decode_utf8};
 
 /// `String#inspect`: the double-quoted, escaped rendering. Printable
-/// characters keep Rust's own debug escaping (which the runtime already
-/// relied on); a byte that isn't a character in this string's encoding --
-/// broken UTF-8, or a high byte of a non-Unicode encoding -- becomes
-/// `\xNN`, exactly as CRuby shows it. For an all-UTF-8, all-valid string
-/// this is byte-for-byte the old `format!("{:?}", s)`.
+/// characters keep Rust's own debug escaping; a byte that isn't a character
+/// in this string's encoding -- broken UTF-8, or a high byte of a
+/// non-Unicode encoding -- becomes `\xNN`, exactly as CRuby shows it.
 pub fn inspect(buf: &StrBuf) -> String {
     let mut out = String::from("\"");
     match buf.encoding().kind() {

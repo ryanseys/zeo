@@ -144,7 +144,7 @@ fn for_loop_over_range_and_array() {
     // use); an `Array`'s elements aren't tracked per-element (`Poly`), so the
     // array case just displays each value -- arithmetic on a `Poly`-typed
     // value is an existing, documented gap (see `codegen::call`'s
-    // `INT_BINARY_OPS` docs), not something this phase changes.
+    // `INT_BINARY_OPS` docs), not something this test exercises.
     let result = run_ruby(
         r#"
         sum = 0
@@ -250,10 +250,9 @@ fn redo_inside_a_yielded_block_reruns_without_advancing() {
 
 #[test]
 fn runtime_define_method_in_a_class_body_loop() {
-    // #97 F2: a class-body `each` loop (F2a: class-body statements now run)
-    // whose `define_method` block captures the loop variable (F2b: nested
-    // block capturing the outer block's own local) installs each method into
-    // the runtime overlay, reachable on every instance and by `respond_to?`.
+    // A class-body `each` loop whose `define_method` block captures the loop
+    // variable installs each method into the runtime overlay, reachable on
+    // every instance and by `respond_to?`.
     let result = run_ruby(
         r##"
         class Robot
@@ -378,8 +377,7 @@ fn regexp_case_eq_and_source() {
 fn case_when_dispatches_via_real_regexp_case_eq() {
     // Method wrapped in a class, not a top-level `def` -- calling a
     // top-level-defined method is a separate, pre-existing, unrelated gap
-    // (confirmed via a plain, regex-free repro), not something this phase
-    // introduces or should fix as a side effect.
+    // (confirmed via a plain, regex-free repro), out of scope here.
     let result = run_ruby(
         r#"
         class Checker
@@ -756,12 +754,12 @@ fn next_from_a_block_passed_to_a_singleton_method_is_its_yield_value() {
 }
 
 /// `case`/`when`, an `in` value/pin pattern, and `grep` all dispatch the
-/// pattern's own `===`. The native ladder they used to share bottomed out in
-/// `==`, so a user class whose `===` differs from its `==` silently took the
-/// WRONG branch, a singleton `===` on a class was ignored, and `lazy.grep`
-/// disagreed with eager `grep` on the same pattern. An Object-typed pin was
-/// worse than wrong: it emitted a bare `Arc<Even>`, and the GENERATED program
-/// failed to compile. The builtin pattern shapes must keep their meaning.
+/// pattern's own `===`. A shared native ladder bottoming out in `==` would
+/// make a user class whose `===` differs from its `==` silently take the
+/// WRONG branch, ignore a singleton `===` on a class, and make `lazy.grep`
+/// disagree with eager `grep` on the same pattern. An Object-typed pin is
+/// worse than wrong: emitting a bare `Arc<Even>` makes the GENERATED program
+/// fail to compile. The builtin pattern shapes must keep their meaning.
 #[test]
 fn case_equality_dispatches_a_user_defined_triple_equals() {
     let result = run_ruby(

@@ -1,9 +1,8 @@
 //! `Comparable` (CRuby compar.c) -- each method drives the receiver's own
 //! `<=>` through FULL dynamic dispatch (`send_value`), so one
 //! implementation serves user objects (registry `<=>`) and builtin values
-//! (`String#<=>`/`Integer#<=>` table rows) alike -- a rework
-//! that retired the `&RObj`-only version and made `"abc" < "abd"` resolve
-//! String(no `<`) -> Comparable -> `String#<=>`.
+//! (`String#<=>`/`Integer#<=>` table rows) alike -- `"abc" < "abd"` resolves
+//! String (no `<`) -> Comparable -> `String#<=>`.
 //!
 //! Dispatched like any other builtin module: `class_table`/
 //! `class_arity_table` map `COMPARABLE_CLASS` to this table's generated
@@ -11,8 +10,8 @@
 //! ancestor hit.
 //!
 //! Real Ruby raises `ArgumentError: comparison of X with Y failed` when
-//! `<=>` answers nil; with the exception factory that is now a
-//! real rescuable raise. A MISSING `<=>` propagates the NoMethodError the
+//! `<=>` answers nil; here that is a real rescuable raise.
+//! A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
 use crate::builtins::{arg_error, arity, type_error};
@@ -125,8 +124,8 @@ ruby_module! {
 mod tests {
     use super::*;
 
-    /// The old pre-table dispatcher's shape, kept as a test-local helper so
-    /// the coverage below reads unchanged: `None` = not a Comparable method.
+    /// A test-local dispatch helper wrapping `lookup`, so the coverage below
+    /// reads uniformly: `None` = not a Comparable method.
     fn comparable_send(
         recv: &RubyValue,
         name: &str,

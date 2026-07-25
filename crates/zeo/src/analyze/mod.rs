@@ -67,8 +67,8 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // and before any user class -- `Math::DomainError` and the per-box
     // surrogates -- so the exceptions keep the FIXED id block
     // `zeo-abi` reserves for them (63..108) regardless of box or user-class
-    // count. The box surrogates used to be created before the whole analyze
-    // pass, which stole those ids the moment a program allocated a box. See
+    // count. Creating the box surrogates before the analyze pass would
+    // steal those ids the moment a program allocated a box. See
     // `pin_builtin_exceptions_tail`.
     let mut tail_pinned = false;
     for (idx, stmt) in statements.into_iter().enumerate() {
@@ -938,7 +938,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         0,
         None,
     )?;
-    // `SyntaxError < ScriptError` (#97 stage 2) -- the eval VM's parse-failure
+    // `SyntaxError < ScriptError` -- the eval VM's parse-failure
     // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
     // immediately after `Math::DomainError`, leaving every other exception id
     // fixed; `zeo-abi::EXCEPTION_CLASSES` reserves the matching id.
@@ -1043,7 +1043,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
 /// If a top-level `CONST = <class value>` constant aliases an existing class
 /// (`CONST = SomeClass`, `CONST = A::B`, or `CONST = <literal>.class`), the
 /// aliased `ClassId`. Real Ruby's `class CONST; ...; end` REOPENS that class
-/// (the #1036 `INTEGER_KLASS = 1.class; class INTEGER_KLASS; ...` shape),
+/// (the `INTEGER_KLASS = 1.class; class INTEGER_KLASS; ...` shape),
 /// rather than minting a fresh one named `CONST`.
 fn const_alias_target(compiler: &Compiler, leaf: &str, box_id: u32) -> Option<ClassId> {
     let value = compiler.hir.nodes().iter().find_map(|n| match n {
@@ -1316,7 +1316,7 @@ fn register_class(
             // `Class`/`Module` themselves have no per-value dispatch to hang a
             // reopen method on, so they stay unsupported. Every OTHER builtin
             // module (`Enumerable`/`Comparable`/`Kernel`/`Math`) now accepts a
-            // reopen (D3): its added methods register as value methods on the
+            // reopen: its added methods register as value methods on the
             // module id, found by the MRO walk for every includer.
             if ci.is_module == is_module && (cid == CLASS_CLASS || cid == MODULE_CLASS) {
                 return Err(format!(
@@ -1326,7 +1326,7 @@ fn register_class(
             }
             // A reopen may RESTATE the builtin's superclass (`class String <
             // Object`); CRuby accepts a matching clause and raises `superclass
-            // mismatch` on a wrong one (D3). Mirrors the user-class reopen guard.
+            // mismatch` on a wrong one. Mirrors the user-class reopen guard.
             if let Some(s) = &superclass {
                 let want = compiler
                     .resolve_class(s, cref, box_id)
@@ -1341,8 +1341,7 @@ fn register_class(
         }
     }
     let class_id = match existing {
-        // REOPENING (replacing the old silent-no-op duplicate
-        // registration): a second `class Foo`/`module Foo` MERGES into the
+        // REOPENING: a second `class Foo`/`module Foo` MERGES into the
         // existing `ClassInfo` -- the body loop below appends
         // includes/body-statements and registers methods with real Ruby's
         // last-`def`-wins rule (see the method arm). Guards mirror CRuby's
@@ -1418,7 +1417,7 @@ fn register_class(
                                     "unknown superclass `{s}` (must be defined earlier in the file)"
                                 )
                             })?;
-                        // Subclassable builtins (D3):
+                        // Subclassable builtins:
                         //  - `Struct`/`Data`: subclasses are ordinary
                         //    ivar-carrying objects (generated struct).
                         //  - `Numeric`: abstract, so a subclass is likewise a plain
@@ -1450,7 +1449,7 @@ fn register_class(
                             // is simply absent.
                             BASIC_OBJECT_CLASS
                                 | STRUCT_CLASS
-                                // `FFI::Struct` (#204): a subclass is a plain
+                                // `FFI::Struct`: a subclass is a plain
                                 // ivar object (no native payload) whose `[]`/
                                 // `[]=`/`size`/`offset_of` are synthesized from
                                 // its `layout` over an `FFI::MemoryPointer` ivar
@@ -1611,11 +1610,8 @@ fn register_class(
             // Any OTHER class-body statement -- a method call, conditional,
             // loop, a runtime `define_method` inside an `each`, etc. -- is real
             // code that runs ONCE at class-definition time with `self` = the
-            // class object (#97 F2a). Collected here (flat list AND this
-            // site's own record) and executed at the site's document
-            // position. Before this it fell through and was SILENTLY
-            // DROPPED, so a class-body `[:a].each { define_method(...) }`
-            // never ran.
+            // class object. Collected here (flat list AND this site's own
+            // record) and executed at the site's document position.
             _ => {
                 // A reachable `C.prepend(M)` / `C.singleton_class.prepend(M)` in
                 // a class body (e.g. connection_pool's
@@ -1796,8 +1792,7 @@ fn resolve_module_target(
 /// `mro::materialize_methods`/`materialize_class_methods`) as a fresh
 /// `Scope`, running the full per-method analysis pipeline (local-type
 /// inference, named-`*rest`/`**kwrest`/`&block`-param type seeding,
-/// bare-`yield`/`block_given?` scanning) that used to live directly inline
-/// in `register_class` before materialization needed to reuse it too.
+/// bare-`yield`/`block_given?` scanning).
 /// `owner` is whichever class/module this Scope is filed under (and, for a
 /// materialized method, whose concrete struct it'll be generated into);
 /// `defining_class` is whichever class/module's HIR body `params`/`body`
@@ -1868,7 +1863,7 @@ fn register_method(
 /// `codegen::call::emit_proc_or_lambda_value`).
 fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
     match &hir[id] {
-        // An FFI wrapper body (#204) uses no block.
+        // An FFI wrapper body uses no block.
         HirNode::Ffi(_) => false,
         HirNode::Yield(_) | HirNode::BlockGiven => true,
         HirNode::IvarWrite(_, value)
@@ -2150,7 +2145,7 @@ pub(crate) fn scan_bare_block_use_body(hir: &Hir, body: &[NodeId]) -> bool {
 /// `super`-target bridges).
 pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
     match &hir[id] {
-        // An FFI wrapper body (#204) uses no block.
+        // An FFI wrapper body uses no block.
         HirNode::Ffi(_) => false,
         HirNode::BlockGiven => false,
         HirNode::Yield(args) => args.iter().any(|e| match e {
@@ -2414,7 +2409,7 @@ pub(crate) fn scan_contains_super_body(hir: &Hir, body: &[NodeId]) -> bool {
 /// appear).
 pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
     match &hir[id] {
-        // An FFI wrapper body (#204) references no instance variables.
+        // An FFI wrapper body references no instance variables.
         HirNode::Ffi(_) => {}
         HirNode::IvarRead(name) => {
             if !out.contains(name) {
@@ -2787,7 +2782,7 @@ mod tests {
         assert_eq!(ci.own_methods.len(), 1);
     }
 
-    /// Reopening a builtin MODULE (Enumerable/Comparable) is supported (D3):
+    /// Reopening a builtin MODULE (Enumerable/Comparable) is supported:
     /// its added methods register as value methods on the module id, found by
     /// the MRO walk for every includer.
     #[test]
@@ -2860,9 +2855,9 @@ mod builtin_reopen_tests {
 
     #[test]
     fn only_class_and_module_stay_rejected() {
-        // `Object` is no longer in this list: reopening it is top-level `def`
-        // by another name. Builtin MODULES (Comparable/Enumerable) became
-        // reopenable in D3; only `Class`/`Module` themselves -- which have no
+        // `Object` is NOT in this list: reopening it is top-level `def`
+        // by another name. Builtin MODULES (Comparable/Enumerable) are
+        // reopenable; only `Class`/`Module` themselves -- which have no
         // per-value dispatch to hang a method on -- stay rejected.
         for src in [
             "class Class\n  def probe\n    1\n  end\nend\n",
@@ -2883,7 +2878,7 @@ mod builtin_reopen_tests {
 
     #[test]
     fn superclass_clause_on_a_builtin_reopen_must_match() {
-        // A MATCHING clause (`String < Object`) is accepted (D3); a wrong one
+        // A MATCHING clause (`String < Object`) is accepted; a wrong one
         // raises CRuby's `superclass mismatch`.
         let a = analyze_src("class String < Object\n  def x\n    1\n  end\nend\n");
         assert_eq!(class_named(&a, "String"), STRING_CLASS);
@@ -3096,8 +3091,8 @@ mod class_value_tests {
         );
     }
 
-    /// The full CRuby-exact chains for the classes whose hierarchy Phase
-    /// 17.1 corrected (oracle: ruby 4.0.5 `.ancestors`).
+    /// The full CRuby-exact chains for the builtin classes
+    /// (oracle: ruby 4.0.5 `.ancestors`).
     #[test]
     fn builtin_ancestors_match_cruby() {
         let a = analyze_src("");

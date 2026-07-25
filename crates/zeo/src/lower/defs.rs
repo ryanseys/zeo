@@ -49,7 +49,7 @@ fn lower_class_body_selected(
     lower_class_body_statement(result, hir, &node, visibility, module_function, out)
 }
 
-/// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver (#97 F3):
+/// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver:
 /// desugar each `def` in the singleton body into a runtime
 /// `obj.define_singleton_method(:a, ->(params) { body })`, the same shape
 /// `def obj.a` uses. Returns the desugared statement nodes (empty for an empty
@@ -1076,7 +1076,7 @@ pub(crate) fn lower_class_body(
             None => vec![n],
         },
     };
-    // A `class T < FFI::Struct` (#204) turns its `layout` directive into
+    // A `class T < FFI::Struct` turns its `layout` directive into
     // synthesized `[]`/`[]=`/`size`/`offset_of`/`pointer` methods over an
     // `FFI::MemoryPointer` ivar -- see `synthesize_ffi_struct`.
     let is_ffi_struct = superclass == Some("FFI::Struct");
@@ -1086,7 +1086,7 @@ pub(crate) fn lower_class_body(
     // see `lower_class_body_statement`'s docs.
     let mut visibility = Visibility::Public;
     let mut module_function = false;
-    // A module that `extend FFI::Library` (the real `ffi` gem, #204) turns its
+    // A module that `extend FFI::Library` (the real `ffi` gem) turns its
     // `ffi_lib`/`attach_function` directives into synthesized wrapper class
     // methods over `extern "C"` symbols -- see `lower_ffi_directive`. A
     // NON-FFI statement in such a module still lowers normally (a module may
@@ -1260,7 +1260,7 @@ fn lower_class_body_statement(
     // enclosing-class retagging can't express (deferred).
     if let Some(singleton) = node.as_singleton_class_node() {
         if singleton.expression().as_self_node().is_none() {
-            // `class << obj` on a NON-`self` receiver (#97 F3): each `def` in
+            // `class << obj` on a NON-`self` receiver: each `def` in
             // the body is a per-object singleton method (see
             // `desugar_singleton_class_defs`).
             out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);

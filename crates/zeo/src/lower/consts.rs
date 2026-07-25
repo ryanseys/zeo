@@ -41,8 +41,8 @@ pub fn constant_path_name(node: &Node<'_>) -> PResult<String> {
 /// `Foo::BAR` / `Foo::Bar::BAZ` (`ConstantPathNode`) -- resolves to
 /// `(scope path, name)` for a `HirNode::ConstWrite`/`QualifiedConstRead`'s
 /// fields: the LAST segment is the constant being read/written, everything
-/// before it is the owning class/module path (multi-segment since Phase
-/// 15.3, resolved by `Compiler::resolve_class`). `::FOO` (no `parent` at
+/// before it is the owning class/module path (multi-segment, resolved by
+/// `Compiler::resolve_class`). `::FOO` (no `parent` at
 /// all -- an explicit top-level anchor) resolves against `Object` directly,
 /// mirroring real Ruby's own representation of top-level constants as
 /// living on `Object`.

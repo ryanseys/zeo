@@ -32,7 +32,7 @@ ruby_class! {
     // edge cases) raises real Ruby's NoMethodError shape for its kind.
     def "new"(recv, args, block) {
         let cid = recv_cid(recv);
-        // `Class.new(superclass) { body }` (#97 F4) -- `recv` is `Class`
+        // `Class.new(superclass) { body }` -- `recv` is `Class`
         // itself, so its `.new` mints a fresh ANONYMOUS class rather than an
         // instance. The block is the class body, run with `self` bound to the
         // new class (so `define_method`/`include`/const-assign inside populate

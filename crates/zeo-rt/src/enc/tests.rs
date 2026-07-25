@@ -81,8 +81,8 @@ fn concat_enc_wide_encodings_mix_only_through_emptiness() {
 #[test]
 fn push_buf_appends_raw_bytes_and_adopts_the_negotiated_encoding() {
     // THE regression seam: BINARY 0xB5 + UTF-8 "\n" must stay the two
-    // raw bytes [0xB5, 0x0A] tagged BINARY -- the old display-text path
-    // promoted it to [0xC2, 0xB5, 0x0A] UTF-8.
+    // raw bytes [0xB5, 0x0A] tagged BINARY -- not promoted to
+    // [0xC2, 0xB5, 0x0A] UTF-8.
     let mut b = StrBuf::from_bytes(vec![0xb5], ASCII_8BIT);
     b.push_buf(&StrBuf::from_utf8("\n".to_string())).unwrap();
     assert_eq!(b.bytes(), [0xb5, 0x0a]);
@@ -242,7 +242,7 @@ fn transcode_xml_text_escapes() {
 
 #[test]
 fn inspect_escapes_invalid_and_high_bytes() {
-    // Valid UTF-8: byte-identical to the old Debug quoting.
+    // Valid UTF-8 uses standard debug-style escaping.
     assert_eq!(inspect(&StrBuf::from_utf8("a\nb".into())), r#""a\nb""#);
     assert_eq!(
         inspect(&StrBuf::from_utf8("caf\u{e9}".into())),

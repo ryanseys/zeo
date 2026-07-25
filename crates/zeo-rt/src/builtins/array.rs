@@ -418,8 +418,8 @@ ruby_class! {
         check_frozen(recv_array!(recv), recv)?;
         // Snapshot every source BEFORE appending: an argument may alias the
         // receiver (`a.concat(a, a)`), and CRuby copies all sources up front,
-        // so the growing receiver never feeds itself (that self-feeding is the
-        // #548 infinite-growth bug -- `[1,2].concat(a,a)` is 6 elements, not 8).
+        // so the growing receiver never feeds itself (which would grow forever
+        // -- `[1,2].concat(a,a)` is 6 elements, not 8).
         let mut extension = Vec::new();
         for a in args {
             let other = &convert::to_rary(a)?;

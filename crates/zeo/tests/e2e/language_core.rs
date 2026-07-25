@@ -80,7 +80,7 @@ fn boolean_and_or_return_the_operand_not_a_bool() {
 fn safe_navigation_on_a_non_nil_receiver() {
     // Only proves `&.` doesn't regress a normal, statically-typed dispatch --
     // a receiver that's *actually* nil at runtime needs a nilable/union type
-    // this spike's `TyKind` doesn't have yet (every `New` is unconditionally
+    // the compiler's `TyKind` doesn't have yet (every `New` is unconditionally
     // a concrete `Object(ClassId)`, never possibly-nil), so that half of
     // `&.`'s behavior isn't testable end to end until then.
     let result = run_ruby(
@@ -302,8 +302,8 @@ fn percent_r_literal_syntax() {
 
 #[test]
 fn nil_predicate_works_universally() {
-    // Added in this phase (surfaced by the queue-sentinel idiom): `.nil?`
-    // on Poly, builtin, and Object receivers, with a user override winning.
+    // `.nil?` on Poly, builtin, and Object receivers, with a user override
+    // winning.
     let result = run_ruby(
         r#"
         puts nil.nil?
@@ -389,7 +389,7 @@ fn the_shareable_predicate_is_deep() {
 
 #[test]
 fn a_stdlib_style_feature_drops_in_through_an_i_search_root() {
-    // #96: stdlib is delivered as ordinary `-I <lib>` load-path roots (no
+    // stdlib is delivered as ordinary `-I <lib>` load-path roots (no
     // bespoke flag) -- pointing `-I` at a Ruby checkout's `lib` makes each
     // `require "feature"` resolve a real stdlib `.rb`. This models that with a
     // pure-Ruby "stdlib" file living under an `-I` root, required by name and

@@ -1,10 +1,9 @@
-//! Forward, single-pass local-variable type tracking -- explicitly NOT the
-//! whole-program fixpoint deferred in the plan's stated scope-cut (see
-//! `docs/PORTING_ANALYSIS.md` roadmap item 2). Walks a method/top-level body
+//! Forward, single-pass local-variable type tracking -- not a whole-program
+//! fixpoint. Walks a method/top-level body
 //! in source order, refining each local's `TyKind` as it's assigned, so
 //! `codegen` can resolve `x + y` to native `Int` arithmetic when `x`/`y` are
 //! locals previously assigned an `Int`-typed value -- not just
-//! literal-on-literal operands, which is all the original version handled.
+//! literal-on-literal operands.
 //!
 //! Branches (`if`/`case`) are handled by `join_branches`: each
 //! branch is walked against its own clone of the pre-branch map, and a local
@@ -61,7 +60,7 @@ fn track_node(
     id: NodeId,
 ) {
     match &compiler.hir[id] {
-        // An `attach_function` wrapper body (#204) assigns no locals -- it
+        // An `attach_function` wrapper body assigns no locals -- it
         // reads only its own params -- so there is nothing to track.
         HirNode::Ffi(_) => {}
         // A lambda's own body is a fresh, independent scope for local-

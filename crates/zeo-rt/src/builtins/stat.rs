@@ -330,8 +330,8 @@ fn world_perm(st: &libc::stat, bit: u32) -> RubyValue {
 #[cfg(test)]
 mod tests {
     /// `File::Stat`'s `ruby_class!` table self-registers via linkme; this pins
-    /// that its instance surface resolves through the registry (the path real
-    /// dispatch uses now that the fn names are mangled).
+    /// that its instance surface resolves through the registry -- the path real
+    /// dispatch uses, since the DSL mangles the fn names.
     #[test]
     fn the_table_resolves_the_stat_surface() {
         let tbl = crate::builtins::registered_table(zeo_abi::FILE_STAT_CLASS)

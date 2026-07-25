@@ -2,8 +2,7 @@
 //! is activated by a `require "<feature>"` the compiler recognizes as a
 //! built-in feature (no filesystem file), and its class/module tables plug into
 //! the same `class_table`/`class_method_table` dispatch the core builtins use.
-//! Unlike the retired native-package DSL, these can construct proper
-//! exceptions (they live inside `zeo-rt`).
+//! Living inside `zeo-rt`, they can construct proper exceptions.
 //!
 //! # A gem may also have a RUBY half
 //!
@@ -46,10 +45,9 @@
 //! 1. **ABI row** in `zeo-abi/src/lib.rs`: a `ClassId` const (next free id)
 //!    and a `BUILTINS` row with `feature: Some("<require-name>")`. Ids are
 //!    append-only and contiguous.
-//! 2. **Module** `ext/<name>.rs` with `builtin_methods! { pub(crate) fn lookup;
-//!    ... }` for instance methods and/or `pub(crate) fn lookup_class;` for
-//!    class/module methods (mirror `base64.rs` for a module, `stringio.rs` for
-//!    a class with instances).
+//! 2. **Module** `ext/<name>.rs` declaring its class with the `ruby_class!`
+//!    (instances) or `ruby_module!` (module functions) DSL (mirror `base64.rs`
+//!    for a module, `stringio.rs` for a class with instances).
 //! 3. **Dispatch arms** in `builtins/mod.rs`: add a `#[cfg(feature =
 //!    "ext-<name>")]` arm to `class_method_table` and/or `class_table`, plus
 //!    `class_table_names` (reflection). Cfg-gate them so a feature-off build

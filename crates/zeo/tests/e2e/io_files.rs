@@ -592,7 +592,7 @@ fn file_predicates_times_and_fnm_constants() {
 
 #[test]
 fn file_stat_io_pipe_and_io_read_family() {
-    // Batch 10: File::Stat (class + readers), File.stat/File#stat, IO.pipe
+    // File::Stat (class + readers), File.stat/File#stat, IO.pipe
     // (a plain-IO reader/writer pair), the IO instance read family
     // (gets separator/limit/chomp, getc/getbyte, lineno), IO class methods
     // (IO.read/write/copy_stream), and FileTest.
@@ -632,7 +632,7 @@ fn file_stat_io_pipe_and_io_read_family() {
 
 #[test]
 fn dir_handle_argf_class_and_binding_local_variable_get() {
-    // Batch 11: Dir.new/Dir.open handles (#path/#read/#each/#children/#entries/
+    // Dir.new/Dir.open handles (#path/#read/#each/#children/#entries/
     // #rewind/#close, the block form, ENOENT on a missing path), ARGF's
     // literally-named class and default "-" filename with no file args, and
     // binding.local_variable_get(:name) reading an in-scope local (including a
@@ -2118,8 +2118,8 @@ fn io_shovel_chains_binary_and_text_arguments_byte_faithfully() {
 #[test]
 fn stdout_receives_a_binary_strings_raw_byte() {
     // The harness captures stdout lossily, so the RAW 0xB4 byte surfaces
-    // as one U+FFFD replacement char -- while the old promoted output
-    // (0xC2 0xB4) decoded "cleanly" as U+00B4. The replacement char IS
+    // as one U+FFFD replacement char -- whereas a promoted output
+    // (0xC2 0xB4) would decode "cleanly" as U+00B4. The replacement char IS
     // the proof the byte reached the fd untouched; the byte-count return
     // (1, not 2) pins it from a second angle.
     let result = run_ruby(

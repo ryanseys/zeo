@@ -70,11 +70,10 @@ pub(super) const INT_UNARY_OPS: &[(&str, &str)] =
 /// division/modulo itself hard-panic the whole process -- real Ruby's own
 /// behavior (unlike `Float`, where division by zero is `Infinity`/`NaN`/
 /// `NaN`, not an error at all -- `float_div`'s own IEEE semantics already
-/// give that for free, no check needed there). Found as a real,
-/// previously-undetected gap via this session's own testing: `1 / 0`
-/// crashed the entire generated binary with a raw Rust panic (`zeo_rt::
+/// give that for free, no check needed there). Without this, `1 / 0`
+/// crashes the entire generated binary with a raw Rust panic (`zeo_rt::
 /// int_div`'s own internal `/` panicking) rather than raising something a
-/// `rescue ZeroDivisionError` could ever catch. A no-op passthrough for
+/// `rescue ZeroDivisionError` could catch. A no-op passthrough for
 /// every other `rt_fn` (every non-`/`/`%` operator).
 pub(super) fn emit_int_div_or_mod_checked(
     cx: &Ctx,

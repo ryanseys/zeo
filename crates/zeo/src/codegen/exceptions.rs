@@ -19,7 +19,7 @@
 //! inspect a sub-expression's `Result` (to test a raised exception against
 //! `rescue` clauses) without immediately propagating it via `?` -- but it
 //! means a literal Rust `return`/labeled `break`/`continue` lexically inside
-//! it can no longer reach the enclosing method/loop directly (a closure is
+//! it cannot reach the enclosing method/loop directly (a closure is
 //! its own `fn`-like boundary for both). So, while emitting these three
 //! bodies: `return` raises `Signal::Return` instead of a literal `return`
 //! (caught by `codegen::mod`'s per-method wrapping, extended to trigger on
@@ -119,7 +119,7 @@ pub fn emit_begin(
     // `in_real_proc` is forced on: `body`/each rescue clause's
     // body/`else_body` are all about to be captured inside a fresh closure
     // boundary, so `return`/`break`/`next`/`redo` lexically inside them can
-    // no longer compile to a literal Rust keyword.
+    // cannot compile to a literal Rust keyword.
     let closure_cx = Ctx {
         loop_labels: None,
         for_var_override: None,

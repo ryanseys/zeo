@@ -340,19 +340,19 @@ fn a_fiber_body_captures_and_mutates_enclosing_locals() {
 }
 
 // ---------------------------------------------------------------------------
-// The whole top level runs as `may`'s first coroutine, with the
-// worker count as the GVL switch (see `zeo_rt::run_main`'s docs). The
-// REAL regression test for this change is every other test in this file --
-// all of them now execute through the coroutine-wrapped main. These three
-// only cover the configuration knobs themselves.
+// Threads run as real OS threads -- truly parallel, with no GVL by default;
+// `ZEO_GVL=1` serializes them instead (see `zeo_rt::run_main`'s docs).
+// `ZEO_THREADS`/`--no-gvl` are accepted but ignored. The real regression
+// coverage is every other test in this file; these two only exercise the
+// configuration knobs themselves.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn scheduler_config_knobs_change_nothing_observable() {
     // The same fiber-exercising program (fibers being the most
-    // execution-context-sensitive feature shipped so far) under the default
-    // (workers=1, GVL-emulated), an explicit ZEO_THREADS count, and
-    // --no-gvl -- byte-identical output on all three.
+    // execution-context-sensitive feature) under the default settings, an
+    // explicit ZEO_THREADS count, and --no-gvl -- byte-identical output on all
+    // three, since the two knobs are ignored.
     let src = r#"
         f = Fiber.new do |x|
           Fiber.yield(x + 1)
@@ -378,10 +378,9 @@ fn scheduler_config_knobs_change_nothing_observable() {
 
 #[test]
 fn retired_scheduler_knobs_are_silently_ignored() {
-    // ZEO_THREADS/--no-gvl configured the deleted may scheduler's worker
-    // count; both retired with it (threads are always real OS threads
-    // now). A stale value -- even a malformed one -- is silently ignored
-    // rather than a startup error, so existing scripts keep running.
+    // `ZEO_THREADS`/`--no-gvl` configure nothing -- threads are always real OS
+    // threads. A value, even a malformed one, is silently ignored rather than a
+    // startup error, so existing scripts keep running.
     let result = run_ruby_configured(
         "puts 1\n",
         &[("ZEO_THREADS", "not-a-number")],
@@ -392,18 +391,16 @@ fn retired_scheduler_knobs_are_silently_ignored() {
 }
 
 // ---------------------------------------------------------------------------
-// Thread/Mutex/Queue over may's green coroutines (see
-// zeo_rt::thread's docs, incl. the documented cooperative-scheduling
-// divergence -- these tests only assert SYNCHRONIZED, deterministic
-// outcomes). Every snippet oracle-verified against real `ruby`; error
-// messages CRuby-verbatim.
+// Thread/Mutex/Queue over real OS threads (see zeo_rt::thread's docs). These
+// tests only assert SYNCHRONIZED, deterministic outcomes. Every snippet
+// oracle-verified against real `ruby`; error messages CRuby-verbatim.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn thread_join_waits_for_the_body_and_returns() {
-    // Deterministic under the default single worker: the spawned coroutine
-    // first runs when the spawner blocks at join. (Real preemptive ruby
-    // agrees on this shape's ordering too -- oracle-verified.)
+    // Deterministic by construction: `join` blocks until the spawned thread's
+    // body has run to completion, so "in thread" always prints before "after
+    // join". (Real ruby agrees on this shape's ordering -- oracle-verified.)
     let result = run_ruby(
         r#"
         t = Thread.new do
@@ -460,11 +457,8 @@ fn an_uncaught_exception_in_a_thread_reraises_at_join_and_value() {
 #[test]
 fn mutex_protected_counter_across_threads_is_exact() {
     // THE canonical threading idiom -- Proc-within-Proc (Thread.new wrapping
-    // synchronize), only possible because the nested-
-    // escaping-block rejection was lifted. The sum is deterministic regardless of
-    // interleaving; the e2e harness runs this under the default GVL mode,
-    // and the same program was manually verified identical under
-    // ZEO_THREADS=4 (real parallelism).
+    // synchronize). The mutex makes the sum exact (2000) regardless of how the
+    // two OS threads interleave.
     let result = run_ruby(
         r#"
         m = Mutex.new
@@ -531,8 +525,8 @@ fn mutex_synchronize_returns_the_block_value_and_always_unlocks() {
 
 #[test]
 fn queue_producer_consumer_rendezvous_with_close() {
-    // pop blocks (coroutine-yielding) until a value or closure arrives; a
-    // closed empty queue pops nil (`thread_sync.c:1034`).
+    // pop blocks the thread until a value or closure arrives; a closed empty
+    // queue pops nil (`thread_sync.c:1034`).
     let result = run_ruby(
         r#"
         q = Queue.new
@@ -560,9 +554,9 @@ fn queue_producer_consumer_rendezvous_with_close() {
 
 #[test]
 fn condition_variable_wait_signal_and_broadcast_coordinate_threads() {
-    // signal/broadcast return self; wait releases the mutex, parks
-    // (coroutine-yielding) until broadcast, then re-acquires. The handoff is
-    // deterministic via the shared `ready` flag under the mutex.
+    // signal/broadcast return self; wait releases the mutex, parks the thread
+    // until broadcast, then re-acquires. The handoff is deterministic via the
+    // shared `ready` flag under the mutex.
     let result = run_ruby(
         r#"
         cv = ConditionVariable.new
@@ -630,17 +624,16 @@ fn queue_length_shovel_and_empty_predicate() {
 }
 
 // ---------------------------------------------------------------------------
-// The `$!`/HANDLING stack is may COROUTINE-local (not
-// thread-local -- multiple Ruby Threads share one OS worker under the GVL
-// default), and Fiber#resume swaps in each fiber's own saved stack, giving
-// fibers the isolated execution context CRuby's per-fiber `saved_ec`
-// provides. All snippets oracle-verified against real `ruby`.
+// Each Ruby Thread is its own OS thread, so the `$!`/HANDLING stack is
+// per-thread; Fiber#resume additionally swaps in each fiber's own saved
+// stack, giving fibers the isolated execution context CRuby's per-fiber
+// `saved_ec` provides. All snippets oracle-verified against real `ruby`.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn each_threads_bare_reraise_sees_its_own_handled_exception() {
-    // With a thread_local! HANDLING stack this would cross-contaminate the
-    // moment two Threads multiplex onto the one default worker.
+    // Each thread's bare `raise` must re-raise its OWN handled exception, never
+    // a sibling's -- the per-thread handling stack keeps the two isolated.
     let result = run_ruby(
         r#"
         t1 = Thread.new do
@@ -767,10 +760,9 @@ fn set_thread_module_and_exception_keyword_accessors() {
 
 #[test]
 fn fiber_transfer_root_and_error_guards() {
-    // Batch 13: Fiber#transfer round-tripping through the root fiber (the case
-    // that used to segfault), Fiber#[]/#[]= storage, the FiberError guards
-    // (yield in a transfer-entered fiber, double resume), and Fiber#kill
-    // running ensure blocks.
+    // Fiber#transfer round-tripping through the root fiber, Fiber#[]/#[]=
+    // storage, the FiberError guards (yield in a transfer-entered fiber, double
+    // resume), and Fiber#kill running ensure blocks.
     let result = run_ruby(
         r#"
         main = Fiber.current
@@ -814,7 +806,7 @@ fn fiber_transfer_root_and_error_guards() {
 
 #[test]
 fn thread_registry_and_kill_raise() {
-    // Batch 12: Thread.list (main plus live spawns, joined ones pruned) and
+    // Thread.list (main plus live spawns, joined ones pruned) and
     // Thread.list.include? by identity; Thread#kill unwinding a blocked thread
     // through its ensure; Thread#raise injecting a rescuable exception; #kill
     // returning the thread; #exit/#terminate aliases.
@@ -872,11 +864,10 @@ fn thread_registry_and_kill_raise() {
 
 #[test]
 fn busy_loop_threads_are_killable_and_raisable() {
-    // Impossible before the interruption checkpoints: a compute-only loop
-    // never reaches a blocking primitive, so `#kill`/`#raise` had no
-    // delivery point and the target spun forever. The back-edge check in
-    // every native loop delivers them now -- kill runs the ensure, raise is
-    // rescuable inside the body.
+    // A compute-only loop never reaches a blocking primitive, so `#kill`/`#raise`
+    // have no natural delivery point. The back-edge check in every native loop
+    // delivers them anyway -- kill runs the ensure, raise is rescuable inside
+    // the body.
     let result = run_ruby(
         r#"
         Thread.report_on_exception = false
@@ -946,8 +937,8 @@ fn raise_into_sleep_wakes_the_sleeper_immediately() {
 
 #[test]
 fn sleep_forever_parks_until_interrupted() {
-    // `sleep` with no duration -- a runtime panic for the whole spike era --
-    // now parks until an interrupt arrives and delivers it normally.
+    // `sleep` with no duration parks until an interrupt arrives, then delivers
+    // it normally.
     let result = run_ruby(
         r#"
         Thread.report_on_exception = false
@@ -991,11 +982,10 @@ fn the_main_thread_is_a_raise_target() {
 
 #[test]
 fn a_spinning_thread_cannot_starve_a_sibling() {
-    // THE parallel-default headline, and the one test that structurally
-    // distinguishes it from the cooperative scheduler: under may's single
-    // worker a compute-only spinner occupied the scheduler forever and the
-    // second thread never ran (this test HANGS there); on OS threads the
-    // sibling completes concurrently.
+    // THE parallel-default headline: a compute-only spinner in one thread
+    // cannot starve a sibling, because both run on independent OS threads. The
+    // worker computes its value concurrently while the spinner loops; the
+    // program only finishes once the spinner is killed.
     let result = run_ruby(
         r#"
         Thread.report_on_exception = false
@@ -1361,8 +1351,8 @@ fn yaml_loads_and_entropy_draws_run_concurrently_under_the_armed_gvl() {
 
 #[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
-    // THE motivating scenario for this phase: the failure surfaces at the
-    // bad thread's own join; the healthy worker completes normally.
+    // A failing thread surfaces its error at its OWN join; the healthy worker
+    // completes normally, unaffected.
     let result = run_ruby(
         r#"
         class Plain
@@ -1536,13 +1526,12 @@ fn a_deeply_frozen_object_crosses_a_ractor_boundary_by_reference() {
 }
 
 // ---------------------------------------------------------------------------
-// The comprehensive cross-feature sweep. Every scenario was
-// FIRST run as one combined program, oracle-verified byte-for-byte against
-// real `ruby`, then confirmed byte-identical under all three scheduler
-// modes (default GVL, ZEO_THREADS=4, --no-gvl) and stable across
-// repeated 8-worker runs. Individual tests below keep failures localized;
-// the composite mode-invariance test at the end is the headline
-// "the toggle changes nothing observable" check.
+// The comprehensive cross-feature sweep. Every scenario was first run as one
+// combined program, oracle-verified byte-for-byte against real `ruby`, then
+// confirmed byte-identical whether run with the default settings,
+// ZEO_THREADS=4, or --no-gvl (all equivalent, since those knobs are ignored).
+// Individual tests below keep failures localized; the composite test at the
+// end is the headline "the config toggles change nothing observable" check.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1621,8 +1610,7 @@ fn fiber_yield_through_a_real_escaping_block() {
 #[test]
 fn a_fiber_driven_entirely_inside_a_thread() {
     // The fiber table is per-OS-thread; a fiber created and resumed inside
-    // one Thread's coroutine works because both operations run on the same
-    // worker.
+    // one Thread works because both operations run on that same OS thread.
     let result = run_ruby(
         r#"
         t = Thread.new do
@@ -1714,10 +1702,9 @@ fn mutex_synchronize_exits_with_a_break_value_and_unlocks() {
 
 #[test]
 fn a_blocked_consumer_is_woken_by_a_producer_thread() {
-    // Under the default single worker the consumer runs first (at
-    // main's `.value` yield), genuinely BLOCKS on the empty pop
-    // (a coroutine-yielding Condvar wait), and is woken by the producer --
-    // exercising the real wakeup path, deterministically.
+    // The consumer genuinely BLOCKS on the empty pop (a Condvar wait) and is
+    // woken by the producer's push -- exercising the real cross-thread wakeup
+    // path. The value is deterministic regardless of which thread runs first.
     let result = run_ruby(
         r#"
         q = Queue.new
@@ -1813,8 +1800,8 @@ fn begin_rescue_ensure_and_retry_work_inside_threads() {
 
 #[test]
 fn a_thread_and_the_fiber_it_resumes_have_isolated_handling() {
-    // The plan's own listed 13.9 scenario: a Thread mid-rescue resumes a
-    // fiber whose bare raise must see an EMPTY $!, not the thread's.
+    // A Thread mid-rescue resumes a fiber whose bare raise must see an EMPTY
+    // $!, not the thread's in-flight exception.
     let result = run_ruby(
         r#"
         t = Thread.new do
@@ -1976,10 +1963,9 @@ fn index_compound_assignment_works_inside_a_thread_block() {
 
 #[test]
 fn the_concurrency_composite_is_invariant_across_scheduler_modes() {
-    // The plan's headline 13.9 check: a well-synchronized program mixing
-    // Threads, a Mutex counter, a Queue rendezvous, and parallel Ractors
-    // produces byte-identical output under the GVL default, an explicit
-    // worker count, and --no-gvl.
+    // A well-synchronized program mixing Threads, a Mutex counter, a Queue
+    // rendezvous, and parallel Ractors produces byte-identical output with the
+    // default settings, an explicit worker count, and --no-gvl.
     let src = r#"
         m = Mutex.new
         count = 0

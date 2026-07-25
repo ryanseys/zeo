@@ -206,7 +206,7 @@ fn eval_shares_the_enclosing_local_scope() {
 
 #[test]
 fn eval_of_a_non_literal_argument_runs_in_the_vm() {
-    // A non-literal source is no longer rejected at compile time; it runs
+    // A non-literal source is not rejected at compile time; it runs
     // through the eval VM. (`y` is interpolated INTO the source string, not
     // referenced inside the eval.)
     let result = run_ruby("y = 40\nputs eval(\"#{y} + 2\")\n");
@@ -370,7 +370,7 @@ fn universal_reflection_and_to_set() {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime string `eval` / `instance_eval` (#97 stage 2 -- the eval VM).
+// Runtime string `eval` / `instance_eval` (the eval VM).
 //
 // Every source below is held in a VARIABLE (or built with `.dup`/`+`), so it is
 // NOT a string literal and therefore runs through the runtime eval VM (a

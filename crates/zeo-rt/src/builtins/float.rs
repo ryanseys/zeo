@@ -23,8 +23,7 @@ use crate::builtins::numeric::num_op_row;
 ruby_class! {
     Float = zeo_abi::FLOAT_CLASS < zeo_abi::NUMERIC_CLASS;
 
-    // The IEEE-754 double constants, colocated here (formerly seeded from
-    // numeric.rs). Values are CRuby's exactly.
+    // The IEEE-754 double constants, colocated here. Values are CRuby's exactly.
     const INFINITY = RubyValue::Float(f64::INFINITY);
     const NAN = RubyValue::Float(f64::NAN);
     const EPSILON = RubyValue::Float(f64::EPSILON);

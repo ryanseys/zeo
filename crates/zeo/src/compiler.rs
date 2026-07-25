@@ -12,8 +12,7 @@ use std::collections::HashMap;
 /// The SHARED compiler/runtime class numbering: `ClassId` and
 /// every reserved builtin id are re-exported from `zeo-abi`, the
 /// zero-dependency leaf crate both `zeo` and `zeo-rt` consume -- the
-/// two numbering schemes this file and `zeo_rt::dispatch` used to
-/// maintain in parallel (synced by a `debug_assert`) are now literally one
+/// class numbering this file and `zeo_rt::dispatch` share is literally one
 /// definition. `Compiler::new` seeds the class arena from
 /// `zeo_abi::BUILTINS` (id + Ruby-visible name + module-ness), which is
 /// what makes `5.is_a?(Integer)`-style checks work uniformly through the
@@ -201,8 +200,8 @@ pub struct ClassInfo {
     /// `Object` (index 0, handled by its own pre-existing `idx != 0` checks)
     /// and for every ordinary user-defined class/module.
     pub is_builtin: bool,
-    /// `Some(root builtin id)` for a PER-BOX builtin-reopen OVERLAY (Phase
-    /// 18): this ClassInfo carries a box's patches on the root builtin --
+    /// `Some(root builtin id)` for a PER-BOX builtin-reopen OVERLAY: this
+    /// ClassInfo carries a box's patches on the root builtin --
     /// its methods emit as value methods registered under `(root id,
     /// box_id)`, while instances keep the ROOT's ClassId (`box::String ==
     /// String`). `None` for every ordinary class, including root builtins.
@@ -355,8 +354,8 @@ impl Compiler {
             class_body_sites: Vec::new(),
             shell_kinds: HashMap::new(),
         };
-        // The CRuby-exact hierarchy is DECLARED in the ABI table (Phase
-        // 17.1): superclass edges (`Integer < Numeric`, `Class < Module`,
+        // The CRuby-exact hierarchy is DECLARED in the ABI table:
+        // superclass edges (`Integer < Numeric`, `Class < Module`,
         // `BasicObject` as the parentless root) and real mixins (`Numeric`/
         // `String`/`Symbol` include `Comparable`; `Array`/`Hash`/`Range`/
         // `Struct`/`Enumerator` include `Enumerable`). Forward id refs are
@@ -658,7 +657,7 @@ impl Compiler {
     /// each of which is instead a boxed `RubyValue` dispatched dynamically:
     /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
     /// `Object` (the runtime root, name-keyed ivars), BOOTSTRAP classes (the
-    /// built-in exceptions, now in `zeo-rt`), and -- since D3 -- every
+    /// built-in exceptions, now in `zeo-rt`), and every
     /// NATIVE-BACKED user subclass: an exception subclass (`class MyErr <
     /// StandardError`, the native `RubyException`) or a value-builtin subclass
     /// (`class Stack < Array`, the native `ValueSubclass`), both constructed via
@@ -691,7 +690,7 @@ impl Compiler {
         std::iter::successors(Some(cid), |&c| self.class(c).parent)
     }
 
-    /// Whether `cid`'s instances are the native `RubyException` (D3): the
+    /// Whether `cid`'s instances are the native `RubyException`: the
     /// bootstrap exception classes themselves, and any user subclass of one
     /// (`class MyErr < StandardError`). Such a class has NO generated struct --
     /// its instances are allocated by `zeo-rt`'s `exception_construct` and
@@ -708,8 +707,8 @@ impl Compiler {
                     .any(|a| a == zeo_abi::EXCEPTION_CLASS))
     }
 
-    /// The instantiable value-builtin a USER subclass wraps as its payload
-    /// (D3): the first `Array`/`String`/`Hash` in `cid`'s linearized ancestry,
+    /// The instantiable value-builtin a USER subclass wraps as its payload:
+    /// the first `Array`/`String`/`Hash` in `cid`'s linearized ancestry,
     /// or `None` for anything that isn't such a subclass. `class Stack < Array`
     /// -> `Some(ARRAY_CLASS)`. The builtin itself (`is_builtin`) is excluded --
     /// only a user subclass has a `ValueSubclass` payload. `Range`/`Regexp` are
@@ -725,7 +724,7 @@ impl Compiler {
             .find(|a| matches!(*a, ARRAY_CLASS | STRING_CLASS | HASH_CLASS))
     }
 
-    /// Whether `cid`'s instances are the native `ValueSubclass` (D3): a user
+    /// Whether `cid`'s instances are the native `ValueSubclass`: a user
     /// subclass of `Array`/`String`/`Hash`. Like `is_exception_backed`, such a
     /// class has NO generated struct -- its user methods emit as dynamic-self
     /// deltas and inherited builtin behavior comes via the payload bridge.
@@ -761,7 +760,7 @@ impl Compiler {
     }
 
     /// Whether `cid` is a user subclass of an IMMEDIATE builtin -- `Integer`/
-    /// `Float`/`Symbol`/`NilClass`/`TrueClass`/`FalseClass` (D3). CRuby allows
+    /// `Float`/`Symbol`/`NilClass`/`TrueClass`/`FalseClass`. CRuby allows
     /// the class DEFINITION (`MyInt.superclass == Integer`, `is_a?` queries
     /// resolve) but has no instances: `MyInt.new` raises `NoMethodError`. So
     /// codegen emits a registry entry ONLY -- no struct, no constructor -- and

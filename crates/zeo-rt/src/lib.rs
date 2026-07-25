@@ -1,7 +1,4 @@
-//! zeo-rt: the runtime library every zeo-generated program links
-//! against. Began as a port of the C predecessor's `lib/` runtime and has
-//! grown far past that origin. See `docs/PORTING_ANALYSIS.md`
-//! for the original design writeup.
+//! zeo-rt: the runtime library every zeo-generated program links against.
 
 mod arith;
 mod bootstrap;
@@ -14,7 +11,7 @@ mod dispatch;
 mod ec;
 mod enc;
 pub mod encoding;
-// Runtime string `eval` (#97 stage 2). Always compiled -- the module's public
+// Runtime string `eval`. Always compiled -- the module's public
 // `eval_string` is the stub-or-real entry, gating only its prism-backed
 // interpreter internals behind the `eval-vm` feature.
 mod eval_vm;
@@ -369,9 +366,9 @@ macro_rules! ruby_class {
             fn ivar_set_named(&self, name: &str, v: $crate::RubyValue) -> bool {
                 match name {
                     $( stringify!($ivar) => { *self.$ivar.lock() = v; true } )*
-                    // An undeclared name lands in the overflow map (no longer
-                    // silently dropped) -- `instance_exec`/`class_eval` bodies
-                    // and `instance_variable_set(:@new, ...)` now stick.
+                    // An undeclared name lands in the overflow map, so
+                    // `instance_exec`/`class_eval` bodies and
+                    // `instance_variable_set(:@new, ...)` stick.
                     _ => { self.__overflow.lock().insert(name.to_string(), v); true }
                 }
             }
@@ -415,7 +412,7 @@ macro_rules! ruby_class {
             /// be optional/rest/keyword instead of uniformly required, a
             /// bare exact-length slice-pattern match (the ONLY thing this
             /// macro could derive on its own from the `def` clauses above)
-            /// can no longer express the binding logic -- zeo already
+            /// cannot express the binding logic -- zeo already
             /// has the full, precise parameter-kind info to author it
             /// correctly (see `codegen::params`), so this macro's job
             /// shrinks to exactly what its own doc comment always claimed:
@@ -555,15 +552,11 @@ mod tests {
         })))
     }
 
-    /// The class registry is now a genuinely process-wide `OnceLock` (Part
-    /// 9), correctly rejecting a second install -- exactly the "install
-    /// once, from `main()`, before anything else runs" contract a real
-    /// generated program relies on. Rust's test harness runs each `#[test]`
-    /// on its own OS thread, so more than one test in this module calling
-    /// `install()` would previously "work" only because each thread's own
-    /// `thread_local!` gave it an independent (and therefore untested-
-    /// against-each-other) copy -- `std::sync::Once` makes the test helper
-    /// itself match the real one-time-installation contract instead.
+    /// The class registry is a process-wide `OnceLock`, rejecting a second
+    /// install -- exactly the "install once, from `main()`, before anything
+    /// else runs" contract a real generated program relies on. Rust's test
+    /// harness runs each `#[test]` on its own OS thread, so `std::sync::Once`
+    /// here makes the test helper match that one-time-installation contract.
     fn install() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {

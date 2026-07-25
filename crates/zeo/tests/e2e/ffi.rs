@@ -115,10 +115,10 @@ fn external_iteration_drives_a_real_fiber() {
     );
 }
 
-// --- Batch G: a runtime-installed singleton method now threads its call-site
-// block through ProcData, so `yield`/`block_given?`/`&blk` work inside a
+// --- A runtime-installed singleton method threads its call-site block
+// through ProcData, so `yield`/`block_given?`/`&blk` work inside a
 // per-object singleton (`def obj.m`, `class << obj`) and a `def` in a
-// Class.new block -- previously clean rejections.
+// Class.new block.
 
 #[test]
 fn external_singleton_def_yields_its_call_site_block() {
@@ -140,7 +140,7 @@ fn external_singleton_def_yields_its_call_site_block() {
     assert_eq!(result.stdout, "hello world\nnone\n500\n");
 }
 
-/// The real `ffi` gem API, AOT-compiled (#204): `require "ffi"` is a native
+/// The real `ffi` gem API, AOT-compiled: `require "ffi"` is a native
 /// no-op, `extend FFI::Library` marks the module, and `attach_function` (plain
 /// and the 4-arg rename form) emits a compile-time `extern "C"` + `#[link]` and
 /// a wrapper module method. Scalar marshaling (`:int`/`:string`/`:ulong`/
@@ -195,7 +195,7 @@ fn ffi_argument_type_mismatch_raises_typeerror() {
     assert_eq!(result.stdout, "TypeError\n");
 }
 
-/// FFI `typedef :existing, :alias` (#204 follow-on): a library-local type alias,
+/// FFI `typedef :existing, :alias`: a library-local type alias,
 /// declared before use as the gem requires, resolves in a later
 /// `attach_function`'s type list. Behaves identically to naming the underlying
 /// type -- a pure compile-time aliasing, matching the gem.
@@ -242,7 +242,7 @@ fn ffi_callback_declares_a_function_pointer_type() {
     assert_eq!(result.stdout, "5\n5\n");
 }
 
-/// FFI `FFI::MemoryPointer` (#204 follow-on): an owned heap buffer with typed
+/// FFI `FFI::MemoryPointer`: an owned heap buffer with typed
 /// read/write accessors, pointer arithmetic, typed arrays, `from_string`, and
 /// an out-of-bounds `IndexError` -- byte-identical to `ffi 1.17.4`.
 #[test]
@@ -279,7 +279,7 @@ fn ffi_memory_pointer_reads_writes_and_arithmetic() {
     );
 }
 
-/// FFI `:pointer` marshaling (#204 follow-on): a `MemoryPointer` passed to a C
+/// FFI `:pointer` marshaling: a `MemoryPointer` passed to a C
 /// function as its raw address, and a C `char *` return wrapped back as an
 /// `FFI::Pointer`. `strcpy(buf, "hello")` fills the buffer and returns it;
 /// `strlen(buf)` reads it back through the pointer. Matches CRuby+ffi.
@@ -305,7 +305,7 @@ fn ffi_pointer_round_trips_through_c() {
     assert_eq!(result.stdout, "hello\n5\nhello\n");
 }
 
-/// FFI `enum` (#204 follow-on): a named `enum :tag, [...]` used as an
+/// FFI `enum`: a named `enum :tag, [...]` used as an
 /// `attach_function` type. A Symbol argument marshals to its int; an int return
 /// maps back to its Symbol (an unmapped int stays an Integer). Auto-increment
 /// after an explicit value (`:next` = 101). Verified against `ffi 1.17.4` using
@@ -333,7 +333,7 @@ fn ffi_enum_marshals_symbols_and_ints() {
     assert_eq!(result.stdout, "100\n:hundred\n:next\n5\n");
 }
 
-/// FFI `FFI::Struct` + `layout` (#204 follow-on): a `class T < FFI::Struct`
+/// FFI `FFI::Struct` + `layout`: a `class T < FFI::Struct`
 /// with a `layout` gets synthesized `[]`/`[]=`/`size`/`offset_of`/`members`
 /// over an owned `FFI::MemoryPointer`, with C field offsets/alignment. The
 /// struct is auto-converted to its pointer when passed to a C `:pointer`

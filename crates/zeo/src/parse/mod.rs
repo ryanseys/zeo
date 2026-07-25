@@ -15,9 +15,8 @@ use crate::diagnostics::CompileError;
 use crate::hir::{Hir, HirNode, NodeId};
 use crate::lower::{encoding_const_name, parse_and_lower_into};
 
-/// The built-in exception hierarchy (originally a minimal "raise/exception
-/// foundation", extended to zeo's own ~20-class set) --
-/// ordinary Ruby source, spliced into EVERY compiled program ahead of the
+/// The built-in exception hierarchy: ordinary Ruby source, spliced into
+/// EVERY compiled program ahead of the
 /// user's own code via the exact same `parse_and_lower_into` mechanism
 /// `eval`'s literal-splice already uses (see that recognizer's docs below).
 /// This is the whole point: real classes/inheritance (the MRO work)

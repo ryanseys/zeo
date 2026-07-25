@@ -251,7 +251,7 @@ fn data_define_constructs_deconstructs_and_is_immutable() {
 fn case_in_range_pattern_covers_float_poly_and_open_bounds() {
     // A range pattern is Range#=== (rb_case_eq/range_covers), so a Float or
     // Poly scrutinee, an exclusive bound, and a beginless/endless range all
-    // work -- the old as_int_unchecked path panicked on non-Int scrutinees.
+    // work -- an as_int_unchecked path would panic on non-Int scrutinees.
     let result = run_ruby(
         r#"
         def classify(x)

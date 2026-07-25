@@ -35,9 +35,9 @@ fn parse_error_is_a_clean_error_not_a_panic() {
 
 #[test]
 fn eval_of_invalid_literal_source_raises_a_catchable_syntax_error() {
-    // A literal `eval("...")` whose source doesn't parse no longer fails the
-    // COMPILE (#97 stage 2): it falls through to the runtime eval VM and raises
-    // a catchable SyntaxError, exactly as CRuby does.
+    // A literal `eval("...")` whose source doesn't parse does not fail the
+    // COMPILE: it falls through to the runtime eval VM and raises a catchable
+    // SyntaxError, exactly as CRuby does.
     let result = run_ruby(r#"begin; eval("1 +"); rescue SyntaxError; puts "caught"; end"#);
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "caught\n");
@@ -774,7 +774,7 @@ fn break_next_from_inside_begin_rescue_nested_in_a_real_escaping_block_works() {
 #[test]
 fn break_inside_begin_rescue_targets_the_enclosing_native_loop() {
     // A bare `break`/`next`/`redo` inside a `begin`/`rescue`/`else` clause
-    // targeting a native loop OUTSIDE the `begin` (Batch H2). The `begin`
+    // targeting a native loop OUTSIDE the `begin`. The `begin`
     // expression is spliced INLINE in the loop body, so its final settling
     // translates the bubbled `Signal` into the loop's own literal jump -- no
     // loop-body closure needed (see `codegen::exceptions`'s module docs). A
@@ -1428,7 +1428,7 @@ fn subclassing_an_unsupported_built_in_type_is_a_clean_error() {
 #[test]
 fn an_invalid_interpolated_pattern_raises_a_catchable_regexp_error() {
     // A STATIC (non-interpolated) invalid pattern is a real, uncatchable
-    // `SyntaxError` at parse time in real Ruby -- this spike defers that
+    // `SyntaxError` at parse time in real Ruby -- zeo defers that
     // check to construction time uniformly (a documented, narrower-timing
     // approximation, see `hir::HirNode::RegexpLit`'s docs), so only the
     // INTERPOLATED case (genuinely runtime-only in real Ruby too) is
@@ -2632,7 +2632,7 @@ fn super_outside_any_method_raises_at_runtime_not_compile_time() {
     );
 }
 
-// --- Batch A6: eager-codegen panics that name a legitimate runtime error are
+// --- Eager-codegen panics that name a legitimate runtime error are
 // deferred to a runtime raise, so an undefined-constant reference in a dead or
 // rescued branch compiles cleanly (CRuby only raises `uninitialized constant`
 // if the branch actually runs) instead of aborting the whole compile.
@@ -2744,8 +2744,8 @@ fn raising_an_undefined_constant_with_a_message_raises_name_error() {
 #[test]
 fn singleton_method_yield_with_no_block_raises_rescuable_local_jump_error() {
     // A `yield` reached with no block is a RESCUABLE LocalJumpError, not a
-    // process abort -- true for a singleton method now that its block is
-    // threaded (Batch G).
+    // process abort -- including for a singleton method, whose block is
+    // threaded through the call site.
     let result = run_ruby(
         r##"
         obj = Object.new

@@ -1,4 +1,4 @@
-//! `Fiber` -- stackful coroutines via `zeo-fiber`'s
+//! `Fiber` -- stackful coroutines via the `coroutine` module's
 //! corosensei shim, mirroring CRuby's own architecture (a userspace stack
 //! switch per `resume`/`yield`, NOT a thread handoff -- see
 //! `coroutine/arm64/Context.S` in the CRuby source; the pthread-parked

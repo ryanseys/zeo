@@ -3,7 +3,7 @@
 //! The static Path-1 codegen arm (`codegen::call`) emits `queue_push`/
 //! `queue_pop`/... directly and never reaches here; these rows mirror it
 //! exactly -- `push` to a closed queue is a `ClosedQueueError`, `pop` blocks
-//! coroutine-yieldingly, a closed empty queue pops `nil` -- so both paths
+//! until an element arrives, a closed empty queue pops `nil` -- so both paths
 //! agree. `Queue` has a dedicated `RubyValue::Queue` variant (like
 //! Thread/Fiber), unwrapped with `as_queue_unchecked`. `SizedQueue` (a
 //! sibling file) inherits every instance row here through the ancestry walk,

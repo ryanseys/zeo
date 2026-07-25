@@ -100,7 +100,7 @@ ruby_class! {
     def "instance_eval" (recv, args, block) {
         if let Some(arg) = args.first() {
             // The string form (`obj.instance_eval("...")`) runs the source
-            // through the eval VM (#97 stage 2) with `self` rebound to the
+            // through the eval VM with `self` rebound to the
             // receiver, so `@ivar`/implicit-self calls resolve against `obj`.
             // A non-String argument keeps Ruby's own TypeError (handled by
             // `eval_value`'s coercion).

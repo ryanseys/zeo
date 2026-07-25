@@ -1075,7 +1075,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             None => false,
             Some(r) if r.as_self_node().is_some() => true,
             Some(r) => {
-                // `def obj.name` on a NON-`self` receiver (#97 F3) -- a
+                // `def obj.name` on a NON-`self` receiver -- a
                 // per-object singleton method. Desugar to a runtime install:
                 //   RECV.define_singleton_method(:name, ->(params) { body })
                 // A lambda body gives method-like strict arity and
@@ -1129,7 +1129,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         }));
     }
 
-    // `class << obj` at expression/statement position (#97 F3) -- top level or
+    // `class << obj` at expression/statement position -- top level or
     // inside a method body. Desugars to a sequence of per-object
     // `define_singleton_method` installs on the receiver; its value is the last
     // (Ruby's own rule, the last `def`'s symbol). `class << self` takes the
@@ -1237,7 +1237,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         // An absolute `::Proc`/`::Fiber` path names the same
                         // builtin; match on the leaf so it keeps its block too.
                         class_name.strip_prefix("::").unwrap_or(class_name.as_str()),
-                        // `Class.new(Super) { body }` (#97 F4) keeps its block --
+                        // `Class.new(Super) { body }` keeps its block --
                         // the block IS the anonymous class's body; `HirNode::New`
                         // has no slot for it, so it falls through to the generic
                         // `Call` and the runtime `Class#new`.
@@ -1268,10 +1268,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     // A trailing keyword hash lands in `kwargs`, kept apart
                     // from the positionals exactly as an ordinary call's is,
                     // so `initialize`'s keyword params bind as keywords.
-                    // (It used to fold into a positional Hash literal, which
-                    // made `Foo.new(1, k: 2)` look like two positionals to a
-                    // `def initialize(a, k:)`.) A callee declaring NO keyword
-                    // params still sees the options hash it expects --
+                    // A callee declaring NO keyword params still sees the
+                    // options hash it expects --
                     // `emit_call_args_to` converts trailing keywords back to
                     // one positional Hash in that case, which is Ruby's own
                     // rule and what keyword_init Structs bind through.
@@ -1490,8 +1488,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             // `Kernel#loop`'s REAL definition (CRuby
                             // kernel.rb:151) rescues StopIteration and
                             // returns its `result` -- desugared here into
-                            // the ordinary Begin/rescue machinery (Phase
-                            // 17.2), so `loop { e.next }` terminates
+                            // the ordinary Begin/rescue machinery, so
+                            // `loop { e.next }` terminates
                             // cleanly with the enumeration's result and a
                             // manual `raise StopIteration` returns nil.
                             let native_loop = hir.push(HirNode::Loop { body });
@@ -1776,8 +1774,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // locals. Every other shape -- a non-literal source expression, or
             // the `binding`/`filename`/`lineno` argument forms -- falls through
             // to the ordinary implicit-self `Call` lowering below, which
-            // dispatches `Kernel#eval` into the runtime eval VM (#97 stage 2;
-            // feature-gated, so a build without it raises NotImplementedError
+            // dispatches `Kernel#eval` into the runtime eval VM (feature-gated,
+            // so a build without it raises NotImplementedError
             // at the call). The VM runs in a top-level-first scope: correct
             // `self`, but no access to the caller's own locals (a first-class
             // `binding` is the next increment).

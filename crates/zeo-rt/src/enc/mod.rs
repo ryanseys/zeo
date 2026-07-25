@@ -1,4 +1,4 @@
-//! `zeo-enc`: the multi-encoding string engine.
+//! The multi-encoding string engine.
 //!
 //! A Ruby `String` is *bytes plus an interpretation*: the same three bytes
 //! `[0xE2, 0x82, 0xAC]` are the single character `€` under UTF-8 but three
@@ -10,7 +10,7 @@
 //! the static [`ENCODINGS`] table; adding a new encoding (Windows-1252,
 //! Shift_JIS, ...) is a new row, never a structural change.
 //!
-//! This crate is a LEAF: it knows nothing of the runtime's value model or
+//! This module is a LEAF: it knows nothing of the runtime's value model or
 //! exception machinery. Refusals come back as plain error values
 //! ([`IncompatibleEncodings`], [`TranscodeError`]) and the runtime maps them
 //! to the exact CRuby exception classes at its boundary.

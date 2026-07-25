@@ -132,7 +132,7 @@ fn emit_counted_block_splice(
     // -- the identical treatment a real block param gets via
     // `emit_proc_or_lambda_value`'s `nested_param_wraps`. Without
     // this, the nested block would fresh-declare the name and read
-    // `nil` (the case the old nested-capture guard rejected outright).
+    // `nil`.
     let nested_captured: std::collections::HashSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
@@ -668,7 +668,7 @@ pub fn emit_call(
                     // expression must be a `RubyValue`.
                     let ctor =
                         new::emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
-                    // A native-backed class (D3) has no struct to `new_handle`
+                    // A native-backed class has no struct to `new_handle`
                     // -- `emit_new` already yields a fully-boxed `RubyValue`
                     // built by the runtime.
                     if cx.compiler.is_native_backed(defining) {
@@ -702,8 +702,8 @@ pub fn emit_call(
                     super::ident::class_ident(cx.compiler, crate::compiler::OBJECT_CLASS);
                 let method_ident = safe_ident(name);
                 // `boxed_implicit_self` IS this rule ("self here, boxed"),
-                // including the case this used to get wrong: inside an
-                // escaping block it answers the block's own receiver, so a
+                // including the subtle case where, inside an escaping
+                // block, it answers the block's own receiver, so a
                 // top-level def called from an `instance_exec`'d block runs
                 // against the rebound self rather than always `main`.
                 let recv = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
@@ -727,8 +727,7 @@ pub fn emit_call(
         // The Kernel FUNCTIONS: the print family (multi-arg
         // now), conversions, rand/srand, throw, sleep, exit/abort --
         // checked AFTER sibling method resolution (a user `def puts`/`def
-        // Integer` wins, real Ruby's rule; the old intercept-first
-        // ordering was a latent bug this stage fixed). Capitalized-name
+        // Integer` wins, real Ruby's rule). Capitalized-name
         // conversion calls WITH arguments parse as ordinary CallNodes, so
         // there's no ClassRef ambiguity.
         if let Some(tokens) =
@@ -745,8 +744,8 @@ pub fn emit_call(
                 return quote! { zeo_rt::kernel_catch(#tag, #blk)? };
             }
         }
-        // `to_enum(:meth, *args)` / `enum_for` on the implicit self (Phase
-        // 17.2): routed through dynamic dispatch, whose Kernel row builds
+        // `to_enum(:meth, *args)` / `enum_for` on the implicit self:
+        // routed through dynamic dispatch, whose Kernel row builds
         // the Enumerator over the boxed receiver -- what the Struct
         // template's `return to_enum(:each) unless block_given?` compiles
         // to.
@@ -832,14 +831,13 @@ pub fn emit_call(
     // own docs: "used as a plain VALUE, ... an ordinary lexically-scoped
     // constant READ" when the name isn't a class), so `MAX.+(1)` (the
     // `MAX += 1` compound-assignment desugar, where `MAX` is a plain
-    // Integer constant, not a class) must NOT take this branch -- found as
-    // a real, previously-undetected bug via this session's own testing: it
-    // unconditionally treated ANY `ClassRef` receiver as a class-method
-    // call, so compound assignment (`+=`/`-=`/etc., every operator except
-    // `||=`) on a non-class constant panicked with a confusing "unknown
-    // class/module" error instead of reading its actual value.
-    // The concurrency builtins' constructors and `Fiber.yield` (Phases
-    // 13.3/13.5) -- intercepted ahead of the generic class-method branch
+    // Integer constant, not a class) must NOT take this branch. Treating
+    // ANY `ClassRef` receiver as a class-method call would make compound
+    // assignment (`+=`/`-=`/etc., every operator except `||=`) on a
+    // non-class constant panic with a confusing "unknown class/module"
+    // error instead of reading its actual value.
+    // The concurrency builtins' constructors and `Fiber.yield` --
+    // intercepted ahead of the generic class-method branch
     // below (which would reject the block / find no such class method). A
     // `Fiber.new`/`Thread.new` block becomes an ordinary escaping `Proc`
     // via `emit_proc_value` -- the same capture machinery every other
@@ -1040,7 +1038,7 @@ pub fn emit_call(
             // `Widget == Widget`, `Widget.name`, `Widget.ancestors` resolve
             // in `send_value`'s Class arm, and a genuinely unknown method is a
             // real runtime NoMethodError ("for class Widget") -- real Ruby's
-            // behavior, replacing the old compile-time rejection.
+            // behavior.
             let is_static = cx.compiler.class_method_in_chain(target, name).is_some();
             if is_static {
                 if safe {
@@ -1202,8 +1200,8 @@ fn dispatch(
                     .and_then(|t| cx.resolve_class(t))
             });
             let Some(target) = resolved else {
-                // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
-                // F4): resolve it at runtime and ancestry-check its id.
+                // A constant bound to a RUNTIME class (`Foo = Class.new`):
+                // resolve it at runtime and ancestry-check its id.
                 let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
                 return quote! {
                     {
@@ -1295,8 +1293,8 @@ fn dispatch(
                     .and_then(|t| cx.resolve_class(t))
             });
             let Some(target) = resolved else {
-                // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
-                // F4): resolve it at runtime and check EXACT class identity.
+                // A constant bound to a RUNTIME class (`Foo = Class.new`):
+                // resolve it at runtime and check EXACT class identity.
                 let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
                 return quote! {
                     {
@@ -1384,7 +1382,7 @@ fn dispatch(
         };
         // Box the receiver to a `RubyValue` and route through
         // `responds_to_value`, which also honors a per-object singleton method
-        // (#97 F3) -- keyed by object identity, so a class-id-only probe can't
+        // keyed by object identity, so a class-id-only probe can't
         // see it. The singleton fast path (`is_live()`) means an ordinary
         // program pays only one predictable atomic here.
         let boxed_recv = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
@@ -1673,7 +1671,7 @@ fn dispatch(
     }
 
     // `Thread#join`/`#value`: both wait via
-    // `zeo_rt::thread_outcome` (a real may yield point); an `Err` is the
+    // `zeo_rt::thread_outcome` (blocks until the thread finishes); an `Err` is the
     // thread's own uncaught signal, re-raised HERE in the joiner -- CRuby's
     // stored-exception semantics (`thread.c:1195`). `join` returns the
     // THREAD itself, `value` the block's result.
@@ -1780,7 +1778,7 @@ fn dispatch(
         }
     }
 
-    // `Queue`: `pop` blocks coroutine-yieldingly; a closed
+    // `Queue`: `pop` blocks the calling thread; a closed
     // empty queue pops nil; push to a closed queue raises ClosedQueueError
     // -- all CRuby `thread_sync.c` semantics, verified in the plan addendum.
     if no_kwargs && infer(cx, recv_id) == TyKind::Queue && block.is_none() {
@@ -2308,10 +2306,7 @@ fn dispatch(
                 // mixed promotion, Bignum/Rational/Complex lanes, user
                 // operator methods, builtin rows -- resolves through
                 // `send_value`'s MRO walk, whose Integer/Float operator
-                // rows drive the same one tower matrix. The
-                // old hand-inlined Float/mixed arms are gone: they
-                // duplicated the promotion rules and knew nothing of the
-                // new lanes.
+                // rows drive the same one tower matrix.
                 let int_arm = int_entry.map(|&(_, rt_fn, kind)| {
                     let func = format_ident!("{rt_fn}");
                     let call = match kind {
@@ -2393,12 +2388,11 @@ fn dispatch(
     // narrower than plain `recv_class.is_none()`: an `Array`/`Hash`/`Range`/
     // `Str`/`Proc`-typed receiver ALSO has no `recv_class` (that's only ever
     // `Some` for `TyKind::Object`), but calling an unimplemented method on
-    // one of those falls through to `send_value`'s DYNAMIC dispatch (Phase
-    // 14.4): its builtin method table handles the supported operations
+    // one of those falls through to `send_value`'s DYNAMIC dispatch:
+    // its builtin method table handles the supported operations
     // (`[1,2,3].each { ... }` works now), and anything else raises a real,
     // rescuable `NoMethodError` at runtime with the builtin class's actual
-    // name -- Ruby's own behavior, replacing the old compile-time
-    // "unsupported call" panic for statically-collection-typed receivers.
+    // name -- Ruby's own behavior.
     // The kinds listed are exactly the ones whose static repr is already a
     // boxed `RubyValue` (see `types.rs`'s module docs: only `Int` -- and
     // `Object`, as `Arc<Concrete>` -- get unboxed native representations,
@@ -2419,7 +2413,7 @@ fn dispatch(
             // kind falls through -- `5.itself`/`"a".between?(...)` resolve
             // Kernel/Comparable rows down the receiver's real ancestor
             // chain at runtime, and a genuinely unknown name raises real
-            // Ruby's NoMethodError instead of the old compile-time panic.
+            // Ruby's NoMethodError.
             | TyKind::Int
             | TyKind::Float
             | TyKind::Symbol

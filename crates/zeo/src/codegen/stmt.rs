@@ -119,8 +119,8 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
         // body's last value -- a documented narrow divergence).
         // A marker with NO registered site is a `class`/`module` the
         // analyze walk never reached (e.g. inside a top-level `begin`) --
-        // the same catalogued gap that used to die in `emit_expr` as "a
-        // top-level-only node in expression position"; keep it loud rather
+        // the same catalogued gap `emit_expr` names "a top-level-only node
+        // in expression position"; keep it loud rather
         // than silently skipping the definition.
         let site_body = cx
             .compiler

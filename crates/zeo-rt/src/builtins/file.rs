@@ -521,7 +521,7 @@ fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
 ruby_class! {
     File = zeo_abi::FILE_CLASS < zeo_abi::IO_CLASS;
 
-    // `File`'s constants, colocated here (formerly `seed_file`). `FNM_*` are
+    // `File`'s constants, colocated here. `FNM_*` are
     // Darwin fnmatch flags (SHORTNAME/SYSCASE are 0 on a case-sensitive fs);
     // the `open(2)` and `flock(2)` bits come straight from libc so they match
     // the host headers exactly.

@@ -102,9 +102,7 @@ pub(super) fn emit_splat_call(
     // Keyword args (literal pairs INTERLEAVED with `**h` double-splats, in
     // source order) merge into ONE trailing Hash (the G2 convention), built
     // by the shared `emit_kwarg_inserts` -- so `f(**a, c: 1, **b)` gets Ruby's
-    // exact left-to-right, last-key-wins order (which the old two-phase
-    // "literals then splats" build got wrong for a splat written before a
-    // pair, and couldn't represent for two splats at all).
+    // exact left-to-right, last-key-wins order.
     let kw_push = (!kwargs.is_empty()).then(|| {
         let inserts = crate::codegen::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
         quote! {

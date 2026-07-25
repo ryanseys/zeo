@@ -1,20 +1,15 @@
 //! A real typed HIR instead of a text-serialized node table. See the plan's
 //! "Compiler internals" section: zeo's `zeo_parse.c` serializes
 //! Prism's C AST to a line-oriented text format that `node_table.c`
-//! re-parses into a flat, dynamically-typed `SpNode` arena -- a design
-//! driven by a historical multi-binary pipeline that no longer applies.
+//! re-parses into a flat, dynamically-typed `SpNode` arena.
 //! Since `ruby-prism` hands us a real, safe, in-process `Node` tree
 //! directly, we lower straight from `ruby_prism::Node` into this typed
 //! arena: one step instead of two, and no string-keyed dynamic field lookup
 //! anywhere.
 //!
 //! Identifiers (class/method/ivar/local names) are plain `String`s here, not
-//! a compact interned id -- this mirrors zeo's own analyze-phase
-//! representation (`SpNode`'s string fields are plain C strings too;
-//! zeo's `sp_sym_intern` is a *codegen-time*, generated-*program*
-//! concern, not a compiler-internal one). Interning zeo's own
-//! identifiers is a straightforward later optimization, not a
-//! blocker.
+//! a compact interned id. Interning them is a possible later optimization,
+//! not a blocker.
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
@@ -1076,7 +1071,7 @@ pub struct RegexpFlags {
     pub multiline: bool,
 }
 
-/// A C ABI type for one FFI argument or return value (#204, the real `ffi`
+/// A C ABI type for one FFI argument or return value (the real `ffi`
 /// gem's type keywords): the scalars, `:pointer`/`:string`, named `enum`s, and
 /// `callback` function-pointer types -- enough for a faithful `attach_function`
 /// over libc/libm and most C entry points. Each maps to a C type codegen
@@ -1118,7 +1113,7 @@ pub enum FfiType {
     Callback(Vec<FfiType>, Box<FfiType>),
 }
 
-/// One C function a module `attach_function`'d (#204). The synthesized wrapper
+/// One C function a module `attach_function`'d. The synthesized wrapper
 /// method's whole body IS this node -- see `codegen`'s `emit_ffi_call`, which
 /// declares the `extern "C"` symbol fn-locally (with `#[link(name = ..)]`, so no
 /// build-step change is needed), marshals each argument, calls it, and wraps the
@@ -1143,10 +1138,7 @@ pub struct FfiCall {
     pub variadic: Option<NodeId>,
 }
 
-/// A small, real enum instead of zeo's ~115 string-typed `SP_NODE_KINDS`
-/// that every pass has to `sp_streq` against. Started at exactly what the
-/// original 7 examples needed; growing it is additive (new variants),
-/// matching the predecessor's own incremental node-kind coverage.
+/// A real enum of node kinds; growing it is additive (new variants).
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),
@@ -1177,13 +1169,11 @@ pub enum HirNode {
     /// from `IntegerLit`'s `i64` in that respect.
     FloatLit(f64),
     SymbolLit(String),
-    /// `nil` -- previously unrepresentable (no example needed it before
-    /// pattern matching landed), but `case/in`'s `Pattern::Value` fallback needs `in nil` to
-    /// lower through the ordinary expression path like any other literal,
-    /// so this closes a genuine, narrow, pre-existing gap rather than
-    /// special-casing pattern lowering around it.
+    /// `nil` as a literal. `case/in`'s `Pattern::Value` fallback needs
+    /// `in nil` to lower through the ordinary expression path like any
+    /// other literal, rather than special-casing pattern lowering around it.
     NilLit,
-    /// `true` / `false` -- see `NilLit`'s docs; same motivating gap.
+    /// `true` / `false` -- see `NilLit`'s docs; same reasoning.
     BoolLit(bool),
     /// `a && b` / `a and b` -- prism normalizes both spellings to the same
     /// node (only precedence differs, already resolved by parse time).
@@ -1325,10 +1315,7 @@ pub enum HirNode {
     ///
     /// `kwargs` carries a trailing `Foo.new(k: 1)`, kept SEPARATE from
     /// `args` the way `Call`'s own are, so `initialize`'s keyword
-    /// parameters bind as keywords. It used to lower to a positional Hash
-    /// instead, which bound to the wrong slot (or, more often, made the
-    /// call look one argument too long: `def initialize(a, k:)` given
-    /// `New.new(1, k: 2)` saw two positionals and raised).
+    /// parameters bind as keywords.
     ///
     /// `args` stays `Vec<NodeId>` rather than `Call`'s `Vec<ArrayElem>`: a
     /// SPLAT at a `.new` site (`Foo.new(*args)`) is still unsupported -- it
@@ -1347,7 +1334,7 @@ pub enum HirNode {
     },
     /// A `super` call. Resolved at RUNTIME against the receiver's live
     /// linearized ancestry (`codegen::call::super_calls` picks the dispatch
-    /// channel; the former static-superclass inline splice is gone).
+    /// channel).
     ///
     /// `zsuper` distinguishes real Ruby's two zero-written-argument shapes,
     /// which mean OPPOSITE things: bare `super` (prism's
@@ -1553,7 +1540,7 @@ pub enum HirNode {
     /// see docs/EVAL_VM.md for the future embedded-interpreter design those
     /// would need.
     Eval(Vec<NodeId>),
-    /// The body of a synthesized `attach_function` wrapper (#204): marshal args,
+    /// The body of a synthesized `attach_function` wrapper: marshal args,
     /// call the C symbol, wrap the result. See `FfiCall`.
     Ffi(FfiCall),
     /// A `Ruby::Box` context switch: the universal wrapper every

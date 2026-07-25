@@ -86,7 +86,7 @@ fn a_block_escaping_from_inside_another_escaping_block_works() {
 
 #[test]
 fn a_nested_block_captures_the_outer_blocks_own_local() {
-    // #97 F2b: the INNER block reads the OUTER block's own param `n`. The outer
+    // The INNER block reads the OUTER block's own param `n`. The outer
     // block promotes `n` to a shared `Arc<Mutex>` cell (see
     // `codegen::call::emit_proc_or_lambda_value`'s `nested_captured`), so the
     // inner `move` closure clone-captures it -- previously a clean rejection,
@@ -400,9 +400,8 @@ fn process_identity_and_scheduling_surface() {
 
 #[test]
 fn blockless_forms_return_real_enumerators() {
-    // The old "no Enumerator (spike scope)" posture was retired:
-    // a blockless map returns a real Enumerator whose `each`
-    // re-invokes the captured method. Oracle-verified.
+    // A blockless map returns a real Enumerator whose `each` re-invokes the
+    // captured method. Oracle-verified.
     let result = run_ruby(
         "e = [1, 2].map\n\
          p e.class\n\
@@ -446,7 +445,7 @@ fn symbol_breadth_and_to_proc() {
 }
 
 /// A native anonymous struct is Enumerable and honours a class-body method
-/// block, exactly like the synthesized constant form (Batch E).
+/// block, exactly like the synthesized constant form.
 #[test]
 fn anonymous_struct_is_enumerable_and_keeps_its_method_block() {
     let result = run_ruby(

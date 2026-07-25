@@ -4,8 +4,7 @@
 //! this yourself based on thread-local storage... switch a pointer... every
 //! time a coroutine switch happens", declined upstream only because it would
 //! tax every switch for users who don't need it). Wasmer 7 and open-coroutine
-//! both implement this same pattern over the same crate. Formerly the separate
-//! `zeo-fiber` crate; folded in here (§ crate consolidation).
+//! both implement this same pattern over the same crate.
 //!
 //! Kept tiny and self-contained so its whole unsafety surface -- the single
 //! raw-pointer deref in [`yield_current`] -- is auditable in one sitting. That

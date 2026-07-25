@@ -84,14 +84,10 @@ const RUST_PRELUDE_COLLISIONS: &[&str] = &[
 /// are ordinary `Call`s) -- none of
 /// these are valid Rust identifier TEXT at all (`+`, `<=>`, `[]`, ...), so
 /// unlike `escape_special_suffix`'s plain-name-plus-suffix rewriting, this
-/// is a fixed, exhaustive lookup table, not a general escaping rule. Found
-/// as a real, previously-undetected gap (this session's own testing): a
-/// user class defining `def +(other)`/`def <=>(other)` panicked at codegen
-/// time with a raw `proc_macro2` "not a valid Ident" error, meaning
-/// user-defined operator overloading -- long claimed to "work for free"
-/// once operators became ordinary Calls -- never actually worked
-/// for the DEFINING side, only ever exercised via native `Int`/`Float` fast
-/// paths that bypass `safe_ident` entirely. Both the `impl` block's method
+/// is a fixed, exhaustive lookup table, not a general escaping rule.
+/// Without it, a user class defining `def +(other)`/`def <=>(other)`
+/// panics at codegen time with a raw `proc_macro2` "not a valid Ident"
+/// error. Both the `impl` block's method
 /// definition (`codegen::mod::emit_class`) and a call site's general
 /// (non-fast-path) dispatch (`codegen::call::dispatch`) route every method
 /// name through this SAME function, so fixing it once makes both sides
@@ -215,9 +211,8 @@ fn escape_special_suffix(name: &str) -> Option<String> {
 }
 
 /// The Rust identifier for a class/module's generated struct/`mod`/`impl`
-/// -- the ONE place a resolved `ClassId` becomes a Rust name (previously
-/// ~11 call sites each derived it from `ClassInfo.name`
-/// independently). A top-level class keeps the plain `safe_ident(name)`
+/// -- the ONE place a resolved `ClassId` becomes a Rust name.
+/// A top-level class keeps the plain `safe_ident(name)`
 /// (generated code for flat programs stays byte-identical); a NESTED class
 /// mangles to `__c<id>_<leaf>` -- the `ClassId` makes it
 /// collision-free by construction (two `Widget`s in different namespaces,

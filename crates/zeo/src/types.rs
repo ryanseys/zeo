@@ -38,7 +38,7 @@ pub enum TyKind {
     /// (see the inference arm below), consumed by `codegen::call`'s
     /// `resume`/`alive?` dispatch.
     Fiber,
-    /// `Thread`/`Mutex`/`Queue` and `Ractor` (13.8) -- same
+    /// `Thread`/`Mutex`/`Queue` and `Ractor` -- same
     /// only-from-`.new` inference shape as `Fiber`.
     Thread,
     Mutex,
@@ -142,9 +142,7 @@ pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
 /// the local-variable type map built so far for its enclosing scope (see
 /// `analyze::locals::infer_locals`), what's its static type? This is what
 /// lets `x + y` resolve to native `Int` arithmetic when `x`/`y` are locals
-/// previously assigned an `Int`-typed value, not just literal-on-literal --
-/// the generalization of the original hardcoded
-/// literal-`+`-on-`IntegerLit` fast path.
+/// previously assigned an `Int`-typed value, not just literal-on-literal.
 pub fn infer_type_with_locals(
     compiler: &Compiler,
     defining: Option<crate::compiler::ClassId>,
@@ -204,8 +202,8 @@ pub fn infer_type_with_locals(
             }
         }
         HirNode::LocalRead(name) => locals.get(name).copied().unwrap_or(TyKind::Poly),
-        // A bare/qualified constant that names a class or module (Phase
-        // 16.1) is a first-class Class value; one that doesn't stays an
+        // A bare/qualified constant that names a class or module is a
+        // first-class Class value; one that doesn't stays an
         // ordinary value constant (type unknown -> Poly).
         HirNode::ClassRef(name) => {
             match compiler.resolve_class(name, &compiler.cref_of(defining), box_id) {
@@ -278,8 +276,8 @@ pub fn infer_type_with_locals(
             // payload (`queue_is_sized`), not the static type.
             HirNode::ClassRef(n) if n == "SizedQueue" => TyKind::Queue,
             HirNode::ClassRef(n) if n == "Ractor" => TyKind::Ractor,
-            // `x.new(...)` through a class-value-typed receiver (Phase
-            // 16.1) constructs exactly what a literal `Widget.new(...)`
+            // `x.new(...)` through a class-value-typed receiver
+            // constructs exactly what a literal `Widget.new(...)`
             // does -- and must TYPE the same way, since codegen's ClassObj
             // interception emits the same unboxed `Arc<Concrete>`
             // construction.
@@ -310,8 +308,8 @@ pub fn infer_type_with_locals(
                 TyKind::Poly
             }
         }
-        // `.class` on a receiver whose class is statically known (Phase
-        // 16.1) is a statically-known Class value -- mirrors codegen's
+        // `.class` on a receiver whose class is statically known is a
+        // statically-known Class value -- mirrors codegen's
         // `.class` fold; the Object arm respects a user-defined `class`
         // override by NOT narrowing (same guard the emission site has).
         HirNode::Call {
@@ -363,8 +361,8 @@ pub fn infer_type_with_locals(
             ..
         } if args.is_empty() && (name == "length" || name == "size") => {
             let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
-            // A reopened builtin's override may return anything (Phase
-            // 16.3) -- see `builtin_override`'s docs.
+            // A reopened builtin's override may return anything -- see
+            // `builtin_override`'s docs.
             if builtin_override(compiler, recv_ty, box_id, name) {
                 return TyKind::Poly;
             }

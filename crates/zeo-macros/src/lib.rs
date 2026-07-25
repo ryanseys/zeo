@@ -7,21 +7,19 @@
 //! the same methods/constants.
 //!
 //! Parses the DSL with the shared [`zeo_dsl`] grammar and emits, for one
-//! Ruby core class/module, everything the RUNTIME needs -- drift-free with the
-//! hand-written `builtin_methods!` it replaces:
+//! Ruby core class/module, everything the RUNTIME needs:
 //!
 //! - one real Rust `fn` per `def` (a named frame in backtraces, unit-testable);
 //! - the instance and class method LOOKUP tables (`lookup`/`lookup_names`/
-//!   `lookup_arity` and the `lookup_class*` trio), the same surfaces
-//!   `builtin_methods!` derives from one row set;
+//!   `lookup_arity` and the `lookup_class*` trio), derived from one row set;
 //! - `install_constants`, which seeds each `const` via `constants::const_set`;
 //! - a `linkme` registration into `builtins::BUILTIN_TABLES` keyed by the
 //!   class's `ClassId`, so the runtime auto-collects the table instead of a
 //!   hand-maintained `match` in `builtins/mod.rs`.
 //!
 //! Everything is emitted into the invoking module against `crate::...` paths
-//! (`crate::RubyValue`, `crate::builtins::BuiltinMethodFn`, ...), exactly like
-//! `builtin_methods!`, so a class file just calls `ruby_class! { ... }`.
+//! (`crate::RubyValue`, `crate::builtins::BuiltinMethodFn`, ...), so a class
+//! file just calls `ruby_class! { ... }`.
 //!
 //! A body may NEST `class`/`module` items with a braced body (mirroring Ruby's
 //! `module Process; class Status; end; end`). Each nested class expands
@@ -30,11 +28,10 @@
 //! table fn names colliding -- the natural home for a class plus the small
 //! helper classes it owns (`Process` + `Process::Status` + `Process::Tms`).
 //!
-//! Phase note: the SHAPE the DSL header declares (module/class, superclass,
-//! includes) is parsed but NOT yet emitted here -- during migration the shape
-//! still lives in `zeo_abi::BUILTINS` (the compiler asserts `ClassId`
-//! contiguity, so rows can't be removed yet). It is reserved for the build.rs
-//! `CLASS_SURFACE` projection, which re-parses these same headers.
+//! The SHAPE the DSL header declares (module/class, superclass, includes) is
+//! parsed but not emitted here: it feeds the build.rs `CLASS_SURFACE`
+//! projection, which re-parses these same headers, while `zeo_abi::BUILTINS`
+//! remains the compiler's source of `ClassId` contiguity.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;

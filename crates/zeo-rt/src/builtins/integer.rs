@@ -3,8 +3,8 @@
 //! it (the full-bignum decision). Every operation here takes
 //! `&RubyValue` pairs whose Integer-ness the caller has proven (statically
 //! via `TyKind::Int`, or dynamically via the table keying) -- the
-//! `#[inline]` small-small fast half costs what the old raw-`i64` helpers
-//! did, with a `#[cold]` bignum half behind it.
+//! `#[inline]` small-small fast half is as cheap as raw `i64` arithmetic,
+//! with a `#[cold]` bignum half behind it.
 //!
 //! The ONE construction invariant: `int_value` demotes every `BigInt`
 //! result that fits back into `Int`, so a big payload never aliases a

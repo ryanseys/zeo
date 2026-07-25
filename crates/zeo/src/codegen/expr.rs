@@ -814,8 +814,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let slf = &cx.self_ident;
             // The `MutexGuard` from `.lock()` is bound to an explicit `__g`
             // local, INSIDE its own block, rather than written as a single
-            // bare `#slf.#ident.lock().clone()` expression -- found the hard
-            // way (this session's own testing, via `@x * @x`): Rust's
+            // bare `#slf.#ident.lock().clone()` expression: Rust's
             // temporary-lifetime rule keeps an UNNAMED `.lock()` guard alive
             // until the end of the ENCLOSING STATEMENT, not just this one
             // sub-expression, so referencing the SAME ivar TWICE within one
@@ -1086,7 +1085,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let b = super::stmt::emit_body(cx, body, false);
             quote! { { #b } }
         }
-        // A synthesized `attach_function` wrapper body (#204): declare the C
+        // A synthesized `attach_function` wrapper body: declare the C
         // symbol `extern "C"` (fn-locally, `#[link]`ed), marshal each argument,
         // call it, wrap the result. See `emit_ffi_call`.
         HirNode::Ffi(call) => emit_ffi_call(cx, call),
@@ -1206,7 +1205,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         } => super::exceptions::emit_begin(cx, body, rescues, else_body, ensure_body),
         HirNode::Retry => super::exceptions::emit_retry(),
         // A `def` / literal `define_method(:sym){...}` in EXPRESSION position --
-        // i.e. inside a block, most notably a `Class.new { ... }` body (#97 F4).
+        // i.e. inside a block, most notably a `Class.new { ... }` body.
         // It installs on the current runtime `self` (the anonymous class):
         //   self.define_method(:name, ->(params){ body })      (instance method)
         //   self.define_singleton_method(:name, ...)            (`def self.x`)
@@ -1483,8 +1482,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         // A Poly (or non-exception) operand is coerced at runtime: an
         // Exception raises itself, a String becomes a `RuntimeError`, and
         // everything else is CRuby's `TypeError: exception class/object
-        // expected` (previously a value smuggled into `Signal::Raise`
-        // that panicked when the machinery unwrapped a non-Object).
+        // expected`.
         _ => {
             let expr = emit_expr(cx, node);
             quote! { zeo_rt::coerce_raise_arg(#expr) }
@@ -1533,7 +1531,7 @@ pub(super) fn emit_boxed_new(
     // it is `raise`'s own semantics (`raise_with_cause` at the raise
     // statement), and `cause: nil` suppression depends on that separation.
     //
-    // A NATIVE-BACKED class (exception or value-builtin subclass, D3) has no
+    // A NATIVE-BACKED class (exception or value-builtin subclass) has no
     // generated struct to `new_handle` -- `emit_new_with_arg_tokens` already
     // returns a fully-boxed `RubyValue` built by the runtime.
     if cx.compiler.is_native_backed(cid) {
@@ -1960,7 +1958,7 @@ pub(super) fn emit_const_write_stmt(
 }
 
 // ---------------------------------------------------------------------------
-// FFI (#204): emit an `attach_function` wrapper body -- a self-contained block
+// FFI: emit an `attach_function` wrapper body -- a self-contained block
 // that declares the C symbol `extern "C"` (fn-locally, `#[link(name = ..)]`ed,
 // so rustc links the library with no build-step change), marshals each Ruby
 // argument to its C type, calls the symbol, and wraps the C result back into a

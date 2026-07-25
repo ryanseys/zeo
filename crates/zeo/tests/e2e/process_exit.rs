@@ -62,9 +62,8 @@ fn uncaught_raise_with_no_rescue_anywhere_exits_with_the_message() {
 
 #[test]
 fn uncaught_exceptions_still_exit_nonzero_through_the_coroutine_boundary() {
-    // The top-level uncaught-raise contract (message on stderr, exit 1)
-    // must survive the body now running inside a may coroutine and its
-    // Result crossing a join back to the OS main thread.
+    // The top-level uncaught-raise contract (message on stderr, exit 1) must
+    // survive the main body's Result crossing back to the OS main thread.
     let result = run_ruby("raise \"through the boundary\"\n");
     assert!(!result.status.success());
     assert!(

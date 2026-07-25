@@ -1,4 +1,4 @@
-//! Marshaling helpers for compile-time FFI (#204): convert between `RubyValue`
+//! Marshaling helpers for compile-time FFI: convert between `RubyValue`
 //! and C scalar types at an `attach_function` boundary.
 //!
 //! The generated program declares the `extern "C"` symbols itself (fn-locally,

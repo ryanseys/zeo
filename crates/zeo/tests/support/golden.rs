@@ -227,8 +227,7 @@ fn run_oracle(
     let ruby = resolve_ruby(run_cwd);
     let mut cmd = Command::new(&ruby);
     cmd.arg("--disable-error_highlight").arg("--disable-did_you_mean");
-    // `Ruby::Box` examples need the experimental namespace flag + env, mirroring
-    // the old `xtask regen`.
+    // `Ruby::Box` examples need the experimental namespace flag + env.
     if source.contains("Ruby::Box") {
         cmd.arg("-W:no-experimental").env("RUBY_BOX", "1");
     }
@@ -282,8 +281,7 @@ fn bless(
 
 /// Run one golden case. See the module docs for the per-`Mode` contract.
 /// `check_stderr` is false for the stdout-only examples suite, true for the
-/// corpus/gaps (full stdout+stderr fidelity, matching the old conformance
-/// harness).
+/// corpus/gaps (full stdout+stderr fidelity).
 pub fn run_golden(
     rb: &Path,
     mode: Mode,

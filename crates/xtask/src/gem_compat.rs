@@ -180,7 +180,7 @@ fn write_artifacts(
     ));
     md.push_str(&format!("| skipped | {} |\n\n", counts.skipped));
 
-    // The native gems, grouped by detected layout -- the FFI (#161) work-list.
+    // The native gems, grouped by detected layout -- the FFI work-list.
     let mut by_kind: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for e in entries {
         if let GemCompatOutcome::NativeUnsupported { kind, .. } = &e.outcome {

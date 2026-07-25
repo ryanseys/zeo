@@ -407,7 +407,7 @@ ruby_class! {
         arity!(args, 1);
         crate::builtins::unbound_method::unbound_method_new(recv_cid(recv), &args[0])
     }
-    // `Module#define_method(name) { body }` (#97) -- install/override an
+    // `Module#define_method(name) { body }` -- install/override an
     // instance method AT RUNTIME (a computed name, or inside an `each` loop).
     // The literal `define_method(:sym) { ... }` form is desugared to a `def` at
     // compile time in zeo; this row serves everything that isn't literal.

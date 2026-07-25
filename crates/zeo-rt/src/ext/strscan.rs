@@ -323,8 +323,7 @@ ruby_class! {
             // (`gems/strscan/lib/strscan.rb`), which `require "strscan"` always
             // loads before reaching the native half. A nested user exception
             // class registers under its fully qualified name with a real
-            // constructor, so raising it by name here works -- which is why
-            // this no longer has to degrade to `RuntimeError`.
+            // constructor, so raising it by name here works.
             None => Err(raise_error(
                 "StringScanner::Error",
                 "unscan failed: previous match record not exist".to_string(),

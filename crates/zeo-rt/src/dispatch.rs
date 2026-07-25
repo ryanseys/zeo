@@ -11,11 +11,9 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
-/// Identifies a Ruby class at runtime. Mirrors zeo's struct-embedded
-/// `cls_id` field (`emit_class_struct`, codegen.c:2496). This
-/// is the SHARED `zeo-abi` type -- the compiler bakes the same
-/// numbering into generated code from the same source of truth, so there is
-/// nothing left to keep in sync by hand.
+/// Identifies a Ruby class at runtime. This is the SHARED `zeo-abi` type --
+/// the compiler bakes the same numbering into generated code from the same
+/// source of truth, so there is nothing to keep in sync by hand.
 pub use zeo_abi::ClassId;
 
 /// Implemented (via `ruby_class!`) by every generated Ruby class, and by the
@@ -145,11 +143,9 @@ pub trait RubyObject: Any + Send + Sync {
 }
 
 /// A handle to any live Ruby object, used wherever the concrete class isn't
-/// statically known. Mirrors zeo's boxed `sp_RbVal { tag: SP_TAG_OBJ,
-/// cls_id, v: { p } }` (`lib/sp_gc.h:42`) for the object case -- except the
-/// Rust trait object's vtable *is* the tag. Mutability lives on individual
-/// ivar fields (see `ruby_class!`), not on this handle, so no lock layer is
-/// needed here. `Arc` (not `Rc`, Part 9): every concrete `RubyObject` impl is
+/// statically known. The Rust trait object's vtable *is* the tag. Mutability
+/// lives on individual ivar fields (see `ruby_class!`), not on this handle, so
+/// no lock layer is needed here. `Arc` (not `Rc`): every concrete `RubyObject` impl is
 /// `Send + Sync` (via the trait's own supertrait bounds above), so this type
 /// itself is genuinely `Send + Sync` -- no `unsafe impl` needed.
 pub type RObj = Arc<dyn RubyObject>;
@@ -454,7 +450,7 @@ pub type DynMethodFn =
 #[derive(Clone)]
 pub enum MethodImpl {
     Static(MethodFn),
-    // The runtime-metaprogramming seam (#97): a compiled block captured as an
+    // The runtime-metaprogramming seam: a compiled block captured as an
     // `Arc<dyn Fn>`, built by `runtime_meta::dynamic_from_proc` for a runtime
     // `define_method`. `Clone` is cheap on both arms (a `fn` copy / an `Arc`
     // bump) -- the overlay resolvers clone an entry out and drop their lock
@@ -711,15 +707,13 @@ impl ClassRegistry {
         Some(RubyValue::Object(alloc(id)))
     }
 
-    /// Build an exception instance from a class NAME + message -- the runtime's
-    /// own replacement for the exception factory that generated `main()` used
-    /// to install. Every built-in exception class registers its constructor
-    /// `ConstructorFn` through `register_exceptions`, so the runtime can
-    /// construct the object itself: allocate the struct and run `initialize(msg)`
-    /// through the SAME trampoline `SomeError.new(msg)` uses. An unknown name is
-    /// a zeo-rt bug (a `raise_error` site naming a class no exception defines),
-    /// exactly as the old factory's `panic!` arm caught. `Exception#initialize`
-    /// only assigns `@message` and cannot signal, so a `Signal` here is a bug.
+    /// Build an exception instance from a class NAME + message. Every built-in
+    /// exception class registers its constructor `ConstructorFn` through
+    /// `register_exceptions`, so the runtime constructs the object itself:
+    /// allocate the struct and run `initialize(msg)` through the SAME trampoline
+    /// `SomeError.new(msg)` uses. An unknown name is a zeo-rt bug (a `raise_error`
+    /// site naming a class no exception defines). `Exception#initialize` only
+    /// assigns `@message` and cannot signal, so a `Signal` here is a bug.
     pub fn construct_exception(&self, class_name: &str, msg: String) -> RubyValue {
         let id = self.by_name.get(class_name).copied();
         let ctor = id
@@ -1295,7 +1289,7 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
 /// `name`? `include_all` is the method's own second parameter -- false (the
 /// default) skips PRIVATE methods, exactly as in CRuby.
 /// `respond_to?` on a VALUE receiver -- like `responds_to` but also honors a
-/// per-object singleton method (#97 F3), which is keyed by object identity and
+/// per-object singleton method, which is keyed by object identity and
 /// so invisible to the class-id-only `responds_to`. Codegen's `respond_to?`
 /// fast path routes here so a `def obj.foo` singleton answers `true`.
 pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> bool {
@@ -1452,7 +1446,7 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
     let n = n.as_str();
     let overlay_live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(recv_class) {
-        // A method defined at runtime (#97: `define_method`, a runtime class's
+        // A method defined at runtime (`define_method`, a runtime class's
         // own method) answers `respond_to?` on every ancestor it lands on.
         // An explicit runtime visibility mark (`class_eval { private :m }`)
         // is checked first: it can target a frozen-registry or builtin
@@ -1769,7 +1763,7 @@ pub(crate) fn allocate_of(id: ClassId) -> Option<RubyValue> {
 
 /// Construct an instance of the class with id `id`, running its `initialize`.
 /// Codegen calls this at every raise/construct site for a BOOTSTRAP exception
-/// class, since those classes no longer have a generated Rust struct to name --
+/// class, since those classes have no generated Rust struct to name --
 /// the native exceptions registered their `ConstructorFn` (see
 /// `crate::builtins::exception`).
 /// A missing constructor is a zeo bug (a bootstrap id with no registrar).
@@ -1794,7 +1788,7 @@ pub fn construct_by_class_id(
 /// ivar, so the retained `Exception#initialize` HIR (a fictional `@message =
 /// msg`) would set a visible ivar and leave the real message untouched. Walking
 /// the registry -- where every exception id carries the native `exc_*` fns --
-/// runs the true behavior instead. Also the exact shape #97's eval VM needs for
+/// runs the true behavior instead. Also the exact shape the eval VM needs for
 /// `super`, so it lands here rather than as a codegen special case.
 pub fn send_super_from(
     recv: &RubyValue,
@@ -2252,8 +2246,7 @@ fn arity_debug_context(msg: String) -> String {
 /// `class_name` exception once the registry is installed (every generated
 /// program), a loud panic otherwise (this crate's own unit tests, which run
 /// registry-less). The registry constructs the object itself via the class's
-/// registered `ConstructorFn` -- see `ClassRegistry::construct_exception` for
-/// why the runtime no longer needs a factory installed from generated `main()`.
+/// registered `ConstructorFn` -- see `ClassRegistry::construct_exception`.
 pub fn raise_error(class_name: &str, msg: String) -> Signal {
     let msg = arity_debug_context(msg);
     match REGISTRY.get() {
@@ -2477,8 +2470,8 @@ pub fn stamp_backtrace(exc: RubyValue) -> RubyValue {
 /// an Exception object raises itself, a String becomes a `RuntimeError` with
 /// that message, and anything else is CRuby's `TypeError: exception
 /// class/object expected` -- instead of panicking when the raise machinery
-/// later unwraps a non-Object. `Exception`'s id is fixed (`zeo-abi`), so it
-/// no longer needs baking in by codegen.
+/// later unwraps a non-Object. `Exception`'s id is fixed (`zeo-abi`), so
+/// codegen need not bake it in.
 pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
     let build = |class_name: &str, msg: String| match REGISTRY.get() {
         Some(reg) => reg.construct_exception(class_name, msg),
@@ -2519,9 +2512,7 @@ pub fn coerce_raise_arg_with_message(
 /// whose `result` is `result` (a fresh instance per raise -- CRuby rebuilds
 /// one from `stop_exc` each time too). Constructs `StopIteration.new(msg)` via
 /// the registry, then stamps the result through the exception class's own
-/// `__set_result` -- the logic generated `main()` used to install as a second
-/// factory, now that the runtime constructs exceptions itself. Loud panic
-/// registry-less (unit tests).
+/// `__set_result`. Loud panic registry-less (unit tests).
 pub fn raise_stop_iteration(result: RubyValue) -> Signal {
     match REGISTRY.get() {
         Some(reg) => {
@@ -2771,8 +2762,8 @@ fn send_value_in_reason(
     // methods, and a `RubyValue::Class`'s own chain runs over Class/Module --
     // it would never reach File's or Math's rows.
     if let RubyValue::Class(cid) = recv {
-        // A class/singleton method DEFINED AT RUNTIME (#97:
-        // `define_singleton_method` on a class, a runtime `def self.x`) wins
+        // A class/singleton method DEFINED AT RUNTIME
+        // (`define_singleton_method` on a class, a runtime `def self.x`) wins
         // over both the frozen `def self.x` and the builtin `Class#new`/`#name`,
         // matching Ruby's "closest singleton" placement. Runs under the class
         // value itself. Only probed once something is defined at runtime.
@@ -2821,10 +2812,6 @@ fn send_value_in_reason(
     // the Kernel universals, BasicObject's `==`, and the
     // `Enumerable`/`Comparable` module tables (whose rows drive the
     // receiver's own `each`/`<=>`) -- is an ordinary `class_table` hit.
-    // The old hand-ordered ladder (reopen probe, universal arms, curated
-    // tables, `to_s`-after-tables hack, hardcoded Array|Hash|Range
-    // Enumerable set, dedicated Enumerable/Comparable driver arms)
-    // dissolved into this one loop.
     for &anc in ancestors_of_value(recv.class_id()) {
         if let Some(f) = value_method(anc, box_id, name) {
             return f(recv, args, block);
@@ -2881,7 +2868,7 @@ fn send_in_reason(
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
     note_dispatch(name);
-    // Runtime metaprogramming (#97): a per-object singleton, a runtime
+    // Runtime metaprogramming: a per-object singleton, a runtime
     // `define_method` override, or a runtime-class instance's own/inherited
     // methods -- probed first (Ruby: a runtime `define_method` REPLACES), but
     // only once anything has been defined at runtime (`is_live`), so the frozen
@@ -2923,8 +2910,7 @@ fn send_in_reason(
     // The SAME MRO walk `send_value` runs, over a boxed
     // handle: Kernel's universals, BasicObject's `==`, and the
     // Enumerable/Comparable module tables all resolve as real ancestor
-    // methods -- which also fixes a fidelity bug: `method_missing` used to
-    // fire BEFORE the Enumerable/Comparable fallbacks, but real Ruby finds
+    // methods, so `method_missing` fires only AFTER them -- real Ruby finds
     // a real (module) method first, always.
     let n = name.name();
     let n = n.as_str();

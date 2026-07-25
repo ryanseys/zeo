@@ -260,11 +260,11 @@ pub(super) fn link_or_copy(from: &Path, to: &Path) -> Result<(), String> {
 /// program's codegen units for another. It is deliberately NOT enabled: `libtest`
 /// runs each `#[test]` on its own thread, so any per-thread keying produces one
 /// cold directory per test (measured: 449 directories, 7.7GB, and a 10s NET LOSS
-/// on the e2e suite). It would also buy little now -- the large per-program
-/// "exception prelude" this once referred to has since moved OUT of codegen into
-/// the prebuilt runtime (`main()` calls `zeo_rt::ClassRegistry::with_core()`;
-/// `puts 1` emits ~74 lines, not thousands), so the emitted crates no longer share
-/// a big prelude to dedup. The remaining per-program build cost is the link +
+/// on the e2e suite). It would also buy little: per-program codegen is small
+/// -- the exception prelude lives in the prebuilt runtime (`main()` calls
+/// `zeo_rt::ClassRegistry::with_core()`; `puts 1` emits ~74 lines, not
+/// thousands), so the emitted crates share little to dedup.
+/// The remaining per-program build cost is the link +
 /// codesign of the runtime artifact, not codegen -- so compile-time work
 /// belongs in `zeo-rt`, not here.
 pub(super) const GENERATED_CRATE_NAME: &str = "zeo_gen";

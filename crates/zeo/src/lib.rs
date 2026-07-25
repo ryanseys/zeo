@@ -23,8 +23,7 @@ pub mod gem_report;
 pub use diagnostics::CompileError;
 
 // The front end: the typed HIR arena (`hir`) plus the prism-tree -> HIR
-// lowering (`lower`), formerly the standalone `zeo-hir` crate, folded in as
-// ordinary modules (§ crate consolidation). It never touches the filesystem;
+// lowering (`lower`). It never touches the filesystem;
 // `require` resolution/gems/search paths stay in the compiler's loader
 // (`parse`), which drives lowering file-by-file via `lower::context`.
 pub mod constpath;
@@ -48,8 +47,8 @@ pub struct CompileOptions {
     pub input_path: Option<std::path::PathBuf>,
     /// Ordered `-I` search roots for plain `require "feature"`.
     pub load_roots: Vec<std::path::PathBuf>,
-    /// Ordered directories to discover `spin.toml` packages under (Phase
-    /// 14.2), searched AFTER every `-I` root; a nonexistent dir contributes
+    /// Ordered directories to discover `spin.toml` packages under,
+    /// searched AFTER every `-I` root; a nonexistent dir contributes
     /// nothing. The CLI defaults to the input file's sibling `packages/`
     /// then the compiler's own bundled `packages/` -- see `main.rs`.
     pub package_dirs: Vec<std::path::PathBuf>,

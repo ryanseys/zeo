@@ -90,7 +90,7 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
         materialize_class_methods(compiler, cid)?;
     }
 
-    // A reopened builtin MODULE (D3) is never run through `materialize_methods`
+    // A reopened builtin MODULE is never run through `materialize_methods`
     // (modules aren't), so its `methods` stays empty and the builtin-reopen
     // emitter would find nothing. Surface its OWN reopen methods as `methods`
     // so they register as value methods on the module id, where the MRO walk
@@ -648,7 +648,7 @@ fn collect_const_refs(
     use crate::hir::{ArrayElem, StrPart};
     let hir = &compiler.hir;
     match &hir[id] {
-        // An FFI wrapper body (#204) references no constants.
+        // An FFI wrapper body references no constants.
         HirNode::Ffi(_) => {}
         HirNode::ClassRef(name) => {
             if compiler.resolve_class(name, cref, 0).is_none() && !out.contains(name) {
@@ -904,7 +904,7 @@ fn collect_const_refs(
 fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<String>) {
     use crate::hir::{ArrayElem, StrPart};
     match &hir[id] {
-        // An FFI wrapper body (#204) references no class variables.
+        // An FFI wrapper body references no class variables.
         HirNode::Ffi(_) => {}
         HirNode::ClassVarRead(name) => {
             if !out.contains(name) {

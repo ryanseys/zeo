@@ -1,9 +1,8 @@
-//! `RubyValue` -- the boxed/poly representation every ivar, method argument,
-//! and method return uses in this runtime (see the plan's stated scope-cut:
-//! native-unboxed `i64` is used only for literal `Int` arithmetic in codegen,
-//! everything else is `RubyValue` uniformly for now). Mirrors zeo's boxed
-//! `sp_RbVal` tagged union (`lib/sp_gc.h:42`), but as a real Rust `enum`
-//! instead of a hand-written `{ tag; cls_id; union { ... } }` struct.
+//! `RubyValue` -- the boxed representation every ivar, method argument, and
+//! method return uses in this runtime: a real Rust `enum`, so the variant
+//! itself is the tag (no hand-written `{ tag; cls_id; union { ... } }`).
+//! Native-unboxed `i64` is used only for literal `Int` arithmetic in codegen;
+//! everything else is `RubyValue` uniformly.
 
 use crate::builtins::{arg_error, type_error};
 use crate::collections::{RArray, RHash, RStr};
@@ -87,7 +86,7 @@ pub enum RubyValue {
     /// its Ruby-visible name/module-ness live in the `ClassRegistry`
     /// (`dispatch::class_name`/`class_is_module`), installed before any
     /// generated statement runs -- OR, for a class minted at runtime by
-    /// `Class.new` (#97 F4), in the `runtime_meta` overlay (an id at/above
+    /// `Class.new`, in the `runtime_meta` overlay (an id at/above
     /// `zeo_abi::RUNTIME_CLASS_ID_BASE`), which those same accessors
     /// consult. A runtime class's instances are `runtime_meta::DynObject`s.
     Class(ClassId),
@@ -1273,8 +1272,7 @@ impl RubyValue {
         if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
             return re.engine.is_match(&s.lock().to_utf8_lossy());
         }
-        // `Range#===` is `#cover?` (fixing `when 1..5` -- which
-        // previously fell to `rb_eq` and silently never matched): each
+        // `Range#===` is `#cover?` (`when 1..5`): each
         // present endpoint compares via `rb_cmp` (numeric tower, strings,
         // user `<=>`), and an incomparable subject is `false`, real Ruby's
         // rule (`(1..5) === "x"` is false, not an error; oracle-verified,
@@ -1301,7 +1299,7 @@ impl RubyValue {
 /// Reduce any `<=>`/comparison-block result to its sign, CRuby's
 /// `rb_cmpint`: a numeric answer (`Int`/`BigInt`/`Float`/`Rational`) gives
 /// its sign relative to zero, anything else (nil, a non-numeric, NaN) is
-/// incomparable (`None`). The one place the Int-only cut used to live,
+/// incomparable (`None`). The one place the Int-only cut lives,
 /// shared by `rb_cmp`, `comparable::cmp`, and the sort/min/max drivers.
 pub(crate) fn cmp_sign(result: &RubyValue) -> Option<i64> {
     crate::builtins::numeric::num_cmp(result, &RubyValue::Int(0)).flatten()
@@ -1770,8 +1768,8 @@ mod tests {
 
     /// One representative of the raising tier (Thread/Ractor raise
     /// `allocator undefined`, Queue/SizedQueue `initialize_copy`; Queue is
-    /// the only one constructible without a running `may`/coroutine
-    /// context). Registry-less unit tests see `raise_error`'s loud-panic
+    /// the only one constructible on its own). Registry-less unit tests see
+    /// `raise_error`'s loud-panic
     /// fallback; the rescuable shape is pinned by e2e.
     #[test]
     #[should_panic(

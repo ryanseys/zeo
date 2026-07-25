@@ -26,7 +26,7 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
 
 // `Thread#join(limit = nil)` -- block until the thread finishes, re-raising a
 // stored exception in the caller, then answer the thread itself. A timeout
-// argument is accepted and ignored (this scheduler always runs to completion).
+// argument is accepted and ignored; the join always waits for completion.
 fn t_join(
     recv: &RubyValue,
     _args: &[RubyValue],
@@ -394,13 +394,11 @@ fn c_set_report_on_exception(
 
 /// `Thread.handle_interrupt(hash) { ... }` -- CRuby defers/unmasks async
 /// interrupt (`Thread#raise`/`#kill`) delivery inside the block per the
-/// `ExceptionClass => :immediate/:on_blocking/:never` mask. This scheduler
-/// is cooperative (`may` coroutines): an async raise is only ever delivered
-/// at a blocking point the target itself reaches, which is `:on_blocking`
-/// behavior already -- so the mask itself is a no-op and the block just
-/// runs. Argument shapes are validated like CRuby (a Hash, and the block is
-/// mandatory). Revisit when the OS-thread GVL migration gives interrupts a
-/// real delivery mechanism to mask.
+/// `ExceptionClass => :immediate/:on_blocking/:never` mask. Async interrupts
+/// here only ever deliver at an interruption checkpoint the target itself
+/// reaches, which is `:on_blocking` behavior already -- so the mask is a
+/// no-op and the block just runs. Argument shapes are validated like CRuby
+/// (a Hash, and the block is mandatory).
 fn c_handle_interrupt(
     _recv: &RubyValue,
     args: &[RubyValue],

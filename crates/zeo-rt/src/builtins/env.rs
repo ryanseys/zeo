@@ -106,9 +106,8 @@ pub fn snapshot() -> RubyValue {
 /// ENV's method table. Because ENV is dispatched by IDENTITY (its class is
 /// `Object`, so a ClassId-keyed `ruby_class!` table would apply to every plain
 /// Object -- see the module docs and the `is_env` arm in `dispatch`), this is
-/// hand-rolled: the one bespoke builtin method lookup left in the runtime after
-/// the `builtin_methods!` macro was retired. Every other class/module is on the
-/// `ruby_class!`/`ruby_module!` DSL.
+/// hand-rolled: the one bespoke builtin method lookup in the runtime. Every
+/// other class/module is on the `ruby_class!`/`ruby_module!` DSL.
 pub(crate) fn lookup(name: &str) -> Option<BuiltinMethodFn> {
     Some(match name {
         "[]" => env_get,

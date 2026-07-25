@@ -52,8 +52,7 @@ pub(super) fn emit_safe_call(
             if __safe_recv.is_nil() {
                 zeo_rt::RubyValue::Nil
             } else {
-                // `send_value` handles Object AND builtin receivers uniformly,
-                // so the old non-Object panic is gone.
+                // `send_value` handles Object AND builtin receivers uniformly.
                 zeo_rt::send_value_in(#__bx, &__safe_recv, #name_expr, &[#(#arg_exprs),*], #block_value)?
             }
         }

@@ -331,8 +331,8 @@ fn interrupt_pending() -> bool {
 /// `Thread#status` -- "run" while alive, `false` after a clean finish, `nil`
 /// after one that ended in an exception. (We can only observe the exit code
 /// once the outcome is cached, i.e. after a `join`; before that a finished
-/// thread still reads "run", matching what this cooperative scheduler can
-/// see without joining.)
+/// thread still reads "run", since the outcome isn't observable until
+/// joined.)
 pub fn thread_status(t: &RThread) -> RubyValue {
     if t.is_main {
         return RubyValue::Str(crate::string_new("run".to_string()));

@@ -15,8 +15,7 @@ use crate::dispatch::ClassRegistry;
 
 /// Install the always-on built-in classes/modules (`Integer`, `Array`,
 /// `Kernel`, ... and `Object`) into `registry` with their DECLARED ancestors --
-/// the fixed hierarchy every program shares, which used to be ~540 lines of
-/// identical `__registry.register(...)` calls in every generated `main()`.
+/// the fixed hierarchy every program shares.
 /// Require-gated extensions (`Base64`, `StringIO`, ...) are NOT here: they stay
 /// per-program in codegen so an un-`require`d one contributes nothing (its
 /// constant must stay invisible). A program that reopens a builtin to change its
@@ -51,12 +50,10 @@ impl ClassRegistry {
 /// Seed the CORE constants a generated program reads (`Float::INFINITY`,
 /// `Encoding::UTF_8`, `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
 /// `Process::CLOCK_*`). Their owners resolve at compile time; only the values
-/// need installing at startup, once the registry is in place. The order matches
-/// the eight `seed_*` calls generated `main()` used to make itself.
+/// need installing at startup, once the registry is in place.
 pub fn install_core_constants() {
-    // `Float::*`, `Math::PI`/`E`, and `Complex::I` now seed via their classes'
-    // ruby_class! `const` rows (the BUILTIN_TABLES loop below); the numeric
-    // seeder is gone.
+    // `Float::*`, `Math::PI`/`E`, and `Complex::I` seed via their classes'
+    // ruby_class! `const` rows (the BUILTIN_TABLES loop below).
     crate::builtins::encoding::seed_encoding_constants();
     crate::builtins::regexp::seed_regexp_constants();
     crate::constants::seed_argv();

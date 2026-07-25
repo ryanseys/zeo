@@ -23,7 +23,7 @@ fn defined_classifies_syntactic_form() {
 
 #[test]
 fn class_new_creates_an_anonymous_runtime_class() {
-    // #97 F4: `Class.new(Super) { ... }` mints a runtime class. The block body
+    // `Class.new(Super) { ... }` mints a runtime class. The block body
     // runs against the new class (`define_method` and `def` both install on
     // it); a constant binding names it; is_a?/instance_of?/superclass and a
     // runtime superclass chain all resolve.
@@ -64,10 +64,10 @@ fn class_new_creates_an_anonymous_runtime_class() {
 
 #[test]
 fn a_subclass_calls_a_non_overridden_inherited_method() {
-    // Closes a real, pre-existing latent gap: today's spike only ever
-    // generated a Rust method for a class's own LITERAL methods --
-    // `Dog.new.speak` with no override at all would fail to compile (Rust
-    // has no cross-struct inherent-method inheritance). `analyze::mro`'s
+    // Closes a real, pre-existing latent gap: a class's own LITERAL methods
+    // each get a generated Rust method, but `Dog.new.speak` with no override
+    // at all has none to call (Rust has no cross-struct inherent-method
+    // inheritance). `analyze::mro`'s
     // materialization fixes this as a byproduct of doing modules correctly
     // (every MRO-reachable method gets its own Scope on the receiver).
     let result = run_ruby(
@@ -445,11 +445,9 @@ fn defined_on_a_begin_expression_classifies_as_expression() {
 
 #[test]
 fn self_inside_a_class_method_is_the_class_object() {
-    // Was a documented scope-cut ("no first-class Class/Module runtime value
-    // exists") and a codegen panic. `RubyValue::Class` has been the
-    // representation for a while; a class method's `self` is now that value,
-    // so `self` and the class constant are interchangeable -- including as a
-    // receiver for the class's OWN other class methods.
+    // A class method's `self` is the class object (a `RubyValue::Class`
+    // value), so `self` and the class constant are interchangeable --
+    // including as a receiver for the class's OWN other class methods.
     let result = run_ruby(
         r#"
         class Foo
@@ -1396,9 +1394,9 @@ fn complexes_keep_component_classes() {
     );
 }
 
-/// `Struct.new` in ANY position mints a native struct class at runtime (Batch
-/// E): an anonymous local/inline struct is a runtime value, exactly like the
-/// constant form -- there is no longer a compile-time-synthesized path.
+/// `Struct.new` in ANY position mints a native struct class at runtime: an
+/// anonymous local/inline struct is a runtime value, exactly like the
+/// constant form -- there is no compile-time-synthesized path.
 #[test]
 fn anonymous_struct_mints_a_native_class_at_runtime() {
     let result = run_ruby(

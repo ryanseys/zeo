@@ -313,11 +313,9 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 /// it (`a = []; a[3] = :x` gives `[nil, nil, nil, :x]`); a negative index
 /// that's still out of range raises a real `IndexError` -- `None` here,
 /// which `codegen::call`'s `[]=` dispatch (the only caller) turns into a
-/// proper `Signal::Raise(IndexError.new(...))` (exceptions
-/// exist now, so this is no longer the "loud panic in the meantime" it was
-/// before exception handling landed). The actual message/exception CONSTRUCTION happens
-/// in codegen, not here, since only codegen has the class registry needed to
-/// build an `IndexError` value.
+/// proper `Signal::Raise(IndexError.new(...))`. The actual message/exception
+/// CONSTRUCTION happens in codegen, not here, since only codegen has the class
+/// registry needed to build an `IndexError` value.
 pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue> {
     let mut arr = arr.lock();
     let i = if index < 0 {
@@ -338,8 +336,7 @@ pub fn array_len(arr: &RArray) -> i64 {
 }
 
 /// Flattens a `*splat` element in place, with Ruby's own coercion rules --
-/// splatting a non-Array is ordinary Ruby, not an error. It used to panic
-/// ("expected an Array to splat"), which took down `a, b = *1`.
+/// splatting a non-Array is ordinary Ruby, not an error.
 ///
 /// The rules, all oracle-verified:
 ///
@@ -778,8 +775,7 @@ mod multi_assign_tests {
         assert_eq!(display(&before), ["1", ""]); // nil-padded
     }
 
-    /// Splatting a non-Array is ordinary Ruby, not an error -- this used to
-    /// panic ("expected an Array to splat"), which took down `a, b = *1`.
+    /// Splatting a non-Array is ordinary Ruby, not an error.
     /// Every case here is oracle-verified against ruby 4.0.5.
     #[test]
     fn splatting_an_array_flattens_it_and_nil_contributes_nothing() {

@@ -398,8 +398,8 @@ mod tests {
         assert!(shareable(&pr));
     }
 
-    /// Cycle guards: a self-referential graph used to recurse to
-    /// stack overflow in both traversals; now every node is visited once.
+    /// Cycle guards: every node in a self-referential graph is visited once,
+    /// so both traversals terminate instead of overflowing the stack.
     #[test]
     fn make_shareable_handles_a_self_referential_array() {
         let arr = crate::array_new(vec![RubyValue::Int(1)]);

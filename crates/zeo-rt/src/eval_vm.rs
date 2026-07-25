@@ -1,4 +1,4 @@
-//! Runtime string `eval` (#97 stage 2) -- a tree-walking interpreter over
+//! Runtime string `eval` -- a tree-walking interpreter over
 //! `ruby-prism`'s own `Node` tree, linked into the runtime behind the
 //! `eval-vm` feature.
 //!

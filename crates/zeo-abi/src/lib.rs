@@ -1,29 +1,22 @@
-//! The compiler/runtime ABI, single-sourced (Phase 15.1; hierarchy made
-//! declarative in Phase 17.1).
+//! The compiler/runtime ABI, single-sourced.
 //!
 //! `zeo` (the compiler) and `zeo-rt` (the runtime every generated
 //! program links) deliberately never link each other -- but they must agree
 //! on the numeric identity of every built-in class: the compiler bakes
 //! `ClassId`s into generated code as literals, and the runtime's dispatch/
-//! `is_a?`/registry machinery interprets them. Before this crate existed,
-//! that agreement was TWO parallel hand-maintained const lists
-//! (`zeo::compiler` and `zeo_rt::dispatch`) synced by a
-//! `debug_assert` -- a growing burden as the ABI gains class names,
-//! module-ness, and (Phase 18) per-box method-table keys. This crate is the
-//! one source of truth both sides re-export.
+//! `is_a?`/registry machinery interprets them. This crate is the one source
+//! of truth both sides re-export, so the agreement can't drift as the ABI
+//! gains class names, module-ness, and per-box method-table keys.
 //!
-//! Since Phase 17.1 the table also carries each builtin's SUPERCLASS and
-//! INCLUDES -- the CRuby-exact hierarchy (oracle-verified against ruby
-//! 4.0.5) that both the compiler's ancestor linearization and the runtime's
-//! registry-free fallback chains are derived from. Ids are APPEND-ONLY:
-//! renumbering is technically safe (nothing persists across builds), but
-//! appending keeps generated-code diffs reviewable and eliminates any
-//! stale-incremental-artifact risk.
+//! The table also carries each builtin's SUPERCLASS and INCLUDES -- the
+//! CRuby-exact hierarchy (oracle-verified against ruby 4.0.5) that both the
+//! compiler's ancestor linearization and the runtime's registry-free fallback
+//! chains are derived from. Ids are APPEND-ONLY: renumbering is technically
+//! safe (nothing persists across builds), but appending keeps generated-code
+//! diffs reviewable and eliminates any stale-incremental-artifact risk.
 //!
-//! Zero dependencies, on purpose: the earlier decision against a shared
-//! crate (Phase 14.4 rev.2) was about dragging the runtime's heavy deps
-//! (`may`/`corosensei`) into every compiler build -- a dependency-free leaf
-//! has no such cost.
+//! Zero dependencies, on purpose: keeping the runtime's heavy deps out of
+//! every compiler build -- a dependency-free leaf has no such cost.
 
 /// Identifies a Ruby class at runtime AND at compile time -- the compiler
 /// mirrors of this id are baked into generated code as literals, so the two
@@ -85,7 +78,7 @@ pub fn is_ext_feature(name: &str) -> bool {
 }
 
 /// `ClassId(0)`, always present: the root every class ultimately chains up
-/// to (via `BasicObject` since Phase 17.1). Not part of [`BUILTINS`] --
+/// to (via `BasicObject`). Not part of [`BUILTINS`] --
 /// both sides construct/register `Object` specially (the compiler seeds it
 /// as class index 0; the runtime's `Object` unit struct carries it as
 /// `CLASS_ID`). Its own place in the chain is [`OBJECT_SUPERCLASS`] +
@@ -115,20 +108,20 @@ pub const RACTOR_CLASS: ClassId = ClassId(18);
 /// Enumerable` linearizes this id into a class's `ancestors` exactly like
 /// a user module.
 pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
-/// `Class` and `Module` (Phase 16.1) -- the classes a first-class
+/// `Class` and `Module` -- the classes a first-class
 /// class/module VALUE (`RubyValue::Class`) answers `.class` with:
 /// `Widget.class == Class`, `Enumerable.class == Module`. Both are
 /// themselves CLASSES (`Class.class == Class` in real Ruby); `Class`'s
 /// superclass is `Module` (`Widget.is_a?(Module)` is true).
 pub const CLASS_CLASS: ClassId = ClassId(20);
 pub const MODULE_CLASS: ClassId = ClassId(21);
-/// The builtin `Comparable` MODULE (Phase 16.2) -- every method drives the
+/// The builtin `Comparable` MODULE -- every method drives the
 /// includer's own `<=>` (the compar.c architecture).
 pub const COMPARABLE_CLASS: ClassId = ClassId(22);
-/// Reserved for Phase 17.2's fiber-backed Enumerator; registered with the
+/// Reserved for the fiber-backed Enumerator; registered with the
 /// CRuby-correct ancestry now so ids stay append-only.
 pub const ENUMERATOR_CLASS: ClassId = ClassId(23);
-/// The true root (Phase 17.1): `BasicObject.superclass` is nil in Ruby;
+/// The true root: `BasicObject.superclass` is nil in Ruby;
 /// every chain ends `..., Object, Kernel, BasicObject`.
 pub const BASIC_OBJECT_CLASS: ClassId = ClassId(24);
 /// The `Kernel` MODULE -- Object owns ZERO instance methods in CRuby;
@@ -142,31 +135,30 @@ pub const RATIONAL_CLASS: ClassId = ClassId(27);
 pub const COMPLEX_CLASS: ClassId = ClassId(28);
 /// The `Math` MODULE (module functions `Math.sqrt` etc. + `PI`/`E`).
 pub const MATH_CLASS: ClassId = ClassId(29);
-/// `Struct` -- root of every runtime-minted `Struct.new(...)` class (Batch E,
-/// `zeo-rt`'s `rstruct`); includes `Enumerable` (CRuby).
+/// `Struct` -- root of every runtime-minted `Struct.new(...)` class
+/// (`zeo-rt`'s `rstruct`); includes `Enumerable` (CRuby).
 pub const STRUCT_CLASS: ClassId = ClassId(30);
-/// `Enumerator::Yielder` (Phase 17.2) -- the `y` in
+/// `Enumerator::Yielder` -- the `y` in
 /// `Enumerator.new { |y| y << 1 }`. Registered under its FLAT
 /// fully-qualified name (this table has no nesting edges); user code
 /// resolving the `Enumerator::Yielder` path lexically gets a loud
 /// NameError -- documented, since yielders are only ever OBTAINED, never
 /// named.
 pub const YIELDER_CLASS: ClassId = ClassId(31);
-/// The `GC` MODULE (G0) -- zeo uses `Arc` refcounting, so
+/// The `GC` MODULE -- zeo uses `Arc` refcounting, so
 /// `GC.start`/`stat`/`enable`/`disable`/`compact` are honest no-ops (see
 /// `zeo_rt::dispatch`'s GC probe); the id exists so `GC` resolves as a
 /// constant and `GC.start` dispatches cleanly instead of NameError-ing.
 pub const GC_CLASS: ClassId = ClassId(32);
-/// `IO` (G0, minimal) -- backs the `STDOUT`/`STDERR` singletons and the
+/// `IO` (minimal) -- backs the `STDOUT`/`STDERR` singletons and the
 /// `$stdout`/`$stderr` globals; the print family routes through whichever
-/// value those globals hold. Full file-backed IO is a later phase (plan
-/// P-B).
+/// value those globals hold.
 pub const IO_CLASS: ClassId = ClassId(33);
-/// `Method` (G0/P4) -- the object `Kernel#method(:name)` answers; wraps a
+/// `Method` -- the object `Kernel#method(:name)` answers; wraps a
 /// bound receiver + method name and dispatches `#call` through `send`.
 pub const METHOD_CLASS: ClassId = ClassId(34);
 
-/// The plan P-B core classes. All are `RubyValue::Object(RObj)` over a
+/// Core classes. All are `RubyValue::Object(RObj)` over a
 /// zeo-rt-resident struct -- `RubyValue` stays frozen at its 23 variants
 /// (a new variant only pays for itself for structural Hash-key equality, a
 /// codegen fast path, or an immediate; none of these qualify).
@@ -187,8 +179,8 @@ pub const FILE_STAT_CLASS: ClassId = ClassId(39);
 /// `Encoding` -- what `String#encoding` answers and `Encoding::UTF_8` names;
 /// wraps an `encoding::EncodingId` in the runtime.
 pub const ENCODING_CLASS: ClassId = ClassId(40);
-/// `Data` -- root of every runtime-minted `Data.define(...)` class (Batch E,
-/// `zeo-rt`'s `rstruct`). Unlike `Struct`, `Data` is immutable and NOT
+/// `Data` -- root of every runtime-minted `Data.define(...)` class
+/// (`zeo-rt`'s `rstruct`). Unlike `Struct`, `Data` is immutable and NOT
 /// `Enumerable` (no `each`). The one other subclassable builtin besides
 /// `Struct`.
 pub const DATA_CLASS: ClassId = ClassId(41);
@@ -252,7 +244,7 @@ pub const MONITOR_CLASS: ClassId = ClassId(66);
 /// `builtins::process`.
 pub const PROCESS_STATUS_CLASS: ClassId = ClassId(67);
 
-/// The `FFI` module (`require "ffi"`, the real `ffi` gem, #204). Require-gated
+/// The `FFI` module (`require "ffi"`, the real `ffi` gem). Require-gated
 /// like the `ext/` classes but recognized as a first-class runtime namespace so
 /// its `Pointer`/`MemoryPointer`/`Struct` constants resolve. `FFI::Library` is
 /// NOT a row -- it's recognized syntactically (`extend FFI::Library`), never a
@@ -940,7 +932,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
-    // The real `ffi` gem (#204), require-gated on "ffi". The `FFI` module row
+    // The real `ffi` gem, require-gated on "ffi". The `FFI` module row
     // MUST precede its nested classes (nested-constant resolution walks parent
     // first). `MemoryPointer < Pointer` so it inherits Pointer's accessors.
     BuiltinClass {
@@ -1556,7 +1548,7 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         superclass: Some(exc_id(4)),
         is_module: false,
     },
-    // `SyntaxError < ScriptError` (#97 stage 2) -- raised by the runtime eval VM
+    // `SyntaxError < ScriptError` -- raised by the runtime eval VM
     // when a dynamically-eval'd string fails to parse. Appended AFTER
     // `Math::DomainError` so every pre-existing exception id stays put; like
     // `Math::DomainError` it is registered in the compiler's exception-tail pin
@@ -1735,8 +1727,7 @@ pub fn declared_ancestors(id: ClassId) -> Vec<ClassId> {
 }
 
 /// The Ruby-visible name of any builtin id, `Object` included. `None` for
-/// user-class ids. Retires the runtime's hand-maintained variant->name
-/// match (NoMethodError messages, registry-less display).
+/// user-class ids. Backs NoMethodError messages and registry-less display.
 pub fn builtin_name(id: ClassId) -> Option<&'static str> {
     if id == OBJECT_CLASS {
         return Some("Object");

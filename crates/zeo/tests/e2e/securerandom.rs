@@ -89,7 +89,7 @@ fn securerandom_random_number_bounds() {
 fn securerandom_is_cryptographic_not_a_seeded_prng() {
     // Two independent draws must differ, and -- unlike Kernel#rand -- srand must
     // NOT make SecureRandom reproducible (it reads the OS CSPRNG, not the seedable
-    // generator). A regression to the old clock-seeded xorshift would break this.
+    // generator). A regression to a clock-seeded xorshift would break this.
     let result = run_ruby(
         r#"
         require "securerandom"

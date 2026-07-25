@@ -161,7 +161,7 @@ impl Walker {
         let mut node = std::mem::replace(&mut hir[id], HirNode::NilLit);
         match &mut node {
             HirNode::LocalRead(name) => self.read(name),
-            // An `attach_function` wrapper body (#204): visit its argument reads
+            // An `attach_function` wrapper body: visit its argument reads
             // (synthetic `__ffi_a*` params) so renaming stays consistent.
             HirNode::Ffi(call) => {
                 let args: Vec<NodeId> = call.args.iter().map(|(a, _)| *a).collect();

@@ -1,15 +1,13 @@
 //! `super` call emission -- named `super_calls`, not `super`, since `super`
 //! is a keyword. Every `super` dispatches at RUNTIME against the
-//! receiver's live ancestry (M5): `emit_runtime_super` routes to
+//! receiver's live ancestry: `emit_runtime_super` routes to
 //! `send_super_from`'s per-position MRO walk (instance methods) or
 //! `send_super_class_from` (class methods); `emit_super_dynamic` reads the
 //! defining class off the runtime method-frame stack for runtime-defined
 //! bodies; `emit_value_super` bridges into an inherited value builtin's
 //! payload; and the `extend M` singleton-chain shape resolves its target
 //! at COMPILE time (sibling-extend order is compile-time knowledge) but
-//! still dispatches the resolved row at runtime. The former ~500-line
-//! inline HIR splice (and its argument-binding machinery) is gone -- one
-//! dispatch mechanism, verified suite-equivalent before the switch.
+//! still dispatches the resolved row at runtime -- one dispatch mechanism.
 
 use quote::quote;
 
@@ -156,7 +154,7 @@ pub fn emit_super(
         })
     };
 
-    // `super` into an inherited VALUE builtin (D3): a `class Stack < Array`
+    // `super` into an inherited VALUE builtin: a `class Stack < Array`
     // method whose `super` finds NO user definition above targets the native
     // `Array` method -- `super` in `initialize` re-seats the payload, any other
     // runs the builtin against it. There is no HIR to splice (the builtin has no
@@ -183,7 +181,7 @@ pub fn emit_super(
     };
 
     // The resolved target dispatches at RUNTIME -- the parent's HIR is
-    // never spliced (M5): one mechanism, `send_super_from`'s per-position
+    // never spliced: one mechanism, `send_super_from`'s per-position
     // MRO walk (or the class-method/singleton channels below), serves every
     // `super`. A CLASS-method target keeps its COMPILE-TIME singleton-chain
     // resolution -- sibling extends interleave in an order the runtime
@@ -395,8 +393,8 @@ fn emit_super_dynamic(
         }
     }
 }
-/// `super` from a value-builtin subclass method into the inherited builtin
-/// (D3): `zeo_rt::value_super` re-seats the payload for `initialize`, else
+/// `super` from a value-builtin subclass method into the inherited builtin:
+/// `zeo_rt::value_super` re-seats the payload for `initialize`, else
 /// runs the root builtin method (`Array#push` ...) against the payload and
 /// re-wraps a self-return. No HIR to splice (the builtin has no `own_methods`).
 /// Argument forwarding is shared with the exception path.

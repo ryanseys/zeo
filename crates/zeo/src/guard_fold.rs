@@ -384,7 +384,7 @@ fn respond_to_fold(
         // builtin class method the class declares in its `ruby_class!`/
         // `ruby_module!` (projected into `CLASS_SURFACE` -- e.g.
         // `Process.respond_to?(:_fork)`, which connection_pool's ForkTracker
-        // gates on). The projection is why this no longer needs a hardcoded
+        // gates on). The projection is why this needs no hardcoded
         // allowlist.
         if compiler.class_method_in_chain(cls, &m).is_some()
             || crate::builtin_surface::provides_class_method(cls, &m)

@@ -141,13 +141,12 @@ pub(crate) fn emit_proc_or_lambda_value(
     // The block's OWN parameter names shadow the enclosing scope's metadata
     // for them -- see `Ctx::in_proc`.
     // Names THIS block binds (its own params or own locals) that a NESTED
-    // escaping block captures (#97 F2b) -- e.g. the `m` in
+    // escaping block captures -- e.g. the `m` in
     // `each { |m| define_method(m) { m } }`. They must become shared
     // `Arc<Mutex<RubyValue>>` cells so the inner closure can `Arc::clone` them,
     // exactly like a method promotes its OWN captured params (see
     // `params::emit_prologue`'s `captured_param_wraps`). Without this the inner
-    // block would fresh-declare the name and read `nil` -- the case the panic
-    // just below used to reject outright.
+    // block would fresh-declare the name and read `nil`.
     let own_params = crate::codegen::captures::own_param_names(params);
     let nested_captured: std::collections::HashSet<String> =
         crate::codegen::captures::collect_escaping_captures(
@@ -165,9 +164,8 @@ pub(crate) fn emit_proc_or_lambda_value(
     // prelude's own-only invariant (`hoisting.rs`) forbids outright.
     own_only.retain(|n| !nested_captured.contains(n));
 
-    // Nested-Proc guard (replacing the old blanket "no block escaping inside
-    // another escaping block" rejection): names shared with the enclosing
-    // METHOD are `Captured` cells, and a name a NESTED escaping block
+    // Nested-Proc guard: names shared with the enclosing METHOD are
+    // `Captured` cells, and a name a NESTED escaping block
     // captures from this one just became a cell too (`nested_captured`,
     // removed from `own_only` above) -- both compose through any nesting
     // depth. A remaining `own_only` name that IS assigned somewhere in this

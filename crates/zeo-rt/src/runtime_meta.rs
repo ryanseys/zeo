@@ -1,4 +1,4 @@
-//! Runtime metaprogramming (#97, stage 1): the seam that fills
+//! Runtime metaprogramming: the seam that fills
 //! `MethodImpl::Dynamic`. Everything the AOT compiler bakes into the frozen,
 //! write-once `REGISTRY` (dispatch.rs) is reached lock-free through `&'static`
 //! reads. Anything DEFINED WHILE THE PROGRAM RUNS -- `define_method` with a

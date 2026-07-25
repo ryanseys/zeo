@@ -69,7 +69,7 @@ fn method_missing_fallback_on_a_total_miss() {
 
 #[test]
 fn class_shift_self_at_top_level_defines_singleton_methods_on_main() {
-    // `class << self` at the top level reopens `main`'s singleton (Batch G):
+    // `class << self` at the top level reopens `main`'s singleton:
     // it desugars to `self.define_singleton_method(...)`, `self` being `main`,
     // so each inner `def` installs on `main` and is callable via implicit self.
     let result = run_ruby(
@@ -328,7 +328,7 @@ fn a_named_block_param_can_be_forwarded_to_another_call() {
 
 #[test]
 fn define_singleton_method_on_object_and_class() {
-    // #97 F2: a per-object singleton (only that object responds) and a
+    // A per-object singleton (only that object responds) and a
     // class-level singleton method (a class method).
     let result = run_ruby(
         r#"
@@ -347,7 +347,7 @@ fn define_singleton_method_on_object_and_class() {
 
 #[test]
 fn def_on_an_object_defines_a_per_object_singleton() {
-    // #97 F3: `def obj.name` and `class << obj` install per-object singleton
+    // `def obj.name` and `class << obj` install per-object singleton
     // methods (identity-keyed overlay), reaching `@ivar`/`self`/params and
     // answering `respond_to?` only on that object.
     let result = run_ruby(
@@ -607,8 +607,8 @@ fn builtin_reopen_with_matching_superclass_clause() {
 
 #[test]
 fn nested_escaping_block_captures_an_inlined_times_param() {
-    // An escaping closure capturing the param of an INLINED `.times` block
-    // (Batch H1). The `.times` body shares the enclosing Rust scope, so the
+    // An escaping closure capturing the param of an INLINED `.times` block.
+    // The `.times` body shares the enclosing Rust scope, so the
     // param is cell-wrapped per iteration -- fresh each turn, matching Ruby --
     // and the nested closure `Arc::clone`s it, exactly like a real block
     // param. Previously a clean compile-error scope-cut.
@@ -630,7 +630,7 @@ fn nested_escaping_block_captures_an_inlined_times_param() {
 }
 
 // Correctness-fix regression tests below -- each reproduces one bug a
-// codebase-wide gap audit found (see docs/PORTING_ANALYSIS.md).
+// codebase-wide gap audit found.
 
 #[test]
 fn super_with_explicit_args_binds_the_parents_own_param_names() {
@@ -2000,9 +2000,8 @@ fn enumerable_resolves_before_method_missing() {
     assert_eq!(result.stdout, "[10, 20, 30]\nmm:nope\n");
 }
 
-/// The interception-order fix: a user-defined sibling `puts` now WINS over
-/// the Kernel function (real Ruby's rule; the old intercept-first order
-/// was a latent bug).
+/// A user-defined sibling `puts` WINS over the Kernel function (real Ruby's
+/// rule).
 #[test]
 fn a_user_defined_puts_wins_over_the_kernel_function() {
     let result = run_ruby(
@@ -2236,7 +2235,7 @@ fn top_level_def_last_def_wins() {
 
 #[test]
 fn top_level_def_self_defines_a_singleton_method_on_main() {
-    // A top-level `def self.name` is a SINGLETON method on `main` (Batch G) --
+    // A top-level `def self.name` is a SINGLETON method on `main` --
     // callable via implicit self at the top level, but (CRuby's asymmetry with
     // a plain top-level `def`, a private Object instance method) NOT from
     // inside another object's method, where self isn't `main`.
@@ -3100,8 +3099,8 @@ fn singleton_class_object_yields_inside_class_shift_obj() {
 
 #[test]
 fn def_in_class_new_block_yields() {
-    // A `def` in expression position (a `Class.new` block) now threads its
-    // block too -- previously a `panic!`/spike-scope rejection.
+    // A `def` in expression position (a `Class.new` block) threads its
+    // block too.
     let result = run_ruby(
         r#"
         k = Class.new do

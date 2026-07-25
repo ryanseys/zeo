@@ -38,7 +38,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 /// The three ways a local/parameter name's storage can be emitted -- see
-/// each variant's docs. Replaces a 2-way `is_hoisted` bool now that a real,
+/// each variant's docs. A 3-way enum, not a bool, because a real
 /// escaping capture case exists (see `codegen::captures`); every read/
 /// write site should go through `emit_local_read`/`emit_local_write` below
 /// rather than matching this directly, so the 3-way logic lives in ONE
@@ -94,8 +94,8 @@ pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
     match local_storage(cx, name) {
         // The `MutexGuard` is bound to an explicit `__g` local inside its
         // own block, not written as a bare `#ident.lock().clone()` -- see
-        // `codegen::expr`'s `IvarRead` arm for the full explanation (found
-        // via this session's own testing): an UNNAMED `.lock()` temporary's
+        // `codegen::expr`'s `IvarRead` arm for the full explanation: an
+        // UNNAMED `.lock()` temporary's
         // scope extends to the end of the ENCLOSING STATEMENT, so reading
         // the SAME captured local twice in one expression (e.g. `total *
         // total`) would otherwise deadlock a non-reentrant
@@ -122,10 +122,8 @@ pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream
     let ident = safe_ident(name);
     match local_storage(cx, name) {
         // `value` is bound to a temporary FIRST, then the store happens as
-        // its own statement -- confirmed the hard way (originally against
-        // `RefCell`, and still exactly as true against `parking_lot::Mutex`,
-        // Part 9 -- if anything MORE important now): `*#ident.lock() =
-        // #value;` evaluates the LHS place expression (calling `lock()`,
+        // its own statement, because `*#ident.lock() = #value;` evaluates
+        // the LHS place expression (calling `lock()`,
         // acquiring the guard) before evaluating `value`, so an RHS that
         // itself reads this SAME captured name (e.g. `total += n`, i.e.
         // `total = total + n`) would call `.lock()` again while the write
@@ -148,7 +146,7 @@ pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream
 /// `Call` arm's docs below).
 pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
     match &compiler.hir[id] {
-        // An FFI wrapper body (#204) declares no hoistable locals (only param
+        // An FFI wrapper body declares no hoistable locals (only param
         // reads).
         HirNode::Ffi(_) => {}
         // A lambda's own body is a fresh, independent local-variable scope

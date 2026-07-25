@@ -153,7 +153,7 @@ ruby_module! {
         }
         Ok(recv.clone())
     }
-    // `Object#define_singleton_method(name) { body }` (#97) -- a per-object
+    // `Object#define_singleton_method(name) { body }` -- a per-object
     // singleton on an ordinary receiver, or a class/singleton method when the
     // receiver is a `Class`. Universal (this Kernel row is reached by every
     // receiver's MRO walk, including a class value). A singleton on an
@@ -170,7 +170,7 @@ ruby_module! {
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         crate::runtime_define_singleton_method(recv, name, body)
     }
-    // `eval(str)` (#97 stage 2) -- runtime string eval through the eval VM
+    // `eval(str)` -- runtime string eval through the eval VM
     // (feature-gated: a build without `eval-vm` answers NotImplementedError).
     // `self` is the CALLER's own, since this universal Kernel row is reached
     // through the receiver's MRO walk -- so `eval("@x")` at the top level reads
@@ -715,7 +715,7 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         Some(v) => Some(crate::builtins::convert::to_index(v)? as u32),
     };
     // A base only makes sense for a String argument -- CRuby raises rather than
-    // silently ignoring it for an Integer/Float/etc. (#2515).
+    // silently ignoring it for an Integer/Float/etc.
     if base.is_some() && !matches!(args[0], RubyValue::Str(_)) {
         return Err(arg_error!("base specified for non string value"));
     }
@@ -1367,10 +1367,10 @@ pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     ))
 }
 
-// The per-coroutine stack of tags with a live `catch` frame. `throw` consults
+// This context's stack of tags with a live `catch` frame. `throw` consults
 // it so an unmatched tag becomes an `UncaughtThrowError` AT THE THROW (as in
 // CRuby), rather than a `Signal::Throw` leaking past every `rescue` to the top
-// level. Coroutine-local: each `Thread`/`Fiber` unwinds its own catch frames.
+// level. Per-context: each `Thread`/`Fiber` unwinds its own catch frames.
 std::thread_local!(static CATCH_TAGS: std::cell::RefCell<Vec<RubyValue>> = const { std::cell::RefCell::new(Vec::new()) });
 
 /// Install `new` as this context's live-catch-tag stack, returning the

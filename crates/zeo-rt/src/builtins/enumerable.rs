@@ -1298,7 +1298,7 @@ ruby_module! {
     }
     def "tally"(recv, args, _block) {
         // Optional accumulator hash: counts add onto its existing values and the
-        // same hash is returned (Enumerable#tally(hash), #2533). No arg -> a fresh
+        // same hash is returned (Enumerable#tally(hash)). No arg -> a fresh
         // hash.
         let counts = match args.first() {
             None => crate::hash_new(Vec::new()),

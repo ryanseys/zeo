@@ -328,7 +328,7 @@ fn splatting_a_non_array_follows_rubys_to_a_rules() {
 
 #[test]
 fn small_api_matchdata_size_set_join_complex_i_method_source_location() {
-    // Batch 3 small wins: MatchData#size/#length, Set#join, the Complex::I
+    // Small API wins: MatchData#size/#length, Set#join, the Complex::I
     // imaginary-unit constant (and that it multiplies to -1), and Method's
     // source_location/super_method (nil for a builtin, matching CRuby's C-method).
     let result = run_ruby(

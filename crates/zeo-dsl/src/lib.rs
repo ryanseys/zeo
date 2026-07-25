@@ -97,7 +97,7 @@ pub enum Visibility {
 
 /// One `def`. Several Ruby NAMES can share a single Rust body (aliases that
 /// live at the same definition site, e.g. `succ`/`next`); each name carries its
-/// own optional arity, matching `builtin_methods!`'s per-name `[n]` column.
+/// own optional arity.
 pub struct MethodDef {
     /// `def self.foo` (a class/singleton method) vs `def foo` (instance).
     pub is_class_method: bool,
@@ -108,8 +108,7 @@ pub struct MethodDef {
     pub is_module_function: bool,
     /// Outer attributes written before the `def` (in practice `#[cfg(...)]`),
     /// carried verbatim onto the emitted fn AND every lookup/names/arity row so
-    /// a platform-gated method drops out of the surface as a unit -- the DSL
-    /// analogue of a `#[cfg]`'d `builtin_methods!` block.
+    /// a platform-gated method drops out of the surface as a unit.
     pub attrs: Vec<Attribute>,
     pub visibility: Visibility,
     /// One or more Ruby names, in declaration order (first is the primary).

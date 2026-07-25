@@ -562,7 +562,7 @@ fn base64_package_matches_real_ruby() {
 
 #[test]
 fn require_gated_extension_constant_is_a_name_error_without_its_require() {
-    // The ext require-gate (#92): a require-gated builtin's constant
+    // The ext require-gate: a require-gated builtin's constant
     // (`Base64`, gated by `"base64"`) is INVISIBLE until `require "base64"`
     // activates it -- referencing it un-required raises `NameError:
     // uninitialized constant Base64`, oracle-verified against ruby 4.0.5
@@ -1106,7 +1106,7 @@ fn rbconfig_shim_is_built_in() {
     );
 }
 
-// A `require` no longer has to be a top-level statement. Whole-program AOT
+// A `require` need not be a top-level statement. Whole-program AOT
 // hoists a non-top-level literal `require`/`require_relative` to a compile-time
 // splice (loaded before the file's own code, like the rubygems/bundler
 // `require "x" unless defined?(X)` idiom), so it works inside a method, a
@@ -1139,7 +1139,7 @@ fn require_works_in_non_top_level_positions() {
     assert_eq!(result.stdout, "2\n3\n{\"k\":1}\n");
 }
 
-// A dynamic `load`/`require` (a runtime-computed target) no longer fails the
+// A dynamic `load`/`require` (a runtime-computed target) does not fail the
 // COMPILE -- whole-program AOT can't splice a path it only learns at runtime,
 // so the call is lowered to a runtime `Kernel#{load,require}` that raises
 // CRuby's `LoadError` if and when it actually executes. A guarded dynamic load

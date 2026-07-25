@@ -21,9 +21,8 @@ pub fn emit_new(
 ) -> TokenStream {
     // A USER class with a real `initialize`: bind its arguments through the
     // SAME `emit_call_args_to` machinery every other call site uses, so
-    // `initialize` gets the full `Params` surface (splat/post/keyword/block)
-    // rather than the required+optional-only subset `.new` used to bind by
-    // hand -- `def initialize(*values)` was a compile-time rejection.
+    // `initialize` gets the full `Params` surface (splat/post/keyword/block),
+    // including shapes like `def initialize(*values)`.
     //
     // Only this path can: the others have no generated `initialize` with a
     // `Params` to bind against (a builtin/module `.new` dispatches
@@ -199,11 +198,8 @@ pub fn emit_new_with_arg_tokens(
     // answered by the runtime's own class-method table. Route it dynamically
     // (exactly as the module case just below does) and let the runtime
     // decide: a builtin with a `new` row constructs, and one without raises
-    // real Ruby's NoMethodError at the moment the call runs. This used to be
-    // a compile-time panic ("built-in types are constructed via their own
-    // literal syntax"), which was never true of `Time`/`File`/`Dir` and made
-    // an unreachable `Time.new` fail the whole compile.
-    // An IMMEDIATE-builtin subclass (`class MyInt < Integer`, D3) is
+    // real Ruby's NoMethodError at the moment the call runs.
+    // An IMMEDIATE-builtin subclass (`class MyInt < Integer`) is
     // registry-only -- no constructor -- so its `.new` must dispatch
     // dynamically too, landing on `Class#new`'s NoMethodError arm (CRuby's
     // exact "undefined method 'new' for class MyInt").
@@ -221,7 +217,7 @@ pub fn emit_new_with_arg_tokens(
             )?
         };
     }
-    // A NATIVE-BACKED class (D3) -- an exception subclass (`RubyException`) or a
+    // A NATIVE-BACKED class -- an exception subclass (`RubyException`) or a
     // value-builtin subclass (`ValueSubclass`, `class Stack < Array`) -- has no
     // generated struct, so construct it through the runtime by id. Returns a
     // boxed `RubyValue` matching its `Poly` static type, running the registered

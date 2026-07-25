@@ -1,11 +1,10 @@
-//! `base64` (CRuby's bundled `base64` gem) -- the first in-tree, require-gated
+//! `base64` (CRuby's bundled `base64` gem) -- an in-tree, require-gated
 //! extension in the `ext/` tree. `require "base64"` activates it (a built-in
 //! feature, resolved without a filesystem file, mirroring CRuby); the module's
 //! functions dispatch through `class_method_table` on the `Base64` module value.
 //!
-//! Ported from the retired `zeo-base64` native crate. Because it now lives
-//! inside `zeo-rt`, it raises proper rescuable `ArgumentError`/`TypeError`
-//! (the native crate could only `panic!`, a divergence this migration retires).
+//! Living inside `zeo-rt`, it raises proper rescuable
+//! `ArgumentError`/`TypeError`.
 //!
 //! Semantics oracle-verified against ruby 4.0.5: `encode64` = RFC 2045 (a `\n`
 //! every 60 chars and at the end; `""` -> `""`); `strict_encode64` = RFC 4648

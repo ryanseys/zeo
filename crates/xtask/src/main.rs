@@ -14,8 +14,7 @@
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 //!
 //! (The golden-file conformance corpus, examples, and gaps all run as
-//! `cargo test`/nextest now -- see `crates/zeo/tests/`; the bespoke `xtask
-//! conformance` harness was retired.)
+//! `cargo test`/nextest -- see `crates/zeo/tests/`.)
 
 mod bench;
 mod exec;

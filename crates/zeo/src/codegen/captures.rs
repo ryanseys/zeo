@@ -47,10 +47,10 @@ pub struct Captures {
 /// OWN escaping blocks).
 ///
 /// Delegates to `Params::bound_names` rather than re-enumerating the param
-/// kinds. It used to keep its own copy of that walk, and the copy drifted the
-/// moment destructuring params arrived: the names inside `|(a, b)|` are bound
-/// by the params but live in `Params::destructures`, so this missed them and
-/// they were classified as ordinary locals rather than captured ones --
+/// kinds: a separate copy of that walk would miss destructuring params --
+/// the names inside `|(a, b)|` are bound by the params but live in
+/// `Params::destructures`, so they would be classified as ordinary locals
+/// rather than captured ones --
 /// silently making `def m((a, b)); -> { a += 1 }; end` read a nil `a` inside
 /// the block. One enumeration, one place to update.
 pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
@@ -71,7 +71,7 @@ pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
 /// enclosing-scope state, while `proc { |x| tmp ||= 0; tmp += x }.call`
 /// genuinely resets `tmp` per call (NOT a capture when nothing outside the
 /// block uses the name; see `hoisting::collect_locals`'s `Call` arm, which
-/// no longer descends into an escaping block's body, making its result
+/// does not descend into an escaping block's body, making its result
 /// exactly "names used outside any escaping block").
 /// `self` has no such distinction (an ivar always means the same object),
 /// so `self_captured` is passed through unfiltered.
@@ -157,7 +157,7 @@ fn body_contains_escaping_return_in(compiler: &Compiler, body: &[NodeId], in_esc
 fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: bool) -> bool {
     let sub = |n: NodeId| node_contains_escaping_return(compiler, n, in_escaping);
     match &compiler.hir[id] {
-        // An FFI wrapper body (#204) contains no block.
+        // An FFI wrapper body contains no block.
         HirNode::Ffi(_) => false,
         // A lambda literal catches its own `Signal::Return` unconditionally --
         // a `return` inside it belongs to the lambda, never the enclosing
@@ -351,7 +351,7 @@ pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
 
 fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
-        // An FFI wrapper body (#204) contains no `begin`.
+        // An FFI wrapper body contains no `begin`.
         HirNode::Ffi(_) => false,
         HirNode::Begin { .. } => true,
         // Same reasoning as `node_contains_escaping_block`'s `Lambda` arm --
@@ -560,7 +560,7 @@ fn walk(
     self_class: Option<crate::compiler::ClassId>,
 ) {
     match &compiler.hir[id] {
-        // An FFI wrapper body (#204) has no escaping block, so nothing of the
+        // An FFI wrapper body has no escaping block, so nothing of the
         // enclosing scope is captured through it.
         HirNode::Ffi(_) => {}
         HirNode::LocalRead(name) => {
@@ -897,8 +897,7 @@ fn walk(
                 // its enclosing BLOCK's own (non-cell) local -- is rejected
                 // at the Proc-construction site instead
                 // (`emit_proc_or_lambda_value`), where it can be detected
-                // precisely rather than banning all nesting wholesale (the
-                // blanket panic that previously lived here).
+                // precisely rather than banning all nesting wholesale.
                 let next_exclusions: HashSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
                 let next_in_escaping = in_escaping || !is_inline;
@@ -907,8 +906,8 @@ fn walk(
                 }
             }
         }
-        // A `def`/literal `define_method` INSIDE an escaping block (#97 F4,
-        // e.g. `Class.new { define_method(:x) { ... } }`) compiles to
+        // A `def`/literal `define_method` INSIDE an escaping block
+        // (e.g. `Class.new { define_method(:x) { ... } }`) compiles to
         // `self.define_method(:name, ->(params){ body })` (see
         // `codegen::expr`'s `DefMethod` arm): it USES `self` (the install
         // target) and its body is a nested escaping proc. Outside an escaping

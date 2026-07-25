@@ -1,5 +1,4 @@
-//! Emits Rust source for the analyzed program -- the direct analog of
-//! `codegen_program` (`codegen.c:4275`): walks classes/methods/top-level
+//! Emits Rust source for the analyzed program: walks classes/methods/top-level
 //! statements, emitting `ruby_class!` macro invocations plus a `fn main()`.
 //!
 //! Generated Rust is built as a `proc_macro2::TokenStream`, composed via
@@ -502,7 +501,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // structs/impls/registration now live once in `zeo-rt`, installed by
     // `ClassRegistry::with_core` (see `main` below). The compiler still keeps
     // their HIR for name resolution, `super` inlining, and materializing user
-    // subclasses -- it just no longer EMITS them into every program.
+    // subclasses -- it just doesn't EMIT them into every program.
     let classes = compiler
         .classes
         .iter()
@@ -552,7 +551,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // there (`codegen::stmt`'s `ClassDef` arm) -- real Ruby's "a class body
     // runs where it appears, re-running per reopen". Everything else --
     // the prelude's bootstrap bodies and the synthetic `None`-marker
-    // registrations -- keeps the old hoisted splice at the head of
+    // registrations -- keeps the hoisted splice at the head of
     // `run_main`'s fallible closure (where `?` propagates as a Signal), so
     // no recorded statement can ever be silently dropped.
     let inline_markers = inline_class_markers(compiler, &analyzed.main_statements);
@@ -600,7 +599,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             }
         } else if compiler.is_exception_backed(ClassId(idx as u32)) {
-            // A user `class MyErr < StandardError` (D3): no generated struct --
+            // A user `class MyErr < StandardError`: no generated struct --
             // its instances are the native `RubyException`. Install the runtime
             // entry + native `Exception` default method set on its id; the
             // subclass's own `def`s then `define_method` OVER these as deltas
@@ -619,7 +618,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             }
         } else if compiler.is_value_subclass(ClassId(idx as u32)) {
-            // A user `class Stack < Array` (D3): no generated struct -- its
+            // A user `class Stack < Array`: no generated struct -- its
             // instances are the native `ValueSubclass` wrapping an `Array`/
             // `String`/`Hash` payload. Register the runtime entry + the shared
             // `value_subclass_construct`; inherited builtin methods come via the
@@ -636,7 +635,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             }
         } else if compiler.is_immediate_subclass(ClassId(idx as u32)) {
-            // A user `class MyInt < Integer` (D3): allowed as a DEFINITION but
+            // A user `class MyInt < Integer`: allowed as a DEFINITION but
             // has NO instances. Register just the name + ancestors with NO
             // constructor -- so `MyInt.ancestors`/`superclass`/`is_a?` resolve,
             // while `MyInt.new` dynamically hits `Class#new`'s "no constructor"
@@ -886,7 +885,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         user_class_bodies.extend(hoisted_sites_for(ClassId(idx as u32)));
     }
 
-    // Native-exception reopen/subclass DELTAS (D3): the native default method
+    // Native-exception reopen/subclass DELTAS: the native default method
     // set is installed on every exception id -- the built-in tree by
     // `with_core()`, each user `class MyErr < StandardError` by the
     // `register_exception_subclass` call emitted above. Codegen then emits only
@@ -1053,7 +1052,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .enumerate()
         // `Object` (index 0, not `is_builtin`) registers through the same
         // mapping: its ancestors are COMPUTED (`[Object, Kernel,
-        // BasicObject]`), no longer a hardcoded `vec![Object]` in `main()`.
+        // BasicObject]`), not a hardcoded `vec![Object]`.
         //
         // A require-gated builtin whose feature never fired
         // (`feature_active` false) is SKIPPED: no `require` means no code can
@@ -1241,13 +1240,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     let (um_containers, um_regs) = emit_user_module_bridges(compiler);
     registrations.extend(um_regs);
 
-    // The exception factory that generated `main()` used to install (one arm
-    // per runtime-raisable exception class, each an `emit_boxed_new`) is gone:
-    // `zeo-rt` now constructs exceptions by NAME from the registered classes
-    // (`ClassRegistry::construct_exception`), so this ~1,130-line block no
-    // longer bloats every binary. The prelude classes still register their
-    // `ConstructorFn` via `ruby_class!`'s `__register`, which is what the
-    // runtime construction path uses.
+    // Exceptions are constructed at runtime by NAME from the registered
+    // classes (`ClassRegistry::construct_exception`) -- no per-program
+    // factory. The prelude classes register their `ConstructorFn` via
+    // `ruby_class!`'s `__register`, which is what the runtime construction
+    // path uses.
 
     quote! {
         #(#classes)*
@@ -1261,9 +1258,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         fn main() {
             // A registry pre-populated with the CORE world -- the always-on
             // builtin classes/modules AND the built-in exception hierarchy,
-            // installed once from `zeo-rt` instead of the ~540 identical
-            // `register(...)` calls plus ~6,600 lines of `ruby_class!` blocks
-            // every program used to emit. Their ids are the ones `zeo-abi`
+            // installed once from `zeo-rt`. Their ids are the ones `zeo-abi`
             // reserves and the compiler asserts it assigned identically (see
             // `analyze`).
             let mut __registry = zeo_rt::ClassRegistry::with_core();
@@ -1275,30 +1270,27 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             zeo_rt::install_class_registry(__registry);
             // Seed the CORE constants (`Float::INFINITY`, `Encoding::UTF_8`,
             // `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
-            // `Process::CLOCK_*`) now that the registry is in place -- their
-            // owners resolved at compile time; only the values need installing.
+            // `Process::CLOCK_*`) -- their owners resolved at compile time;
+            // only the values need installing.
             zeo_rt::install_core_constants();
             // The runtime raises real, catchable exceptions (NoMethodError,
             // ArgumentError, TypeError, StopIteration, ...) by constructing
             // them itself from the registered classes -- see
             // `ClassRegistry::construct_exception`. No per-program factory is
-            // installed anymore: it was ~1,130 lines of identical machinery in
-            // every binary (the single largest slice after the prelude classes).
+            // installed.
 
-            // The whole top level runs as `may`'s first coroutine (Phase
-            // 13.4) -- see `zeo_rt::run_main`'s docs for the worker-count
-            // GVL model and why registration must complete first. The
-            // closure is `move + Send + 'static` trivially: top-level
-            // statements are self-contained (their hoisted locals are
-            // declared inside the body itself) and every value is Send+Sync
-            // (Part 9).
+            // The top-level program body runs on the main OS thread -- see
+            // `zeo_rt::run_main`'s docs for the worker-count / GVL model and
+            // why registration must complete first. The closure is
+            // `move + Send + 'static` trivially: top-level statements are
+            // self-contained (their hoisted locals are declared inside the
+            // body itself) and every value is Send+Sync.
             let __result: Result<zeo_rt::RubyValue, zeo_rt::Signal> =
                 zeo_rt::run_main(move || {
                     // Class-body statements (`@@x = expr` / `CONST = expr`)
                     // run first, inside the fallible closure (they may
-                    // `?`), builtins before user classes -- the same
-                    // "before every top-level statement" order the old
-                    // in-`main()` splice had.
+                    // `?`), builtins before user classes, before every
+                    // top-level statement.
                     #main_frame
                     zeo_rt::check_ints()?;
                     #validate_aliases
@@ -1346,8 +1338,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 /// `define_method`) -- run once at class-definition time, in file order, with
 /// `self` = the class object (`class_self: Some(cid)`). Emitted inside
 /// `run_main`'s fallible closure (see the call site), so a fallible statement
-/// propagates its `Signal` through `?` like any method-body statement (#97
-/// F2a). Runs right after this class/module's own dispatch-table registration.
+/// propagates its `Signal` through `?` like any method-body statement.
+/// Runs right after this class/module's own dispatch-table registration.
 pub(crate) fn emit_class_body_site(
     compiler: &Compiler,
     site: &crate::compiler::ClassBodySite,
@@ -1677,7 +1669,7 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
     }
 }
 
-/// The native-exception reopen/subclass DELTA (D3): for an exception-backed
+/// The native-exception reopen/subclass DELTA: for an exception-backed
 /// class (`is_exception_backed`), the methods whose winning body is NOT a
 /// pristine `BUILTIN_EXCEPTIONS_RB` body (`!native_default`) and that were
 /// actually defined ON an exception class (never a top-level `def`
@@ -1780,10 +1772,7 @@ fn emit_builtin_method_fn(
         // `Arc<Concrete>` -- a reopened builtin has no generated struct to
         // take ivar fields from, and for an `Object` reopen (which is where
         // TOP-LEVEL `def`s live) the receiver is the `main` object, whose
-        // ivars are name-keyed. This is what used to be rejected as
-        // "instance variable `@c` in a top-level method (or `Object` reopen)
-        // isn't supported yet (the `main` object has no ivar storage)"; it
-        // has storage now (`dispatch::Object`).
+        // ivars are name-keyed with storage in `dispatch::Object`.
         self_is_dynamic: true,
         runtime_super_params: None,
         block_depth: 0,

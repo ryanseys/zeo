@@ -90,7 +90,7 @@ pub type BuiltinMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 /// One method surface (instance OR class): the same drift-free trio every
-/// `builtin_methods!`/`ruby_class!` table derives from a single row set.
+/// `ruby_class!`/`ruby_module!` table derives from a single row set.
 pub struct MethodTable {
     pub lookup: fn(&str) -> Option<BuiltinMethodFn>,
     pub names: fn() -> &'static [&'static str],
@@ -100,11 +100,10 @@ pub struct MethodTable {
 /// One builtin class/module's tables, registered by the `ruby_class!`/
 /// `ruby_module!` macro and collected at link time into [`BUILTIN_TABLES`].
 ///
-/// This is the data-driven replacement for the hand-written `ClassId`->lookup
-/// `match` arms below: the routing fns (`class_table` etc.) consult the
-/// registered table FIRST and fall back to the match only for classes not yet
-/// migrated to the macro -- so a class is fully described by its own file the
-/// moment it is registered here.
+/// The routing fns (`class_table` etc.) consult the registered table FIRST and
+/// fall back to the hand-written `ClassId`->lookup `match` arms below only for
+/// the few classes still served by hand -- so a class registered here is fully
+/// described by its own file.
 pub struct BuiltinClassTable {
     pub id: ClassId,
     /// Instance methods (`class_table`/`class_arity_table`/`class_table_names`).
@@ -136,69 +135,23 @@ pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable
 /// walk reaches them as ancestors of Array/Hash/Range and of any user class
 /// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
-    // A macro-registered class is fully described by its own table -- its match
-    // arm below is deleted, so consult the registry first.
+    // A macro-registered class is fully described by its own table and has no
+    // match arm below, so consult the registry first.
     if let Some(t) = registered_table(id) {
         return t.instance.as_ref().map(|m| m.lookup);
     }
     Some(match id {
-        // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
-        // FLOAT_CLASS migrated to ruby_class! -- served via registered_table.
-        // NUMERIC_CLASS migrated to ruby_class! -- served via registered_table.
-        // RATIONAL_CLASS migrated to ruby_class! -- served via registered_table.
-        // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARRAY_CLASS migrated to ruby_class! -- served via registered_table.
-        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROC_CLASS migrated to ruby_class! -- served via registered_table.
-        // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
-        // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
-        // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
-        // BASIC_OBJECT_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
-        // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
-        // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
-        // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
-        // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup,
-        // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
-        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
-        // METHOD_CLASS / UNBOUND_METHOD_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FIBER_CLASS => fiber::lookup,
         zeo_abi::THREAD_CLASS => thread::lookup,
-        // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
-        // TIME_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
-        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
-        // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
-        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // In-tree `ext/` extensions with instances (modules like CGI/JSON have
-        // none -- they appear only in `class_method_table`).
-        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
-        // registered_table (MD5 carries the shared table; the SHA ids alias it).
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup, // DATE_CLASS served via registered_table
-        // TCPSocket has no own instance table -- it inherits IO's read/write via
-        // the MRO (`TCPSocket < IO`). TCPServer adds accept/addr/listen/close.
-        // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
-        // registered_table (MemoryPointer inherits Pointer's instance table).
-        // Etc::Passwd / Etc::Group migrated to ruby_class! -- served via
-        // registered_table (Passwd's BSD fields are #[cfg]'d in the DSL).
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup,
         _ => return None,
     })
 }
 
 /// `class_table`'s arity twin: ClassId -> the instance-method arity table
-/// (`<lookup>_arity`, generated beside every `builtin_methods!` `lookup`).
+/// (`<lookup>_arity`, generated beside every `lookup`).
 /// `Method#arity` consults this for a builtin-receiver method object, walking
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
 pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
@@ -206,53 +159,11 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         return t.instance.as_ref().map(|m| m.arity);
     }
     Some(match id {
-        // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
-        // FLOAT_CLASS migrated to ruby_class! -- served via registered_table.
-        // NUMERIC_CLASS migrated to ruby_class! -- served via registered_table.
-        // RATIONAL_CLASS migrated to ruby_class! -- served via registered_table.
-        // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARRAY_CLASS migrated to ruby_class! -- served via registered_table.
-        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROC_CLASS migrated to ruby_class! -- served via registered_table.
-        // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
-        // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
-        // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
-        // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
-        // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
-        // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
-        // BASIC_OBJECT_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
-        // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
-        // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
-        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
-        // METHOD_CLASS / UNBOUND_METHOD_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
         zeo_abi::THREAD_CLASS => thread::lookup_arity,
-        // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
-        // TIME_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
-        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
-        // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
-        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
-        // registered_table.
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity, // DATE_CLASS served via registered_table
-        // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
-        // registered_table.
-        // Etc::Passwd / Etc::Group migrated to ruby_class! -- served via
-        // registered_table.
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
         _ => return None,
     })
 }
@@ -267,8 +178,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
 /// `File.read` is `RubyValue::Class(FILE_CLASS)`, whose own class is
 /// `Class` -- so the ordinary MRO walk looks at Class/Module and never at
 /// File. `send_value_in` probes this table first for a `RubyValue::Class`
-/// receiver, which is what `Math.sqrt` used to get via a hardcoded
-/// `if *cid == MATH_CLASS` arm (and `GC` via a second one).
+/// receiver, which is how `Math.sqrt` and `GC` resolve.
 ///
 /// The `&RubyValue` a row receives is the CLASS VALUE itself, not an
 /// instance -- rows generally ignore it (`Time.now` needs no receiver), but
@@ -278,56 +188,18 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         return t.class.as_ref().map(|m| m.lookup);
     }
     Some(match id {
-        // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARRAY_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRING_CLASS migrated to ruby_class! -- served via registered_table.
-        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROC_CLASS migrated to ruby_class! -- served via registered_table.
-        // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        // FILE_CLASS migrated to ruby_class! -- served via registered_table.
-        // FileTest shares File's class-method table (the macro still emits
-        // `file::lookup_class`); it is a module, not a File subclass, so it
-        // keeps its own arm rather than inheriting through an ancestry walk.
+        // FileTest is a module, not a File subclass, so it keeps its own arm
+        // (sharing File's class-method table) rather than inheriting via ancestry.
         zeo_abi::FILE_TEST_MODULE => file::lookup_class,
         zeo_abi::IO_CLASS => io::lookup_class,
-        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
-        // TIME_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROCESS_CLASS migrated to ruby_module! -- served via registered_table.
-        // SIGNAL_MODULE migrated to ruby_module! -- served via registered_table.
-        // WARNING_MODULE migrated to ruby_module! -- served via registered_table.
-        // OBJECTSPACE_MODULE migrated to ruby_module! -- served via registered_table.
-        // GC_CLASS migrated to ruby_module! -- served via registered_table.
-        // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
-        // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
-        // ENUMERATOR_CLASS migrated to ruby_class! -- served via registered_table.
-        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class,
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
-        // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
-        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // RACTOR_CLASS migrated to ruby_class! -- served via registered_table.
-        // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
-        // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
-        // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
-        // Etc module migrated to ruby_module! -- served via registered_table.
-        // CGI_MODULE migrated to ruby_module! -- served via registered_table.
-        // Digest::MD5/SHA1/SHA256/SHA512 + the Digest module migrated to
-        // ruby_class!/ruby_module! -- served via registered_table.
-        // JSON_MODULE migrated to ruby_module! -- served via registered_table.
+        // In-tree `ext/` extensions, each behind its `ext-<name>` cargo feature.
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class, // DATE_CLASS served via registered_table
-        // ZLIB_MODULE migrated to ruby_module! -- served via registered_table.
-        // PSYCH_MODULE migrated to ruby_module! -- served via registered_table;
-        // the `YAML` alias id has no table of its own, so it routes here.
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class,
+        // The `YAML` alias id has no table of its own, so it routes to psych.
         #[cfg(feature = "ext-psych")]
         zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class,
-        // OPENSSL_MODULE migrated to ruby_module! -- served via registered_table.
-        // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
-        // registered_table.
         _ => return None,
     })
 }
@@ -340,53 +212,11 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         return t.instance.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
     }
     match id {
-        // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
-        // FLOAT_CLASS migrated to ruby_class! -- served via registered_table.
-        // NUMERIC_CLASS migrated to ruby_class! -- served via registered_table.
-        // RATIONAL_CLASS migrated to ruby_class! -- served via registered_table.
-        // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SYMBOL_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARRAY_CLASS migrated to ruby_class! -- served via registered_table.
-        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANGE_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROC_CLASS migrated to ruby_class! -- served via registered_table.
-        // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
-        // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
-        // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
-        // BASIC_OBJECT_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENUMERATOR_CLASS (+ Chain/Product via ancestry) / YIELDER_CLASS
-        // migrated to ruby_class! -- served via registered_table.
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
-        // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
-        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARGF_CLASS migrated to ruby_class! -- served via registered_table.
-        // METHOD_CLASS / UNBOUND_METHOD_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_names(),
-        // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
-        // RANDOM_CLASS migrated to ruby_class! -- served via registered_table.
-        // TIME_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRUCT_CLASS / DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        // LAZY_CLASS migrated to ruby_class! -- served via registered_table.
-        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
-        // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
-        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // ENUMERABLE_CLASS migrated to ruby_module! -- served via registered_table.
-        // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
-        // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
-        // MATH_CLASS migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-digest")]
-        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
-        // registered_table.
         #[cfg(feature = "ext-date")]
-        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(), // DATE_CLASS served via registered_table
-        // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
-        // registered_table.
+        zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
         _ => &[],
     }
 }
@@ -398,40 +228,10 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         return t.class.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
     }
     match id {
-        // INTEGER_CLASS migrated to ruby_class! -- served via registered_table.
-        // ARRAY_CLASS migrated to ruby_class! -- served via registered_table.
-        // STRING_CLASS migrated to ruby_class! -- served via registered_table.
-        // HASH_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROC_CLASS migrated to ruby_class! -- served via registered_table.
-        // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
-        // FILE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
         zeo_abi::IO_CLASS => io::lookup_class_names(),
-        // DIR_CLASS migrated to ruby_class! -- served via registered_table.
-        // TIME_CLASS migrated to ruby_class! -- served via registered_table.
-        // PROCESS_CLASS migrated to ruby_module! -- served via registered_table.
-        // SIGNAL_MODULE migrated to ruby_module! -- served via registered_table.
-        // WARNING_MODULE migrated to ruby_module! -- served via registered_table.
-        // OBJECTSPACE_MODULE migrated to ruby_module! -- served via registered_table.
-        // GC_CLASS migrated to ruby_module! -- served via registered_table.
-        // ENCODING_CLASS migrated to ruby_class! -- served via registered_table.
-        // SET_CLASS migrated to ruby_class! -- served via registered_table.
-        // COMPLEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // MARSHAL_MODULE migrated to ruby_module! -- served via registered_table.
-        // ENUMERATOR_CLASS migrated to ruby_class! -- served via registered_table.
-        // CONDITION_VARIABLE_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::THREAD_CLASS => thread::lookup_class_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),
-        // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
-        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
-        // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
-        // Etc module + Etc::Passwd/Group migrated to ruby_module!/ruby_class! --
-        // served via registered_table.
-        // CGI_MODULE migrated to ruby_module! -- served via registered_table.
-        // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
-        // registered_table.
-        // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
-        // registered_table.
         _ => &[],
     }
 }
