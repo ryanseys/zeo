@@ -1,15 +1,16 @@
-//! `Class` + `Module` receiver methods (CRuby class.c/object.c), found via
-//! the walk on a `RubyValue::Class` receiver (whose `class_id()` is
-//! `CLASS_CLASS` or `MODULE_CLASS`; `Class`'s chain passes through
-//! `Module`, so class values see both tables -- real Ruby's own layout:
-//! `Module` owns `name`/`ancestors`/`===`, `Class` owns `new`).
-//! `struct`/`class`/`module` being Rust keywords is why the two share this
-//! one file.
+//! `Module` receiver methods (CRuby module.c/object.c), found via the walk on
+//! a `RubyValue::Class` receiver whose `class_id()` is `MODULE_CLASS` -- or
+//! `CLASS_CLASS`, since `Class`'s ancestry passes through `Module`, so a class
+//! value sees this table too. `Module` owns `name`/`ancestors`/`===`; its
+//! sibling `Class` (which owns `new`/`allocate`) lives in `rclass.rs`. Both are
+//! r-prefixed (like `rproc`/`rstruct`) because `class`/`module` are Rust
+//! keywords. The shared `recv_cid` helper is `pub(crate)` for `rclass` to use.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, name_error, type_error};
+use crate::builtins::{arity, name_error, type_error};
+use zeo_macros::ruby_class;
 
-fn recv_cid(recv: &RubyValue) -> crate::ClassId {
+pub(crate) fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     match recv {
         RubyValue::Class(cid) => *cid,
         _ => unreachable!("Class/Module table row dispatched on a non-Class receiver"),
@@ -76,10 +77,10 @@ fn syms_to_array(names: Vec<crate::Symbol>) -> RubyValue {
     ))
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_module;
+ruby_class! {
+    Module = zeo_abi::MODULE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    "name" | "to_s" | "inspect" => fn name(recv, args, _block) {
+    def "name" | "to_s" | "inspect" (recv, args, _block) {
         arity!(args, 0);
         let cid = recv_cid(recv);
         let n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
@@ -88,7 +89,7 @@ builtin_methods! {
     // `Class#superclass` -- the first non-module entry after self in the
     // linearized ancestors (prepends/includes are modules, so this lands on
     // the real parent class); `nil` at the root (`BasicObject`).
-    "superclass" => fn superclass(recv, args, _block) {
+    def "superclass" (recv, args, _block) {
         arity!(args, 0);
         let cid = recv_cid(recv);
         // `superclass` is a `Class` method; a Module receiver has none
@@ -109,7 +110,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Nil)
     }
-    "ancestors" => fn ancestors(recv, args, _block) {
+    def "ancestors" (recv, args, _block) {
         arity!(args, 0);
         let chain = crate::dispatch::ancestors_of_value(recv_cid(recv))
             .iter()
@@ -120,7 +121,7 @@ builtin_methods! {
     // `Module#included_modules`: the modules in `recv`'s ancestor chain, in MRO
     // order (the classes filtered out). Kernel and any mixed-in module appear;
     // `Object`/`BasicObject` (classes) do not.
-    "included_modules" => fn included_modules(recv, args, _block) {
+    def "included_modules" (recv, args, _block) {
         arity!(args, 0);
         let mods = crate::dispatch::ancestors_of_value(recv_cid(recv))
             .iter()
@@ -135,7 +136,7 @@ builtin_methods! {
     // unspecified (an id table in CRuby, a HashMap here).
     // `Module#const_set(name, value)` -- define a constant on this module,
     // answering the value (as CRuby does).
-    "const_set" => fn const_set_m(recv, args, _block) {
+    def "const_set" (recv, args, _block) {
         arity!(args, 2);
         let cid = recv_cid(recv);
         let name = match &args[0] {
@@ -156,15 +157,15 @@ builtin_methods! {
     // references statically, so a runtime-only flag could not be honored
     // consistently anyway). Gems call this to hide internals (timeout's
     // `private_constant :GET_TIME`); accepting-without-enforcing loads them.
-    "private_constant" => fn private_constant(recv, args, _block) {
+    def "private_constant" (recv, args, _block) {
         constant_visibility_no_op(recv, args)
     }
-    "public_constant" => fn public_constant(recv, args, _block) {
+    def "public_constant" (recv, args, _block) {
         constant_visibility_no_op(recv, args)
     }
     // `Module#const_get(name)` -- resolve a constant on this module (walking the
     // ancestry), a NameError "uninitialized constant <name>" on a miss.
-    "const_get" => fn const_get_m(recv, args, _block) {
+    def "const_get" (recv, args, _block) {
         arity!(args, 1..=2);
         let cid = recv_cid(recv);
         let name = match &args[0] {
@@ -180,7 +181,7 @@ builtin_methods! {
                 .find_map(|anc| crate::constants::const_get(anc.0, &name)))
             .ok_or_else(|| name_error!("uninitialized constant {name}"))
     }
-    "constants" => fn constants(recv, args, _block) {
+    def "constants" (recv, args, _block) {
         arity!(args, 0..=1);
         let cid = recv_cid(recv);
         let mut seen = std::collections::HashSet::new();
@@ -211,7 +212,7 @@ builtin_methods! {
     // one of its ancestors (never `recv` itself, and never a superclass --
     // only included/prepended modules count). A non-class/module argument is a
     // TypeError.
-    "include?" => fn include_p(recv, args, _block) {
+    def "include?" (recv, args, _block) {
         arity!(args, 1);
         // The argument must be a MODULE. A class (or any non-module) is a
         // TypeError whose type name CRuby reports as `Class` for a class value.
@@ -237,7 +238,7 @@ builtin_methods! {
     }
     // `Module#===`: instance-of-ancestry, the check `case`/`when` class
     // candidates desugar to.
-    "===" => fn case_eq(recv, args, _block) {
+    def "===" (recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(crate::dispatch::is_a(
             args[0].class_id(),
@@ -249,23 +250,23 @@ builtin_methods! {
     // an ancestor of the other), while a non-class/module argument is a
     // TypeError. `<=>` is `nil` for both the unrelated and the non-module
     // cases. All five share the one `module_cmp` ordering.
-    "<" => fn mod_lt(recv, args, _block) {
+    def "<" (recv, args, _block) {
         arity!(args, 1);
         module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Less))
     }
-    "<=" => fn mod_le(recv, args, _block) {
+    def "<=" (recv, args, _block) {
         arity!(args, 1);
         module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
     }
-    ">" => fn mod_gt(recv, args, _block) {
+    def ">" (recv, args, _block) {
         arity!(args, 1);
         module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Greater))
     }
-    ">=" => fn mod_ge(recv, args, _block) {
+    def ">=" (recv, args, _block) {
         arity!(args, 1);
         module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
     }
-    "<=>" => fn mod_cmp(recv, args, _block) {
+    def "<=>" (recv, args, _block) {
         arity!(args, 1);
         match args[0] {
             RubyValue::Class(other) => Ok(
@@ -278,7 +279,7 @@ builtin_methods! {
     // `Class#subclasses`: the DIRECT, currently-registered subclasses. Order
     // is unspecified in CRuby (a hash-set walk), so this returns them in the
     // registry's iteration order -- tests that assert a listing sort it.
-    "subclasses" => fn subclasses(recv, args, _block) {
+    def "subclasses" (recv, args, _block) {
         arity!(args, 0);
         let kids = crate::dispatch::direct_subclasses(recv_cid(recv))
             .into_iter()
@@ -289,7 +290,7 @@ builtin_methods! {
     // Named classes/modules are never singleton (metaclass) classes; zeo
     // doesn't model per-object singleton classes as first-class ids, so this
     // is `false` for every reachable `RubyValue::Class` receiver.
-    "singleton_class?" => fn singleton_class_p(recv, args, _block) {
+    def "singleton_class?" (recv, args, _block) {
         arity!(args, 0);
         let _ = recv_cid(recv);
         Ok(RubyValue::Bool(false))
@@ -298,26 +299,26 @@ builtin_methods! {
     // or a class body writes (see `civars`' docs). Really `Object`'s
     // methods, which a class inherits; they live on the Module table
     // because that is the one a `RubyValue::Class` receiver reaches.
-    "instance_variable_get" => fn ivar_get(recv, args, _block) {
+    def "instance_variable_get" (recv, args, _block) {
         arity!(args, 1);
         let name = ivar_name_arg(&args[0])?;
         Ok(crate::civars::class_ivar_get(recv_cid(recv).0, &name))
     }
-    "instance_variable_set" => fn ivar_set(recv, args, _block) {
+    def "instance_variable_set" (recv, args, _block) {
         arity!(args, 2);
         let name = ivar_name_arg(&args[0])?;
         crate::civars::class_ivar_set(recv_cid(recv).0, &name, args[1].clone())?;
         // Answers the VALUE, not the receiver -- oracle-checked.
         Ok(args[1].clone())
     }
-    "instance_variable_defined?" => fn ivar_defined(recv, args, _block) {
+    def "instance_variable_defined?" (recv, args, _block) {
         arity!(args, 1);
         let name = ivar_name_arg(&args[0])?;
         Ok(RubyValue::Bool(
             crate::civars::class_ivar_names(recv_cid(recv).0).contains(&name),
         ))
     }
-    "instance_variables" => fn ivars(recv, args, _block) {
+    def "instance_variables" (recv, args, _block) {
         arity!(args, 0);
         let names = crate::civars::class_ivar_names(recv_cid(recv).0)
             .into_iter()
@@ -329,7 +330,7 @@ builtin_methods! {
     // provide `name` as a public OR protected INSTANCE method? (private and
     // nonexistent answer false), so an inherited `object_id`/`frozen?` answers
     // true too.
-    "method_defined?" => fn method_defined(recv, args, _block) {
+    def "method_defined?" (recv, args, _block) {
         // The optional second `inherit` flag (default true): false restricts the
         // lookup to the receiver's own methods (no ancestor walk).
         arity!(args, 1..=2);
@@ -345,7 +346,7 @@ builtin_methods! {
     // module/class (and its ancestors unless `inherit` is false). A builtin's
     // list is a subset of CRuby's (this runtime implements a subset), so
     // callers assert membership; a user class's own list is exact.
-    "instance_methods" => fn instance_methods(recv, args, _block) {
+    def "instance_methods" (recv, args, _block) {
         arity!(args, 0..=1);
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
@@ -355,7 +356,7 @@ builtin_methods! {
         Ok(syms_to_array(names))
     }
     // `public_instance_methods` narrows to public ONLY (protected excluded).
-    "public_instance_methods" => fn public_instance_methods(recv, args, _block) {
+    def "public_instance_methods" (recv, args, _block) {
         arity!(args, 0..=1);
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
@@ -364,7 +365,7 @@ builtin_methods! {
         );
         Ok(syms_to_array(names))
     }
-    "private_instance_methods" => fn private_instance_methods(recv, args, _block) {
+    def "private_instance_methods" (recv, args, _block) {
         arity!(args, 0..=1);
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
@@ -373,7 +374,7 @@ builtin_methods! {
         );
         Ok(syms_to_array(names))
     }
-    "protected_instance_methods" => fn protected_instance_methods(recv, args, _block) {
+    def "protected_instance_methods" (recv, args, _block) {
         arity!(args, 0..=1);
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
@@ -386,23 +387,23 @@ builtin_methods! {
     // `protected_method_defined?` -- true when `name` is an instance method of
     // this exact visibility. A non-method (or a name of another visibility)
     // answers false.
-    "public_method_defined?" => fn public_method_defined(recv, args, _block) {
+    def "public_method_defined?" (recv, args, _block) {
         arity!(args, 1..=2);
         Ok(RubyValue::Bool(method_defined_with_vis(
             recv, &args[0], crate::dispatch::MethodVisibility::Public)?))
     }
-    "private_method_defined?" => fn private_method_defined(recv, args, _block) {
+    def "private_method_defined?" (recv, args, _block) {
         arity!(args, 1..=2);
         Ok(RubyValue::Bool(method_defined_with_vis(
             recv, &args[0], crate::dispatch::MethodVisibility::Private)?))
     }
-    "protected_method_defined?" => fn protected_method_defined(recv, args, _block) {
+    def "protected_method_defined?" (recv, args, _block) {
         arity!(args, 1..=2);
         Ok(RubyValue::Bool(method_defined_with_vis(
             recv, &args[0], crate::dispatch::MethodVisibility::Protected)?))
     }
     // `Module#instance_method(:name)` -> an UnboundMethod for the module/class.
-    "instance_method" => fn instance_method(recv, args, _block) {
+    def "instance_method" (recv, args, _block) {
         arity!(args, 1);
         crate::builtins::unbound_method::unbound_method_new(recv_cid(recv), &args[0])
     }
@@ -410,7 +411,7 @@ builtin_methods! {
     // instance method AT RUNTIME (a computed name, or inside an `each` loop).
     // The literal `define_method(:sym) { ... }` form is desugared to a `def` at
     // compile time in zeo; this row serves everything that isn't literal.
-    "define_method" => fn define_method(recv, args, block) {
+    def "define_method" (recv, args, block) {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
         // A `Method`/`UnboundMethod` second argument installs that method's
@@ -430,7 +431,7 @@ builtin_methods! {
     // serves everything that isn't literal. Snapshot semantics -- the alias
     // keeps the method `old_name` resolves to NOW -- and returns the new
     // name's Symbol, both per CRuby.
-    "alias_method" => fn alias_method(recv, args, _block) {
+    def "alias_method" (recv, args, _block) {
         arity!(args, 2);
         let new = crate::runtime_meta::coerce_method_name(args.first())?;
         let old = crate::runtime_meta::coerce_method_name(args.get(1))?;
@@ -440,7 +441,7 @@ builtin_methods! {
     // (`Class.new { include M }`, `mod.class_eval { include Other }`): mix each
     // module's instance methods into the receiver's runtime ancestry. The plain
     // class-body form resolves statically; this serves the runtime shapes.
-    "include" => fn include_m(recv, args, _block) {
+    def "include" (recv, args, _block) {
         crate::runtime_meta::runtime_include(recv, args)
     }
     // `Module#private`/`public`/`protected` reached at RUNTIME (inside a
@@ -449,15 +450,15 @@ builtin_methods! {
     // mark visibility in the runtime overlay; the argument-less
     // default-visibility form is a documented nil no-op (see
     // `runtime_set_visibility`).
-    "private" => fn private_m(recv, args, _block) {
+    def "private" (recv, args, _block) {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Private)
     }
-    "public" => fn public_m(recv, args, _block) {
+    def "public" (recv, args, _block) {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Public)
     }
-    "protected" => fn protected_m(recv, args, _block) {
+    def "protected" (recv, args, _block) {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Protected)
     }
@@ -465,7 +466,7 @@ builtin_methods! {
     // fileutils' `private_module_function` calls `module_function name`). The
     // literal form resolves at compile time in `lower/defs.rs`. Promotes the
     // named instance method to a module method (see `runtime_module_function`).
-    "module_function" => fn module_function_m(recv, args, _block) {
+    def "module_function" (recv, args, _block) {
         crate::runtime_meta::runtime_module_function(recv_cid(recv), args)
     }
     // `private_class_method`/`public_class_method` at RUNTIME: zeo does not
@@ -474,14 +475,14 @@ builtin_methods! {
     // documented over-permissiveness; bundler only invokes PUBLIC commands, and
     // fileutils' `private_module_function` relies on the `module_function`
     // promotion above, not on the privatization).
-    "private_class_method" | "public_class_method" => fn class_method_visibility(recv, _args, _block) {
+    def "private_class_method" | "public_class_method" (recv, _args, _block) {
         Ok(recv.clone())
     }
     // `Module#class_eval`/`module_eval` -- run the block with `self` rebound
     // to the module/class value, returning the block's value. A
     // `def`/`define_method` inside installs on the receiver via the dynamic-
     // self path (self is a Class). `module_eval` is an alias.
-    "class_eval" | "module_eval" => fn class_eval(recv, args, block) {
+    def "class_eval" | "module_eval" (recv, args, block) {
         if let Some(arg) = args.first() {
             // The string form, through the eval VM with `self` rebound to the
             // class -- the same routing `instance_eval` already uses, and the
@@ -501,7 +502,7 @@ builtin_methods! {
     }
     // `Module#class_exec`/`module_exec(*args) { |*a| ... }` -- like class_eval
     // but forwards positional args to the block's params.
-    "class_exec" | "module_exec" => fn class_exec(recv, args, block) {
+    def "class_exec" | "module_exec" (recv, args, block) {
         let blk = crate::builtins::basic_object::block_proc(block, "class_exec")?;
         blk.call_with_self(recv, args)
     }
@@ -509,7 +510,7 @@ builtin_methods! {
     // (a `@@x` is owned by the nearest ancestor that first assigned it --
     // see `cvars`' docs). `get` on a never-assigned name is a `NameError`,
     // unlike a plain `@@x` read's nil-on-miss.
-    "class_variable_get" => fn cvar_get_m(recv, args, _block) {
+    def "class_variable_get" (recv, args, _block) {
         arity!(args, 1);
         let name = cvar_name_arg(&args[0])?;
         let cid = recv_cid(recv);
@@ -521,7 +522,7 @@ builtin_methods! {
         Err(name_error!("uninitialized class variable @@{name} in {}",
                 crate::dispatch::class_name(cid).unwrap_or_default()))
     }
-    "class_variable_set" => fn cvar_set_m(recv, args, _block) {
+    def "class_variable_set" (recv, args, _block) {
         arity!(args, 2);
         let name = cvar_name_arg(&args[0])?;
         let cid = recv_cid(recv);
@@ -534,7 +535,7 @@ builtin_methods! {
         crate::cvar_set(owner.0, &name, args[1].clone())?;
         Ok(args[1].clone())
     }
-    "class_variable_defined?" => fn cvar_defined_m(recv, args, _block) {
+    def "class_variable_defined?" (recv, args, _block) {
         arity!(args, 1);
         let name = cvar_name_arg(&args[0])?;
         Ok(RubyValue::Bool(
@@ -546,7 +547,7 @@ builtin_methods! {
     // `Module#class_variables([inherit=true])` -- the `@@name` symbols owned by
     // this class and (unless `inherit` is false) its ancestors, own first.
     // Names store bare (`x`); the reflection re-adds the `@@` prefix.
-    "class_variables" => fn class_variables(recv, args, _block) {
+    def "class_variables" (recv, args, _block) {
         arity!(args, 0..=1);
         let cid = recv_cid(recv);
         let mut seen = std::collections::HashSet::new();
@@ -646,106 +647,27 @@ fn ivar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    // `Class#new` -- the registry's dynamic constructor (`x = Widget;
-    // x.new(...)`). A class with no allocator (builtins, exception-less
-    // edge cases) raises real Ruby's NoMethodError shape for its kind.
-    "new" => fn new_m(recv, args, block) {
-        let cid = recv_cid(recv);
-        // `Class.new(superclass) { body }` (#97 F4) -- `recv` is `Class`
-        // itself, so its `.new` mints a fresh ANONYMOUS class rather than an
-        // instance. The block is the class body, run with `self` bound to the
-        // new class (so `define_method`/`include`/const-assign inside populate
-        // it). A literal `def` inside the block is a documented fast-follow
-        // (use `define_method`).
-        if cid == zeo_abi::CLASS_CLASS {
-            let superclass = args.first().cloned();
-            let body = match &block {
-                Some(RubyValue::Proc(p)) => Some(p.clone()),
-                _ => None,
-            };
-            return crate::runtime_class_new(superclass, body);
-        }
-        // `Module.new { body }` -- an anonymous module (no superclass, no
-        // constructor); the block populates it just like a class body.
-        if cid == zeo_abi::MODULE_CLASS {
-            let body = match &block {
-                Some(RubyValue::Proc(p)) => Some(p.clone()),
-                _ => None,
-            };
-            return crate::runtime_meta::runtime_module_new(body);
-        }
-        // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
-        // runtime allocator; parse deliberately skips the
-        // static `New` node for it so the block arrives here.
-        if cid == zeo_abi::ENUMERATOR_CLASS {
-            return crate::builtins::enumerator::enumerator_new(args, block);
-        }
-        // `BasicObject.new` -- instantiable in real Ruby: the same blank
-        // instance `Object.new` builds, tagged with the root class's own id.
-        // Its `initialize` (the true root's) takes no arguments.
-        if cid == zeo_abi::BASIC_OBJECT_CLASS {
-            crate::builtins::arity!(args, 0);
-            return Ok(crate::runtime_meta::blank_instance(cid));
-        }
-        match crate::dispatch::constructor_of(cid) {
-            Some(ctor) => ctor(cid, args, block),
-            None => {
-                let is_module = crate::dispatch::class_is_module(cid).unwrap_or(false);
-                let kind = if is_module { "module" } else { "class" };
-                let n = crate::dispatch::class_name(cid)
-                    .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
-                Err(crate::dispatch::raise_error(
-                    "NoMethodError",
-                    format!("undefined method 'new' for {kind} {n}"),
-                ))
-            }
-        }
-    }
-
-    // `Class#allocate` -- a fresh instance WITHOUT running `initialize`. A user
-    // class allocates its zero-initialized struct via its registered allocator;
-    // a builtin value class answers its empty value (`String.allocate` -> `""`,
-    // like CRuby, whose `allocate` yields the class's default instance).
-    "allocate" => fn allocate_m(recv, _args, _block) {
-        let cid = recv_cid(recv);
-        if let Some(v) = builtin_allocate(cid) {
-            return Ok(v);
-        }
-        match crate::dispatch::allocate_of(cid) {
-            Some(v) => Ok(v),
-            None => {
-                let n = crate::dispatch::class_name(cid)
-                    .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
-                Err(type_error!("allocator undefined for {n}"))
-            }
-        }
-    }
-}
-
-/// The empty/default value a builtin value class's `allocate` yields, matching
-/// CRuby (`String.allocate == ""`, `Array.allocate == []`, `Hash.allocate ==
-/// {}`). `None` for a user or non-value class, which routes to its registered
-/// allocator instead.
-fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
-    match cid {
-        zeo_abi::STRING_CLASS => Some(RubyValue::Str(crate::string_new(String::new()))),
-        zeo_abi::ARRAY_CLASS => Some(RubyValue::Array(crate::array_new(Vec::new()))),
-        zeo_abi::HASH_CLASS => Some(RubyValue::Hash(crate::hash_new(Vec::new()))),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use zeo_abi::*;
 
+    /// The `Module` rows are `ruby_class!`-generated (their Rust fn names are
+    /// mangled), so reach them the way dispatch does -- through the registered
+    /// instance table keyed by `MODULE_CLASS`.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(MODULE_CLASS)
+            .expect("Module is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Module has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Module#{name} is defined"))
+    }
+
     #[test]
     fn module_case_eq_checks_ancestry_registry_free() {
         // 5.class == Integer; Integer's fallback chain contains Numeric.
+        let case_eq = imethod("===");
         let r = case_eq(&RubyValue::Class(NUMERIC_CLASS), &[RubyValue::Int(5)], None).unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
         let r = case_eq(&RubyValue::Class(STRING_CLASS), &[RubyValue::Int(5)], None).unwrap();
@@ -754,7 +676,8 @@ mod tests {
 
     #[test]
     fn ancestors_row_reflects_the_fallback_chain() {
-        let RubyValue::Array(a) = ancestors(&RubyValue::Class(INTEGER_CLASS), &[], None).unwrap()
+        let RubyValue::Array(a) =
+            imethod("ancestors")(&RubyValue::Class(INTEGER_CLASS), &[], None).unwrap()
         else {
             panic!()
         };

@@ -231,7 +231,7 @@ pub fn enumerator_class_id(e: &REnumerator) -> crate::ClassId {
 }
 
 /// `Enumerator.new([size]) { |y| ... }` -- reached through the dynamic
-/// `Class#new` arm (`class_module::class_new` special-cases
+/// `Class#new` row (`rclass`'s `new` special-cases
 /// `ENUMERATOR_CLASS`); parse deliberately skips the static `New` node
 /// for literal `Enumerator` receivers so the block rides the ordinary
 /// dynamic-call plumbing.

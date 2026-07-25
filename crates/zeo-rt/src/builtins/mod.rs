@@ -25,7 +25,6 @@ use std::sync::LazyLock;
 pub(crate) mod argf;
 pub(crate) mod array;
 pub(crate) mod basic_object;
-pub(crate) mod class_module;
 pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod condition_variable;
@@ -62,7 +61,9 @@ pub(crate) mod queue;
 pub(crate) mod random;
 pub(crate) mod range;
 pub(crate) mod rational;
+pub(crate) mod rclass;
 pub(crate) mod regexp;
+pub(crate) mod rmodule;
 pub(crate) mod rproc;
 pub(crate) mod rstruct;
 pub(crate) mod set;
@@ -154,8 +155,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // PROC_CLASS migrated to ruby_class! -- served via registered_table.
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::CLASS_CLASS => class_module::lookup_class,
-        zeo_abi::MODULE_CLASS => class_module::lookup_module,
+        // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
         // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
@@ -235,8 +235,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         // PROC_CLASS migrated to ruby_class! -- served via registered_table.
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::CLASS_CLASS => class_module::lookup_class_arity,
-        zeo_abi::MODULE_CLASS => class_module::lookup_module_arity,
+        // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
         // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         // RANDOM_FORMATTER_MODULE migrated to ruby_module! -- served via registered_table.
@@ -408,8 +407,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         // PROC_CLASS migrated to ruby_class! -- served via registered_table.
         // REGEXP_CLASS migrated to ruby_class! -- served via registered_table.
         // MATCH_DATA_CLASS migrated to ruby_class! -- served via registered_table.
-        zeo_abi::CLASS_CLASS => class_module::lookup_class_names(),
-        zeo_abi::MODULE_CLASS => class_module::lookup_module_names(),
+        // CLASS_CLASS / MODULE_CLASS migrated to ruby_class! -- served via registered_table.
         // NIL_CLASS / TRUE_CLASS / FALSE_CLASS migrated to ruby_class! -- served via registered_table.
         // KERNEL_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_names(),
