@@ -23,6 +23,9 @@
 pub(crate) mod addrinfo;
 pub(crate) mod basic_socket;
 pub(crate) mod ip_socket;
+// The generic `Socket` class file, named for its class -- the inner `socket`
+// matching the gem dir is intentional (one-file-per-class), not accidental.
+#[allow(clippy::module_inception)]
 pub(crate) mod socket;
 pub(crate) mod tcp_server;
 pub(crate) mod tcp_socket;
