@@ -32,15 +32,14 @@ program start, CRuby's timing), and `Kernel#raise` is a real dispatch row
 (closes the `send(:raise, ...)` NoMethodError divergence).
 
 FFI corpus port findings (2026-07-21, from the spinel-intrinsic -> real
-ffi gem test port; 25/29 pass): Proc -> C-function-pointer marshaling
-unimplemented (parse/ffi.rs resolves `callback` tags to plain `:pointer`);
-`:varargs` missing from `ffi_type_of`; binary `Digest#digest` bytes get
-UTF-8-transcoded through concat/pack/Base64 (the CONCAT and OUTPUT legs
-are fixed -- `StrBuf::push_buf` byte concat + raw-byte print family; the
-pack/Base64/format legs still funnel through lossy text and need the same
-treatment -- re-probe the digest tests when touching them);
-`OpenSSL::Random` implemented in ext/openssl.rs but never registered in
-zeo-abi.
+ffi gem test port). Now RESOLVED: Proc -> C-function-pointer marshaling
+(`callback`) and `:varargs` both land over libffi (`ext-ffi`; see
+`lower/ffi.rs`), and `OpenSSL::Random` is registered in zeo-abi. STILL
+OPEN: binary `Digest#digest` bytes get UTF-8-transcoded through
+pack/Base64/format (the CONCAT and OUTPUT legs are fixed --
+`StrBuf::push_buf` byte concat + raw-byte print family; the pack/Base64/
+format legs still funnel through lossy text and need the same treatment --
+re-probe the digest tests when touching them).
 
 Same lossy family, found while testing the single-byte encoding rows
 (2026-07-21): a string LITERAL with raw high `\xNN` escapes is not

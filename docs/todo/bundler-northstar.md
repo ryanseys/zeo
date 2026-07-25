@@ -1,7 +1,7 @@
 # Bundler north star — compile-`bundle` inventory
 
-**Goal (plan Phase 6 §G):** zeo compiles `rubygems` + `bundler` out of the box,
-milestones `bundle --version` → `bundle install --local` → network install.
+**Goal:** zeo compiles `rubygems` + `bundler` out of the box, milestones
+`bundle --version` → `bundle install --local` → network install.
 
 **Status (2026-07-23): does NOT compile yet, but the architecture is now in
 place.** The dominant architectural blockers — `rbconfig`, non-top-level
@@ -9,9 +9,9 @@ place.** The dominant architectural blockers — `rbconfig`, non-top-level
 `Random.urandom` + `extend`-onto-class/module) — are fixed, as are the dynamic
 `load`/`require`, `a, = rhs` multi-assign, and `rescue *splat` compiler gaps,
 and native **`etc`** is DONE. The require graph now clears config_file.rb and
-stops at a MISSING STDLIB (`fileutils`). What remains is the grind: vendor the
-pure-Ruby stdlib (`fileutils`/`pathname`/... — see the worklist) and implement
-native `io/wait`, one at a time.
+stops at a MISSING STDLIB (`fileutils`). Native `io/wait`, `etc`, and
+`pathname` have since landed; what remains is the grind: vendor the pure-Ruby
+stdlib (`fileutils`/`tempfile`/... — see the worklist), one at a time.
 
 ## Setup
 
@@ -165,7 +165,6 @@ path):
 | Feature | Why | Notes |
 |---|---|---|
 | `fileutils` | gem install core; **40** requires | biggest; `mkdir_p`/`cp_r`/`rm_rf`/`mv` over File/Dir |
-| `pathname` | bundler uses `Pathname` pervasively (`Bundler.root`) | pure Ruby over File |
 | `tempfile` | atomic writes, downloads | sits on `Dir.mktmpdir` (already present) |
 | `open3` | subprocess with pipes (`capture3`) | over Process/IO |
 | `find` | dir walker | small |
@@ -176,7 +175,9 @@ path):
 
 **Missing NATIVE ext stdlib:**
 - `etc` — ✅ DONE (full native `ext/etc`).
-- `io/wait` — `IO#wait_readable`/`#wait_writable` (net/http).
+- `io/wait` — ✅ DONE (`IO#wait_readable`/`#wait_writable` as unconditional `IO`
+  rows over real `poll(2)`; see `builtins/io.rs`).
+- `pathname` — ✅ DONE (native `ext/pathname`, `ext-pathname`).
 - `mkmf` — native-extension Makefile generation. **M2/M3**, large; only needed to
   install gems with C extensions, not for `bundle --version`.
 
@@ -197,7 +198,7 @@ them; each small):
    (`fileutils` and `pathname` are the highest-leverage for the bundle path).
 3. **Small lowering gaps** (`loc, =`, alias-of-builtin, ScopedConstRead,
    shellwords) opportunistically as the graph hits them.
-4. **Native `etc`/`io/wait`** when the graph demands them.
+4. **Native ext stdlib** (`etc`/`io/wait`/`pathname` done) as the graph demands more.
 5. `mkmf`, `open-uri`/`net/http` and rbconfig target-arch fidelity are **M2/M3**
    (real gem/network install), not `bundle --version`.
 

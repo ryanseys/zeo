@@ -11,11 +11,12 @@ zeo mirrors CRuby's `ext/` model: an extension is an in-tree module that a
    out-of-the-box build has every extension and `require`ing one just works.
    Slim a binary with `--no-default-features --features ext-json,ext-stringio,…`.
 
-**Implementation status.** Some extensions carry real, oracle-matched methods;
-others are **scaffolded** — a couple of core methods, with the rest `todo!()` as
-a compile-visible, greppable marker (`rg 'todo!' crates/zeo-rt/src/ext`).
-Scaffolding still lets `require` succeed and the constant resolve, so downstream
-code compiles *past* the `require`; only the unbuilt method call panics.
+**Implementation status.** Every extension module carries real, oracle-matched
+methods — none are `todo!()` scaffolds. A few provide a deliberate *subset* of
+their upstream's surface (noted per row below); a call into an unimplemented
+corner raises `NoMethodError` rather than panicking. Where zeo's answer can
+diverge from the upstream gem or C extension, the reason is catalogued in
+[`docs/COMPATIBILITY.md`](COMPATIBILITY.md).
 
 The catalog below covers CRuby's full `ext/` set plus the bundled default gems
 that are C-accelerated (base64, json, …). Pure-Ruby stdlib (`shellwords`,
@@ -27,31 +28,34 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | Extension | `require` | Cargo feature | Status | Notes |
 |---|---|---|---|---|
 | base64 | `base64` | `ext-base64` | **done** | RFC 2045/4648, urlsafe |
-| stringio | `stringio` | `ext-stringio` | **done** | in-memory IO buffer (read/write/gets/puts/each_line/eof?/rewind/pos/…); `seek`/`getc`/`readline`/`truncate` `todo!` |
-| strscan | `strscan` | `ext-strscan` | **done** | `StringScanner` over the Regexp engine (scan/skip/match?/check/scan_until/getch/peek/rest/pre_match/…); `exist?`/`unscan`/`get_byte` `todo!` |
+| stringio | `stringio` | `ext-stringio` | **done** | in-memory `StringIO` buffer (read/write/gets/puts/each_line/eof?/rewind/pos/…) |
+| strscan | `strscan` | `ext-strscan` | **done** | `StringScanner` over the Regexp engine (scan/skip/match?/check/scan_until/getch/peek/rest/pre_match/…) |
 | cgi (escape) | `cgi/escape`, `cgi`, `cgi/util` | `ext-cgi` | **done** | `escape`/`unescape`/`escapeHTML`/`unescapeHTML`/`escapeURIComponent` (+ `ERB::Util` routines) |
-| digest | `digest`, `digest/*` | `ext-digest` | **done** | `Digest::MD5`/`SHA1`/`SHA256`/`SHA512` — class + streaming API (RustCrypto); `Digest.hexencode`/`bubblebabble`/`digest_length` `todo!` |
-| json | `json` | `ext-json` | **done** | `parse` (serde_json, `symbolize_names`), `generate`/`pretty_generate`/`dump`. `to_json` monkeypatch + `JSON::ParserError` class are gaps |
-| psych / yaml | `psych`, `yaml` | `ext-psych` | **done** | `load`/`safe_load`/`dump` (yaml-rust2, hand-rolled Psych block-style dump). `parse` (node tree)/`load_file` `todo!`; aliases/anchors load as nil |
-| zlib | `zlib` | `ext-zlib` | **partial** | `crc32`/`adler32` real; `deflate`/`inflate`/`Gzip*` `todo!` (pending a `flate2` backend) |
-| date | `date` | `ext-date` | **scaffolded** | `Date`/`DateTime` constants resolve; all methods `todo!` (needs a Julian-day calendar core) |
-| socket | `socket` | `ext-socket` | **scaffolded** | `Socket` constant resolves; all methods `todo!` (needs `libc`/`std::net` + the `BasicSocket`/`TCPSocket`/`UDPSocket` hierarchy) |
-| openssl | `openssl` | `ext-openssl` | **scaffolded** | `OpenSSL` constant resolves; all methods `todo!`. Digest/HMAC could reuse RustCrypto; TLS/PKey needs FFI or rustls |
+| digest | `digest`, `digest/*` | `ext-digest` | **done** | `Digest::MD5`/`SHA1`/`SHA256`/`SHA512` — class + streaming API (RustCrypto) |
+| json | `json` | `ext-json` | **done** | `parse` (serde_json, `symbolize_names`), `generate`/`pretty_generate`/`dump` |
+| psych / yaml | `psych`, `yaml` | `ext-psych` | **done** | `load`/`safe_load`/`dump` (yaml-rust2, hand-rolled Psych block-style dump) |
+| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32` plus `deflate`/`inflate`/`gzip`/`gunzip` (flate2/miniz_oxide) |
+| date | `date` | `ext-date` | **done** | `Date`/`DateTime` over an in-tree Julian-day calendar core |
+| socket | `socket` | `ext-socket` | **done** | full `BasicSocket`/`IPSocket`/`TCPSocket`/`TCPServer`/`UDPSocket`/`UNIXSocket`/`UNIXServer`/`Addrinfo` hierarchy over libc |
+| openssl | `openssl` | `ext-openssl` | **subset** | `OpenSSL::Random` bytes + fixed-length secure compare; `Cipher`/`PKey`/`SSL` still need an FFI or rustls backend |
+| etc | `etc` | `ext-etc` | **done** | `Etc` over libc (`getpwnam`/`getgrgid`/… + `Passwd`/`Group` structs, `sysconf`/`uname`/`nprocessors`) |
+| pathname | `pathname` | `ext-pathname` | **done** | focused native `Pathname` over File/Dir |
+| monitor | `monitor` | `ext-monitor` | **done** | `Monitor` + `MonitorMixin` |
+
+The IO-core extensions have landed as unconditional rows on the `IO` table:
+`require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
+and `require "io/console"` (`IO#winsize` over `ioctl`) are pure ceremony — the
+methods are always present. `ARGF` is a live builtin (`zeo_abi::ARGF_CLASS`), and
+`rbconfig` resolves through a synthetic shim (see `docs/todo/bundler-northstar.md`).
 
 ## Deferred (catalogued, no module yet)
 
-These extend the **IO core** rather than adding a new class, so they wait on the
-builtin-reopen mechanism (adding instance methods to a required builtin):
-
 | Extension | `require` | Why deferred |
 |---|---|---|
-| io/wait | `io/wait` | adds `IO#wait_readable`/`#wait_writable` (needs `libc::poll` + builtin reopen) |
-| io/console | `io/console` | adds `IO#raw`/`#getch`/`#winsize` (termios) |
-| io/nonblock | `io/nonblock` | adds `IO#nonblock` |
-| ARGF | (core) | ARGV-consuming stream over the IO core |
-| fcntl / etc / rbconfig | `fcntl`/`etc` | constant-only modules — need the module-constant exposure seam, not method tables |
+| io/nonblock | `io/nonblock` | would add `IO#nonblock`/`#nonblock=` (fcntl `O_NONBLOCK`) |
+| fcntl | `fcntl` | a constant-only module (`Fcntl::O_*`) — needs the module-constant exposure seam, not a method table |
 
-## FFI — the real `ffi` gem, AOT-compiled (#204)
+## FFI — the real `ffi` gem, AOT-compiled
 
 zeo implements the **real `ffi` gem API**, not a custom DSL, so a program
 using it runs identically under CRuby+ffi and zeo (the north star). `require
@@ -91,11 +95,14 @@ The `layout` is recognized at compile time; `[]`/`[]=`/`size`/`offset_of`/
 and alignment. A struct auto-converts to its pointer when passed to a C
 `:pointer` argument.
 
-**Deferred follow-ons:** `callback` and `varargs`. Both need a *runtime* C-call
-builder (libffi): a callback C stores and invokes asynchronously can't be a
-static trampoline, and a variadic call's arity/types are only known per runtime
-call. They are the one part of the gem that the pure compile-time-`extern` model
-can't reach without linking libffi — tracked, not silently degraded.
+**`callback` and `varargs`.** Both are implemented over a *runtime* C-call
+builder (libffi, the `ext-ffi` cargo feature). `callback :tag, [args], ret`
+registers a C function-pointer type, so a Ruby `Proc` passed for a `:tag`
+argument is marshaled into a libffi closure; a `:varargs` marker in an
+`attach_function` type list (`[:string, :varargs]`) builds the variadic call
+interface per runtime call, since its trailing arity/types aren't known at
+compile time. These are the one part of the gem that the pure
+compile-time-`extern` model can't reach without libffi, hence the extra dep.
 
 ## Out of scope (VM internals / tooling)
 
@@ -109,10 +116,9 @@ See the checklist at the top of `crates/zeo-rt/src/ext/mod.rs`. In brief:
 1. **ABI row** — a `ClassId` const + `BUILTINS` row with `feature:
    Some("<require-name>")` in `crates/zeo-abi/src/lib.rs` (ids are
    append-only, contiguous).
-2. **Module** — `crates/zeo-rt/src/ext/<name>.rs` with `builtin_methods! {
-   pub(crate) fn lookup; … }` (instance methods) and/or `pub(crate) fn
-   lookup_class;` (class/module methods). Mirror `base64.rs` (module) or
-   `stringio.rs` (class with instances).
+2. **Module** — `crates/zeo-rt/src/ext/<name>.rs` declaring its class with the
+   `ruby_class!` (instances) or `ruby_module!` (module functions) DSL. Mirror
+   `base64.rs` (module) or `stringio.rs` (class with instances).
 3. **Dispatch arms** — cfg-gated arms in `builtins/mod.rs`'s `class_method_table`
    / `class_table` / `class_table_names`.
 4. **Cargo feature** — `ext-<name>` in `zeo-rt/Cargo.toml`, added to

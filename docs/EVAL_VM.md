@@ -1,135 +1,97 @@
-# Dynamic `eval` / `binding`: a future embedded-interpreter phase
+# Runtime `eval` and the `binding` gap
 
-`zeo` supports `eval("literal string")` today (`HirNode::Eval`, wired up
-in `parse/mod.rs`) by parsing the literal at *compile time* and splicing its
-lowered HIR into the arena at the call site — the same trick `require` will
-eventually use for a file's contents. This works because the argument is a
-compile-time-constant `StringLit` (no interpolation): zeo already has the
-whole program in front of it, so "the instant this code would run" and
-"compile time" are the same moment for a literal, and no runtime parser is
-ever needed.
+`zeo` handles `eval("literal string")` at *compile time* (`HirNode::Eval`, wired
+up in `parse/mod.rs`): the recognizer parses the literal, lowers it, and splices
+the resulting HIR into the arena at the call site — the same trick `require` uses
+for a file's contents. This works because the argument is a
+compile-time-constant `StringLit` (no interpolation): zeo already has the whole
+program in front of it, so "the instant this code would run" and "compile time"
+are the same moment for a literal, and no runtime parser is ever needed.
 
 A **dynamic** `eval` — a runtime-computed string (interpolated, read from a
-variable, built from I/O) — is a fundamentally different problem for a
-whole-program AOT compiler: the code being "compiled" isn't known until the
-program is already running. This document sketches how that could work as a
-real, buildable future phase — not a project abandoned for lack of a plan,
-but one genuinely bigger than a small addition to the current spike, and
-correctly deferred behind Phases 6 and 9 below.
+variable, built from I/O) — is a different problem for a whole-program AOT
+compiler: the source being "compiled" isn't known until the program is already
+running. zeo handles it with a runtime tree-walking interpreter, the **eval
+VM**, linked into the generated binary behind the `eval-vm` cargo feature.
 
-## The core idea: the interpreter is just the dynamic twin of this same pipeline
+## The eval VM (`crates/zeo-rt/src/eval_vm.rs`)
 
-`zeo-rt` already gives every AOT-compiled method and every `send()` call
-the identical ABI: `Result<RubyValue, Signal>`. A tree-walking interpreter —
+The eval VM walks `ruby-prism`'s own `Node` tree directly, not the compiler's
+HIR. HIR bakes in decisions the AOT compiler resolves statically — `New` needs a
+statically-known class, `ClassRef` has no first-class runtime `Class` value,
+`super` lowers to inlining the parent body, class-var owners are pre-resolved in
+`analyze` — so an interpreter over HIR would have to *undo* all of that. Prism's
+`Node` tree, by contrast, is Ruby's surface semantics, and every construct maps
+onto a primitive the runtime already exposes: `dispatch::send_value` for method
+calls, `const_get`/`global_get`/`ivar_*`/`cvar_*` for state, the `runtime_meta`
+overlay for a runtime `def`/`class`.
 
-```rust
-fn eval_node(hir: &Hir, id: NodeId, env: &Env) -> Result<RubyValue, Signal>
-```
+So the VM is a purely additive module against the *live* runtime, not a second
+compiler. Eval'd code and AOT-compiled code share one value representation
+(`RubyValue`), one control-flow signal type (`Signal`), and one class/method
+registry — and call into each other freely: compiled code invoking `eval`,
+eval'd code calling a compiled method via `send`, and an eval-defined method
+being called back from compiled code.
 
-— slots into that ABI with **zero changes to `Signal` itself** (`Retry`/
-`Raise` are already dormant, waiting for exactly this kind of consumer). It
-can reuse the *exact* runtime primitives compiled code already calls —
-`zeo_rt::dispatch::send`, the `arith.rs` helpers, `collections.rs` — just
-resolving each operation dynamically per-node instead of by `analyze`'s
-static `TyKind`. In effect: `analyze`/codegen's "Path 1 static dispatch" has
-no equivalent inside the interpreter — it is *always* Path 2, dispatching
-every call through `send()` by inspecting each `RubyValue`'s own runtime
-tag. That's a genuine simplification, not a gap: no `TyKind` fixpoint, no
-codegen, needed on this path at all.
+### Selective linking — most binaries stay parser-free
 
-This means eval'd code and AOT-compiled code would share one value
-representation, one class/method registry, and one control-flow signal
-type — and could call into each other bidirectionally: compiled code
-invoking `eval`, eval'd code calling a compiled method via `send`, and (once
-the pieces below exist) an eval-defined method being called back from
-compiled code, recursively.
+`ruby-prism` is a C library and the single largest size lever in the runtime, so
+the default runtime never links it. The compiler statically detects whether a
+program can reach the VM (`Hir::uses_runtime_eval` — a receiverless
+`Kernel#eval`, or a string-form `instance_eval`/`class_eval`/`module_eval`) and
+only then links the prism-backed `eval-vm` runtime variant (`backend::Runtime`).
+A program that uses `eval` still compiles and runs out of the box; it just opts
+*its own* binary into carrying prism, while every other binary stays lean. This
+is work matz's interpreter can't do — CRuby always ships its parser because it
+can't know in advance whether a program evals. Built without the feature, the
+VM's entry point is an honest stub that raises `NotImplementedError` naming
+`--features eval-vm`.
 
-## What's genuinely reusable vs. genuinely new
+### What the VM does, and the one gap
 
-**Reusable, close to free:**
-- `RubyValue`/`Signal` as the interpreter's own value/error types (see above).
-- The arithmetic/collection runtime helpers (`arith.rs`, `collections.rs`).
-- Whatever capture-cell type Phase 6's `Proc` env ends up using
-  (`Rc<RefCell<RubyValue>>` per captured local, per the roadmap) is exactly
-  the right cell type for the interpreter's own variable bindings too — real,
-  load-bearing reuse, not just an analogy.
+An `eval` runs with a correct `self`: its receiver's ivars, implicit-self calls,
+constants, and globals all resolve. The invoking surface decides where a `def`
+inside the source installs (CRuby's "default definee"): an instance method for
+`class_eval`, a singleton for `instance_eval`, and `self`'s class for a plain
+`eval` (a top-level eval's `self` is the main object, so `def` lands on
+`Object`). Eval'd code can `def` methods, run blocks passed to calls, and
+`yield`/`return` inside an eval-defined method; each such method or block
+re-parses its own captured source per invocation. A local *assigned* inside an
+eval is visible to later statements of the same eval (held in `Env::locals`).
 
-**Genuinely new work, not free:**
-- **The environment *container* differs, not just its cell type.** Phase 6's
-  Proc env is a codegen-generated concrete Rust struct with statically-known
-  fields (this project's "concrete-type-by-default" style) — an interpreter
-  has no compile time, so its environment must be a real dynamic
-  `HashMap<String, Rc<RefCell<RubyValue>>>` (or a chain of scopes).
-- **Bidirectional interop needs `binding` to exist first.** For eval'd code
-  to read/write a *caller's* locals, the compiled call site must expose its
-  own locals' cells to the interpreter — a `Binding` value is precisely that
-  exposure. This is why the user's framing scopes dynamic `eval` and
-  `binding` together: you can't build a faithful dynamic `eval` without
-  something that's already most of the way to `binding`.
-- **`zeo_rt::dispatch::MethodFn` would need to widen** from a bare
-  `fn(&RObj, &[RubyValue]) -> Result<RubyValue, Signal>` function pointer to
-  something like `Rc<dyn Fn(&RObj, &[RubyValue]) -> Result<RubyValue, Signal>>`,
-  so compiled code can `send` into a method an eval'd `def` defined at
-  runtime (an interpreted closure can't be represented as a bare `fn`
-  pointer). This is the same "erase to `Rc<dyn Trait>` only once a concrete
-  function pointer genuinely can't work" idiom Phase 6's `Rc<dyn ProcBody>`
-  already commits to — not new invention, but a real ABI change to a
-  currently-shipping runtime type.
-- **`ruby-prism` needs to be linked into the *generated binary*, not just
-  `zeo`.** Literal eval never needs this (it parses entirely inside the
-  compiler's own process, at compile time; the parser never ships). A truly
-  dynamic eval needs a real parser present in every compiled program that
-  might call it — a genuine distribution-size/FFI-surface cost (though not
-  unprecedented: CRuby itself always ships its own parser for the same
-  reason).
-- **A shared HIR representation, reachable from both crates.** `Hir`/
-  `HirNode`/the lowering logic currently live only in `zeo`, the
-  compiler, which never ships in the generated binary. Recommend extracting
-  `hir.rs` (and the lowering logic a runtime `eval` needs) into a new shared
-  crate (e.g. `zeo-hir`) depended on by both `zeo` and whatever
-  runtime crate hosts the interpreter — not a second, drift-prone copy.
-- **Runtime parse/lowering errors need to become real Ruby exceptions** —
-  `Signal::Raise(RubyValue)` is the intended vehicle (see the breadcrumb in
-  `zeo-rt/src/signal.rs`), but that variant isn't load-bearing until
-  Phase 9 (`begin`/`rescue`) actually exists.
+What the VM does **not** yet reach is the **caller's own local variables**: those
+live as Rust stack slots the interpreter can't touch without codegen
+materializing a `Binding`. A first-class `binding` — the value that exposes a
+compiled call site's own locals to the interpreter — is the next increment, and
+the real prerequisite for bidirectional local sharing. That is why dynamic
+`eval` and `binding` are naturally scoped together: a faithful caller-local
+`eval` is most of the way to `binding` already.
 
-## Sequencing
+## Runtime metaprogramming without a parser
 
-This is its own future phase — naturally *after* Phase 6 (needs the Proc
-capture-cell convention to exist for real) and coordinated with Phase 9
-(needs `Signal::Raise` to be load-bearing for runtime syntax/eval errors),
-not a small addition to the current eval scaffold. Recommended shape when
-picked up: `binding` first (it's the real prerequisite, not eval itself),
-then the interpreter loop over `Hir`, then wiring a non-literal `eval` call
-to it, then the `MethodFn` widening for full bidirectional interop last
-(compiled-calls-eval'd-def is the hardest, least essential slice).
-
-## Runtime metaprogramming without a parser (#97, stage 1 — shipped)
-
-Some of what this doc once listed as "permanently out of scope" turned out NOT
-to need the parser at all — a compiled block is already an `Arc<dyn Fn>`, so a
-class/method defined at runtime *from a block* needs only a runtime-mutable
-method registry, not an interpreter. That foundation shipped as #97 stage 1
-(see `zeo-rt/src/runtime_meta.rs`): a lock-guarded overlay beside the frozen
+Some runtime metaprogramming needs no parser at all: a compiled block is already
+an `Arc<dyn Fn>`, so a class or method defined at runtime *from a block* needs
+only a runtime-mutable method registry, not an interpreter. That foundation is
+`zeo-rt/src/runtime_meta.rs`: a lock-guarded overlay beside the frozen
 `OnceLock` registry, gated by a single `is_live()` atomic so parser-free
 programs pay nothing. On it:
 
-- **Runtime `define_method`** (computed name, in a class-body `each` loop) —
-  the block becomes a `MethodImpl::Dynamic`. Class-body statements now execute
-  (they were silently dropped), and a nested block may capture the enclosing
-  block's own local (both were pre-existing codegen gaps, fixed here).
+- **Runtime `define_method`** (computed name, in a class-body `each` loop) — the
+  block becomes a `MethodImpl::Dynamic`. Class-body statements execute, and a
+  nested block may capture the enclosing block's own local.
 - **Per-object singletons** (`def obj.foo`, `class << obj`,
   `obj.define_singleton_method`) — an identity-keyed overlay table.
-- **`Class.new(Super) { … }`** — a runtime class id + a name-keyed `DynObject`
-  instance type.
+- **`Class.new(Super) { … }`** — a runtime class id plus a name-keyed
+  `DynObject` instance type.
 
 **Documented boundary (inherent to AOT):** a runtime `define_method` that
-*overrides* a method the compiler dispatched *statically* (a direct
-`Klass::m` call, not through `send`) is invisible at that call site.
+*overrides* a method the compiler dispatched *statically* (a direct `Klass::m`
+call, not through `send`) is invisible at that call site.
 
-## Non-goals, still
+## Non-goals
 
-`TracePoint`/`ObjectSpace`, Ractors, refinements, and reflection/`eval` with a
-*non-literal, runtime-computed* method name or source string stay out of scope
-until the interpreter (stage 2) exists — the VM is specifically about executing
-*runtime-known Ruby source*, which the overlay above deliberately does not do.
+`TracePoint`/`ObjectSpace`, Ractors, and refinements stay out of scope. So does
+a *reflective* eval the static analysis cannot see — a `send(:eval, str)` hides
+the eval site from `uses_runtime_eval`, so its binary may not link the VM; the
+honest failure mode there is the runtime's own `NotImplementedError`, never
+silent wrong output.

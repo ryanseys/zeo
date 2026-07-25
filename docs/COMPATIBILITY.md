@@ -46,7 +46,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 | `psych` / `yaml` | `yaml-rust2`-backed built-in | not libyaml; tag/anchor and error-position behaviour differ |
 | `zlib` | `flate2`-backed built-in | not the `zlib` C extension; stream/checksum surface is partial |
 | `digest` | RustCrypto-backed built-in | not the OpenSSL `digest` C extension |
-| `openssl` | RustCrypto-backed built-in | a small subset, not OpenSSL |
+| `openssl` | built-in subset | `OpenSSL::Random` + secure compare only; `Cipher`/`PKey`/`SSL` absent |
 | `strscan` | zeo `StringScanner` | a reimplementation, not the C extension |
 | `stringio` | zeo `StringIO` | a reimplementation |
 | `date` | zeo `Date`/`DateTime` | a reimplementation |

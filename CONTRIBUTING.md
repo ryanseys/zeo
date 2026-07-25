@@ -47,8 +47,8 @@ $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
 - Raise through the typed macros (`type_error!`, `arg_error!`, …); argument
   conversion goes through `builtins/convert.rs` (the `rb_convert_type`
   protocol), arity checks through `arity!`.
-- One Ruby class/module per runtime module, methods declared in
-  `builtin_methods!` tables with oracle-verified `[arity]` metadata.
+- One Ruby class/module per runtime module, declared with the
+  `ruby_class!`/`ruby_module!` DSL and oracle-verified arity metadata.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
 
