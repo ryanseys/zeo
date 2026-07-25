@@ -8,8 +8,9 @@
 //! `escapeHTML`/`unescapeHTML` map `& < > " '`. The unreserved set kept by the
 //! URL escapers is alphanumerics plus `_.-~`.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::arity;
 use crate::{RubyValue, string_new};
+use zeo_macros::ruby_module;
 
 fn in_bytes(v: &RubyValue) -> Vec<u8> {
     match v {
@@ -133,30 +134,32 @@ fn html_unescape(text: &str) -> String {
     out
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    CGI = zeo_abi::CGI_MODULE;
 
-    "escape" => fn escape(_recv, args, _block) {
+    // CRuby exposes these as `CGI.escape` etc. (singleton methods on the module),
+    // so they migrate as `def self.`. Arities match ruby 4.0.5.
+    def self."escape" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(out(percent_encode(&in_bytes(&args[0]), true)))
     }
-    "unescape" => fn unescape(_recv, args, _block) {
+    def self."unescape" arity -1 (_recv, args, _block) {
         arity!(args, 1..=2); // (str[, encoding]) -- encoding ignored
         Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(&args[0]), true)).into_owned()))
     }
-    "escapeURIComponent" | "escape_uri_component" => fn escape_uri_component(_recv, args, _block) {
+    def self."escapeURIComponent" arity 1 | "escape_uri_component" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(out(percent_encode(&in_bytes(&args[0]), false)))
     }
-    "unescapeURIComponent" | "unescape_uri_component" => fn unescape_uri_component(_recv, args, _block) {
+    def self."unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, args, _block) {
         arity!(args, 1..=2);
         Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(&args[0]), false)).into_owned()))
     }
-    "escapeHTML" | "escape_html" => fn escape_html(_recv, args, _block) {
+    def self."escapeHTML" arity 1 | "escape_html" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(out(html_escape(&in_bytes(&args[0]))))
     }
-    "unescapeHTML" | "unescape_html" => fn unescape_html(_recv, args, _block) {
+    def self."unescapeHTML" arity 1 | "unescape_html" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let text = match &args[0] {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
@@ -179,16 +182,26 @@ mod tests {
             other => panic!("expected Str, got {other:?}"),
         }
     }
+    /// `CGI`'s `ruby_module!`-generated functions have mangled Rust idents, so
+    /// the tests call them through the registered class-method `lookup`.
+    fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::CGI_MODULE)
+            .expect("CGI is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("CGI has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("CGI.{name} is defined"))
+    }
 
     #[test]
     fn url_escapes_match_ruby() {
         assert_eq!(
-            t(escape(&RubyValue::Nil, &[s("a b&c=d~e.f-g_h")], None)),
+            t(f("escape")(&RubyValue::Nil, &[s("a b&c=d~e.f-g_h")], None)),
             "a+b%26c%3Dd~e.f-g_h"
         );
-        assert_eq!(t(unescape(&RubyValue::Nil, &[s("a+b%26c")], None)), "a b&c");
+        assert_eq!(t(f("unescape")(&RubyValue::Nil, &[s("a+b%26c")], None)), "a b&c");
         assert_eq!(
-            t(escape_uri_component(&RubyValue::Nil, &[s("a b&c")], None)),
+            t(f("escapeURIComponent")(&RubyValue::Nil, &[s("a b&c")], None)),
             "a%20b%26c"
         );
     }
@@ -196,11 +209,11 @@ mod tests {
     #[test]
     fn html_escapes_match_ruby() {
         assert_eq!(
-            t(escape_html(&RubyValue::Nil, &[s("<a>&\"'")], None)),
+            t(f("escapeHTML")(&RubyValue::Nil, &[s("<a>&\"'")], None)),
             "&lt;a&gt;&amp;&quot;&#39;"
         );
         assert_eq!(
-            t(unescape_html(
+            t(f("unescapeHTML")(
                 &RubyValue::Nil,
                 &[s("&lt;a&gt;&amp;&quot;&#39;")],
                 None
@@ -208,7 +221,7 @@ mod tests {
             "<a>&\"'"
         );
         assert_eq!(
-            t(unescape_html(&RubyValue::Nil, &[s("&#x41;&#66;")], None)),
+            t(f("unescapeHTML")(&RubyValue::Nil, &[s("&#x41;&#66;")], None)),
             "AB"
         );
     }

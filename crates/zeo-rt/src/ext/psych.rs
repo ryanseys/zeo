@@ -19,10 +19,11 @@
 //! built; the `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) raises
 //! NotImplementedError (not modelled).
 
-use crate::builtins::{arity, builtin_methods, not_impl_error};
+use crate::builtins::{arity, not_impl_error};
 use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
+use zeo_macros::ruby_module;
 use yaml_rust2::{Yaml, YamlLoader};
 
 fn yaml_to_ruby(y: &Yaml) -> RubyValue {
@@ -234,23 +235,25 @@ fn dump(v: &RubyValue) -> String {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    Psych = zeo_abi::PSYCH_MODULE;
 
-    "load" | "unsafe_load" | "safe_load" => fn load(_recv, args, _block) {
+    // CRuby's `Psych.load`/`dump`/... are singleton module methods (`def self.`),
+    // each arity -2 (one required arg + optional opts).
+    def self."load" arity -2 | "unsafe_load" arity -2 | "safe_load" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2); // (yaml[, opts]) -- opts ignored
         let text = load_text(&args[0])?;
         let docs = YamlLoader::load_from_str(&text)
             .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
         Ok(docs.first().map(yaml_to_ruby).unwrap_or(RubyValue::Nil))
     }
-    "dump" => fn dump_m(_recv, args, _block) {
+    def self."dump" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2); // (obj[, io/opts]) -- only the compact string form
         Ok(RubyValue::Str(string_new(dump(&args[0]))))
     }
 
     // `Psych.load_file(path)` -- read the file and load its first document.
-    "load_file" => fn load_file(_recv, args, _block) {
+    def self."load_file" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2); // (path[, opts]) -- opts ignored
         let path = crate::builtins::file::path_arg(&args[0], "load_file")?;
         let text = crate::gvl::without_gvl(|| std::fs::read_to_string(&path)).map_err(|e| raise_error(
@@ -263,7 +266,7 @@ builtin_methods! {
     }
     // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
     // one to a block (then the receiver's nil, matching CRuby's block form).
-    "load_stream" => fn load_stream(_recv, args, block) {
+    def self."load_stream" arity -2 (_recv, args, block) {
         arity!(args, 1..=2);
         let text = load_text(&args[0])?;
         let docs = YamlLoader::load_from_str(&text)
@@ -279,10 +282,10 @@ builtin_methods! {
 
     // The `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) isn't
     // modelled; a clean NotImplementedError rather than a panic.
-    "parse" => fn parse(_recv, _args, _block) {
+    def self."parse" arity -2 (_recv, _args, _block) {
         Err(not_impl_error!("Psych.parse (the node-tree API) is not implemented"))
     }
-    "parse_stream" => fn parse_stream(_recv, _args, _block) {
+    def self."parse_stream" arity -2 (_recv, _args, _block) {
         Err(not_impl_error!("Psych.parse_stream (the node-tree API) is not implemented"))
     }
 }
@@ -294,8 +297,18 @@ mod tests {
     fn s(text: &str) -> RubyValue {
         RubyValue::Str(string_new(text.to_string()))
     }
+    /// `Psych`'s `ruby_module!`-generated functions have mangled Rust idents, so
+    /// the tests call them through the registered class-method `lookup`.
+    fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::PSYCH_MODULE)
+            .expect("Psych is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("Psych has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Psych.{name} is defined"))
+    }
     fn dumped(v: &RubyValue) -> String {
-        match dump_m(&RubyValue::Nil, std::slice::from_ref(v), None).unwrap() {
+        match f("dump")(&RubyValue::Nil, std::slice::from_ref(v), None).unwrap() {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => panic!("expected Str, got {other:?}"),
         }
@@ -303,7 +316,7 @@ mod tests {
 
     #[test]
     fn load_maps_and_sequences() {
-        let v = load(
+        let v = f("load")(
             &RubyValue::Nil,
             &[s("a: 1\nb:\n  - 2\n  - 3.5\n  - null\n  - true")],
             None,
@@ -321,11 +334,11 @@ mod tests {
     #[test]
     fn load_scalars() {
         assert!(matches!(
-            load(&RubyValue::Nil, &[s("42")], None).unwrap(),
+            f("load")(&RubyValue::Nil, &[s("42")], None).unwrap(),
             RubyValue::Int(42)
         ));
         assert!(matches!(
-            load(&RubyValue::Nil, &[s("hello")], None).unwrap(),
+            f("load")(&RubyValue::Nil, &[s("hello")], None).unwrap(),
             RubyValue::Str(_)
         ));
     }

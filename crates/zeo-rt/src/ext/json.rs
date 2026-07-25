@@ -14,10 +14,11 @@
 //! degraded to `RuntimeError`. Documented divergence: `to_json` on arbitrary
 //! objects (the require-time monkeypatch) is not added -- use `JSON.generate`.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::arity;
 use crate::collections::{array_new, hash_new};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
+use zeo_macros::ruby_module;
 
 /// `serde_json::Value` -> `RubyValue`. `symbolize` turns object keys into
 /// Symbols.
@@ -161,23 +162,26 @@ fn parse_text(v: &RubyValue) -> Result<String, Signal> {
         .into_owned())
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    JSON = zeo_abi::JSON_MODULE;
 
-    "parse" | "load" => fn parse(_recv, args, _block) {
+    // CRuby's json/common.rb declares these `module_function`, so each is both a
+    // public `JSON.parse` and a private instance method reachable via `include
+    // JSON`. Arity is -2 (one required arg + optional opts).
+    module_function def "parse" arity -2 | "load" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2);
         let text = parse_text(&args[0])?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;
         Ok(to_ruby(&value, symbolize_opt(args.get(1))))
     }
-    "generate" | "dump" => fn generate(_recv, args, _block) {
+    module_function def "generate" arity -2 | "dump" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2); // (obj[, opts]) -- opts ignored for compact form
         let mut out = String::new();
         generate_into(&args[0], None, &mut out);
         Ok(RubyValue::Str(string_new(out)))
     }
-    "pretty_generate" => fn pretty_generate(_recv, args, _block) {
+    module_function def "pretty_generate" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2);
         let mut out = String::new();
         generate_into(&args[0], Some(0), &mut out);
@@ -198,6 +202,17 @@ mod tests {
             other => panic!("expected Str, got {other:?}"),
         }
     }
+    /// `JSON`'s `ruby_module!`-generated functions have mangled Rust idents, so
+    /// the tests call them the way real dispatch does -- through the registered
+    /// module-function `lookup`.
+    fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::JSON_MODULE)
+            .expect("JSON is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("JSON has module functions");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("JSON.{name} is defined"))
+    }
 
     #[test]
     fn generate_matches_ruby() {
@@ -209,7 +224,7 @@ mod tests {
         ]));
         let h = RubyValue::Hash(hash_new(vec![(s("a"), RubyValue::Int(1)), (s("b"), inner)]));
         assert_eq!(
-            t(generate(&RubyValue::Nil, &[h], None)),
+            t(f("generate")(&RubyValue::Nil, &[h], None)),
             "{\"a\":1,\"b\":[2,3.5,null,true]}"
         );
     }
@@ -224,14 +239,14 @@ mod tests {
             ),
         ]));
         assert_eq!(
-            t(pretty_generate(&RubyValue::Nil, &[h], None)),
+            t(f("pretty_generate")(&RubyValue::Nil, &[h], None)),
             "{\n  \"a\": 1,\n  \"b\": [\n    2,\n    3\n  ]\n}"
         );
     }
 
     #[test]
     fn parse_roundtrips_types() {
-        let v = parse(
+        let v = f("parse")(
             &RubyValue::Nil,
             &[s(r#"{"a":1,"b":[2,3.5,null,true],"c":"x"}"#)],
             None,
@@ -245,11 +260,11 @@ mod tests {
             RubyValue::Int(1)
         ));
         assert!(matches!(
-            parse(&RubyValue::Nil, &[s("42")], None).unwrap(),
+            f("parse")(&RubyValue::Nil, &[s("42")], None).unwrap(),
             RubyValue::Int(42)
         ));
         assert!(matches!(
-            parse(&RubyValue::Nil, &[s("3.14")], None).unwrap(),
+            f("parse")(&RubyValue::Nil, &[s("3.14")], None).unwrap(),
             RubyValue::Float(_)
         ));
     }

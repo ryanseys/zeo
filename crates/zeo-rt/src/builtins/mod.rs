@@ -357,8 +357,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class,
         #[cfg(feature = "ext-strscan")]
         zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class,
-        #[cfg(feature = "ext-cgi")]
-        zeo_abi::CGI_MODULE => crate::ext::cgi::lookup_class,
+        // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
         | zeo_abi::DIGEST_SHA1_CLASS
@@ -366,14 +365,14 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_class,
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MODULE => crate::ext::digest::lookup_module,
-        #[cfg(feature = "ext-json")]
-        zeo_abi::JSON_MODULE => crate::ext::json::lookup_class,
+        // JSON_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-date")]
         zeo_abi::DATE_CLASS | zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_class,
-        #[cfg(feature = "ext-zlib")]
-        zeo_abi::ZLIB_MODULE => crate::ext::zlib::lookup_class,
+        // ZLIB_MODULE migrated to ruby_module! -- served via registered_table.
+        // PSYCH_MODULE migrated to ruby_module! -- served via registered_table;
+        // the `YAML` alias id has no table of its own, so it routes here.
         #[cfg(feature = "ext-psych")]
-        zeo_abi::PSYCH_MODULE | zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class,
+        zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class,
         #[cfg(feature = "ext-socket")]
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_class,
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_class,
@@ -510,8 +509,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class_names(),
         #[cfg(feature = "ext-strscan")]
         zeo_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class_names(),
-        #[cfg(feature = "ext-cgi")]
-        zeo_abi::CGI_MODULE => crate::ext::cgi::lookup_class_names(),
+        // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-digest")]
         zeo_abi::DIGEST_MD5_CLASS
         | zeo_abi::DIGEST_SHA1_CLASS

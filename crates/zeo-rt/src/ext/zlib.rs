@@ -6,8 +6,9 @@
 //! `Zlib.gzip` uses a fixed mtime of 0 (a documented divergence from CRuby's
 //! current-time default) so its output is deterministic.
 
-use crate::builtins::{arity, builtin_methods, runtime_error};
+use crate::builtins::{arity, runtime_error};
 use crate::{RubyValue, Signal};
+use zeo_macros::ruby_module;
 
 fn bytes_arg(v: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
     match v {
@@ -55,21 +56,23 @@ fn adler32(data: &[u8], adler: u32) -> u32 {
     (b << 16) | a
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    Zlib = zeo_abi::ZLIB_MODULE;
 
-    "crc32" => fn crc32_m(_recv, args, _block) {
+    // `crc32`/`adler32` are CRuby module_functions (usable via `include Zlib`);
+    // the compression calls are plain module methods. Arities match ruby 4.0.5.
+    module_function def "crc32" arity -1 (_recv, args, _block) {
         arity!(args, 0..=2);
         Ok(RubyValue::Int(i64::from(crc32(&bytes_arg(args.first())?, u32_arg(args.get(1), 0)))))
     }
-    "adler32" => fn adler32_m(_recv, args, _block) {
+    module_function def "adler32" arity -1 (_recv, args, _block) {
         arity!(args, 0..=2);
         Ok(RubyValue::Int(i64::from(adler32(&bytes_arg(args.first())?, u32_arg(args.get(1), 1)))))
     }
 
     // `Zlib.deflate(str, level = DEFAULT_COMPRESSION)` -- zlib-format
     // compressed bytes (ASCII-8BIT).
-    "deflate" => fn deflate(_recv, args, _block) {
+    def self."deflate" arity -1 (_recv, args, _block) {
         arity!(args, 1..=2);
         let data = bytes_arg(args.first())?;
         let level = compression_level(args.get(1));
@@ -80,7 +83,7 @@ builtin_methods! {
             .map_err(io_err)
     }
     // `Zlib.inflate(str)` -- decompress a zlib stream.
-    "inflate" => fn inflate(_recv, args, _block) {
+    def self."inflate" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let data = bytes_arg(args.first())?;
         let mut dec = flate2::read::ZlibDecoder::new(&data[..]);
@@ -89,7 +92,7 @@ builtin_methods! {
     // `Zlib.gzip(str, level: ...)` -- a gzip stream. The header carries a
     // machine/time-independent mtime of 0 (documented divergence from CRuby,
     // whose default mtime is the current time), so output is deterministic.
-    "gzip" => fn gzip(_recv, args, _block) {
+    def self."gzip" arity -1 (_recv, args, _block) {
         arity!(args, 1..=2);
         let data = bytes_arg(args.first())?;
         let level = compression_level(args.get(1));
@@ -102,7 +105,7 @@ builtin_methods! {
             .map_err(io_err)
     }
     // `Zlib.gunzip(str)` -- decompress a gzip stream.
-    "gunzip" => fn gunzip(_recv, args, _block) {
+    def self."gunzip" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let data = bytes_arg(args.first())?;
         let mut dec = flate2::read::GzDecoder::new(&data[..]);
@@ -151,21 +154,31 @@ mod tests {
             other => panic!("expected Int, got {other:?}"),
         }
     }
+    /// `Zlib`'s `ruby_module!`-generated functions have mangled Rust idents, so
+    /// the tests call them through the registered module-function `lookup`.
+    fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::ZLIB_MODULE)
+            .expect("Zlib is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("Zlib has module functions");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Zlib.{name} is defined"))
+    }
 
     #[test]
     fn checksums_match_ruby() {
-        assert_eq!(int(crc32_m(&RubyValue::Nil, &[s("abc")], None)), 891568578);
-        assert_eq!(int(crc32_m(&RubyValue::Nil, &[], None)), 0);
+        assert_eq!(int(f("crc32")(&RubyValue::Nil, &[s("abc")], None)), 891568578);
+        assert_eq!(int(f("crc32")(&RubyValue::Nil, &[], None)), 0);
         assert_eq!(
-            int(crc32_m(
+            int(f("crc32")(
                 &RubyValue::Nil,
                 &[s("abc"), RubyValue::Int(100)],
                 None
             )),
             2063213118
         );
-        assert_eq!(int(adler32_m(&RubyValue::Nil, &[s("abc")], None)), 38600999);
-        assert_eq!(int(adler32_m(&RubyValue::Nil, &[], None)), 1);
+        assert_eq!(int(f("adler32")(&RubyValue::Nil, &[s("abc")], None)), 38600999);
+        assert_eq!(int(f("adler32")(&RubyValue::Nil, &[], None)), 1);
     }
 
     fn bytes(v: Result<RubyValue, Signal>) -> Vec<u8> {
@@ -179,7 +192,7 @@ mod tests {
     fn deflate_matches_ruby_zlib_bytes() {
         // Ruby 4.0.5: `Zlib.deflate("hello world").bytes`.
         assert_eq!(
-            bytes(deflate(&RubyValue::Nil, &[s("hello world")], None)),
+            bytes(f("deflate")(&RubyValue::Nil, &[s("hello world")], None)),
             vec![
                 120, 156, 203, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 0, 26, 11, 4, 93
             ],
@@ -190,12 +203,12 @@ mod tests {
     fn deflate_inflate_and_gzip_gunzip_round_trip() {
         let text = "compress me ".repeat(20);
         let msg = s(&text);
-        let comp = deflate(&RubyValue::Nil, std::slice::from_ref(&msg), None).unwrap();
+        let comp = f("deflate")(&RubyValue::Nil, std::slice::from_ref(&msg), None).unwrap();
         assert_eq!(
-            bytes(inflate(&RubyValue::Nil, &[comp], None)),
+            bytes(f("inflate")(&RubyValue::Nil, &[comp], None)),
             text.as_bytes()
         );
-        let gz = gzip(&RubyValue::Nil, &[msg], None).unwrap();
-        assert_eq!(bytes(gunzip(&RubyValue::Nil, &[gz], None)), text.as_bytes());
+        let gz = f("gzip")(&RubyValue::Nil, &[msg], None).unwrap();
+        assert_eq!(bytes(f("gunzip")(&RubyValue::Nil, &[gz], None)), text.as_bytes());
     }
 }
