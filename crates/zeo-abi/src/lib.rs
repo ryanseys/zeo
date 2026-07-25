@@ -368,6 +368,26 @@ pub const ETC_GROUP_CLASS: ClassId = ClassId(88);
 /// `File`/`Dir`/`std::path`.
 pub const PATHNAME_CLASS: ClassId = ClassId(89);
 
+/// The `socket` gem's socket hierarchy, mirroring CRuby's:
+/// `BasicSocket < IO`, `IPSocket < BasicSocket`, `TCPSocket < IPSocket`,
+/// `TCPServer < TCPSocket`, `UDPSocket < IPSocket`, `Socket < BasicSocket`,
+/// `UNIXSocket < BasicSocket`, `UNIXServer < UNIXSocket`. All the fd-backed
+/// classes descend from `BasicSocket`, which owns the raw-fd operations
+/// (`getsockname`/`setsockopt`/`send`/`recv`/...) they all share.
+pub const BASIC_SOCKET_CLASS: ClassId = ClassId(90);
+/// `IPSocket < BasicSocket` -- the shared `addr`/`peeraddr`/`recvfrom` of the
+/// IP-family sockets (`TCPSocket`, `UDPSocket`).
+pub const IP_SOCKET_CLASS: ClassId = ClassId(91);
+/// `UDPSocket < IPSocket` -- a connectionless datagram socket.
+pub const UDP_SOCKET_CLASS: ClassId = ClassId(92);
+/// `UNIXSocket < BasicSocket` -- a local (AF_UNIX) stream socket.
+pub const UNIX_SOCKET_CLASS: ClassId = ClassId(93);
+/// `UNIXServer < UNIXSocket` -- a listening local socket.
+pub const UNIX_SERVER_CLASS: ClassId = ClassId(94);
+/// `Addrinfo` -- a resolved socket address (family/type/protocol + endpoint),
+/// what `getaddrinfo`/`#local_address`/`#remote_address` answer.
+pub const ADDRINFO_CLASS: ClassId = ClassId(95);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -857,7 +877,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: SOCKET_CLASS,
         name: "Socket",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
+        superclass: Some(BASIC_SOCKET_CLASS),
         includes: &[],
         feature: Some("socket"),
     },
@@ -1003,14 +1023,15 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[COMPARABLE_CLASS],
         feature: None,
     },
-    // `require "socket"`. TCPSocket < IO (inherits read/write/gets); TCPServer <
-    // TCPSocket (adds accept/addr). KEEP THESE LAST: FIRST_EXCEPTION_ID must
-    // follow the final builtin row.
+    // `require "socket"`. TCPSocket < IPSocket (inherits BasicSocket's raw-fd
+    // ops + IO's read/write/gets); TCPServer < TCPSocket (adds accept/addr).
+    // The rest of the socket hierarchy (BasicSocket, IPSocket, ...) is appended
+    // at the very end of the table (ids 90+).
     BuiltinClass {
         id: TCPSOCKET_CLASS,
         name: "TCPSocket",
         is_module: false,
-        superclass: Some(IO_CLASS),
+        superclass: Some(IP_SOCKET_CLASS),
         includes: &[],
         feature: Some("socket"),
     },
@@ -1101,6 +1122,58 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[COMPARABLE_CLASS],
         feature: Some("pathname"),
+    },
+    // The `socket` gem's hierarchy (all `require "socket"`-gated). Appended
+    // after the last non-socket id so the table stays contiguous; the
+    // forward edges from the earlier `Socket`(60)/`TCPSocket`(78) rows into
+    // these are resolved after every class exists.
+    BuiltinClass {
+        id: BASIC_SOCKET_CLASS,
+        name: "BasicSocket",
+        is_module: false,
+        superclass: Some(IO_CLASS),
+        includes: &[],
+        feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: IP_SOCKET_CLASS,
+        name: "IPSocket",
+        is_module: false,
+        superclass: Some(BASIC_SOCKET_CLASS),
+        includes: &[],
+        feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: UDP_SOCKET_CLASS,
+        name: "UDPSocket",
+        is_module: false,
+        superclass: Some(IP_SOCKET_CLASS),
+        includes: &[],
+        feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: UNIX_SOCKET_CLASS,
+        name: "UNIXSocket",
+        is_module: false,
+        superclass: Some(BASIC_SOCKET_CLASS),
+        includes: &[],
+        feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: UNIX_SERVER_CLASS,
+        name: "UNIXServer",
+        is_module: false,
+        superclass: Some(UNIX_SOCKET_CLASS),
+        includes: &[],
+        feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: ADDRINFO_CLASS,
+        name: "Addrinfo",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("socket"),
     },
 ];
 

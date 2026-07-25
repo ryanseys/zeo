@@ -1978,29 +1978,36 @@ fn closed_tcp_server_raises_ioerror_and_a_dead_port_refuses_connections() {
 }
 
 #[test]
-fn the_scaffolded_socket_class_raises_rescuable_not_implemented() {
-    // The generic Socket class is deliberately scaffolded (see
-    // ext/socket.rs docs): its surface raises a rescue-able
-    // NotImplementedError rather than pretending to network.
+fn the_generic_socket_class_binds_listens_accepts_and_transfers() {
+    // The generic Socket class is implemented over libc: new/bind/listen/accept
+    // on a loopback pair, resolving the bound port through Socket.pack/
+    // unpack_sockaddr_in and reading it back via #local_address (an Addrinfo).
     let result = run_ruby(
         r#"
         require "socket"
-        begin
-          Socket.new(:INET, :STREAM)
-        rescue NotImplementedError => e
-          puts e.message
-        end
-        begin
-          Socket.getaddrinfo("localhost", 80)
-        rescue NotImplementedError
-          puts "getaddrinfo too"
-        end
+        srv = Socket.new(Socket::AF_INET, Socket::SOCK_STREAM, 0)
+        srv.setsockopt(Socket::SOL_SOCKET, Socket::SO_REUSEADDR, 1)
+        srv.bind(Socket.pack_sockaddr_in(0, "127.0.0.1"))
+        srv.listen(1)
+        port, ip = Socket.unpack_sockaddr_in(srv.getsockname)
+        p ip
+        p port > 0
+        cli = Socket.new(:INET, :STREAM)
+        cli.connect(Socket.sockaddr_in(port, "127.0.0.1"))
+        conn, addr = srv.accept
+        p conn.class
+        p addr.class
+        cli.write("ping")
+        p conn.recv(4)
+        conn.close
+        cli.close
+        srv.close
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "Socket#new is not implemented (live networking is out of scope)\ngetaddrinfo too\n"
+        "\"127.0.0.1\"\ntrue\nSocket\nAddrinfo\n\"ping\"\n"
     );
 }
 

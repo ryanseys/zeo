@@ -190,11 +190,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup,
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup, // DATE_CLASS served via registered_table
-        #[cfg(feature = "ext-socket")]
-        zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup,
         // TCPSocket has no own instance table -- it inherits IO's read/write via
         // the MRO (`TCPSocket < IO`). TCPServer adds accept/addr/listen/close.
-        zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver,
         #[cfg(feature = "ext-ffi")]
         zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup,
         #[cfg(feature = "ext-etc")]
@@ -260,9 +257,6 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_arity,
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity, // DATE_CLASS served via registered_table
-        #[cfg(feature = "ext-socket")]
-        zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_arity,
-        zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_arity,
         #[cfg(feature = "ext-ffi")]
         zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => {
             crate::ext::ffi::lookup_arity
@@ -349,10 +343,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // the `YAML` alias id has no table of its own, so it routes here.
         #[cfg(feature = "ext-psych")]
         zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class,
-        #[cfg(feature = "ext-socket")]
-        zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_class,
-        zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_class,
-        zeo_abi::TCPSOCKET_CLASS => crate::ext::socket::lookup_tcpsocket_class,
         // OPENSSL_MODULE migrated to ruby_module! -- served via registered_table.
         #[cfg(feature = "ext-ffi")]
         zeo_abi::FFI_POINTER_CLASS => crate::ext::ffi::lookup_class_pointer,
@@ -417,9 +407,6 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         | zeo_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_names(),
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(), // DATE_CLASS served via registered_table
-        #[cfg(feature = "ext-socket")]
-        zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_names(),
-        zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_names(),
         #[cfg(feature = "ext-ffi")]
         zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => {
             crate::ext::ffi::lookup_names()

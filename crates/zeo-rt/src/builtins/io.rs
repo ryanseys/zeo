@@ -138,6 +138,32 @@ pub(crate) fn socket_value(f: std::fs::File, class_id: ClassId) -> RubyValue {
     RubyValue::Object(Arc::new(io))
 }
 
+/// Wrap an owning raw socket descriptor (from `libc::socket`/`accept`/
+/// `socketpair`) as a Ruby socket value of `class_id`, reading/writing over the
+/// fd like a pipe. The fd's ownership transfers to the value (closed on GC or
+/// `#close`).
+///
+/// # Safety
+/// `fd` must be a valid, open descriptor that nothing else owns.
+pub(crate) unsafe fn socket_from_raw_fd(fd: std::os::fd::RawFd, class_id: ClassId) -> RubyValue {
+    use std::os::fd::FromRawFd;
+    socket_value(unsafe { std::fs::File::from_raw_fd(fd) }, class_id)
+}
+
+/// The raw descriptor behind a socket-backed IO value (a `TCPSocket`/`Socket`/
+/// ... created via [`socket_value`]), or `None` if the receiver is not an open
+/// fd-backed IO. The fd stays owned by the value -- callers borrow it for
+/// `libc` calls (`getsockname`, `setsockopt`, `send`, ...) and must not close
+/// it. A closed socket answers `None`, so callers raise `IOError` on it.
+pub(crate) fn socket_raw_fd(recv: &RubyValue) -> Option<std::os::fd::RawFd> {
+    use std::os::fd::AsRawFd;
+    let io = as_rio(recv)?;
+    match &*io.backend.lock() {
+        IoBackend::Pipe(Some(f)) | IoBackend::File(Some(f)) => Some(f.as_raw_fd()),
+        _ => None,
+    }
+}
+
 fn std_io(stream: StdStream) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::Std(stream), String::new())))
 }

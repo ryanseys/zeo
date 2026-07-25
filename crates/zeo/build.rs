@@ -24,10 +24,16 @@ use zeo_dsl::ClassSpec;
 
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
-    let builtins_dir = Path::new(&manifest_dir).join("../zeo-rt/src/builtins");
+    let rt_src = Path::new(&manifest_dir).join("../zeo-rt/src");
 
     let mut surfaces: Vec<Surface> = Vec::new();
-    collect_from_dir(&builtins_dir, &mut surfaces);
+    // The core classes (`builtins/`) and the require-gated extensions (`ext/`,
+    // whose gems namespace their classes in subdirectories -- `socket/`, ...).
+    // Ext surfaces are projected unconditionally of their cargo feature: the
+    // surface is folding-only (a miss falls back to runtime dispatch), and an
+    // un-required ext constant is unreachable regardless.
+    collect_from_dir(&rt_src.join("builtins"), &mut surfaces);
+    collect_from_dir(&rt_src.join("ext"), &mut surfaces);
     // Deterministic output regardless of readdir order.
     surfaces.sort_by(|a, b| a.id_const.cmp(&b.id_const));
 
@@ -78,9 +84,12 @@ fn collect_from_dir(dir: &Path, out: &mut Vec<Surface>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "rs") {
-            // Re-run when any builtin source changes (a migrated header edited,
-            // a class newly migrated).
+        if path.is_dir() {
+            // A gem namespaces its classes in a subdirectory (`ext/socket/`).
+            collect_from_dir(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            // Re-run when any source changes (a migrated header edited, a class
+            // newly migrated).
             println!("cargo:rerun-if-changed={}", path.display());
             collect_from_file(&path, out);
         }
