@@ -331,7 +331,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // PROCESS_CLASS migrated to ruby_module! -- served via registered_table.
         // SIGNAL_MODULE migrated to ruby_module! -- served via registered_table.
         // WARNING_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::OBJECTSPACE_MODULE => weak::lookup_class,
+        // OBJECTSPACE_MODULE migrated to ruby_module! -- served via registered_table.
         // GC_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENCODING_CLASS => encoding::lookup_class,
         zeo_abi::SET_CLASS => set::lookup_class,
@@ -494,7 +494,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         // PROCESS_CLASS migrated to ruby_module! -- served via registered_table.
         // SIGNAL_MODULE migrated to ruby_module! -- served via registered_table.
         // WARNING_MODULE migrated to ruby_module! -- served via registered_table.
-        zeo_abi::OBJECTSPACE_MODULE => weak::lookup_class_names(),
+        // OBJECTSPACE_MODULE migrated to ruby_module! -- served via registered_table.
         // GC_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::ENCODING_CLASS => encoding::lookup_class_names(),
         zeo_abi::SET_CLASS => set::lookup_class_names(),

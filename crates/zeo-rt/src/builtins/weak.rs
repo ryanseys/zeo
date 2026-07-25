@@ -26,7 +26,8 @@ use crate::encoding::StrBuf;
 use crate::{RubyValue, Signal, Symbol};
 use zeo_abi::{ClassId, WEAKMAP_CLASS, WEAKREF_CLASS};
 
-use super::{arg_error, arity, builtin_methods, local_jump_error, not_impl_error, type_error};
+use super::{arg_error, arity, local_jump_error, not_impl_error, type_error};
+use zeo_macros::ruby_module;
 
 /// A weak handle to a Ruby value's liveness. The heap kinds carry a real
 /// `Weak` to their backing `Arc`; everything else is kept alive strongly
@@ -622,13 +623,13 @@ pub fn run_finalizers() {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    ObjectSpace = zeo_abi::OBJECTSPACE_MODULE;
 
     // `define_finalizer(obj, callable)` or `define_finalizer(obj) { |id| }` --
     // best-effort: the callback runs when `obj` is seen collected (`GC.start`)
     // and unconditionally at program exit, receiving obj's id.
-    "define_finalizer" => fn os_define_finalizer(_recv, args, block) {
+    def self."define_finalizer"(_recv, args, block) {
         arity!(args, 1..=2);
         let obj = &args[0];
         let callback = match (args.get(1), block) {
@@ -656,7 +657,7 @@ builtin_methods! {
         Ok(RubyValue::Array(array_new(vec![RubyValue::Int(0), obj.clone()])))
     }
     // Remove every finalizer registered for `obj` (by identity). Returns obj.
-    "undefine_finalizer" => fn os_undefine_finalizer(_recv, args, _block) {
+    def self."undefine_finalizer"(_recv, args, _block) {
         arity!(args, 1);
         let obj = &args[0];
         FINALIZERS.lock().retain(|f| match f.target.upgrade() {
@@ -667,21 +668,21 @@ builtin_methods! {
     }
     // A `WeakMap` of every live object of a class -- zeo has no heap
     // enumeration, so this is an honest NotImplementedError (decision #4).
-    "each_object" => fn os_each_object(_recv, _args, _block) {
+    def self."each_object"(_recv, _args, _block) {
         Err(not_impl_error!("ObjectSpace.each_object is not available (zeo has no heap enumeration)"))
     }
     // No id->object table exists under Arc refcounting.
-    "_id2ref" => fn os_id2ref(_recv, _args, _block) {
+    def self."_id2ref"(_recv, _args, _block) {
         Err(not_impl_error!("ObjectSpace._id2ref is not available (zeo has no id-to-object table)"))
     }
     // `garbage_collect` is `GC.start` by another name -- a no-op sweep (plus
     // the finalizer/weakmap sweep once those land).
-    "garbage_collect" => fn os_garbage_collect(_recv, _args, _block) {
+    def self."garbage_collect"(_recv, _args, _block) {
         Ok(RubyValue::Nil)
     }
     // An empty per-class census: no fabricated counts, matching `GC.stat`'s
     // empty-Hash posture.
-    "count_objects" => fn os_count_objects(_recv, _args, _block) {
+    def self."count_objects"(_recv, _args, _block) {
         Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
     }
 }
@@ -733,5 +734,60 @@ mod tests {
         } // k dropped here
         m.prune();
         assert_eq!(m.live_pairs().len(), 0);
+    }
+
+    /// `ObjectSpace`'s `ruby_module!`-generated class methods are reachable only
+    /// through the dispatch table (their Rust fn names are mangled), so the
+    /// tests call them the way real dispatch does -- through the registered
+    /// class-method `lookup`.
+    fn os_cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::OBJECTSPACE_MODULE)
+            .expect("ObjectSpace is a registered builtin table")
+            .class
+            .as_ref()
+            .expect("ObjectSpace has class methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("ObjectSpace.{name} is defined"))
+    }
+
+    #[test]
+    fn garbage_collect_is_a_nil_no_op_and_count_objects_is_empty() {
+        let nil = RubyValue::Nil;
+        assert!(matches!(
+            os_cmethod("garbage_collect")(&nil, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
+        let RubyValue::Hash(h) = os_cmethod("count_objects")(&nil, &[], None).unwrap() else {
+            panic!("count_objects is a Hash")
+        };
+        assert_eq!(h.lock().len(), 0);
+    }
+
+    #[test]
+    fn heap_enumeration_methods_are_honest_not_implemented_errors() {
+        let nil = RubyValue::Nil;
+        for name in ["each_object", "_id2ref"] {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                os_cmethod(name)(&nil, &[RubyValue::Int(0)], None)
+            }));
+            // NotImplementedError raised; registry-less in a bare unit test, so
+            // it either panics or returns Err.
+            assert!(r.is_err() || r.unwrap().is_err(), "{name} should not succeed");
+        }
+    }
+
+    #[test]
+    fn define_and_undefine_finalizer_round_trip() {
+        let obj = a_string("finalizable");
+        // A block finalizer registers; the return is CRuby's [0, obj] pair.
+        let r = os_cmethod("define_finalizer")(&RubyValue::Nil, std::slice::from_ref(&obj), Some(block_proc()));
+        assert!(r.is_ok(), "define_finalizer with a block succeeds");
+        // undefine_finalizer answers the object it was given.
+        let back = os_cmethod("undefine_finalizer")(&RubyValue::Nil, std::slice::from_ref(&obj), None).unwrap();
+        assert!(same_object(&back, &obj));
+    }
+
+    /// A trivial callable (a `Proc`) for `define_finalizer`'s block slot.
+    fn block_proc() -> RubyValue {
+        RubyValue::Proc(crate::RProc::new(|_args: &[RubyValue]| Ok(RubyValue::Nil)))
     }
 }
