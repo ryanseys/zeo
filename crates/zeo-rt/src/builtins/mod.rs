@@ -169,7 +169,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         zeo_abi::FIBER_CLASS => fiber::lookup,
         zeo_abi::THREAD_CLASS => thread::lookup,
-        zeo_abi::THREAD_GROUP_CLASS => thread_group::lookup,
+        // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::RANDOM_CLASS => random::lookup,
         zeo_abi::TIME_CLASS => time::lookup,
         zeo_abi::ENCODING_CLASS => encoding::lookup,
@@ -255,7 +255,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_arity,
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
         zeo_abi::THREAD_CLASS => thread::lookup_arity,
-        zeo_abi::THREAD_GROUP_CLASS => thread_group::lookup_arity,
+        // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::RANDOM_CLASS => random::lookup_arity,
         zeo_abi::TIME_CLASS => time::lookup_arity,
         zeo_abi::ENCODING_CLASS => encoding::lookup_arity,
@@ -432,7 +432,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_names(),
-        zeo_abi::THREAD_GROUP_CLASS => thread_group::lookup_names(),
+        // THREAD_GROUP_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::RANDOM_CLASS => random::lookup_names(),
         zeo_abi::TIME_CLASS => time::lookup_names(),
         zeo_abi::ENCODING_CLASS => encoding::lookup_names(),
