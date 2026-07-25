@@ -1,7 +1,7 @@
-//! The unit suite, moved verbatim with the extraction (`use crate::*` --
+//! The unit suite, moved verbatim with the extraction (`use crate::enc::*` --
 //! every asserted item is part of the public surface).
 
-use crate::*;
+use crate::enc::*;
 
 /// A quick content-driven `StrBuf` for the concat-rule tests: `bytes` under
 /// `enc` (ascii-only-ness and emptiness come from the content, exactly as
@@ -429,7 +429,7 @@ fn multibyte_walk_counts_characters_structurally() {
 
 #[test]
 fn multibyte_codepoint_splits_match_chr_semantics() {
-    use crate::mb::MbCodepointError;
+    use crate::enc::mb::MbCodepointError;
     assert_eq!(
         mb_codepoint_bytes(MbFamily::Sjis, 0x82A0),
         Ok(vec![0x82, 0xA0])

@@ -7,7 +7,9 @@ license.workspace = true
 
 [dependencies]
 zeo-abi.workspace = true
-zeo-enc.workspace = true
+# The multi-encoding string engine under `crate::enc` (formerly the zeo-enc
+# crate): StrBuf, transcode, the encoding tables.
+encoding_rs.workspace = true
 # The ruby_class!/ruby_module! DSL (compile-time) and its link-time registry.
 # A class file declares its methods/constants once; linkme collects each
 # table into `builtins::BUILTIN_TABLES`, which the routing consults ahead of

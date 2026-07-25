@@ -3,8 +3,8 @@
 //! every string carries. Adding an encoding is a new row (plus, for a
 //! genuinely new byte<->character mapping family, an [`EncKind`] variant).
 
-use crate::mb::MbFamily;
-use crate::single_byte::{self, SingleByteTable};
+use crate::enc::mb::MbFamily;
+use crate::enc::single_byte::{self, SingleByteTable};
 
 /// An index into [`ENCODINGS`]. `Copy` and one byte wide, so every string
 /// carries its encoding for free.

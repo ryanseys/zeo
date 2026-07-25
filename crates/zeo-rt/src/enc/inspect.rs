@@ -1,8 +1,8 @@
 //! `String#inspect`: the double-quoted, escaped rendering, per encoding.
 
-use crate::strbuf::StrBuf;
-use crate::table::EncKind;
-use crate::transcode::{Unit, decode_utf8};
+use crate::enc::strbuf::StrBuf;
+use crate::enc::table::EncKind;
+use crate::enc::transcode::{Unit, decode_utf8};
 
 /// `String#inspect`: the double-quoted, escaped rendering. Printable
 /// characters keep Rust's own debug escaping (which the runtime already
@@ -59,9 +59,9 @@ pub fn inspect(buf: &StrBuf) -> String {
         // (`"ab€".encode("UTF-16LE").inspect` is `"ab€"`,
         // `"AB𝄞"` gives `"AB\u{1D11E}"`).
         EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-            let w = crate::wide::wide_of(buf.encoding().kind()).expect("wide kind");
+            let w = crate::enc::wide::wide_of(buf.encoding().kind()).expect("wide kind");
             let bytes = buf.bytes();
-            let ranges = crate::wide::wide_ranges(w, bytes);
+            let ranges = crate::enc::wide::wide_ranges(w, bytes);
             for i in 0..ranges.len() {
                 let (r, scalar, _) = &ranges[i];
                 match scalar {
@@ -93,7 +93,7 @@ pub fn inspect(buf: &StrBuf) -> String {
         // usual -- all oracle-verified.
         EncKind::MultiByte(family) => {
             let bytes = buf.bytes();
-            for (r, _) in crate::mb::mb_ranges(family, bytes) {
+            for (r, _) in crate::enc::mb::mb_ranges(family, bytes) {
                 if r.len() > 1 {
                     out.push_str("\\x{");
                     for b in &bytes[r] {

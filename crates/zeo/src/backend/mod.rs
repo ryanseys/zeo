@@ -67,7 +67,6 @@ use std::time::SystemTime;
 const RUNTIME_CRATES: &[&str] = &[
     "zeo-rt",
     "zeo-abi",
-    "zeo-enc",
     // Compile-time deps whose output is baked into `zeo-rt`: the `ruby_class!`/
     // `ruby_module!` proc-macro and its shared parser. Editing either changes
     // the generated runtime, and `zeo` has no cargo edge to catch it, so the

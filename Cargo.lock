@@ -1587,13 +1587,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeo-enc"
-version = "0.1.0"
-dependencies = [
- "encoding_rs",
-]
-
-[[package]]
 name = "zeo-hir"
 version = "0.1.0"
 dependencies = [
@@ -1619,6 +1612,7 @@ version = "0.1.0"
 dependencies = [
  "corosensei",
  "digest",
+ "encoding_rs",
  "fancy-regex",
  "flate2",
  "getrandom",
@@ -1643,7 +1637,6 @@ dependencies = [
  "unicode-segmentation",
  "yaml-rust2",
  "zeo-abi",
- "zeo-enc",
  "zeo-macros",
 ]
 

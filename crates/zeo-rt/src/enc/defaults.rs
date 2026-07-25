@@ -1,7 +1,7 @@
 //! The process-wide default external/internal encodings
 //! (`Encoding.default_external` / `default_internal`).
 
-use crate::table::{EncodingId, UTF_8};
+use crate::enc::table::{EncodingId, UTF_8};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 // `u8::MAX` sentinel = "unset" for the optional default_internal.

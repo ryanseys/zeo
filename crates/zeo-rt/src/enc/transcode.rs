@@ -2,7 +2,7 @@
 //! units, re-encode into the target, applying the `:invalid`/`:undef`/
 //! `:replace`/`:xml`/`:newline` options.
 
-use crate::table::{EncKind, EncodingId};
+use crate::enc::table::{EncKind, EncodingId};
 
 /// The `encode` keyword options, already extracted from the Ruby hash.
 /// `:fallback` is handled by the caller (it may invoke arbitrary Ruby), so
@@ -48,7 +48,7 @@ pub(crate) enum Unit {
     Char(char),
     /// Bytes the SOURCE encoding couldn't decode (`:invalid` territory),
     /// with the CRuby message form they warrant.
-    Invalid(Vec<u8>, crate::mb::InvalidStyle),
+    Invalid(Vec<u8>, crate::enc::mb::InvalidStyle),
     /// A VALID source character with no Unicode mapping (an unassigned
     /// windows-125x vendor-page slot, an unassigned CJK pair): `:undef`
     /// territory, but reported by its bytes -- there is no scalar to name.
@@ -65,7 +65,7 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
                 if *b < 0x80 {
                     Unit::Char(*b as char)
                 } else {
-                    Unit::Invalid(vec![*b], crate::mb::InvalidStyle::Plain)
+                    Unit::Invalid(vec![*b], crate::enc::mb::InvalidStyle::Plain)
                 }
             })
             .collect(),
@@ -83,12 +83,12 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
             let mut units = Vec::new();
             let mut i = 0;
             while i < bytes.len() {
-                let unit = crate::mb::mb_unit(family, &bytes[i..]);
+                let unit = crate::enc::mb::mb_unit(family, &bytes[i..]);
                 let seq = &bytes[i..i + unit.len];
                 if !unit.valid {
                     units.push(Unit::Invalid(seq.to_vec(), unit.style));
                 } else {
-                    match crate::mb::mb_decode_seq(family, seq) {
+                    match crate::enc::mb::mb_decode_seq(family, seq) {
                         Some(c) => units.push(Unit::Char(c)),
                         None => units.push(Unit::Unmapped(seq.to_vec())),
                     }
@@ -98,8 +98,8 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
             units
         }
         EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-            let w = crate::wide::wide_of(from.kind()).expect("wide kind");
-            crate::wide::wide_ranges(w, bytes)
+            let w = crate::enc::wide::wide_of(from.kind()).expect("wide kind");
+            crate::enc::wide::wide_ranges(w, bytes)
                 .into_iter()
                 .map(|(r, scalar, style)| match scalar {
                     Some(c) => Unit::Char(c),
@@ -128,7 +128,7 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
                 let bad_len = e.error_len().unwrap_or(rest.len() - good).max(1);
                 units.push(Unit::Invalid(
                     rest[good..good + bad_len].to_vec(),
-                    crate::mb::InvalidStyle::Plain,
+                    crate::enc::mb::InvalidStyle::Plain,
                 ));
                 rest = &rest[good + bad_len..];
             }
@@ -154,10 +154,10 @@ fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
         // binary byte (it isn't a byte).
         EncKind::Binary => (cp < 0x80).then(|| vec![cp as u8]),
         EncKind::SingleByte => to.single_byte_table().encode(c).map(|b| vec![b]),
-        EncKind::MultiByte(family) => crate::mb::mb_encode_char(family, c),
+        EncKind::MultiByte(family) => crate::enc::mb::mb_encode_char(family, c),
         EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-            let w = crate::wide::wide_of(to.kind()).expect("wide kind");
-            Some(crate::wide::wide_encode_char(w, c))
+            let w = crate::enc::wide::wide_of(to.kind()).expect("wide kind");
+            Some(crate::enc::wide::wide_encode_char(w, c))
         }
     }
 }
@@ -208,13 +208,13 @@ pub fn transcode(
                     // wrong next byte -- printable trails quoted verbatim,
                     // `"\xA1" followed by "a"`), plain `"\xFF" on EUC-JP`.
                     let msg = match style {
-                        crate::mb::InvalidStyle::Plain => {
+                        crate::enc::mb::InvalidStyle::Plain => {
                             format!("\"{esc}\" on {}", from.name())
                         }
-                        crate::mb::InvalidStyle::Incomplete => {
+                        crate::enc::mb::InvalidStyle::Incomplete => {
                             format!("incomplete \"{esc}\" on {}", from.name())
                         }
-                        crate::mb::InvalidStyle::FollowedBy(t) => {
+                        crate::enc::mb::InvalidStyle::FollowedBy(t) => {
                             format!(
                                 "\"{esc}\" followed by \"{}\" on {}",
                                 quote_byte(t),
@@ -237,10 +237,10 @@ pub fn transcode(
                     out.extend_from_slice(&replacement(opts, to));
                 } else {
                     let escaped: String = raw.iter().map(|b| quote_byte(*b)).collect();
-                    let msg = if to == crate::table::UTF_8 && transcoder_name(from) == from.name() {
+                    let msg = if to == crate::enc::table::UTF_8 && transcoder_name(from) == from.name() {
                         format!("\"{escaped}\" from {} to UTF-8", from.name())
                     } else {
-                        let tail = if to == crate::table::UTF_8 {
+                        let tail = if to == crate::enc::table::UTF_8 {
                             String::new()
                         } else {
                             format!(" to {}", transcoder_name(to))
@@ -322,7 +322,7 @@ fn transcoder_name(enc: EncodingId) -> String {
 fn undef_message(c: char, from: EncodingId, to: EncodingId) -> String {
     let cp = c as u32;
     let to_disp = transcoder_name(to);
-    if from == crate::table::UTF_8 {
+    if from == crate::enc::table::UTF_8 {
         if to_disp == to.name() {
             format!("U+{cp:04X} from UTF-8 to {to_disp}")
         } else {

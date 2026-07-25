@@ -1,10 +1,10 @@
-//! The runtime's view of the encoding engine -- a re-export of the
-//! `zeo-enc` crate, so the builtins keep reading `crate::encoding::X`
-//! unchanged, plus the ONE piece that cannot live there: mapping the
-//! engine's plain error values onto real Ruby exceptions (`Signal`).
-//! `zeo-enc` is a leaf crate that knows nothing of the runtime.
+//! The runtime's view of the encoding engine -- a re-export of the `crate::enc`
+//! module (formerly the `zeo-enc` crate), so the builtins keep reading
+//! `crate::encoding::X` unchanged, plus the ONE piece that cannot live there:
+//! mapping the engine's plain error values onto real Ruby exceptions
+//! (`Signal`). `crate::enc` knows nothing of the runtime's dispatch layer.
 
-pub use zeo_enc::*;
+pub use crate::enc::*;
 
 use crate::Signal;
 

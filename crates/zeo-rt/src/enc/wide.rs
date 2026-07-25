@@ -2,7 +2,7 @@
 //! ASCII-compatible -- their strings are never `SevenBit`, and concatenation
 //! with any other encoding is refused unless one side is empty.
 
-use crate::mb::InvalidStyle;
+use crate::enc::mb::InvalidStyle;
 
 /// Which wide layout -- carried inside `EncKind::{Utf16,Utf32}`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -123,10 +123,10 @@ pub(crate) fn wide_encode_char(w: Wide, c: char) -> Vec<u8> {
 }
 
 /// The `Wide` layout of a `Utf16`/`Utf32` kind, `None` for every other.
-pub(crate) fn wide_of(kind: crate::table::EncKind) -> Option<Wide> {
+pub(crate) fn wide_of(kind: crate::enc::table::EncKind) -> Option<Wide> {
     match kind {
-        crate::table::EncKind::Utf16 { be } => Some(Wide { width: 2, be }),
-        crate::table::EncKind::Utf32 { be } => Some(Wide { width: 4, be }),
+        crate::enc::table::EncKind::Utf16 { be } => Some(Wide { width: 2, be }),
+        crate::enc::table::EncKind::Utf32 { be } => Some(Wide { width: 4, be }),
         _ => None,
     }
 }

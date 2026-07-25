@@ -4,10 +4,10 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 
-use crate::case::{CaseMode, ascii_case_byte, case_bytes, case_single_byte, case_unicode};
-use crate::coderange::{CodeRange, compute_coderange};
-use crate::table::{EncKind, EncodingId, UTF_8};
-use crate::transcode::utf8_seq_len;
+use crate::enc::case::{CaseMode, ascii_case_byte, case_bytes, case_single_byte, case_unicode};
+use crate::enc::coderange::{CodeRange, compute_coderange};
+use crate::enc::table::{EncKind, EncodingId, UTF_8};
+use crate::enc::transcode::utf8_seq_len;
 
 /// A Ruby string's contents: raw `bytes` interpreted through `enc`, with a
 /// lazily-computed `coderange` cache. The `Cell` is sound because every
@@ -112,10 +112,10 @@ impl StrBuf {
                     String::from_utf8_lossy(&self.bytes)
                 } else {
                     let mut out = String::with_capacity(self.bytes.len());
-                    for (r, valid) in crate::mb::mb_ranges(family, &self.bytes) {
+                    for (r, valid) in crate::enc::mb::mb_ranges(family, &self.bytes) {
                         let seq = &self.bytes[r];
                         match valid
-                            .then(|| crate::mb::mb_decode_seq(family, seq))
+                            .then(|| crate::enc::mb::mb_decode_seq(family, seq))
                             .flatten()
                         {
                             Some(c) => out.push(c),
@@ -126,9 +126,9 @@ impl StrBuf {
                 }
             }
             EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-                let w = crate::wide::wide_of(self.enc.kind()).expect("wide kind");
+                let w = crate::enc::wide::wide_of(self.enc.kind()).expect("wide kind");
                 Cow::Owned(
-                    crate::wide::wide_ranges(w, &self.bytes)
+                    crate::enc::wide::wide_ranges(w, &self.bytes)
                         .into_iter()
                         .map(|(_, scalar, _)| scalar.unwrap_or('\u{FFFD}'))
                         .collect(),
@@ -180,13 +180,13 @@ impl StrBuf {
             EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
                 (0..self.bytes.len()).map(|i| i..i + 1).collect()
             }
-            EncKind::MultiByte(family) => crate::mb::mb_ranges(family, &self.bytes)
+            EncKind::MultiByte(family) => crate::enc::mb::mb_ranges(family, &self.bytes)
                 .into_iter()
                 .map(|(r, _)| r)
                 .collect(),
             EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-                let w = crate::wide::wide_of(self.enc.kind()).expect("wide kind");
-                crate::wide::wide_ranges(w, &self.bytes)
+                let w = crate::enc::wide::wide_of(self.enc.kind()).expect("wide kind");
+                crate::enc::wide::wide_ranges(w, &self.bytes)
                     .into_iter()
                     .map(|(r, _, _)| r)
                     .collect()
@@ -295,7 +295,7 @@ impl StrBuf {
             // and touches only 1-byte units.
             EncKind::MultiByte(family) => {
                 let mut bytes = self.bytes.clone();
-                for (r, _) in crate::mb::mb_ranges(family, &self.bytes) {
+                for (r, _) in crate::enc::mb::mb_ranges(family, &self.bytes) {
                     if r.len() == 1 && bytes[r.start] < 0x80 {
                         let up = match mode {
                             CaseMode::Up => true,
@@ -311,9 +311,9 @@ impl StrBuf {
             // UTF-16/32: full Unicode case per character, re-encoded in
             // place; a broken unit's bytes are copied through untouched.
             EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-                let w = crate::wide::wide_of(self.enc.kind()).expect("wide kind");
+                let w = crate::enc::wide::wide_of(self.enc.kind()).expect("wide kind");
                 let mut out = Vec::with_capacity(self.bytes.len());
-                for (i, (r, scalar, _)) in crate::wide::wide_ranges(w, &self.bytes)
+                for (i, (r, scalar, _)) in crate::enc::wide::wide_ranges(w, &self.bytes)
                     .into_iter()
                     .enumerate()
                 {
@@ -333,7 +333,7 @@ impl StrBuf {
                         c.to_lowercase().collect()
                     };
                     for cc in cased {
-                        out.extend(crate::wide::wide_encode_char(w, cc));
+                        out.extend(crate::enc::wide::wide_encode_char(w, cc));
                     }
                 }
                 StrBuf::from_bytes(out, self.enc)

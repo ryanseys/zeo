@@ -1,7 +1,7 @@
 //! CRuby's coderange cache -- the "how ASCII/valid is this string"
 //! classification that unlocks byte == char fast paths.
 
-use crate::table::{EncKind, EncodingId};
+use crate::enc::table::{EncKind, EncodingId};
 
 /// CRuby's coderange cache -- how the bytes sit relative to their encoding.
 /// `SevenBit` is the overwhelmingly common case and unlocks byte == char
@@ -47,15 +47,15 @@ pub(crate) fn compute_coderange(bytes: &[u8], enc: EncodingId) -> CodeRange {
         // Multibyte: STRUCTURALLY valid sequences only (an unmapped pair is
         // still a character; a bad lead/trail or truncated lead is Broken).
         EncKind::MultiByte(family) => {
-            if crate::mb::mb_ranges(family, bytes).iter().all(|(_, v)| *v) {
+            if crate::enc::mb::mb_ranges(family, bytes).iter().all(|(_, v)| *v) {
                 CodeRange::Valid
             } else {
                 CodeRange::Broken
             }
         }
         EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
-            let w = crate::wide::wide_of(enc.kind()).expect("wide kind");
-            if crate::wide::wide_ranges(w, bytes)
+            let w = crate::enc::wide::wide_of(enc.kind()).expect("wide kind");
+            if crate::enc::wide::wide_ranges(w, bytes)
                 .iter()
                 .all(|(_, scalar, _)| scalar.is_some())
             {
