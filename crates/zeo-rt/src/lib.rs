@@ -17,6 +17,7 @@ pub mod encoding;
 // `eval_string` is the stub-or-real entry, gating only its prism-backed
 // interpreter internals behind the `eval-vm` feature.
 mod eval_vm;
+mod coroutine;
 mod exec;
 mod ext;
 pub mod ffi;

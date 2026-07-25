@@ -47,7 +47,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
-use zeo_fiber::{Coroutine, CoroutineResult};
+use crate::coroutine::{Coroutine, CoroutineResult};
 
 /// The Send+Sync half of a Fiber -- what `RubyValue::Fiber` actually
 /// carries. The coroutine itself is in [`FIBERS`] on `owner`'s thread.
@@ -179,7 +179,7 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
     let id = NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed);
     // The first input becomes the block's args -- or, if the very first thing
     // done to the fiber is `#raise`, the body raises before running at all.
-    let coro = zeo_fiber::new_fiber(move |first: FiberInput| match first {
+    let coro = crate::coroutine::new_fiber(move |first: FiberInput| match first {
         FiberInput::Resume(args) | FiberInput::Transfer(args) => body.call(&args),
         FiberInput::Raise(exc) => Err(Signal::Raise(exc)),
     });
@@ -261,7 +261,7 @@ pub fn fiber_transfer(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
     // suspend of the CURRENT fiber back to its driver.
     if handle.id == 0 {
         let payload = pack_values(args);
-        return match zeo_fiber::yield_current::<FiberInput, RubyValue>(payload) {
+        return match crate::coroutine::yield_current::<FiberInput, RubyValue>(payload) {
             // Called from the root itself (nothing suspended) -- a no-op.
             None => FiberResume::Value(RubyValue::Nil),
             Some(FiberInput::Resume(vals)) | Some(FiberInput::Transfer(vals)) => {
@@ -316,7 +316,7 @@ fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     // Mark THIS fiber as current for the duration of the switch, so
     // `Fiber.current` inside the body finds it (and nested resumes stack).
     CURRENT_FIBER.with(|s| s.borrow_mut().push(handle.clone()));
-    let result = zeo_fiber::resume(&mut coro, input);
+    let result = crate::coroutine::resume(&mut coro, input);
     CURRENT_FIBER.with(|s| {
         s.borrow_mut().pop();
     });
@@ -356,7 +356,7 @@ pub fn fiber_yield(args: Vec<RubyValue>) -> FiberYield {
         return FiberYield::Root;
     }
     let payload = pack_values(args);
-    match zeo_fiber::yield_current::<FiberInput, RubyValue>(payload) {
+    match crate::coroutine::yield_current::<FiberInput, RubyValue>(payload) {
         None => FiberYield::Root,
         Some(FiberInput::Resume(vals)) | Some(FiberInput::Transfer(vals)) => {
             FiberYield::Value(pack_values(vals))

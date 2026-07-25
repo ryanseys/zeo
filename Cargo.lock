@@ -1594,13 +1594,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeo-fiber"
-version = "0.1.0"
-dependencies = [
- "corosensei",
-]
-
-[[package]]
 name = "zeo-hir"
 version = "0.1.0"
 dependencies = [
@@ -1624,6 +1617,7 @@ dependencies = [
 name = "zeo-rt"
 version = "0.1.0"
 dependencies = [
+ "corosensei",
  "digest",
  "fancy-regex",
  "flate2",
@@ -1650,7 +1644,6 @@ dependencies = [
  "yaml-rust2",
  "zeo-abi",
  "zeo-enc",
- "zeo-fiber",
  "zeo-macros",
 ]
 

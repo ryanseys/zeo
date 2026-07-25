@@ -15,7 +15,7 @@
 //! External iteration (`next`/`peek`) lazily spins up a coroutine that
 //! runs the FULL internal `each` with a shuttle block that suspends per
 //! element (`next_i`/`next_ii`, enumerator.c:772/758). The coroutine is
-//! the EXACT same `zeo_fiber` instantiation `fiber.rs` uses -- same
+//! the EXACT same `crate::coroutine` instantiation `fiber.rs` uses -- same
 //! Send+Sync split (handle in the value, coroutine thread-pinned in a TLS
 //! table), same ec-swap (see `crate::ec`), and, because the `(input, yield)`
 //! TypeIds match, a `Fiber.yield` inside an enumerated `each` suspends
@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::ThreadId;
-use zeo_fiber::CoroutineResult;
+use crate::coroutine::CoroutineResult;
 
 /// What `to_enum` captures -- CRuby's `struct enumerator`'s `obj`/`meth`/
 /// `args` triple, or the `Enumerator.new` generator block. Cloned into
@@ -161,7 +161,7 @@ impl EnumeratorData {
 
 /// Deliberately the same instantiation as `fiber.rs`'s `FiberCoro` (see
 /// the module docs for why the matching TypeIds are a feature).
-type EnumCoro = zeo_fiber::Coroutine<Vec<RubyValue>, RubyValue, Result<RubyValue, Signal>>;
+type EnumCoro = crate::coroutine::Coroutine<Vec<RubyValue>, RubyValue, Result<RubyValue, Signal>>;
 
 thread_local! {
     static ENUM_FIBERS: RefCell<HashMap<u64, EnumCoro>> = RefCell::new(HashMap::new());
@@ -368,11 +368,11 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     }
     let id = NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed);
     let source = e.source.clone();
-    let coro: EnumCoro = zeo_fiber::new_fiber(move |_: Vec<RubyValue>| {
+    let coro: EnumCoro = crate::coroutine::new_fiber(move |_: Vec<RubyValue>| {
         let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
             // `y.yield` suspends, then returns the value `#feed` injected on the
             // resume (empty resume -> nil), so `got = y.yield(x)` sees it.
-            let fed = zeo_fiber::yield_current::<Vec<RubyValue>, RubyValue>(RubyValue::Array(
+            let fed = crate::coroutine::yield_current::<Vec<RubyValue>, RubyValue>(RubyValue::Array(
                 array_new(raw.to_vec()),
             ));
             Ok(fed
@@ -426,7 +426,7 @@ fn get_next_values(e: &REnumerator) -> Result<Vec<RubyValue>, Signal> {
     // the shuttle returns it from the paused `y.yield`. Cleared once consumed.
     let feed_in: Vec<RubyValue> = e.state.lock().feed.take().into_iter().collect();
     let caller_ec = crate::ec::swap(std::mem::take(&mut e.state.lock().saved_ec));
-    let outcome = zeo_fiber::resume(&mut coro, feed_in);
+    let outcome = crate::coroutine::resume(&mut coro, feed_in);
     e.state.lock().saved_ec = crate::ec::swap(caller_ec);
     match outcome {
         // The shuttle's arity-preserving Array payload -- the normal case.

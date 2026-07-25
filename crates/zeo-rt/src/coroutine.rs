@@ -1,16 +1,15 @@
-//! zeo-fiber: the "current yielder" shim that lets `Fiber.yield` suspend
-//! the innermost running coroutine from ARBITRARY call depth -- the one
-//! piece corosensei deliberately doesn't ship (its maintainer's words, issue
-//! #71: "implement this yourself based on thread-local storage... switch a
-//! pointer... every time a coroutine switch happens", declined upstream only
-//! because it would tax every switch for users who don't need it). Wasmer 7
-//! and open-coroutine both implement this same pattern over the same crate.
+//! The "current yielder" shim that lets `Fiber.yield` suspend the innermost
+//! running coroutine from ARBITRARY call depth -- the one piece corosensei
+//! deliberately doesn't ship (its maintainer's words, issue #71: "implement
+//! this yourself based on thread-local storage... switch a pointer... every
+//! time a coroutine switch happens", declined upstream only because it would
+//! tax every switch for users who don't need it). Wasmer 7 and open-coroutine
+//! both implement this same pattern over the same crate. Formerly the separate
+//! `zeo-fiber` crate; folded in here (§ crate consolidation).
 //!
-//! **This is deliberately the ONLY crate in this workspace containing
-//! `unsafe` code** (`zeo`/`zeo-rt` keep `#![forbid(unsafe_code)]`) --
-//! kept tiny and self-contained so the entire unsafety surface is auditable
-//! in one sitting. The single `unsafe` operation is the raw-pointer deref in
-//! [`yield_current`]; its safety rests on three invariants:
+//! Kept tiny and self-contained so its whole unsafety surface -- the single
+//! raw-pointer deref in [`yield_current`] -- is auditable in one sitting. That
+//! deref's safety rests on three invariants:
 //!
 //! 1. **The pointer is valid for the coroutine's whole life.** corosensei's
 //!    `Yielder` is `#[repr(transparent)]` over the parent-link slot at a

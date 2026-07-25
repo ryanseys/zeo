@@ -33,7 +33,12 @@ fancy-regex.workspace = true
 # bindgen `generate` feature (pre-generated bindings) and builds the VENDORED C
 # library, never linking a system libonig.
 onig.workspace = true
-zeo-fiber.workspace = true
+# The coroutine/current-yielder shim under `crate::coroutine` (formerly the
+# `zeo-fiber` crate). Pinned to the 0.3.x line: the safety argument in
+# `coroutine.rs` relies on an implementation invariant of corosensei's Yielder
+# representation (a fixed slot on the coroutine's own stack) that is structural
+# in 0.3.x but not a documented API guarantee -- re-verify before any bump.
+corosensei.workspace = true
 # OS entropy for `OpenSSL::Random`/`SecureRandom` -- the real extension draws
 # from a CSPRNG, so we must too (getrandom(2)/SecRandomCopyBytes underneath).
 getrandom.workspace = true
