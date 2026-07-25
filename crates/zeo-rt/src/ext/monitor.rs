@@ -20,7 +20,8 @@
 //! mixin whose `@mon_data` is nil.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, need_block, thread_error};
+use crate::builtins::{arity, need_block, thread_error};
+use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::thread::{
     RMutex, mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
@@ -115,24 +116,24 @@ fn monitor_of(recv: &RubyValue) -> &RMonitor {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Monitor = zeo_abi::MONITOR_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `mon_enter` is the `MonitorMixin` spelling of `enter`; both names reach
     // the same C function in CRuby, so both are rows here.
-    "enter" | "mon_enter" => fn enter(recv, args, _block) {
+    def "enter" | "mon_enter" (recv, args, _block) {
         arity!(args, 0);
         monitor_of(recv).enter()?;
         Ok(RubyValue::Nil)
     }
-    "exit" | "mon_exit" => fn exit(recv, args, _block) {
+    def "exit" | "mon_exit" (recv, args, _block) {
         arity!(args, 0);
         monitor_of(recv).exit()?;
         Ok(RubyValue::Nil)
     }
     // `try_enter` never blocks: `true` iff this execution now holds it,
     // which a re-entry always does.
-    "try_enter" | "mon_try_enter" => fn try_enter(recv, args, _block) {
+    def "try_enter" | "mon_try_enter" (recv, args, _block) {
         arity!(args, 0);
         let m = monitor_of(recv);
         if !mutex_owned(&m.mutex) && !mutex_try_lock(&m.mutex) {
@@ -141,18 +142,18 @@ builtin_methods! {
         m.count.fetch_add(1, Ordering::Relaxed);
         Ok(RubyValue::Bool(true))
     }
-    "mon_locked?" => fn locked_p(recv, args, _block) {
+    def "mon_locked?" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_locked(&monitor_of(recv).mutex)))
     }
-    "mon_owned?" => fn owned_p(recv, args, _block) {
+    def "mon_owned?" (recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_owned(&monitor_of(recv).mutex)))
     }
     // Enter, run the block, ALWAYS leave -- an exception or `break` out of
     // the block must still unwind one nesting level. Same shape as
     // `Mutex#synchronize`, which is what `mon_synchronize` aliases to.
-    "synchronize" | "mon_synchronize" => fn synchronize(recv, _args, block) {
+    def "synchronize" | "mon_synchronize" (recv, _args, block) {
         let blk = need_block!(block);
         let m = monitor_of(recv);
         m.enter()?;
@@ -160,12 +161,8 @@ builtin_methods! {
         let _ = m.exit();
         r
     }
-}
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" => fn new_monitor(_recv, args, _block) {
+    def self."new" (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Object(Arc::new(RMonitor::new())))
     }
