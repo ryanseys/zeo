@@ -9,15 +9,15 @@ use zeo_macros::ruby_class;
 ruby_class! {
     TrueClass = zeo_abi::TRUE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "&"(_recv, args, _block) {
+    def "&" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(args[0].truthy()))
     }
-    def "|"(_recv, args, _block) {
+    def "|" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(true))
     }
-    def "^"(_recv, args, _block) {
+    def "^" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(!args[0].truthy()))
     }

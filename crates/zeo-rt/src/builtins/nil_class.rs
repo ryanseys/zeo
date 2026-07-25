@@ -9,45 +9,45 @@ use zeo_macros::ruby_class;
 ruby_class! {
     NilClass = zeo_abi::NIL_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "&"(_recv, args, _block) {
+    def "&" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(false))
     }
-    def "|"(_recv, args, _block) {
+    def "|" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(args[0].truthy()))
     }
-    def "^"(_recv, args, _block) {
+    def "^" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(args[0].truthy()))
     }
-    def "to_a"(_recv, args, _block) {
+    def "to_a" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(Vec::new())))
     }
-    def "to_h"(_recv, args, _block) {
+    def "to_h" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Hash(crate::hash_new(Vec::new())))
     }
-    def "to_i"(_recv, args, _block) {
+    def "to_i" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(0))
     }
-    def "to_f"(_recv, args, _block) {
+    def "to_f" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Float(0.0))
     }
     // `nil` converts to the zero of each numeric tower.
-    def "to_r" | "rationalize" (_recv, args, _block) {
+    def "to_r" | "rationalize" arity 0 (_recv, args, _block) {
         arity!(args, 0..=1);
         crate::builtins::rational::rational_new(0.into(), 1.into())
     }
-    def "to_c"(_recv, args, _block) {
+    def "to_c" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(RubyValue::Int(0), RubyValue::Int(0))
     }
     // `nil =~ anything` is always nil (nil matches no pattern).
-    def "=~"(_recv, args, _block) {
+    def "=~" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Nil)
     }
