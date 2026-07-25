@@ -31,6 +31,7 @@
 //!     def "succ" | "next" (recv, args, block) { .. }     // aliases sharing one body
 //!     private def helper(recv, args, block) { .. }       // visibility prefix
 //!     def self.pid(recv, args, block) { .. }             // class/singleton method
+//!     #[cfg(target_vendor = "apple")] def "change"(..){} // platform-gated def
 //!
 //!     alias cmp = "<=>";                                 // late alias (new = existing)
 //!
@@ -47,7 +48,7 @@
 
 use proc_macro2::TokenStream;
 use syn::parse::ParseStream;
-use syn::{braced, parenthesized, Expr, Ident, LitInt, LitStr, Path, Token};
+use syn::{braced, parenthesized, Attribute, Expr, Ident, LitInt, LitStr, Path, Token};
 
 /// A fully-parsed `ruby_class! { ... }` body.
 pub struct ClassSpec {
@@ -105,6 +106,11 @@ pub struct MethodDef {
     /// e.g. every `Math.sqrt` also reachable as a private `sqrt` via
     /// `include Math`). The macro emits it into both lookup tables.
     pub is_module_function: bool,
+    /// Outer attributes written before the `def` (in practice `#[cfg(...)]`),
+    /// carried verbatim onto the emitted fn AND every lookup/names/arity row so
+    /// a platform-gated method drops out of the surface as a unit -- the DSL
+    /// analogue of a `#[cfg]`'d `builtin_methods!` block.
+    pub attrs: Vec<Attribute>,
     pub visibility: Visibility,
     /// One or more Ruby names, in declaration order (first is the primary).
     pub names: Vec<MethodName>,
@@ -215,9 +221,21 @@ impl ClassSpec {
 /// `include`, `const`, `alias`, an optional `private`/`protected` visibility
 /// prefix then `def`, or a nested `class`/`module` with a braced body.
 fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
+    // Outer attributes (`#[cfg(...)]`) prefix a `def`; only method items carry
+    // them, so a stray attribute before anything else is a clear error.
+    let attrs = input.call(Attribute::parse_outer)?;
+    let attrs_forbidden = |input: ParseStream| {
+        syn::Error::new(
+            input.span(),
+            "attributes are only supported on `def` items (e.g. `#[cfg(...)] def ...`)",
+        )
+    };
     // `const` is a real Rust keyword, so it can't be peeked as an `Ident` like
     // the (non-keyword) `include`/`alias`/`private`/`protected`/`def` leads.
     if input.peek(Token![const]) {
+        if !attrs.is_empty() {
+            return Err(attrs_forbidden(input));
+        }
         input.parse::<Token![const]>()?;
         let name: Ident = input.parse()?;
         input.parse::<Token![=]>()?;
@@ -233,11 +251,17 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
     })?;
     match lookahead.to_string().as_str() {
         "include" => {
+            if !attrs.is_empty() {
+                return Err(attrs_forbidden(input));
+            }
             input.parse::<Ident>()?; // `include`
             spec.includes.push(Path::parse_mod_style(input)?);
             input.parse::<Token![;]>()?;
         }
         "alias" => {
+            if !attrs.is_empty() {
+                return Err(attrs_forbidden(input));
+            }
             input.parse::<Ident>()?; // `alias`
             let new_name = parse_method_name(input)?;
             input.parse::<Token![=]>()?;
@@ -252,21 +276,24 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
             } else {
                 Visibility::Protected
             };
-            spec.methods.push(parse_def(input, visibility)?);
+            spec.methods.push(parse_def(input, visibility, attrs)?);
         }
         "def" => {
-            spec.methods.push(parse_def(input, Visibility::Public)?);
+            spec.methods.push(parse_def(input, Visibility::Public, attrs)?);
         }
         "module_function" => {
             // `module_function def foo(...)` -- a module function: emitted into
             // BOTH the instance and class tables (CRuby's `module_function`).
             // Private as an instance method, public as a singleton.
             input.parse::<Ident>()?; // `module_function`
-            let mut def = parse_def(input, Visibility::Private)?;
+            let mut def = parse_def(input, Visibility::Private, attrs)?;
             def.is_module_function = true;
             spec.methods.push(def);
         }
         "class" | "module" => {
+            if !attrs.is_empty() {
+                return Err(attrs_forbidden(input));
+            }
             spec.nested.push(ClassSpec::parse_nested(input)?);
         }
         other => {
@@ -280,8 +307,12 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
 }
 
 /// Parse a `def` (the `def` keyword is still on `input`), given the visibility
-/// already consumed by the caller.
-fn parse_def(input: ParseStream, visibility: Visibility) -> syn::Result<MethodDef> {
+/// and any outer attributes already consumed by the caller.
+fn parse_def(
+    input: ParseStream,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> syn::Result<MethodDef> {
     input.parse::<Ident>()?; // `def`
 
     // `self .` marks a class/singleton method.
@@ -336,6 +367,7 @@ fn parse_def(input: ParseStream, visibility: Visibility) -> syn::Result<MethodDe
     Ok(MethodDef {
         is_class_method,
         is_module_function: false,
+        attrs,
         visibility,
         names,
         bound_name,

@@ -191,10 +191,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // the MRO (`TCPSocket < IO`). TCPServer adds accept/addr/listen/close.
         // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
         // registered_table (MemoryPointer inherits Pointer's instance table).
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_lookup,
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group,
+        // Etc::Passwd / Etc::Group migrated to ruby_class! -- served via
+        // registered_table (Passwd's BSD fields are #[cfg]'d in the DSL).
         _ => return None,
     })
 }
@@ -253,10 +251,8 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity, // DATE_CLASS served via registered_table
         // FFI::Pointer / FFI::MemoryPointer migrated to ruby_class! -- served via
         // registered_table.
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::lookup_passwd_arity,
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_arity,
+        // Etc::Passwd / Etc::Group migrated to ruby_class! -- served via
+        // registered_table.
         _ => return None,
     })
 }
@@ -317,8 +313,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
         // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
+        // Etc module migrated to ruby_module! -- served via registered_table.
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         // Digest::MD5/SHA1/SHA256/SHA512 + the Digest module migrated to
         // ruby_class!/ruby_module! -- served via registered_table.
@@ -430,12 +425,8 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         // QUEUE_CLASS / SIZED_QUEUE_CLASS migrated to ruby_class! -- served via registered_table.
         // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         // BASE64_MODULE migrated to ruby_module! -- served via registered_table.
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class_names(),
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_names(),
-        #[cfg(feature = "ext-etc")]
-        zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_names(),
+        // Etc module + Etc::Passwd/Group migrated to ruby_module!/ruby_class! --
+        // served via registered_table.
         // CGI_MODULE migrated to ruby_module! -- served via registered_table.
         // Digest::MD5/SHA1/SHA256/SHA512 migrated to ruby_class! -- served via
         // registered_table.

@@ -68,6 +68,9 @@ struct Entry {
     ruby: String,
     fn_ident: Ident,
     arity: Option<i64>,
+    /// Outer attributes (`#[cfg(...)]`) gating this entry -- shared with the
+    /// impl fn so a cfg'd-out method drops its fn AND its table rows together.
+    attrs: Vec<syn::Attribute>,
 }
 
 fn expand(spec: &ClassSpec) -> TokenStream2 {
@@ -90,7 +93,9 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         };
         let (recv, args, block) = (&method.recv, &method.args, &method.block);
         let body = &method.body;
+        let attrs = &method.attrs;
         fn_items.push(quote! {
+            #( #attrs )*
             pub(crate) fn #fn_ident(
                 #recv: &crate::RubyValue,
                 #args: &[crate::RubyValue],
@@ -106,6 +111,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 ruby: name.ruby.clone(),
                 fn_ident: fn_ident.clone(),
                 arity: name.arity,
+                attrs: method.attrs.clone(),
             };
             if method.is_module_function {
                 instance.push(entry.clone());
@@ -131,6 +137,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     ruby: alias.new_name.clone(),
                     fn_ident: t.fn_ident.clone(),
                     arity: t.arity,
+                    attrs: t.attrs.clone(),
                 };
                 // Mirror the target's bucket.
                 if class.iter().any(|e| e.ruby == alias.old_name) {
@@ -237,17 +244,18 @@ fn gen_method_table(
     let arity_fn = format_ident!("{arity}");
 
     let lookup_arms = entries.iter().map(|e| {
-        let (ruby, fn_ident) = (&e.ruby, &e.fn_ident);
-        quote! { #ruby => Some(#fn_ident), }
+        let (ruby, fn_ident, attrs) = (&e.ruby, &e.fn_ident, &e.attrs);
+        quote! { #( #attrs )* #ruby => Some(#fn_ident), }
     });
     let name_lits = entries.iter().map(|e| {
-        let ruby = &e.ruby;
-        quote! { #ruby }
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        quote! { #( #attrs )* #ruby }
     });
     let arity_arms = entries.iter().map(|e| {
         let ruby = &e.ruby;
         let a = e.arity.unwrap_or(-1);
-        quote! { #ruby => Some(#a), }
+        let attrs = &e.attrs;
+        quote! { #( #attrs )* #ruby => Some(#a), }
     });
 
     let items = quote! {

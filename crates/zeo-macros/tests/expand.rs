@@ -92,6 +92,19 @@ mod comparable {
             Ok(RubyValue::Int(77))
         }
 
+        // `#[cfg(...)]` on a `def` gates the fn AND its lookup/names/arity rows
+        // as a unit (a platform-specific accessor). `all()` is always true,
+        // `any()` always false -- so `cfg_in` is present and `cfg_out` is not,
+        // regardless of target.
+        #[cfg(all())]
+        def "cfg_in" arity 0 (_recv, _args, _block) {
+            Ok(RubyValue::Int(1))
+        }
+        #[cfg(any())]
+        def "cfg_out" (_recv, _args, _block) {
+            Ok(RubyValue::Int(2))
+        }
+
         // A nested class sharing the same file: its own id, its own `lookup`
         // table (in a private submodule, so no collision with the outer one).
         class Nested = crate::NESTED_CLASS < crate::OBJECT_CLASS {
@@ -147,6 +160,20 @@ fn instance_lookup_arity_and_names() {
     assert!(names.contains(&"<"));
     assert!(names.contains(&"between?"));
     assert!(names.contains(&"lteq"));
+}
+
+#[test]
+fn a_cfg_on_a_def_gates_the_fn_and_its_table_rows_together() {
+    // The always-true cfg keeps `cfg_in` in the lookup, names, and arity tables.
+    let cfg_in = comparable::lookup("cfg_in").expect("cfg_in present under cfg(all())");
+    assert_eq!(cfg_in(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(1));
+    assert!(comparable::lookup_names().contains(&"cfg_in"));
+    assert_eq!(comparable::lookup_arity("cfg_in"), Some(0));
+
+    // The always-false cfg drops `cfg_out` from every surface.
+    assert!(comparable::lookup("cfg_out").is_none());
+    assert!(!comparable::lookup_names().contains(&"cfg_out"));
+    assert_eq!(comparable::lookup_arity("cfg_out"), None);
 }
 
 #[test]
