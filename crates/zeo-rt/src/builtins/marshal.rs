@@ -14,7 +14,8 @@
 //! Ruby-level `marshal_load`. Not yet handled: `e` (a singleton-extended
 //! object), which needs a runtime `extend` on the loaded instance.
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, type_error};
+use zeo_macros::ruby_module;
 use crate::collections::{
     array_get, array_len, array_new, array_push, hash_new, hash_pairs, hash_set, string_from_bytes,
 };
@@ -32,11 +33,11 @@ use std::sync::Arc;
 const MAJOR: u8 = 4;
 const MINOR: u8 = 8;
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
+ruby_module! {
+    Marshal = zeo_abi::MARSHAL_MODULE;
 
     // `Marshal.dump(obj[, io])` -> a BINARY String of the serialized object.
-    "dump" => fn dump(_recv, args, _block) {
+    def self."dump"(_recv, args, _block) {
         arity!(args, 1..=2);
         let mut w = Writer::default();
         w.out.push(MAJOR);
@@ -47,7 +48,7 @@ builtin_methods! {
     }
 
     // `Marshal.load(str)` -> the deserialized object.
-    "load" => fn load(_recv, args, _block) {
+    def self."load"(_recv, args, _block) {
         arity!(args, 1..=2);
         let RubyValue::Str(s) = &args[0] else {
             return Err(type_error!("instance of IO needed"));
