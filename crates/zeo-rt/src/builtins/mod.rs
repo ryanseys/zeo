@@ -179,7 +179,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::LAZY_CLASS => lazy::lookup,
         zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup,
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup,
-        zeo_abi::MUTEX_CLASS => mutex::lookup,
+        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         // In-tree `ext/` extensions with instances (modules like CGI/JSON have
         // none -- they appear only in `class_method_table`).
         #[cfg(feature = "ext-stringio")]
@@ -265,7 +265,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::LAZY_CLASS => lazy::lookup_arity,
         zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_arity,
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_arity,
-        zeo_abi::MUTEX_CLASS => mutex::lookup_arity,
+        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_arity,
         #[cfg(feature = "ext-monitor")]
@@ -346,7 +346,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
         zeo_abi::QUEUE_CLASS => queue::lookup_class,
         zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_class_sized,
-        zeo_abi::MUTEX_CLASS => mutex::lookup_class,
+        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::RACTOR_CLASS => crate::ractor::lookup_class,
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
@@ -442,7 +442,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::LAZY_CLASS => lazy::lookup_names(),
         zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_names(),
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),
-        zeo_abi::MUTEX_CLASS => mutex::lookup_names(),
+        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_names(),
         // COMPARABLE_CLASS migrated to ruby_module! -- served via registered_table.
         zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup_names(),
@@ -506,7 +506,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),
         zeo_abi::QUEUE_CLASS => queue::lookup_class_names(),
         zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_class_sized_names(),
-        zeo_abi::MUTEX_CLASS => mutex::lookup_class_names(),
+        // MUTEX_CLASS migrated to ruby_class! -- served via registered_table.
         #[cfg(feature = "ext-base64")]
         zeo_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
         #[cfg(feature = "ext-etc")]

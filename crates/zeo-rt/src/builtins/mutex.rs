@@ -8,10 +8,11 @@
 //! than downcasting an `Object` the way `ConditionVariable` does.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, need_block, thread_error};
+use crate::builtins::{arity, need_block, thread_error};
 use crate::thread::{
     mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
 };
+use zeo_macros::ruby_class;
 
 /// A runtime lock/unlock `Err(&str)` as the `ThreadError` CRuby raises -- the
 /// runtime carries the exact message, exception construction is ours.
@@ -19,40 +20,45 @@ fn thread_error(msg: &str) -> crate::Signal {
     thread_error!("{msg}")
 }
 
-builtin_methods! {
-    pub(crate) fn lookup;
+ruby_class! {
+    Mutex = zeo_abi::MUTEX_CLASS < zeo_abi::OBJECT_CLASS;
+
+    def self."new"(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(mutex_new())
+    }
 
     // `lock`/`unlock` return self; a recursive or foreign lock/unlock is a
     // `ThreadError` carrying the runtime's message verbatim.
-    "lock" => fn lock(recv, args, _block) {
+    def "lock"(recv, args, _block) {
         arity!(args, 0);
         let m = recv.as_mutex_unchecked();
         mutex_lock(&m).map_err(thread_error)?;
         Ok(RubyValue::Mutex(m))
     }
-    "unlock" => fn unlock(recv, args, _block) {
+    def "unlock"(recv, args, _block) {
         arity!(args, 0);
         let m = recv.as_mutex_unchecked();
         mutex_unlock(&m).map_err(thread_error)?;
         Ok(RubyValue::Mutex(m))
     }
-    "locked?" => fn locked_p(recv, args, _block) {
+    def "locked?"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_locked(&recv.as_mutex_unchecked())))
     }
     // `try_lock` -- acquire without blocking; `true` iff it was free.
-    "try_lock" => fn try_lock(recv, args, _block) {
+    def "try_lock"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_try_lock(&recv.as_mutex_unchecked())))
     }
-    "owned?" => fn owned_p(recv, args, _block) {
+    def "owned?"(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_owned(&recv.as_mutex_unchecked())))
     }
     // `synchronize { }` -- lock, run the block, ALWAYS unlock (even on a
     // signal: an exception/`break` inside the block must release the lock on
     // its way out), then re-propagate. `break` exits it with the break value.
-    "synchronize" => fn synchronize(recv, _args, block) {
+    def "synchronize"(recv, _args, block) {
         let blk = need_block!(block);
         let m = recv.as_mutex_unchecked();
         mutex_lock(&m).map_err(thread_error)?;
@@ -62,36 +68,41 @@ builtin_methods! {
     }
 }
 
-builtin_methods! {
-    pub(crate) fn lookup_class;
-
-    "new" => fn new_m(_recv, args, _block) {
-        arity!(args, 0);
-        Ok(mutex_new())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The `ruby_class!`-generated methods are reachable only through the
+    /// dispatch tables (their Rust fn names are mangled), so the tests call
+    /// them the way real dispatch does -- through Mutex's registered lookups.
+    fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
+        let tbl = crate::builtins::registered_table(zeo_abi::MUTEX_CLASS)
+            .expect("Mutex is a registered builtin table")
+            .instance
+            .as_ref()
+            .expect("Mutex has instance methods");
+        (tbl.lookup)(name).unwrap_or_else(|| panic!("Mutex#{name} is defined"))
+    }
+
     #[test]
-    fn the_table_covers_the_dynamic_mutex_surface() {
-        assert!(lookup("lock").is_some());
-        assert!(lookup("synchronize").is_some());
-        assert!(lookup("nope").is_none());
-        assert!(lookup_class("new").is_some());
+    fn the_tables_cover_the_dynamic_mutex_surface() {
+        let t = crate::builtins::registered_table(zeo_abi::MUTEX_CLASS).unwrap();
+        let inst = t.instance.as_ref().unwrap();
+        assert!((inst.lookup)("lock").is_some());
+        assert!((inst.lookup)("synchronize").is_some());
+        assert!((inst.lookup)("nope").is_none());
+        assert!((t.class.as_ref().unwrap().lookup)("new").is_some());
     }
 
     #[test]
     fn lock_owned_unlock_round_trips() {
         let m = mutex_new();
-        assert_eq!(owned_p(&m, &[], None).unwrap().inspect_string(), "false");
-        lock(&m, &[], None).unwrap();
-        assert_eq!(locked_p(&m, &[], None).unwrap().inspect_string(), "true");
-        assert_eq!(owned_p(&m, &[], None).unwrap().inspect_string(), "true");
-        unlock(&m, &[], None).unwrap();
-        assert_eq!(locked_p(&m, &[], None).unwrap().inspect_string(), "false");
+        assert_eq!(imethod("owned?")(&m, &[], None).unwrap().inspect_string(), "false");
+        imethod("lock")(&m, &[], None).unwrap();
+        assert_eq!(imethod("locked?")(&m, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(imethod("owned?")(&m, &[], None).unwrap().inspect_string(), "true");
+        imethod("unlock")(&m, &[], None).unwrap();
+        assert_eq!(imethod("locked?")(&m, &[], None).unwrap().inspect_string(), "false");
     }
 
     #[test]
@@ -99,7 +110,9 @@ mod tests {
         // Without a ClassRegistry installed the raise surfaces as a panic;
         // the point is that it does not silently succeed.
         let m = mutex_new();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unlock(&m, &[], None)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            imethod("unlock")(&m, &[], None)
+        }));
         assert!(r.is_err() || r.unwrap().is_err());
     }
 }
