@@ -285,21 +285,6 @@ pub fn num_eq(a: &RubyValue, b: &RubyValue) -> Option<bool> {
     })
 }
 
-/// Seeds `Complex::I` into the constant store -- called once at startup. The
-/// `Float::*` and `Math::PI`/`E` constants moved onto their classes' `const`
-/// rows (installed by the `BUILTIN_TABLES` loop); only `Complex::I` remains
-/// here (it could likewise move onto Complex's `const` row -- a small
-/// follow-up).
-pub fn seed_numeric_constants() {
-    use crate::const_set;
-    // `Complex::I` -- the imaginary unit, `Complex(0, 1)`.
-    const_set(
-        zeo_abi::COMPLEX_CLASS.0,
-        "I",
-        crate::builtins::complex::complex_from_literal(RubyValue::Int(1)),
-    );
-}
-
 /// Infallible views for Complex's internal component arithmetic (whose
 /// operands are numeric by construction).
 pub(crate) fn num_add_or_panic(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {

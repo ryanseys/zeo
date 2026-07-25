@@ -609,6 +609,10 @@ fn complex_abs_value(c: &RComplexData) -> RubyValue {
 ruby_class! {
     Complex = zeo_abi::COMPLEX_CLASS < zeo_abi::NUMERIC_CLASS;
 
+    // `Complex::I` -- the imaginary unit, `Complex(0, 1)`. Colocated here
+    // (formerly seeded from numeric.rs's `seed_numeric_constants`).
+    const I = complex_from_literal(RubyValue::Int(1));
+
     // `Complex.rect(real, imag = 0)` / `.rectangular(...)`: the direct
     // cartesian constructor (the class-method mirror of the `Complex(...)`
     // Kernel form). `Complex.polar` is a separate gap (its CRuby type-exact

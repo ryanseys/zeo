@@ -54,7 +54,9 @@ impl ClassRegistry {
 /// need installing at startup, once the registry is in place. The order matches
 /// the eight `seed_*` calls generated `main()` used to make itself.
 pub fn install_core_constants() {
-    crate::builtins::numeric::seed_numeric_constants();
+    // `Float::*`, `Math::PI`/`E`, and `Complex::I` now seed via their classes'
+    // ruby_class! `const` rows (the BUILTIN_TABLES loop below); the numeric
+    // seeder is gone.
     crate::builtins::encoding::seed_encoding_constants();
     crate::builtins::regexp::seed_regexp_constants();
     crate::constants::seed_argv();
