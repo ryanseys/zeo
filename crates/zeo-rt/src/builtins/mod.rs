@@ -162,7 +162,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup,
         zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup,
-        zeo_abi::FILE_STAT_CLASS => stat::lookup,
+        // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::DIR_CLASS => dir::lookup,
         zeo_abi::ARGF_CLASS => argf::lookup,
         zeo_abi::METHOD_CLASS => method_obj::lookup,
@@ -248,7 +248,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup_arity,
         zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder_arity,
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
-        zeo_abi::FILE_STAT_CLASS => stat::lookup_arity,
+        // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::DIR_CLASS => dir::lookup_arity,
         zeo_abi::ARGF_CLASS => argf::lookup_arity,
         zeo_abi::METHOD_CLASS => method_obj::lookup_arity,
@@ -425,7 +425,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup_names(),
         zeo_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
         zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
-        zeo_abi::FILE_STAT_CLASS => stat::lookup_names(),
+        // FILE_STAT_CLASS migrated to ruby_class! -- served via registered_table.
         zeo_abi::DIR_CLASS => dir::lookup_names(),
         zeo_abi::ARGF_CLASS => argf::lookup_names(),
         zeo_abi::METHOD_CLASS => method_obj::lookup_names(),
