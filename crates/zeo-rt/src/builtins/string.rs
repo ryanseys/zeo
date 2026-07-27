@@ -1048,6 +1048,15 @@ ruby_class! {
     String = zeo_abi::STRING_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
+    // `String.try_convert(obj)`: `obj` if it's already a String, its `to_str`
+    // if it defines one (which must yield a String), else nil. That IS the
+    // `to_str` check-conversion protocol, so it delegates rather than
+    // re-deriving it -- a present-but-lying `to_str` still raises TypeError.
+    def self."try_convert"(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(convert::check_to_str(&args[0])?.unwrap_or(RubyValue::Nil))
+    }
+
     // `String.new` / `String.new(str)` / `String.new(str, encoding:, capacity:)`.
     // A no-arg new is an empty ASCII-8BIT string (CRuby's default for a
     // fresh buffer); a source string is copied, keeping its own encoding

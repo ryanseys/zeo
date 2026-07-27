@@ -1,0 +1,12 @@
+"hello"
+true
+Name
+"/tmp/x"
+nil
+nil
+nil
+nil
+nil
+can't convert Liar to String (Liar#to_str gives Integer)
+nil
+#<Encoding:BINARY (ASCII-8BIT)>

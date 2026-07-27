@@ -21,19 +21,36 @@
 
 use super::{convert_name_of, type_error};
 use crate::dispatch::{responds_to_value, send_value};
-use crate::{RubyValue, Signal, Symbol};
+use crate::{ClassId, RubyValue, Signal, Symbol};
 
-/// Does `v` already satisfy `target` without conversion? `target` is the
-/// Ruby class name used in error messages, so the mapping is by that name.
+/// The class behind a conversion target name -- the five types this protocol
+/// covers. `target` is the name used in the error messages, so the mapping is
+/// by that name.
+fn target_class(target: &str) -> Option<ClassId> {
+    Some(match target {
+        "Integer" => zeo_abi::INTEGER_CLASS,
+        "String" => zeo_abi::STRING_CLASS,
+        "Array" => zeo_abi::ARRAY_CLASS,
+        "Hash" => zeo_abi::HASH_CLASS,
+        "Float" => zeo_abi::FLOAT_CLASS,
+        _ => return None,
+    })
+}
+
+/// Does `v` already satisfy `target` without conversion? CRuby asks this of
+/// the underlying TYPE (`T_STRING`, `T_ARRAY`, ...), which a subclass
+/// instance shares -- so `String.try_convert(Name.new("ada"))` answers the
+/// `Name` itself rather than routing through `to_str`. A value-builtin
+/// subclass is an object wrapping a payload, so ask it which builtin it is
+/// rooted at; everything else answers for itself.
 fn is_already(v: &RubyValue, target: &str) -> bool {
-    matches!(
-        (v, target),
-        (RubyValue::Int(_) | RubyValue::BigInt(_), "Integer")
-            | (RubyValue::Str(_), "String")
-            | (RubyValue::Array(_), "Array")
-            | (RubyValue::Hash(_), "Hash")
-            | (RubyValue::Float(_), "Float")
-    )
+    let Some(target) = target_class(target) else {
+        return false;
+    };
+    match v {
+        RubyValue::Object(o) => o.builtin_root() == Some(target),
+        other => other.class_id() == target,
+    }
 }
 
 /// `rb_convert_type`: `v` itself when already a `target`, else the result of
