@@ -1,0 +1,4 @@
+gaps/issue_class_variable_toplevel_scope.rb:8:in 'block in <main>': class variable access from toplevel (RuntimeError)
+	from gaps/issue_class_variable_toplevel_scope.rb:7:in 'Class#initialize'
+	from gaps/issue_class_variable_toplevel_scope.rb:7:in 'Class#new'
+	from gaps/issue_class_variable_toplevel_scope.rb:7:in '<main>'
