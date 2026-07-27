@@ -1287,6 +1287,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         None => quote! {},
     };
 
+    // Ruby's own parse warnings, as one literal slice -- emitted only when
+    // the program actually has some, so the common binary carries nothing.
+    let parse_warnings = (!compiler.hir.warnings.is_empty()).then(|| {
+        let lines = compiler.hir.warnings.iter().map(ToString::to_string);
+        quote! { zeo_rt::emit_parse_warnings(&[#(#lines),*]); }
+    });
+
     // User-module method bridges (see `emit_user_module_bridges`): their value-
     // method registrations run LAST, after every module's own
     // `__registry.register` above has created the entry they attach to.
@@ -1326,6 +1333,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // `Process::CLOCK_*`) -- their owners resolved at compile time;
             // only the values need installing.
             zeo_rt::install_core_constants();
+            // Ruby's own PARSE-time warnings (a duplicated hash key, ...),
+            // collected by the front end and replayed before the program's
+            // first line -- where CRuby prints them.
+            #parse_warnings
             // The runtime raises real, catchable exceptions (NoMethodError,
             // ArgumentError, TypeError, StopIteration, ...) by constructing
             // them itself from the registered classes -- see

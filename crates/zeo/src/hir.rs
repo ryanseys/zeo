@@ -101,6 +101,11 @@ pub struct Hir {
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.
     span_stack: Vec<Span>,
+    /// Ruby's own parse-time warnings for the files that make up this
+    /// program, in the order they were parsed -- see
+    /// [`CompileWarning`](crate::diagnostics::CompileWarning). Codegen emits
+    /// them into the binary's startup.
+    pub warnings: Vec<crate::diagnostics::CompileWarning>,
     /// Registered source files (`Span::file` indexes here).
     pub files: Vec<SourceFile>,
     /// The file whose source is currently being lowered -- the drivers (the

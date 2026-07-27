@@ -1,0 +1,11 @@
+parse_warning_duplicate_key.rb:11: warning: key :k is duplicated and overwritten on line 11
+parse_warning_duplicate_key.rb:12: warning: key "s" is duplicated and overwritten on line 12
+parse_warning_duplicate_key.rb:13: warning: key 1 is duplicated and overwritten on line 13
+parse_warning_duplicate_key.rb:17: warning: key :dup is duplicated and overwritten on line 19
+parse_warning_duplicate_key.rb:24: warning: key :a is duplicated and overwritten on line 24
+parse_warning_duplicate_key.rb:27: warning: key :x is duplicated and overwritten on line 27
+parse_warning_duplicate_key.rb:28: warning: key :y is duplicated and overwritten on line 28
+parse_warning_duplicate_key.rb:31: warning: key :m is duplicated and overwritten on line 31
+parse_warning_duplicate_key.rb:33: warning: key :b is duplicated and overwritten on line 33
+parse_warning_duplicate_key.rb:36: warning: key :t is duplicated and overwritten on line 36
+parse_warning_duplicate_key.rb:36: warning: key :t is duplicated and overwritten on line 36

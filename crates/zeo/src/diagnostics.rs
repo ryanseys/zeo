@@ -106,6 +106,22 @@ impl Diagnostic for LowerDiagnostic {
     }
 }
 
+/// One of Ruby's own PARSE-time warnings, carried from the compiler to the
+/// compiled program. CRuby prints these before the program runs; a zeo binary
+/// prints them at startup, which is the same position relative to any program
+/// output. `Display` is CRuby's exact line.
+pub struct CompileWarning {
+    pub file: String,
+    pub line: u32,
+    pub message: String,
+}
+
+impl std::fmt::Display for CompileWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}: warning: {}", self.file, self.line, self.message)
+    }
+}
+
 /// Which compile stage failed. The `From<CompileError> for String` shim keeps
 /// every `Result<_, String>` consumer working unchanged (the message text is
 /// exactly what those callers always saw).

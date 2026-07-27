@@ -199,6 +199,8 @@ pub(super) fn lower_main_file(
             err.message()
         )));
     }
+    let main_name = input_path.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
+    collect_parse_warnings(hir, &result, &main_name, &source);
     let program = result
         .node()
         .as_program_node()
@@ -208,10 +210,7 @@ pub(super) fn lower_main_file(
     let _file = SourceFileFrame::push(input_path);
     // Span provenance: the main file's name AS GIVEN (matching `__FILE__`),
     // `"-e"` for a pathless source string.
-    let main_file = hir.add_file(
-        input_path.map_or_else(|| "-e".to_string(), |p| p.display().to_string()),
-        source,
-    );
+    let main_file = hir.add_file(main_name, source);
     let prev_file = hir.lowering_file.replace(main_file);
     let statements = loader.lower_file_statements(
         hir,
@@ -835,6 +834,12 @@ impl Loader {
             .node()
             .as_program_node()
             .ok_or_else(|| format!("{}: expected a top-level ProgramNode", canonical.display()))?;
+        // A VENDORED gem's warnings are not the user's to act on, and zeo's
+        // vendored copy may not even be the one CRuby would have parsed --
+        // so only files outside a package report.
+        if hir.loaded_files[idx].package.is_none() {
+            collect_parse_warnings(hir, &result, &canonical.display().to_string(), &source);
+        }
         self.splicing.push(canonical.to_path_buf());
         // A required file's `__FILE__` is ITSELF, not whoever required it.
         // Popped by the guard's Drop, so the parent's own statements after
@@ -1442,4 +1447,45 @@ fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::
             out.push(call);
         }
     }
+}
+
+/// Ruby's own parse-time warnings for one file, as prism reports them --
+/// `key :k is duplicated and overwritten on line 24` and friends. Collected
+/// here rather than re-derived: prism already knows the rules (which keys
+/// count, and which line the surviving one is on), and re-implementing them
+/// would be a second source of truth.
+fn collect_parse_warnings(
+    hir: &mut Hir,
+    result: &ruby_prism::ParseResult<'_>,
+    file: &str,
+    source: &str,
+) {
+    for warning in result.warnings() {
+        let message = warning.message();
+        if !is_default_level(message) {
+            continue;
+        }
+        let upto = warning.location().start_offset().min(source.len());
+        let line = 1 + source.as_bytes()[..upto].iter().filter(|&&b| b == b'\n').count() as u32;
+        hir.warnings.push(crate::diagnostics::CompileWarning {
+            file: file.to_string(),
+            line,
+            message: message.to_string(),
+        });
+    }
+}
+
+/// prism reports its parse warnings at two levels: `default` (what plain
+/// `ruby foo.rb` prints) and `verbose` (what only `ruby -w` prints). Its Rust
+/// binding exposes a warning's message and location but NOT its level, and
+/// zeo has no `-w` to justify the verbose tier -- so the shapes worth
+/// forwarding are named here explicitly.
+///
+/// Only the duplicated-key warning so far. Of prism's ten other default-level
+/// shapes, two (`literal in condition`) render IDENTICALLY to a verbose-level
+/// one, so a message-keyed filter cannot tell those apart -- and forwarding a
+/// verbose-only warning by mistake is worse than forwarding none. Reading the
+/// real level would need the binding to expose `pm_diagnostic_t::level`.
+fn is_default_level(message: &str) -> bool {
+    message.starts_with("key ") && message.contains(" is duplicated and overwritten on line ")
 }

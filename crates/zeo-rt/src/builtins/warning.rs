@@ -64,6 +64,19 @@ ruby_module! {
     }
 }
 
+/// Ruby's PARSE-time warnings, which CRuby prints before the program's first
+/// line runs. zeo parses at COMPILE time, so the compiler collects them and
+/// generated `main()` replays them here -- ahead of `run_main`, which is the
+/// same position relative to any program output.
+///
+/// Straight to stderr, not through `Warning.warn`: in CRuby these are already
+/// out before the program could install an override.
+pub fn emit_parse_warnings(lines: &[&str]) {
+    for line in lines {
+        eprintln!("{line}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
