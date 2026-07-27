@@ -64,6 +64,24 @@ ruby_module! {
     }
 }
 
+/// The `Ractor API is experimental` notice, at the FIRST `Ractor.new` and
+/// never again -- CRuby's own once-per-process `rb_warn` with the caller's
+/// `file:line`, and gated on the same `Warning[:experimental]` flag, so a
+/// program that turns the category off before its first Ractor sees nothing.
+pub(crate) fn warn_ractor_experimental() {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if WARNED.swap(true, Ordering::Relaxed) || !EXPERIMENTAL.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some((file, line)) = crate::frames::current_location() else {
+        return;
+    };
+    eprintln!(
+        "{file}:{line}: warning: Ractor API is experimental and may change in \
+         future versions of Ruby."
+    );
+}
+
 /// Ruby's PARSE-time warnings, which CRuby prints before the program's first
 /// line runs. zeo parses at COMPILE time, so the compiler collects them and
 /// generated `main()` replays them here -- ahead of `run_main`, which is the

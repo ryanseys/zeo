@@ -82,6 +82,7 @@ thread_local! {
 /// (CRuby sends them through the ordinary message path). `Err` = an
 /// unshareable/uncopyable arg's message, raised as `RactorError` by codegen.
 pub fn ractor_new(block: RubyValue, args: Vec<RubyValue>) -> Result<RubyValue, String> {
+    crate::builtins::warning::warn_ractor_experimental();
     let body = block.as_proc_unchecked();
     let crossed: Vec<RubyValue> = args.iter().map(cross_boundary).collect::<Result<_, _>>()?;
     let (tx, rx) = mpsc::channel();
