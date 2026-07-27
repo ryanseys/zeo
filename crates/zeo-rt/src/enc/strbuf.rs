@@ -213,7 +213,10 @@ impl StrBuf {
         if start < 0 || start > n || len < 0 {
             return None;
         }
-        let end = (start + len).min(n);
+        // Saturating -- see the note in `builtins/array.rs`: an unchecked
+        // `start + len` wraps negative for a user-supplied `len` near `i64::MAX`,
+        // which skips this clamp and indexes `ranges` out of bounds below.
+        let end = start.saturating_add(len).min(n);
         let bytes = if start == end {
             Vec::new()
         } else {

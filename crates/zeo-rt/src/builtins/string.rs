@@ -1218,7 +1218,9 @@ ruby_class! {
             }
             None => 1,
         };
-        let end = (off + len).min(n) as usize;
+        // Saturating -- see the note in `builtins/array.rs`: an unchecked
+        // `off + len` wraps negative for a user-supplied `len` near `i64::MAX`.
+        let end = off.saturating_add(len).min(n) as usize;
         Ok(RubyValue::Str(crate::string_from_bytes(
             bytes[off as usize..end].to_vec(),
             enc,

@@ -88,7 +88,11 @@ ruby_class! {
             if start < 0 || start > n || len < 0 {
                 return Ok(RubyValue::Nil);
             }
-            let end = (start + len).min(n);
+            // Saturating: `len` comes straight from user code, and release
+            // builds have overflow-checks off, so a plain `start + len` with
+            // `len` near `i64::MAX` wraps NEGATIVE -- the `.min(n)` clamp then
+            // reads false and the slice index panics. ruby clamps to the end.
+            let end = start.saturating_add(len).min(n);
             return Ok(RubyValue::Array(crate::array_new(
                 guard[start as usize..end as usize].to_vec(),
             )));
