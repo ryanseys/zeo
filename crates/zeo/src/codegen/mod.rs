@@ -959,6 +959,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         })
         .map(|scope| scope.name.as_str())
         .collect();
+    // `Method#super_method` re-seats a bound Method onto the ancestor that
+    // defines the name NEXT, and calling that Method must run the ancestor's
+    // body -- which needs exactly the receiver-generic bridge `super` needs.
+    // Which name and which ancestor it lands on is a runtime choice, so a
+    // program that reflects this way marks every method name reachable. Same
+    // over-approximation policy as the runtime-`super` shapes below: a
+    // spurious bridge is dead code, a missing one is a wrong NoMethodError.
+    if compiler.hir.all_nodes().iter().any(|node| {
+        matches!(node, crate::hir::HirNode::Call { name, .. } if name == "super_method")
+    }) {
+        super_reachable.extend(compiler.scopes.iter().map(|scope| scope.name.as_str()));
+    }
     // RUNTIME-defined methods with a `super` in their body reach targets by
     // NAME through the method-frame walk, so their names count as
     // super-reachable too. Two shapes, both scanned over the whole arena

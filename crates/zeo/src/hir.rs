@@ -216,6 +216,18 @@ impl Hir {
         NodeId((self.nodes.len() - 1) as u32)
     }
 
+    /// [`push`](Self::push), but inheriting `origin`'s provenance instead of
+    /// the enclosing statement's. For a node SYNTHESIZED from another one --
+    /// the `DefMethod` an `alias` clones, the accessors `attr_reader`
+    /// expands to -- the source location Ruby reports is the original's, not
+    /// wherever the expansion happens to sit.
+    pub fn push_from(&mut self, node: HirNode, origin: NodeId) -> NodeId {
+        let span = self.spans[origin.0 as usize];
+        self.nodes.push(node);
+        self.spans.push(span);
+        NodeId((self.nodes.len() - 1) as u32)
+    }
+
     /// Every node in the arena, in push order -- for whole-program scans
     /// that don't care about tree structure (e.g. codegen's
     /// super-reachability analysis; `const_is_assigned` is the precedent).

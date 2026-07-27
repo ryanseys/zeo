@@ -2,14 +2,15 @@
 //! not yet bound to a receiver. `#bind(obj)` re-binds it into a `Method` (obj
 //! must be an instance of the owning class or a subclass); `#bind_call(obj,
 //! *args)` binds and calls in one step. Its sibling `Method` lives in
-//! `method.rs`, from which this file borrows `RMethod` (the bind result) and
-//! the shared `resolve_method_name`.
+//! `method.rs`, from which this file borrows `method_value` (the bind result)
+//! and the shared `resolve_method_name`.
 
 use std::sync::Arc;
 
-use crate::builtins::method::{RMethod, resolve_method_name};
+use crate::builtins::method::{method_value, resolve_method_name};
 use crate::builtins::{arg_error, arity, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
+use crate::method_meta::MethodKind;
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -17,8 +18,25 @@ use zeo_abi::ClassId;
 use zeo_macros::ruby_class;
 
 pub struct RUnboundMethod {
+    /// The class it was FETCHED from -- the `#bind` target check, and the MRO
+    /// a `#super_method` walk runs over.
     pub class_id: ClassId,
     pub name: Symbol,
+    /// Where the lookup sits in that chain -- see [`RMethod::home`]. Unlike a
+    /// bound `Method`, an UnboundMethod prints its owner unqualified, so this
+    /// only drives the super walk and the metadata lookup.
+    pub home: ClassId,
+    pub kind: MethodKind,
+}
+
+impl RUnboundMethod {
+    /// The class or module that actually defines this method.
+    pub(crate) fn owner(&self) -> Option<ClassId> {
+        match self.kind {
+            MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
+            MethodKind::Singleton => crate::dispatch::class_method_owner(self.home, self.name),
+        }
+    }
 }
 
 impl RubyObject for RUnboundMethod {
@@ -42,6 +60,8 @@ impl RubyObject for RUnboundMethod {
         Arc::new(RUnboundMethod {
             class_id: self.class_id,
             name: self.name,
+            home: self.home,
+            kind: self.kind,
         })
     }
 }
@@ -60,6 +80,10 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
     Ok(RubyValue::Object(Arc::new(RUnboundMethod {
         class_id: cid,
         name,
+        // `instance_method` always asks the INSTANCE chain -- `Foo.bar` is
+        // reached through `Foo.singleton_class.instance_method(:bar)`.
+        home: crate::dispatch::method_owner(cid, name).unwrap_or(cid),
+        kind: MethodKind::Instance,
     })))
 }
 
@@ -81,10 +105,7 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
             crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string())
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RMethod {
-        recv: obj.clone(),
-        name: um.name,
-    })))
+    Ok(method_value(obj.clone(), um.name, um.home, um.kind))
 }
 
 ruby_class! {
@@ -96,12 +117,12 @@ ruby_class! {
     def "arity"(recv, _a, _b) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Int(
-            crate::method_meta::arity(um.class_id, crate::MethodKind::Instance, um.name).unwrap_or(-1),
+            crate::method_meta::arity(um.home, um.kind, um.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv, _a, _b) {
         let um = recv_unbound(recv);
-        Ok(crate::method_meta::parameters(um.class_id, crate::MethodKind::Instance, um.name)
+        Ok(crate::method_meta::parameters(um.home, um.kind, um.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     def "bind"(recv, args, _b) {
@@ -123,8 +144,36 @@ ruby_class! {
     // ancestry (may differ from the class the unbound method was fetched from).
     def "owner"(recv, _a, _b) {
         let um = recv_unbound(recv);
-        let owner = crate::dispatch::method_owner(um.class_id, um.name).unwrap_or(um.class_id);
-        Ok(RubyValue::Class(owner))
+        Ok(RubyValue::Class(um.owner().unwrap_or(um.home)))
+    }
+    def "source_location"(recv, _a, _b) {
+        let um = recv_unbound(recv);
+        Ok(crate::method_meta::source_location(um.home, um.kind, um.name))
+    }
+    // The unbound twin of `Method#super_method`, walking the chain of the
+    // class this method was fetched from.
+    def "super_method"(recv, _a, _b) {
+        let um = recv_unbound(recv);
+        let Some(owner) = um.owner() else {
+            return Ok(RubyValue::Nil);
+        };
+        let next = match um.kind {
+            MethodKind::Instance => {
+                crate::dispatch::method_owner_after(um.class_id, owner, um.name)
+            }
+            MethodKind::Singleton => {
+                crate::dispatch::class_method_owner_after(um.class_id, owner, um.name)
+            }
+        };
+        Ok(match next {
+            Some(home) => RubyValue::Object(Arc::new(RUnboundMethod {
+                class_id: um.class_id,
+                name: um.name,
+                home,
+                kind: um.kind,
+            })),
+            None => RubyValue::Nil,
+        })
     }
     // `UnboundMethod#original_name` -- the defined name (we track no aliases).
     def "original_name"(recv, _a, _b) {

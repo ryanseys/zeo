@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::builtins::{arity, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::method_meta::MethodKind;
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -20,6 +21,77 @@ use crate::builtins::unbound_method::RUnboundMethod;
 pub struct RMethod {
     pub recv: RubyValue,
     pub name: Symbol,
+    /// Where the MRO lookup STARTS -- CRuby's `mklass`. Ordinarily the
+    /// receiver's own class (paired with [`MethodKind::Instance`]), or the
+    /// class itself when the receiver IS a class holding a `def self.x`
+    /// (paired with [`MethodKind::Singleton`] -- zeo has no singleton-class
+    /// objects, so the pair plays that role).
+    ///
+    /// `#super_method` re-seats it further down the chain. That single fact
+    /// is what makes the super chain walkable, tells `#call` where to resume
+    /// so a re-seated Method runs the ancestor's body rather than
+    /// re-dispatching to the override, and tells `#inspect` when to stop
+    /// qualifying the owner (`Sub(Base)#greet` vs. a plain `Base#greet`).
+    pub home: ClassId,
+    pub kind: MethodKind,
+}
+
+impl RMethod {
+    /// The MRO a lookup on this Method walks. It is the RECEIVER's, not
+    /// `home`'s: after `#super_method` re-seats `home` onto an included
+    /// module, that module's own chain is just itself and would lose the
+    /// rest of the ancestry.
+    pub(crate) fn chain(&self) -> ClassId {
+        match (self.kind, &self.recv) {
+            (MethodKind::Singleton, RubyValue::Class(cid)) => *cid,
+            _ => self.recv.class_id(),
+        }
+    }
+
+    /// The class or module that actually defines this method. `home` starts
+    /// at the lookup root and, once `#super_method` has re-seated it, IS the
+    /// definer -- so resolving from it answers both cases.
+    pub(crate) fn owner(&self) -> Option<ClassId> {
+        match self.kind {
+            MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
+            MethodKind::Singleton => crate::dispatch::class_method_owner(self.home, self.name),
+        }
+    }
+}
+
+/// The `(home, kind)` a freshly built `Method` starts at: a class or module
+/// receiver that answers `name` from its CLASS-method chain is a singleton
+/// lookup rooted at that class; everything else -- including `Api.method(
+/// :name)`, which finds `Module#name` -- is an instance lookup rooted at the
+/// receiver's class.
+pub(crate) fn home_of(recv: &RubyValue, name: Symbol) -> (ClassId, MethodKind) {
+    match recv {
+        RubyValue::Class(cid) if crate::dispatch::class_method_owner(*cid, name).is_some() => {
+            (*cid, MethodKind::Singleton)
+        }
+        _ => (recv.class_id(), MethodKind::Instance),
+    }
+}
+
+/// A bound `Method` value over an already-resolved lookup position.
+pub(crate) fn method_value(
+    recv: RubyValue,
+    name: Symbol,
+    home: ClassId,
+    kind: MethodKind,
+) -> RubyValue {
+    RubyValue::Object(Arc::new(RMethod {
+        recv,
+        name,
+        home,
+        kind,
+    }))
+}
+
+/// A bound `Method` over a fresh lookup (`obj.method(:name)`).
+fn method_at_home(recv: &RubyValue, name: Symbol) -> RubyValue {
+    let (home, kind) = home_of(recv, name);
+    method_value(recv.clone(), name, home, kind)
 }
 
 impl RubyObject for RMethod {
@@ -43,6 +115,8 @@ impl RubyObject for RMethod {
         Arc::new(RMethod {
             recv: self.recv.clone(),
             name: self.name,
+            home: self.home,
+            kind: self.kind,
         })
     }
 }
@@ -86,10 +160,7 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
             crate::dispatch::class_name(recv.class_id()).unwrap_or_else(|| "Object".to_string())
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RMethod {
-        recv: recv.clone(),
-        name,
-    })))
+    Ok(method_at_home(recv, name))
 }
 
 /// `Object#singleton_method(:name)` -- a `Method` bound to the receiver, but
@@ -106,10 +177,7 @@ pub fn singleton_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<Ru
             recv.inspect_string()
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RMethod {
-        recv: recv.clone(),
-        name,
-    })))
+    Ok(method_at_home(recv, name))
 }
 
 /// `Kernel#public_method(:name)` -- like `method`, but a PRIVATE (or
@@ -120,10 +188,7 @@ pub fn public_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyV
     let cid = recv.class_id();
     let class = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
     if crate::dispatch::responds_to(cid, name, false) {
-        return Ok(RubyValue::Object(Arc::new(RMethod {
-            recv: recv.clone(),
-            name,
-        })));
+        return Ok(method_at_home(recv, name));
     }
     let msg = if crate::dispatch::responds_to(cid, name, true) {
         format!("method '{}' for class '{}' is private", name.name(), class)
@@ -141,10 +206,10 @@ pub fn method_source(v: &RubyValue) -> Option<(ClassId, Symbol)> {
         return None;
     };
     if let Some(m) = o.as_any().downcast_ref::<RMethod>() {
-        return Some((m.recv.class_id(), m.name));
+        return Some((m.owner().unwrap_or(m.home), m.name));
     }
     if let Some(u) = o.as_any().downcast_ref::<RUnboundMethod>() {
-        return Some((u.class_id, u.name));
+        return Some((u.owner().unwrap_or(u.home), u.name));
     }
     None
 }
@@ -181,9 +246,22 @@ fn compose(recv: &RubyValue, args: &[RubyValue], forward: bool) -> Result<RubyVa
 ruby_class! {
     Method = zeo_abi::METHOD_CLASS < zeo_abi::OBJECT_CLASS;
 
+    // An ordinary Method dispatches like any other call. One re-seated by
+    // `#super_method` must resume the walk AT its home instead, or it would
+    // find the override it was reached through and recurse.
     def "call" | "()" | "[]" | "===" (recv, args, blk) {
         let m = recv_method(recv);
-        crate::dispatch::send_value(&m.recv, m.name, args, blk)
+        if m.home == m.chain() {
+            return crate::dispatch::send_value(&m.recv, m.name, args, blk);
+        }
+        match m.kind {
+            MethodKind::Instance => {
+                crate::dispatch::send_as_defined_in(&m.recv, m.home, m.name, args, blk)
+            }
+            MethodKind::Singleton => {
+                crate::dispatch::send_class_from(m.chain(), m.home, m.name, args, blk)
+            }
+        }
     }
     def "name"(recv, _args, _blk) {
         Ok(RubyValue::Symbol(recv_method(recv).name))
@@ -197,7 +275,7 @@ ruby_class! {
     def "to_proc" as m_to_proc (recv, _args, _blk) {
         let m = recv_method(recv);
         let (target, name) = (m.recv.clone(), m.name);
-        let arity = crate::method_meta::arity(m.recv.class_id(), crate::MethodKind::Instance, m.name).unwrap_or(-1) as i32;
+        let arity = crate::method_meta::arity(m.home, m.kind, m.name).unwrap_or(-1) as i32;
         Ok(RubyValue::Proc(crate::RProc::with_meta(
             move |args: &[RubyValue]| crate::dispatch::send_value(&target, name, args, None),
             arity,
@@ -209,21 +287,25 @@ ruby_class! {
         // A user `def` has a baked descriptor; a builtin has none, so `-1`
         // (var-args) stays the honest catch-all there.
         Ok(RubyValue::Int(
-            crate::method_meta::arity(m.recv.class_id(), crate::MethodKind::Instance, m.name).unwrap_or(-1),
+            crate::method_meta::arity(m.home, m.kind, m.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv, _args, _blk) {
         let m = recv_method(recv);
         // Builtins have no baked signature -- CRuby reports them as a lone rest;
         // mirror that so `#parameters` is always an Array.
-        Ok(crate::method_meta::parameters(m.recv.class_id(), crate::MethodKind::Instance, m.name)
+        Ok(crate::method_meta::parameters(m.home, m.kind, m.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
+    // CRuby unbinds to the OWNER, not to the class the method was reached
+    // through: `Sub.new.method(:greet).unbind` is `Base`'s.
     def "unbind"(recv, _args, _blk) {
         let m = recv_method(recv);
         Ok(RubyValue::Object(Arc::new(RUnboundMethod {
-            class_id: m.recv.class_id(),
+            class_id: m.chain(),
             name: m.name,
+            home: m.owner().unwrap_or(m.home),
+            kind: m.kind,
         })))
     }
     // `Method#owner` -- the class or module in the receiver's ancestry that
@@ -231,25 +313,41 @@ ruby_class! {
     // class, not the class itself).
     def "owner"(recv, _args, _blk) {
         let m = recv_method(recv);
-        let owner =
-            crate::dispatch::method_owner(m.recv.class_id(), m.name).unwrap_or(m.recv.class_id());
-        Ok(RubyValue::Class(owner))
+        Ok(RubyValue::Class(m.owner().unwrap_or(m.home)))
     }
     // `Method#original_name` -- the name the method was defined under. We don't
     // record aliases, so this is `#name` (exact except for aliased methods).
     def "original_name"(recv, _args, _blk) {
         Ok(RubyValue::Symbol(recv_method(recv).name))
     }
-    // `Method#source_location` -- `nil` for a method with no Ruby source
-    // location this AOT runtime tracks (builtins, and any method whose defining
-    // `.rb` span isn't recorded), matching CRuby's `nil` for C-defined methods.
-    def "source_location"(_recv, _args, _blk) {
-        Ok(RubyValue::Nil)
+    // `Method#source_location` -- the `[file, line]` codegen baked from the
+    // `def` keyword's own span. `nil` for a method with no Ruby source this
+    // AOT runtime tracks (a builtin, a `define_method` body), matching CRuby's
+    // `nil` for C-defined methods.
+    def "source_location"(recv, _args, _blk) {
+        let m = recv_method(recv);
+        Ok(crate::method_meta::source_location(m.home, m.kind, m.name))
     }
-    // `Method#super_method` -- `nil` (this runtime tracks no super-method chain
-    // for a bound Method object).
-    def "super_method"(_recv, _args, _blk) {
-        Ok(RubyValue::Nil)
+    // `Method#super_method` -- the same method as the NEXT ancestor up defines
+    // it, or `nil` at the end of the chain. The result is re-seated onto that
+    // ancestor, so calling it runs the ancestor's body.
+    def "super_method"(recv, _args, _blk) {
+        let m = recv_method(recv);
+        let Some(owner) = m.owner() else {
+            return Ok(RubyValue::Nil);
+        };
+        let next = match m.kind {
+            MethodKind::Instance => {
+                crate::dispatch::method_owner_after(m.chain(), owner, m.name)
+            }
+            MethodKind::Singleton => {
+                crate::dispatch::class_method_owner_after(m.chain(), owner, m.name)
+            }
+        };
+        Ok(match next {
+            Some(home) => method_value(m.recv.clone(), m.name, home, m.kind),
+            None => RubyValue::Nil,
+        })
     }
     // `meth >> other` -- a Proc running `meth` then piping its result into
     // `other` (`other.call(meth.call(*args))`). `other` is any callable.
@@ -270,9 +368,7 @@ ruby_class! {
         let Some(other) = o.as_any().downcast_ref::<RMethod>() else {
             return Ok(RubyValue::Bool(false));
         };
-        let same_method = m.name == other.name
-            && crate::dispatch::method_owner(m.recv.class_id(), m.name)
-                == crate::dispatch::method_owner(other.recv.class_id(), other.name);
+        let same_method = m.name == other.name && m.owner() == other.owner();
         if !same_method {
             return Ok(RubyValue::Bool(false));
         }
@@ -292,9 +388,7 @@ ruby_class! {
         let m = recv_method(recv);
         let mut h = std::collections::hash_map::DefaultHasher::new();
         m.name.hash(&mut h);
-        crate::dispatch::method_owner(m.recv.class_id(), m.name)
-            .unwrap_or(m.recv.class_id())
-            .hash(&mut h);
+        m.owner().unwrap_or(m.home).hash(&mut h);
         Ok(RubyValue::Int(h.finish() as i64))
     }
     // `Method#curry` -- curries the equivalent Proc (`to_proc.curry`).

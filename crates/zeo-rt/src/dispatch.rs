@@ -1415,6 +1415,38 @@ pub fn class_defines_own_class_method(cid: ClassId, name: Symbol) -> bool {
             .is_some_and(|e| e.class_methods.contains_key(&name))
 }
 
+/// The class in `cid`'s ancestry whose `def self.<name>` a `cid.<name>` call
+/// reaches -- `Method#owner` for a class-method lookup, and what tells a class
+/// receiver's `method(:x)` that it found a class method rather than an
+/// instance method of `Class`/`Module`. `None` when nothing up the chain
+/// defines one.
+pub fn class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
+    scan_class_method_owner(cid, 0, name)
+}
+
+/// [`class_method_owner`]'s `#super_method` companion: the next definer
+/// strictly after `after`.
+pub fn class_method_owner_after(
+    cid: ClassId,
+    after: ClassId,
+    name: Symbol,
+) -> Option<ClassId> {
+    let at = ancestors_of_value(cid).iter().position(|&a| a == after)?;
+    scan_class_method_owner(cid, at + 1, name)
+}
+
+/// The shared scan. Wider than [`class_defines_own_class_method`], which
+/// deliberately ignores a builtin's own `def self.x` rows so an `extend`ed
+/// module can override them -- reflection has no such stake and must report
+/// `Array.method(:try_convert).owner` too.
+fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
+    let n = name.name();
+    ancestors_of_value(cid).iter().skip(skip).copied().find(|&anc| {
+        class_defines_own_class_method(anc, name)
+            || crate::builtins::class_method_table(anc).is_some_and(|lookup| lookup(&n).is_some())
+    })
+}
+
 /// `Module#method_defined?` -- true when `name` resolves to a public OR
 /// protected instance method of `recv_class` (private and nonexistent answer
 /// false). Unlike `respond_to?`'s default, protected counts. `instance_method_
@@ -1511,10 +1543,26 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
 /// it (callers construct the method only after a `responds_to` check, so this
 /// is the belt-and-suspenders arm).
 pub fn method_owner(recv_class: ClassId, name: Symbol) -> Option<ClassId> {
+    scan_owner(recv_class, 0, name)
+}
+
+/// The next class up that defines `name` -- the one strictly AFTER `after` in
+/// `recv_class`'s MRO. Backs `Method#super_method`: `nil` once the chain runs
+/// out, and `nil` too for an `after` that isn't in this chain at all.
+pub fn method_owner_after(recv_class: ClassId, after: ClassId, name: Symbol) -> Option<ClassId> {
+    let at = ancestors_of_value(recv_class)
+        .iter()
+        .position(|&a| a == after)?;
+    scan_owner(recv_class, at + 1, name)
+}
+
+/// The shared MRO scan: the first ancestor from `skip` positions in that
+/// carries a definition of `name` itself.
+fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
     let n = name.name();
     let n = n.as_str();
     let overlay_live = crate::runtime_meta::is_live();
-    for &anc in ancestors_of_value(recv_class) {
+    for &anc in ancestors_of_value(recv_class).iter().skip(skip) {
         if overlay_live && crate::runtime_meta::overlay_has_instance_method(anc, name) {
             return Some(anc);
         }
@@ -1797,16 +1845,75 @@ pub fn send_super_from(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let obj = recv.as_object_unchecked();
-    let ancestors = ancestors_of_value(obj.class_id());
     // Resume AFTER the class this `super` is written in; an unrecognized
     // `defining_class` (never expected) degrades to a full walk from the top.
+    let ancestors = ancestors_of_value(recv.class_id());
     let start = ancestors
         .iter()
         .position(|&a| a == defining_class)
         .map_or(0, |p| p + 1);
+    send_walking(recv, start, name, args, block)
+}
+
+/// Invoke `name` AS `owner` defines it, against `recv` -- what a `Method`
+/// that `#super_method` re-seated calls, so
+/// `Sub.new.method(:greet).super_method.call` runs `Base#greet` rather than
+/// re-dispatching to the `Sub#greet` it was reached through.
+///
+/// It reads the same `own_impls` set a `super` walk does, and for the same
+/// reason: a user class's materialized `methods` row downcasts `self` to that
+/// class's own generated struct, so `Base`'s row cannot run against a `Sub`
+/// instance. `own_impls` holds the receiver-generic bridge instead. Codegen
+/// emits those bridges for every method name a `super` -- or a
+/// `#super_method` anywhere in the program -- can reach.
+pub fn send_as_defined_in(
+    recv: &RubyValue,
+    owner: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    if let RubyValue::Object(obj) = recv {
+        if crate::runtime_meta::is_live() {
+            if let Some(m) = crate::runtime_meta::overlay_own_method(owner, name) {
+                return m.call(obj, args, block);
+            }
+        }
+        if let Some(m) = registry().super_target(owner, name) {
+            return m.call(obj, args, block);
+        }
+    }
+    if let Some(f) = value_method(owner, 0, name) {
+        return f(recv, args, block);
+    }
+    if let Some(f) = crate::builtins::class_table(owner).and_then(|t| t(&name.to_string())) {
+        return f(recv, args, block);
+    }
+    // Nothing receiver-generic at the owner: fall back to ordinary dispatch
+    // rather than raising, so the call still answers SOMETHING.
+    send_value(recv, name, args, block)
+}
+
+/// The shared body of [`send_super_from`] and [`send_as_defined_in`]: walk
+/// the receiver's ancestors from `start`, invoking the first OWN definition
+/// of `name`. Only the entry position differs between them.
+fn send_walking(
+    recv: &RubyValue,
+    start: usize,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // The two `MethodImpl` arms below take an `RObj`; a non-Object receiver
+    // (an Integer, a String) never has one, and never reaches them either --
+    // its definitions live in the value-method and builtin tables.
+    let obj = match recv {
+        RubyValue::Object(o) => Some(o.clone()),
+        _ => None,
+    };
+    let ancestors = ancestors_of_value(recv.class_id());
     let method_name = name.to_string();
-    for &anc in &ancestors[start..] {
+    for &anc in ancestors.iter().skip(start) {
         // Each position contributes its OWN definitions only -- never the
         // flattened `methods` table, whose winner at a position can be a
         // PREPENDED module's copy sitting BEFORE this position in the MRO
@@ -1817,13 +1924,15 @@ pub fn send_super_from(
         // reopen (`value_methods` on that id), then the ancestor's native
         // builtin table (`BasicObject#initialize` is the one every `super`
         // chain bottoms out on).
-        if crate::runtime_meta::is_live() {
-            if let Some(m) = crate::runtime_meta::overlay_own_method(anc, name) {
-                return m.call(&obj, args, block);
+        if let Some(obj) = &obj {
+            if crate::runtime_meta::is_live() {
+                if let Some(m) = crate::runtime_meta::overlay_own_method(anc, name) {
+                    return m.call(obj, args, block);
+                }
             }
-        }
-        if let Some(m) = registry().super_target(anc, name) {
-            return m.call(&obj, args, block);
+            if let Some(m) = registry().super_target(anc, name) {
+                return m.call(obj, args, block);
+            }
         }
         if let Some(f) = value_method(anc, 0, name) {
             return f(recv, args, block);
@@ -1862,14 +1971,43 @@ pub fn send_super_class_from(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let recv = RubyValue::Class(recv_class);
-    let ancestors = ancestors_of_value(recv_class);
-    let start = ancestors
+    let start = ancestors_of_value(recv_class)
         .iter()
         .position(|&a| a == defining_class)
         .map_or(1, |p| p + 1);
+    send_class_walking(recv_class, start, name, args, block)
+}
+
+/// Invoke the CLASS method `name` starting the walk AT `from` -- the
+/// class-method twin of [`send_from`], for a `Method` that `#super_method`
+/// re-seated onto an ancestor's `def self.x`.
+pub fn send_class_from(
+    recv_class: ClassId,
+    from: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let start = ancestors_of_value(recv_class)
+        .iter()
+        .position(|&a| a == from)
+        .unwrap_or(0);
+    send_class_walking(recv_class, start, name, args, block)
+}
+
+/// The shared body of [`send_super_class_from`] and [`send_class_from`]:
+/// walk `recv_class`'s ancestors from `start`, invoking the first own
+/// `def self.<name>`. Only the entry position differs.
+fn send_class_walking(
+    recv_class: ClassId,
+    start: usize,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let recv = RubyValue::Class(recv_class);
     let method_name = name.to_string();
-    for &anc in &ancestors[start..] {
+    for &anc in ancestors_of_value(recv_class).iter().skip(start) {
         if registry().entries.get(&anc.0).is_some_and(|e| e.is_module) {
             continue;
         }

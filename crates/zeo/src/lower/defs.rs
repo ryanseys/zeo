@@ -585,14 +585,19 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
             *visibility,
             *is_def,
         );
-        out.push(hir.push(HirNode::DefMethod {
-            name: new_name,
-            params,
-            body,
-            is_class_method,
-            visibility,
-            is_def,
-        }));
+        // Carrying the SOURCE's span, not the `alias` line's: an alias
+        // reports its original's `source_location`, as in CRuby.
+        out.push(hir.push_from(
+            HirNode::DefMethod {
+                name: new_name,
+                params,
+                body,
+                is_class_method,
+                visibility,
+                is_def,
+            },
+            old_id,
+        ));
     } else {
         out.push(hir.push(HirNode::AliasMethod {
             new_name,
@@ -1443,6 +1448,12 @@ fn lower_class_body_statement(
                     let arg_list: Vec<_> = args.arguments().iter().collect();
                     if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some())
                     {
+                        // The accessors this expands to are Ruby-visible
+                        // methods whose `source_location` is the
+                        // `attr_accessor` line -- an expansion that never
+                        // descends through `lower_node` has to stamp that
+                        // provenance itself.
+                        hir.push_span(crate::lower::span_of(hir, node));
                         for n in &arg_list {
                             let ivar = String::from_utf8_lossy(
                                 n.as_symbol_node().expect("checked above").unescaped(),
@@ -1479,6 +1490,7 @@ fn lower_class_body_statement(
                                 }));
                             }
                         }
+                        hir.pop_span();
                         return Ok(());
                     }
                 }

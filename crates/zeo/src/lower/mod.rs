@@ -123,19 +123,28 @@ fn assemble_i64(negative: bool, digits: &[u32]) -> Option<i64> {
 /// (`LowerError::with_span_if_missing`). `HirNode` itself carries no span
 /// field -- the parallel `Hir::spans` table is the whole design.
 pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
+    let span = span_of(hir, node);
+    hir.push_span(span);
+    let out = lower_node_inner(result, hir, node);
+    hir.pop_span();
+    out.map_err(|e| e.with_span_if_missing(span))
+}
+
+/// One prism node's provenance in the file currently lowering, `Span::SYNTH`
+/// when there is none. Split out of [`lower_node`] for the lowerings that
+/// EXPAND a node into several `HirNode`s without descending through it
+/// (`attr_accessor` -> a pair of `DefMethod`s), which have to stamp that
+/// span themselves.
+pub(crate) fn span_of(hir: &Hir, node: &Node<'_>) -> Span {
     let loc = node.location();
-    let span = match hir.lowering_file {
+    match hir.lowering_file {
         Some(file) => Span {
             file,
             start: loc.start_offset() as u32,
             end: loc.end_offset() as u32,
         },
         None => Span::SYNTH,
-    };
-    hir.push_span(span);
-    let out = lower_node_inner(result, hir, node);
-    hir.pop_span();
-    out.map_err(|e| e.with_span_if_missing(span))
+    }
 }
 
 fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {

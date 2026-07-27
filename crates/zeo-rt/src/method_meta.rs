@@ -239,6 +239,20 @@ pub fn parameters(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Ruby
     Some(RubyValue::Array(crate::array_new(pairs)))
 }
 
+/// `Method#source_location` / `UnboundMethod#source_location`: the
+/// `[file, line]` codegen baked from the `def` keyword's span, or `nil` for a
+/// method with no Ruby source here -- a builtin, or a body this runtime
+/// synthesized. CRuby answers `nil` for its own C methods the same way.
+pub fn source_location(class: ClassId, kind: MethodKind, name: Symbol) -> RubyValue {
+    let Some((file, line)) = lookup(class, kind, name).and_then(|m| m.source) else {
+        return RubyValue::Nil;
+    };
+    RubyValue::Array(crate::array_new(vec![
+        RubyValue::Str(crate::string_new(file.to_string())),
+        RubyValue::Int(line as i64),
+    ]))
+}
+
 /// The nameless descriptor CRuby reports for a method defined in C, derived
 /// from its arity alone: `2` is `[[:req], [:req]]`, `-1` is `[[:rest]]`, and
 /// `-2` is `[[:req], [:rest]]`.
