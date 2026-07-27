@@ -461,13 +461,38 @@ pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal
     }
 }
 
+/// CRuby snapshots a String key on store (`rb_hash_aset` ->
+/// `rb_hash_key_str`): the hash keeps a FROZEN COPY, so mutating the
+/// caller's string afterwards cannot rewrite a key that is already in the
+/// table. Two keys stay exempt -- an already-frozen string (nothing can
+/// change it, so the copy would be waste) and any key under identity
+/// comparison (there the caller's object IS the key).
+///
+/// Only KEYS. A stored value is deliberately the caller's shared handle:
+/// `h[:k] << "!"` must be visible through `h`.
+fn snapshot_key(key: RubyValue, by_identity: bool) -> RubyValue {
+    match &key {
+        RubyValue::Str(s) if !by_identity && !s.is_frozen() => {
+            let copy = string_wrap(s.lock().clone());
+            copy.set_frozen();
+            RubyValue::Str(copy)
+        }
+        _ => key,
+    }
+}
+
 /// `Hash#[]=`: replaces an existing key's VALUE in place, preserving its
 /// original insertion position (matching real Ruby) rather than moving it to
 /// the end -- `IndexMap::insert`'s own documented behavior for a
 /// re-inserted, already-present key.
+///
+/// The one insertion point every literal, every `[]=`/`store`/`merge` row and
+/// every runtime hash builder funnels through, which is what makes
+/// [`snapshot_key`] a single edit rather than an audit.
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
     let mut g = h.lock();
     let k = hash_key_in(&key, g.compare_by_identity);
+    let key = snapshot_key(key, g.compare_by_identity);
     g.insert(k, (key, value.clone()));
     value
 }
