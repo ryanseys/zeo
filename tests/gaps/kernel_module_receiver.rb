@@ -1,3 +1,6 @@
+# `Kernel.block_given?` -- the module-receiver form -- is not defined, so the
+# program dies on line 15. ruby exposes Kernel's private instance methods as
+# singleton methods on the module as well.
 # Kernel's module functions are callable with the module as an explicit
 # receiver and mean exactly what the bare call means. Nothing served that
 # receiver, so every one raised "undefined method 'exit' for class Kernel" --

@@ -1,3 +1,6 @@
+# A socket comes up with `sync` false here. ruby leaves a socket UNBUFFERED
+# (`sync == true`) and only buffers file handles, which is the distinction this
+# test is drawing.
 # The socket methods belong to the socket classes, not to every IO handle,
 # and a socket is sync = true where a file is buffered.
 require "socket"

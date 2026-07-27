@@ -1,3 +1,6 @@
+# `IPSocket.getaddress` is not implemented, so the resolver line answers
+# NoMethodError where ruby answers the resolved address. The socket class
+# constants either side of it already match.
 # The socket classes are constants once `require "socket"` runs, and a class
 # Spinel recognizes but has not implemented reports the missing METHOD rather
 # than a missing constant. (IPSocket.getaddress is one of the documented gaps;

@@ -13,3 +13,7 @@ zeo-gems.json
 
 # Vendored upstream sources for the bundler north-star (not part of the build)
 /vendor/
+
+# Scratch dir created by tests/gaps/dir_for_fd_and_enumerable.rb, whose cleanup
+# never runs while `Dir.for_fd` is a gap
+tests/spinel_dir_suite/

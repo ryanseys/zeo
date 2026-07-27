@@ -1,3 +1,6 @@
+# `Dir.for_fd` is not implemented, so the program dies on line 9 before any of
+# the Enumerable-on-Dir coverage below it runs. ruby opens a Dir handle from a
+# raw file descriptor.
 # Dir.for_fd's handle lists through the descriptor (it has no path), and Dir's
 # Enumerable surface routes through #entries.
 d = "spinel_dir_suite"

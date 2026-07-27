@@ -1,3 +1,6 @@
+# `raise` with the exception CLASS reached through a VALUE (a local or constant
+# read rather than a syntactically-literal class name) reports
+# `TypeError: exception class/object expected` instead of raising it.
 # `raise SomeError` was only recognized as raising SomeError when the class was
 # written as a literal constant. Reached through a variable or an array element
 # -- a table of error classes, a retry list -- the Class value fell through to

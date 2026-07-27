@@ -1,3 +1,5 @@
+# `BasicSocket#getsockopt` answers a `Socket::Option` object, which is not
+# implemented -- line 52 raises NotImplementedError.
 # UDPSocket, the UNIX-domain pair, and the socket-option family.
 require "socket"
 

@@ -1,3 +1,6 @@
+# A `case`/`when <regex>` arm does not set `Regexp.last_match` (`$~`), so every
+# `last_match` read after a matched arm answers nil. ruby's `Regexp#===` sets
+# the match globals exactly as `=~` does.
 case "hello world"
 when /(h\w+) (w\w+)/
   p Regexp.last_match(1)

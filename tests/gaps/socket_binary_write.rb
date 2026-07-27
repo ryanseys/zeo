@@ -1,3 +1,4 @@
+# `TCPSocket#write_nonblock` is not implemented, so line 40 raises.
 require "socket"
 
 # A String carrying an embedded NUL must reach the peer whole: #bytesize

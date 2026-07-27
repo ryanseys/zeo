@@ -1,3 +1,6 @@
+# zeo REJECTS this at compile time ("unknown module `FFI`"); ruby compiles it
+# and raises NameError from the module body at run time. The divergence is
+# WHEN an unresolved constant is reported, not whether it is.
 module Sock
   extend FFI
   ffi_lib "c"

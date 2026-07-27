@@ -1,3 +1,5 @@
+# `IO::WaitReadable` does not exist, so the nonblocking-retry rescue arm cannot
+# resolve -- the same missing marker module as `exception_module_hierarchy`.
 # The non-blocking readiness family: the IO::*Wait* exceptions, the
 # `exception: false` markers, and the retry loop they exist for. Everything here
 # is deterministic -- no cross-thread timing.

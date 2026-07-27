@@ -1,3 +1,6 @@
+# The real-uid stat predicates (`File.readable_real?` and its siblings) are
+# missing, so the program dies on line 10. ruby answers them from `stat(2)`
+# against the REAL uid/gid rather than the effective one.
 # File real-uid predicates, File.realdirpath, IO#inspect, String/IO.try_convert
 # Everything is compared against a path this test creates and resolves itself:
 # /tmp and /etc are symlinks on macOS, so a hardcoded expectation is not portable.

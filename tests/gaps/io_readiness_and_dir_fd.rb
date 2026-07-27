@@ -1,3 +1,5 @@
+# `IO.select` is not implemented, so the program dies on line 2 before any of
+# the Dir-from-descriptor coverage runs.
 # IO.select / IO#wait_* / IO.for_fd / Dir.for_fd / Dir class-constant NoMethodError
 p IO.select(nil, nil, nil, 0)
 r, w = IO.pipe

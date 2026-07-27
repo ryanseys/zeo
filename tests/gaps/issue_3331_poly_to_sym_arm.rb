@@ -1,3 +1,6 @@
+# Same root as `issue_3301_case_regex_last_match`: the `when Flag::SWITCH_RE`
+# arm leaves `Regexp.last_match` nil, so `parse_switch` indexes nil and raises
+# instead of reading the captured switch name.
 require "ostruct"
 class Config
   attr_reader :flags, :lookup

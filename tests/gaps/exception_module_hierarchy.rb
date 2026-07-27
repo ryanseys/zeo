@@ -1,3 +1,7 @@
+# `IO::WaitReadable` -- and the `IO::EAGAINWaitReadable` / `EWOULDBLOCK` classes
+# built on it -- does not exist here, so every rescue arm that matches on the
+# marker module fails to resolve. ruby mixes those modules into the Errno
+# classes so a nonblocking read can be caught by protocol rather than by errno.
 # Ruby's exception hierarchy is not a chain: a class can include modules, and
 # `rescue M` / `#is_a?(M)` must agree about them.
 module Retryable; end

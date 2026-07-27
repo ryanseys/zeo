@@ -1,3 +1,5 @@
+# `BasicSocket#getsockopt` answers a `Socket::Option` object, which is not
+# implemented -- line 29 raises NotImplementedError.
 # Addrinfo and Socket::Option.
 require "socket"
 
