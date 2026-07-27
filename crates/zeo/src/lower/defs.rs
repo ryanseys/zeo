@@ -587,7 +587,7 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
         );
         // Carrying the SOURCE's span, not the `alias` line's: an alias
         // reports its original's `source_location`, as in CRuby.
-        out.push(hir.push_from(
+        let cloned = hir.push_from(
             HirNode::DefMethod {
                 name: new_name,
                 params,
@@ -597,7 +597,9 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
                 is_def,
             },
             old_id,
-        ));
+        );
+        hir.record_alias_origin(cloned, old_name);
+        out.push(cloned);
     } else {
         out.push(hir.push(HirNode::AliasMethod {
             new_name,

@@ -94,6 +94,9 @@ pub struct Hir {
     /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
     /// codegen routes these through `send_value_vcall_in`.
     pub vcall_nodes: std::collections::HashSet<NodeId>,
+    /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
+    /// under -- see [`record_alias_origin`](Self::record_alias_origin).
+    alias_origins: std::collections::HashMap<NodeId, String>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.
@@ -214,6 +217,19 @@ impl Hir {
         self.spans
             .push(self.span_stack.last().copied().unwrap_or(Span::SYNTH));
         NodeId((self.nodes.len() - 1) as u32)
+    }
+
+    /// Records that the `DefMethod` at `def` is an `alias` of `original` --
+    /// the one fact a same-body alias's cloned node cannot carry itself, and
+    /// what `Method#original_name` answers. Keyed by node rather than added
+    /// to `DefMethod` because only the handful of alias clones ever have it.
+    pub fn record_alias_origin(&mut self, def: NodeId, original: impl Into<String>) {
+        self.alias_origins.insert(def, original.into());
+    }
+
+    /// The name the `DefMethod` at `def` was born under, if it is an alias.
+    pub fn alias_origin(&self, def: NodeId) -> Option<&str> {
+        self.alias_origins.get(&def).map(String::as_str)
     }
 
     /// [`push`](Self::push), but inheriting `origin`'s provenance instead of

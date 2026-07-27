@@ -180,6 +180,9 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         let new_sid = super::register_method(
             compiler, class_id, class_id, new_name, def_node, params, body, visibility,
         )?;
+        // `def_node` is the SOURCE's, shared with the original method, so the
+        // birth name can't be read off it -- record it on the new scope.
+        compiler.scopes[new_sid.0 as usize].alias_of = Some(old_name);
         super::add_own_method(compiler, class_id, new_sid, is_class_method);
     }
     Ok(())

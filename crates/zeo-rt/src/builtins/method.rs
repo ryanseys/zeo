@@ -405,7 +405,18 @@ ruby_class! {
     // the owner whenever an ancestor is the one that actually defines it.
     def "inspect" | "to_s" (recv, _args, _blk) {
         let m = recv_method(recv);
-        let owner = m.owner();
+        // An alias names the class its SOURCE came from, not its own owner:
+        // `alias_method :w, :x` in `B < A`, where `A` defines `x`, prints
+        // `B(A)#w(x)` even though the alias itself is owned by `B`.
+        let original = crate::method_meta::alias_origin(m.home, m.kind, m.name);
+        let owner = match m.kind {
+            MethodKind::Instance => {
+                crate::dispatch::method_owner(m.home, original.unwrap_or(m.name))
+            }
+            MethodKind::Singleton => {
+                crate::dispatch::class_method_owner(m.home, original.unwrap_or(m.name))
+            }
+        };
         let per_object = !matches!(m.recv, RubyValue::Class(_))
             && crate::runtime_meta::object_has_singleton_method(&m.recv, m.name);
         let (home, separator, qualifier) = if per_object {
@@ -424,7 +435,7 @@ ruby_class! {
                 owner: qualifier.map(class_name),
                 separator,
                 name: m.name,
-                original: crate::method_meta::alias_origin(m.home, m.kind, m.name),
+                original,
                 params: crate::method_meta::printable_params(m.home, m.kind, m.name),
                 source: crate::method_meta::source_of(m.home, m.kind, m.name),
             }

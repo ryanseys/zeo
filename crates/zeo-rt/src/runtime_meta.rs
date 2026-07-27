@@ -305,6 +305,18 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
             None => e.methods_vis.remove(&new),
         };
     }
+    // Reflection follows the copy: the alias reports the source's birth name
+    // (so a chain -- `alias b a; alias c b` -- still answers `:a`) and the
+    // source's own signature and definition site.
+    let origin = crate::method_meta::original_name(id, crate::MethodKind::Instance, old);
+    let mut meta = crate::MethodMeta::instance(id.0, &new.name()).aliased_from(&origin.name());
+    if let Some(source) = crate::method_meta::lookup(id, crate::MethodKind::Instance, old) {
+        meta = meta.with_params(source.params().clone());
+        if let Some((file, line)) = source.source() {
+            meta = meta.defined_at(file, line);
+        }
+    }
+    meta.register();
     mark_live();
     Ok(RubyValue::Symbol(new))
 }

@@ -1835,11 +1835,16 @@ fn register_method(
             uses_bare_block = true;
         }
     }
+    // A same-body `alias` clones its source's `DefMethod`; the clone is what
+    // carries the birth name, and materializing this method onto a descendant
+    // reuses the same node, so the alias stays an alias all the way down.
+    let alias_of = def_node.and_then(|n| compiler.hir.alias_origin(n).map(str::to_string));
     Ok(compiler.push_scope(Scope {
         name,
         class: Some(owner),
         defining_class,
         def_node,
+        alias_of,
         params,
         body,
         local_types,

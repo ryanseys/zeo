@@ -441,8 +441,12 @@ fn method_meta_registration(
         .def_node
         .and_then(|n| source_location(compiler, n))
         .map(|(file, line)| quote! { .defined_at(#file, #line) });
+    let aliased_from = scope
+        .alias_of
+        .as_ref()
+        .map(|original| quote! { .aliased_from(#original) });
     quote! {
-        zeo_rt::MethodMeta::#ctor(#id, #name) #params #defined_at .register();
+        zeo_rt::MethodMeta::#ctor(#id, #name) #params #defined_at #aliased_from .register();
     }
 }
 

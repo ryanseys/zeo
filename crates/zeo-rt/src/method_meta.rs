@@ -349,15 +349,21 @@ pub(crate) fn source_of(
 /// `Method#original_name`: the name this method was born under -- its own
 /// unless an `alias` renamed it.
 pub fn original_name(class: ClassId, kind: MethodKind, name: Symbol) -> Symbol {
-    lookup(class, kind, name).map_or(name, |meta| meta.original_name())
+    alias_origin(class, kind, name).unwrap_or(name)
 }
 
 /// The birth name only when it DIFFERS from the name in hand -- the
 /// `A#y(x)` qualifier `#inspect` adds for an alias.
+///
+/// An alias of a BUILTIN (`alias_method :raise!, :raise`) has no body to
+/// clone and so no row here, only a name indirection in the class registry;
+/// that indirection is the birth name just the same.
 pub(crate) fn alias_origin(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Symbol> {
-    lookup(class, kind, name)?
-        .original_name
-        .filter(|&origin| origin != name)
+    let origin = match lookup(class, kind, name) {
+        Some(meta) => meta.original_name,
+        None => crate::dispatch::alias_target(class, name),
+    };
+    origin.filter(|&origin| origin != name)
 }
 
 /// The nameless descriptor CRuby reports for a method defined in C, derived

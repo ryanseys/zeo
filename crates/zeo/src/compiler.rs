@@ -235,6 +235,10 @@ pub struct Scope {
     /// `None` for synthesized scopes (aliases keep their source's node;
     /// the exception prelude has no spans at all).
     pub def_node: Option<NodeId>,
+    /// The name this method was born under, when it reached `name` through an
+    /// `alias`/`alias_method` -- what `Method#original_name` answers and what
+    /// `#inspect` prints in parens. `None` for an ordinary `def`.
+    pub alias_of: Option<String>,
     pub params: Params,
     pub body: Vec<NodeId>,
     /// Per-local static type, computed once by `analyze::locals::infer_locals`
