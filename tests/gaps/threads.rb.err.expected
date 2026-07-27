@@ -1,2 +1,0 @@
-#<Thread:0x0000000102cf6310 threads.rb:14 run> terminated with exception (report_on_exception is true):
-threads.rb:14:in 'block in <main>': thread boom (RuntimeError)

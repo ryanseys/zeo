@@ -6,9 +6,9 @@ we can grind them down over time. Same file format as
 plus optional `.err.expected` / `.args` / `.stdin` sidecars), so promoting a
 fixed gap is a plain move into the corpus.
 
-Some gaps are stderr-only divergences on output zeo intentionally won't
-reproduce (ruby's experimental-API / duplicate-key warnings, thread exception
-dumps) — those stay parked here rather than in the passing suite.
+Every gap is a real divergence with a real cause, and its header comment says
+what that cause is. A divergence zeo has decided not to reproduce does not
+belong here — it belongs in a passing test that documents it.
 
 ## The XFAIL contract
 
@@ -28,6 +28,15 @@ in **`Mode::Xfail`**:
   spinel corpus, and a spinel-origin gap re-promotes on its own the next time
   `scripts/import-spinel-corpus.sh` triages it.
 
+  A promoted file's goldens carry its OLD path (`gaps/foo.rb:12`), so re-bless
+  it in its new home right after: `ZEO_BLESS=1 cargo test -p zeo --test
+  examples -- foo`.
+
+Both stdout **and stderr** are compared, byte-exactly, after the shared
+normalization in `crates/zeo/tests/support/golden.rs` (line endings, the
+source path, and object addresses — `0x` + 16 hex digits → `0xADDR`, since
+those are process-random on both sides).
+
 ## Goldens are recorded from ruby, never hand-written
 
 The `.expected` is the **ruby 4.0.5 oracle** output (the target zeo must
@@ -44,3 +53,7 @@ Drop in `foo.rb`, then `ZEO_BLESS=1 cargo test -p zeo --test gaps -- foo` to
 capture its golden. If zeo already matches ruby, the test will tell you it's not
 a gap — put it in the corpus instead. New gaps usually arrive via
 `scripts/import-spinel-corpus.sh` (spinel triage).
+
+Keep at least one gap here: `datatest-stable` panics rather than reporting zero
+cases, so an empty directory breaks the suite. If the last one is ever fixed,
+retire `crates/zeo/tests/gaps.rs` and its `[[test]]` entry along with it.

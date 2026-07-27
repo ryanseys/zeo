@@ -97,8 +97,67 @@ fn normalize_source_path(bytes: Vec<u8>, source: &Path, run_cwd: &Path) -> Vec<u
     replace_bytes(&bytes, abs.as_bytes(), rel.as_bytes())
 }
 
+/// Scrub object identity, which is process-random on both sides: CRuby and
+/// zeo both render it as `0x` followed by exactly 16 lowercase hex digits
+/// (`#<Thread:0x0000000102cf6310 ...>`, `#<Object:0x...>`), so a golden can
+/// assert the shape AROUND an address it could never match.
+///
+/// Deliberately exactly 16: `%x`-formatted output in the corpus (`0xff`,
+/// `0x1.ffp+7`) is far shorter and stays untouched. Programs that would
+/// rather scrub Ruby-side (`e.message.sub(/0x[0-9a-f]+/, "0xADDR")`, the
+/// existing convention) keep working -- their output has no address left in
+/// it by the time it gets here.
+fn normalize_addresses(bytes: Vec<u8>) -> Vec<u8> {
+    const WIDTH: usize = 16;
+    let is_hex = |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b);
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let addr = bytes[i..].starts_with(b"0x")
+            && bytes.len() >= i + 2 + WIDTH
+            && bytes[i + 2..i + 2 + WIDTH].iter().all(|&b| is_hex(b))
+            && !bytes.get(i + 2 + WIDTH).is_some_and(|&b| is_hex(b));
+        if addr {
+            out.extend_from_slice(b"0xADDR");
+            i += 2 + WIDTH;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
 fn norm(bytes: &[u8], source: &Path, run_cwd: &Path) -> Vec<u8> {
-    normalize_source_path(normalize_crlf(bytes), source, run_cwd)
+    normalize_addresses(normalize_source_path(
+        normalize_crlf(bytes),
+        source,
+        run_cwd,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_addresses;
+
+    fn scrub(s: &str) -> String {
+        String::from_utf8(normalize_addresses(s.as_bytes().to_vec())).unwrap()
+    }
+
+    #[test]
+    fn only_full_width_object_addresses_are_scrubbed() {
+        assert_eq!(
+            scrub("#<Thread:0x0000000102cf6310 t.rb:4 run>"),
+            "#<Thread:0xADDR t.rb:4 run>"
+        );
+        assert_eq!(scrub("a 0xdeadbeefcafef00d b"), "a 0xADDR b");
+        // `%x`/`%a` formatting is shorter, and a longer run isn't an address.
+        assert_eq!(scrub("0xff / 010"), "0xff / 010");
+        assert_eq!(scrub("\"0x1.ffp+7\""), "\"0x1.ffp+7\"");
+        assert_eq!(scrub("0x00000001234567890"), "0x00000001234567890");
+        // Uppercase hex is `%X` output, never an address rendering.
+        assert_eq!(scrub("0xDEADBEEFCAFEF00D"), "0xDEADBEEFCAFEF00D");
+    }
 }
 
 // ---- sidecars ----

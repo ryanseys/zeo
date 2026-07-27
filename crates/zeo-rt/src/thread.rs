@@ -10,9 +10,10 @@
 //!
 //! Error contract (verified against CRuby `thread.c`/`thread_sync.c`, see
 //! the plan's Part 11 addendum): an uncaught exception inside a Thread is
-//! STORED and re-raised in whoever calls `#join`/`#value` (`thread.c:1195`;
-//! CRuby's no-join `report_on_exception` stderr warning is a documented
-//! skip); Ruby `Mutex` is NOT reentrant and ownership is per-execution-
+//! STORED and re-raised in whoever calls `#join`/`#value` (`thread.c:1195`)
+//! AND, separately, reported to stderr as the thread terminates unless
+//! `report_on_exception` is off for it -- a program can see both; Ruby
+//! `Mutex` is NOT reentrant and ownership is per-execution-
 //! context (`ec_serial`, `thread_sync.c:9`) -- relock by the owner raises
 //! `ThreadError: "deadlock; recursive locking"`, foreign/idle unlock raises
 //! too; `Queue#pop` on a closed empty queue returns nil, `#push` to a
@@ -105,12 +106,26 @@ pub struct ThreadData {
 
 pub type RThread = Arc<ThreadData>;
 
+/// `Thread.report_on_exception` -- the process-wide default each new thread
+/// copies at spawn (true, as in CRuby). It lives here, beside the per-thread
+/// flag it seeds, so `ThreadData::build` can read it; `Thread`'s class-method
+/// rows are just accessors over it.
+static REPORT_ON_EXCEPTION: AtomicBool = AtomicBool::new(true);
+
+pub fn report_on_exception_default() -> bool {
+    REPORT_ON_EXCEPTION.load(Ordering::Relaxed)
+}
+
+pub fn set_report_on_exception_default(on: bool) {
+    REPORT_ON_EXCEPTION.store(on, Ordering::Relaxed);
+}
+
 impl ThreadData {
     fn build(state: Option<ThreadState>, is_main: bool, origin: Option<String>) -> RThread {
         Arc::new(ThreadData {
             state: PlMutex::new(state),
             name: PlMutex::new(None),
-            report_on_exception: AtomicBool::new(true),
+            report_on_exception: AtomicBool::new(report_on_exception_default()),
             locals: PlMutex::new(HashMap::new()),
             tvars: PlMutex::new(HashMap::new()),
             is_main,
@@ -222,10 +237,12 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         // A killed thread dies silently with a nil value, whatever exception
         // unwound it (its `ensure` blocks already ran during that unwind).
         if for_thread.was_killed.load(Ordering::Relaxed) {
-            Ok(RubyValue::Nil)
-        } else {
-            result
+            return Ok(RubyValue::Nil);
         }
+        if let Err(Signal::Raise(exc)) = &result {
+            report_terminated(&for_thread, exc);
+        }
+        result
     };
     // A real OS thread: CRuby-sized 8MiB stack, its own scheduling ctx
     // attached to the process Gvl, the (usually disabled, hence free) Gvl
@@ -359,6 +376,36 @@ pub fn thread_set_name(t: &RThread, name: Option<String>) {
 
 /// The `Thread.new` call site (`file:line`) shown in `#inspect`; `None` for
 /// the main thread.
+/// `Thread#inspect` -- `#<Thread:0xADDR file:line status>`, CRuby's shape,
+/// including the `Thread.new` call site (the main thread has none). Shared
+/// with the at-termination report, which names the thread the same way.
+///
+/// `status` is the caller's word rather than [`thread_alive`]'s, because a
+/// thread reporting its OWN uncaught exception is plainly still running even
+/// though its state cell may not hold the join handle yet -- `Thread.new`
+/// fills that in after `spawn` returns, which the body can outrun.
+pub fn thread_inspect(t: &RThread, status: &str) -> String {
+    let addr = Arc::as_ptr(t) as usize;
+    let origin = thread_origin(t).map_or_else(String::new, |o| format!(" {o}"));
+    format!("#<Thread:0x{addr:016x}{origin} {status}>")
+}
+
+/// CRuby reports a thread that dies of an uncaught exception to stderr as it
+/// terminates -- the thread's own `#inspect`, then the ordinary uncaught
+/// report -- unless `report_on_exception` is off for it. This happens whether
+/// or not anyone later joins: a `#join` re-raise and this report are separate
+/// mechanisms, and a program can see both.
+fn report_terminated(t: &RThread, exc: &RubyValue) {
+    if !t.report_on_exception.load(Ordering::Relaxed) {
+        return;
+    }
+    let preamble = format!(
+        "{} terminated with exception (report_on_exception is true):",
+        thread_inspect(t, "run")
+    );
+    crate::builtins::exception::report_exception(exc, Some(&preamble));
+}
+
 pub fn thread_origin(t: &RThread) -> Option<String> {
     t.origin.clone()
 }

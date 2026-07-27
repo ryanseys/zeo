@@ -1,0 +1,7 @@
+"#<Method: Integer#zero?() <internal:numeric>:288>"
+"#<Method: Integer#integer?() <internal:numeric>:202>"
+-2
+"#<Method: OBJ.only(x, y=...)>"
+"#<Method: Sig#anon(...)>"
+"#<Method: Sig#partly(x, *, ...)>"
+[[:rest, :*], [:keyrest, :**], [:block, :&]]

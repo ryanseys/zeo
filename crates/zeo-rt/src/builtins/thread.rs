@@ -71,16 +71,7 @@ fn t_inspect(
 ) -> Result<RubyValue, Signal> {
     let t = recv.as_thread_unchecked();
     let status = if thread_alive(&t) { "run" } else { "dead" };
-    let addr = std::sync::Arc::as_ptr(&t) as usize;
-    // CRuby includes the `Thread.new` call site (`#<Thread:0xADDR file:line
-    // status>`); the main thread has none.
-    let loc = match thread::thread_origin(&t) {
-        Some(o) => format!(" {o}"),
-        None => String::new(),
-    };
-    Ok(RubyValue::Str(crate::string_new(format!(
-        "#<Thread:0x{addr:016x}{loc} {status}>"
-    ))))
+    Ok(RubyValue::Str(crate::string_new(thread::thread_inspect(&t, status))))
 }
 
 fn t_name(
@@ -368,19 +359,15 @@ fn c_pass(
 }
 
 /// `Thread.report_on_exception` -- the process-wide default a new thread
-/// inherits (true by CRuby default); setting it false silences the
-/// at-termination stderr report.
-static REPORT_ON_EXCEPTION: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
-
+/// copies at spawn; setting it false silences the at-termination stderr
+/// report for threads spawned AFTERWARDS (already-running ones keep the
+/// value they were born with, as in CRuby).
 fn c_report_on_exception(
     _recv: &RubyValue,
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(
-        REPORT_ON_EXCEPTION.load(std::sync::atomic::Ordering::Relaxed),
-    ))
+    Ok(RubyValue::Bool(thread::report_on_exception_default()))
 }
 
 fn c_set_report_on_exception(
@@ -388,7 +375,7 @@ fn c_set_report_on_exception(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    REPORT_ON_EXCEPTION.store(args[0].truthy(), std::sync::atomic::Ordering::Relaxed);
+    thread::set_report_on_exception_default(args[0].truthy());
     Ok(args[0].clone())
 }
 

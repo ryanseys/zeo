@@ -452,6 +452,15 @@ pub fn apply_custom_backtrace(exc_value: &RubyValue, bt: &RubyValue) -> Result<(
 /// degrades to the bare `msg (Class)` form. A raising user `message`
 /// contributes an empty message rather than a crash.
 pub fn report_uncaught(exc_value: &RubyValue) {
+    report_exception(exc_value, None);
+}
+
+/// [`report_uncaught`]'s body, with an optional line printed ahead of it --
+/// what `Thread`'s at-termination report puts there
+/// (`#<Thread:0x… f.rb:4 run> terminated with exception (...)`). Emitting the
+/// pair as ONE write keeps another thread's report from interleaving into the
+/// middle of it.
+pub(crate) fn report_exception(exc_value: &RubyValue, preamble: Option<&str>) {
     let msg = crate::dispatch::send(
         &exc_value.as_object_unchecked(),
         crate::Symbol::intern("message"),
@@ -461,15 +470,21 @@ pub fn report_uncaught(exc_value: &RubyValue) {
     .and_then(|v| v.try_display_string())
     .unwrap_or_default();
     let cls = crate::builtins::class_name_of(exc_value);
+    let mut out = String::new();
+    if let Some(preamble) = preamble {
+        out.push_str(preamble);
+        out.push('\n');
+    }
     match backtrace_lines(exc_value) {
         Some(lines) if !lines.is_empty() => {
-            eprintln!("{}: {} ({})", lines[0], msg, cls);
+            out.push_str(&format!("{}: {} ({})\n", lines[0], msg, cls));
             for l in &lines[1..] {
-                eprintln!("\tfrom {l}");
+                out.push_str(&format!("\tfrom {l}\n"));
             }
         }
-        _ => eprintln!("{msg} ({cls})"),
+        _ => out.push_str(&format!("{msg} ({cls})\n")),
     }
+    eprint!("{out}");
 }
 
 /// The raised exception's formatted backtrace lines (`None` = never
