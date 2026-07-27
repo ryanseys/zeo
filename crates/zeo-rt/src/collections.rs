@@ -907,9 +907,11 @@ mod compare_by_identity_tests {
         assert!(hash_key_in(&a, true) == hash_key_in(&a, true));
     }
 
-    /// `Hash#[]`/`#[]=`/`#delete`/`#key?` honor the flag once set, and
-    /// enabling it re-projects pre-existing entries so the stored object
-    /// still hits.
+    /// `Hash#[]`/`#[]=`/`#delete`/`#key?` honor the flag once set, and a
+    /// String key stored BEFORE the switch becomes unreachable by the object
+    /// it was stored under -- the hash kept a frozen snapshot of it, and
+    /// under identity keying that snapshot is a different object. Verified
+    /// against ruby 4.0.5, which answers `nil` there too.
     #[test]
     fn ops_honor_identity_and_reprojection() {
         let h = hash_new(vec![]);
@@ -923,17 +925,29 @@ mod compare_by_identity_tests {
         let h2 = hash_new(vec![]);
         hash_set(&h2, a.clone(), RubyValue::Int(1));
         hash_enable_compare_by_identity(&h2);
-        // The very object inserted before the switch still resolves.
-        assert!(is_int(&hash_get(&h2, &a), 1));
-        // A different, equal String misses.
+        // Neither the object stored nor an equal one reaches the snapshot.
+        assert!(matches!(hash_get(&h2, &a), RubyValue::Nil));
         assert!(matches!(hash_get(&h2, &b), RubyValue::Nil));
-        assert!(hash_has_key(&h2, &a));
+        assert!(!hash_has_key(&h2, &a));
         assert!(!hash_has_key(&h2, &b));
-        // Two distinct equal Strings now coexist.
-        hash_set(&h2, b.clone(), RubyValue::Int(2));
-        assert_eq!(hash_len(&h2), 2);
-        assert!(is_int(&hash_delete(&h2, &a), 1));
+        // The entry is still there, keyed by the snapshot -- which is frozen,
+        // and is not the object it was made from.
         assert_eq!(hash_len(&h2), 1);
+        let stored = h2.lock().values().next().unwrap().0.clone();
+        let (RubyValue::Str(stored), RubyValue::Str(a_str)) = (&stored, &a) else {
+            panic!("a String key stays a String")
+        };
+        assert!(stored.is_frozen());
+        assert!(!Arc::ptr_eq(stored, a_str));
+
+        // Under identity, keys stored AFTER the switch are the caller's own
+        // objects, so two distinct equal Strings coexist and each is reachable.
+        hash_set(&h2, a.clone(), RubyValue::Int(2));
+        hash_set(&h2, b.clone(), RubyValue::Int(3));
+        assert_eq!(hash_len(&h2), 3);
+        assert!(is_int(&hash_get(&h2, &a), 2));
+        assert!(is_int(&hash_delete(&h2, &a), 2));
+        assert_eq!(hash_len(&h2), 2);
     }
 
     /// Enabling identity is idempotent and never loses entries.

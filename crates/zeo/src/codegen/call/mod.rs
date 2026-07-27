@@ -2193,9 +2193,11 @@ fn dispatch(
     // simply dropped on that fallback path, matching the same documented
     // scope-cut as a method declaring keyword params being unreachable via
     // `send` at all.
-    let send_resolves = (name == "send" || name == "public_send")
-        .then(|| resolve_send(cx, recv_id, name))
-        .unwrap_or(SendTarget::Shadowed);
+    let send_resolves = if name == "send" || name == "public_send" {
+        resolve_send(cx, recv_id, name)
+    } else {
+        SendTarget::Shadowed
+    };
     if send_resolves == SendTarget::Unknown && !args.is_empty() {
         // The receiver's class isn't known, so only the runtime can say which
         // `send` its chain resolves to -- hand it the question along with

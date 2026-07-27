@@ -200,7 +200,7 @@ pub(super) fn lower_main_file(
         )));
     }
     let main_name = input_path.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
-    collect_parse_warnings(hir, &result, &main_name, &source);
+    collect_parse_warnings(hir, &result, &main_name, source);
     let program = result
         .node()
         .as_program_node()

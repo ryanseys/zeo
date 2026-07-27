@@ -136,29 +136,6 @@ fn norm(bytes: &[u8], source: &Path, run_cwd: &Path) -> Vec<u8> {
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::normalize_addresses;
-
-    fn scrub(s: &str) -> String {
-        String::from_utf8(normalize_addresses(s.as_bytes().to_vec())).unwrap()
-    }
-
-    #[test]
-    fn only_full_width_object_addresses_are_scrubbed() {
-        assert_eq!(
-            scrub("#<Thread:0x0000000102cf6310 t.rb:4 run>"),
-            "#<Thread:0xADDR t.rb:4 run>"
-        );
-        assert_eq!(scrub("a 0xdeadbeefcafef00d b"), "a 0xADDR b");
-        // `%x`/`%a` formatting is shorter, and a longer run isn't an address.
-        assert_eq!(scrub("0xff / 010"), "0xff / 010");
-        assert_eq!(scrub("\"0x1.ffp+7\""), "\"0x1.ffp+7\"");
-        assert_eq!(scrub("0x00000001234567890"), "0x00000001234567890");
-        // Uppercase hex is `%X` output, never an address rendering.
-        assert_eq!(scrub("0xDEADBEEFCAFEF00D"), "0xDEADBEEFCAFEF00D");
-    }
-}
 
 // ---- sidecars ----
 
@@ -438,5 +415,29 @@ fn mismatch_message(
             show(err),
         ),
         Err(e) => format!("{}: zeo failed to compile/run it: {e}", rb.display()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_addresses;
+
+    fn scrub(s: &str) -> String {
+        String::from_utf8(normalize_addresses(s.as_bytes().to_vec())).unwrap()
+    }
+
+    #[test]
+    fn only_full_width_object_addresses_are_scrubbed() {
+        assert_eq!(
+            scrub("#<Thread:0x0000000102cf6310 t.rb:4 run>"),
+            "#<Thread:0xADDR t.rb:4 run>"
+        );
+        assert_eq!(scrub("a 0xdeadbeefcafef00d b"), "a 0xADDR b");
+        // `%x`/`%a` formatting is shorter, and a longer run isn't an address.
+        assert_eq!(scrub("0xff / 010"), "0xff / 010");
+        assert_eq!(scrub("\"0x1.ffp+7\""), "\"0x1.ffp+7\"");
+        assert_eq!(scrub("0x00000001234567890"), "0x00000001234567890");
+        // Uppercase hex is `%X` output, never an address rendering.
+        assert_eq!(scrub("0xDEADBEEFCAFEF00D"), "0xDEADBEEFCAFEF00D");
     }
 }
