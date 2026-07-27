@@ -96,12 +96,12 @@ ruby_class! {
     def "arity"(recv, _a, _b) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Int(
-            crate::method_params::arity(um.class_id, um.name).unwrap_or(-1),
+            crate::method_meta::arity(um.class_id, crate::MethodKind::Instance, um.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv, _a, _b) {
         let um = recv_unbound(recv);
-        Ok(crate::method_params::parameters(um.class_id, um.name)
+        Ok(crate::method_meta::parameters(um.class_id, crate::MethodKind::Instance, um.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     def "bind"(recv, args, _b) {

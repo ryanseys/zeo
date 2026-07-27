@@ -417,11 +417,40 @@ fn enclosing_frame_label(cx: &Ctx) -> String {
     "<main>".to_string()
 }
 
-/// The `zeo_rt::register_params` entries for one method's `Params`, in
-/// Ruby's canonical `#parameters` order (required, optional, rest, post,
-/// keywords, keyword-rest, block). Internal destructure-slot names
-/// (`__destr_N`) are emitted anonymous, matching CRuby's nameless `[:req]`
-/// for a `|(a, b)|` slot.
+/// The `zeo_rt::MethodMeta` registration for one method scope: what Ruby can
+/// ask back about a `def` that its fn pointer can't answer -- the signature
+/// (`#arity`/`#parameters`) and the `def` keyword's own line
+/// (`#source_location`, and the tail of `#inspect`). One helper for all three
+/// emission sites: a user class's own methods, its `def self.x` methods, and
+/// the methods a reopened builtin gains.
+///
+/// A fact the method doesn't have is left off the chain rather than emitted
+/// empty, so the generated registration stays as small as the `def` is.
+fn method_meta_registration(
+    compiler: &Compiler,
+    class: ClassId,
+    scope: &crate::compiler::Scope,
+    class_method: bool,
+) -> TokenStream {
+    let id = class.0;
+    let name = &scope.name;
+    let ctor = format_ident!("{}", if class_method { "singleton" } else { "instance" });
+    let entries = param_descriptor_entries(&scope.params);
+    let params = (!entries.is_empty()).then(|| quote! { .with_params(vec![ #(#entries),* ]) });
+    let defined_at = scope
+        .def_node
+        .and_then(|n| source_location(compiler, n))
+        .map(|(file, line)| quote! { .defined_at(#file, #line) });
+    quote! {
+        zeo_rt::MethodMeta::#ctor(#id, #name) #params #defined_at .register();
+    }
+}
+
+/// The parameter descriptor entries for one method's `Params`, in Ruby's
+/// canonical `#parameters` order (required, optional, rest, post, keywords,
+/// keyword-rest, block). Internal destructure-slot names (`__destr_N`) are
+/// emitted anonymous, matching CRuby's nameless `[:req]` for a `|(a, b)|`
+/// slot.
 fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
     use crate::hir::KeywordParam;
     fn entry(kind: &str, name: Option<&str>) -> TokenStream {
@@ -724,16 +753,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             });
         }
-        // The signature of each own method, baked for `Method#arity`/
-        // `#parameters` / `UnboundMethod` reflection (the dispatch tables carry
-        // only fn pointers). Emitted in Ruby's canonical `#parameters` order.
+        // What each own method's fn pointer can't answer: its signature and
+        // its `def` line, baked for `Method`/`UnboundMethod` reflection.
         for &sid in &compiler.class(ClassId(id)).own_methods {
             let scope = compiler.scope(sid);
-            let name = &scope.name;
-            let entries = param_descriptor_entries(&scope.params);
-            registrations.push(quote! {
-                zeo_rt::register_params(#id, #name, vec![ #(#entries),* ]);
-            });
+            registrations.push(method_meta_registration(compiler, ClassId(id), scope, false));
         }
         // Every `undef name` in this class's body is recorded so
         // `respond_to?` stops its ancestor walk here -- dispatch itself
@@ -794,6 +818,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     #tramp,
                 );
             });
+            // A class method's reflection keys on the SINGLETON table, so
+            // `Api.method(:fetch)` and `Api.new.method(:fetch)` can't collide.
+            registrations.push(method_meta_registration(compiler, ClassId(id), scope, true));
         }
         // Singleton-chain super targets: every `extend`ed module method's
         // copy -- winner AND shadowed -- registered per `(module, name)` so
@@ -1127,11 +1154,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 }),
                 crate::hir::Visibility::Public => None,
             };
-            // Bake this method's signature for `Method#arity`/`#parameters`
-            // reflection -- the `own_methods` loop above only covers user
-            // CLASSES, not a reopened builtin (Object, which every top-level
-            // `def` materializes onto). `descriptor_of` keys on (cid, name).
-            let params_entries = param_descriptor_entries(&scope.params);
+            // Bake this method's reflection facts -- the `own_methods` loop
+            // above only covers user CLASSES, not a reopened builtin (Object,
+            // which every top-level `def` materializes onto).
+            let meta = method_meta_registration(compiler, ClassId(target), scope, false);
             quote! {
                 __registry.define_value_method(
                     zeo_rt::ClassId(#target),
@@ -1139,9 +1165,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     zeo_rt::Symbol::intern(#key),
                     #tramp,
                 );
-                zeo_rt::register_params(
-                    #target, #key, vec![ #(#params_entries),* ],
-                );
+                #meta
                 #mark_vis
             }
         });

@@ -108,14 +108,14 @@ pub fn marshal_members(recv: &RubyValue) -> Option<Vec<(Symbol, RubyValue)>> {
 
 /// The parameter shape of a struct/data member accessor `name` on `class_id`,
 /// for `Method#arity`/`#parameters` (these accessors are dispatched dynamically,
-/// so no `register_params` descriptor exists). A reader (`:x`) takes no args; a
+/// so they register no descriptor of their own). A reader (`:x`) takes no args; a
 /// writer (`:x=`, structs only) takes one required `value`. `None` when `name`
 /// is not a member accessor of this class.
 pub fn accessor_params(
     class_id: ClassId,
     name: Symbol,
-) -> Option<crate::method_params::Descriptor> {
-    use crate::method_params::ParamKind;
+) -> Option<crate::method_meta::Descriptor> {
+    use crate::method_meta::ParamKind;
     let meta = meta_of(class_id)?;
     let n = name.name();
     if let Some(base) = n.strip_suffix('=') {

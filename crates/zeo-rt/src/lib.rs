@@ -25,7 +25,7 @@ mod globals;
 pub mod gvl;
 mod handling;
 mod lastmatch;
-mod method_params;
+mod method_meta;
 mod ractor;
 mod regexp;
 mod rproc;
@@ -85,7 +85,7 @@ pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match,
 };
-pub use method_params::{ParamKind, register_params};
+pub use method_meta::{MethodKind, MethodMeta, ParamKind};
 
 /// The Ruby class name of any value -- what the generated top level suffixes an
 /// uncaught exception's message with (`"msg (ClassName)"`, CRuby's own form).
