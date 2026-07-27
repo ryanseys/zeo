@@ -74,7 +74,7 @@ ruby_class! {
     }
     // `Hash.try_convert(obj)`: `obj` if it's already a Hash, its `to_hash` if
     // it defines one (which must yield a Hash or nil), else nil.
-    def self."try_convert"(_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let v = &args[0];
         if matches!(v, RubyValue::Hash(_)) {

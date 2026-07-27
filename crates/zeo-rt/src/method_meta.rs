@@ -178,18 +178,24 @@ pub fn arity(class: ClassId, kind: MethodKind, name: Symbol) -> Option<i64> {
     if let Some(d) = descriptor_of(class, kind, name) {
         return Some(arity_of(&d));
     }
-    builtin_arity(class, name)
+    builtin_arity(class, kind, name)
 }
 
 /// A builtin (C-defined) method has no `Params` descriptor -- its arity is the
 /// argc declared in its class's `ruby_class!`/`ruby_module!` definition. Walk
 /// the receiver's ancestry so an inherited builtin resolves against its owner.
-pub(crate) fn builtin_arity(class: ClassId, name: Symbol) -> Option<i64> {
+pub(crate) fn builtin_arity(class: ClassId, kind: MethodKind, name: Symbol) -> Option<i64> {
     let n = name.name();
     let n = n.as_str();
     crate::dispatch::ancestors_of_value(class)
         .iter()
-        .find_map(|&anc| crate::builtins::class_arity_table(anc).and_then(|f| f(n)))
+        .find_map(|&anc| {
+            match kind {
+                MethodKind::Instance => crate::builtins::class_arity_table(anc),
+                MethodKind::Singleton => crate::builtins::class_method_arity_table(anc),
+            }
+            .and_then(|f| f(n))
+        })
 }
 
 /// CRuby's signed arity for one descriptor. Required positionals (a post arg is
@@ -225,7 +231,7 @@ pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
 /// by a rest.
 pub fn parameters(class: ClassId, kind: MethodKind, name: Symbol) -> Option<RubyValue> {
     let d = descriptor_of(class, kind, name)
-        .or_else(|| builtin_arity(class, name).map(anonymous_descriptor))?;
+        .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))?;
     let pairs = d
         .into_iter()
         .map(|(kind, pname)| {
@@ -251,6 +257,107 @@ pub fn source_location(class: ClassId, kind: MethodKind, name: Symbol) -> RubyVa
         RubyValue::Str(crate::string_new(file.to_string())),
         RubyValue::Int(line as i64),
     ]))
+}
+
+/// The pieces of CRuby's `method_inspect` (proc.c), assembled by
+/// [`Inspect::render`]. Both `Method` and `UnboundMethod` fill this in and
+/// share the one formatter:
+///
+/// ```text
+/// #<Method: Sub(Base)#greet() f.rb:1>   inherited -- home, then the owner
+/// #<Method: A#y(x)(q) f.rb:5>           an alias -- its birth name in parens
+/// #<Method: Q.z(x) f.rb:9>              a class method -- a `.`, not a `#`
+/// #<Method: #<Object:0x…>.only() f.rb:17>   a per-object singleton
+/// #<Method: Array#each()>               native -- placeholders, no location
+/// #<UnboundMethod: M#hi() f.rb:1>       unbound -- owner only, never qualified
+/// ```
+pub(crate) struct Inspect<'a> {
+    /// `"Method"` or `"UnboundMethod"`.
+    pub label: &'a str,
+    /// How the lookup's starting point prints -- a class name, or a
+    /// receiver's own `inspect` for a per-object singleton.
+    pub home: String,
+    /// The defining class, when it differs from `home` and so needs naming.
+    pub owner: Option<String>,
+    /// `'.'` for a singleton method, `'#'` for an instance method.
+    pub separator: char,
+    pub name: Symbol,
+    /// The pre-alias name, when this method reached `name` through an alias.
+    pub original: Option<Symbol>,
+    pub params: Descriptor,
+    pub source: Option<(&'static str, u32)>,
+}
+
+impl Inspect<'_> {
+    pub(crate) fn render(&self) -> String {
+        let mut out = format!("#<{}: {}", self.label, self.home);
+        if let Some(owner) = &self.owner {
+            out.push_str(&format!("({owner})"));
+        }
+        out.push(self.separator);
+        out.push_str(&self.name.name());
+        if let Some(original) = self.original {
+            out.push_str(&format!("({})", original.name()));
+        }
+        out.push_str(&render_params(&self.params));
+        if let Some((file, line)) = self.source {
+            out.push_str(&format!(" {file}:{line}"));
+        }
+        out.push('>');
+        out
+    }
+}
+
+/// The parenthesized signature: each parameter as Ruby spells it in a `def`,
+/// with an anonymous slot dropping its name. An entry with no name at all is
+/// a native method's placeholder (see [`anonymous_descriptor`]), which CRuby
+/// prints as a bare `_` or `*`.
+fn render_params(params: &Descriptor) -> String {
+    let one = |(kind, name): &(ParamKind, Option<String>)| match (kind, name.as_deref()) {
+        (ParamKind::Req, None) => "_".to_string(),
+        (ParamKind::Req, Some(n)) => n.to_string(),
+        (ParamKind::Opt, n) => format!("{}=...", n.unwrap_or("_")),
+        (ParamKind::Rest, n) => format!("*{}", n.unwrap_or("")),
+        (ParamKind::KeyReq, n) => format!("{}:", n.unwrap_or("_")),
+        (ParamKind::Key, n) => format!("{}: ...", n.unwrap_or("_")),
+        (ParamKind::KeyRest, n) => format!("**{}", n.unwrap_or("")),
+        (ParamKind::Block, n) => format!("&{}", n.unwrap_or("")),
+    };
+    format!(
+        "({})",
+        params.iter().map(one).collect::<Vec<_>>().join(", ")
+    )
+}
+
+/// The signature to PRINT for `class`'s `name`: the compiler's descriptor when
+/// there is one, else the placeholders derived from a native method's arity.
+pub(crate) fn printable_params(class: ClassId, kind: MethodKind, name: Symbol) -> Descriptor {
+    descriptor_of(class, kind, name)
+        .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))
+        .unwrap_or_default()
+}
+
+/// Where the `def` was written, for the ` file:line` tail of `#inspect`.
+pub(crate) fn source_of(
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> Option<(&'static str, u32)> {
+    lookup(class, kind, name)?.source
+}
+
+/// `Method#original_name`: the name this method was born under -- its own
+/// unless an `alias` renamed it.
+pub fn original_name(class: ClassId, kind: MethodKind, name: Symbol) -> Symbol {
+    lookup(class, kind, name).map_or(name, |meta| meta.original_name())
+}
+
+/// The birth name only when it DIFFERS from the name in hand -- the
+/// `A#y(x)` qualifier `#inspect` adds for an alias.
+pub(crate) fn alias_origin(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Symbol> {
+    lookup(class, kind, name)?
+        .original_name
+        .filter(|&origin| origin != name)
 }
 
 /// The nameless descriptor CRuby reports for a method defined in C, derived

@@ -315,10 +315,11 @@ ruby_class! {
         let m = recv_method(recv);
         Ok(RubyValue::Class(m.owner().unwrap_or(m.home)))
     }
-    // `Method#original_name` -- the name the method was defined under. We don't
-    // record aliases, so this is `#name` (exact except for aliased methods).
+    // `Method#original_name` -- the name the method was DEFINED under, which
+    // differs from `#name` only for one reached through an alias.
     def "original_name"(recv, _args, _blk) {
-        Ok(RubyValue::Symbol(recv_method(recv).name))
+        let m = recv_method(recv);
+        Ok(RubyValue::Symbol(crate::method_meta::original_name(m.home, m.kind, m.name)))
     }
     // `Method#source_location` -- the `[file, line]` codegen baked from the
     // `def` keyword's own span. `nil` for a method with no Ruby source this
@@ -396,12 +397,44 @@ ruby_class! {
         let proc = m_to_proc(recv, &[], None)?;
         crate::dispatch::send_value(&proc, Symbol::intern("curry"), args, None)
     }
+    // The four homes a bound Method can print (see `method_meta::Inspect`):
+    // a per-object singleton names the RECEIVER, a class method names its
+    // class with a `.`, an instance method of `Class`/`Module` reached
+    // through a class receiver names the singleton class that method hangs
+    // off, and everything else names the receiver's class -- qualified with
+    // the owner whenever an ancestor is the one that actually defines it.
     def "inspect" | "to_s" (recv, _args, _blk) {
         let m = recv_method(recv);
-        Ok(RubyValue::Str(crate::collections::string_new(format!(
-            "#<Method: {}#{}>",
-            crate::dispatch::class_name(m.recv.class_id()).unwrap_or_else(|| "Object".to_string()),
-            m.name.name()
-        ))))
+        let owner = m.owner();
+        let per_object = !matches!(m.recv, RubyValue::Class(_))
+            && crate::runtime_meta::object_has_singleton_method(&m.recv, m.name);
+        let (home, separator, qualifier) = if per_object {
+            (m.recv.inspect_string(), '.', None)
+        } else if m.kind == MethodKind::Singleton {
+            (class_name(m.home), '.', owner.filter(|&o| o != m.home))
+        } else if let RubyValue::Class(cid) = m.recv {
+            (format!("#<Class:{}>", class_name(cid)), '#', owner)
+        } else {
+            (class_name(m.home), '#', owner.filter(|&o| o != m.home))
+        };
+        Ok(RubyValue::Str(crate::collections::string_new(
+            crate::method_meta::Inspect {
+                label: "Method",
+                home,
+                owner: qualifier.map(class_name),
+                separator,
+                name: m.name,
+                original: crate::method_meta::alias_origin(m.home, m.kind, m.name),
+                params: crate::method_meta::printable_params(m.home, m.kind, m.name),
+                source: crate::method_meta::source_of(m.home, m.kind, m.name),
+            }
+            .render(),
+        )))
     }
+}
+
+/// A class's Ruby name, or `Object` for one the registry can't name (never
+/// expected -- reflection only ever holds registered classes).
+fn class_name(cid: ClassId) -> String {
+    crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string())
 }

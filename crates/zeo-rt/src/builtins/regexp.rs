@@ -96,7 +96,7 @@ ruby_class! {
 
     // `Regexp.try_convert(obj)` -- `obj` if it is already a Regexp, else `nil`
     // (never raises, unlike a coercion).
-    def self."try_convert"(_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(match &args[0] {
             RubyValue::Regexp(_) => args[0].clone(),

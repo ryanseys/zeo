@@ -175,16 +175,30 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    // `UnboundMethod#original_name` -- the defined name (we track no aliases).
+    // `UnboundMethod#original_name` -- the name it was DEFINED under, which
+    // differs from `#name` only for one reached through an alias.
     def "original_name"(recv, _a, _b) {
-        Ok(RubyValue::Symbol(recv_unbound(recv).name))
+        let um = recv_unbound(recv);
+        Ok(RubyValue::Symbol(crate::method_meta::original_name(um.home, um.kind, um.name)))
     }
+    // Unbound, there is no receiver to qualify against: CRuby prints the
+    // OWNER alone, never the class the method was fetched from.
     def "inspect" | "to_s" (recv, _a, _b) {
         let um = recv_unbound(recv);
-        Ok(RubyValue::Str(crate::collections::string_new(format!(
-            "#<UnboundMethod: {}#{}>",
-            crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string()),
-            um.name.name()
-        ))))
+        let owner = um.owner().unwrap_or(um.home);
+        Ok(RubyValue::Str(crate::collections::string_new(
+            crate::method_meta::Inspect {
+                label: "UnboundMethod",
+                home: crate::dispatch::class_name(owner)
+                    .unwrap_or_else(|| "Object".to_string()),
+                owner: None,
+                separator: if um.kind == MethodKind::Singleton { '.' } else { '#' },
+                name: um.name,
+                original: crate::method_meta::alias_origin(um.home, um.kind, um.name),
+                params: crate::method_meta::printable_params(um.home, um.kind, um.name),
+                source: crate::method_meta::source_of(um.home, um.kind, um.name),
+            }
+            .render(),
+        )))
     }
 }

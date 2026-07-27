@@ -1052,7 +1052,7 @@ ruby_class! {
     // if it defines one (which must yield a String), else nil. That IS the
     // `to_str` check-conversion protocol, so it delegates rather than
     // re-deriving it -- a present-but-lying `to_str` still raises TypeError.
-    def self."try_convert"(_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(convert::check_to_str(&args[0])?.unwrap_or(RubyValue::Nil))
     }

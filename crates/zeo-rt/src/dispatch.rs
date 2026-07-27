@@ -633,6 +633,11 @@ struct ClassEntry {
     /// `mark_own` beside `mark_private`. Empty means "unknown/none recorded",
     /// in which case reflection falls back to the materialized set.
     own_methods: HashSet<Symbol>,
+    /// `own_methods`' class-method twin: the names whose `def self.x` is
+    /// written HERE, as opposed to materialized down from an ancestor. Only
+    /// reflection needs the distinction -- `Cache.method(:open).owner` has to
+    /// answer `Store` even though materialization gave `Cache` a copy.
+    own_class_methods: HashSet<Symbol>,
     constructor: Option<ConstructorFn>,
     /// The no-`initialize` allocator backing `Class#allocate` -- registered by
     /// `ruby_class!`'s `__register` beside the constructor. `None` for
@@ -684,6 +689,7 @@ impl ClassRegistry {
                 class_methods: HashMap::new(),
                 singleton_super_targets: HashMap::new(),
                 own_methods: HashSet::new(),
+                own_class_methods: HashSet::new(),
                 constructor,
                 allocator: None,
             },
@@ -739,6 +745,14 @@ impl ClassRegistry {
     pub fn mark_own(&mut self, id: ClassId, name: Symbol) {
         if let Some(e) = self.entries.get_mut(&id.0) {
             e.own_methods.insert(name);
+        }
+    }
+
+    /// [`mark_own`](Self::mark_own) for a `def self.x` -- see
+    /// `ClassEntry::own_class_methods`.
+    pub fn mark_own_class_method(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.own_class_methods.insert(name);
         }
     }
 
@@ -1442,7 +1456,12 @@ pub fn class_method_owner_after(
 fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
     let n = name.name();
     ancestors_of_value(cid).iter().skip(skip).copied().find(|&anc| {
-        class_defines_own_class_method(anc, name)
+        (crate::runtime_meta::is_live()
+            && crate::runtime_meta::overlay_class_method(anc, name).is_some())
+            || REGISTRY
+                .get()
+                .and_then(|r| r.entries.get(&anc.0))
+                .is_some_and(|e| e.own_class_methods.contains(&name))
             || crate::builtins::class_method_table(anc).is_some_and(|lookup| lookup(&n).is_some())
     })
 }

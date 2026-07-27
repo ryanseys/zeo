@@ -818,8 +818,21 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     #tramp,
                 );
             });
-            // A class method's reflection keys on the SINGLETON table, so
-            // `Api.method(:fetch)` and `Api.new.method(:fetch)` can't collide.
+        }
+        // A class method's reflection keys on the SINGLETON table, so
+        // `Api.method(:fetch)` and `Api.new.method(:fetch)` can't collide --
+        // and on the class that WROTE the `def self.x`, not on every
+        // descendant materialization gave a copy to, so `Cache.method(:open)`
+        // still reports `Store` as its owner.
+        for &sid in &compiler.class(ClassId(id)).own_class_methods {
+            let scope = compiler.scope(sid);
+            let key = &scope.name;
+            registrations.push(quote! {
+                __registry.mark_own_class_method(
+                    zeo_rt::ClassId(#id),
+                    zeo_rt::Symbol::intern(#key),
+                );
+            });
             registrations.push(method_meta_registration(compiler, ClassId(id), scope, true));
         }
         // Singleton-chain super targets: every `extend`ed module method's

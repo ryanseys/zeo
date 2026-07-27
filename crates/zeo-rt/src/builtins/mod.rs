@@ -204,6 +204,23 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
     })
 }
 
+/// `class_method_table`'s arity twin -- what `Foo.method(:bar).arity` reads
+/// for a builtin class method, the singleton mirror of [`class_arity_table`].
+pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
+    if let Some(t) = registered_table(id) {
+        return t.class.as_ref().map(|m| m.arity);
+    }
+    // Only the hand-written tables that declare arities appear here; the rest
+    // of `class_method_table`'s arms are hand-rolled `lookup_class` fns with
+    // no arity twin, so their class methods report the `-1` catch-all.
+    Some(match id {
+        zeo_abi::FILE_TEST_MODULE => file::lookup_class_arity,
+        #[cfg(feature = "ext-psych")]
+        zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class_arity,
+        _ => return None,
+    })
+}
+
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin
 /// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
 /// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.

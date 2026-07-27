@@ -25,7 +25,7 @@ ruby_class! {
     // `Array.try_convert(obj)`: `obj` if it's already an Array, its `to_ary`
     // if it defines one (which must yield an Array or nil), else nil. Unlike
     // `Array(obj)` it never wraps or raises for a non-convertible value.
-    def self."try_convert"(_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         let v = &args[0];
         if matches!(v, RubyValue::Array(_)) {
