@@ -1,0 +1,13 @@
+TCPServer
+TCPSocket
+UDPSocket
+BasicSocket
+Socket
+"TCPServer"
+"TCPServer"
+"::1"
+NoMethodError
+"undefined method 'bogus_xyz' for class TCPServer"
+TCPServer
+NameError
+"uninitialized constant Bogus123Xyz"

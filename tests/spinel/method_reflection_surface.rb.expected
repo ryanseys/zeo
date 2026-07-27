@@ -1,0 +1,7 @@
+true
+true
+:dbl
+[[:req, :n]]
+1
+[[:req, :a], [:opt, :b], [:rest, :r], [:key, :k], [:keyrest, :kw], [:block, :blk]]
+:m

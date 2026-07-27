@@ -1,0 +1,2 @@
+spinel/issue_3330_unresolved_at_typed_slots.rb:2:in '<module:Sock>': uninitialized constant Sock::FFI (NameError)
+	from spinel/issue_3330_unresolved_at_typed_slots.rb:1:in '<main>'

@@ -1,0 +1,26 @@
+== local alias ==
+"x1"
+"X"
+"R"
+"x"
+">x"
+"Z"
+""
+"ab"
+== container ==
+["1X"]
+"1X"
+{k: "v1"}
+== ivar ==
+"x1"
+== param ==
+"G"
+== capture ==
+"xc"
+== return ==
+"xr"
+== iteration ==
+["a!", "b!"]
+== frozen ==
+:frozen
+"x"

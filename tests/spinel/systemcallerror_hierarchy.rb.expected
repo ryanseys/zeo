@@ -1,0 +1,10 @@
+"caught SystemCallError"
+Errno::ENOENT
+true
+true
+true
+false
+"caught StandardError"
+Errno::ECONNREFUSED
+"socket error is a SystemCallError"
+"TypeError stays a TypeError"

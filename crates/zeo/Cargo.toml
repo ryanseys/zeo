@@ -16,6 +16,8 @@ miette.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# `flock(2)` for the cross-process runtime-build lock in `backend`.
+libc.workspace = true
 
 [build-dependencies]
 # The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the

@@ -1,0 +1,17 @@
+nil
+Array
+1
+nil
+IO
+IO
+true
+IO
+IO
+true
+Errno::EBADF
+true
+NoMethodError
+"undefined method 'bogus_xyz' for class Dir"
+Errno::EBADF
+Errno::EBADF
+Dir

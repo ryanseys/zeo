@@ -1,0 +1,20 @@
+Addrinfo
+"127.0.0.1"
+80
+true
+true
+false
+"#<Addrinfo: 127.0.0.1:80 TCP>"
+true
+true
+"#<Addrinfo: [::1]:53 UDP>"
+true
+true
+Addrinfo
+"127.0.0.1"
+true
+Socket::Option
+true
+true
+true
+true

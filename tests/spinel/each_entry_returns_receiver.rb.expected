@@ -1,0 +1,10 @@
+Dir
+[".", "..", "a.txt"]
+Array
+true
+Hash
+Range
+[2, 4, 6]
+[["a", 1], ["b", 2]]
+Trio
+[1, 2, 3]

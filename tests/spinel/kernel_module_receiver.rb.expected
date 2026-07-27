@@ -1,0 +1,14 @@
+puts ok
+print ok
+"03.50"
+"a-b"
+42
+255
+1.5
+"9"
+[1, 2]
+false
+0
+"boom"
+"Proc"
+false

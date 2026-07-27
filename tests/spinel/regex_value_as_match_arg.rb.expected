@@ -1,0 +1,40 @@
+#<MatchData "1">
+true
+0
+false
+["1"]
+#<MatchData "1">
+["1", "2"]
+#<MatchData "1">
+true
+0
+["1", "2"]
+#<MatchData "1">
+true
+0
+false
+["1", "2"]
+#<MatchData "1">
+true
+0
+["1", "2"]
+[["1", "b"]]
+#<MatchData "1">
+#<MatchData "d">
+true
+["1", "2", "d"]
+[["1", "b"]]
+["1", "2"]
+[["1", "b"]]
+[]
+12"a1b2"
+43200
+1800
+nil
+#<MatchData "2">
+true
+#<MatchData "2">
+#<MatchData "1">
+true
+#<MatchData "1">
+true

@@ -1,0 +1,11 @@
+["WaitReadable", IO::EAGAINWaitReadable]
+true
+true
+:wait_readable
+:wait_readable
+IO::EAGAINWaitReadable
+"hi"
+4
+"moresecond"
+"line\n"
+true

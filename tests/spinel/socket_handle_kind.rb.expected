@@ -1,0 +1,9 @@
+true
+"hi\n"
+Array
+"AF_INET"
+false
+NoMethodError
+"undefined method 'addr' for an instance of File"
+NoMethodError
+NoMethodError

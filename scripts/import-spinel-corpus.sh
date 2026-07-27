@@ -28,16 +28,18 @@ is_removed() { local s="${1%.rb}"; for r in "${REMOVED[@]}"; do [ "$r" = "$s" ] 
 # Bless <name>.rb's golden from ruby, run from the tests/ cwd with a RELATIVE
 # source path (e.g. `spinel/<name>.rb`) so backtrace paths match the harness's
 # normalization. Writes <name>.rb.expected, and <name>.rb.err.expected only if
-# ruby wrote to stderr.
+# ruby wrote to stderr. A test whose oracle run RAISES is a legitimate golden
+# (empty stdout + a backtrace on stderr), so ruby's exit status is ignored --
+# without the `|| true` `set -e` would abort the whole import mid-bless.
 bless() { # $1 = suite dir under tests/ ("spinel" or "gaps"), $2 = name.rb
   local rel="$1/$2" args stdin_file
   args="$(cat "$TESTS/$rel.args" 2>/dev/null || true)"
   stdin_file="$TESTS/$rel.stdin"
   ( cd "$TESTS"
     if [ -f "$stdin_file" ]; then
-      "$RB" "${FLAGS[@]}" "$rel" $args < "$stdin_file" > "$rel.expected" 2>/tmp/import_err
+      "$RB" "${FLAGS[@]}" "$rel" $args < "$stdin_file" > "$rel.expected" 2>/tmp/import_err || true
     else
-      "$RB" "${FLAGS[@]}" "$rel" $args > "$rel.expected" 2>/tmp/import_err
+      "$RB" "${FLAGS[@]}" "$rel" $args > "$rel.expected" 2>/tmp/import_err || true
     fi )
   if [ -s /tmp/import_err ]; then cp /tmp/import_err "$TESTS/$rel.err.expected"
   else rm -f "$TESTS/$rel.err.expected"; fi
@@ -46,7 +48,8 @@ bless() { # $1 = suite dir under tests/ ("spinel" or "gaps"), $2 = name.rb
 added=()
 for rb in "$SP"/*.rb; do
   name="$(basename "$rb")"
-  [ -e "$SPINEL/$name" ] && continue                  # already vendored
+  # Already vendored -- as a corpus case, a gap, or a flat top-level example.
+  { [ -e "$SPINEL/$name" ] || [ -e "$GAPS/$name" ] || [ -e "$TESTS/$name" ]; } && continue
   is_removed "$name" && continue                      # skiplisted
   cp "$rb" "$SPINEL/$name"
   [ -f "$rb.args" ] && cp "$rb.args" "$SPINEL/$name.args"

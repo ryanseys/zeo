@@ -1,0 +1,3 @@
+Set-Cookie: flash=hello; HttpOnly
+Set-Cookie: sid=42; Path=/
+Set-Cookie: theme=dark; Secure

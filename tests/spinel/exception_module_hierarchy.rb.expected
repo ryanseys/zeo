@@ -1,0 +1,14 @@
+rescued via module
+true
+true
+true
+[NetGlitch, Retryable, StandardError, Exception]
+["module", IO::EAGAINWaitReadable]
+"errno"
+"syscall"
+true
+true
+true
+false
+["w", IO::EINPROGRESSWaitWritable]
+"EWOULDBLOCK catches EAGAIN"

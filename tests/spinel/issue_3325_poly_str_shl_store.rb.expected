@@ -1,0 +1,2 @@
+Set-Cookie: flash=hello; HttpOnly
+sid=42; Path=/; HttpOnly; SameSite=Lax

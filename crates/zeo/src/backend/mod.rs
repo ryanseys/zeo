@@ -58,6 +58,57 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
+/// How many jobs a runtime `cargo` build may run at once.
+///
+/// Cargo defaults `-j` to the core count, and `[profile.release] codegen-units = 1`
+/// makes every crate in the graph ONE whole-crate LLVM module -- the fattest rustc
+/// configuration there is. At the machine's full width that is enough concurrent
+/// rustc to exhaust memory on a 16GB box (`bindgen`, `clang-sys`, `syn`,
+/// `regex-automata` and `jiff` are all in the runtime's graph). Capped here, and
+/// overridable for a big CI machine.
+fn job_cap() -> usize {
+    if let Some(n) = std::env::var("ZEO_BUILD_JOBS").ok().and_then(|v| v.parse().ok()) {
+        return n;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    cores.min(6)
+}
+
+/// An exclusive cross-process lock serializing runtime `cargo` builds.
+///
+/// The four (runtime, linkage) combinations build into SEPARATE target dirs (see
+/// [`variant_target_dir`]), so cargo's own per-target-dir build lock does NOT
+/// serialize them -- and because the dirs share no compiled dependencies, two
+/// concurrent builds compile two full copies of the graph at once. Under nextest
+/// (process per test, so [`ensure_runtime_built`]'s per-process memo collapses
+/// nothing) the lean and eval dynamic builds raced exactly that way and exhausted
+/// memory. One lock across all combinations keeps the peak to a single graph.
+///
+/// `flock(2)` is released by the kernel when the fd closes -- including on a killed
+/// process -- so an interrupted build can never leave a stale lock behind.
+#[cfg(unix)]
+fn lock_runtime_build() -> Option<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    let path = target_dir().join(".zeo-rt-build.lock");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).ok()?;
+    // EINTR is the only retryable error here; anything else means we proceed
+    // unlocked rather than fail a build over a lock we couldn't take.
+    while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return None;
+        }
+    }
+    Some(file)
+}
+
+#[cfg(not(unix))]
+fn lock_runtime_build() -> Option<std::fs::File> {
+    None
+}
+
 /// The workspace crates whose sources are inputs to the `zeo-rt` artifact --
 /// its own crate plus its workspace path-dependency closure. `ensure_runtime_built`
 /// stat-walks exactly these to decide whether a built runtime is stale, so this
@@ -265,7 +316,7 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
     let mut cmd = std::process::Command::new("cargo");
     match linkage {
         Linkage::Static => {
-            cmd.arg("build").arg("--quiet");
+            cmd.arg("build").arg("--quiet").arg("--jobs").arg(job_cap().to_string());
             if let Some(flag) = profile.cargo_flag() {
                 cmd.arg(flag);
             }
@@ -280,7 +331,8 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             // `prefer-dynamic` to the FINAL crate only (its rlib deps still link
             // normally). Always its own target dir -- a `prefer-dynamic` build
             // must not clobber the static rlib.
-            cmd.arg("rustc").arg("--quiet");
+            // `--jobs` must precede the `--` separator or cargo hands it to rustc.
+            cmd.arg("rustc").arg("--quiet").arg("--jobs").arg(job_cap().to_string());
             if let Some(flag) = profile.cargo_flag() {
                 cmd.arg(flag);
             }
@@ -297,6 +349,8 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
     }
     cmd.current_dir(workspace_root());
     let label = build_label(profile, runtime, linkage);
+    // Held for the whole cargo call: one runtime build machine-wide at a time.
+    let _lock = lock_runtime_build();
     match cmd.status() {
         Ok(status) if status.success() => Ok(()),
         Ok(status) => Err(format!("`{label}` exited with {status}")),

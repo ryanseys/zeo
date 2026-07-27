@@ -1,0 +1,6 @@
+Set-Cookie: z=9
+Set-Cookie: a=1
+Set-Cookie: t=2
+"z=9"
+nil
+["a=1", "t=2"]

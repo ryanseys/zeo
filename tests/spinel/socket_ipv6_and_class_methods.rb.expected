@@ -1,0 +1,13 @@
+"AF_INET6"
+"v6"
+"AF_INET6"
+"AF_INET"
+Array
+"AF_INET"
+80
+"127.0.0.1"
+Socket
+true
+"hey\n"
+Socket
+true

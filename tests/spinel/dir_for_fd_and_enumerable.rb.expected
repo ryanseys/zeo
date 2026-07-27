@@ -1,0 +1,11 @@
+nil
+["a.txt", "b.txt"]
+[".", "..", "a.txt", "b.txt"]
+[".", "..", "a.txt", "b.txt"]
+["a.txt", "b.txt"]
+[".", "..", "a.txt", "b.txt"]
+4
+true
+[".", "..", "A.TXT", "B.TXT"]
+["a.txt", "b.txt"]
+"spinel_dir_suite"

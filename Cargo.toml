@@ -128,3 +128,14 @@ debug = "line-tables-only"
 [profile.release]
 strip = "symbols"
 codegen-units = 1
+
+# ...but only for the workspace crates that need it. `codegen-units = 1` above
+# applies to the WHOLE release graph, and one whole-crate LLVM module per
+# dependency is the fattest configuration rustc has: `bindgen`, `clang-sys`,
+# `syn`, `regex-automata` and `jiff` are all in `zeo-rt`'s graph, and building
+# them that way is what let a runtime build exhaust memory. `package."*"` covers
+# dependencies only, so `zeo-rt` keeps its whole-crate optimization (the reason
+# the no-LTO note above holds) while its deps -- which gain nothing from it,
+# being optimized units already -- build in parallel chunks.
+[profile.release.package."*"]
+codegen-units = 16

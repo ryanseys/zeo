@@ -1,0 +1,16 @@
+UDPSocket
+true
+"ping"
+"AF_INET"
+"127.0.0.1"
+"pong"
+UNIXServer
+true
+UNIXSocket
+"hi\n"
+Integer
+true
+true
+0
+true
+NameError
