@@ -280,9 +280,7 @@ program, at most once per (profile, runtime variant, linkage). You can prebuild
 it explicitly with `cargo build --release -p zeo-rt` (add `--features eval-vm`
 for programs that use dynamic `eval`).
 
-`mise.toml` pins the development toolchain (`ruby = "4.0.5"`, `rust = "1.97.1"`)
-and defines convenience tasks: `mise run build`, `mise run zeo`,
-`mise run conformance`, `mise run e2e`.
+`mise.toml` pins the development toolchain (`ruby = "4.0.5"`, `rust = "1.97.1"`).
 
 ## Testing & conformance
 
