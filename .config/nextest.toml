@@ -15,3 +15,8 @@ golden = { max-threads = 8 }
 [[profile.default.overrides]]
 filter = "binary(spinel) | binary(examples) | binary(gaps)"
 test-group = "golden"
+# Backstop under the harness's own per-child byte cap and deadline (see
+# `run_bounded` in tests/support/golden.rs). That bound handles a runaway
+# compiled program; this one catches anything the harness itself gets stuck on,
+# so a hung case can never wedge the whole run.
+slow-timeout = { period = "60s", terminate-after = 3 }

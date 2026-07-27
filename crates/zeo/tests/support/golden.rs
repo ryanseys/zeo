@@ -20,6 +20,120 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
+
+/// Hard bounds on any child this harness runs (a compiled golden binary, or the
+/// ruby oracle).
+///
+/// Without them a single miscompiled `.rb` takes the machine down rather than
+/// failing: `Command::output()` reads both pipes to EOF into an unbounded
+/// `Vec<u8>`, and because the parent always drains, the child is never
+/// backpressured -- so `loop { puts "x" }` writes into the test process's memory
+/// at full speed, forever. Neither nextest nor the harness had anything that
+/// would stop it. A run that trips either bound is reported as an ordinary test
+/// FAILURE naming the bound, which is what the corpus wants: a hang is a
+/// divergence from ruby like any other.
+const MAX_CAPTURE: usize = 64 << 20; // 64 MiB per stream
+const RUN_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Run `cmd` to completion, capturing at most [`MAX_CAPTURE`] per stream and
+/// killing it after [`RUN_DEADLINE`].
+///
+/// Both pipes are drained on their own threads, and `stdin` is written on one
+/// too: writing it inline (as this harness used to) deadlocks whenever the child
+/// fills its stdout pipe before consuming all of stdin.
+fn run_bounded(
+    cmd: &mut Command,
+    stdin: Option<&[u8]>,
+    what: &str,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    use std::io::Read as _;
+    use std::process::Stdio;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    match stdin {
+        Some(_) => cmd.stdin(Stdio::piped()),
+        None => cmd.stdin(Stdio::null()),
+    };
+    let mut child = cmd.spawn().map_err(|e| format!("spawn {what}: {e}"))?;
+
+    // Set by either reader the moment its stream passes the cap.
+    let overflowed = Arc::new(AtomicBool::new(false));
+
+    let spawn_reader = |mut pipe: Box<dyn std::io::Read + Send>, flag: Arc<AtomicBool>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 64 * 1024];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if buf.len() > MAX_CAPTURE {
+                            // Stop draining: the child blocks on its next write
+                            // and the deadline loop kills it.
+                            flag.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                    }
+                }
+            }
+            buf
+        })
+    };
+
+    let out_h = spawn_reader(
+        Box::new(child.stdout.take().expect("piped stdout")),
+        Arc::clone(&overflowed),
+    );
+    let err_h = spawn_reader(
+        Box::new(child.stderr.take().expect("piped stderr")),
+        Arc::clone(&overflowed),
+    );
+    let in_h = stdin.map(|input| {
+        let mut sink = child.stdin.take().expect("piped stdin");
+        let input = input.to_vec();
+        std::thread::spawn(move || {
+            use std::io::Write as _;
+            // A child that exits without reading stdin gives us EPIPE; that is
+            // its business, not an error here.
+            let _ = sink.write_all(&input);
+        })
+    });
+
+    let started = Instant::now();
+    let mut limit = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Err(e) => return Err(format!("waiting on {what}: {e}")),
+            Ok(None) => {}
+        }
+        if overflowed.load(Ordering::SeqCst) {
+            limit = Some(format!("wrote more than {} MiB", MAX_CAPTURE >> 20));
+        } else if started.elapsed() > RUN_DEADLINE {
+            limit = Some(format!("ran longer than {}s", RUN_DEADLINE.as_secs()));
+        }
+        if limit.is_some() {
+            let _ = child.kill();
+            let _ = child.wait();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let out = out_h.join().unwrap_or_default();
+    let err = err_h.join().unwrap_or_default();
+    if let Some(h) = in_h {
+        let _ = h.join();
+    }
+    match limit {
+        Some(why) => Err(format!("{what} killed: {why}")),
+        None => Ok((out, err)),
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -208,27 +322,9 @@ fn compile_and_run(
 
     let mut cmd = Command::new(&bin);
     cmd.args(args).current_dir(run_cwd);
-    let out = if let Some(input) = stdin {
-        use std::io::Write as _;
-        use std::process::Stdio;
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| format!("spawn: {e}"))?;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input)
-            .map_err(|e| format!("write stdin: {e}"))?;
-        child.wait_with_output()
-    } else {
-        cmd.output()
-    }
-    .map_err(|e| format!("running compiled binary: {e}"));
+    let out = run_bounded(&mut cmd, stdin, "compiled binary");
     let _ = std::fs::remove_file(&bin);
-    let out = out?;
-    Ok((out.stdout, out.stderr))
+    out
 }
 
 // ---- ruby oracle (bless) ----
@@ -268,25 +364,7 @@ fn run_oracle(
         cmd.arg("-W:no-experimental").env("RUBY_BOX", "1");
     }
     cmd.arg(rb).args(args).current_dir(run_cwd);
-    let out = if let Some(input) = stdin {
-        use std::io::Write as _;
-        use std::process::Stdio;
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| format!("spawn ruby: {e}"))?;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input)
-            .map_err(|e| format!("write ruby stdin: {e}"))?;
-        child.wait_with_output()
-    } else {
-        cmd.output()
-    }
-    .map_err(|e| format!("running ruby oracle: {e}"))?;
-    Ok((out.stdout, out.stderr))
+    run_bounded(&mut cmd, stdin, "ruby oracle")
 }
 
 /// `ZEO_BLESS=1`: (re)write `<rb>.expected` (+ `.err.expected`) from the oracle.
@@ -403,7 +481,18 @@ fn mismatch_message(
     expected_err: &[u8],
     run_cwd: &Path,
 ) -> String {
-    let show = |b: &[u8]| String::from_utf8_lossy(&norm(b, rb, run_cwd)).into_owned();
+    // Truncate BEFORE `norm`: it makes three full copies of its input, and its
+    // path-replacement pass scans for the needle at every byte offset, so
+    // handing it a multi-megabyte buffer costs more than the message is worth.
+    const SHOW_LIMIT: usize = 8 << 10;
+    let show = |b: &[u8]| {
+        let clipped = &b[..b.len().min(SHOW_LIMIT)];
+        let mut s = String::from_utf8_lossy(&norm(clipped, rb, run_cwd)).into_owned();
+        if b.len() > SHOW_LIMIT {
+            s.push_str(&format!("\n[... {} more bytes]", b.len() - SHOW_LIMIT));
+        }
+        s
+    };
     match actual {
         Ok((out, err)) => format!(
             "{}: output differs from ruby.\n--- expected stdout ---\n{}\n--- actual stdout ---\n{}\n\
