@@ -2128,6 +2128,44 @@ pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
+/// `recv.send(name, ...)` / `#public_send` where the compiler could not prove
+/// WHICH `send` the receiver's chain resolves to.
+///
+/// CRuby has no `send` intrinsic: `send` is an ordinary method on `Kernel`,
+/// so a class defining its own -- `BasicSocket#send` writing bytes,
+/// `Ractor#send` passing a message, any `def send` of your own -- simply wins
+/// the lookup because it sits earlier in the MRO. Only when the lookup lands
+/// on Kernel's does the first argument get reinterpreted as a method name.
+/// This asks that question once, then does whichever of the two the answer
+/// calls for.
+///
+/// `send_name` is the name as WRITTEN (`:send` or `:public_send`), which is
+/// both what the MRO is asked about and what an ordinary call dispatches.
+pub fn send_dispatch_in(
+    box_id: u32,
+    recv: &RubyValue,
+    send_name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let shadowed = !matches!(
+        method_owner(recv.class_id(), send_name),
+        Some(KERNEL_CLASS) | Some(BASIC_OBJECT_CLASS) | None
+    );
+    if shadowed {
+        return send_value_in(box_id, recv, send_name, args, block);
+    }
+    let Some((target, rest)) = args.split_first() else {
+        return Err(crate::builtins::arg_error!("no method name given"));
+    };
+    let target = method_name_symbol(target)?;
+    if send_name == Symbol::intern("public_send") {
+        send_value_public_in(box_id, recv, target, rest, block)
+    } else {
+        send_value_in(box_id, recv, target, rest, block)
+    }
+}
+
 /// A registry-OPTIONAL probe for a builtin-reopen method --
 /// `None` when no registry is installed (this crate's own unit tests) or
 /// the class carries no such method. The lookup key is the receiver's own

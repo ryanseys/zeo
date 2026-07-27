@@ -257,6 +257,49 @@ fn wrap_dynamic_result(has_block: bool, call: TokenStream) -> TokenStream {
         quote! { (#call)? }
     }
 }
+
+/// Which `send` a `recv.send(...)` site resolves to.
+///
+/// CRuby has no `send` intrinsic: `send` is an ordinary method on `Kernel`,
+/// so a class defining its own -- `BasicSocket#send` writing bytes,
+/// `Ractor#send` passing a message, any `def send` of your own -- simply wins
+/// the lookup by sitting earlier in the MRO, and only Kernel's reinterprets
+/// the first argument as a method name. Resolve first, reinterpret second.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum SendTarget {
+    /// Provably Kernel's: reinterpret `args[0]` here, at compile time.
+    Kernel,
+    /// Provably shadowed: emit an ordinary call named `send`.
+    Shadowed,
+    /// The receiver's class isn't statically known, so the MRO question goes
+    /// to the runtime (`zeo_rt::send_dispatch_in`).
+    Unknown,
+}
+
+/// [`SendTarget`] for one call site: walk the receiver's ancestors and see who
+/// gets to `name` first. Both halves of the chain matter -- a user `def send`
+/// and a builtin's own row -- so this consults the user method table AND the
+/// generated builtin surface at each position.
+fn resolve_send(cx: &Ctx, recv_id: NodeId, name: &str) -> SendTarget {
+    let Some(cid) = super::expr::infer_any_class(cx, recv_id) else {
+        return SendTarget::Unknown;
+    };
+    let defines = |anc: crate::compiler::ClassId| {
+        cx.compiler
+            .class(anc)
+            .own_methods
+            .iter()
+            .any(|&sid| cx.compiler.scope(sid).name == name)
+            || crate::builtin_surface::provides_instance_method(anc, name)
+    };
+    match cx.compiler.class(cid).ancestors.iter().copied().find(|&a| defines(a)) {
+        // Nobody closer than Kernel/BasicObject: the reinterpreting one.
+        Some(crate::compiler::KERNEL_CLASS | crate::compiler::BASIC_OBJECT_CLASS) | None => {
+            SendTarget::Kernel
+        }
+        Some(_) => SendTarget::Shadowed,
+    }
+}
 /// The value `self` has in the context currently being emitted, as a boxed
 /// `RubyValue` ready for runtime dispatch: the concrete receiver inside an
 /// instance method, the CLASS OBJECT inside a class method or class body
@@ -2136,7 +2179,9 @@ fn dispatch(
 
     let recv_class = infer_class(cx, recv_id);
 
-    // `send`/`public_send`: try literal-name static resolution first
+    // `send`/`public_send`: which one does this receiver's chain resolve to?
+    // (See `resolve_send`.) Then, for Kernel's:
+    // try literal-name static resolution first
     // (mirrors zeo's `desugar_public_send_recv`) -- rewritten to a direct
     // call (Path 1) when the class is known AND the name resolves. Falls to
     // Path 2 (the genuinely new part -- see the plan's Object Model
@@ -2148,17 +2193,31 @@ fn dispatch(
     // simply dropped on that fallback path, matching the same documented
     // scope-cut as a method declaring keyword params being unreachable via
     // `send` at all.
-    // A class that defines its OWN `send`/`public_send` uses THAT method (Ruby
-    // dispatches it as an ordinary call); only the builtin Kernel#send/#public_send
-    // reinterprets the first argument as a method name. So when the receiver's
-    // class defines the name, skip this reinterpretation entirely and fall
-    // through to the ordinary Path-1 call below (mirroring the Ractor#send
-    // shadow arm above).
-    let send_is_user_defined = (name == "send" || name == "public_send")
-        && recv_class
-            .and_then(|c| cx.compiler.method_in_chain(c, name))
-            .is_some();
-    if (name == "send" || name == "public_send") && !args.is_empty() && !send_is_user_defined {
+    let send_resolves = (name == "send" || name == "public_send")
+        .then(|| resolve_send(cx, recv_id, name))
+        .unwrap_or(SendTarget::Shadowed);
+    if send_resolves == SendTarget::Unknown && !args.is_empty() {
+        // The receiver's class isn't known, so only the runtime can say which
+        // `send` its chain resolves to -- hand it the question along with
+        // every argument, including the one Kernel's would reinterpret.
+        let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
+        let all_args = args.iter().map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        });
+        let block_value = emit_block_option(cx, block, block_arg);
+        let dyn_call = quote! {
+            zeo_rt::send_dispatch_in(
+                #__bx,
+                &(#recv_expr),
+                zeo_rt::Symbol::intern(#name),
+                &[#(#all_args,)* #(#kw_hash,)*],
+                #block_value,
+            )
+        };
+        return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
+    }
+    if send_resolves == SendTarget::Kernel && !args.is_empty() {
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
             if let Some(cid) = recv_class {
