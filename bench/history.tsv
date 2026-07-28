@@ -77,12 +77,14 @@ bm_range_each	1784676499	11.494
 bm_range_each	1784705777	5.954
 bm_rbtree	1784676544	2.332
 bm_rbtree	1784705784	1.818
+bm_rbtree	1785266940	0.938
 bm_ruby_xor	1784676564	6.132
 bm_ruby_xor	1784705800	5.148
 bm_send_bmethod	1784676568	0.160
 bm_send_bmethod	1784705801	0.145
 bm_send_cfunc_block	1784676588	6.323
 bm_send_cfunc_block	1784705820	5.952
+bm_send_cfunc_block	1785266954	4.229
 bm_send_rubyfunc_block	1784676592	0.570
 bm_send_rubyfunc_block	1784705822	0.487
 bm_setivar	1784676595	0.256
@@ -97,6 +99,7 @@ bm_sinatra_mini	1784676603	0.017
 bm_sinatra_mini	1784705830	0.020
 bm_so_lists	1784676626	7.451
 bm_so_lists	1784705852	7.367
+bm_so_lists	1785266968	6.612
 bm_so_mandelbrot	1784705880	8.813
 bm_so_mandelbrot	1784733203	8.960
 bm_sort_by	1784676637	0.047

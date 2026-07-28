@@ -620,38 +620,72 @@ ruby_class! {
         Ok(RubyValue::Str(crate::string_new(join_recursive(&elems, &sep))))
     }
     def "index" | "find_index"(recv, args, block) {
-        let items = recv_array!(recv).lock().clone();
+        // Live per-element probes: neither the block nor `rb_eq` (a user
+        // `==`) ever runs under the receiver's lock.
+        let arr = recv_array!(recv);
         if let Some(RubyValue::Proc(p)) = &block {
-            for (i, e) in items.iter().enumerate() {
-                if p.call(std::slice::from_ref(e))?.truthy() {
+            let mut i = 0usize;
+            loop {
+                let e = {
+                    let guard = arr.lock();
+                    match guard.get(i) {
+                        Some(e) => e.clone(),
+                        None => return Ok(RubyValue::Nil),
+                    }
+                };
+                if p.call(&[e])?.truthy() {
                     return Ok(RubyValue::Int(i as i64));
                 }
+                i += 1;
             }
-            return Ok(RubyValue::Nil);
         }
         arity!(args, 1);
-        Ok(match items.iter().position(|e| e.rb_eq(&args[0])) {
-            Some(i) => RubyValue::Int(i as i64),
-            None => RubyValue::Nil,
-        })
+        let mut i = 0usize;
+        loop {
+            let e = {
+                let guard = arr.lock();
+                match guard.get(i) {
+                    Some(e) => e.clone(),
+                    None => return Ok(RubyValue::Nil),
+                }
+            };
+            if e.rb_eq(&args[0]) {
+                return Ok(RubyValue::Int(i as i64));
+            }
+            i += 1;
+        }
     }
     // `rindex(obj)` matches by `==` from the right; `rindex { |e| }` finds
     // the last element the block answers truthy for.
     def "rindex"(recv, args, block) {
-        let items = recv_array!(recv).lock().clone();
+        // Right-to-left with per-element lock round-trips (an index the
+        // block/`rb_eq` shrank away just skips); neither re-entrant call
+        // ever runs under the receiver's lock.
+        let arr = recv_array!(recv);
+        let len = arr.lock().len();
         if let Some(RubyValue::Proc(p)) = &block {
-            for i in (0..items.len()).rev() {
-                if p.call(std::slice::from_ref(&items[i]))?.truthy() {
+            for i in (0..len).rev() {
+                let e = match arr.lock().get(i).cloned() {
+                    Some(e) => e,
+                    None => continue,
+                };
+                if p.call(&[e])?.truthy() {
                     return Ok(RubyValue::Int(i as i64));
                 }
             }
             return Ok(RubyValue::Nil);
         }
         arity!(args, 1);
-        Ok(match items.iter().rposition(|e| e.rb_eq(&args[0])) {
-            Some(i) => RubyValue::Int(i as i64),
-            None => RubyValue::Nil,
-        })
+        for i in (0..len).rev() {
+            let e = match arr.lock().get(i).cloned() {
+                Some(e) => e,
+                None => continue,
+            };
+            if e.rb_eq(&args[0]) {
+                return Ok(RubyValue::Int(i as i64));
+            }
+        }
+        Ok(RubyValue::Nil)
     }
     // `rfind` is `find` scanning from the right -- the last element the block
     // accepts (nil if none); a blockless call answers an Enumerator.
@@ -719,13 +753,33 @@ ruby_class! {
         arity!(args, 1);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
-        let mut guard = handle.lock();
-        let before = guard.len();
-        guard.retain(|e| !e.rb_eq(&args[0]));
-        if guard.len() < before {
+        // Two phases so `rb_eq` (a user `==`) never runs under the lock:
+        // probe per element, then retain by identity of the matched slots.
+        let mut matched = Vec::new();
+        let mut i = 0usize;
+        loop {
+            let e = {
+                let guard = handle.lock();
+                match guard.get(i) {
+                    Some(e) => e.clone(),
+                    None => break,
+                }
+            };
+            if e.rb_eq(&args[0]) {
+                matched.push(i);
+            }
+            i += 1;
+        }
+        if !matched.is_empty() {
+            let mut guard = handle.lock();
+            let mut idx = 0usize;
+            guard.retain(|_| {
+                let hit = matched.binary_search(&idx).is_ok();
+                idx += 1;
+                !hit
+            });
             return Ok(args[0].clone());
         }
-        drop(guard);
         // Not found: a block supplies the answer (yielded the searched value),
         // else nil.
         match &block {
@@ -1090,12 +1144,23 @@ ruby_class! {
     def "each" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
-        // Snapshot: mutating the array from inside the block iterates the
-        // original elements (a deliberate, simpler rule than CRuby's
-        // live-view semantics).
-        let elems: Vec<RubyValue> = recv_array!(recv).lock().clone();
-        for e in elems {
+        // Live view, one lock round-trip per element: appending from inside
+        // the block iterates the appended tail and shrinking stops early --
+        // CRuby's own rule -- and the old whole-Vec snapshot per call (which
+        // made every Enumerable method driving `each` quadratic in a loop)
+        // is gone. The lock is never held across the block call.
+        let arr = recv_array!(recv);
+        let mut i = 0usize;
+        loop {
+            let e = {
+                let guard = arr.lock();
+                match guard.get(i) {
+                    Some(e) => e.clone(),
+                    None => break,
+                }
+            };
             p.call(&[e])?;
+            i += 1;
         }
         Ok(recv.clone())
     }
@@ -2056,7 +2121,7 @@ mod tests {
     }
 
     #[test]
-    fn each_snapshots_and_returns_the_receiver() {
+    fn each_yields_every_element_and_returns_the_receiver() {
         let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2)]);
         let seen = std::sync::Arc::new(parking_lot::Mutex::new(0i64));
         let seen2 = std::sync::Arc::clone(&seen);

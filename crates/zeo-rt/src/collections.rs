@@ -579,7 +579,22 @@ pub fn array_push(arr: &RArray, value: RubyValue) -> RubyValue {
 /// `Array#include?` -- `==`-based membership (`RubyValue::rb_eq`), matching
 /// real Ruby's `==` (not `eql?`) rule for `include?`.
 pub fn array_include(arr: &RArray, value: &RubyValue) -> bool {
-    arr.lock().iter().any(|e| e.rb_eq(value))
+    // Per-element lock round-trips: `rb_eq` can re-enter a user `==`, which
+    // must not run under the receiver's (non-reentrant) payload lock.
+    let mut i = 0usize;
+    loop {
+        let e = {
+            let guard = arr.lock();
+            match guard.get(i) {
+                Some(e) => e.clone(),
+                None => return false,
+            }
+        };
+        if e.rb_eq(value) {
+            return true;
+        }
+        i += 1;
+    }
 }
 
 /// A new Hash containing every pair from `h` whose key ISN'T in `keys` --

@@ -96,7 +96,7 @@ fn for_each(
     let proc_: RProc = RProc::new(f);
     match send_value(
         recv,
-        Symbol::intern("each"),
+        crate::symbol::wk::each(),
         &[],
         Some(RubyValue::Proc(proc_)),
     ) {
