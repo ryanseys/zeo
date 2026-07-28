@@ -741,6 +741,26 @@ fn emit_typed_iter_inline(
     }
 }
 
+/// The operand identifier when `id` reads a PLAIN hoisted local
+/// (`LocalStorage::Hoisted`) -- the one case the dynamic-operator match can
+/// borrow the place directly instead of cloning into a borrowed temporary.
+/// Sound because the match arms only ever READ through the borrow (the
+/// fallback send clones the argument itself), and nothing can write the
+/// local while it is held: any closure that could reassign it would have
+/// forced `Captured` (cell) storage, which -- like an Object-typed
+/// (`Shadowed`, unboxed `Arc<Concrete>`) local or a `for`-var override --
+/// stays on the clone path.
+fn borrowable_operand(cx: &Ctx, id: NodeId) -> Option<proc_macro2::Ident> {
+    let HirNode::LocalRead(name) = &cx.compiler.hir[id] else {
+        return None;
+    };
+    if cx.for_var_override.as_ref().is_some_and(|(n, _)| n == name) {
+        return None;
+    }
+    (super::hoisting::local_storage(cx, name) == super::hoisting::LocalStorage::Hoisted)
+        .then(|| safe_ident(name))
+}
+
 /// Finishes a dynamic-dispatch (`send_value`) emission: `catch_break`
 /// wraps the call ONLY when the call site itself carries a block -- a
 /// `Signal::Break` can only ever target a block attached to THIS call, so
@@ -2892,6 +2912,14 @@ fn dispatch(
                     let e = emit_expr(cx, args[0]);
                     box_if_object_typed(cx, args[0], e)
                 };
+                let recv_operand = match borrowable_operand(cx, recv_id) {
+                    Some(ident) => quote! { &#ident },
+                    None => quote! { &(#recv_expr) },
+                };
+                let arg_operand = match borrowable_operand(cx, args[0]) {
+                    Some(ident) => quote! { &#ident },
+                    None => quote! { &(#arg_expr) },
+                };
                 // One inline Int-Int fast arm (the hot `def add(a, b); a +
                 // b; end` case); EVERY other operand shape -- Float pairs,
                 // mixed promotion, Bignum/Rational/Complex lanes, user
@@ -2925,7 +2953,7 @@ fn dispatch(
                 });
                 let name_sym = super::pooled_sym(name);
                 return quote! {
-                    match (&(#recv_expr), &(#arg_expr)) {
+                    match (#recv_operand, #arg_operand) {
                         #int_arm
                         (__dyn_recv, __dyn_arg) => zeo_rt::send_value_in(#__bx,
                             __dyn_recv,
@@ -2949,9 +2977,13 @@ fn dispatch(
                         __r @ zeo_rt::RubyValue::Int(_) => zeo_rt::#func(__r),
                     }
                 });
+                let recv_operand = match borrowable_operand(cx, recv_id) {
+                    Some(ident) => quote! { &#ident },
+                    None => quote! { &(#recv_expr) },
+                };
                 let name_sym = super::pooled_sym(name);
                 return quote! {
-                    match &(#recv_expr) {
+                    match #recv_operand {
                         #int_arm
                         __dyn_recv => zeo_rt::send_value_in(#__bx,
                             __dyn_recv,
