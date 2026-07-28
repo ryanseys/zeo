@@ -23,9 +23,11 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 | tsort | 0.2.0 | ruby 4.0.5 default gem |
 
 **zeo-authored Ruby halves** of libraries whose native half lives in
-`zeo-rt` (`json`, `monitor`, `optparse`, `psych`, `strscan`) -- these are
-intended to match upstream behaviour; divergences are documented in
-`docs/COMPATIBILITY.md`.
+`zeo-rt` (`json`, `monitor`, `optparse`, `psych`, `strscan`, `zlib`, `pty`,
+`syslog`) -- these are intended to match upstream behaviour; divergences are
+documented in `docs/COMPATIBILITY.md`. One file inside them is a faithful
+vendored copy rather than zeo-authored: `syslog/lib/syslog/logger.rb`
+(`Syslog::Logger`, from the ruby 4.0.5 syslog-0.4.0 gem, verbatim).
 
 When bumping the oracle Ruby, re-vendor the first table from the new
 installation and update the versions here.

@@ -421,6 +421,11 @@ pub const ZLIB_GZIP_READER_CLASS: ClassId = ClassId(104);
 /// `ChildExited` exception lives in the gem's Ruby half (`gems/pty`), the
 /// same split as `Zlib`'s errors.
 pub const PTY_MODULE: ClassId = ClassId(105);
+/// `syslog`: the `Syslog` module over the system `syslog(3)` facility --
+/// `open`/`log`/`mask` plus the priority/facility/option constant set. Its
+/// `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules live in the
+/// gem's Ruby half (`gems/syslog`).
+pub const SYSLOG_MODULE: ClassId = ClassId(106);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1292,6 +1297,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("pty"),
+    },
+    BuiltinClass {
+        id: SYSLOG_MODULE,
+        name: "Syslog",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("syslog"),
     },
 ];
 

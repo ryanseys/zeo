@@ -89,6 +89,8 @@ pub(crate) mod pty;
 pub(crate) mod socket;
 #[cfg(feature = "ext-stringio")]
 pub(crate) mod stringio;
+#[cfg(feature = "ext-syslog")]
+pub(crate) mod syslog;
 #[cfg(feature = "ext-strscan")]
 pub(crate) mod strscan;
 #[cfg(feature = "ext-zlib")]
