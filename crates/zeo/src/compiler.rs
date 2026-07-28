@@ -337,6 +337,24 @@ pub struct Compiler {
     /// stays a compile error -- deferring that one would silently DROP the
     /// mixin, since zeo's compiled classes dispatch off a static MRO.
     pub assigned_const_names: std::collections::HashSet<String>,
+    /// `class_in_scope`'s lazily-drained (box, lexical_parent) -> name -> id
+    /// index, replacing its linear whole-`classes` scan (the profiled
+    /// hot spot at gem scale: every bare-constant classification paid
+    /// O(#classes) string compares). Drained forward from `indexed_upto` on
+    /// each query, which is sound because every `add_class` site settles a
+    /// class's identity fields (name/box/lexical_parent) before any lookup
+    /// can run; `ZEO_VERIFY_CLASS_INDEX=1` shadow-compares every answer
+    /// against the original scan.
+    class_index: std::cell::RefCell<HashMap<(u32, Option<ClassId>), HashMap<String, ClassId>>>,
+    indexed_upto: std::cell::Cell<usize>,
+}
+
+/// Whether `ZEO_VERIFY_CLASS_INDEX` is set: every `class_in_scope` answer is
+/// then shadow-compared against the original linear scan -- the drift
+/// detector for the index's settle-before-lookup registration invariant.
+fn verify_class_index() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var_os("ZEO_VERIFY_CLASS_INDEX").is_some())
 }
 
 /// See [`Compiler::class_body_sites`].
@@ -388,6 +406,8 @@ impl Compiler {
             class_body_sites: Vec::new(),
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
+            class_index: std::cell::RefCell::new(HashMap::new()),
+            indexed_upto: std::cell::Cell::new(0),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -521,16 +541,17 @@ impl Compiler {
             return Some(cid);
         }
         if box_id != 0 {
+            // The index's (0, None) row IS the first-registered top-level
+            // name; builtins and bootstrap classes register before any user
+            // class, so when a builtin/bootstrap of this name exists it is
+            // that first entry -- and when the entry is a user class, no
+            // builtin of the name exists and the old scan also missed.
             if let Some(cid) = self
-                .classes
-                .iter()
-                .position(|c| {
-                    c.name == name
-                        && c.box_id == 0
-                        && c.lexical_parent.is_none()
-                        && (c.is_builtin || c.is_bootstrap)
+                .class_in_scope(None, name, 0)
+                .filter(|&c| {
+                    let ci = self.class(c);
+                    ci.is_builtin || ci.is_bootstrap
                 })
-                .map(|i| ClassId(i as u32))
                 .filter(|&c| self.feature_active(c))
             {
                 return Some(cid);
@@ -558,12 +579,38 @@ impl Compiler {
         name: &str,
         box_id: u32,
     ) -> Option<ClassId> {
-        self.classes
-            .iter()
-            .position(|c| {
-                c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent
-            })
-            .map(|i| ClassId(i as u32))
+        let mut index = self.class_index.borrow_mut();
+        let upto = self.indexed_upto.get();
+        if upto < self.classes.len() {
+            // First-registered wins within one scope (`or_insert`), exactly
+            // the old scan's `position` semantics.
+            for (i, c) in self.classes.iter().enumerate().skip(upto) {
+                index
+                    .entry((c.box_id, c.lexical_parent))
+                    .or_default()
+                    .entry(c.name.clone())
+                    .or_insert(ClassId(i as u32));
+            }
+            self.indexed_upto.set(self.classes.len());
+        }
+        let hit = index
+            .get(&(box_id, lexical_parent))
+            .and_then(|m| m.get(name))
+            .copied();
+        if verify_class_index() {
+            let scan = self
+                .classes
+                .iter()
+                .position(|c| {
+                    c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent
+                })
+                .map(|i| ClassId(i as u32));
+            assert_eq!(
+                hit, scan,
+                "class index diverged for {name:?} (box {box_id}, parent {lexical_parent:?})"
+            );
+        }
+        hit
     }
 
     /// Creates (idempotently) box `box_id`'s top-level surrogate -- see

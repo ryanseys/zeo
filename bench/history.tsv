@@ -9,6 +9,7 @@ bm_bigint_fib	1784702860	0.021
 bm_bigint_fib	1784705622	0.023
 bm_binary_trees	1784676316	0.093
 bm_binary_trees	1784705622	0.079
+bm_binary_trees	1785268849	0.034
 bm_csv_process	1784676321	1.407
 bm_csv_process	1784705627	1.305
 bm_fannkuch	1784676322	0.027
