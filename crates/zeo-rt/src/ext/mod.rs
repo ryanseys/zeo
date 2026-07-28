@@ -48,10 +48,11 @@
 //! 2. **Module** `ext/<name>.rs` declaring its class with the `ruby_class!`
 //!    (instances) or `ruby_module!` (module functions) DSL (mirror `base64.rs`
 //!    for a module, `stringio.rs` for a class with instances).
-//! 3. **Dispatch arms** in `builtins/mod.rs`: add a `#[cfg(feature =
-//!    "ext-<name>")]` arm to `class_method_table` and/or `class_table`, plus
-//!    `class_table_names` (reflection). Cfg-gate them so a feature-off build
-//!    drops them cleanly.
+//! 3. **Nothing.** `ruby_class!`/`ruby_module!` self-register through `linkme`
+//!    into `BUILTIN_TABLES`, and `class_table` consults `registered_table(id)`
+//!    first, so no hand-written dispatch arm is needed. The exception is
+//!    id-ALIASING (one table answering for several ids), which still wants an
+//!    explicit arm in `builtins/mod.rs`.
 //! 4. **Cargo feature** `ext-<name>` in `zeo-rt/Cargo.toml`, added to the
 //!    `ext-all` umbrella (with `dep:` entries if it needs an optional crate).
 //! 5. **Module declaration** below, cfg-gated.
@@ -68,6 +69,8 @@ pub(crate) mod date;
 pub(crate) mod digest;
 #[cfg(feature = "ext-etc")]
 pub(crate) mod etc;
+#[cfg(feature = "ext-fcntl")]
+pub(crate) mod fcntl;
 #[cfg(feature = "ext-ffi")]
 pub(crate) mod ffi;
 #[cfg(feature = "ext-json")]

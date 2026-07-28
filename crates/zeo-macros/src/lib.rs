@@ -167,9 +167,10 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         (quote! {}, quote! { None })
     } else {
         let sets = spec.consts.iter().map(|c| {
+            let attrs = &c.attrs;
             let name = c.name.to_string();
             let value = &c.value;
-            quote! { crate::constants::const_set(#id.0, #name, { #value }); }
+            quote! { #( #attrs )* crate::constants::const_set(#id.0, #name, { #value }); }
         });
         (
             quote! {

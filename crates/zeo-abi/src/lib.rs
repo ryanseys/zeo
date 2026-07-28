@@ -383,6 +383,9 @@ pub const ADDRINFO_CLASS: ClassId = ClassId(95);
 /// (`#path`/`#lineno`/`#label`), what `Kernel#caller_locations` answers and
 /// `Exception#backtrace_locations` would.
 pub const BACKTRACE_LOCATION_CLASS: ClassId = ClassId(96);
+/// `fcntl`: the `Fcntl` module's `fcntl(2)`/`open(2)` flag constants. No
+/// methods -- CRuby's extension is a constant table, and `IO#fcntl` is IO's.
+pub const FCNTL_MODULE: ClassId = ClassId(97);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1179,6 +1182,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: None,
+    },
+    BuiltinClass {
+        id: FCNTL_MODULE,
+        name: "Fcntl",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("fcntl"),
     },
 ];
 

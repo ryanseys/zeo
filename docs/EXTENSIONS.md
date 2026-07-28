@@ -41,6 +41,7 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | etc | `etc` | `ext-etc` | **done** | `Etc` over libc (`getpwnam`/`getgrgid`/… + `Passwd`/`Group` structs, `sysconf`/`uname`/`nprocessors`) |
 | pathname | `pathname` | `ext-pathname` | **done** | focused native `Pathname` over File/Dir |
 | monitor | `monitor` | `ext-monitor` | **done** | `Monitor` + `MonitorMixin` |
+| fcntl | `fcntl` | `ext-fcntl` | **done** | `Fcntl`'s `fcntl(2)`/`open(2)` flag constants, read from `libc` and `#[cfg]`'d per platform as CRuby `#ifdef`s them |
 
 The IO-core extensions have landed as unconditional rows on the `IO` table:
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
@@ -52,8 +53,7 @@ methods are always present. `ARGF` is a live builtin (`zeo_abi::ARGF_CLASS`), an
 
 | Extension | `require` | Why deferred |
 |---|---|---|
-| io/nonblock | `io/nonblock` | would add `IO#nonblock`/`#nonblock=` (fcntl `O_NONBLOCK`) |
-| fcntl | `fcntl` | a constant-only module (`Fcntl::O_*`) — needs the module-constant exposure seam, not a method table |
+| _(none currently)_ | | |
 
 ## FFI — the real `ffi` gem, AOT-compiled
 

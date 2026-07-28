@@ -134,9 +134,11 @@ ext-all = [
     "ext-ffi",
     "ext-etc",
     "ext-pathname",
+    "ext-fcntl",
 ]
 ext-base64 = []
 ext-etc = []
+ext-fcntl = []
 ext-pathname = []
 ext-monitor = []
 ext-stringio = []

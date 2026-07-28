@@ -82,6 +82,11 @@ pub enum ClassKind {
 /// `const NAME = <expr>;` -- the value is real Rust the proc-macro passes
 /// through; the build.rs projection needs only the name.
 pub struct ConstDef {
+    /// Outer attributes (`#[cfg(...)]`) gating this constant. A flag constant
+    /// often exists on one platform and not another (`Fcntl::F_PREALLOCATE` is
+    /// macOS, `F_DUPFD_CLOEXEC` is Linux), and CRuby's own extensions `#ifdef`
+    /// each one for exactly that reason.
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub value: Expr,
 }
@@ -232,15 +237,12 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
     // `const` is a real Rust keyword, so it can't be peeked as an `Ident` like
     // the (non-keyword) `include`/`alias`/`private`/`protected`/`def` leads.
     if input.peek(Token![const]) {
-        if !attrs.is_empty() {
-            return Err(attrs_forbidden(input));
-        }
         input.parse::<Token![const]>()?;
         let name: Ident = input.parse()?;
         input.parse::<Token![=]>()?;
         let value: Expr = input.parse()?;
         input.parse::<Token![;]>()?;
-        spec.consts.push(ConstDef { name, value });
+        spec.consts.push(ConstDef { attrs, name, value });
         return Ok(());
     }
     let lookahead: Ident = input.fork().parse().map_err(|_| {
@@ -473,6 +475,22 @@ mod tests {
         assert!(!spec.methods[0].is_class_method);
         assert!(spec.methods[1].is_class_method);
         assert_eq!(spec.methods[1].names[0].ruby, "pi");
+    }
+
+    /// A flag constant often exists on one platform only, so a `const` row
+    /// carries its `#[cfg]` through to the installer the same way a `def` does.
+    #[test]
+    fn a_const_keeps_its_cfg_attribute() {
+        let spec = parse_class(quote! {
+            Fcntl = FCNTL_MODULE;
+            const F_GETFL = flag(3);
+            #[cfg(target_vendor = "apple")]
+            const F_PREALLOCATE = flag(42);
+        });
+        assert_eq!(spec.consts.len(), 2);
+        assert!(spec.consts[0].attrs.is_empty());
+        assert_eq!(spec.consts[1].attrs.len(), 1);
+        assert!(spec.consts[1].attrs[0].path().is_ident("cfg"));
     }
 
     #[test]
