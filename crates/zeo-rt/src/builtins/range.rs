@@ -140,6 +140,9 @@ fn int_in_range(i: i64, end: Option<&RubyValue>, exclusive: bool) -> bool {
                 (i as f64) <= *f
             }
         }
+        // A canonical BigInt end is out of i64 range entirely: a positive one
+        // admits every i64, a negative one admits none.
+        Some(RubyValue::BigInt(e)) => e.sign() == num_bigint::Sign::Plus,
         _ => false,
     }
 }
