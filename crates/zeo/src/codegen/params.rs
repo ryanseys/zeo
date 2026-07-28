@@ -1071,13 +1071,13 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
 /// `builtins::rproc::parameters`), which also lets `#parameters(lambda:)` force
 /// either view. A parenthesized destructuring slot (`__destr_<i>`) reports no
 /// name; `is_lambda` does not affect the stored kinds.
-pub(super) fn proc_parameters(params: &Params, _is_lambda: bool) -> TokenStream {
+pub(super) fn proc_parameters(params: &Params, _is_lambda: bool) -> Option<TokenStream> {
     fn mk(kind: &str, name: Option<&str>) -> TokenStream {
         let name_tok = match name {
             Some(n) => quote! { Some(#n) },
             None => quote! { None },
         };
-        quote! { zeo_rt::ProcParamMeta::new(#kind, #name_tok) }
+        quote! { zeo_rt::ProcParamMeta { kind: #kind, name: #name_tok } }
     }
     // A parenthesized destructuring slot (`__destr_<i>`) reports no name.
     fn visible(n: &str) -> Option<&str> {
@@ -1110,7 +1110,16 @@ pub(super) fn proc_parameters(params: &Params, _is_lambda: bool) -> TokenStream 
     if let Some(blk) = &params.block {
         items.push(mk("block", Some(anon_name(blk.as_deref(), "&"))));
     }
-    quote! { vec![ #(#items),* ] }
+    if items.is_empty() {
+        // A no-param signature is `ProcData`'s default -- skip the call.
+        return None;
+    }
+    let key = items
+        .iter()
+        .map(|t| t.to_string())
+        .collect::<Vec<_>>()
+        .join(";");
+    Some(super::pooled_proc_params(key, &items))
 }
 
 /// The reported name for a `rest`/`keyword_rest`/`block` slot: its declared

@@ -70,8 +70,10 @@ pub struct ProcData {
     /// `[[kind, name], ...]` order and kinds (a proc reports required
     /// positionals as `:opt`, a lambda as `:req`). Empty for a runtime-internal
     /// proc (`RProc::new`), matching CRuby's `[[:rest]]`-ish C-proc reporting
-    /// only where codegen supplied it.
-    params: Vec<ProcParamMeta>,
+    /// only where codegen supplied it. `Cow`: codegen shares one per-signature
+    /// static table across every construction of that signature
+    /// (`with_params_static`), so building a proc allocates nothing here.
+    params: std::borrow::Cow<'static, [ProcParamMeta]>,
     /// The method activation this block/lambda was constructed inside (see
     /// `crate::signal::home_current`). A non-lambda Proc's `return` unwinds to
     /// this home if it is still on the stack, else raises `LocalJumpError`.
@@ -87,21 +89,13 @@ pub struct ProcData {
 
 /// One entry of `Proc#parameters` -- a parameter's kind (`"req"`, `"opt"`,
 /// `"rest"`, `"keyreq"`, `"key"`, `"keyrest"`, `"block"`) and optional name.
-/// Codegen builds these from the block/lambda's static signature.
+/// Codegen builds these from the block/lambda's static signature. Both
+/// fields are `&'static str` (the name interns lazily at the `#parameters`
+/// reflection site) so a whole signature can live in one `static` table.
 #[derive(Clone)]
 pub struct ProcParamMeta {
     pub kind: &'static str,
-    pub name: Option<crate::Symbol>,
-}
-
-impl ProcParamMeta {
-    /// Codegen's constructor: a static kind and an optional name to intern.
-    pub fn new(kind: &'static str, name: Option<&str>) -> ProcParamMeta {
-        ProcParamMeta {
-            kind,
-            name: name.map(crate::Symbol::intern),
-        }
-    }
+    pub name: Option<&'static str>,
 }
 
 /// A `Proc` value's payload. A newtype over `Arc<ProcData>` rather than the
@@ -125,7 +119,7 @@ impl RProc {
             self_val: RubyValue::Nil,
             arity: -1,
             is_lambda: false,
-            params: Vec::new(),
+            params: std::borrow::Cow::Borrowed(&[]),
             home: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -144,7 +138,7 @@ impl RProc {
             self_val: RubyValue::Nil,
             arity,
             is_lambda,
-            params: Vec::new(),
+            params: std::borrow::Cow::Borrowed(&[]),
             home: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -185,7 +179,7 @@ impl RProc {
             self_val,
             arity,
             is_lambda,
-            params: Vec::new(),
+            params: std::borrow::Cow::Borrowed(&[]),
             home: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -196,14 +190,23 @@ impl RProc {
     /// 1), so `Arc::get_mut` always succeeds; a no-op on the rare shared handle.
     pub fn with_params(mut self, params: Vec<ProcParamMeta>) -> RProc {
         if let Some(data) = Arc::get_mut(&mut self.0) {
-            data.params = params;
+            data.params = std::borrow::Cow::Owned(params);
+        }
+        self
+    }
+
+    /// `with_params` from a per-signature `static` table -- codegen's form:
+    /// no allocation per construction.
+    pub fn with_params_static(mut self, params: &'static [ProcParamMeta]) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.params = std::borrow::Cow::Borrowed(params);
         }
         self
     }
 
     /// The `Proc#parameters` metadata (empty for a runtime-internal proc).
     pub fn parameters(&self) -> &[ProcParamMeta] {
-        &self.0.params
+        self.0.params.as_ref()
     }
 
     /// Capture the current method activation as this Proc's home (see

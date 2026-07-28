@@ -120,7 +120,7 @@ ruby_class! {
                 let kind = if pm.kind == "req" && !lambda_view { "opt" } else { pm.kind };
                 let mut entry = vec![RubyValue::Symbol(crate::Symbol::intern(kind))];
                 if let Some(name) = pm.name {
-                    entry.push(RubyValue::Symbol(name));
+                    entry.push(RubyValue::Symbol(crate::Symbol::intern(name)));
                 }
                 RubyValue::Array(crate::array_new(entry))
             })

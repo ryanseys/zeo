@@ -546,6 +546,11 @@ struct PoolBuilder {
     syms: Vec<String>,
     lit_ix: HashMap<String, usize>,
     lits: Vec<String>,
+    /// Per-signature `Proc#parameters` tables (`static __PP_N: [ProcParamMeta;
+    /// k]`), deduped by rendered signature -- constructing a proc then borrows
+    /// one table instead of allocating a `Vec` + interning names per call.
+    pp_ix: HashMap<String, usize>,
+    pps: Vec<TokenStream>,
 }
 
 thread_local! {
@@ -586,6 +591,27 @@ pub(crate) fn pooled_frozen_str(text: &str) -> TokenStream {
     });
     let i = proc_macro2::Literal::usize_unsuffixed(i);
     quote! { crate::__LITS.s(#i) }
+}
+
+/// `crate::__PP_N` for one proc signature's `ProcParamMeta` table, deduped
+/// across equal signatures. `entries` are the const struct-literal tokens;
+/// `key` is any stable rendering of them.
+pub(crate) fn pooled_proc_params(key: String, entries: &[TokenStream]) -> TokenStream {
+    let i = POOLS.with_borrow_mut(|p| {
+        if let Some(&i) = p.pp_ix.get(&key) {
+            return i;
+        }
+        let i = p.pps.len();
+        let ident = format_ident!("__PP_{i}");
+        let n = entries.len();
+        p.pps.push(quote! {
+            static #ident: [zeo_rt::ProcParamMeta; #n] = [#(#entries),*];
+        });
+        p.pp_ix.insert(key, i);
+        i
+    });
+    let ident = format_ident!("__PP_{i}");
+    quote! { crate::#ident }
 }
 
 fn take_pools() -> PoolBuilder {
@@ -1692,7 +1718,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let texts = &pools.lits;
         quote! { static __LITS: zeo_rt::LitPool = zeo_rt::LitPool::new(&[#(#texts),*]); }
     });
-    quote! { #program #syms #lits }
+    let pps = &pools.pps;
+    quote! { #program #syms #lits #(#pps)* }
 }
 
 /// Every statement written directly in a class/module body -- cvar/const/ivar

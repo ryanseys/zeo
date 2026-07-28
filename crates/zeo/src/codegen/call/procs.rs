@@ -11,6 +11,29 @@ use crate::codegen::ident::safe_ident;
 use crate::hir::{HirNode, NodeId, Params};
 use proc_macro2::TokenStream;
 
+/// Whether `body` can raise `Signal::Return` at its own level -- the gate
+/// for capturing a proc home (see the construction site below). Conservative
+/// in the keep direction: nested blocks/lambdas recurse (an inline-spliced
+/// block's `return` raises at THIS proc's level), while a nested `def`/
+/// `class` body's `return` belongs to that body alone.
+fn body_contains_return(hir: &crate::hir::Hir, body: &[NodeId]) -> bool {
+    fn scan(hir: &crate::hir::Hir, id: NodeId) -> bool {
+        match &hir[id] {
+            HirNode::Return(_) => return true,
+            HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
+            _ => {}
+        }
+        let mut found = false;
+        hir[id].for_each_child(&mut |n| {
+            if !found {
+                found = scan(hir, n);
+            }
+        });
+        found
+    }
+    body.iter().any(|&n| scan(hir, n))
+}
+
 /// Builds a real, escaping `zeo_rt::RubyValue::Proc` value from a literal
 /// block (`HirNode::Block`) at a call site whose callee ISN'T the `.times`
 /// inline fast path (see `is_times_fast_path`'s docs -- that's the entire
@@ -306,8 +329,16 @@ pub(crate) fn emit_proc_or_lambda_value(
     // `Proc#arity`/`#lambda?`/`#curry` read these -- a Rust closure can't
     // answer them about itself (see `zeo_rt::ProcData`).
     let arity = crate::codegen::params::proc_arity(params, is_lambda);
-    // `Proc#parameters` metadata, attached to the constructed proc.
-    let proc_params = crate::codegen::params::proc_parameters(params, is_lambda);
+    // `Proc#parameters` metadata: a shared per-signature static table, or
+    // nothing at all for a no-param block (`ProcData`'s default).
+    let with_params = crate::codegen::params::proc_parameters(params, is_lambda)
+        .map(|pp| quote! { .with_params_static(&#pp) });
+    // A home capture (`home_current` walks the frame stack per construction)
+    // only matters if this body can raise `Signal::Return` at its own level;
+    // a relayed inner return terminates correctly against a `None` home.
+    // Conservative: nested blocks/lambdas recurse, `def`/`class` bodies stop.
+    let with_home =
+        body_contains_return(&cx.compiler.hir, body).then(|| quote! { .with_home() });
     // Three shapes:
     // - `with_self_and_block` whenever the body must see a CALL-SITE block --
     //   a METHOD-BODY lambda (the runtime install rebinds the receiver per
@@ -377,7 +408,7 @@ pub(crate) fn emit_proc_or_lambda_value(
             // `Thread.new ...; Thread.pass; t.raise` idiom relies on.
             if __out.is_ok() { zeo_rt::check_ints()?; }
             __out
-        }, #default_arg #arity, #is_lambda).with_home().with_params(#proc_params))
+        }, #default_arg #arity, #is_lambda)#with_home #with_params)
     };
     // Braces exist to scope the capture-clone prelude; a capture-free proc
     // emits bare (a braced function argument draws rustc's
