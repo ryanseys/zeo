@@ -169,6 +169,11 @@ pub struct Hir {
     /// one arena, so per-file numbering would make two files' first flip-flops
     /// share a latch.
     pub flip_flops: u32,
+    /// How many `class`/`module` bodies enclose the statement being lowered --
+    /// CRuby's cref chain depth, which is what `@@x` resolves against. `0`
+    /// means the reference is genuinely top-level and must raise; see
+    /// [`cvar_is_toplevel`](Self::cvar_is_toplevel).
+    cref_depth: u32,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -205,6 +210,28 @@ impl Hir {
     /// check, which needs no tree structure, just the full node set.
     pub fn iter(&self) -> impl Iterator<Item = &HirNode> {
         self.nodes.iter()
+    }
+
+    /// Lowers `body` as one more level of cref nesting -- see `cref_depth`.
+    pub fn in_class_body<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
+        self.cref_depth += 1;
+        let out = body(self);
+        self.cref_depth -= 1;
+        out
+    }
+
+    /// Whether a `@@x` lowered right here resolves to the TOP-LEVEL cref, in
+    /// which case Ruby raises `RuntimeError: class variable access from
+    /// toplevel` rather than storing anything.
+    ///
+    /// Only `class`/`module` bodies open a cref. A `def`, a block, a lambda
+    /// and a `class << obj` body all leave the enclosing one in place -- so
+    /// `Class.new { @@x = 1 }` written at the top level raises, while the
+    /// same line inside `class C` stores on `C`. (CRuby reaches the identical
+    /// answer by walking `CREF_NEXT` past singleton and eval crefs and
+    /// raising when it runs off the end.)
+    pub fn cvar_is_toplevel(&self) -> bool {
+        self.cref_depth == 0
     }
 }
 
@@ -1943,6 +1970,101 @@ pub enum HirNode {
 }
 
 impl HirNode {
+    /// Whether ONLY a `class`/`module` body can hold this node.
+    ///
+    /// These are the class-body directives: the lowerer emits them from the
+    /// static class path, and codegen consumes them there and nowhere else. A
+    /// class built at RUNTIME (`Class.new { ... }`, a `class_eval` reopen) runs
+    /// its body as an ordinary block, so each one has to be rewritten into the
+    /// equivalent self-send first -- see
+    /// `lower::defs::transform_runtime_class_body`, which refuses to pass an
+    /// unrewritten directive through.
+    ///
+    /// The two halves used to be independent lists and drifted apart silently:
+    /// a directive added to the static path but not the runtime one reached
+    /// codegen as a "top-level-only node in expression position". Exhaustive
+    /// here, with no `_` catch-all, so a new variant has to be classified.
+    pub fn is_class_body_directive(&self) -> bool {
+        match self {
+            HirNode::Include(_)
+            | HirNode::Extend(_)
+            | HirNode::Prepend(_)
+            | HirNode::Undef(_)
+            | HirNode::AliasMethod { .. }
+            | HirNode::MethodVisibility { .. }
+            | HirNode::ModuleFunction(_) => true,
+
+            // `ClassDef` and `DefMethod` are class-body shapes too, but both
+            // also stand on their own at the top level and inside a method,
+            // and codegen emits them in block position -- the runtime path
+            // rewrites the former only to give it a runtime superclass.
+            HirNode::ClassDef { .. }
+            | HirNode::DefMethod { .. }
+            | HirNode::Program(_)
+            | HirNode::IntegerLit(_)
+            | HirNode::BigIntegerLit { .. }
+            | HirNode::RationalLit { .. }
+            | HirNode::ImaginaryLit(_)
+            | HirNode::FloatLit(_)
+            | HirNode::SymbolLit(_)
+            | HirNode::NilLit
+            | HirNode::BoolLit(_)
+            | HirNode::And(..)
+            | HirNode::Or(..)
+            | HirNode::Defined(_)
+            | HirNode::If { .. }
+            | HirNode::CaseWhen { .. }
+            | HirNode::ArrayLit(_)
+            | HirNode::HashLit(_)
+            | HirNode::RangeLit { .. }
+            | HirNode::StringLit(_)
+            | HirNode::RegexpLit(..)
+            | HirNode::LocalRead(_)
+            | HirNode::LocalWrite(..)
+            | HirNode::IvarRead(_)
+            | HirNode::IvarWrite(..)
+            | HirNode::ClassVarRead(_)
+            | HirNode::ClassVarWrite(..)
+            | HirNode::ClassRef(_)
+            | HirNode::Call { .. }
+            | HirNode::New { .. }
+            | HirNode::SuperCall { .. }
+            | HirNode::Block { .. }
+            | HirNode::Lambda { .. }
+            | HirNode::While { .. }
+            | HirNode::Loop { .. }
+            | HirNode::For { .. }
+            | HirNode::Break(_)
+            | HirNode::Next(_)
+            | HirNode::Redo
+            | HirNode::MultiWrite { .. }
+            | HirNode::Eval(_)
+            | HirNode::Ffi(_)
+            | HirNode::BoxScope { .. }
+            | HirNode::BoxHandle(_)
+            | HirNode::Return(_)
+            | HirNode::Yield(_)
+            | HirNode::BlockGiven
+            | HirNode::SelfRef
+            | HirNode::Raise(..)
+            | HirNode::CaseIn { .. }
+            | HirNode::MatchPredicate { .. }
+            | HirNode::MatchRequired { .. }
+            | HirNode::Begin { .. }
+            | HirNode::Retry
+            | HirNode::GlobalRead(_)
+            | HirNode::GlobalWrite(..)
+            | HirNode::QualifiedConstRead(..)
+            | HirNode::ConstReadOrNil(..)
+            | HirNode::ConstWrite { .. }
+            | HirNode::PreExec(_)
+            | HirNode::AliasGlobal(..)
+            | HirNode::LastMatchRef(_)
+            | HirNode::Seq(_)
+            | HirNode::FlipFlop { .. } => false,
+        }
+    }
+
     /// Every child node this one owns, in evaluation order.
     ///
     /// The name-collecting passes (`analyze::collect_ivars`,

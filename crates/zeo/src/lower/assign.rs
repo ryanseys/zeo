@@ -33,7 +33,7 @@ impl Storage {
         match self {
             Storage::Local(n) => hir.push(HirNode::LocalRead(n.clone())),
             Storage::Ivar(n) => hir.push(HirNode::IvarRead(n.clone())),
-            Storage::ClassVar(n) => hir.push(HirNode::ClassVarRead(n.clone())),
+            Storage::ClassVar(n) => super::cvar_read(hir, n.clone()),
             Storage::Global(n) => hir.push(HirNode::GlobalRead(n.clone())),
             Storage::Const { scope: None, name } => hir.push(HirNode::ClassRef(name.clone())),
             Storage::Const {
@@ -47,7 +47,7 @@ impl Storage {
         match self {
             Storage::Local(n) => hir.push(HirNode::LocalWrite(n.clone(), value)),
             Storage::Ivar(n) => hir.push(HirNode::IvarWrite(n.clone(), value)),
-            Storage::ClassVar(n) => hir.push(HirNode::ClassVarWrite(n.clone(), value)),
+            Storage::ClassVar(n) => super::cvar_write(hir, n.clone(), value),
             Storage::Global(n) => hir.push(HirNode::GlobalWrite(n.clone(), value)),
             Storage::Const { scope, name } => hir.push(HirNode::ConstWrite {
                 scope: scope.clone(),
@@ -289,6 +289,18 @@ pub(crate) fn lower_multi_target(
         let name = String::from_utf8_lossy(t.name().as_slice())
             .trim_start_matches('@')
             .to_string();
+        if hir.cvar_is_toplevel() {
+            // `@@a, @@b = 1, 2` written outside any class body. Borrowing the
+            // `Call` target shape (rather than growing a variant every walker
+            // would have to learn) reproduces Ruby's ordering for free: the
+            // slot's value is distributed into `tmp_name` first, and only then
+            // does this target's "write" -- the raise -- run, so the targets to
+            // its LEFT have already been assigned.
+            return Ok(MultiTarget::Call {
+                write_call: super::cvar_toplevel_raise(hir),
+                tmp_name: hir.gensym("__mval"),
+            });
+        }
         return Ok(MultiTarget::ClassVar(name));
     }
     if let Some(t) = node.as_global_variable_target_node() {

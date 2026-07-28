@@ -122,6 +122,42 @@ fn assemble_i64(negative: bool, digits: &[u32]) -> Option<i64> {
 /// and an error propagating out picks up the innermost frame's span
 /// (`LowerError::with_span_if_missing`). `HirNode` itself carries no span
 /// field -- the parallel `Hir::spans` table is the whole design.
+/// A `@@name` READ, or the `raise` that stands in for one written outside any
+/// class body -- see [`Hir::cvar_is_toplevel`].
+pub(crate) fn cvar_read(hir: &mut Hir, name: String) -> NodeId {
+    match hir.cvar_is_toplevel() {
+        false => hir.push(HirNode::ClassVarRead(name)),
+        true => cvar_toplevel_raise(hir),
+    }
+}
+
+/// A `@@name = value` WRITE, or -- outside any class body -- `value` evaluated
+/// for its side effects followed by the raise. Ruby's `setclassvariable`
+/// instruction is what raises, so the right-hand side has already run by then.
+pub(crate) fn cvar_write(hir: &mut Hir, name: String, value: NodeId) -> NodeId {
+    if !hir.cvar_is_toplevel() {
+        return hir.push(HirNode::ClassVarWrite(name, value));
+    }
+    let raise = cvar_toplevel_raise(hir);
+    hir.push(HirNode::Seq(vec![value, raise]))
+}
+
+fn cvar_toplevel_raise(hir: &mut Hir) -> NodeId {
+    let class = hir.push(HirNode::ClassRef("RuntimeError".to_string()));
+    let message = hir.push(HirNode::StringLit(vec![StrPart::Lit(
+        "class variable access from toplevel".to_string(),
+    )]));
+    hir.push(HirNode::Call {
+        receiver: None,
+        name: "raise".to_string(),
+        args: vec![ArrayElem::Single(class), ArrayElem::Single(message)],
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
 pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
     let span = span_of(hir, node);
     hir.push_span(span);
@@ -814,6 +850,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
 
     if let Some(defined) = node.as_defined_node() {
+        // `defined?(@@x)` outside any class body answers nil rather than
+        // raising -- `defined?` never evaluates its operand, so the raise
+        // `cvar_read` would otherwise put there must not be lowered at all.
+        if defined.value().as_class_variable_read_node().is_some() && hir.cvar_is_toplevel() {
+            return Ok(hir.push(HirNode::NilLit));
+        }
         let value = lower_node(result, hir, &defined.value())?;
         return Ok(hir.push(HirNode::Defined(value)));
     }
@@ -1180,7 +1222,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         let name = String::from_utf8_lossy(cvar.name().as_slice())
             .trim_start_matches('@')
             .to_string();
-        return Ok(hir.push(HirNode::ClassVarRead(name)));
+        return Ok(cvar_read(hir, name));
     }
 
     if let Some(cvar) = node.as_class_variable_write_node() {
@@ -1188,7 +1230,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             .trim_start_matches('@')
             .to_string();
         let value = lower_node(result, hir, &cvar.value())?;
-        return Ok(hir.push(HirNode::ClassVarWrite(name, value)));
+        return Ok(cvar_write(hir, name, value));
     }
 
     if let Some(call) = node.as_call_node() {

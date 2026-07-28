@@ -1511,6 +1511,9 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
         // a name that resolved when the mark was made -- so it is
         // authoritative for both existence and visibility.
         if overlay_live {
+            if crate::runtime_meta::overlay_is_undefined(anc, name) {
+                return false;
+            }
             if let Some(v) = crate::runtime_meta::overlay_method_visibility(anc, name) {
                 return include_all || v == MethodVisibility::Public;
             }
@@ -1588,8 +1591,13 @@ fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId>
     let n = n.as_str();
     let overlay_live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(recv_class).iter().skip(skip) {
-        if overlay_live && crate::runtime_meta::overlay_has_instance_method(anc, name) {
-            return Some(anc);
+        if overlay_live {
+            if crate::runtime_meta::overlay_is_undefined(anc, name) {
+                return None;
+            }
+            if crate::runtime_meta::overlay_has_instance_method(anc, name) {
+                return Some(anc);
+            }
         }
         if let Some(r) = REGISTRY.get() {
             if r.is_undefined(anc, name) {
@@ -1714,6 +1722,17 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for anc in chain {
+        // The overlay first, and it CLAIMS every name it has an opinion about
+        // (`seen.insert` before the filter): a runtime `private :m` has to beat
+        // the registry's compile-time public flag below, and an `undef_method`
+        // tombstone has to keep an ancestor's definition off the list entirely.
+        if crate::runtime_meta::is_live() {
+            for (name, vis) in crate::runtime_meta::overlay_instance_method_names(anc) {
+                if seen.insert(name) && vis.is_some_and(|v| filter.matches(v)) {
+                    out.push(name);
+                }
+            }
+        }
         if let Some(r) = reg {
             // `inherit=false` restricts the user-method set to this class's own
             // definitions (materialization otherwise flattens inherited in).
@@ -1755,6 +1774,9 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         // frozen registry's compile-time flags, and a runtime-defined method
         // with no mark is public.
         if crate::runtime_meta::is_live() {
+            if crate::runtime_meta::overlay_is_undefined(*anc, name) {
+                return None;
+            }
             if let Some(vis) = crate::runtime_meta::overlay_method_visibility(*anc, name) {
                 return Some(vis);
             }
@@ -1786,6 +1808,15 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
 pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
+    // A class minted at runtime keeps its `def self.x`/`define_singleton_method`/
+    // `module_function` methods in the overlay, never in the frozen registry.
+    if crate::runtime_meta::is_live() {
+        for name in crate::runtime_meta::overlay_class_method_names(class) {
+            if seen.insert(name) {
+                out.push(name);
+            }
+        }
+    }
     if let Some(r) = REGISTRY.get() {
         for name in r.own_class_method_names(class) {
             if seen.insert(name) {
@@ -1949,6 +1980,12 @@ fn send_walking(
         // reopen (`value_methods` on that id), then the ancestor's native
         // builtin table (`BasicObject#initialize` is the one every `super`
         // chain bottoms out on).
+        // An `undef_method` at this position terminates the walk, exactly as
+        // it does for ordinary dispatch -- `super` must not reach past it into
+        // a still-live ancestor definition.
+        if crate::runtime_meta::is_live() && crate::runtime_meta::overlay_is_undefined(anc, name) {
+            break;
+        }
         if let Some(obj) = &obj {
             if crate::runtime_meta::is_live() {
                 if let Some(m) = crate::runtime_meta::overlay_own_method(anc, name) {

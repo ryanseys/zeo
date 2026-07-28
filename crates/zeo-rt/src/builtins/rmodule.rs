@@ -632,14 +632,14 @@ ruby_class! {
         };
         push_owner(cid, &mut out);
         if inherit_flag(args) {
+            // No Object/BasicObject exclusion here, unlike `constants` -- a
+            // `@@x` can only reach Object through an explicit `class Object`
+            // body (a top-level one raises; see `Hir::cvar_is_toplevel`), and
+            // CRuby does report that one from every descendant.
             for anc in crate::dispatch::ancestors_of_value(cid) {
-                if *anc == cid
-                    || *anc == zeo_abi::OBJECT_CLASS
-                    || *anc == zeo_abi::BASIC_OBJECT_CLASS
-                {
-                    continue;
+                if *anc != cid {
+                    push_owner(*anc, &mut out);
                 }
-                push_owner(*anc, &mut out);
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))

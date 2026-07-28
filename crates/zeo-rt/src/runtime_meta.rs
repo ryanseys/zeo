@@ -650,9 +650,9 @@ fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
 /// time in `lower/defs.rs`). Promotes each named instance method to a
 /// class/module method using the same wrapper `extend self` builds
 /// (`extended_class_method`), so `Mod.name` and bare calls in class-method
-/// context resolve. The bare (no-arg) mode form has no runtime spelling here
-/// and is a documented nil no-op. Unlike CRuby it leaves the instance copy
-/// public -- a harmless over-permissiveness; callers use the module method.
+/// context resolve. The instance copy stays -- that is the `include`-mixin half
+/// of `module_function` -- but becomes PRIVATE, as in CRuby. The bare (no-arg)
+/// mode form has no runtime spelling here and is a documented nil no-op.
 pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if args.is_empty() {
         update_frame_for(id, |f| f.module_function = true);
@@ -680,6 +680,8 @@ pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyVa
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         for (sym, proc_) in installs {
             e.class_methods.insert(sym, proc_);
+            e.methods_vis
+                .insert(sym, crate::dispatch::MethodVisibility::Private);
         }
     }
     mark_live();
@@ -1043,7 +1045,11 @@ fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc> {
     // methods work; a method that reaches a Class-level sibling or ivar is a
     // documented limitation (zeo represents modules as class values, not
     // objects, so there is no module instance to bind).
-    let m = module_own_method_impl(mid, name)?;
+    // An INCLUDED module's method counts: `module_function :greet` after
+    // `include Greeting` promotes the mixed-in body, and `extend self` reaches
+    // the same way. Own definitions win, so the ancestry walk is only the
+    // fallback.
+    let m = module_own_method_impl(mid, name).or_else(|| snapshot_instance_method(mid, name))?;
     Some(RProc::with_self_and_block(
         move |self_val, args, block| match self_val {
             RubyValue::Object(o) => m.call(o, args, block),
@@ -1075,6 +1081,55 @@ fn overlay_own_method_names(id: ClassId) -> Vec<Symbol> {
         .unwrap()
         .get(&id.0)
         .map(|e| e.methods.keys().copied().collect())
+        .unwrap_or_default()
+}
+
+/// Every instance-method name `id`'s own overlay entry has an opinion about,
+/// paired with its visibility -- `None` for an `undef_method` tombstone, which
+/// carries no method but still CLAIMS the name so an ancestor's definition
+/// can't answer for it.
+///
+/// This is the overlay half of `dispatch::instance_method_names`, whose other
+/// half reads the frozen registry: a class minted by `Class.new` has all of its
+/// methods here and none of them there.
+pub fn overlay_instance_method_names(
+    id: ClassId,
+) -> Vec<(Symbol, Option<crate::dispatch::MethodVisibility>)> {
+    let c = maps().classes.read().unwrap();
+    let Some(e) = c.get(&id.0) else {
+        return Vec::new();
+    };
+    // A visibility mark can name a method the overlay carries no body for
+    // (`class_eval { private :compiled_method }`), so the marks contribute
+    // names of their own rather than just annotating `methods`.
+    let named: HashSet<Symbol> = e
+        .methods
+        .keys()
+        .chain(e.methods_vis.keys())
+        .copied()
+        .filter(|n| !e.undefs.contains(n))
+        .collect();
+    e.undefs
+        .iter()
+        .map(|&n| (n, None))
+        .chain(named.into_iter().map(|n| {
+            let vis = e.methods_vis.get(&n).copied();
+            let vis = vis.unwrap_or(crate::dispatch::MethodVisibility::Public);
+            (n, Some(vis))
+        }))
+        .collect()
+}
+
+/// The overlay's own CLASS-method names for `id` -- the class-level counterpart
+/// of [`overlay_instance_method_names`], and likewise invisible to the frozen
+/// registry that `dispatch::class_method_names` otherwise reads.
+pub fn overlay_class_method_names(id: ClassId) -> Vec<Symbol> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .map(|e| e.class_methods.keys().copied().collect())
         .unwrap_or_default()
 }
 
@@ -1187,6 +1242,11 @@ pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
     mark_live();
     let val = RubyValue::Class(new_id);
     if let Some(b) = body {
+        // `Module.new` reaches its body through `Class#new` -> `Module#initialize`
+        // -- the allocator is Class's, the initializer Module's. See
+        // `runtime_class_new` for the pair it mirrors.
+        let _new = crate::frames::synthetic_c_frame("Class#new");
+        let _init = crate::frames::synthetic_c_frame("Module#initialize");
         with_body_frame(new_id, || b.call_with_self(&val, &[]))?;
     }
     Ok(val)
@@ -1247,6 +1307,11 @@ pub fn runtime_class_new(
 
     let class_val = RubyValue::Class(new_id);
     if let Some(b) = body {
+        // The body runs two C frames deep in CRuby (`Class.new` calls
+        // `Class#initialize`, which yields), and a raise from inside it shows
+        // both -- so a backtrace here has to as well.
+        let _new = crate::frames::synthetic_c_frame("Class#new");
+        let _init = crate::frames::synthetic_c_frame("Class#initialize");
         with_body_frame(new_id, || b.call_with_self(&class_val, &[]))?;
     }
     Ok(class_val)

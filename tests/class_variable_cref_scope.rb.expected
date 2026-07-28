@@ -1,0 +1,15 @@
+1
+[:@@count]
+:yes
+true
+[:@@from_singleton, :@@on_object, :@@via_block]
+"class variable access from toplevel"
+"class variable access from toplevel"
+"class variable access from toplevel"
+"class variable access from toplevel"
+"class variable access from toplevel"
+"class variable access from toplevel"
+"class variable access from toplevel"
+nil
+"class variable access from toplevel"
+:ran

@@ -26,7 +26,12 @@ puts Tep.session_secret           # hello
 # Read again to confirm the global persists
 puts Tep.session_secret           # hello
 
-# Bare top-level `@@x` (legal in Ruby though unusual) -- same
-# Toplevel namespace, just no enclosing module/class.
-@@plain = 42
-puts @@plain                      # 42
+# Moved out of the spinel mirror: the corpus claimed a bare top-level `@@x`
+# stores into the same namespace. It doesn't -- only a `class`/`module` body
+# opens the cref `@@x` resolves against, so Ruby raises here. See
+# `class_variable_cref_scope.rb` for the full rule.
+begin
+  @@plain = 42
+rescue RuntimeError => e
+  puts e.message                  # class variable access from toplevel
+end

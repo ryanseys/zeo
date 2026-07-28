@@ -281,6 +281,11 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // cross-body/inherited source reaches here as an `AliasMethod`.
             HirNode::AliasMethod { .. } => Item::ClassAlias,
             HirNode::ConstWrite { .. } => Item::Passthrough,
+            // A `@@x` inside `class << self` belongs to the ENCLOSING class,
+            // not the singleton: cvar lookup walks past singleton crefs (see
+            // `Hir::cvar_is_toplevel`), so passing the node through to the
+            // class body is both the simplest and the correct mapping.
+            HirNode::ClassVarWrite(..) | HirNode::ClassVarRead(_) => Item::Passthrough,
             HirNode::Include(m) => Item::Extend(m.clone()),
             // A conditional guarding class-method defs (erb/compiler.rb's
             // `class << self; if defined?(Ractor); def register_scanner ...`):
@@ -961,6 +966,7 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
         Alias(String, String),
         Visibility(&'static str, String),
         Undef(Vec<String>),
+        ModuleFunction(String),
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
         Keep,
@@ -978,6 +984,7 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                 Rewrite::Visibility(visibility_name(*visibility), name.clone())
             }
             HirNode::Undef(names) => Rewrite::Undef(names.clone()),
+            HirNode::ModuleFunction(name) => Rewrite::ModuleFunction(name.clone()),
             HirNode::ClassDef {
                 name,
                 superclass,
@@ -1012,6 +1019,10 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                 let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
                 runtime_self_send(hir, "undef_method", args)
             }
+            Rewrite::ModuleFunction(name) => {
+                let args = vec![sym_lit(hir, name)];
+                runtime_self_send(hir, "module_function", args)
+            }
             Rewrite::Nested(name, superclass, inner, is_module) => {
                 runtime_nested_class(hir, name, superclass, inner, is_module)?
             }
@@ -1024,7 +1035,18 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                     else_body,
                 })
             }
-            Rewrite::Keep => id,
+            // Anything with no runtime spelling of its own passes through --
+            // but a class-body DIRECTIVE reaching here means the two halves of
+            // the table have drifted, and codegen would report it far from its
+            // cause ("top-level-only node in expression position").
+            Rewrite::Keep => {
+                debug_assert!(
+                    !hir[id].is_class_body_directive(),
+                    "class-body directive with no runtime rewrite -- add it to \
+                     `transform_runtime_class_body` alongside `is_class_body_directive`"
+                );
+                id
+            }
         };
         out.push(node);
     }
@@ -1135,33 +1157,40 @@ pub(crate) fn lower_class_body(
     // `attach_function` can name an alias the gem requires be declared first.
     let mut ffi_aliases: std::collections::HashMap<String, crate::hir::FfiType> =
         std::collections::HashMap::new();
-    for stmt in &stmts {
-        if is_ffi {
-            if is_extend_ffi_library(stmt) {
-                continue; // `extend FFI::Library` is the marker, no output
+    // This is the ONE place a `class`/`module` body's statements are lowered
+    // (the runtime-class desugars route through here too), so it is also the
+    // one place the cref chain deepens -- see `Hir::cvar_is_toplevel`.
+    hir.in_class_body(|hir| {
+        for stmt in &stmts {
+            if is_ffi {
+                if is_extend_ffi_library(stmt) {
+                    continue; // `extend FFI::Library` is the marker, no output
+                }
+                if lower_ffi_directive(result, hir, stmt, &mut ffi_lib, &mut ffi_aliases, &mut out)?
+                {
+                    continue;
+                }
             }
-            if lower_ffi_directive(result, hir, stmt, &mut ffi_lib, &mut ffi_aliases, &mut out)? {
-                continue;
+            if is_ffi_struct {
+                if let Some(fields) = as_ffi_layout(stmt)? {
+                    // Replace `layout ...` in place with the synthesized accessors,
+                    // so any user methods after it can still override them.
+                    let source = synthesize_ffi_struct(&fields)?;
+                    out.extend(parse_and_lower_into(hir, &source)?);
+                    continue;
+                }
             }
+            lower_class_body_statement(
+                result,
+                hir,
+                stmt,
+                &mut visibility,
+                &mut module_function,
+                &mut out,
+            )?;
         }
-        if is_ffi_struct {
-            if let Some(fields) = as_ffi_layout(stmt)? {
-                // Replace `layout ...` in place with the synthesized accessors,
-                // so any user methods after it can still override them.
-                let source = synthesize_ffi_struct(&fields)?;
-                out.extend(parse_and_lower_into(hir, &source)?);
-                continue;
-            }
-        }
-        lower_class_body_statement(
-            result,
-            hir,
-            stmt,
-            &mut visibility,
-            &mut module_function,
-            &mut out,
-        )?;
-    }
+        PResult::Ok(())
+    })?;
     Ok(out)
 }
 
@@ -1566,4 +1595,49 @@ fn lower_class_body_statement(
     }
     out.push(lower_node(result, hir, node)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every class-body directive has to have a runtime spelling: a class built
+    /// at runtime runs its body as an ordinary block, where the static-path node
+    /// has no meaning. `HirNode::is_class_body_directive` is the shared table,
+    /// and it is exhaustive, so the only way to grow the directive set without
+    /// tripping this test is to also teach `transform_runtime_class_body` the
+    /// rewrite -- which is the point.
+    #[test]
+    fn every_class_body_directive_has_a_runtime_rewrite() {
+        let directives = [
+            HirNode::Include("M".to_string()),
+            HirNode::Extend("M".to_string()),
+            HirNode::Prepend("M".to_string()),
+            HirNode::Undef(vec!["m".to_string()]),
+            HirNode::AliasMethod {
+                new_name: "a".to_string(),
+                old_name: "b".to_string(),
+                is_class_method: false,
+            },
+            HirNode::MethodVisibility {
+                name: "m".to_string(),
+                visibility: Visibility::Private,
+            },
+            HirNode::ModuleFunction("m".to_string()),
+        ];
+        for node in directives {
+            assert!(
+                node.is_class_body_directive(),
+                "this test only covers directives"
+            );
+            let mut hir = Hir::default();
+            let id = hir.push(node);
+            let out = transform_runtime_class_body(&mut hir, vec![id])
+                .expect("a directive rewrites rather than erroring");
+            assert!(
+                !hir[out[0]].is_class_body_directive(),
+                "class-body directive left unrewritten for a runtime class body"
+            );
+        }
+    }
 }
