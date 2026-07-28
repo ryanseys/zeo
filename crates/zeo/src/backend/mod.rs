@@ -709,8 +709,15 @@ pub fn build_binary(
 
     if !status.success() {
         let _ = std::fs::remove_dir_all(&staging);
+        // The build path skips the in-compiler syn validation; re-parse here
+        // so a codegen token bug still reports as a zeo bug, not a bare
+        // rustc error in a temp file.
+        let triage = match syn::parse_file(rust_source) {
+            Err(e) => format!(" (generated Rust fails to parse -- a zeo bug: {e})"),
+            Ok(_) => String::new(),
+        };
         return Err(format!(
-            "rustc failed compiling the generated program (source at {})",
+            "rustc failed compiling the generated program (source at {}){triage}",
             src_path.display()
         ));
     }

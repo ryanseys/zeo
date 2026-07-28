@@ -292,6 +292,7 @@ fn run() -> Result<(), MainError> {
         nowarn: args.nowarn.clone(),
         gem_path: args.gem_path.clone(),
         lockfile: args.lockfile.clone(),
+        pretty: args.print_rust,
     };
     let compiled = zeo::compile_to_rust_with(&source, &opts)?;
 

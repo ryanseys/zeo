@@ -71,6 +71,11 @@ pub struct CompileOptions {
     /// `--lockfile <Gemfile.lock>`: the resolved gem set to draw from the
     /// store. Only meaningful together with `gem_path`.
     pub lockfile: Option<std::path::PathBuf>,
+    /// Render the generated Rust through prettyplease (the `-S` human view).
+    /// Off by default: the build path feeds rustc, which is insensitive to
+    /// formatting, and the re-parse + pretty-print pair dominated emission
+    /// at gem scale.
+    pub pretty: bool,
 }
 
 /// A compiled program: the generated Rust source, ready for
@@ -159,7 +164,11 @@ fn compile_on_this_thread(
     let analyzed = analyze::analyze(hir, root)?;
     let t_analyze = t_analyze_start.elapsed();
     let t_codegen_start = std::time::Instant::now();
-    let rust_source = codegen::codegen_to_string(&analyzed)?;
+    let rust_source = if opts.pretty {
+        codegen::codegen_to_string_pretty(&analyzed)?
+    } else {
+        codegen::codegen_to_string(&analyzed)?
+    };
     if timings_enabled() {
         eprintln!(
             "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={}",
