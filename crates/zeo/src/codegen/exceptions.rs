@@ -416,7 +416,7 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
                 // inside it, no conflict; a genuinely escaping block is
                 // already its own separate Rust closure, independently
                 // correct via its own `in_real_proc` handling.
-                super::call::is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty())
+                super::call::is_spliced_block_body(compiler, *receiver, name, kwargs.is_empty(), b)
                     && body_contains_bubbling_loop_jump(compiler, body)
             });
             block_jumps

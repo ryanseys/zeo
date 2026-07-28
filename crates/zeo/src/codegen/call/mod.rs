@@ -83,9 +83,12 @@ pub fn is_range_each_fast_path(
         })
 }
 
-/// Either inline-splice shape -- what the escaping-block scans
-/// (`captures`/`hoisting`/`exceptions`) ask: a block NOT matching one of
-/// these becomes a real, heap-allocated `Proc`.
+/// Either inline-splice shape -- what the CAPTURE scans ask: a block NOT
+/// matching one of these becomes a real, heap-allocated `Proc`.
+/// Deliberately syntactic-only (typed `inline_iter_sites` nominations are
+/// NOT consulted): a typed site's dynamic-fallback arm still builds a real
+/// proc, so its shared outer locals must keep escaping-style cell captures,
+/// which the inline arm routes through just as correctly.
 pub fn is_inline_block_fast_path(
     compiler: &Compiler,
     receiver: Option<NodeId>,
@@ -94,6 +97,22 @@ pub fn is_inline_block_fast_path(
 ) -> bool {
     is_times_fast_path(compiler, receiver, name, kwargs_empty)
         || is_range_each_fast_path(compiler, receiver, name, kwargs_empty)
+}
+
+/// The DESCEND decision for the hoisting/exception scans: any spliced block
+/// body -- literal shape or typed-site nomination -- shares the enclosing
+/// Rust scope, so its assigned locals hoist there and its loop jumps compile
+/// against labels in that scope. Wider than `is_inline_block_fast_path`
+/// (see its docs for why the capture scans keep the narrow answer).
+pub fn is_spliced_block_body(
+    compiler: &Compiler,
+    receiver: Option<NodeId>,
+    name: &str,
+    kwargs_empty: bool,
+    block: NodeId,
+) -> bool {
+    is_inline_block_fast_path(compiler, receiver, name, kwargs_empty)
+        || compiler.inline_iter_sites.contains_key(&block)
 }
 
 /// The one native counted-loop splice behind both `n.times { }` and
@@ -213,8 +232,10 @@ fn emit_counted_block_splice(
         .iter()
         .filter(|name| !nested_captured.contains(*name))
         .map(|name| {
-            let ident = safe_ident(name);
-            quote! { #ident = zeo_rt::RubyValue::Nil; }
+            // Through the storage-aware writer: a name some OTHER nested
+            // block (per the method-level capture analysis) cell-wrapped is
+            // an `Arc<Mutex>` here, not a plain local.
+            super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
         });
     let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
     let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
@@ -335,8 +356,8 @@ fn emit_array_each_splice(
         .iter()
         .filter(|name| !nested_captured.contains(*name))
         .map(|name| {
-            let ident = safe_ident(name);
-            quote! { #ident = zeo_rt::RubyValue::Nil; }
+            // Storage-aware: see the counted splice's identical note.
+            super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
         });
     let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
     let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);

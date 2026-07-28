@@ -301,7 +301,13 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 // here. `.times` stays inline (unchanged): its block is
                 // spliced directly into whichever Rust scope encloses it,
                 // so its locals still need to be part of THAT hoisting pass.
-                if super::call::is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
+                if super::call::is_spliced_block_body(
+                    compiler,
+                    *receiver,
+                    name,
+                    kwargs.is_empty(),
+                    *b,
+                ) {
                     collect_locals(compiler, *b, out);
                 }
             }
