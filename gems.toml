@@ -35,3 +35,38 @@ rev    = "0245079c2489f9806f8556aa74e01540adaa3278"
 github = "ruby/uri"
 tag    = "v1.1.1"
 rev    = "f1b05c89ab38667e7564896f994d4d6cfbc67149"
+
+[gems.abbrev]
+github = "ruby/abbrev"
+tag    = "v0.1.2"
+rev    = "b362e8e3b92c48a9e8f34fc0f782d3396858db1f"
+
+[gems.benchmark]
+github = "ruby/benchmark"
+tag    = "v0.4.1"
+rev    = "6d878b4c0b96afaa6b234a13bf0ed36910c56913"
+
+[gems.find]
+github = "ruby/find"
+tag    = "v0.2.0"
+rev    = "192237e766c191fbba4578fafbad94f4c9d3d3a4"
+
+[gems.logger]
+github = "ruby/logger"
+tag    = "v1.7.0"
+rev    = "f474d07d9890a03e6e40430c4e2ee933c6193d7e"
+
+[gems.net-protocol]
+github = "ruby/net-protocol"
+tag    = "v0.2.2"
+rev    = "2d3c4b43a837a616e5853f807cde63aaffbcd280"
+
+[gems.resolv]
+github = "ruby/resolv"
+tag    = "v0.6.2"
+rev    = "a28aaed4cb700303227f0e81178baf93d6221621"
+
+[gems.time]
+github = "ruby/time"
+tag    = "v0.4.1"
+rev    = "539b151049413cd37b5b86da087cdeabef5400af"
