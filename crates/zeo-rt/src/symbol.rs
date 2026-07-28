@@ -44,6 +44,13 @@ impl Symbol {
         self.0
     }
 
+    /// How many distinct symbols exist. Nothing is ever removed from the
+    /// interner, so this only grows -- which is what lets
+    /// `ObjectSpace.count_symbols` report the total as `immortal_symbol`.
+    pub fn count() -> usize {
+        INTERNER.lock().names.len()
+    }
+
     pub fn name(&self) -> String {
         INTERNER.lock().names[self.0 as usize].clone()
     }

@@ -46,8 +46,12 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 The IO-core extensions have landed as unconditional rows on the `IO` table:
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
 and `require "io/console"` (`IO#winsize` over `ioctl`) are pure ceremony — the
-methods are always present. `ARGF` is a live builtin (`zeo_abi::ARGF_CLASS`), and
-`rbconfig` resolves through a synthetic shim (see `docs/todo/bundler-northstar.md`).
+methods are always present. `objspace` is the same shape: `ObjectSpace` is a
+live builtin, so `memsize_of`/`reachable_objects_from`/`count_symbols` answer
+without the require (`crates/zeo-rt/src/builtins/objspace.rs`; what it declines
+and why is in [`docs/COMPATIBILITY.md`](COMPATIBILITY.md)). `ARGF` is a live
+builtin (`zeo_abi::ARGF_CLASS`), and `rbconfig` resolves through a synthetic
+shim (see `docs/todo/bundler-northstar.md`).
 
 ## Deferred (catalogued, no module yet)
 
@@ -106,8 +110,8 @@ compile-time-`extern` model can't reach without libffi, hence the extra dep.
 
 ## Out of scope (VM internals / tooling)
 
-`objspace`, `rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism),
-`pty`, `win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
+`rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism), `pty`,
+`win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
 
 ## Adding an extension
 

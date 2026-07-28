@@ -53,6 +53,33 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 | `socket` | zeo `Socket` | a partial reimplementation |
 | `base64` | zeo `Base64` | a reimplementation |
 | `cgi` | zeo CGI escaping | escape/unescape only |
+| `objspace` | always-on `ObjectSpace` rows | see below |
+
+### `objspace`
+
+CRuby's `ext/objspace` adds its introspection methods to `ObjectSpace` when
+required; zeo's are always present, so the `require` is ceremony (the shape
+`io/wait` and `io/console` already have). What answers, and how:
+
+- `memsize_of` computes from zeo's own value representation. CRuby documents
+  the figure as implementation-defined and it is — only the shape is portable
+  (0 for an immediate, growing with the payload).
+- `reachable_objects_from` matches CRuby on everything a Ruby program can see
+  (class first, then direct references, immediates dropped), but has no
+  counterpart for the internal tier CRuby lists for a Class or a Proc —
+  `T_ICLASS`, `T_IMEMO`, method entries — so those answer with their class
+  alone.
+- `count_symbols` reports the interner total as `immortal_symbol`; zeo never
+  frees a symbol, so CRuby's mortal/dynamic/static split has no meaning here.
+- `count_nodes`/`count_tdata_objects`/`count_imemo_objects` are empty because
+  zero such objects exist, not because they couldn't be counted.
+- The `allocation_*` getters answer nil — CRuby's own answer for an object
+  allocated outside a trace, which under zeo is every object.
+- `memsize_of_all`, `reachable_objects_from_root`, the
+  `trace_object_allocations*` family, `dump`/`dump_all`/`dump_shapes`, and
+  `internal_class_of`/`internal_super_of` raise `NotImplementedError` naming
+  what they'd need (heap enumeration, a root set, an allocation hook, an
+  object header, internal classes).
 
 ## Satisfied faithfully (zeo-bundled gems)
 

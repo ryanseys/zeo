@@ -127,6 +127,42 @@ fn objectspace_module_surface_and_honest_not_implemented() {
     );
 }
 
+/// The introspection half that zeo declines: each error names the capability
+/// it would need, so a caller learns why rather than reading a fabricated
+/// zero. `tests/objspace_introspection.rb` covers the half that does answer.
+#[test]
+fn objspace_declines_name_the_missing_capability() {
+    let result = run_ruby(
+        r#"
+        require "objspace"
+        %i[
+          memsize_of_all reachable_objects_from_root
+          trace_object_allocations_start trace_object_allocations_stop
+          dump dump_all dump_shapes internal_class_of internal_super_of
+        ].each do |m|
+          begin
+            ObjectSpace.public_send(m, "x")
+          rescue NotImplementedError => e
+            puts e.message
+          end
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ObjectSpace.memsize_of_all is not available (zeo has no heap enumeration)\n\
+         ObjectSpace.reachable_objects_from_root is not available (zeo has no GC root table)\n\
+         ObjectSpace.trace_object_allocations_start is not available (zeo has no allocation hook)\n\
+         ObjectSpace.trace_object_allocations_stop is not available (zeo has no allocation hook)\n\
+         ObjectSpace.dump is not available (zeo objects carry no VM header to serialize)\n\
+         ObjectSpace.dump_all is not available (zeo has no heap enumeration)\n\
+         ObjectSpace.dump_shapes is not available (zeo has no shape tree)\n\
+         ObjectSpace.internal_class_of is not available (zeo has no internal classes)\n\
+         ObjectSpace.internal_super_of is not available (zeo has no internal classes)\n"
+    );
+}
+
 #[test]
 fn define_finalizer_runs_at_exit_and_validates_args() {
     // The finalizer for a still-referenced object runs at program exit; the
