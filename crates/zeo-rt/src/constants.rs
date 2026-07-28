@@ -20,6 +20,43 @@ use std::sync::LazyLock;
 static CONSTANTS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// The `Object`-owned constant names that existed before the program's own top
+/// level ran -- `RUBY_VERSION`, `ARGV`, the seeded encodings, everything
+/// `bootstrap::install_core_constants` puts in place. See
+/// [`seal_master_constants`].
+static MASTER: LazyLock<Mutex<Option<std::collections::HashSet<String>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Freeze the master set: called once from `install_core_constants`, at the
+/// seam between startup seeding and `run_main`.
+///
+/// A `Ruby::Box` is a copy of the MASTER namespace, so it sees the constants
+/// the runtime installed but NOT the ones the main program went on to define
+/// -- the same line `globals.rs` draws for `$foo`. Both live in `Object`'s
+/// table here, and the only thing distinguishing them is when they arrived, so
+/// this is where the mark goes.
+pub fn seal_master_constants() {
+    let names = CONSTANTS
+        .lock()
+        .keys()
+        .filter(|(owner, _)| *owner == 0)
+        .map(|(_, name)| name.clone())
+        .collect();
+    *MASTER.lock() = Some(names);
+}
+
+/// A top-level constant as a BOX sees it: `Object`'s binding, but only for a
+/// name that was already there when [`seal_master_constants`] ran. Before the
+/// seal (or in a program that never calls it) this is plain [`const_get`].
+pub fn const_get_master(name: &str) -> Option<RubyValue> {
+    if let Some(master) = MASTER.lock().as_ref() {
+        if !master.contains(name) {
+            return None;
+        }
+    }
+    const_get(0, name)
+}
+
 pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     let map = CONSTANTS.lock();
     if let Some(v) = map.get(&(owner_class_id, name.to_string())) {

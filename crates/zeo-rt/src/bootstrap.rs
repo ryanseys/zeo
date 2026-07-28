@@ -81,6 +81,9 @@ pub fn install_core_constants() {
             install();
         }
     }
+    // Everything above is the MASTER namespace; everything after this call
+    // belongs to the main program, and a `Ruby::Box` must not see it.
+    crate::constants::seal_master_constants();
 }
 
 /// Top-level `RUBY_*` version/build constants (owner `Object`, id 0) plus the

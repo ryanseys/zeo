@@ -1855,6 +1855,20 @@ pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
     })
 }
 
+/// The class a BARE constant belongs to at this emit site's top level: the
+/// box's own surrogate inside a `Ruby::Box` (readable externally as
+/// `box::CONST`, invisible to every other box), and the shared `Object` root
+/// for the main program.
+fn box_top_owner(cx: &Ctx) -> u32 {
+    if cx.box_id == 0 {
+        return crate::compiler::OBJECT_CLASS.0;
+    }
+    cx.compiler
+        .box_surrogate(cx.box_id)
+        .expect("analyze registers a surrogate for every allocated box")
+        .0
+}
+
 /// Fallible companion to [`const_owner_id`]: returns `None` when an explicit
 /// `Scope::NAME` names a scope class that isn't registered (e.g. a reference to
 /// `OpenSSL::Digest` when `require "openssl"` didn't materialize the module).
@@ -1869,15 +1883,9 @@ pub(super) fn const_owner_id_opt(cx: &Ctx, scope: Option<&str>, name: &str) -> O
         // box's surrogate -- readable externally as `box::CONST`, invisible
         // to other boxes; `Object` (the shared id-0 root) stays the owner
         // only for the root program.
-        None => cx.defining_class.unwrap_or_else(|| {
-            if cx.box_id != 0 {
-                cx.compiler
-                    .box_surrogate(cx.box_id)
-                    .expect("analyze registers a surrogate for every allocated box")
-            } else {
-                crate::compiler::OBJECT_CLASS
-            }
-        }),
+        None => cx
+            .defining_class
+            .unwrap_or_else(|| crate::compiler::ClassId(box_top_owner(cx))),
     };
     Some(
         cx.compiler
@@ -1982,16 +1990,28 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // The raised `NameError` carries `#name` (the missing leaf as a Symbol) and
     // `#receiver` (the class the lookup ran against -- `Object` at top level, the
     // enclosing module for a nested miss), matching CRuby.
-    // Object is where Ruby's bare-name lookup ends, and the only constants the
-    // compile-time owner map can't already have placed are the ones the runtime
-    // installs (`RUBY_RELEASE_DATE` and friends) -- which is exactly why a bare
-    // read inside a nested module needs this tail. An explicit `Scope::NAME`
-    // gets no such fallback; CRuby doesn't give it one either.
-    let lookup = if scope.is_none() && owner != crate::compiler::OBJECT_CLASS.0 {
-        quote! { zeo_rt::const_get(#owner, #name).or_else(|| zeo_rt::const_get(0u32, #name)) }
-    } else {
-        quote! { zeo_rt::const_get(#owner, #name) }
-    };
+    // The top level is where Ruby's bare-name lookup ends, and the only
+    // constants the compile-time owner map can't already have placed are the
+    // ones the runtime installs (`RUBY_RELEASE_DATE` and friends) -- which is
+    // exactly why a bare read inside a nested module needs this tail. An
+    // explicit `Scope::NAME` gets no such fallback; CRuby doesn't give it one
+    // either.
+    //
+    // Inside a BOX the top level is the box's own surrogate, and the tail past
+    // it reaches only the MASTER constants -- the ones installed before the
+    // main program ran. Falling straight through to `Object` would hand the box
+    // main's own top-level constants, which a box (a copy of master) never
+    // sees.
+    let top = box_top_owner(cx);
+    let mut lookup = quote! { zeo_rt::const_get(#owner, #name) };
+    if scope.is_none() {
+        if owner != top {
+            lookup = quote! { #lookup.or_else(|| zeo_rt::const_get(#top, #name)) };
+        }
+        if cx.box_id != 0 {
+            lookup = quote! { #lookup.or_else(|| zeo_rt::const_get_master(#name)) };
+        }
+    }
     quote! {
         match #lookup {
             Some(__v) => __v,

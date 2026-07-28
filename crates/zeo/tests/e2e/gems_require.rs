@@ -875,6 +875,27 @@ fn main_definitions_are_invisible_inside_a_box() {
     assert_eq!(result.stdout, "invisible\n");
 }
 
+/// The other half of that line: a box IS a copy of master, so the constants
+/// the runtime installed before main ran stay visible inside it -- the bare
+/// read's fallback tail reaches those and stops, rather than continuing into
+/// main's own `Object` table.
+#[test]
+fn master_constants_stay_visible_inside_a_box() {
+    let result = run_ruby(
+        r#"
+        VERSION_COPY = RUBY_VERSION
+        box = Ruby::Box.new
+        box.eval("puts RUBY_VERSION")
+        box.eval("begin; p VERSION_COPY; rescue NameError; puts 'invisible'; end")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        format!("{}\ninvisible\n", zeo_abi::RUBY_VERSION)
+    );
+}
+
 #[test]
 fn shift_operator_boxes_an_object_typed_argument() {
     // `junk << Trash.new(1)` on a Poly receiver: the numeric-op fallback's
