@@ -1879,6 +1879,14 @@ pub enum HirNode {
         name: String,
         visibility: Visibility,
     },
+    /// `module_function :name` where `name` is INHERITED rather than defined
+    /// in this body -- `erb/util.rb`'s `include ERB::Escape; module_function
+    /// :html_escape`. A name the body does define is retagged in place at
+    /// lowering time; this variant defers the rest to `mro`, which can only
+    /// find the source once ancestors are linearized. The instance copy stays
+    /// (the mixin half of `module_function`), and a module method is added
+    /// alongside it.
+    ModuleFunction(String),
     /// The last-match specials: `$~`, `$1`..`$9`, `$&`, `` $` ``, `$'`.
     ///
     /// NOT `GlobalRead`, even though they are spelled like globals: nothing
@@ -2198,7 +2206,8 @@ impl HirNode {
             | HirNode::MethodVisibility {
                 name: _,
                 visibility: _,
-            } => {}
+            }
+            | HirNode::ModuleFunction(_) => {}
         }
     }
 }

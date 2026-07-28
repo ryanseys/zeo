@@ -282,6 +282,27 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
+    // `defined?(Scope::NAME)` where the scope is a known class/module but the
+    // name isn't statically there. Folding that to nil is wrong the moment
+    // anything does `const_set` -- `uri/common.rb`'s `remove_const(:Parser) if
+    // defined?(::URI::Parser)` guards a constant it creates itself, so the
+    // answer has to change over the program's life. The scope is still
+    // resolved at compile time; only the membership test is deferred.
+    if let HirNode::QualifiedConstRead(scope, name) = &cx.compiler.hir[id] {
+        if super::constfold::const_form_resolves(cx, id) != Some(true) {
+            if let Some(scope_id) = cx.resolve_class(scope) {
+                let scope_id = scope_id.0;
+                let name = name.as_str();
+                return quote! {
+                    if zeo_rt::const_defined_in(zeo_rt::ClassId(#scope_id), #name) {
+                        zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
+                    } else {
+                        zeo_rt::RubyValue::Nil
+                    }
+                };
+            }
+        }
+    }
     let global_var =
         quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("global-variable".to_string())) };
     // `defined?($g)` is `"global-variable"` only if the global has been
@@ -447,7 +468,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. } => None,
+        | HirNode::MethodVisibility { .. }
+        | HirNode::ModuleFunction(_) => None,
     };
     match classification {
         Some(s) => quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(#s.to_string())) },
@@ -1307,7 +1329,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. } => {
+        | HirNode::MethodVisibility { .. }
+        | HirNode::ModuleFunction(_) => {
             let loc = crate::codegen::source_location(cx.compiler, id);
             crate::codegen::unsupported(format!(
                 "a definition-level construct used as a VALUE isn't supported yet (zeo limitation): {loc:?}"

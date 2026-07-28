@@ -18,7 +18,7 @@
 
 use super::register_method;
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
-use crate::hir::{HirNode, NodeId};
+use crate::hir::{HirNode, NodeId, Visibility};
 use std::collections::HashSet;
 
 /// Real Ruby's actual linearization (not classic C3): for `class_id` with
@@ -81,6 +81,7 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
     // one. See `HirNode::AliasMethod`.
     for &cid in &all_ids {
         resolve_aliases(compiler, cid)?;
+        resolve_module_functions(compiler, cid)?;
     }
 
     for &cid in &all_ids {
@@ -184,6 +185,54 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         // birth name can't be read off it -- record it on the new scope.
         compiler.scopes[new_sid.0 as usize].alias_of = Some(old_name);
         super::add_own_method(compiler, class_id, new_sid, is_class_method);
+    }
+    Ok(())
+}
+
+/// Resolves this module's `pending_module_functions`: a `module_function :m`
+/// whose `m` came in through an `include` (`erb/util.rb`'s `include
+/// ERB::Escape; module_function :html_escape`). The source is an INSTANCE
+/// method of some ancestor, and the result is a class method of this module,
+/// which is why this can't ride `resolve_aliases`' single flag.
+///
+/// It takes TWO copies, which is what `module_function` means: a public class
+/// method, and a PRIVATE instance method for the `include`-mixin half. The
+/// private copy is why an includer answers `respond_to?` false while `send`
+/// still reaches it (oracle-verified), and it has to be an own copy rather than
+/// the inherited original, whose visibility belongs to the module that defined
+/// it. A name that resolves nowhere is left alone -- a `module_function` naming
+/// a builtin has no body to clone.
+fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+    let pending =
+        std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_module_functions);
+    for name in pending {
+        let ancestors = compiler.class(class_id).ancestors.clone();
+        let source = ancestors.iter().find_map(|&anc| {
+            compiler
+                .class(anc)
+                .own_methods
+                .iter()
+                .find(|&&s| compiler.scope(s).name == name)
+                .copied()
+        });
+        let Some(sid) = source else { continue };
+        let scope = compiler.scope(sid);
+        let (def_node, params, body) = (scope.def_node, scope.params.clone(), scope.body.clone());
+        for (is_class_method, visibility) in
+            [(true, Visibility::Public), (false, Visibility::Private)]
+        {
+            let new_sid = super::register_method(
+                compiler,
+                class_id,
+                class_id,
+                name.clone(),
+                def_node,
+                params.clone(),
+                body.clone(),
+                visibility,
+            )?;
+            super::add_own_method(compiler, class_id, new_sid, is_class_method);
+        }
     }
     Ok(())
 }
@@ -588,7 +637,7 @@ fn own_const_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
 /// here (a narrow, documented approximation; a bare assignment inside a
 /// METHOD body is a Ruby SyntaxError -- "dynamic constant assignment" --
 /// so class bodies are genuinely the only place to look).
-pub(super) fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
+pub(crate) fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
     compiler.class(class_id).class_body_stmts.iter().any(|&n| {
         matches!(&compiler.hir[n], HirNode::ConstWrite { scope: None, name: w, .. } if w == name)
     })

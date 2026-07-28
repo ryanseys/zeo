@@ -499,6 +499,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             name: _,
             visibility: _,
         }
+        | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(_, _)
         | HirNode::QualifiedConstRead(_, _)
         | HirNode::ConstReadOrNil(_, _)

@@ -561,6 +561,37 @@ pub fn alias_target_name(node: &Node<'_>) -> PResult<String> {
 /// isn't in this body and whose ancestry isn't linearized until `analyze`, so
 /// a deferred `HirNode::AliasMethod` is emitted for `mro::resolve_aliases` to
 /// resolve later. See `HirNode::AliasMethod`.
+/// Turns the instance `def` at `id` into a module function: real Ruby keeps
+/// BOTH halves, a public module method and a PRIVATE instance method for the
+/// `include`-mixin, so the original becomes the private half and a class-method
+/// copy joins it. `false` (and nothing pushed) when `id` isn't a `DefMethod`.
+///
+/// Whether `id` is already in `out` is the caller's business: the bare
+/// `module_function` mode pushes it here, while `module_function :name` found
+/// it there in the first place.
+fn promote_to_module_function(hir: &mut Hir, id: NodeId, out: &mut Vec<NodeId>) -> bool {
+    let HirNode::DefMethod {
+        name, params, body, ..
+    } = &hir[id]
+    else {
+        return false;
+    };
+    let (name, params, body) = (name.clone(), params.clone(), body.clone());
+    hir.set_method_visibility(id, Visibility::Private);
+    if !out.contains(&id) {
+        out.push(id);
+    }
+    out.push(hir.push(HirNode::DefMethod {
+        name,
+        params,
+        body,
+        is_class_method: true,
+        visibility: Visibility::Public,
+        is_def: true,
+    }));
+    true
+}
+
 fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: String) {
     if let Some(&old_id) = out
         .iter()
@@ -1354,10 +1385,15 @@ fn lower_class_body_statement(
                             n.as_symbol_node().expect("checked above").unescaped(),
                         )
                         .into_owned();
-                        if let Some(&id) = out.iter().rev().find(|&&id| {
-                            matches!(&hir[id], HirNode::DefMethod { name: existing, .. } if *existing == target)
+                        match out.iter().rev().find(|&&id| {
+                            matches!(&hir[id], HirNode::DefMethod { name: existing, is_class_method: false, .. } if *existing == target)
                         }) {
-                            hir.set_method_is_class_method(id);
+                            Some(&id) => {
+                                promote_to_module_function(hir, id, out);
+                            }
+                            // Not defined here: it arrives through an
+                            // `include`, so only `mro` can find it.
+                            None => out.push(hir.push(HirNode::ModuleFunction(target))),
                         }
                     }
                     return Ok(());
@@ -1522,24 +1558,8 @@ fn lower_class_body_statement(
         // so an `include`d module's method is callable bare). The original
         // `def` stays as the private instance method; a class-method copy is
         // added alongside it.
-        if *module_function {
-            if let HirNode::DefMethod {
-                name, params, body, ..
-            } = &hir[id]
-            {
-                let (name, params, body) = (name.clone(), params.clone(), body.clone());
-                hir.set_method_visibility(id, Visibility::Private);
-                out.push(id);
-                out.push(hir.push(HirNode::DefMethod {
-                    name,
-                    params,
-                    body,
-                    is_class_method: true,
-                    visibility: Visibility::Public,
-                    is_def: true,
-                }));
-                return Ok(());
-            }
+        if *module_function && promote_to_module_function(hir, id, out) {
+            return Ok(());
         }
         out.push(id);
         return Ok(());

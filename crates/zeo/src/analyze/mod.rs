@@ -9,7 +9,7 @@
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
 
 mod locals;
-mod mro;
+pub(crate) mod mro;
 
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::hir::{
@@ -753,7 +753,8 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. } => true,
+        | HirNode::MethodVisibility { .. }
+        | HirNode::ModuleFunction(_) => true,
         HirNode::If {
             then_body,
             else_body,
@@ -1685,6 +1686,13 @@ fn register_class(
                     .pending_aliases
                     .push(entry);
             }
+            // A `module_function :m` naming an INHERITED method -- resolved by
+            // `mro::resolve_module_functions`. See `HirNode::ModuleFunction`.
+            HirNode::ModuleFunction(name) => {
+                compiler.classes[class_id.0 as usize]
+                    .pending_module_functions
+                    .push(name.clone());
+            }
             // A `private`/`public`/`protected :m` re-declaring an INHERITED
             // method's visibility -- applied by codegen after materialization.
             // See `HirNode::MethodVisibility`.
@@ -2212,6 +2220,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -2483,6 +2492,7 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

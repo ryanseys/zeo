@@ -62,19 +62,17 @@ pub fn emit_new(
             }
             None => quote! { None },
         };
-        // A namespaced runtime class (`class NS::Item < Struct.new(:a)`) lives
-        // as `Item` INSIDE `NS`, so the lookup needs that owner -- reading the
-        // joined spelling under `Object` finds nothing.
+        // Resolved exactly as an ordinary constant read is, so a namespaced
+        // runtime class (`class NS::Item < Struct.new(:a)`) is found under
+        // `NS`, and an unqualified name is found through the lexical cref --
+        // `uri/common.rb` calls `Parser.new` inside `module URI` for a `Parser`
+        // that only `const_set` ever creates, and reading it under `Object`
+        // finds nothing.
         let path = crate::constpath::ConstPath::parse(class_name);
-        let (owner_id, base_name) = match path.scope().and_then(|s| cx.resolve_class(s)) {
-            Some(owner) => (owner.0, path.base().to_string()),
-            None => (0, class_name.to_string()),
-        };
+        let rtclass = crate::codegen::expr::emit_const_read(cx, path.scope(), path.base());
         return quote! {
             {
-                let __rtclass = zeo_rt::const_get(#owner_id, #base_name).ok_or_else(|| {
-                    zeo_rt::raise_error("NameError", format!("uninitialized constant {}", #class_name))
-                })?;
+                let __rtclass = #rtclass;
                 zeo_rt::send_value(
                     &__rtclass,
                     zeo_rt::Symbol::intern("new"),

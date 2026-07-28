@@ -109,6 +109,11 @@ pub struct ClassInfo {
     /// `is_class_method` (an `alias` inside `class << self`) resolves against
     /// `own_class_methods`. See `HirNode::AliasMethod`'s docs.
     pub pending_aliases: Vec<(String, String, bool)>,
+    /// Names from a `module_function :m` whose `m` is INHERITED rather than
+    /// defined in this body -- recorded by `analyze::register_class` from a
+    /// `HirNode::ModuleFunction` and resolved by `mro::resolve_module_functions`
+    /// once the ancestor chain is linearized.
+    pub pending_module_functions: Vec<String>,
     /// `(new, old)` aliases whose source is a BUILTIN (no user `Scope`
     /// anywhere in the ancestor chain -- Kernel's `raise`, Object's `dup`,
     /// ...): there is no HIR body to clone, so the alias is a NAME
@@ -335,6 +340,7 @@ impl Compiler {
                 class_method_prepends: Vec::new(),
                 undefined: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
+                pending_module_functions: Vec::new(),
                 builtin_aliases: Vec::new(),
                 visibility_overrides: Vec::new(),
                 is_module: false,
@@ -606,6 +612,7 @@ impl Compiler {
             class_method_prepends: Vec::new(),
             undefined: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
+                pending_module_functions: Vec::new(),
             builtin_aliases: Vec::new(),
             visibility_overrides: Vec::new(),
             is_module,

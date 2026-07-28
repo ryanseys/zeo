@@ -63,6 +63,14 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // being core there as well.
     matches!(
         feature,
-        "tmpdir" | "set" | "time" | "io/console" | "io/wait" | "weakref" | "objspace" | "fiber"
+        "tmpdir"
+            | "set"
+            | "time"
+            | "io/console"
+            | "io/wait"
+            | "io/nonblock"
+            | "weakref"
+            | "objspace"
+            | "fiber"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }

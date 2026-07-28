@@ -379,6 +379,7 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
             name: _,
             visibility: _,
         }
+        | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(_, _)
         | HirNode::QualifiedConstRead(_, _)
         | HirNode::ConstReadOrNil(_, _)
@@ -638,6 +639,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             name: _,
             visibility: _,
         }
+        | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(_, _)
         | HirNode::QualifiedConstRead(_, _)
         | HirNode::ConstReadOrNil(_, _)
@@ -1175,6 +1177,7 @@ fn walk(
             name: _,
             visibility: _,
         }
+        | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(_, _)
         | HirNode::QualifiedConstRead(_, _)
         | HirNode::ConstReadOrNil(_, _)

@@ -1405,6 +1405,95 @@ fn io_each_codepoint(
     Ok(recv.clone())
 }
 
+/// This IO's descriptor, or `None` for a std stream or a closed handle --
+/// `fcntl` needs the real number.
+fn io_raw_fd(recv: &RubyValue) -> Option<std::os::fd::RawFd> {
+    use std::os::fd::AsRawFd;
+    let io = as_rio(recv)?;
+    let backend = io.backend.lock();
+    match &*backend {
+        IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => Some(f.as_raw_fd()),
+        _ => None,
+    }
+}
+
+/// `IO#nonblock?` -- the descriptor's own `O_NONBLOCK`, from
+/// `require "io/nonblock"`.
+fn io_nonblock_p(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    let Some(fd) = io_raw_fd(recv) else {
+        return Ok(RubyValue::Bool(false));
+    };
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io_error!("closed stream"));
+    }
+    Ok(RubyValue::Bool(flags & libc::O_NONBLOCK != 0))
+}
+
+/// Turns `O_NONBLOCK` on or off for `fd`.
+pub(crate) fn set_fd_nonblock(fd: std::os::fd::RawFd, on: bool) -> Result<(), Signal> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io_error!("closed stream"));
+    }
+    let next = if on {
+        flags | libc::O_NONBLOCK
+    } else {
+        flags & !libc::O_NONBLOCK
+    };
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, next) } < 0 {
+        return Err(crate::builtins::file::raise_errno(
+            &std::io::Error::last_os_error(),
+            "fcntl",
+            "",
+        ));
+    }
+    Ok(())
+}
+
+/// `IO#nonblock = flag` -- the plain setter, answering the flag it set.
+fn io_nonblock_assign(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    let on = args[0].truthy();
+    let Some(fd) = io_raw_fd(recv) else {
+        return Err(io_error!("closed stream"));
+    };
+    set_fd_nonblock(fd, on)?;
+    Ok(RubyValue::Bool(on))
+}
+
+/// `IO#nonblock(flag = true) { ... }` -- sets the flag for the block only and
+/// restores it after, answering the block's value. CRuby REQUIRES the block
+/// here (`#nonblock?` is the reader), so a blockless call is a LocalJumpError.
+fn io_nonblock_scoped(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0..=1);
+    let Some(RubyValue::Proc(p)) = blk else {
+        return Err(crate::raise_error("LocalJumpError", "no block given".to_string()));
+    };
+    let on = args.first().is_none_or(|v| v.truthy());
+    let Some(fd) = io_raw_fd(recv) else {
+        return Err(io_error!("closed stream"));
+    };
+    let was = unsafe { libc::fcntl(fd, libc::F_GETFL) } & libc::O_NONBLOCK != 0;
+    set_fd_nonblock(fd, on)?;
+    let out = p.call(&[]);
+    set_fd_nonblock(fd, was)?;
+    out
+}
+
 /// Whether this IO's fd was opened for writing (`close_write` needs it) or
 /// reading (`close_read`). `fcntl(F_GETFL) & O_ACCMODE` is the fd's own truth,
 /// so no per-IO mode field is needed.
@@ -1898,6 +1987,9 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "fileno" | "to_i" => io_fileno,
         "tty?" | "isatty" => io_tty,
         "winsize" => io_winsize,
+        "nonblock?" => io_nonblock_p,
+        "nonblock" => io_nonblock_scoped,
+        "nonblock=" => io_nonblock_assign,
         "wait_readable" => io_wait_readable,
         "wait_writable" => io_wait_writable,
         "inspect" | "to_s" => io_inspect,
@@ -1971,6 +2063,9 @@ pub fn lookup_names() -> &'static [&'static str] {
         "tty?",
         "isatty",
         "winsize",
+        "nonblock?",
+        "nonblock",
+        "nonblock=",
         "wait_readable",
         "wait_writable",
         "inspect",
@@ -2058,6 +2153,11 @@ fn io_class_pipe(
             "pipe",
             "",
         ));
+    }
+    // Both ends start non-blocking, as CRuby's do -- `IO.pipe` there hands back
+    // fds it has already marked, which `#nonblock?` reports.
+    for fd in fds {
+        set_fd_nonblock(fd, true)?;
     }
     // SAFETY: `pipe(2)` just handed us these two fresh, owned fds.
     let r = pipe_value(unsafe { std::fs::File::from_raw_fd(fds[0]) });

@@ -85,6 +85,13 @@ fn const_lookup(cid: crate::ClassId, name: &str, inherit: bool) -> Option<RubyVa
     })
 }
 
+/// `defined?(Scope::NAME)`'s membership test, for a scope codegen resolved but
+/// a name it could not: the constant may not exist until a `const_set` runs.
+/// Shares `const_lookup` with `const_defined?`, whose semantics these are.
+pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
+    const_lookup(cid, name, true).is_some()
+}
+
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
 fn inherit_flag(args: &[RubyValue]) -> bool {

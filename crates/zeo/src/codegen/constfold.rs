@@ -36,26 +36,37 @@ pub(super) fn value_const_defined_in(cx: &Ctx, target: ClassId, cname: &str) -> 
     if !chain.contains(&OBJECT_CLASS) {
         chain.push(OBJECT_CLASS);
     }
+    // An ACTUAL `NAME = ...` in the body, not merely a `const_owners` entry:
+    // that map records where a name WOULD resolve, and a bare reference to a
+    // name nothing defines still gets one (`uri/common.rb` calls `Parser.new`
+    // in the very method whose `defined?(::URI::Parser)` guard must answer nil
+    // until its own `const_set` runs).
     chain
         .iter()
-        .any(|&anc| cx.compiler.class(anc).const_owners.contains_key(cname))
+        .any(|&anc| crate::analyze::mro::directly_defines_const(cx.compiler, anc, cname))
 }
 
 /// Whether a constant-reference HIR node (the operand of a `defined?`) provably
 /// resolves at compile time. `Some(true)` = names a live class or value
-/// constant; `Some(false)` = a `Scope::NAME`/bare-`NAME` const form whose
-/// target is absent; `None` = not a constant-reference node at all (a method
-/// call, ivar, ..., which this function makes no claim about).
+/// constant; `Some(false)` = provably absent; `None` = undecidable here, so
+/// the caller must ask at runtime (or, for a non-constant node, make no claim).
+///
+/// A `Scope::NAME` whose scope exists but whose name isn't statically there is
+/// `None`, never `Some(false)`: `const_set` can add it later, and folding the
+/// guard away would run the very branch it protects. A BARE name stays
+/// decidable, because that is the version/feature-gate idiom (`defined?(Ractor)`)
+/// whose whole value is dropping unreachable code at compile time.
 pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
     match &cx.compiler.hir[id] {
         HirNode::ClassRef(name) => Some(cx.resolve_class(name).is_some()),
-        HirNode::QualifiedConstRead(scope, name) => Some(match cx.resolve_class(scope) {
-            Some(scope_id) => {
-                class_const_in(cx, scope_id, name).is_some()
-                    || value_const_defined_in(cx, scope_id, name)
-            }
-            None => false,
-        }),
+        HirNode::QualifiedConstRead(scope, name) => {
+            let Some(scope_id) = cx.resolve_class(scope) else {
+                return Some(false);
+            };
+            let known = class_const_in(cx, scope_id, name).is_some()
+                || value_const_defined_in(cx, scope_id, name);
+            known.then_some(true)
+        }
         _ => None,
     }
 }

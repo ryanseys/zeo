@@ -1735,24 +1735,15 @@ fn emit_user_module_bridges(compiler: &Compiler) -> (Vec<TokenStream>, Vec<Token
 
 fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
-    for &sid in &ci.methods {
-        let n = &compiler.scope(sid).name;
-        if ci
-            .class_methods
-            .iter()
-            .any(|&cs| compiler.scope(cs).name == *n)
-        {
-            return unsupported(format!(
-                "the built-in class `{}` defines both an instance method and a class method named `{n}` -- not supported yet (zeo limitation: they share one generated container)",
-                ci.name
-            ));
-        }
-    }
     let mod_ident = ident::class_ident(compiler, cid);
     let instance_fns = ci
         .methods
         .iter()
         .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+    // Instance and class methods share this one container but not their
+    // idents (`x` vs `__cm_x`), so a reopen defining both -- `module Kernel;
+    // def URI(u); end; module_function :URI; end`, which is what
+    // `module_function` produces -- emits cleanly.
     let class_fns = ci
         .class_methods
         .iter()

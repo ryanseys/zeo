@@ -35,11 +35,6 @@ pub(super) fn emit_splat_call(
     safe: bool,
 ) -> TokenStream {
     let __bx = cx.box_id;
-    if safe {
-        return crate::codegen::unsupported(
-            "safe-navigation (`&.`) on a call with a splat argument isn't supported yet (zeo limitation)",
-        );
-    }
     let recv_obj_expr = match receiver {
         Some(recv_id) => {
             // A class-VALUE receiver (`Point.new(*args)` / `Klass.foo(**h)`):
@@ -122,15 +117,35 @@ pub(super) fn emit_splat_call(
         }
     });
     let block_value = super::emit_block_option(cx, block, block_arg);
-    let dyn_call =
-        quote! { zeo_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &__args, #block_value) };
+    let dyn_call = quote! {
+        zeo_rt::send_value_in(#__bx, &__recv, #name_expr, &__args, #block_value)
+    };
     let dyn_call = super::wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
+    let dispatch = quote! {
+        let mut __args: Vec<zeo_rt::RubyValue> = Vec::new();
+        #(#arg_pushes)*
+        #kw_push
+        #dyn_call
+    };
+    // `recv&.m(*args)` -- a nil receiver skips the arguments as well as the
+    // call, which is why the whole build sits inside the else branch
+    // (oracle-verified: `nil&.push(*a, f())` never calls `f`).
+    if safe {
+        return quote! {
+            {
+                let __recv = #recv_obj_expr;
+                if __recv.is_nil() {
+                    zeo_rt::RubyValue::Nil
+                } else {
+                    #dispatch
+                }
+            }
+        };
+    }
     quote! {
         {
-            let mut __args: Vec<zeo_rt::RubyValue> = Vec::new();
-            #(#arg_pushes)*
-            #kw_push
-            #dyn_call
+            let __recv = #recv_obj_expr;
+            #dispatch
         }
     }
 }
