@@ -426,6 +426,16 @@ pub const PTY_MODULE: ClassId = ClassId(105);
 /// `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules live in the
 /// gem's Ruby half (`gems/syslog`).
 pub const SYSLOG_MODULE: ClassId = ClassId(106);
+/// `readline`: the `Readline` module -- `readline` line input (rustyline on a
+/// terminal, a plain read everywhere else) plus the completion/word-break
+/// attribute surface.
+pub const READLINE_MODULE: ClassId = ClassId(107);
+/// The class of the `Readline::HISTORY` singleton -- the one history list as
+/// an Enumerable object (`push`/`<<`/`[]`/`delete_at`/`each`/...). Not
+/// constructible from Ruby. Deliberately NOT named `Readline::HISTORY`: the
+/// compiler resolves a builtin's name as a CONSTANT PATH, and that spelling
+/// must resolve to the runtime-seeded singleton OBJECT, not to its class.
+pub const READLINE_HISTORY_CLASS: ClassId = ClassId(108);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1305,6 +1315,22 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("syslog"),
+    },
+    BuiltinClass {
+        id: READLINE_MODULE,
+        name: "Readline",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("readline"),
+    },
+    BuiltinClass {
+        id: READLINE_HISTORY_CLASS,
+        name: "Readline::History",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[ENUMERABLE_CLASS],
+        feature: Some("readline"),
     },
 ];
 

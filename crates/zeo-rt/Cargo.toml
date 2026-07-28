@@ -74,6 +74,10 @@ digest = { workspace = true, optional = true }
 # `zlib` extension: flate2's pure-Rust (miniz_oxide) backend powers
 # `deflate`/`inflate`/`gzip`/`gunzip`. Pulled in only by `ext-zlib`.
 flate2 = { workspace = true, optional = true }
+
+# `readline` extension: rustyline is the pure-Rust line editor behind
+# `Readline.readline` on a terminal (non-tty reads bypass it entirely).
+rustyline = { workspace = true, optional = true }
 # `json` extension: serde_json parses into a `Value` tree we convert to
 # `RubyValue` (generation is hand-rolled for int/float/bignum fidelity).
 # Pulled in only by `ext-json`.
@@ -137,12 +141,14 @@ ext-all = [
     "ext-fcntl",
     "ext-pty",
     "ext-syslog",
+    "ext-readline",
 ]
 ext-base64 = []
 ext-etc = []
 ext-fcntl = []
 ext-pty = []
 ext-syslog = []
+ext-readline = ["dep:rustyline"]
 ext-pathname = []
 ext-monitor = []
 ext-stringio = []

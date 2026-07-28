@@ -85,6 +85,8 @@ pub(crate) mod pathname;
 pub(crate) mod psych;
 #[cfg(feature = "ext-pty")]
 pub(crate) mod pty;
+#[cfg(feature = "ext-readline")]
+pub(crate) mod readline;
 #[cfg(feature = "ext-socket")]
 pub(crate) mod socket;
 #[cfg(feature = "ext-stringio")]
