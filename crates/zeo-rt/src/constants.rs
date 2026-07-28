@@ -21,7 +21,7 @@ use std::sync::LazyLock;
 /// every read probe with its borrowed `&str` -- the pre-split
 /// `(u32, String)` key allocated a fresh `String` per read, once per
 /// ancestor on the fallback walk.
-static CONSTANTS: LazyLock<Mutex<FMap<u32, FMap<Box<str>, RubyValue>>>> =
+static CONSTANTS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// The `Object`-owned constant names that existed before the program's own top

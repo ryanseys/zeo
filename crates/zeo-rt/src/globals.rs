@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// read probe with the borrowed `&str` it was handed -- the pre-split
 /// `(u32, String)` key forced a `String` allocation per READ, which is the
 /// wrong side to pay on (reads dominate writes by orders of magnitude).
-static GLOBALS: LazyLock<Mutex<FMap<u32, FMap<Box<str>, RubyValue>>>> =
+static GLOBALS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// Whether `$stdout`/`$stderr`/`$stdin` was ever ASSIGNED (any box): while
@@ -47,7 +47,7 @@ fn arm_if_stdio(target: &str) {
 ///
 /// Keyed `(box_id, name)` like `GLOBALS` itself, since an alias is
 /// per-box state exactly as the variable is.
-static ALIASES: LazyLock<Mutex<FMap<u32, FMap<Box<str>, Box<str>>>>> =
+static ALIASES: LazyLock<Mutex<crate::ScopedMap<Box<str>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// The name whose storage `name` actually refers to -- itself (borrowed,

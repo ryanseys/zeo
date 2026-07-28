@@ -125,8 +125,12 @@ pub(super) struct Loader {
     /// every file's resolvability pre-scan AND again at its splice.
     /// `Err` verdicts (ambiguous feature) are not cached -- they abort the
     /// compile at first sight.
-    require_memo: std::cell::RefCell<HashMap<String, Option<(PathBuf, Option<String>)>>>,
+    require_memo: std::cell::RefCell<HashMap<String, ResolvedRequire>>,
 }
+
+/// `resolve_require`'s success shape: the found path plus the owning
+/// package's name, or `None` for not-on-disk.
+type ResolvedRequire = Option<(PathBuf, Option<String>)>;
 
 /// Lowers the MAIN file's statements, resolving require/require_relative/
 /// load recursively -- the entry point `parse_and_lower_with` uses for the

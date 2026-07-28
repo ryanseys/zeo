@@ -47,7 +47,7 @@ use std::sync::LazyLock;
 /// Two-level (class -> name -> value), so reads probe with their borrowed
 /// `&str` instead of allocating a `(u32, String)` key per access -- the
 /// dominant cost of a module-level `@ivar` read loop.
-static CIVARS: LazyLock<Mutex<FMap<u32, FMap<Box<str>, RubyValue>>>> =
+static CIVARS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// `nil` for a class-level `@x` never yet written -- and here that is real

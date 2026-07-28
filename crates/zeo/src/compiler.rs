@@ -345,7 +345,7 @@ pub struct Compiler {
     /// class's identity fields (name/box/lexical_parent) before any lookup
     /// can run; `ZEO_VERIFY_CLASS_INDEX=1` shadow-compares every answer
     /// against the original scan.
-    class_index: std::cell::RefCell<HashMap<(u32, Option<ClassId>), HashMap<String, ClassId>>>,
+    class_index: std::cell::RefCell<ClassNameIndex>,
     indexed_upto: std::cell::Cell<usize>,
     /// `cref_of`/`fq_name` answers for every class, precomputed once by
     /// [`Compiler::freeze_identity_caches`] at `mro::materialize`'s head --
@@ -384,6 +384,9 @@ pub enum InlineIterKind {
 /// The compiler-internal hash policy: fast, not DoS-resistant -- these sets
 /// only ever hold program identifiers.
 pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
+
+/// `class_index`'s shape: `(box, lexical_parent) -> name -> id`.
+type ClassNameIndex = HashMap<(u32, Option<ClassId>), HashMap<String, ClassId>>;
 
 /// Whether `ZEO_VERIFY_CLASS_INDEX` is set: every `class_in_scope` answer is
 /// then shadow-compared against the original linear scan -- the drift
