@@ -201,7 +201,14 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
             sub(*v)
         }
-        HirNode::And(l, r) | HirNode::Or(l, r) => sub(*l) || sub(*r),
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => sub(*l) || sub(*r),
         HirNode::If { cond, then_body, else_body } => {
             sub(*cond)
                 || body_contains_escaping_return_in(compiler, then_body, in_escaping)
@@ -461,7 +468,16 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
             node_contains_begin(compiler, *v)
         }
-        HirNode::And(l, r) | HirNode::Or(l, r) => node_contains_begin(compiler, *l) || node_contains_begin(compiler, *r),
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => {
+            node_contains_begin(compiler, *l) || node_contains_begin(compiler, *r)
+        }
         HirNode::If { cond, then_body, else_body } => {
             node_contains_begin(compiler, *cond)
                 || body_contains_begin(compiler, then_body)
@@ -763,7 +779,14 @@ fn walk(
                 walk(compiler, n, true, &next_exclusions, caps, self_class);
             }
         }
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => {
             walk(compiler, *l, in_escaping, param_exclusions, caps, self_class);
             walk(compiler, *r, in_escaping, param_exclusions, caps, self_class);
         }

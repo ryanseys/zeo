@@ -87,7 +87,14 @@ fn track_node(
         HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
             track_node(compiler, defining, box_id, locals, *value)
         }
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => {
             track_node(compiler, defining, box_id, locals, *l);
             track_node(compiler, defining, box_id, locals, *r);
         }

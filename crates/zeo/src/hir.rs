@@ -164,6 +164,11 @@ pub struct Hir {
     /// its interned, frozen twin. `false` (the default) keeps literals
     /// mutable.
     pub frozen_string_literal: bool,
+    /// How many flip-flops have been lowered -- see `HirNode::FlipFlop`. The
+    /// counter is per-PROGRAM, not per-file: `require` splices every file into
+    /// one arena, so per-file numbering would make two files' first flip-flops
+    /// share a latch.
+    pub flip_flops: u32,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -1904,6 +1909,29 @@ pub enum HirNode {
     /// to a Ruby reader and to tooling, not because they generate
     /// differently.
     Seq(Vec<NodeId>),
+    /// `left..right` / `left...right` used AS a condition -- Ruby's flip-flop,
+    /// a two-state latch rather than a Range. Off, it evaluates `left` and
+    /// turns on when that is truthy; on, it evaluates `right` and turns off
+    /// when that is truthy. Either way it answers true whenever it is (or just
+    /// became) on. The two-dot form additionally tests `right` in the very
+    /// evaluation that turned it on, so `(i == 3)..(i == 3)` is true for one
+    /// iteration; the three-dot form (`exclusive`) waits for the next one.
+    ///
+    /// prism mints this node only in a conditional position -- a `..`
+    /// anywhere else is an ordinary `RangeLit` -- so no context flag is
+    /// needed here. An omitted side is nil, hence falsy: `..(i == 3)` never
+    /// turns on and `(i == 2)..` never turns off, both oracle-verified.
+    ///
+    /// `state` indexes the runtime's latch table. It is minted per SYNTACTIC
+    /// occurrence, which is what Ruby scopes the latch to -- two flip-flops in
+    /// one loop body keep separate state, and one flip-flop keeps its state
+    /// across separate runs of its loop.
+    FlipFlop {
+        state: u32,
+        left: NodeId,
+        right: NodeId,
+        exclusive: bool,
+    },
 }
 
 impl HirNode {
@@ -1953,7 +1981,14 @@ impl HirNode {
             | HirNode::BoxScope { box_id: _, body } => each(body.iter().copied(), visit),
             HirNode::Ffi(call) => call.args.iter().for_each(|(a, _)| visit(*a)),
             HirNode::ImaginaryLit(inner) => visit(*inner),
-            HirNode::And(l, r) | HirNode::Or(l, r) => {
+            HirNode::And(l, r)
+            | HirNode::Or(l, r)
+            | HirNode::FlipFlop {
+                state: _,
+                left: l,
+                right: r,
+                exclusive: _,
+            } => {
                 visit(*l);
                 visit(*r);
             }

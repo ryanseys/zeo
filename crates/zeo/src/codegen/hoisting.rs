@@ -166,7 +166,14 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
             collect_locals(compiler, *value, out)
         }
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => {
             collect_locals(compiler, *l, out);
             collect_locals(compiler, *r, out);
         }

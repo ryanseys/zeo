@@ -136,6 +136,47 @@ pub fn emit_range_lit(
     quote! { zeo_rt::RubyValue::Range(#start_expr, #end_expr, #exclusive) }
 }
 
+/// `a..b` / `a...b` in a condition -- Ruby's flip-flop (see
+/// `HirNode::FlipFlop`). The latch lives in the runtime, keyed by `state`;
+/// only the operand whose turn it is gets evaluated, which is what makes
+/// `(i == 3)..expensive` cheap while the latch is off.
+pub fn emit_flip_flop(
+    cx: &Ctx,
+    state: u32,
+    left: NodeId,
+    right: NodeId,
+    exclusive: bool,
+) -> TokenStream {
+    let turn_off = {
+        let right = emit_expr(cx, right);
+        quote! {
+            if (#right).truthy() {
+                zeo_rt::flip_flop_set(#state, false);
+            }
+        }
+    };
+    // Two dots retest the right operand in the very evaluation that turned
+    // the latch on; three dots wait for the next one.
+    let on_turning_on = if exclusive {
+        quote! {}
+    } else {
+        turn_off.clone()
+    };
+    let left = emit_expr(cx, left);
+    quote! {
+        if zeo_rt::flip_flop_on(#state) {
+            #turn_off
+            zeo_rt::RubyValue::Bool(true)
+        } else if (#left).truthy() {
+            zeo_rt::flip_flop_set(#state, true);
+            #on_turning_on
+            zeo_rt::RubyValue::Bool(true)
+        } else {
+            zeo_rt::RubyValue::Bool(false)
+        }
+    }
+}
+
 /// Whether string literals in `id`'s SOURCE FILE are frozen -- its OWN
 /// `# frozen_string_literal: true` pragma, not the entry file's. Synthetic
 /// nodes (the exception prelude, `eval` bodies -- no file) fall back to the

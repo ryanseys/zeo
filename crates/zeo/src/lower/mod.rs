@@ -2002,6 +2002,26 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         return Ok(hir.push(HirNode::HashLit(kwargs)));
     }
 
+    // A `..`/`...` prism decided is a CONDITION, not a Range -- see
+    // `HirNode::FlipFlop`. An omitted side lowers to nil, which is falsy, and
+    // that is exactly Ruby's behaviour for a one-sided flip-flop.
+    if let Some(ff) = node.as_flip_flop_node() {
+        let mut side = |n: Option<Node<'_>>| match n {
+            None => Ok(hir.push(HirNode::NilLit)),
+            Some(n) => lower_node(result, hir, &n),
+        };
+        let left = side(ff.left())?;
+        let right = side(ff.right())?;
+        let state = hir.flip_flops;
+        hir.flip_flops += 1;
+        return Ok(hir.push(HirNode::FlipFlop {
+            state,
+            left,
+            right,
+            exclusive: ff.is_exclude_end(),
+        }));
+    }
+
     if let Some(range) = node.as_range_node() {
         let start = match range.left() {
             None => None,

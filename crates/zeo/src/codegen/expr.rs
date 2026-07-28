@@ -10,7 +10,9 @@ use quote::quote;
 
 use super::Ctx;
 use super::call::emit_call;
-use super::collections::{emit_array_lit, emit_hash_lit, emit_range_lit, emit_string_lit};
+use super::collections::{
+    emit_array_lit, emit_flip_flop, emit_hash_lit, emit_range_lit, emit_string_lit,
+};
 use super::ident::safe_ident;
 use super::loops::{emit_break, emit_for, emit_loop, emit_next, emit_redo, emit_while};
 use crate::compiler::ClassId;
@@ -398,6 +400,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::StringLit(_)
         | HirNode::RegexpLit(..)
         | HirNode::RangeLit { .. }
+        | HirNode::FlipFlop { .. }
         | HirNode::And(..)
         | HirNode::Or(..)
         | HirNode::Defined(_)
@@ -734,6 +737,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             end,
             exclusive,
         } => emit_range_lit(cx, *start, *end, *exclusive),
+        HirNode::FlipFlop {
+            state,
+            left,
+            right,
+            exclusive,
+        } => emit_flip_flop(cx, *state, *left, *right, *exclusive),
         HirNode::StringLit(parts) => {
             emit_string_lit(cx, parts, super::collections::literal_file_frozen(cx, id))
         }

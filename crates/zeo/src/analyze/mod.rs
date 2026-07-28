@@ -1973,7 +1973,14 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         HirNode::IvarWrite(_, value)
         | HirNode::LocalWrite(_, value)
         | HirNode::ClassVarWrite(_, value) => scan_bare_block_use(hir, *value),
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => {
             scan_bare_block_use(hir, *l) || scan_bare_block_use(hir, *r)
         }
         HirNode::Defined(v) => scan_bare_block_use(hir, *v),
@@ -2260,7 +2267,14 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         HirNode::IvarWrite(_, value)
         | HirNode::LocalWrite(_, value)
         | HirNode::ClassVarWrite(_, value) => scan_contains_super(hir, *value),
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
+        HirNode::And(l, r)
+        | HirNode::Or(l, r)
+        | HirNode::FlipFlop {
+            state: _,
+            left: l,
+            right: r,
+            exclusive: _,
+        } => {
             scan_contains_super(hir, *l) || scan_contains_super(hir, *r)
         }
         HirNode::Defined(v) => scan_contains_super(hir, *v),

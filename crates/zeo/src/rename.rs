@@ -159,7 +159,14 @@ impl Walker {
             | HirNode::PreExec(body)
             | HirNode::Seq(body)
             | HirNode::BoxScope { box_id: _, body } => self.visit_all(hir, &body.clone()),
-            HirNode::And(l, r) | HirNode::Or(l, r) => {
+            HirNode::And(l, r)
+            | HirNode::Or(l, r)
+            | HirNode::FlipFlop {
+                state: _,
+                left: l,
+                right: r,
+                exclusive: _,
+            } => {
                 self.visit(hir, *l);
                 self.visit(hir, *r);
             }
