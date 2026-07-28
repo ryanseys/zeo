@@ -1098,17 +1098,38 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // Modules need nothing here -- their own methods are already registered
     // as value methods on their own id (`emit_user_module_bridges`), which
     // the `super` walk probes per position.
-    let mut super_reachable: std::collections::HashSet<&str> = compiler
-        .scopes
-        .iter()
-        .filter(|scope| {
-            scope
-                .body
-                .iter()
-                .any(|&n| crate::analyze::scan_contains_super(&compiler.hir, n))
-        })
-        .map(|scope| scope.name.as_str())
-        .collect();
+    // Precise (class, name) pairs, not names alone: a name-keyed set forced a
+    // bridge (a SECOND compilation of the body) onto every same-named own
+    // method program-wide -- one `initialize` containing `super` doubled every
+    // class's `initialize`. A `super` in a scope defined on X can only ever
+    // walk the MRO of a class that has X among its ancestors, and every
+    // position it probes is in that class's own `ancestors` list -- so marking
+    // (D, name) for each D in ancestors(R), for every class R whose ancestors
+    // include X, covers exactly the reachable positions (module-defined
+    // `super`s included: R ranges over includers, whose chains continue past
+    // the module into their own). The reflection/runtime-def shapes below
+    // stay name-global -- their receiver is a runtime choice.
+    let mut super_pairs: std::collections::HashSet<(ClassId, &str)> =
+        std::collections::HashSet::new();
+    let mut super_global: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for scope in &compiler.scopes {
+        if !scope
+            .body
+            .iter()
+            .any(|&n| crate::analyze::scan_contains_super(&compiler.hir, n))
+        {
+            continue;
+        }
+        let defined_on = scope.defining_class;
+        for class in &compiler.classes {
+            if class.is_module || !class.ancestors.contains(&defined_on) {
+                continue;
+            }
+            for &d in &class.ancestors {
+                super_pairs.insert((d, scope.name.as_str()));
+            }
+        }
+    }
     // `Method#super_method` re-seats a bound Method onto the ancestor that
     // defines the name NEXT, and calling that Method must run the ancestor's
     // body -- which needs exactly the receiver-generic bridge `super` needs.
@@ -1119,7 +1140,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     if compiler.hir.all_nodes().iter().any(|node| {
         matches!(node, crate::hir::HirNode::Call { name, .. } if name == "super_method")
     }) {
-        super_reachable.extend(compiler.scopes.iter().map(|scope| scope.name.as_str()));
+        super_global.extend(compiler.scopes.iter().map(|scope| scope.name.as_str()));
     }
     // RUNTIME-defined methods with a `super` in their body reach targets by
     // NAME through the method-frame walk, so their names count as
@@ -1133,12 +1154,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // block contains a `super` marks every SymbolLit argument), covering
     // `send(:define_method, :m) { super }` and friends -- a spurious bridge
     // is dead code, a missing one is a wrong NoMethodError.
-    for node in compiler.hir.all_nodes() {
-        match node {
+    // A `def` some compile-time Scope claims is already covered (precisely)
+    // by the pair scan above; only an UNCLAIMED `DefMethod` node is a
+    // runtime-defined body whose receiver class is minted at runtime.
+    let claimed_defs: std::collections::HashSet<crate::hir::NodeId> =
+        compiler.scopes.iter().filter_map(|s| s.def_node).collect();
+    for id in compiler.hir.node_ids() {
+        match &compiler.hir[id] {
             crate::hir::HirNode::DefMethod { name, body, .. }
-                if crate::analyze::scan_contains_super_body(&compiler.hir, body) =>
+                if !claimed_defs.contains(&id)
+                    && crate::analyze::scan_contains_super_body(&compiler.hir, body) =>
             {
-                super_reachable.insert(name.as_str());
+                super_global.insert(name.as_str());
             }
             crate::hir::HirNode::Call { args, block, .. } => {
                 let lambda_super = args.iter().any(|e| {
@@ -1161,7 +1188,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                         let (crate::hir::ArrayElem::Single(a) | crate::hir::ArrayElem::Splat(a)) =
                             e;
                         if let crate::hir::HirNode::SymbolLit(n) = &compiler.hir[*a] {
-                            super_reachable.insert(n.as_str());
+                            super_global.insert(n.as_str());
                         }
                     }
                 }
@@ -1179,7 +1206,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let mut bridged: Vec<crate::compiler::ScopeId> = Vec::new();
         for &sid in &class.own_methods {
             let name = &compiler.scope(sid).name;
-            if !super_reachable.contains(name.as_str()) {
+            if !super_global.contains(name.as_str())
+                && !super_pairs.contains(&(cid, name.as_str()))
+            {
                 continue;
             }
             if compiler.is_native_backed(cid) {

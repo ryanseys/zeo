@@ -312,6 +312,13 @@ impl Hir {
         &self.nodes
     }
 
+    /// `all_nodes`' ids, in the same push order -- for whole-program scans
+    /// that need the id alongside the node (e.g. telling a scope-claimed
+    /// `DefMethod` from a runtime-defined one).
+    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + use<> {
+        (0..self.nodes.len() as u32).map(NodeId)
+    }
+
     /// The provenance of `id` -- `None` for a synthetic node (see `Span`).
     pub fn span(&self, id: NodeId) -> Option<Span> {
         self.spans[id.0 as usize].known()
