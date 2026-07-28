@@ -152,7 +152,9 @@ fn emit_ctor_struct(cx: &Ctx, cid: crate::compiler::ClassId) -> TokenStream {
     let class_ident = crate::codegen::ident::class_ident(cx.compiler, cid);
     let fields = ci.ivars.iter().map(|iv| {
         let f = safe_ident(iv);
-        quote! { #f: zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil), }
+        // `None`, not `Nil`: a freshly allocated object has no ivars assigned
+        // yet, which is what `defined?`/`instance_variables` report on.
+        quote! { #f: zeo_rt::parking_lot::Mutex::new(None), }
     });
     // Every object starts unfrozen -- `.freeze`'s per-object flag (see
     // `ruby_class!`'s `__frozen` field docs).

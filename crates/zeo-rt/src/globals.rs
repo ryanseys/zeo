@@ -203,6 +203,21 @@ pub fn seed_default_globals() {
     global_alias(0, "$\"", "$LOADED_FEATURES");
 }
 
+/// Fills `$LOADED_FEATURES` with the files the front end spliced -- called once
+/// from generated `main()`, after `seed_default_globals`.
+///
+/// It stays a real, mutable Array (a program may push to it), but nothing else
+/// ever appends: every require was resolved at compile time. Its one functional
+/// use is [`crate::builtins::kernel::feature_already_loaded`], which lets a
+/// DYNAMIC require of an already-spliced path answer `false` instead of raising.
+pub fn seed_loaded_features(paths: &[&str]) {
+    let values = paths
+        .iter()
+        .map(|p| RubyValue::Str(crate::string_new((*p).to_string())))
+        .collect();
+    global_set(0, "$LOADED_FEATURES", RubyValue::Array(crate::array_new(values)));
+}
+
 /// Whether `name` has ever been assigned in this box -- backs
 /// `defined?($g)`, which answers `"global-variable"` only for an assigned
 /// user global and `nil` for one that was never written (unlike `global_get`,

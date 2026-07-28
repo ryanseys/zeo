@@ -194,6 +194,15 @@ ruby_class! {
     def "public_constant" (recv, args, _block) {
         constant_visibility_no_op(recv, args)
     }
+    // `Module#deprecate_constant(:A, ...)` -- same argument validation, same
+    // reason for not enforcing: CRuby warns on ACCESS, and zeo binds constant
+    // references at compile time, so there is no runtime read to hook. (CRuby's
+    // warning is itself off unless `Warning[:deprecated]` is on, which it isn't
+    // by default -- so the common case agrees exactly.) net/http deprecates its
+    // legacy response-class aliases at load time.
+    def "deprecate_constant" (recv, args, _block) {
+        constant_visibility_no_op(recv, args)
+    }
     def "const_get" (recv, args, _block) {
         arity!(args, 1..=2);
         let name = const_name_arg(&args[0])?;

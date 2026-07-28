@@ -1,0 +1,14 @@
+[[nil, []], ["instance-variable", [:@a]], ["instance-variable", [:@a]]]
+[:x]
+[1, nil, nil]
+instance variable @never not defined
+[]
+[:@v]
+nil
+false
+true
+[]
+[:@v]
+false
+[:@invented]
+true

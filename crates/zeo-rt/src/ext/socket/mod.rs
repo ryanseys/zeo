@@ -49,13 +49,47 @@ pub(crate) enum Endpoint {
     Unix(String),
 }
 
+/// The POSITIONAL arguments of a call that may carry a trailing keyword Hash
+/// (the runtime's kwargs convention), so `arity!` counts only real positionals.
+pub(crate) fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
+    match args.last() {
+        Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
+        _ => args,
+    }
+}
+
+/// A seconds-valued keyword (`connect_timeout:`) from the trailing options
+/// Hash, as a `Duration`; `None` when absent or nil.
+pub(crate) fn kwarg_secs(
+    args: &[RubyValue],
+    name: &str,
+) -> Result<Option<std::time::Duration>, Signal> {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return Ok(None);
+    };
+    let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(name)));
+    Ok(match v {
+        RubyValue::Nil => None,
+        RubyValue::Int(i) => Some(std::time::Duration::from_secs(i.max(0) as u64)),
+        RubyValue::Float(f) => Some(std::time::Duration::from_secs_f64(f.max(0.0))),
+        other => {
+            return Err(crate::builtins::type_error!(
+                "no implicit conversion of {} into Numeric",
+                crate::builtins::class_name_of(&other)
+            ));
+        }
+    })
+}
+
 /// A `(host, port)` pair from a `.new`/`.open` argument list. CRuby accepts
 /// `(port)` or `(host, port)`, a nil host meaning `default_host`; the corpus
-/// uses the explicit `(host, port)` form.
+/// uses the explicit `(host, port)` form. A trailing `local_host`/`local_port`
+/// pair (`Socket.tcp`'s bind side) is accepted and ignored -- binding the local
+/// end is a separate, rarely-used capability.
 pub(crate) fn host_port(args: &[RubyValue], default_host: &str) -> Result<(String, u16), Signal> {
     match args {
         [p] => Ok((default_host.to_string(), port_of(p)?)),
-        [h, p] => {
+        [h, p] | [h, p, _] | [h, p, _, _] => {
             let host = match h {
                 RubyValue::Nil => default_host.to_string(),
                 other => other.to_display_string(),

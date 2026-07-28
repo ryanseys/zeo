@@ -83,6 +83,12 @@ ruby_module! {
             .lock()
             .to_utf8_lossy()
             .into_owned();
+        // ...unless the front end already spliced this very file, in which case
+        // Ruby's own answer for an already-loaded feature -- `false` -- is both
+        // correct and what the caller expects.
+        if feature_already_loaded(&path) {
+            return Ok(RubyValue::Bool(false));
+        }
         Err(crate::dispatch::raise_error(
             "LoadError",
             format!("cannot load such file -- {path}"),
@@ -1103,6 +1109,30 @@ pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// doubling, same rule as `puts`) to `$stderr`; returns nil. The
 /// `uplevel:` keyword isn't modeled (kwargs never reach the
 /// Kernel-function path).
+/// Whether `path` names a file the front end already spliced -- i.e. whether it
+/// is in `$LOADED_FEATURES` (see `globals::seed_loaded_features`).
+///
+/// Compared as a suffix on a path boundary, not for equality: the seeded entries
+/// are canonical absolute paths, while a dynamic require may name the file
+/// relatively (`require_relative "smtp/auth_plain"`, with or without `.rb`).
+/// Suffix matching is what makes both spellings find it, and a `/` boundary is
+/// what keeps `auth_plain.rb` from matching `not_auth_plain.rb`.
+pub(crate) fn feature_already_loaded(path: &str) -> bool {
+    let RubyValue::Array(features) = crate::globals::global_get(0, "$LOADED_FEATURES") else {
+        return false;
+    };
+    let wanted = path.trim_end_matches(".rb");
+    features.lock().iter().any(|f| {
+        let RubyValue::Str(s) = f else { return false };
+        let loaded = s.lock().to_utf8_lossy().into_owned();
+        let loaded = loaded.trim_end_matches(".rb");
+        loaded == wanted
+            || loaded
+                .strip_suffix(wanted)
+                .is_some_and(|head| head.ends_with('/'))
+    })
+}
+
 pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // A trailing keyword Hash (`category:`/`uplevel:`) is consumed, not printed.
     // CRuby leaves `Warning[:deprecated]` off by default (so a :deprecated

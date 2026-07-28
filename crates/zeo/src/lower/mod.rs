@@ -180,7 +180,7 @@ pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResu
 /// bare `Inner` there is `uninitialized constant Pkg::Inner::Inner`
 /// (oracle-verified). Anything else is a genuine per-object singleton def and
 /// keeps the runtime `define_singleton_method` desugar.
-fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
+pub(crate) fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
     let Some(enclosing) = hir.enclosing_class() else {
         return false;
     };

@@ -679,6 +679,20 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
 /// block carry a self it never reads, which costs nothing but a moved
 /// `RubyValue`. So when in doubt, leave it out. `method`/`send`/`raise` are
 /// deliberately absent: they genuinely consult the implicit receiver.
+/// Whether the class this block is being compiled under has a real method of
+/// this name -- in which case a receiver-less call to it is NOT the Kernel free
+/// function [`is_kernel_free_fn`] assumes. `Object` is excluded: every class
+/// inherits Kernel through it, so a hit there proves nothing.
+fn self_class_overrides(
+    compiler: &crate::compiler::Compiler,
+    self_class: Option<crate::compiler::ClassId>,
+    name: &str,
+) -> bool {
+    self_class.is_some_and(|cid| {
+        cid != crate::compiler::OBJECT_CLASS && compiler.method_in_chain(cid, name).is_some()
+    })
+}
+
 fn is_kernel_free_fn(name: &str) -> bool {
     matches!(
         name,
@@ -1073,7 +1087,16 @@ fn walk(
             // Kernel free functions (`puts`) are excluded: codegen emits them
             // as direct calls that never consult a receiver, so capturing self
             // for them would be dead weight on almost every block in a program.
-            if receiver.is_none() && in_escaping && !is_kernel_free_fn(name) {
+            //
+            // ...unless the enclosing class OVERRIDES the Kernel name. Then it
+            // is an ordinary method after all, and codegen emits a direct call
+            // on `self` -- which a `move` closure would move out of, breaking
+            // `Fn`. `Net::WriteAdapter#puts` is the shape that found it: a
+            // top-level `def` materialized onto a class that defines `puts`,
+            // with an escaping block inside.
+            let kernel_free =
+                is_kernel_free_fn(name) && !self_class_overrides(compiler, self_class, name);
+            if receiver.is_none() && in_escaping && !kernel_free {
                 caps.self_captured = true;
             }
             if let Some(r) = receiver {

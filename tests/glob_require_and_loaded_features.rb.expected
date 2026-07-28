@@ -1,0 +1,12 @@
+"constant"
+"constant"
+"constant"
+Net::SMTP::Authenticator
+true
+true
+true
+true
+true
+true
+1
+constant Legacy::NOPE not defined

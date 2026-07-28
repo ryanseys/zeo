@@ -1,0 +1,18 @@
+Net::Protocol
+80
+443
+"example.test"
+8080
+false
+false
+"GET"
+"/index?a=1"
+"text/plain"
+[["accept", "text/plain"], ["accept-encoding", "gzip;q=1.0,deflate;q=0.6,identity;q=0.3"], ["user-agent", "Ruby"]]
+"k=v&n=1"
+"application/x-www-form-urlencoded"
+false
+true
+"/p?q=1"
+true
+Net::HTTPClientError

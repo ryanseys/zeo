@@ -138,6 +138,37 @@ ruby_class! {
         // SAFETY: `fd` is a fresh, solely-owned descriptor.
         Ok(unsafe { socket_from_raw_fd(fd, SOCKET_CLASS) })
     }
+    // `Socket.tcp(host, port, local_host = nil, local_port = nil, **opts)` --
+    // a connected TCPSocket, or, with a block, that socket yielded and then
+    // CLOSED (the shape net/http probes for and uses). `connect_timeout:` is
+    // honoured; the other timeout keywords are accepted and ignored, since
+    // resolution and connect happen in one blocking step here.
+    def self."tcp"(_recv, args, block) {
+        let positional = super::kw_strip(args);
+        arity!(positional, 2..=4);
+        let (host, port) = super::host_port(positional, "127.0.0.1")?;
+        let addr = resolve_one(&host, port)?;
+        let timeout = super::kwarg_secs(args, "connect_timeout")?;
+        // Gvl-released: connect(2) blocks until the peer answers.
+        let stream = crate::gvl::without_gvl(|| match timeout {
+            Some(t) => std::net::TcpStream::connect_timeout(&addr, t),
+            None => std::net::TcpStream::connect(addr),
+        })
+        .map_err(|e| super::map_io_err(&e, "connect(2)"))?;
+        // SAFETY: `into_raw_fd` yields a fresh, solely-owned descriptor.
+        let sock = unsafe {
+            crate::builtins::io::socket_from_raw_fd(
+                std::os::unix::io::IntoRawFd::into_raw_fd(stream),
+                zeo_abi::TCPSOCKET_CLASS,
+            )
+        };
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(sock);
+        };
+        let out = p.call(std::slice::from_ref(&sock));
+        let _ = crate::dispatch::send_value(&sock, crate::Symbol::intern("close"), &[], None);
+        out
+    }
     // `Socket.gethostname` -- the host's name.
     def self."gethostname"(_recv, args, _block) {
         arity!(args, 0);

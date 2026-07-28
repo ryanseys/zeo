@@ -1338,7 +1338,14 @@ fn lower_class_body_statement(
     // clean rejection: those act on the singleton's OWN singleton, which plain
     // enclosing-class retagging can't express (deferred).
     if let Some(singleton) = node.as_singleton_class_node() {
-        if singleton.expression().as_self_node().is_none() {
+        // `class << HTTP` written INSIDE `class HTTP` IS `class << self` --
+        // net/http spells its class-method aliases that way, and routing it
+        // through the per-object desugar would install them on a runtime
+        // singleton the compile-time tables never see. Same rule (and same
+        // reason) as `def HTTP.version_1_2` -- see `lower::names_enclosing_class`.
+        let is_self = singleton.expression().as_self_node().is_some()
+            || crate::lower::names_enclosing_class(hir, &singleton.expression());
+        if !is_self {
             // `class << obj` on a NON-`self` receiver: each `def` in
             // the body is a per-object singleton method (see
             // `desugar_singleton_class_defs`).

@@ -104,7 +104,9 @@ pub use fiber::{
 };
 pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line, synthetic_c_frame};
 pub use builtins::rmodule::const_defined_in;
-pub use globals::{global_alias, global_assign, global_defined, global_get, global_set};
+pub use globals::{
+    global_alias, global_assign, global_defined, global_get, global_set, seed_loaded_features,
+};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use ractor::{
     RRactor, RactorData, make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send,
@@ -245,7 +247,14 @@ macro_rules! ruby_class {
             /// (a literal Ruby `@__frozen` would -- same accepted, vanishing
             /// residual risk as every other `__`-reserved name in codegen).
             pub __frozen: std::sync::atomic::AtomicBool,
-            $( pub $ivar: $crate::parking_lot::Mutex<$crate::RubyValue>, )*
+            /// One slot per ivar the class body names. `None` is "never
+            /// assigned", which Ruby distinguishes from an assigned `nil`:
+            /// `defined?(@x)` and `instance_variables` report the second and not
+            /// the first, and `@x` reads `nil` either way. A plain
+            /// `Mutex<RubyValue>` initialized to `Nil` cannot tell them apart,
+            /// which made `@x = {} unless defined? @x` -- observer's shape --
+            /// skip its own initialization.
+            $( pub $ivar: $crate::parking_lot::Mutex<Option<$crate::RubyValue>>, )*
             /// Ivars the class body never declared but a runtime path INVENTED
             /// -- an `instance_exec`/`class_eval`-added method assigning a fresh
             /// `@name`, or `instance_variable_set(:@new, ...)`. A generated
@@ -312,7 +321,7 @@ macro_rules! ruby_class {
             pub fn __allocate(_class: $crate::ClassId) -> $crate::RObj {
                 std::sync::Arc::new($name {
                     __frozen: std::sync::atomic::AtomicBool::new(false),
-                    $( $ivar: $crate::parking_lot::Mutex::new($crate::RubyValue::Nil), )*
+                    $( $ivar: $crate::parking_lot::Mutex::new(None), )*
                     __overflow: $crate::parking_lot::Mutex::new(std::collections::HashMap::new()),
                 })
             }
@@ -336,8 +345,11 @@ macro_rules! ruby_class {
             fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> { self }
             fn is_frozen(&self) -> bool { self.__frozen.load(std::sync::atomic::Ordering::Relaxed) }
             fn set_frozen(&self) { self.__frozen.store(true, std::sync::atomic::Ordering::Relaxed) }
+            // Only ASSIGNED ivars, here and in `ivar_pairs`: a declared slot
+            // nothing ever wrote does not exist as far as Ruby is concerned.
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
-                let mut vals = vec![ $( self.$ivar.lock().clone() ),* ];
+                let mut vals: Vec<$crate::RubyValue> = Vec::new();
+                $( if let Some(v) = self.$ivar.lock().clone() { vals.push(v); } )*
                 vals.extend(self.__overflow.lock().values().cloned());
                 vals
             }
@@ -346,9 +358,10 @@ macro_rules! ruby_class {
             // `ivar_get_named`'s `stringify!` note), so no extra list to keep
             // in sync.
             fn ivar_pairs(&self) -> Vec<(String, $crate::RubyValue)> {
-                let mut pairs = vec![
-                    $( (format!("@{}", stringify!($ivar)), self.$ivar.lock().clone()) ),*
-                ];
+                let mut pairs: Vec<(String, $crate::RubyValue)> = Vec::new();
+                $( if let Some(v) = self.$ivar.lock().clone() {
+                    pairs.push((format!("@{}", stringify!($ivar)), v));
+                } )*
                 for (k, v) in self.__overflow.lock().iter() {
                     pairs.push((format!("@{k}"), v.clone()));
                 }
@@ -362,7 +375,12 @@ macro_rules! ruby_class {
             // TODO.
             fn ivar_get_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 match name {
-                    $( stringify!($ivar) => Some(self.$ivar.lock().clone()), )*
+                    // A declared-but-unassigned slot reads `nil`, as Ruby's
+                    // ivars do -- `Some(Nil)`, not `None`, which means "this
+                    // class has no such slot at all".
+                    $( stringify!($ivar) => {
+                        Some(self.$ivar.lock().clone().unwrap_or($crate::RubyValue::Nil))
+                    } )*
                     // An invented ivar reads its overflow value, or `None`
                     // (never assigned) so a probe can tell it's undefined.
                     _ => self.__overflow.lock().get(name).cloned(),
@@ -370,22 +388,20 @@ macro_rules! ruby_class {
             }
             fn ivar_set_named(&self, name: &str, v: $crate::RubyValue) -> bool {
                 match name {
-                    $( stringify!($ivar) => { *self.$ivar.lock() = v; true } )*
+                    $( stringify!($ivar) => { *self.$ivar.lock() = Some(v); true } )*
                     // An undeclared name lands in the overflow map, so
                     // `instance_exec`/`class_eval` bodies and
                     // `instance_variable_set(:@new, ...)` stick.
                     _ => { self.__overflow.lock().insert(name.to_string(), v); true }
                 }
             }
-            // `Kernel#remove_instance_variable` -- a declared field always
-            // physically exists, so removal replaces its value with `Nil` and
-            // returns the old value; an undeclared name answers `None` (the
-            // caller raises `NameError`). See the trait method's caveat about
-            // declared-but-unassigned fields.
+            // `Kernel#remove_instance_variable` -- empties the slot and returns
+            // the old value, or `None` for a name that was never assigned (the
+            // caller raises `NameError`), which is now a real distinction
+            // rather than the approximation the old always-present slot forced.
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 match name {
-                    $( stringify!($ivar) => Some(::std::mem::replace(
-                        &mut *self.$ivar.lock(), $crate::RubyValue::Nil)), )*
+                    $( stringify!($ivar) => self.$ivar.lock().take(), )*
                     // An invented ivar genuinely vanishes (name-keyed), so a
                     // remove of an absent one answers `None` -> NameError.
                     _ => self.__overflow.lock().remove(name),
@@ -466,8 +482,8 @@ mod tests {
             name: "Point";
             ancestors: [100, 0, 25, 24]; // [Point, Object, Kernel, BasicObject]
             ivars { x }
-            def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = x; Ok(RubyValue::Nil) }
-            def x(self: std::sync::Arc<Self>) { Ok(self.x.lock().clone()) }
+            def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = Some(x); Ok(RubyValue::Nil) }
+            def x(self: std::sync::Arc<Self>) { Ok(self.x.lock().clone().unwrap_or(RubyValue::Nil)) }
             dispatch {
                 "initialize" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
@@ -523,12 +539,12 @@ mod tests {
             ancestors: [102, 22, 0, 25, 24]; // [Temp, Comparable, Object, Kernel, BasicObject]
             ivars { deg }
             def cmp(self: std::sync::Arc<Self>, other: RubyValue) {
-                let mine = self.deg.lock().clone();
+                let mine = self.deg.lock().clone().unwrap_or(RubyValue::Nil);
                 let theirs = match &other {
                     RubyValue::Object(o) => {
                         let t = downcast_robj::<Temp>(o).expect("Temp <=> Temp only in tests");
 
-                        t.deg.lock().clone()
+                        t.deg.lock().clone().unwrap_or(RubyValue::Nil)
                     }
                     _ => return Ok(RubyValue::Nil),
                 };
@@ -553,7 +569,7 @@ mod tests {
         RubyValue::Object(Temp::new_handle(std::sync::Arc::new(Temp {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            deg: parking_lot::Mutex::new(RubyValue::Int(deg)),
+            deg: parking_lot::Mutex::new(Some(RubyValue::Int(deg))),
         })))
     }
 
@@ -653,7 +669,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Nil),
+            x: parking_lot::Mutex::new(None),
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
         match p.x().unwrap() {
@@ -667,7 +683,7 @@ mod tests {
         let handle: RObj = Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Int(7)),
+            x: parking_lot::Mutex::new(Some(RubyValue::Int(7))),
         }));
         assert_eq!(handle.class_id(), Point::CLASS_ID);
     }
@@ -700,7 +716,7 @@ mod tests {
         let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Nil),
+            x: parking_lot::Mutex::new(None),
         })));
         assert!(!obj.is_frozen());
         obj.freeze_value().unwrap();
@@ -743,15 +759,15 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Int(1)),
+            x: parking_lot::Mutex::new(Some(RubyValue::Int(1))),
         });
 
         let copy = RubyObject::dup_object(&*p, false);
         let concrete = downcast_robj::<Point>(&copy).expect("same concrete class");
-        *concrete.x.lock() = RubyValue::Int(99);
+        *concrete.x.lock() = Some(RubyValue::Int(99));
 
-        assert_eq!(p.x.lock().to_display_string(), "1");
-        assert_eq!(concrete.x.lock().to_display_string(), "99");
+        assert_eq!(p.x.lock().clone().unwrap().to_display_string(), "1");
+        assert_eq!(concrete.x.lock().clone().unwrap().to_display_string(), "99");
     }
 
     #[test]
@@ -759,7 +775,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Nil),
+            x: parking_lot::Mutex::new(None),
         });
         RubyObject::set_frozen(&*p);
 
@@ -864,7 +880,7 @@ mod tests {
         let instance = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Nil),
+            x: parking_lot::Mutex::new(None),
         })));
 
         assert!(point_class.rb_case_eq(&instance));
@@ -888,7 +904,7 @@ mod tests {
         let p: RObj = Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __overflow: Default::default(),
-            x: parking_lot::Mutex::new(RubyValue::Nil),
+            x: parking_lot::Mutex::new(None),
         }));
         let _ = send(&p, Symbol::intern("nope"), &[], None);
     }

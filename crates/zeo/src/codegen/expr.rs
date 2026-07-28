@@ -857,7 +857,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // ...; __g.clone() }` shape (not just wrapping in a bare `{ }`
             // block, which does NOT change the guard's drop timing -- also
             // confirmed empirically) resolves it.
-            quote! { { let __g = #slf.#ident.lock(); __g.clone() } }
+            // `unwrap_or(Nil)`: the slot is `Option`-shaped so `defined?` and
+            // `instance_variables` can tell "never assigned" from "assigned
+            // nil" (see `ruby_class!`'s field docs), but a READ is `nil` either
+            // way, as in Ruby.
+            quote! {
+                { let __g = #slf.#ident.lock(); __g.clone().unwrap_or(zeo_rt::RubyValue::Nil) }
+            }
         }
         HirNode::IvarWrite(name, value) => {
             let v = emit_expr(cx, *value);
@@ -1802,7 +1808,9 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
         if zeo_rt::RubyObject::is_frozen(&*#slf) {
             return Err(zeo_rt::Signal::Raise(#frozen_error));
         }
-        *#slf.#ident.lock() = #value;
+        // `Some(..)`: writing is exactly what makes the ivar DEFINED, and the
+        // slot's `Option` is how that fact is stored (`ruby_class!`).
+        *#slf.#ident.lock() = Some(#value);
     }
 }
 

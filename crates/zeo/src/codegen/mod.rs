@@ -1325,6 +1325,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         None => quote! {},
     };
 
+    // Every spliced file's canonical path, for `$LOADED_FEATURES`. Build-machine
+    // paths, baked in -- the same caveat `$LOAD_PATH` carries (see
+    // `docs/COMPATIBILITY.md`); what they are FOR is letting a runtime require of
+    // an already-spliced file answer `false` rather than raise.
+    let loaded_features: Vec<String> = compiler
+        .hir
+        .loaded_files
+        .iter()
+        .map(|f| f.canonical.to_string_lossy().into_owned())
+        .collect();
+
     // Ruby's own parse warnings, as one literal slice -- emitted only when
     // the program actually has some, so the common binary carries nothing.
     let parse_warnings = (!compiler.hir.warnings.is_empty()).then(|| {
@@ -1371,6 +1382,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // `Process::CLOCK_*`) -- their owners resolved at compile time;
             // only the values need installing.
             zeo_rt::install_core_constants();
+            // Every file the front end spliced, as `$LOADED_FEATURES` -- so a
+            // dynamic `require`/`require_relative` of one (net/smtp globs its
+            // authenticators and requires each) answers `false`, the way Ruby
+            // answers an already-loaded feature, instead of raising LoadError
+            // because an AOT binary has no runtime loader.
+            zeo_rt::seed_loaded_features(&[#(#loaded_features),*]);
             // Ruby's own PARSE-time warnings (a duplicated hash key, ...),
             // collected by the front end and replayed before the program's
             // first line -- where CRuby prints them.
