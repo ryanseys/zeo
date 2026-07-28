@@ -35,6 +35,9 @@ pub const UTF_16LE: EncodingId = EncodingId(20);
 pub const UTF_16BE: EncodingId = EncodingId(21);
 pub const UTF_32LE: EncodingId = EncodingId(22);
 pub const UTF_32BE: EncodingId = EncodingId(23);
+pub const ISO_2022_JP: EncodingId = EncodingId(24);
+pub const UTF_16: EncodingId = EncodingId(25);
+pub const UTF_32: EncodingId = EncodingId(26);
 
 /// How an encoding maps bytes to characters -- the single knob that drives
 /// character iteration, validation, and transcoding. A new encoding picks
@@ -81,6 +84,13 @@ pub struct EncodingSpec {
     /// The mapping table for `EncKind::SingleByte` rows; `None` for every
     /// kind that needs no table.
     pub table: Option<&'static SingleByteTable>,
+    /// CRuby's `Encoding#dummy?`: the encoding exists as a NAME (strings can
+    /// be tagged with it, `#inspect` shows ` (dummy)`) but has no per-
+    /// character structure -- a "character" is one byte and nothing is ever
+    /// invalid, which is why the dummy rows reuse `EncKind::Binary`. What a
+    /// dummy CAN still do is transcode: `transcode` special-cases these ids
+    /// (stateful ISO-2022-JP escapes, BOM-carrying UTF-16/32).
+    pub dummy: bool,
 }
 
 /// A `SingleByte` row -- name/aliases straight from `Encoding#names` under
@@ -96,6 +106,7 @@ const fn single_byte(
         ascii_compatible: true,
         kind: EncKind::SingleByte,
         table: Some(table),
+        dummy: false,
     }
 }
 
@@ -113,6 +124,7 @@ const fn multi_byte(
         ascii_compatible: true,
         kind: EncKind::MultiByte(family),
         table: None,
+        dummy: false,
     }
 }
 
@@ -124,6 +136,21 @@ const fn wide(name: &'static str, aliases: &'static [&'static str], kind: EncKin
         ascii_compatible: false,
         kind,
         table: None,
+        dummy: false,
+    }
+}
+
+/// A dummy row (`Encoding#dummy?`): a name with byte-per-character
+/// semantics (see the `dummy` field's docs). Never ASCII-compatible --
+/// `"abc".force_encoding("ISO-2022-JP").ascii_only?` is false in CRuby.
+const fn dummy(name: &'static str, aliases: &'static [&'static str]) -> EncodingSpec {
+    EncodingSpec {
+        name,
+        aliases,
+        ascii_compatible: false,
+        kind: EncKind::Binary,
+        table: None,
+        dummy: true,
     }
 }
 
@@ -136,6 +163,7 @@ pub static ENCODINGS: &[EncodingSpec] = &[
         ascii_compatible: true,
         kind: EncKind::Utf8,
         table: None,
+        dummy: false,
     },
     EncodingSpec {
         name: "US-ASCII",
@@ -143,6 +171,7 @@ pub static ENCODINGS: &[EncodingSpec] = &[
         ascii_compatible: true,
         kind: EncKind::Ascii,
         table: None,
+        dummy: false,
     },
     EncodingSpec {
         name: "ASCII-8BIT",
@@ -150,6 +179,7 @@ pub static ENCODINGS: &[EncodingSpec] = &[
         ascii_compatible: true,
         kind: EncKind::Binary,
         table: None,
+        dummy: false,
     },
     EncodingSpec {
         name: "ISO-8859-1",
@@ -157,6 +187,7 @@ pub static ENCODINGS: &[EncodingSpec] = &[
         ascii_compatible: true,
         kind: EncKind::Latin1,
         table: None,
+        dummy: false,
     },
     single_byte("Windows-1250", &["CP1250"], &single_byte::WINDOWS_1250),
     single_byte("Windows-1251", &["CP1251"], &single_byte::WINDOWS_1251),
@@ -182,6 +213,9 @@ pub static ENCODINGS: &[EncodingSpec] = &[
     wide("UTF-16BE", &["UCS-2BE"], EncKind::Utf16 { be: true }),
     wide("UTF-32LE", &["UCS-4LE"], EncKind::Utf32 { be: false }),
     wide("UTF-32BE", &["UCS-4BE"], EncKind::Utf32 { be: true }),
+    dummy("ISO-2022-JP", &["ISO2022-JP"]),
+    dummy("UTF-16", &[]),
+    dummy("UTF-32", &[]),
 ];
 
 impl EncodingId {
@@ -199,9 +233,15 @@ impl EncodingId {
     pub fn inspect_name(self) -> String {
         if self == ASCII_8BIT {
             "BINARY (ASCII-8BIT)".to_string()
+        } else if self.is_dummy() {
+            format!("{} (dummy)", self.name())
         } else {
             self.name().to_string()
         }
+    }
+    /// `Encoding#dummy?` -- see [`EncodingSpec::dummy`].
+    pub fn is_dummy(self) -> bool {
+        self.spec().dummy
     }
     pub fn kind(self) -> EncKind {
         self.spec().kind

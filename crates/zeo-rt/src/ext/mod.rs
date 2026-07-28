@@ -77,6 +77,8 @@ pub(crate) mod ffi;
 pub(crate) mod json;
 #[cfg(feature = "ext-monitor")]
 pub(crate) mod monitor;
+#[cfg(feature = "ext-nkf")]
+pub(crate) mod nkf;
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
 #[cfg(feature = "ext-pathname")]

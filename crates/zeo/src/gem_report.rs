@@ -66,6 +66,7 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "socket" => Some("a partial zeo reimplementation"),
         "base64" => Some("a zeo reimplementation of Base64"),
         "cgi" | "cgi/escape" => Some("a zeo reimplementation of CGI escaping"),
+        "nkf" => Some("a zeo reimplementation over its own encoding engine; not the nkf C library"),
         _ => None,
     }
 }

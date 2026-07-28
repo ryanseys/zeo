@@ -436,6 +436,11 @@ pub const READLINE_MODULE: ClassId = ClassId(107);
 /// compiler resolves a builtin's name as a CONSTANT PATH, and that spelling
 /// must resolve to the runtime-seeded singleton OBJECT, not to its class.
 pub const READLINE_HISTORY_CLASS: ClassId = ClassId(108);
+/// `nkf`: the `NKF` module -- Network Kanji Filter, Japanese text encoding
+/// conversion (`.nkf` over an option string, `.guess`) rebuilt over the
+/// runtime's own encoding engine. The `Kconv` wrapper is the gem's Ruby
+/// half (`gems/nkf`).
+pub const NKF_MODULE: ClassId = ClassId(109);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1331,6 +1336,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[ENUMERABLE_CLASS],
         feature: Some("readline"),
+    },
+    BuiltinClass {
+        id: NKF_MODULE,
+        name: "NKF",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("nkf"),
     },
 ];
 

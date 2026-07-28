@@ -24,10 +24,12 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 
 **zeo-authored Ruby halves** of libraries whose native half lives in
 `zeo-rt` (`json`, `monitor`, `optparse`, `psych`, `strscan`, `zlib`, `pty`,
-`syslog`) -- these are intended to match upstream behaviour; divergences are
-documented in `docs/COMPATIBILITY.md`. One file inside them is a faithful
-vendored copy rather than zeo-authored: `syslog/lib/syslog/logger.rb`
-(`Syslog::Logger`, from the ruby 4.0.5 syslog-0.4.0 gem, verbatim).
+`syslog`, `nkf`) -- these are intended to match upstream behaviour;
+divergences are documented in `docs/COMPATIBILITY.md`. Two files inside them
+are faithful vendored copies rather than zeo-authored:
+`syslog/lib/syslog/logger.rb` (`Syslog::Logger`, from the ruby 4.0.5
+syslog-0.4.0 gem, verbatim) and `nkf/lib/kconv.rb` (`Kconv` and the String
+patches, from the ruby 4.0.5 nkf-0.3.0 gem, verbatim).
 
 When bumping the oracle Ruby, re-vendor the first table from the new
 installation and update the versions here.

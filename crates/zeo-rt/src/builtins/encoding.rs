@@ -206,9 +206,7 @@ ruby_class! {
     }
     def "dummy?"(recv, args, _block) {
         arity!(args, 0);
-        // None of the built-in encodings are dummy encodings yet.
-        let _ = recv;
-        Ok(RubyValue::Bool(false))
+        Ok(RubyValue::Bool(recv_encoding(recv).is_dummy()))
     }
     def "==" | "eql?"(recv, args, _block) {
         arity!(args, 1);

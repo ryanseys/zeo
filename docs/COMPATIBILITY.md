@@ -2,7 +2,7 @@
 
 ## Encoding divergences (zeo-enc)
 
-The encoding engine carries 24 encodings. The single-byte tables
+The encoding engine carries 27 encodings. The single-byte tables
 (Windows-125x, ISO-8859-2/-15, KOI8-R) are generated from the ruby 4.0.6
 oracle itself, so their mappings -- including which vendor-page bytes have
 NO Unicode mapping -- are exact. Known divergences:
@@ -17,6 +17,19 @@ NO Unicode mapping -- are exact. Known divergences:
 - **Big5 pairs that WHATWG maps to two-scalar sequences** (a handful of
   HKSCS combining forms) are treated as unmapped (undefined conversion)
   rather than decoded.
+- **ISO-2022-JP undefined-conversion messages are simpler than CRuby's.**
+  The dummy ISO-2022-JP row transcodes for real (the stateful escape codec
+  in `enc/iso2022jp.rs`), and the representable repertoire matches -- but a
+  character it refuses reports `U+XXXX from UTF-8 to ISO-2022-JP` where
+  CRuby narrates its internal pivot chain (`"\x8F\xAB\xB1" to
+  stateless-ISO-2022-JP in conversion from UTF-8 to EUC-JP to ...`).
+  Halfwidth katakana are refused (as CRuby refuses them), and JIS X 0212
+  characters CRuby reaches through its EUC-JP pivot are refused too (the
+  EUC-JP row's encoder is JIS X 0208-only, per the CP932 note above).
+- **The dummy UTF-16/UTF-32 rows always write a big-endian BOM** when
+  encoding TO them, and reading FROM them requires one (no BOM is an
+  invalid sequence) -- both CRuby-observed; the difference is only that
+  error messages name the BE row (`UTF-16BE`) where CRuby says `UTF-16`.
 - **String literals with raw high `\xNN` escapes** are not yet
   byte-faithful through the compiler's lowering (see
   docs/todo/stdlib-gaps.md); runtime-constructed bytes (`chr`, IO reads,
@@ -53,6 +66,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 | `socket` | zeo `Socket` | a partial reimplementation |
 | `base64` | zeo `Base64` | a reimplementation |
 | `cgi` | zeo CGI escaping | escape/unescape only |
+| `nkf` | zeo `NKF` over its own encoding engine | the conversion option subset only; `guess` is a reimplemented heuristic — see below |
 | `objspace` | always-on `ObjectSpace` rows | see below |
 | `io/console` | always-on `IO` rows over `termios(3)` | see below |
 
@@ -159,6 +173,31 @@ Two divergences:
 Before this landed, `IO#winsize` answered `[0, 0]` on a non-terminal where
 CRuby raises `Errno::ENOTTY`; it now raises. The corpus expectation that
 recorded `[0, 0]` was spinel's, not ruby's, and has been re-oracled.
+
+### `nkf`
+
+`NKF.nkf`/`NKF.guess` are rebuilt over zeo's own encoding engine, not the
+nkf C library, implementing what nkf fundamentally does -- decode under a
+detected/declared Japanese encoding, apply text passes, re-encode. What is
+faithful (oracle-verified byte-for-byte): the `-j/-e/-s/-w[8|16|32][B|L][0]`
+outputs and their `-J/-E/-S/-W` input twins, `--ic=`/`--oc=` (unknown names
+silently ignored, as nkf ignores them), MIME encoded-word decoding on by
+default with adjacent-word joining (`-m`, off via `-m0`), halfwidth->
+fullwidth katakana folding with voiced-mark combination on by default
+(`-x` preserves halfwidth, including real `ESC ( I` runs for `-j -x`),
+`-Z`/`-Z1`/`-Z2` (`～` exempt, as nkf leaves it), `-L[uwm]`, and the error
+shapes (`no output encoding given`, the `TypeError`s). Divergences:
+
+- **`guess` is a heuristic reimplementation.** The clear-cut cases (an
+  ISO-2022 escape, pure ASCII, a BOM, text valid in exactly one of
+  UTF-8/EUC-JP/Shift_JIS) answer as nkf does; ambiguous junk bytes may
+  answer differently (nkf scores partial matches; this detector does not).
+- **The rest of nkf's grammar is not pretended at.** MIME *encoding*
+  (`-M`), fold (`-f`), `-h` hiragana/katakana swaps, `-I`, `-t`, and the
+  long-option tail parse as no-ops, exactly like flags nkf itself does not
+  know.
+- **Broken input bytes are dropped** during decoding; real nkf's handling
+  of malformed sequences is stream-state dependent and not promised.
 
 ## Satisfied faithfully (zeo-bundled gems)
 
