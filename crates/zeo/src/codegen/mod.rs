@@ -1469,7 +1469,13 @@ pub(crate) fn emit_class_body_site(
     }
     let cid = site.class;
     let label_counter = Cell::new(0u32);
-    let no_captures = HashSet::new();
+    // A class body is an ordinary Ruby scope with ordinary locals, and an
+    // escaping block written in it closes over them exactly as one written at
+    // the top level does (`yesno = CompletingHash.new; %w[- no].each { |el|
+    // yesno[el] = false }`, optparse's own accept-table setup). Left empty,
+    // every such name was re-declared nil INSIDE the closure.
+    let captures =
+        captures::collect_escaping_captures(compiler, stmts, &crate::hir::Params::default(), None);
     let no_locals = HashMap::new();
     let cx = Ctx {
         compiler,
@@ -1491,7 +1497,7 @@ pub(crate) fn emit_class_body_site(
         label_counter: &label_counter,
         loop_labels: None,
         for_var_override: None,
-        captured_locals: std::borrow::Cow::Borrowed(&no_captures),
+        captured_locals: std::borrow::Cow::Borrowed(&captures.locals),
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,

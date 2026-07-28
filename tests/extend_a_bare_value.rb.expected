@@ -1,0 +1,16 @@
+true
+"[1, 2]!"
+3
+false
+true
+"\"hi\"!"
+3
+2
+"REALLY LOUD"
+:mine
+[1, 2, 3]
+[Integer, "can't define singleton"]
+[Float, "can't define singleton"]
+[Symbol, "can't define singleton"]
+true
+true

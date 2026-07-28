@@ -1,0 +1,9 @@
+CompletingHash
+{"+" => true, "-" => false, "false" => false, "nil" => false, "no" => false, "true" => true, "yes" => true}
+false
+3
+nil
+[1, 2, 3]
+7
+{"a" => "A", "b" => "B"}
+[1, 2]

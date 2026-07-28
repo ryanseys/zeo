@@ -997,10 +997,33 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
                 entry.class_methods.insert(name, proc_);
             }
         }
-        _ => {
-            // Immediates have no singleton storage in this runtime (same posture
-            // as `define_singleton_method`).
-            return Err(type_error!("can't extend {}", immediate_kind(recv)));
+        other => {
+            // Any other HEAP value (`ARGV.extend(OptionParser::Arguable)`, the
+            // last line of optparse) -- the same value-keyed singleton table
+            // `def SOME_ARRAY.m` writes to, since a bare Array has no `RObj` to
+            // bind a compiled body against. Immediates have no singleton
+            // storage here at all, same posture as `define_singleton_method`.
+            // An Integer/Float/Symbol has no singleton storage in CRuby either,
+            // and reports it with the same wording `define_singleton_method`
+            // does -- not a per-kind message (oracle-verified). `nil`/`true`/
+            // `false` DO accept one, and take no frozen check.
+            let Some(key) = value_identity(other) else {
+                return Err(type_error!("can't define singleton"));
+            };
+            if !matches!(other, RubyValue::Nil | RubyValue::Bool(_)) {
+                crate::builtins::check_frozen(recv)?;
+            }
+            // Built before the write lock, like the Class arm above:
+            // `extended_value_method` reads the overlay.
+            let installs: Vec<(Symbol, RProc)> = names
+                .into_iter()
+                .filter_map(|name| extended_value_method(*mid, name).map(|p| (name, p)))
+                .collect();
+            let mut w = maps().value_singletons.write().unwrap();
+            let table = w.entry(key).or_default();
+            for (name, proc_) in installs {
+                table.insert(name, proc_);
+            }
         }
     }
     mark_live();
@@ -1108,6 +1131,20 @@ fn module_extendable_method_names(mid: ClassId) -> Vec<Symbol> {
         }
     }
     names
+}
+
+/// One `extend`ed module method for a BARE HEAP VALUE receiver
+/// (`ARGV.extend(OptionParser::Arguable)`). Both the native module tables and
+/// a compiled user module's own bridge already take a `&RubyValue` receiver --
+/// which an Array/String/Hash IS -- so the value passes straight through, with
+/// no surrogate instance anywhere. A module method that only exists as an
+/// `&RObj` body has no way to run against a bare value and is skipped, the same
+/// posture `extended_class_method` takes for its own unreachable cases.
+fn extended_value_method(mid: ClassId, name: Symbol) -> Option<RProc> {
+    let f = crate::builtins::class_table(mid)
+        .and_then(|t| t(&name.name()))
+        .or_else(|| crate::dispatch::value_method(mid, 0, name))?;
+    Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true))
 }
 
 /// One `extend`ed module method, wrapped as a class method (a value-receiver
