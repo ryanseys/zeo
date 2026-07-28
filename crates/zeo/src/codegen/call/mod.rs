@@ -55,6 +55,7 @@ pub fn is_times_fast_path(
 ) -> bool {
     kwargs_empty
         && name == "times"
+        && !compiler.times_literal_suppressed
         && receiver.is_some_and(|r| matches!(compiler.hir[r], HirNode::IntegerLit(_)))
 }
 
@@ -70,6 +71,7 @@ pub fn is_range_each_fast_path(
 ) -> bool {
     kwargs_empty
         && name == "each"
+        && !compiler.range_each_literal_suppressed
         && receiver.is_some_and(|r| match compiler.hir[r] {
             HirNode::RangeLit {
                 start: Some(s),
@@ -115,12 +117,15 @@ pub fn is_spliced_block_body(
         || compiler.inline_iter_sites.contains_key(&block)
 }
 
-/// The one native counted-loop splice behind both `n.times { }` and
-/// `(a..b).each { }`: iterate `__i` from `start` to `stop`
-/// (`inclusive` decides `>` vs `>=`), binding the block's first required
-/// param as a fresh `Int` each iteration, and evaluate to `result` (times:
-/// the receiver Int; range each: the receiver range). The body is spliced
-/// into this Rust scope -- no closure or `Proc` object is ever allocated --
+/// The one native counted-loop splice behind `n.times { }`,
+/// `n.upto/downto/step(..) { }` and `(a..b).each { }`: iterate `__i` from
+/// `start`, advancing by `step` (an `i64` expression; the add is
+/// overflow-CHECKED, so a walk that would leave `i64` just stops -- exactly
+/// where CRuby's next value exceeds every `i64` limit) until `done` (a bool
+/// expression over `__i`), binding the block's first required param as a
+/// fresh `Int` each iteration, and evaluate to `result` (times/upto/...: the
+/// receiver Int; range each: the receiver range). The body is spliced into
+/// this Rust scope -- no closure or `Proc` object is ever allocated --
 /// sharing `codegen::loops`' redo-wrapping so `break`/`next`/`redo` work
 /// exactly as in `while`/`until`/`for`.
 #[allow(clippy::too_many_arguments)]
@@ -128,8 +133,8 @@ fn emit_counted_block_splice(
     cx: &Ctx,
     block_id: NodeId,
     start: TokenStream,
-    stop: TokenStream,
-    inclusive: bool,
+    done: TokenStream,
+    step: TokenStream,
     label_stem: &str,
     result: TokenStream,
 ) -> TokenStream {
@@ -239,11 +244,6 @@ fn emit_counted_block_splice(
         });
     let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
     let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
-    let done = if inclusive {
-        quote! { __i > #stop }
-    } else {
-        quote! { __i >= #stop }
-    };
     quote! {
         {
             let mut __i: i64 = #start;
@@ -252,7 +252,12 @@ fn emit_counted_block_splice(
             // continues the INNER label and never reaches here.
             let mut __first = true;
             #outer: loop {
-                if !__first { __i += 1; }
+                if !__first {
+                    __i = match __i.checked_add(#step) {
+                        Some(__v) => __v,
+                        None => break #outer #result,
+                    };
+                }
                 __first = false;
                 if #done { break #outer #result; }
                 #bind
@@ -388,15 +393,20 @@ fn emit_array_each_splice(
 }
 
 /// A typed-receiver iterator site (`Compiler::inline_iter_sites`): emit the
-/// native loop under a match arm that PROVES the receiver's runtime shape,
-/// with the ordinary dynamic dispatch as the other arm -- an Int-typed
-/// local holding a post-overflow BigInt, or a shadowing block param, just
-/// takes the fallback. The escaping-block scans treated this site as
-/// escaping (cell captures), which both arms share correctly.
+/// native loop under a match arm that PROVES the receiver's (and any
+/// argument's) runtime shape, with the ordinary dynamic dispatch as the
+/// other arm -- an Int-typed local holding a post-overflow BigInt, a
+/// shadowing block param, or a Float `step` limit just takes the fallback.
+/// Every native arm is additionally gated on `zeo_rt::iter_inline_ok`: once
+/// anything is defined at runtime (a reopen of the builtin, a per-object
+/// singleton) or inside a box, only real dispatch can answer, and the site
+/// keeps working through the fallback arm. The escaping-block scans treated
+/// this site as escaping (cell captures), which both arms share correctly.
 fn emit_typed_iter_inline(
     cx: &Ctx,
     kind: crate::compiler::InlineIterKind,
     recv_id: NodeId,
+    args: &[NodeId],
     block_id: NodeId,
     name: &str,
     block_arg: Option<NodeId>,
@@ -406,26 +416,120 @@ fn emit_typed_iter_inline(
     let __bx = cx.box_id;
     let name_sym = super::pooled_sym(name);
     let block_value = emit_block_option(cx, Some(block_id), block_arg);
-    let fallback = wrap_dynamic_result(
-        true,
-        quote! {
-            zeo_rt::send_value_in(#__bx, &__iter_other, #name_sym, &[], #block_value)
-        },
-    );
+    let fallback = |fb_args: TokenStream| {
+        wrap_dynamic_result(
+            true,
+            quote! {
+                zeo_rt::send_value_in(#__bx, &__iter_other, #name_sym, #fb_args, #block_value)
+            },
+        )
+    };
+    // The receiver Int evaluates to itself (MRI: `times`/`upto`/`downto`/
+    // `step` answer their receiver).
+    let int_result = quote! { zeo_rt::RubyValue::Int(__iter_a) };
     match kind {
         K::TimesInt => {
             let splice = emit_counted_block_splice(
                 cx,
                 block_id,
                 quote! { 0i64 },
-                quote! { __iter_n },
-                false,
+                quote! { __i >= __iter_a },
+                quote! { 1i64 },
                 "times",
-                quote! { zeo_rt::RubyValue::Int(__iter_n) },
+                int_result,
             );
+            let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
-                    zeo_rt::RubyValue::Int(__iter_n) => #splice,
+                    zeo_rt::RubyValue::Int(__iter_a) if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    __iter_other => #fallback,
+                }
+            }
+        }
+        // A one-arg `step` IS `upto`: limit inclusive, stride 1.
+        K::UptoInt | K::DowntoInt | K::StepInt if args.len() == 1 => {
+            let limit = emit_expr(cx, args[0]);
+            let (done, step) = if kind == K::DowntoInt {
+                (quote! { __i < __iter_b }, quote! { -1i64 })
+            } else {
+                (quote! { __i > __iter_b }, quote! { 1i64 })
+            };
+            let splice = emit_counted_block_splice(
+                cx,
+                block_id,
+                quote! { __iter_a },
+                done,
+                step,
+                name,
+                int_result,
+            );
+            let fallback = fallback(quote! { &[__iter_lim] });
+            quote! {
+                match (#recv, #limit) {
+                    (zeo_rt::RubyValue::Int(__iter_a), zeo_rt::RubyValue::Int(__iter_b))
+                        if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    (__iter_other, __iter_lim) => #fallback,
+                }
+            }
+        }
+        K::StepInt => {
+            let limit = emit_expr(cx, args[0]);
+            let by = emit_expr(cx, args[1]);
+            // The stride's sign picks the walk's direction; zero strides
+            // (an ArgumentError) fall back to the runtime's own check.
+            let splice = emit_counted_block_splice(
+                cx,
+                block_id,
+                quote! { __iter_a },
+                quote! { (__iter_s > 0 && __i > __iter_b) || (__iter_s < 0 && __i < __iter_b) },
+                quote! { __iter_s },
+                name,
+                int_result,
+            );
+            let fallback = fallback(quote! { &[__iter_lim, __iter_stp] });
+            quote! {
+                match (#recv, #limit, #by) {
+                    (
+                        zeo_rt::RubyValue::Int(__iter_a),
+                        zeo_rt::RubyValue::Int(__iter_b),
+                        zeo_rt::RubyValue::Int(__iter_s),
+                    ) if __iter_s != 0 && zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    (__iter_other, __iter_lim, __iter_stp) => #fallback,
+                }
+            }
+        }
+        K::UptoInt | K::DowntoInt => unreachable!("mark pass nominates these with one argument"),
+        K::RangeEachInt => {
+            let splice = emit_counted_block_splice(
+                cx,
+                block_id,
+                quote! { __iter_a },
+                quote! { if __iter_x { __i >= __iter_b } else { __i > __iter_b } },
+                quote! { 1i64 },
+                "range_each",
+                quote! {
+                    zeo_rt::RubyValue::Range(
+                        Some(Box::new(zeo_rt::RubyValue::Int(__iter_a))),
+                        Some(Box::new(zeo_rt::RubyValue::Int(__iter_b))),
+                        __iter_x,
+                    )
+                },
+            );
+            let fallback = fallback(quote! { &[] });
+            quote! {
+                match #recv {
+                    zeo_rt::RubyValue::Range(Some(__iter_bs), Some(__iter_be), __iter_x)
+                        if zeo_rt::iter_inline_ok(#__bx)
+                            && matches!(__iter_bs.as_ref(), zeo_rt::RubyValue::Int(_))
+                            && matches!(__iter_be.as_ref(), zeo_rt::RubyValue::Int(_)) =>
+                    {
+                        let (zeo_rt::RubyValue::Int(__iter_a), zeo_rt::RubyValue::Int(__iter_b)) =
+                            (*__iter_bs, *__iter_be)
+                        else {
+                            unreachable!()
+                        };
+                        #splice
+                    }
                     __iter_other => #fallback,
                 }
             }
@@ -441,9 +545,10 @@ fn emit_typed_iter_inline(
                     "each"
                 },
             );
+            let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
-                    zeo_rt::RubyValue::Array(__iter_arr) => #splice,
+                    zeo_rt::RubyValue::Array(__iter_arr) if zeo_rt::iter_inline_ok(#__bx) => #splice,
                     __iter_other => #fallback,
                 }
             }
@@ -2355,8 +2460,8 @@ fn dispatch(
                 cx,
                 block_id,
                 quote! { 0i64 },
-                quote! { #n },
-                false,
+                quote! { __i >= #n },
+                quote! { 1i64 },
                 "times",
                 quote! { zeo_rt::RubyValue::Int(#n) },
             );
@@ -2366,8 +2471,7 @@ fn dispatch(
     // `(a..b).each { |i| }` on a LITERAL Int-bounded range: the same native
     // counted loop `.times` fuses to (the generic path allocates a real
     // Proc and dynamic-dispatches every yield -- bm_range_each spent 65s
-    // there). `.each` answers the receiver range. `i64::MAX`-inclusive is
-    // excluded: the `__i += 1` after the final iteration would overflow.
+    // there). `.each` answers the receiver range.
     if let Some(block_id) =
         block.filter(|_| is_range_each_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
     {
@@ -2381,23 +2485,26 @@ fn dispatch(
                 (&cx.compiler.hir[*s], &cx.compiler.hir[*e])
             {
                 let (s, e, exclusive) = (*s, *e, *exclusive);
-                if exclusive || e < i64::MAX {
-                    return emit_counted_block_splice(
-                        cx,
-                        block_id,
-                        quote! { #s },
-                        quote! { #e },
-                        !exclusive,
-                        "range_each",
-                        quote! {
-                            zeo_rt::RubyValue::Range(
-                                Some(Box::new(zeo_rt::RubyValue::Int(#s))),
-                                Some(Box::new(zeo_rt::RubyValue::Int(#e))),
-                                #exclusive,
-                            )
-                        },
-                    );
-                }
+                let done = if exclusive {
+                    quote! { __i >= #e }
+                } else {
+                    quote! { __i > #e }
+                };
+                return emit_counted_block_splice(
+                    cx,
+                    block_id,
+                    quote! { #s },
+                    done,
+                    quote! { 1i64 },
+                    "range_each",
+                    quote! {
+                        zeo_rt::RubyValue::Range(
+                            Some(Box::new(zeo_rt::RubyValue::Int(#s))),
+                            Some(Box::new(zeo_rt::RubyValue::Int(#e))),
+                            #exclusive,
+                        )
+                    },
+                );
             }
         }
     }
@@ -2407,7 +2514,7 @@ fn dispatch(
     // so ordering is free. See `emit_typed_iter_inline` for the guard rule.
     if let Some(block_id) = block {
         if let Some(&kind) = cx.compiler.inline_iter_sites.get(&block_id) {
-            return emit_typed_iter_inline(cx, kind, recv_id, block_id, name, block_arg);
+            return emit_typed_iter_inline(cx, kind, recv_id, args, block_id, name, block_arg);
         }
     }
 

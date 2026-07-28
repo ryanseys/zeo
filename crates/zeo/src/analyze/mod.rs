@@ -174,16 +174,22 @@ fn mark_inline_iter_sites(
             ..
         } = &compiler.hir[id]
         {
-            if args.is_empty() && kwargs.is_empty() {
+            if kwargs.is_empty() {
                 if let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
                     (&compiler.hir[*recv], &compiler.hir[*block])
                 {
                     if plain_positional(params) {
-                        let kind = match (locals.get(rn), name.as_str(), params.required.len()) {
-                            (Some(TyKind::Int), "times", 0 | 1) => Some(InlineIterKind::TimesInt),
-                            (Some(TyKind::Array), "each", 0 | 1) => Some(InlineIterKind::ArrayEach),
-                            (Some(TyKind::Array), "each_with_index", 1 | 2) => {
-                                Some(InlineIterKind::ArrayEachWithIndex)
+                        use InlineIterKind as K;
+                        let key = (locals.get(rn), name.as_str(), args.len());
+                        let kind = match (key, params.required.len()) {
+                            ((Some(TyKind::Int), "times", 0), 0 | 1) => Some(K::TimesInt),
+                            ((Some(TyKind::Int), "upto", 1), 0 | 1) => Some(K::UptoInt),
+                            ((Some(TyKind::Int), "downto", 1), 0 | 1) => Some(K::DowntoInt),
+                            ((Some(TyKind::Int), "step", 1 | 2), 0 | 1) => Some(K::StepInt),
+                            ((Some(TyKind::Range), "each", 0), 0 | 1) => Some(K::RangeEachInt),
+                            ((Some(TyKind::Array), "each", 0), 0 | 1) => Some(K::ArrayEach),
+                            ((Some(TyKind::Array), "each_with_index", 0), 1 | 2) => {
+                                Some(K::ArrayEachWithIndex)
                             }
                             _ => None,
                         };
@@ -197,24 +203,35 @@ fn mark_inline_iter_sites(
         compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
     }
 
-    // A user REOPEN of the builtin method wins at every call site -- don't
-    // nominate that method's sites at all (the literal fast paths predate
-    // this rule, but gem-scale code goes through here).
+    // A user REDEFINITION of the builtin iterator wins at every call site --
+    // never nominate that method's sites. Checked across the whole ancestry,
+    // so a prepended module or an inherited override (`Numeric#step`) counts
+    // too. The literal fast paths obey the same verdict via the two
+    // `Compiler` flags below.
     let reopened = |cname: &str, m: &str| {
         compiler.resolve_class(cname, &[], 0).is_some_and(|cid| {
-            compiler
-                .class(cid)
-                .own_methods
-                .iter()
-                .any(|&s| compiler.scope(s).name == m)
+            mro::compute_ancestors(compiler, cid).iter().any(|&a| {
+                compiler
+                    .class(a)
+                    .own_methods
+                    .iter()
+                    .any(|&s| compiler.scope(s).name == m)
+            })
         })
     };
-    if reopened("Integer", "times")
-        || reopened("Array", "each")
-        || reopened("Array", "each_with_index")
-    {
-        return;
-    }
+    use InlineIterKind as K;
+    let sup: Vec<(K, bool)> = vec![
+        (K::TimesInt, reopened("Integer", "times")),
+        (K::UptoInt, reopened("Integer", "upto")),
+        (K::DowntoInt, reopened("Integer", "downto")),
+        (K::StepInt, reopened("Integer", "step")),
+        (K::RangeEachInt, reopened("Range", "each")),
+        (K::ArrayEach, reopened("Array", "each")),
+        (K::ArrayEachWithIndex, reopened("Array", "each_with_index")),
+    ];
+    let suppressed = |k: &K| sup.iter().any(|(sk, s)| sk == k && *s);
+    compiler.times_literal_suppressed = suppressed(&K::TimesInt);
+    compiler.range_each_literal_suppressed = suppressed(&K::RangeEachInt);
 
     let mut sites = HashMap::new();
     for scope in &compiler.scopes {
@@ -225,6 +242,7 @@ fn mark_inline_iter_sites(
     for &n in main_statements {
         scan(compiler, n, main_local_types, &mut sites);
     }
+    sites.retain(|_, k| !suppressed(k));
     compiler.inline_iter_sites = sites;
 }
 

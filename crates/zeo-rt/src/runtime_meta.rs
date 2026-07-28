@@ -152,6 +152,17 @@ pub fn is_live() -> bool {
     OVERLAY_LIVE.load(Ordering::Acquire)
 }
 
+/// The typed-iterator fusion gate (`codegen`'s `emit_typed_iter_inline`): a
+/// fused native loop bypasses dispatch entirely, which is only sound while
+/// nothing could have overridden the builtin iterator -- no runtime-defined
+/// method anywhere (a reopen or a per-object singleton would win the lookup)
+/// and not inside a box (a box may carry its own override). The same rule the
+/// flat dispatch maps apply, asked once per loop entry.
+#[inline(always)]
+pub fn iter_inline_ok(box_id: u32) -> bool {
+    box_id == 0 && !is_live()
+}
+
 fn mark_live() {
     OVERLAY_LIVE.store(true, Ordering::Release);
 }

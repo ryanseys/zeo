@@ -368,13 +368,30 @@ pub struct Compiler {
     /// the escaping-block scans deliberately ignore it -- a marked site keeps
     /// escaping-style cell captures, correct in both arms.
     pub inline_iter_sites: HashMap<crate::hir::NodeId, InlineIterKind>,
+    /// A compile-time reopen of `Integer#times` / `Range#each` anywhere in
+    /// Integer's/Range's ancestry (`analyze::mark_inline_iter_sites` computes
+    /// both): the LITERAL fast paths (`3.times`, `(1..9).each`) must then
+    /// dispatch dynamically -- unlike the typed sites they carry no runtime
+    /// guard to fall back through.
+    pub times_literal_suppressed: bool,
+    pub range_each_literal_suppressed: bool,
 }
 
 /// See [`Compiler::inline_iter_sites`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum InlineIterKind {
     /// `n.times { |i| }`, `n` statically `Int`.
     TimesInt,
+    /// `n.upto(m) { |i| }`, `n` statically `Int` (the guard also proves `m`).
+    UptoInt,
+    /// `n.downto(m) { |i| }`, `n` statically `Int`.
+    DowntoInt,
+    /// `n.step(limit[, by]) { |i| }`, `n` statically `Int`; positional args
+    /// only (a keyword form never nominates), all proven `Int` by the guard.
+    StepInt,
+    /// `r.each { |i| }`, `r` statically `Range`; the guard proves both bounds
+    /// are present and `Int` (a String/endless/beginless range falls back).
+    RangeEachInt,
     /// `arr.each { |e| }`, `arr` statically `Array`.
     ArrayEach,
     /// `arr.each_with_index { |e, i| }`, `arr` statically `Array`.
@@ -451,6 +468,8 @@ impl Compiler {
             frozen_fq_names: None,
             direct_const_defs: None,
             inline_iter_sites: HashMap::new(),
+            times_literal_suppressed: false,
+            range_each_literal_suppressed: false,
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
