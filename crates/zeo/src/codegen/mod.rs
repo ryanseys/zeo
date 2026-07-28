@@ -1350,12 +1350,20 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // paths, baked in -- the same caveat `$LOAD_PATH` carries (see
     // `docs/COMPATIBILITY.md`); what they are FOR is letting a runtime require of
     // an already-spliced file answer `false` rather than raise.
-    let loaded_features: Vec<String> = compiler
+    let mut loaded_features: Vec<String> = compiler
         .hir
         .loaded_files
         .iter()
         .map(|f| f.canonical.to_string_lossy().into_owned())
         .collect();
+    // `ruby` preloads rbconfig (via rubygems) before the first program line,
+    // so its `$LOADED_FEATURES` entry exists in EVERY process -- including
+    // programs whose demand-driven splice skipped the shim's code. Listing
+    // it keeps a dynamic `require "rbconfig"` answering `false` either way.
+    let ambient_rbconfig = "<zeo-shim>/rbconfig.rb".to_string();
+    if !loaded_features.contains(&ambient_rbconfig) {
+        loaded_features.push(ambient_rbconfig);
+    }
 
     // Ruby's own parse warnings, as one literal slice -- emitted only when
     // the program actually has some, so the common binary carries nothing.

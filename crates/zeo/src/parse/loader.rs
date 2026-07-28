@@ -212,19 +212,45 @@ pub(super) fn lower_main_file(
     // `"-e"` for a pathless source string.
     let main_file = hir.add_file(main_name, source);
     let prev_file = hir.lowering_file.replace(main_file);
-    let lowered = loader.preload_ambient_features(hir).and_then(|mut all| {
-        all.extend(loader.lower_file_statements(
+    let lowered = loader
+        .lower_file_statements(
             hir,
             &result,
             program.statements().body(),
             dir.as_deref(),
             None,
             0,
-        )?);
-        Ok(all)
-    });
+        )
+        .and_then(|main_stmts| {
+            // Demand-driven: the shim's ~100 lines of module code ride along
+            // only when something can actually reach RbConfig. Splicing AFTER
+            // the main lowering (but prepending the statements, so the shim
+            // still executes first) is what lets the decision see every
+            // spliced file; an explicit `require "rbconfig"` already spliced
+            // it mid-main and dedups here. The `$LOADED_FEATURES` entry stays
+            // unconditional either way -- see codegen's seed_loaded_features.
+            let mut all = if wants_ambient_rbconfig(hir) {
+                loader.preload_ambient_features(hir)?
+            } else {
+                Vec::new()
+            };
+            all.extend(main_stmts);
+            Ok(all)
+        });
     hir.lowering_file = prev_file;
     Ok((lowered?, loader.gem_records))
+}
+
+/// Whether the ambient rbconfig shim must be compiled in: some spliced
+/// source names `RbConfig` (or the `rbconfig` feature -- a plain substring
+/// scan, deliberately over-approximate: a comment mention costs only the
+/// shim's inclusion), or runtime `eval` exists and could reach it.
+fn wants_ambient_rbconfig(hir: &Hir) -> bool {
+    hir.uses_runtime_eval()
+        || hir
+            .files
+            .iter()
+            .any(|f| f.source.contains("RbConfig") || f.source.contains("rbconfig"))
 }
 
 /// What `ruby` has already loaded before the main script's first line: it
