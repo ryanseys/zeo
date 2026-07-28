@@ -651,7 +651,8 @@ pub fn emit_call_args_to(
                     // side-effecting key (in practice always a constant/literal).
                     let key = match &kw_names[i] {
                         Some(name) => {
-                            quote! { zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)) }
+                            let sym = super::pooled_sym(name);
+                            quote! { zeo_rt::RubyValue::Symbol(#sym) }
                         }
                         None => {
                             let KwArg::Pair(k, _) = &kwargs[i] else { unreachable!() };
@@ -1303,18 +1304,19 @@ pub fn emit_proc_param_bindings(
         // ordinary procs alike.
         KeywordParam::Required(name) => {
             let ident = safe_ident(name);
+            let name_sym = super::pooled_sym(name);
             quote! {
                 #[allow(unused_mut)]
                 let mut #ident: zeo_rt::RubyValue = match &__kw_source {
                     Some(zeo_rt::RubyValue::Hash(__h))
                         if zeo_rt::hash_has_key(
                             __h,
-                            &zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)),
+                            &zeo_rt::RubyValue::Symbol(#name_sym),
                         ) =>
                     {
                         zeo_rt::hash_get(
                             __h,
-                            &zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)),
+                            &zeo_rt::RubyValue::Symbol(#name_sym),
                         )
                     }
                     _ => {
@@ -1328,6 +1330,7 @@ pub fn emit_proc_param_bindings(
         }
         KeywordParam::Optional(name, default) => {
             let ident = safe_ident(name);
+            let name_sym = super::pooled_sym(name);
             let default_expr = emit_expr(cx, *default);
             quote! {
                 // `mut`: a keyword parameter is reassignable like any other
@@ -1336,7 +1339,7 @@ pub fn emit_proc_param_bindings(
                 #[allow(unused_mut)]
                 let mut #ident: zeo_rt::RubyValue = match &__kw_source {
                     Some(zeo_rt::RubyValue::Hash(__h)) => {
-                        let __v = zeo_rt::hash_get(__h, &zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)));
+                        let __v = zeo_rt::hash_get(__h, &zeo_rt::RubyValue::Symbol(#name_sym));
                         if __v.is_nil() { #default_expr } else { __v }
                     }
                     _ => #default_expr,

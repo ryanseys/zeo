@@ -61,7 +61,10 @@ pub(super) fn emit_universal_implicit_form(
         && block.is_none()
     {
         return Some(match &cx.current_method {
-            Some(m) => quote! { zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#m)) },
+            Some(m) => {
+                let sym = super::super::pooled_sym(m);
+                quote! { zeo_rt::RubyValue::Symbol(#sym) }
+            }
             None => quote! { zeo_rt::RubyValue::Nil },
         });
     }
@@ -74,8 +77,9 @@ pub(super) fn emit_universal_implicit_form(
                 let e = emit_expr(cx, args[0]);
                 box_if_object_typed(cx, args[0], e)
             };
+            let method_sym = super::super::pooled_sym("method");
             return Some(quote! {
-                zeo_rt::send_value_in(#__bx, &#recv, zeo_rt::Symbol::intern("method"), &[#arg], None)?
+                zeo_rt::send_value_in(#__bx, &#recv, #method_sym, &[#arg], None)?
             });
         }
     }

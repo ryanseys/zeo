@@ -465,16 +465,19 @@ fn emit_array_binding(
         // A Poly scrutinee that isn't a runtime Array dispatches
         // `#deconstruct` (real Ruby's array-pattern protocol) when it responds
         // to it; anything else simply doesn't match (no raise).
-        TyKind::Poly => Some(quote! {
-            let #arr_ident: Vec<zeo_rt::RubyValue> = match &(#scrutinee) {
-                zeo_rt::RubyValue::Array(__arc) => __arc.lock().clone(),
-                __v if zeo_rt::responds_to(__v.class_id(), zeo_rt::Symbol::intern("deconstruct"), false) => {
-                    zeo_rt::send_value(__v, zeo_rt::Symbol::intern("deconstruct"), &[], None)?
-                        .as_array_unchecked().lock().clone()
-                }
-                _ => break #label false,
-            };
-        }),
+        TyKind::Poly => {
+            let dec = super::pooled_sym("deconstruct");
+            Some(quote! {
+                let #arr_ident: Vec<zeo_rt::RubyValue> = match &(#scrutinee) {
+                    zeo_rt::RubyValue::Array(__arc) => __arc.lock().clone(),
+                    __v if zeo_rt::responds_to(__v.class_id(), #dec, false) => {
+                        zeo_rt::send_value(__v, #dec, &[], None)?
+                            .as_array_unchecked().lock().clone()
+                    }
+                    _ => break #label false,
+                };
+            })
+        }
         _ => None,
     }
 }
@@ -510,30 +513,36 @@ fn emit_hash_binding(
         // regex's named captures become a symbol-keyed hash. A no-match `match`
         // is nil at runtime, so guard: a non-MatchData value (nil) simply
         // doesn't match the hash pattern (falls through to `in nil`), no raise.
-        TyKind::MatchData => Some(quote! {
-            let #h_ident: zeo_rt::RHash = match &(#scrutinee) {
-                zeo_rt::RubyValue::MatchData(_) => zeo_rt::send_value(
-                    &(#scrutinee),
-                    zeo_rt::Symbol::intern("deconstruct_keys"),
-                    &[zeo_rt::RubyValue::Nil],
-                    None,
-                )?.as_hash_unchecked(),
-                _ => break #label false,
-            };
-        }),
+        TyKind::MatchData => {
+            let dk = super::pooled_sym("deconstruct_keys");
+            Some(quote! {
+                let #h_ident: zeo_rt::RHash = match &(#scrutinee) {
+                    zeo_rt::RubyValue::MatchData(_) => zeo_rt::send_value(
+                        &(#scrutinee),
+                        #dk,
+                        &[zeo_rt::RubyValue::Nil],
+                        None,
+                    )?.as_hash_unchecked(),
+                    _ => break #label false,
+                };
+            })
+        }
         // A Poly scrutinee that isn't a runtime Hash dispatches
         // `#deconstruct_keys` (real Ruby's hash-pattern protocol) when it
         // responds to it; anything else simply doesn't match (no raise).
-        TyKind::Poly => Some(quote! {
-            let #h_ident: zeo_rt::RHash = match &(#scrutinee) {
-                zeo_rt::RubyValue::Hash(__rc) => __rc.clone(),
-                __v if zeo_rt::responds_to(__v.class_id(), zeo_rt::Symbol::intern("deconstruct_keys"), false) => {
-                    zeo_rt::send_value(__v, zeo_rt::Symbol::intern("deconstruct_keys"), &[zeo_rt::RubyValue::Nil], None)?
-                        .as_hash_unchecked()
-                }
-                _ => break #label false,
-            };
-        }),
+        TyKind::Poly => {
+            let dk = super::pooled_sym("deconstruct_keys");
+            Some(quote! {
+                let #h_ident: zeo_rt::RHash = match &(#scrutinee) {
+                    zeo_rt::RubyValue::Hash(__rc) => __rc.clone(),
+                    __v if zeo_rt::responds_to(__v.class_id(), #dk, false) => {
+                        zeo_rt::send_value(__v, #dk, &[zeo_rt::RubyValue::Nil], None)?
+                            .as_hash_unchecked()
+                    }
+                    _ => break #label false,
+                };
+            })
+        }
         _ => None,
     }
 }
@@ -721,7 +730,8 @@ fn emit_hash_pattern(
     });
 
     let key_checks = pairs.iter().map(|(key, pat)| {
-        let key_expr = quote! { zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#key)) };
+        let key_sym = super::pooled_sym(key);
+        let key_expr = quote! { zeo_rt::RubyValue::Symbol(#key_sym) };
         let has_key = quote! { zeo_rt::hash_has_key(&#h_ident, &(#key_expr)) };
         let value_expr = quote! { zeo_rt::hash_get(&#h_ident, &(#key_expr)) };
         let value_check = match pat {

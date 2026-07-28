@@ -33,6 +33,7 @@ mod handling;
 mod flipflop;
 mod lastmatch;
 mod method_meta;
+pub mod pools;
 mod ractor;
 mod regexp;
 mod rproc;
@@ -129,6 +130,7 @@ pub use runtime_meta::{
     runtime_define_singleton_method, send_super_dynamic,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push};
+pub use pools::{LitPool, SymPool};
 pub use symbol::Symbol;
 pub use thread::{
     MutexData, QueueData, RMutex, RQueue, RThread, ThreadData, mutex_lock, mutex_locked, mutex_new,

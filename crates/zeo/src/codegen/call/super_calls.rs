@@ -190,6 +190,7 @@ pub fn emit_super(
     if in_class_method {
         let target_id = new_defining_class.0;
         let recv_id = receiver_class.0;
+        let mname_sym = super::super::pooled_sym(mname);
         let (pushes, block_expr) =
             emit_runtime_super_args(cx, &current_params, args, kwargs, zsuper, block, block_arg);
         return quote! {
@@ -200,7 +201,7 @@ pub fn emit_super(
                     zeo_rt::ClassId(#target_id),
                     #target_is_module_instance,
                     zeo_rt::ClassId(#recv_id),
-                    zeo_rt::Symbol::intern(#mname),
+                    #mname_sym,
                     &__super_args,
                     #block_expr,
                 )?
@@ -313,6 +314,7 @@ fn emit_runtime_super(
     block_arg: Option<NodeId>,
 ) -> TokenStream {
     let def_id = cx.defining_class.expect("`super` outside a method").0;
+    let mname_sym = super::super::pooled_sym(mname);
     let (pushes, block_expr) =
         emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block, block_arg);
     // A CLASS-method `super` (`current_class` deliberately `None` there --
@@ -329,7 +331,7 @@ fn emit_runtime_super(
                 zeo_rt::send_super_class_from(
                     zeo_rt::ClassId(#recv_id),
                     zeo_rt::ClassId(#def_id),
-                    zeo_rt::Symbol::intern(#mname),
+                    #mname_sym,
                     &__super_args,
                     #block_expr,
                 )?
@@ -353,7 +355,7 @@ fn emit_runtime_super(
             zeo_rt::send_super_from(
                 &#self_val,
                 zeo_rt::ClassId(#def_id),
-                zeo_rt::Symbol::intern(#mname),
+                #mname_sym,
                 &__super_args,
                 #block_expr,
             )?
@@ -480,10 +482,11 @@ fn emit_runtime_super_args(
                     | crate::hir::KeywordParam::Optional(n, _) => n,
                 };
                 let v = read(key);
+                let key_sym = super::super::pooled_sym(key);
                 kw_pushes.push(quote! {
                     zeo_rt::hash_set(
                         &__kw,
-                        zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#key)),
+                        zeo_rt::RubyValue::Symbol(#key_sym),
                         #v,
                     );
                 });

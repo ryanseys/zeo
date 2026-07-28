@@ -82,7 +82,7 @@ pub(super) fn emit_splat_call(
             super::boxed_implicit_self(cx).expect("every context has an implicit self")
         }
     };
-    let name_expr = quote! { zeo_rt::Symbol::intern(#name) };
+    let name_expr = super::super::pooled_sym(name);
     let arg_pushes = args.iter().map(|a| match a {
         ArrayElem::Single(n) => {
             let e = emit_expr(cx, *n);

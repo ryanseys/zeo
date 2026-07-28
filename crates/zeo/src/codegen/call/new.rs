@@ -70,12 +70,13 @@ pub fn emit_new(
         // finds nothing.
         let path = crate::constpath::ConstPath::parse(class_name);
         let rtclass = crate::codegen::expr::emit_const_read(cx, path.scope(), path.base());
+        let new_sym = super::super::pooled_sym("new");
         return quote! {
             {
                 let __rtclass = #rtclass;
                 zeo_rt::send_value(
                     &__rtclass,
-                    zeo_rt::Symbol::intern("new"),
+                    #new_sym,
                     &[#(#arg_exprs),*],
                     #block_expr,
                 )?
@@ -219,10 +220,11 @@ pub fn emit_new_with_arg_tokens(
         || cx.compiler.is_immediate_subclass(cid)
     {
         let id = cid.0;
+        let new_sym = super::super::pooled_sym("new");
         return quote! {
             zeo_rt::send_value_in(#__bx,
                 &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)),
-                zeo_rt::Symbol::intern("new"),
+                #new_sym,
                 &[#(#arg_exprs),*],
                 None,
             )?

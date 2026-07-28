@@ -591,10 +591,11 @@ pub fn emit_call(
                 // convention) -- the callee's trampoline binds it.
                 let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
                 let block_value = emit_block_option(cx, block, block_arg);
+                let name_sym = super::pooled_sym(name);
                 let dyn_call = quote! {
                     zeo_rt::send_value_in(#__bx,
                         &#slf,
-                        zeo_rt::Symbol::intern(#name),
+                        #name_sym,
                         &[#(#arg_exprs,)* #(#kw_hash,)*],
                         #block_value,
                     )
@@ -814,10 +815,11 @@ pub fn emit_call(
                         box_if_object_typed(cx, a, e)
                     })
                     .collect();
+                let name_sym = super::pooled_sym(name);
                 return quote! {
                     zeo_rt::send_value_in(#__bx,
                         &#boxed,
-                        zeo_rt::Symbol::intern(#name),
+                        #name_sym,
                         &[#(#arg_exprs),*],
                         None,
                     )?
@@ -847,15 +849,16 @@ pub fn emit_call(
         let blk = emit_block_option(cx, block, block_arg);
         // A bareword VCALL that misses must raise NameError, not NoMethodError
         // (it could have been a local). is_vcall implies no args and no block.
+        let name_sym = super::pooled_sym(name);
         if is_vcall {
             return quote! {
-                zeo_rt::send_value_vcall_in(#__bx, &#recv, zeo_rt::Symbol::intern(#name))?
+                zeo_rt::send_value_vcall_in(#__bx, &#recv, #name_sym)?
             };
         }
         return quote! {
             zeo_rt::send_value_in(#__bx,
                 &#recv,
-                zeo_rt::Symbol::intern(#name),
+                #name_sym,
                 &[#(#arg_exprs),*],
                 #blk,
             )?
@@ -2221,11 +2224,12 @@ fn dispatch(
             box_if_object_typed(cx, a, e)
         });
         let block_value = emit_block_option(cx, block, block_arg);
+        let name_sym = super::pooled_sym(name);
         let dyn_call = quote! {
             zeo_rt::send_dispatch_in(
                 #__bx,
                 &(#recv_expr),
-                zeo_rt::Symbol::intern(#name),
+                #name_sym,
                 &[#(#all_args,)* #(#kw_hash,)*],
                 #block_value,
             )
@@ -2409,12 +2413,13 @@ fn dispatch(
                         ) => #call,
                     }
                 });
+                let name_sym = super::pooled_sym(name);
                 return quote! {
                     match (&(#recv_expr), &(#arg_expr)) {
                         #int_arm
                         (__dyn_recv, __dyn_arg) => zeo_rt::send_value_in(#__bx,
                             __dyn_recv,
-                            zeo_rt::Symbol::intern(#name),
+                            #name_sym,
                             &[(*__dyn_arg).clone()],
                             None,
                         )?,
@@ -2434,12 +2439,13 @@ fn dispatch(
                         __r @ zeo_rt::RubyValue::Int(_) => zeo_rt::#func(__r),
                     }
                 });
+                let name_sym = super::pooled_sym(name);
                 return quote! {
                     match &(#recv_expr) {
                         #int_arm
                         __dyn_recv => zeo_rt::send_value_in(#__bx,
                             __dyn_recv,
-                            zeo_rt::Symbol::intern(#name),
+                            #name_sym,
                             &[],
                             None,
                         )?,
@@ -2507,7 +2513,7 @@ fn dispatch(
             // unknown name is a real runtime NoMethodError "for class X".
             | TyKind::ClassObj(_)
     ) {
-        let name_expr = quote! { zeo_rt::Symbol::intern(#name) };
+        let name_expr = super::pooled_sym(name);
         let arg_exprs = args.iter().map(|&a| {
             let e = emit_expr(cx, a);
             box_if_object_typed(cx, a, e)
@@ -2553,7 +2559,7 @@ fn dispatch(
                 .contains(&crate::compiler::COMPARABLE_CLASS)
         {
             let class_ident = super::ident::class_ident(cx.compiler, cid);
-            let name_expr = quote! { zeo_rt::Symbol::intern(#name) };
+            let name_expr = super::pooled_sym(name);
             let arg_exprs = args.iter().map(|&a| {
                 let e = emit_expr(cx, a);
                 box_if_object_typed(cx, a, e)

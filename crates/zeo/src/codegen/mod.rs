@@ -533,6 +533,65 @@ fn take_unsupported() -> Option<String> {
     UNSUPPORTED.with_borrow_mut(|slot| slot.take())
 }
 
+/// The per-compile literal-pool accumulator (`zeo_rt::SymPool`/`LitPool`):
+/// every literal symbol name and frozen string codegen emits registers here,
+/// call sites index the pool (`crate::__SYMS.s(4)`), and `codegen` appends
+/// the two backing statics after the program tokens. Thread-local for the
+/// same reason `UNSUPPORTED` is -- codegen is single-threaded per compile
+/// and threading an accumulator through every emit fn would bloat every
+/// signature for bookkeeping no reader cares about.
+#[derive(Default)]
+struct PoolBuilder {
+    sym_ix: HashMap<String, usize>,
+    syms: Vec<String>,
+    lit_ix: HashMap<String, usize>,
+    lits: Vec<String>,
+}
+
+thread_local! {
+    static POOLS: std::cell::RefCell<PoolBuilder> =
+        std::cell::RefCell::new(PoolBuilder::default());
+}
+
+/// `crate::__SYMS.s(i)` for a literal symbol name -- the pooled replacement
+/// for a per-execution `zeo_rt::Symbol::intern("...")` (a lock + hash even
+/// on a hit). `crate::`-qualified so the same tokens work at any module
+/// depth (the `__own_`/`__bm_` containers included).
+pub(crate) fn pooled_sym(name: &str) -> TokenStream {
+    let i = POOLS.with_borrow_mut(|p| {
+        if let Some(&i) = p.sym_ix.get(name) {
+            return i;
+        }
+        let i = p.syms.len();
+        p.syms.push(name.to_string());
+        p.sym_ix.insert(name.to_string(), i);
+        i
+    });
+    let i = proc_macro2::Literal::usize_unsuffixed(i);
+    quote! { crate::__SYMS.s(#i) }
+}
+
+/// `crate::__LITS.s(i)` -- the pooled interned-frozen-string VALUE, replacing
+/// a per-evaluation `RubyValue::Str(intern_frozen(StrBuf::from_utf8(...)))`
+/// (which allocated the key `String` and re-hashed even on a hit).
+pub(crate) fn pooled_frozen_str(text: &str) -> TokenStream {
+    let i = POOLS.with_borrow_mut(|p| {
+        if let Some(&i) = p.lit_ix.get(text) {
+            return i;
+        }
+        let i = p.lits.len();
+        p.lits.push(text.to_string());
+        p.lit_ix.insert(text.to_string(), i);
+        i
+    });
+    let i = proc_macro2::Literal::usize_unsuffixed(i);
+    quote! { crate::__LITS.s(#i) }
+}
+
+fn take_pools() -> PoolBuilder {
+    POOLS.with_borrow_mut(std::mem::take)
+}
+
 /// The assembled program as tokens, with the unsupported-construct record
 /// turned into a clean `CompileError` -- the shared front half of both
 /// renderers below.
@@ -647,6 +706,7 @@ pub fn codegen_to_string_pretty(
 }
 
 fn codegen(analyzed: &Analyzed) -> TokenStream {
+    take_pools(); // drop any accumulation a prior errored compile left behind
     let compiler = &analyzed.compiler;
 
     // `Object` (index 0, built into `zeo-rt`), every MODULE, and every
@@ -1500,15 +1560,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // `ruby_class!`'s `__register`, which is what the runtime construction
     // path uses.
 
-    quote! {
+    let program = quote! {
         // Lints that mirror RUBY-source properties, not codegen defects: an
-        // unused Ruby assignment, code after a `raise`, Kernel#URI's own
-        // capitalization. Genuine-defect lints (unused_must_use and friends)
-        // stay live -- the generated program is expected to build clean.
+        // unused Ruby assignment (or a hoisted local never read), code after
+        // a `raise`, Kernel#URI's own capitalization. Genuine-defect lints
+        // (unused_must_use and friends) stay live -- the generated program is
+        // expected to build clean.
         #![allow(
             unused_parens,
             unused_braces,
             unused_mut,
+            unused_variables,
             unreachable_code,
             unused_assignments,
             non_snake_case
@@ -1617,7 +1679,20 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 }
             }
         }
-    }
+    };
+    // The literal pools, appended AFTER the program tokens are fully built --
+    // interpolation above is what runs the lazy emitters that register pool
+    // entries, so the tables must be read only now. See `PoolBuilder`.
+    let pools = take_pools();
+    let syms = (!pools.syms.is_empty()).then(|| {
+        let names = &pools.syms;
+        quote! { static __SYMS: zeo_rt::SymPool = zeo_rt::SymPool::new(&[#(#names),*]); }
+    });
+    let lits = (!pools.lits.is_empty()).then(|| {
+        let texts = &pools.lits;
+        quote! { static __LITS: zeo_rt::LitPool = zeo_rt::LitPool::new(&[#(#texts),*]); }
+    });
+    quote! { #program #syms #lits }
 }
 
 /// Every statement written directly in a class/module body -- cvar/const/ivar

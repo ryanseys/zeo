@@ -169,7 +169,7 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 /// is legal; a non-name value raises CRuby's TypeError shape).
 pub fn emit_symbol_expr(cx: &Ctx, id: NodeId) -> TokenStream {
     if let HirNode::SymbolLit(s) = &cx.compiler.hir[id] {
-        return quote! { zeo_rt::Symbol::intern(#s) };
+        return super::pooled_sym(s);
     }
     let e = emit_expr(cx, id);
     quote! { zeo_rt::method_name_symbol(&(#e))? }
@@ -270,12 +270,12 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
                 (box_if_object_typed(cx, rid, e), quote! { false })
             }
         };
-        let name = name.as_str();
+        let name_sym = super::pooled_sym(&name);
         // `defined?` consults `respond_to_missing?` too (a method_missing
         // method answers "method"), but SWALLOWS a raise from it (returning
         // nil) -- `unwrap_or(false)`, not `?`, keeps that exception-safety.
         return quote! {
-            if zeo_rt::responds_to_or_missing(&#recv, zeo_rt::Symbol::intern(#name), #include_all).unwrap_or(false) {
+            if zeo_rt::responds_to_or_missing(&#recv, #name_sym, #include_all).unwrap_or(false) {
                 zeo_rt::RubyValue::Str(zeo_rt::string_new("method".to_string()))
             } else {
                 zeo_rt::RubyValue::Nil
@@ -668,7 +668,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             super::call::emit_lambda_value(&body_cx, params, body, *method_body)
         }
         HirNode::SymbolLit(s) => {
-            quote! { zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#s)) }
+            let sym = super::pooled_sym(s);
+            quote! { zeo_rt::RubyValue::Symbol(#sym) }
         }
         HirNode::NilLit => quote! { zeo_rt::RubyValue::Nil },
         HirNode::BoolLit(b) => quote! { zeo_rt::RubyValue::Bool(#b) },
@@ -1293,13 +1294,15 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
             let proc = super::call::emit_proc_or_lambda_value(&body_cx, params, body, true, true);
+            let name_sym = super::pooled_sym(name);
             if *is_class_method {
                 // `def self.x` always installs a singleton method on `self`.
+                let dsm = super::pooled_sym("define_singleton_method");
                 quote! {
                     zeo_rt::send_value(
                         &#self_val,
-                        zeo_rt::Symbol::intern("define_singleton_method"),
-                        &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)), #proc],
+                        #dsm,
+                        &[zeo_rt::RubyValue::Symbol(#name_sym), #proc],
                         None,
                     )?
                 }
@@ -1310,7 +1313,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 quote! {
                     zeo_rt::define_in_default_definee(
                         &#self_val,
-                        zeo_rt::Symbol::intern(#name),
+                        #name_sym,
                         #proc,
                     )?
                 }
@@ -1318,11 +1321,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // A literal `define_method(:m){...}` call: an ordinary
                 // Module#define_method dispatch, which raises NoMethodError when
                 // self isn't a Module/Class (`instance_exec { define_method... }`).
+                let dm = super::pooled_sym("define_method");
                 quote! {
                     zeo_rt::send_value(
                         &#self_val,
-                        zeo_rt::Symbol::intern("define_method"),
-                        &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)), #proc],
+                        #dm,
+                        &[zeo_rt::RubyValue::Symbol(#name_sym), #proc],
                         None,
                     )?
                 }

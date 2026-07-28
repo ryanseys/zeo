@@ -217,11 +217,7 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart], frozen: bool) -> TokenStream
         // interned, frozen twin (equal literals share one object, and
         // mutation raises). Interpolated literals below stay mutable.
         if frozen {
-            return quote! {
-                zeo_rt::RubyValue::Str(zeo_rt::intern_frozen(
-                    zeo_rt::encoding::StrBuf::from_utf8(#s.to_string()),
-                ))
-            };
+            return super::pooled_frozen_str(s);
         }
         return quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(#s.to_string())) };
     }

@@ -38,7 +38,7 @@ pub(super) fn emit_safe_call(
         }
         None => emit_expr(cx, recv_id),
     };
-    let name_expr = quote! { zeo_rt::Symbol::intern(#name) };
+    let name_expr = super::super::pooled_sym(name);
     let arg_exprs = args
         .iter()
         .map(|&a| {
