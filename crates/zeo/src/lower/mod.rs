@@ -1271,6 +1271,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             | "Hash"
                             | "Set"
                             | "Class"
+                            | "Module"
                             | "Struct"
                     )
                 {

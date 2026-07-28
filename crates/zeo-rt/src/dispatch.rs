@@ -3148,7 +3148,11 @@ fn send_in_reason(
     // method_missing fallback, with `name` prepended to args (mirrors
     // CRuby's own protocol) -- AFTER every real method, per real Ruby.
     let mm = Symbol::intern("method_missing");
-    if let Some(f) = registry().lookup(id, mm) {
+    let mm_impl = crate::runtime_meta::is_live()
+        .then(|| crate::runtime_meta::resolve_dynamic(recv, id, mm))
+        .flatten()
+        .or_else(|| registry().lookup(id, mm).cloned());
+    if let Some(f) = mm_impl {
         let mut full_args = Vec::with_capacity(args.len() + 1);
         full_args.push(RubyValue::Symbol(name));
         full_args.extend_from_slice(args);

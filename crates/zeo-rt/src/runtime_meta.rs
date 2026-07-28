@@ -32,7 +32,7 @@ use crate::dispatch::{
 use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use zeo_abi::RUNTIME_CLASS_ID_BASE;
@@ -70,12 +70,20 @@ struct OverlayEntry {
     /// `call_with_self(class_value, args)`.
     class_methods: HashMap<Symbol, RProc>,
     constructor: Option<ConstructorFn>,
+    /// Names `undef_method` removed. An ENTRY, not a deletion: it TERMINATES
+    /// the MRO walk here, so an ancestor's still-live definition can't answer
+    /// for a descendant that undef'd the name. Mirrors the frozen registry's
+    /// `ClassEntry::undefined_methods`.
+    undefs: HashSet<Symbol>,
+    /// The address the anonymous `#<Class:0x...>` rendering reports -- a real
+    /// leaked allocation, so it is unique, stable, and 16 hex digits wide like
+    /// every other object's. Not `ancestors.as_ptr()`: `include`/`prepend`
+    /// re-leak that slice.
+    addr: usize,
 }
 
-impl OverlayEntry {
-    /// A pure method-delta over an existing frozen class -- no ancestors, no
-    /// constructor of its own.
-    fn delta() -> OverlayEntry {
+impl Default for OverlayEntry {
+    fn default() -> Self {
         OverlayEntry {
             name: RwLock::new(None),
             is_module: false,
@@ -84,7 +92,17 @@ impl OverlayEntry {
             methods_vis: HashMap::new(),
             class_methods: HashMap::new(),
             constructor: None,
+            undefs: HashSet::new(),
+            addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
         }
+    }
+}
+
+impl OverlayEntry {
+    /// A pure method-delta over an existing frozen class -- no ancestors, no
+    /// constructor of its own.
+    fn delta() -> OverlayEntry {
+        OverlayEntry::default()
     }
 }
 
@@ -244,6 +262,121 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     }
     mark_live();
     Ok(RubyValue::Symbol(name))
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum AttrKind {
+    Reader,
+    Writer,
+    Accessor,
+}
+
+/// `attr_reader`/`attr_writer`/`attr_accessor` reached AT RUNTIME
+/// (`Class.new { attr_reader :v }`, `Foo.class_eval { attr_accessor :y }`).
+/// The literal class-body form expands to real `def`s at compile time.
+///
+/// Each accessor closes over the RECEIVER's name-keyed ivar storage, which is
+/// total across every receiver kind -- a `DynObject`, a generated struct's
+/// typed field or `__overflow` map, a `ValueSubclass` -- so one implementation
+/// serves a runtime class and a `class_eval` over a compiled one alike.
+pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<RubyValue, Signal> {
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    let mut defined = Vec::new();
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        if kind != AttrKind::Writer {
+            let key: Arc<str> = Arc::from(name.name().as_str());
+            let getter = MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
+                if !args.is_empty() {
+                    return Err(arg_error!(
+                        "wrong number of arguments (given {}, expected 0)",
+                        args.len()
+                    ));
+                }
+                Ok(recv.ivar_get_named(&key).unwrap_or(RubyValue::Nil))
+            }));
+            install_attr(id, name, getter);
+            defined.push(RubyValue::Symbol(name));
+        }
+        if kind != AttrKind::Reader {
+            let key: Arc<str> = Arc::from(name.name().as_str());
+            let setter_name = Symbol::intern(&format!("{}=", name.name()));
+            let setter = MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
+                let [v] = args else {
+                    return Err(arg_error!(
+                        "wrong number of arguments (given {}, expected 1)",
+                        args.len()
+                    ));
+                };
+                recv.ivar_set_named(&key, v.clone());
+                Ok(v.clone())
+            }));
+            install_attr(id, setter_name, setter);
+            defined.push(RubyValue::Symbol(setter_name));
+        }
+    }
+    mark_live();
+    Ok(RubyValue::Array(crate::array_new(defined)))
+}
+
+fn install_attr(id: ClassId, name: Symbol, m: MethodImpl) {
+    let mut w = maps().classes.write().unwrap();
+    let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+    e.methods.insert(name, m);
+    e.methods_vis.remove(&name);
+    e.undefs.remove(&name);
+}
+
+/// `Module#undef_method` -- CRuby's `rb_undef`. The name must currently
+/// RESOLVE for instances of `id`; the entry then terminates the MRO walk here,
+/// so an ancestor's definition can no longer answer for `id`.
+pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        if !crate::dispatch::responds_to(id, name, true) {
+            return Err(name_error!(
+                "undefined method '{}' for class '{}'",
+                name.name(),
+                crate::dispatch::class_name(id).unwrap_or_else(|| "?".to_string())
+            ));
+        }
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.undefs.insert(name);
+        e.methods.remove(&name);
+    }
+    mark_live();
+    Ok(RubyValue::Class(id))
+}
+
+/// `Module#remove_method` -- drops this class's OWN definition, leaving an
+/// inherited one reachable. Unlike `undef_method` it plants no tombstone.
+pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        let mut w = maps().classes.write().unwrap();
+        let removed = w
+            .get_mut(&id.0)
+            .and_then(|e| e.methods.remove(&name))
+            .is_some();
+        if !removed {
+            return Err(name_error!(
+                "method '{}' not defined in {}",
+                name.name(),
+                crate::dispatch::class_name(id).unwrap_or_else(|| "?".to_string())
+            ));
+        }
+    }
+    mark_live();
+    Ok(RubyValue::Class(id))
 }
 
 /// `Module#alias_method(new, old)` reached AT RUNTIME (computed names --
@@ -728,51 +861,80 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
 /// immutable, so a runtime `include` on it is a documented no-op on dispatch
 /// (rare -- static `include` is the compiled path).
 pub fn runtime_include(recv: &RubyValue, modules: &[RubyValue]) -> Result<RubyValue, Signal> {
+    // `include A, B` inserts each right after self, so the LAST argument ends
+    // up closest to self -- process right-to-left to reproduce that order.
+    mix_in(recv, modules, Placement::After, "include")
+}
+
+/// `Module#prepend(M, ...)` -- the mirror of `include`, splicing before the
+/// receiver so the module's methods win over the receiver's own. `super` from
+/// one then resumes at the receiver, because `send_super_from` walks by
+/// POSITION and the module's id is what was pushed as the defining class.
+pub fn runtime_prepend(recv: &RubyValue, modules: &[RubyValue]) -> Result<RubyValue, Signal> {
+    mix_in(recv, modules, Placement::Before, "prepend")
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Placement {
+    Before,
+    After,
+}
+
+fn mix_in(
+    recv: &RubyValue,
+    modules: &[RubyValue],
+    placement: Placement,
+    verb: &str,
+) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = recv else {
-        return Err(type_error!("can't include into {}", immediate_kind(recv)));
+        return Err(type_error!("can't {verb} into {}", immediate_kind(recv)));
     };
     if crate::dispatch::class_frozen(*cid) {
         return Err(crate::dispatch::frozen_class_error(*cid));
     }
-    // `include A, B` inserts each right after self, so the LAST argument ends
-    // up closest to self -- process right-to-left to reproduce that order.
-    for module_val in modules.iter().rev() {
+    // `prepend A, B` puts B closest to self and `include A, B` puts B closest
+    // too, so both walk the arguments in the order that lands them there.
+    let ordered: Vec<&RubyValue> = match placement {
+        Placement::After => modules.iter().rev().collect(),
+        Placement::Before => modules.iter().collect(),
+    };
+    for module_val in ordered {
         let RubyValue::Class(mid) = module_val else {
             return Err(type_error!(
                 "wrong argument type {} (expected Module)",
                 crate::builtins::class_name_of(module_val)
             ));
         };
-        include_module_into(*cid, *mid);
+        splice_module_into(*cid, *mid, placement);
     }
     mark_live();
     Ok(recv.clone())
 }
 
-/// Splices `mid`'s ancestry into `cid`'s overlay ancestry directly after `cid`
-/// itself, skipping any ancestor already present (CRuby's dedup). Computes the
-/// new chain BEFORE taking the overlay write lock (`ancestors_of_value` reads
-/// it). The freshly-leaked slice replaces the field; the old one leaks, matching
-/// this runtime's no-GC policy for interned ancestries.
-fn include_module_into(cid: ClassId, mid: ClassId) {
+/// Splices `mid`'s ancestry into `cid`'s, at `cid`'s own position, skipping any
+/// ancestor already present. Computes the new chain BEFORE taking the write
+/// lock (`ancestors_of_value` reads it); the old slice leaks, matching this
+/// runtime's no-GC policy for interned ancestries.
+fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
     let current: Vec<ClassId> = ancestors_of_value(cid).to_vec();
-    let mid_chain: Vec<ClassId> = ancestors_of_value(mid).to_vec();
-    let (Some(&this), rest) = (current.first(), &current[current.len().min(1)..]) else {
+    // Not `current[0]`: after a prepend, self is no longer first.
+    let Some(at) = current.iter().position(|&a| a == cid) else {
         return;
     };
-    let present: std::collections::HashSet<ClassId> = current.iter().copied().collect();
-    let mut new_anc = Vec::with_capacity(current.len() + mid_chain.len());
-    new_anc.push(this);
-    for m in mid_chain {
-        if !present.contains(&m) {
-            new_anc.push(m);
-        }
-    }
-    new_anc.extend_from_slice(rest);
+    let present: HashSet<ClassId> = current.iter().copied().collect();
+    let fresh: Vec<ClassId> = ancestors_of_value(mid)
+        .iter()
+        .copied()
+        .filter(|m| !present.contains(m))
+        .collect();
+    let cut = if placement == Placement::Before { at } else { at + 1 };
+    let mut new_anc = Vec::with_capacity(current.len() + fresh.len());
+    new_anc.extend_from_slice(&current[..cut]);
+    new_anc.extend_from_slice(&fresh);
+    new_anc.extend_from_slice(&current[cut..]);
     let leaked: &'static [ClassId] = Box::leak(new_anc.into_boxed_slice());
     let mut w = maps().classes.write().unwrap();
-    let entry = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
-    entry.ancestors = leaked;
+    w.entry(cid.0).or_insert_with(OverlayEntry::delta).ancestors = leaked;
 }
 
 /// The public/protected instance-method names a module contributes to a host
@@ -909,12 +1071,8 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
             id_num,
             OverlayEntry {
                 name: RwLock::new(Some(format!("#<Class:{real_name}>"))),
-                is_module: false,
                 ancestors: leaked,
-                methods: HashMap::new(),
-                methods_vis: HashMap::new(),
-                class_methods: HashMap::new(),
-                constructor: None,
+                ..Default::default()
             },
         );
     }
@@ -944,13 +1102,9 @@ pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
         w.insert(
             id_num,
             OverlayEntry {
-                name: RwLock::new(None),
                 is_module: true,
                 ancestors: leaked,
-                methods: HashMap::new(),
-                methods_vis: HashMap::new(),
-                class_methods: HashMap::new(),
-                constructor: None,
+                ..Default::default()
             },
         );
     }
@@ -993,13 +1147,9 @@ pub fn runtime_class_new(
         w.insert(
             id_num,
             OverlayEntry {
-                name: RwLock::new(None),
-                is_module: false,
                 ancestors: leaked,
-                methods: HashMap::new(),
-                methods_vis: HashMap::new(),
-                class_methods: HashMap::new(),
                 constructor: Some(dyn_object_construct),
+                ..Default::default()
             },
         );
     }
@@ -1035,13 +1185,10 @@ pub fn intern_native_class(
         w.insert(
             id_num,
             OverlayEntry {
-                name: RwLock::new(None),
-                is_module: false,
                 ancestors: leaked,
                 methods,
-                methods_vis: HashMap::new(),
-                class_methods: HashMap::new(),
                 constructor: Some(constructor),
+                ..Default::default()
             },
         );
     }
@@ -1112,7 +1259,13 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     for &anc in chain {
         {
             let c = maps().classes.read().unwrap();
-            if let Some(m) = c.get(&anc.0).and_then(|e| e.methods.get(&name).cloned()) {
+            let entry = c.get(&anc.0);
+            // An undef here terminates the walk -- an ancestor's still-live
+            // definition must not answer past it.
+            if entry.is_some_and(|e| e.undefs.contains(&name)) {
+                return None;
+            }
+            if let Some(m) = entry.and_then(|e| e.methods.get(&name).cloned()) {
                 return Some(m);
             }
         }
@@ -1183,8 +1336,22 @@ pub fn overlay_class_name(id: ClassId) -> Option<String> {
     if entry.ancestors.is_empty() {
         return None; // a pure delta over a frozen class carries no name of its own
     }
-    let name = entry.name.read().unwrap().clone();
-    Some(name.unwrap_or_else(|| format!("#<Class:0x{:08x}>", id.0)))
+    if let Some(name) = entry.name.read().unwrap().clone() {
+        return Some(name);
+    }
+    let kind = if entry.is_module { "Module" } else { "Class" };
+    Some(format!("#<{kind}:0x{:016x}>", entry.addr))
+}
+
+/// Whether class `id`'s OWN entry undef'd `name` -- the terminator every MRO
+/// walk probes per ancestor, alongside `ClassRegistry::is_undefined`.
+pub fn overlay_is_undefined(id: ClassId, name: Symbol) -> bool {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.undefs.contains(&name))
 }
 
 /// Reverse of [`overlay_class_name`]: the runtime class id whose Ruby-visible

@@ -74,6 +74,11 @@ ruby_class! {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
+    // Returns self, and does nothing else -- see `Module#ruby2_keywords`.
+    def "ruby2_keywords"(recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        Ok(recv.clone())
+    }
     // `source_location` -> `[file, line]`. zeo is whole-program AOT and
     // the conformance harness disables the line map, so a proc's exact
     // origin isn't tracked; the pair's SHAPE and element types match CRuby

@@ -531,7 +531,7 @@ fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {
     let recv = recv.strip_prefix("::").unwrap_or(recv);
     matches!(
         (recv, name.as_str()),
-        ("Data", "define") | ("Struct", "new") | ("Class", "new")
+        ("Data", "define") | ("Struct", "new") | ("Class", "new") | ("Module", "new")
     )
 }
 

@@ -471,6 +471,43 @@ ruby_class! {
     def "include" (recv, args, _block) {
         crate::runtime_meta::runtime_include(recv, args)
     }
+    def "prepend" (recv, args, _block) {
+        crate::runtime_meta::runtime_prepend(recv, args)
+    }
+    // The literal class-body forms of these four expand to real `def`s at
+    // compile time; these rows serve `Class.new { }` and `class_eval { }`.
+    def "attr_reader" (recv, args, _block) {
+        crate::runtime_meta::runtime_attr(recv_cid(recv), args, crate::runtime_meta::AttrKind::Reader)
+    }
+    def "attr_writer" (recv, args, _block) {
+        crate::runtime_meta::runtime_attr(recv_cid(recv), args, crate::runtime_meta::AttrKind::Writer)
+    }
+    def "attr_accessor" (recv, args, _block) {
+        crate::runtime_meta::runtime_attr(recv_cid(recv), args, crate::runtime_meta::AttrKind::Accessor)
+    }
+    // `attr :x` is a reader; the deprecated `attr :x, true` is an accessor.
+    def "attr" (recv, args, _block) {
+        let accessor = matches!(args.last(), Some(RubyValue::Bool(true)));
+        let names = if accessor { &args[..args.len() - 1] } else { args };
+        let kind = if accessor {
+            crate::runtime_meta::AttrKind::Accessor
+        } else {
+            crate::runtime_meta::AttrKind::Reader
+        };
+        crate::runtime_meta::runtime_attr(recv_cid(recv), names, kind)
+    }
+    // A no-op by construction: it flags a method to pass a bare `*args`
+    // trailing hash through as keywords, and zeo's keyword arguments are
+    // already carried separately from the positionals.
+    def "ruby2_keywords" (_recv, _args, _block) {
+        Ok(RubyValue::Nil)
+    }
+    def "undef_method" (recv, args, _block) {
+        crate::runtime_meta::runtime_undef_method(recv_cid(recv), args)
+    }
+    def "remove_method" (recv, args, _block) {
+        crate::runtime_meta::runtime_remove_method(recv_cid(recv), args)
+    }
     // `Module#private`/`public`/`protected` reached at RUNTIME (inside a
     // `class_eval` block or a guarded class-body statement -- the plain
     // class-body form resolves at compile time): with names, validate and
