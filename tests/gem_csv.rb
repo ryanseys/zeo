@@ -1,13 +1,15 @@
-# csv vendors and its StringScanner-subclassing parser compiles, but loading it
-# still dies in `forwardable`: `CSV::Row` uses `def_delegators`, which builds a
-# method with `eval("proc do\n  def m(...)\n ... end\nend")` and `module_eval`s
-# it. The eval-VM rejects `(...)` argument forwarding inside that proc --
-# `unexpected 'do', ignoring it` -- so no delegator is ever defined.
+# csv vendored. Its parser is `class Scanner < StringScanner` and its rows use
+# `forwardable`, whose delegators are generated with `eval` -- so this exercises
+# native subclassing, `caller_locations` objects, and `(...)` forwarding in the
+# eval VM all at once.
+#
+# (`CSV#shift` is still a gap -- see `tests/gaps/issue_csv_shift_nonlocal.rb`.)
 require "csv"
 
 p CSV.parse("a,b,c\n1,2,3\n")
 p CSV.parse_line("x,y,z")
 p CSV.generate_line(["a", "b,c", nil])
+p CSV.new("x,y").read
 
 table = CSV.parse("name,age\nzeo,1\nruby,32\n", headers: true)
 p table.headers
@@ -24,7 +26,6 @@ out = CSV.generate do |csv|
 end
 p out
 
-p CSV.new("a,b\n").shift
 p CSV::VERSION.is_a?(String)
 
 begin

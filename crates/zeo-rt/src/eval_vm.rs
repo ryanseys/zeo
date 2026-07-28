@@ -506,6 +506,16 @@ mod imp {
             );
         }
 
+        // `defined?(expr)` -- forwardable's generated delegators guard with
+        // `if defined?(_.method)`. Only the shapes that guard are classified:
+        // a method call is probed for real (evaluating the receiver, as Ruby
+        // does), a local/ivar/global/constant answers by whether it is set, and
+        // anything else answers "expression" -- CRuby's catch-all for a plain
+        // value, which is what an unrecognized operand reduces to here.
+        if let Some(defined) = node.as_defined_node() {
+            return eval_defined(&defined.value(), env);
+        }
+
         // ---- method calls ---------------------------------------------------
         if let Some(call) = node.as_call_node() {
             return eval_call(&call, env);
@@ -897,6 +907,11 @@ mod imp {
                         eval_node(&assoc.value(), env)?,
                     ));
                 }
+            } else if arg.as_forwarding_arguments_node().is_some() {
+                // `f(...)` inside a `def m(...)` -- forward every positional
+                // argument the enclosing method received. Its block forwards
+                // too, in `eval_call`, since the block isn't part of this list.
+                out.extend(env.method_args.clone().unwrap_or_default());
             } else {
                 out.push(eval_node(&arg, env)?);
             }
@@ -905,6 +920,79 @@ mod imp {
             out.push(RubyValue::Hash(crate::hash_new(kw_pairs)));
         }
         Ok(())
+    }
+
+    /// `defined?(operand)` -- the classification String, or `nil`. See the call
+    /// site for which shapes are modelled and why.
+    fn eval_defined(operand: &Node<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
+        let answer = |s: &str| Ok(RubyValue::Str(crate::string_new(s.to_string())));
+        if let Some(call) = operand.as_call_node() {
+            let receiver = match call.receiver() {
+                Some(r) => eval_node(&r, env)?,
+                None => env.self_val.clone(),
+            };
+            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+            // Private methods count for an implicit receiver, as in Ruby.
+            let all = call.receiver().is_none();
+            let found = crate::dispatch::responds_to_or_missing(
+                &receiver,
+                Symbol::intern(&name),
+                all,
+            )
+            .unwrap_or(false);
+            return match found {
+                true => answer("method"),
+                false => Ok(RubyValue::Nil),
+            };
+        }
+        if let Some(local) = operand.as_local_variable_read_node() {
+            let name = String::from_utf8_lossy(local.name().as_slice()).into_owned();
+            return match env.locals.contains_key(&name) {
+                true => answer("local-variable"),
+                false => Ok(RubyValue::Nil),
+            };
+        }
+        if let Some(ivar) = operand.as_instance_variable_read_node() {
+            let name = String::from_utf8_lossy(ivar.name().as_slice()).into_owned();
+            let bare = name.trim_start_matches('@');
+            return match crate::dispatch::ivar_defined(&env.self_val, bare) {
+                true => answer("instance-variable"),
+                false => Ok(RubyValue::Nil),
+            };
+        }
+        if let Some(gvar) = operand.as_global_variable_read_node() {
+            let name = String::from_utf8_lossy(gvar.name().as_slice()).into_owned();
+            return match crate::globals::global_defined(env.box_id, &name) {
+                true => answer("global-variable"),
+                false => Ok(RubyValue::Nil),
+            };
+        }
+        if operand.as_constant_read_node().is_some() || operand.as_constant_path_node().is_some() {
+            // Resolution runs through the ordinary constant path, and a miss
+            // raises -- which `defined?` turns into `nil` rather than
+            // propagating, exactly as Ruby's never-raising contract requires.
+            return match eval_node(operand, env) {
+                Ok(_) => answer("constant"),
+                Err(_) => Ok(RubyValue::Nil),
+            };
+        }
+        if operand.as_self_node().is_some() {
+            return answer("self");
+        }
+        if operand.as_nil_node().is_some() {
+            return answer("expression");
+        }
+        answer("expression")
+    }
+
+    /// Whether `call`'s argument list is (or contains) the `...` forwarding
+    /// form -- see `collect_arguments` and `eval_call`.
+    fn forwards_arguments(call: &ruby_prism::CallNode<'_>) -> bool {
+        call.arguments().is_some_and(|a| {
+            a.arguments()
+                .iter()
+                .any(|arg| arg.as_forwarding_arguments_node().is_some())
+        })
     }
 
     /// The value of a `return`/`break` with an argument list: a lone value as
@@ -924,6 +1012,10 @@ mod imp {
     fn eval_call(call: &ruby_prism::CallNode<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
         let block = match call.block() {
             Some(b) => Some(eval_call_block(&b, env)?),
+            // `f(...)` forwards the enclosing method's BLOCK as well as its
+            // arguments -- the arguments themselves are picked up in
+            // `collect_arguments`, which never sees the block slot.
+            None if forwards_arguments(call) => env.block.clone(),
             None => None,
         };
         let receiver = match call.receiver() {
@@ -971,6 +1063,24 @@ mod imp {
         Ok(RubyValue::Proc(proc))
     }
 
+    /// Where a `def` inside a re-parsed block installs: the CLASS itself when
+    /// `self` is one (`Foo.module_eval { def m; end }` defines `Foo#m` -- the
+    /// default definee of a module_eval body), else the receiver's class.
+    ///
+    /// Without the first case the definee was `Class`, and the method landed
+    /// somewhere nothing could call it -- which is what forwardable's
+    /// delegators hit once they started parsing.
+    fn block_definee(self_val: &RubyValue) -> crate::ClassId {
+        match self_val {
+            RubyValue::Class(cid) => *cid,
+            other => other.class_id(),
+        }
+    }
+
+    /// The receiver-less call a stored block snippet is re-parsed under -- see
+    /// `run_eval_block`. Never actually dispatched; only its block is read.
+    const BLOCK_WRAP_CALL: &str = "__zeo_eval_block ";
+
     /// One invocation of an eval-defined block: re-parse the `{...}`/`do...end`
     /// snippet, bind its params to the yielded args, interpret the body.
     fn run_eval_block(
@@ -979,6 +1089,17 @@ mod imp {
         self_val: &RubyValue,
         args: &[RubyValue],
     ) -> Result<RubyValue, Signal> {
+        // prism only parses a block in CALL position, so the stored
+        // `{...}`/`do...end` text is re-parsed as the block of a synthetic
+        // no-op call. Parsing it bare made a brace block read as a Hash and a
+        // `do...end` one fail outright ("unexpected 'do'"), which is how
+        // forwardable's `eval("proc do ... end")` delegators died.
+        //
+        // The WRAPPED text becomes `env.src`, not the bare snippet: a nested
+        // block slices its own source out of that same buffer by location, so
+        // the two must be the same string.
+        let wrapped = format!("{BLOCK_WRAP_CALL}{snippet}");
+        let snippet = wrapped.as_str();
         let result = ruby_prism::parse(snippet.as_bytes());
         if let Some(err) = result.errors().next() {
             return Err(crate::dispatch::raise_error(
@@ -1009,7 +1130,7 @@ mod imp {
             self_val: self_val.clone(),
             locals: HashMap::new(),
             box_id,
-            definee: Definee::Class(self_val.class_id()),
+            definee: Definee::Class(block_definee(self_val)),
             block: None,
             method_args: None,
             src: Arc::from(snippet),

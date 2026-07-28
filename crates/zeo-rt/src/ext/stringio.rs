@@ -119,6 +119,22 @@ ruby_class! {
         arity!(args, 0);
         Ok(bytes_to_str(&io_of(recv).state.lock().bytes))
     }
+    // The IO encoding pair, as `IO` answers it: the buffer's own encoding
+    // outward, and no transcoding on the way in. csv's writer reads both to
+    // decide whether it must convert what it is about to emit.
+    def "external_encoding" (recv, args, _block) {
+        arity!(args, 0);
+        crate::dispatch::send_value(
+            &bytes_to_str(&io_of(recv).state.lock().bytes),
+            crate::Symbol::intern("encoding"),
+            &[],
+            None,
+        )
+    }
+    def "internal_encoding" (_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Nil)
+    }
     def "read" (recv, args, _block) {
         arity!(args, 0..=1);
         let mut s = io_of(recv).state.lock();
@@ -196,10 +212,12 @@ ruby_class! {
         s.pos = end;
         Ok(bytes_to_str(&line))
     }
-    def "each_line" (recv, args, block) {
+    def "each_line" | "each" (recv, args, block) {
         arity!(args, 0);
+        // Blockless, this is an Enumerator over the same lines -- Ruby's rule
+        // for every `each_*`, and what `each_line.to_a` (csv's reader) needs.
         let Some(RubyValue::Proc(p)) = block else {
-            return Err(crate::dispatch::raise_no_block_yield());
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_line", &[]));
         };
         loop {
             let line = gets(recv, &[], None)?;
