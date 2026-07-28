@@ -386,6 +386,11 @@ pub const BACKTRACE_LOCATION_CLASS: ClassId = ClassId(96);
 /// `fcntl`: the `Fcntl` module's `fcntl(2)`/`open(2)` flag constants. No
 /// methods -- CRuby's extension is a constant table, and `IO#fcntl` is IO's.
 pub const FCNTL_MODULE: ClassId = ClassId(97);
+/// `IO::ConsoleMode` -- a saved terminal mode, what `IO#console_mode` hands
+/// back and `IO#console_mode=` restores. Not constructible from Ruby (CRuby's
+/// has no `initialize` either); its `raw`/`raw!`/`echo=` rows edit the saved
+/// mode before it is put back.
+pub const CONSOLE_MODE_CLASS: ClassId = ClassId(98);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1191,6 +1196,17 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: Some("fcntl"),
     },
+    // Ungated: `io/console`'s methods are unconditional rows on the IO table
+    // (see `docs/EXTENSIONS.md`), so the mode object they hand back has to
+    // resolve without a require too.
+    BuiltinClass {
+        id: CONSOLE_MODE_CLASS,
+        name: "IO::ConsoleMode",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
@@ -1694,6 +1710,14 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     ExceptionClass {
         id: exc_id(62),
         name: "Errno::ECHILD",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    // `Errno::ENOTTY` -- what every `io/console` method raises for a stream
+    // that isn't a terminal (`IO#raw`, `#echo?`, `#winsize`, ...).
+    ExceptionClass {
+        id: exc_id(63),
+        name: "Errno::ENOTTY",
         superclass: Some(exc_id(31)),
         is_module: false,
     },

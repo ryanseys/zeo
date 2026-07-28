@@ -54,6 +54,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 | `base64` | zeo `Base64` | a reimplementation |
 | `cgi` | zeo CGI escaping | escape/unescape only |
 | `objspace` | always-on `ObjectSpace` rows | see below |
+| `io/console` | always-on `IO` rows over `termios(3)` | see below |
 
 ### `objspace`
 
@@ -80,6 +81,25 @@ required; zeo's are always present, so the `require` is ceremony (the shape
   `internal_class_of`/`internal_super_of` raise `NotImplementedError` naming
   what they'd need (heap enumeration, a root set, an allocation hook, an
   object header, internal classes).
+
+### `io/console`
+
+Its methods are unconditional rows on the `IO` table, so they answer before the
+`require` as `io/wait`'s do. The terminal modes (`raw`/`raw!`/`cooked`/
+`cooked!`/`noecho`/`echo=`/`echo?`/`getch`/`getpass`/`console_mode`), the
+flushes, `winsize`/`winsize=`, `ttyname`, and the cursor/erase escapes are real
+`termios(3)`/`ioctl` calls and match CRuby, `Errno::ENOTTY` messages included.
+Two divergences:
+
+- `pressed?` and `check_winsize_changed` raise `NotImplementedError`. That is
+  CRuby's own behaviour on Unix, message included — they are Windows-only
+  there too.
+- `IO#cursor` asks the terminal for its position and parses the reply. A
+  stream that answers nothing reads as `[0, 0]` rather than hanging.
+
+Before this landed, `IO#winsize` answered `[0, 0]` on a non-terminal where
+CRuby raises `Errno::ENOTTY`; it now raises. The corpus expectation that
+recorded `[0, 0]` was spinel's, not ruby's, and has been re-oracled.
 
 ## Satisfied faithfully (zeo-bundled gems)
 

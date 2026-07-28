@@ -465,6 +465,28 @@ pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
     }
 }
 
+/// The receiver's fd -- `#fileno` without the `RubyValue` round trip, for the
+/// libc calls (`ioctl`, `poll`, `termios`) that need a raw descriptor.
+pub(crate) fn raw_fd(recv: &RubyValue) -> Result<libc::c_int, Signal> {
+    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
+        unreachable!("io_fileno answers an Int");
+    };
+    Ok(fd as libc::c_int)
+}
+
+/// How CRuby names a stream in an `Errno` message: `<STDIN>` and friends for a
+/// std stream, the path for a file, empty for anything else.
+pub(crate) fn stream_label(recv: &RubyValue) -> String {
+    match stream_of(recv) {
+        Some(StdStream::Stdin) => "<STDIN>".to_string(),
+        Some(StdStream::Stdout) => "<STDOUT>".to_string(),
+        Some(StdStream::Stderr) => "<STDERR>".to_string(),
+        None => as_rio(recv)
+            .and_then(|io| io.path.clone())
+            .unwrap_or_default(),
+    }
+}
+
 fn stream_of(recv: &RubyValue) -> Option<StdStream> {
     match &*as_rio(recv)?.backend.lock() {
         IoBackend::Std(s) => Some(*s),
@@ -506,27 +528,20 @@ fn io_tty(
     }))
 }
 
-/// `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`.
-///
-/// **Documented divergence.** CRuby raises `Errno::ENOTTY` ("Inappropriate
-/// ioctl for device") when the stream isn't a terminal; here a failed ioctl
-/// answers `[0, 0]`. That is deliberate: the corpus expectation is checked in
-/// rather than oracle-generated, its header states the `[0, 0]` contract, and
-/// the conformance harness always redirects stdout -- so raising would make
-/// the test unrunnable rather than more faithful. A program that must
-/// distinguish the two cases should ask `tty?` first.
+/// `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`, or
+/// `Errno::ENOTTY` when the stream isn't a terminal, as CRuby answers. The
+/// rest of the console surface is in `io_console.rs`; this row predates it.
 fn io_winsize(
     recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 0);
-    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
-        unreachable!("io_fileno answers an Int");
-    };
+    let fd = raw_fd(recv)?;
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    // A nonzero return leaves `ws` zeroed, which is the answer we want.
-    unsafe { libc::ioctl(fd as libc::c_int, libc::TIOCGWINSZ, &mut ws) };
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } != 0 {
+        return Err(super::io_console::not_a_terminal(recv, "IO#winsize"));
+    }
     Ok(RubyValue::Array(crate::collections::array_new(vec![
         RubyValue::Int(ws.ws_row as i64),
         RubyValue::Int(ws.ws_col as i64),
@@ -554,11 +569,8 @@ fn io_wait_for(
             }
         }
     };
-    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
-        unreachable!("io_fileno answers an Int");
-    };
     let mut pfd = libc::pollfd {
-        fd: fd as libc::c_int,
+        fd: raw_fd(recv)?,
         events,
         revents: 0,
     };
@@ -2040,6 +2052,40 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "fileno" | "to_i" => io_fileno,
         "tty?" | "isatty" => io_tty,
         "winsize" => io_winsize,
+        // `io/console` (see `io_console.rs`) -- unconditional rows, so its
+        // require is ceremony.
+        "winsize=" => super::io_console::winsize_set,
+        "raw" => super::io_console::raw,
+        "raw!" => super::io_console::raw_bang,
+        "cooked" => super::io_console::cooked,
+        "cooked!" => super::io_console::cooked_bang,
+        "echo?" => super::io_console::echo_p,
+        "echo=" => super::io_console::echo_set,
+        "noecho" => super::io_console::noecho,
+        "getch" => super::io_console::getch,
+        "getpass" => super::io_console::getpass,
+        "iflush" => super::io_console::iflush,
+        "oflush" => super::io_console::oflush,
+        "ioflush" => super::io_console::ioflush,
+        "ttyname" => super::io_console::ttyname,
+        "console_mode" => super::io_console::console_mode,
+        "console_mode=" => super::io_console::console_mode_set,
+        "pressed?" => super::io_console::pressed_p,
+        "check_winsize_changed" => super::io_console::check_winsize_changed,
+        "beep" => super::io_console::beep,
+        "clear_screen" => super::io_console::clear_screen,
+        "erase_line" => super::io_console::erase_line,
+        "erase_screen" => super::io_console::erase_screen,
+        "goto" => super::io_console::goto,
+        "goto_column" => super::io_console::goto_column,
+        "cursor" => super::io_console::cursor,
+        "cursor=" => super::io_console::cursor_set,
+        "cursor_up" => super::io_console::cursor_up,
+        "cursor_down" => super::io_console::cursor_down,
+        "cursor_left" => super::io_console::cursor_left,
+        "cursor_right" => super::io_console::cursor_right,
+        "scroll_forward" => super::io_console::scroll_forward,
+        "scroll_backward" => super::io_console::scroll_backward,
         "nonblock?" => io_nonblock_p,
         "nonblock" => io_nonblock_scoped,
         "nonblock=" => io_nonblock_assign,
@@ -2116,6 +2162,38 @@ pub fn lookup_names() -> &'static [&'static str] {
         "tty?",
         "isatty",
         "winsize",
+        "winsize=",
+        "raw",
+        "raw!",
+        "cooked",
+        "cooked!",
+        "echo?",
+        "echo=",
+        "noecho",
+        "getch",
+        "getpass",
+        "iflush",
+        "oflush",
+        "ioflush",
+        "ttyname",
+        "console_mode",
+        "console_mode=",
+        "pressed?",
+        "check_winsize_changed",
+        "beep",
+        "clear_screen",
+        "erase_line",
+        "erase_screen",
+        "goto",
+        "goto_column",
+        "cursor",
+        "cursor=",
+        "cursor_up",
+        "cursor_down",
+        "cursor_left",
+        "cursor_right",
+        "scroll_forward",
+        "scroll_backward",
         "nonblock?",
         "nonblock",
         "nonblock=",
@@ -2312,6 +2390,7 @@ fn io_class_new(
 pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "pipe" => io_class_pipe,
+        "console" => super::io_console::io_class_console,
         "copy_stream" => io_class_copy_stream,
         "sysopen" => io_class_sysopen,
         "new" | "open" | "for_fd" => io_class_new,
@@ -2328,6 +2407,7 @@ pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 pub fn lookup_class_names() -> &'static [&'static str] {
     &[
         "pipe",
+        "console",
         "copy_stream",
         "sysopen",
         "new",

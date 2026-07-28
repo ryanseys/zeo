@@ -1129,6 +1129,9 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         // `Errno::ECHILD` -- `Process.wait` with no children (matches
         // `zeo-abi::EXCEPTION_CLASSES` exc_id(62)).
         ("Errno::ECHILD", "SystemCallError"),
+        // `Errno::ENOTTY` -- every `io/console` method on a stream that isn't
+        // a terminal (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(63)).
+        ("Errno::ENOTTY", "SystemCallError"),
     ] {
         register_class(
             compiler,

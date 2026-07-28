@@ -45,7 +45,9 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 
 The IO-core extensions have landed as unconditional rows on the `IO` table:
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
-and `require "io/console"` (`IO#winsize` over `ioctl`) are pure ceremony — the
+and `require "io/console"` (the terminal modes — `raw`/`cooked`/`echo=`/
+`getch`/`getpass` over `termios(3)`, `winsize` over `ioctl`, and the cursor
+escapes; `crates/zeo-rt/src/builtins/io_console.rs`) are pure ceremony — the
 methods are always present. `objspace` is the same shape: `ObjectSpace` is a
 live builtin, so `memsize_of`/`reachable_objects_from`/`count_symbols` answer
 without the require (`crates/zeo-rt/src/builtins/objspace.rs`; what it declines
