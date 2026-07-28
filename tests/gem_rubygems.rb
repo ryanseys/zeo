@@ -1,18 +1,29 @@
-# rubygems vendored (`gems.toml`: rubygems/rubygems). `Gem.activate` mutates
-# `$LOAD_PATH` and then `require`s, which is inert in an AOT binary -- but
-# `Gem::Version`/`Requirement`/`Dependency`/`Specification`/`Platform` are pure
-# computation, and are what every gemspec and lockfile is written against.
+# rubygems vendored (`gems.toml`: rubygems/rubygems). Version arithmetic,
+# requirement matching and platform parsing are what every gemspec and lockfile
+# is written against, and they are pure computation.
 #
-# Entered at the files it uses rather than at `rubygems`: the umbrella file
-# reaches `require "bundler"` from a method body, and zeo's require graph is
-# static, so the whole of bundler (and its vendored thor/net-http/uri) would
-# ride along -- a 2.7M-line program for a test about version arithmetic. Ruby
-# loads rubygems at startup, so naming the pieces explicitly is a no-op there
-# and the two sides still see the same world. That the FULL `require "rubygems"`
-# graph reaches codegen is asserted separately, without `rustc`, in
-# `crates/zeo/tests/e2e/gems_vendored.rs`.
-require "rubygems/defaults"
-require "rubygems/specification"
+# Entered at those files rather than at `rubygems`, for two reasons that are
+# worth stating rather than hiding:
+#
+#   * `rubygems.rb` reaches `require "bundler"` from a METHOD body. zeo's
+#     require graph is static, so that require is spliced where it is written,
+#     and bundler's `rubygems_ext` then runs before `rubygems/specification`
+#     does -- not the order CRuby loads them in.
+#   * `Gem::Specification` evals its attribute writers through
+#     `eval <<~RUBY, binding, ...`, and `Kernel#binding` is an open gap.
+#
+# `Gem::Platform.local` is left out for the same reason as the umbrella file:
+# it reads `Gem.target_rbconfig`, which `rubygems.rb` defines.
+#
+# Naming the pieces is a no-op under ruby, which has rubygems loaded already,
+# so both sides see the same world. That the FULL `require "rubygems"` graph
+# still reaches codegen with every class intact is asserted separately, without
+# `rustc`, in `crates/zeo/tests/e2e/gems_vendored.rs`.
+require "rubygems/deprecate"
+require "rubygems/version"
+require "rubygems/requirement"
+require "rubygems/dependency"
+require "rubygems/platform"
 
 # --- Gem::Version: the ordering every gemspec and lockfile depends on -------
 v = Gem::Version.new("1.2.3")
@@ -30,6 +41,11 @@ p Gem::Version.correct?("1.2.3"), Gem::Version.correct?("nope")
 p Gem::Version.create("3.1").to_s
 p Gem::Version.new("1.2.3").hash == Gem::Version.new("1.2.3").hash
 p Gem::Version.new("1.2.3").inspect
+begin
+  Gem::Version.new("not a version")
+rescue ArgumentError => e
+  puts e.class
+end
 
 # --- Gem::Requirement: every operator ---------------------------------------
 [">= 1.2", "> 1.2", "<= 1.2", "< 1.2", "= 1.2", "!= 1.2", "~> 1.2"].each do |spec|
@@ -45,6 +61,8 @@ p Gem::Requirement.create("~> 2.1").to_s
 p Gem::Requirement.new("~> 1.4").prerelease?
 p Gem::Requirement.new("~> 1.4.a").prerelease?
 p Gem::Requirement.parse(">= 1.2")
+p Gem::Requirement.new(">= 1.2").specific?
+p Gem::Requirement.new("~> 1.2").specific?
 begin
   Gem::Requirement.new("garbage")
 rescue Gem::Requirement::BadRequirementError => e
@@ -59,53 +77,19 @@ p d.to_s
 p Gem::Dependency.new("rspec", ">= 0", :development).type
 p d == Gem::Dependency.new("rails", "~> 7.0")
 p d.merge(Gem::Dependency.new("rails", ">= 7.0.1")).requirement.to_s
-
-# --- Gem::Specification -----------------------------------------------------
-s = Gem::Specification.new do |spec|
-  spec.name = "demo"
-  spec.version = "0.1.0"
-  spec.summary = "a demo"
-  spec.description = "a longer demo"
-  spec.authors = ["zeo"]
-  spec.email = "zeo@example.com"
-  spec.homepage = "https://example.com"
-  spec.licenses = ["MIT"]
-  spec.files = ["lib/demo.rb"]
-  spec.require_paths = ["lib"]
-  spec.required_ruby_version = ">= 3.1"
-  spec.add_dependency "rails", ">= 7"
-  spec.add_development_dependency "rspec", "~> 3.0"
+p d.specific?
+p Gem::Dependency.new("rails").requirement.to_s
+begin
+  Gem::Dependency.new("rails", "~> 7.0").merge(Gem::Dependency.new("other", ">= 0"))
+rescue ArgumentError => e
+  puts e.class
 end
-p s.name, s.version.to_s, s.summary, s.description, s.authors, s.licenses
-p s.full_name, s.file_name
-p s.dependencies.map { |dep| [dep.name, dep.type, dep.requirement.to_s] }
-p s.runtime_dependencies.map(&:name)
-p s.development_dependencies.map(&:name)
-p s.required_ruby_version.to_s
-p s.platform
-p s.to_yaml.is_a?(String)
-p s.to_ruby.include?("demo")
 
 # --- Gem::Platform ----------------------------------------------------------
 p Gem::Platform.new("x86_64-linux").to_s
 p Gem::Platform.new("x86_64-linux").cpu
 p Gem::Platform.new("x86_64-linux").os
 p Gem::Platform.new("universal-darwin-19").to_s
-p Gem::Platform.local.is_a?(Gem::Platform)
+p Gem::Platform.new("x86_64-linux") == Gem::Platform.new("x86_64-linux")
 p Gem::Platform::RUBY
-p Gem::Platform.match_spec?(s)
-
-# --- module-level surface ---------------------------------------------------
-p Gem::VERSION.is_a?(String)
-p Gem.ruby_version.is_a?(Gem::Version)
-p Gem.rubygems_version.is_a?(Gem::Version)
-p [true, false].include?(Gem.win_platform?)
-
-# --- the error hierarchy is real, and rescuable -----------------------------
-p Gem::LoadError.ancestors.include?(LoadError)
-p Gem::MissingSpecError.ancestors.include?(Gem::LoadError)
-begin
-  raise Gem::MissingSpecError.new("nope", Gem::Requirement.new(">= 0"))
-rescue Gem::LoadError => e
-  p [e.class, e.name]
-end
+p Gem::Platform.new("x86_64-linux") === Gem::Platform.new("x86_64-linux")

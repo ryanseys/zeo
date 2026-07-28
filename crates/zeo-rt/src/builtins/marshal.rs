@@ -36,6 +36,12 @@ const MINOR: u8 = 8;
 ruby_module! {
     Marshal = zeo_abi::MARSHAL_MODULE;
 
+    // The format version every dump carries in its first two bytes. Ruby
+    // exposes both, and a reader that checks a stream by hand reads them from
+    // here rather than hardcoding (rubygems' `SafeMarshal::Reader` does).
+    const MAJOR_VERSION = RubyValue::Int(MAJOR as i64);
+    const MINOR_VERSION = RubyValue::Int(MINOR as i64);
+
     // `Marshal.dump(obj[, io])` -> a BINARY String of the serialized object.
     def self."dump"(_recv, args, _block) {
         arity!(args, 1..=2);
