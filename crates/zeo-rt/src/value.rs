@@ -1269,8 +1269,19 @@ impl RubyValue {
     /// for anything that doesn't respond to `to_str`), matching this
     /// function's own no-panic-on-mismatched-shape posture.
     pub fn rb_case_eq(&self, subject: &RubyValue) -> bool {
-        if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
-            return re.engine.is_match(&s.lock().to_utf8_lossy());
+        // A Symbol is a legal subject too (CRuby coerces it via `rb_sym2str`),
+        // and anything else CLEARS `$~` rather than leaving a stale match.
+        if let RubyValue::Regexp(re) = self {
+            return match subject {
+                RubyValue::Str(s) => {
+                    crate::regexp::regexp_case_eq(re, &s.lock().to_utf8_lossy())
+                }
+                RubyValue::Symbol(sym) => crate::regexp::regexp_case_eq(re, &sym.name()),
+                _ => {
+                    crate::lastmatch::set_last_match(None);
+                    false
+                }
+            };
         }
         // `Range#===` is `#cover?` (`when 1..5`): each
         // present endpoint compares via `rb_cmp` (numeric tower, strings,

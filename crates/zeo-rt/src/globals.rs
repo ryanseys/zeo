@@ -85,6 +85,23 @@ pub fn seed_default_globals() {
     let prog = std::env::args().next().unwrap_or_default();
     global_set(0, "$0", RubyValue::Str(crate::string_new(prog)));
     global_alias(0, "$PROGRAM_NAME", "$0");
+    global_set(0, "$$", RubyValue::Int(i64::from(std::process::id())));
+
+    // Real Arrays, but empty, and they stay that way: every `require` in a
+    // compiled program was resolved at COMPILE time, so there is no runtime
+    // search path for a push to affect and no feature list to append to.
+    // Seeding them as Arrays is what lets the near-universal
+    // `$LOAD_PATH.unshift File.dirname(__FILE__)` preamble run instead of
+    // raising on nil.
+    global_set(0, "$LOAD_PATH", RubyValue::Array(crate::array_new(Vec::new())));
+    global_alias(0, "$:", "$LOAD_PATH");
+    global_alias(0, "$-I", "$LOAD_PATH");
+    global_set(
+        0,
+        "$LOADED_FEATURES",
+        RubyValue::Array(crate::array_new(Vec::new())),
+    );
+    global_alias(0, "$\"", "$LOADED_FEATURES");
 }
 
 /// Whether `name` has ever been assigned in this box -- backs

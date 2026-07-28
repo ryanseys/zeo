@@ -1026,8 +1026,21 @@ pub fn regexp_find(re: &RRegexp, haystack: &str) -> Option<(usize, usize)> {
 /// `match?`, exposed separately so `codegen`'s `case/when`/pattern-matching
 /// desugar (`RubyValue::rb_case_eq`) has a name that reads as "the `===`
 /// protocol", not just "another way to spell match?".
+/// `Regexp#===` -- what `case`/`when`, bare `===` and `Enumerable#grep` all
+/// reach. Unlike `match?` it RECORDS the outcome in `$~`: a hit stores the
+/// match data, a miss clears it, so `$1` after a matched `when` arm reads the
+/// arm's own captures.
 pub fn regexp_case_eq(re: &RRegexp, haystack: &str) -> bool {
-    regexp_is_match(re, haystack)
+    match re.engine.captures_first(haystack) {
+        Some(caps) => {
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            true
+        }
+        None => {
+            crate::lastmatch::set_last_match(None);
+            false
+        }
+    }
 }
 
 fn char_index(haystack: &str, byte_idx: usize) -> i64 {
@@ -1241,6 +1254,9 @@ pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<()
                 .expect("group 0 is always the whole match");
             RubyValue::Str(string_new(whole.to_string()))
         };
+        // `$~` tracks the CURRENT match inside the block, as it does in
+        // `sub`/`gsub`'s block form.
+        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
         blk.call(&[yielded])?;
     }
     Ok(())
