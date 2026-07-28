@@ -143,6 +143,7 @@ ext-all = [
     "ext-syslog",
     "ext-readline",
     "ext-nkf",
+    "ext-bigdecimal",
 ]
 ext-base64 = []
 ext-etc = []
@@ -151,6 +152,7 @@ ext-pty = []
 ext-syslog = []
 ext-readline = ["dep:rustyline"]
 ext-nkf = []
+ext-bigdecimal = []
 ext-pathname = []
 ext-monitor = []
 ext-stringio = []

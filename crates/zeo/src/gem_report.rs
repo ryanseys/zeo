@@ -67,6 +67,7 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "base64" => Some("a zeo reimplementation of Base64"),
         "cgi" | "cgi/escape" => Some("a zeo reimplementation of CGI escaping"),
         "nkf" => Some("a zeo reimplementation over its own encoding engine; not the nkf C library"),
+        "bigdecimal" => Some("native core reimplemented; the gem's Ruby half is vendored upstream"),
         _ => None,
     }
 }

@@ -382,6 +382,13 @@ ruby_module! {
     def "Rational"(_recv, args, _block) {
         kernel_rational(args)
     }
+    // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
+    // removed). Present whenever the extension is compiled in; like `Time`'s
+    // extra methods, it answers even without `require "bigdecimal"`.
+    #[cfg(feature = "ext-bigdecimal")]
+    def "BigDecimal"(_recv, args, _block) {
+        crate::ext::bigdecimal::kernel_big_decimal(args)
+    }
     def "Complex"(_recv, args, _block) {
         kernel_complex(args)
     }

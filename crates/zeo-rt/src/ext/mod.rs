@@ -61,6 +61,8 @@
 
 #[cfg(feature = "ext-base64")]
 pub(crate) mod base64;
+#[cfg(feature = "ext-bigdecimal")]
+pub(crate) mod bigdecimal;
 #[cfg(feature = "ext-cgi")]
 pub(crate) mod cgi;
 #[cfg(feature = "ext-date")]

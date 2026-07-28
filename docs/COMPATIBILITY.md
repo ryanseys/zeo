@@ -67,6 +67,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 | `base64` | zeo `Base64` | a reimplementation |
 | `cgi` | zeo CGI escaping | escape/unescape only |
 | `nkf` | zeo `NKF` over its own encoding engine | the conversion option subset only; `guess` is a reimplemented heuristic — see below |
+| `bigdecimal` | zeo `BigDecimal` core + the gem's real Ruby half | not the C extension; the native slice is reimplemented — see below |
 | `objspace` | always-on `ObjectSpace` rows | see below |
 | `io/console` | always-on `IO` rows over `termios(3)` | see below |
 
@@ -198,6 +199,31 @@ shapes (`no output encoding given`, the `TypeError`s). Divergences:
   know.
 - **Broken input bytes are dropped** during decoding; real nkf's handling
   of malformed sequences is stream-state dependent and not promised.
+
+### `bigdecimal`
+
+bigdecimal 4.x splits itself between C and Ruby, and zeo keeps that split:
+the native half (`crates/zeo-rt/src/ext/bigdecimal/`) reimplements exactly
+the C slice -- the value type over a BigUint coefficient, exact
+add/sub/mult, division to the documented rule (`max(a.precision,
+b.precision) + double_fig`, floored at `2*double_fig`, rounded under the
+current mode with a true sticky tail), the rounding engine, the
+mode/limit/save_* state, conversions, and `Kernel#BigDecimal` -- while
+`**`/`power`, `sqrt` (Newton), `BigMath`, and `util`'s `to_d` family are
+the gem's OWN Ruby code, vendored in `gems/bigdecimal/` and compiled like
+any user code. Both goldens (`tests/bigdecimal*.rb`) compare live against
+the oracle, engineering-notation `to_s` and division digits included.
+Known divergences of the native slice:
+
+- **`Kernel#BigDecimal` answers without the require** (the `time`-shaped
+  ceremony divergence: no per-method activation to hang the gate on).
+- **ISO-2022-JP-style pivot messages don't apply here, but EUC-JP limits
+  do**: values reachable only through JIS X 0212 (see the encoding notes
+  above) behave per the encoding engine, not per libc nkf.
+- The vendored Ruby half carries two marked deviations: the JRuby loader
+  branch is reduced to `require "bigdecimal.so"`, and
+  `private_class_method def` is unwrapped to a plain def (a compiler gap,
+  `tests/gaps/issue_private_class_method_def.rb`) -- visibility-only.
 
 ## Satisfied faithfully (zeo-bundled gems)
 

@@ -441,6 +441,13 @@ pub const READLINE_HISTORY_CLASS: ClassId = ClassId(108);
 /// runtime's own encoding engine. The `Kconv` wrapper is the gem's Ruby
 /// half (`gems/nkf`).
 pub const NKF_MODULE: ClassId = ClassId(109);
+/// `bigdecimal`: the `BigDecimal` class -- arbitrary-precision decimal
+/// arithmetic. The native half is bigdecimal 4.x's C slice (exact
+/// arithmetic, division precision, rounding, mode state); `power`/`sqrt`/
+/// `BigMath` and the `to_d` family are the gem's own Ruby, vendored in
+/// `gems/bigdecimal`. Not constructible via `new` (CRuby removed it); the
+/// `Kernel#BigDecimal` function is the one constructor.
+pub const BIGDECIMAL_CLASS: ClassId = ClassId(110);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1344,6 +1351,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("nkf"),
+    },
+    BuiltinClass {
+        id: BIGDECIMAL_CLASS,
+        name: "BigDecimal",
+        is_module: false,
+        superclass: Some(NUMERIC_CLASS),
+        includes: &[],
+        feature: Some("bigdecimal"),
     },
 ];
 
