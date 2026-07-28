@@ -1,0 +1,16 @@
+nil
+42
+"constant"
+nil
+nil
+"constant"
+nil
+"constant"
+"constant"
+nil
+"0.1"
+[Pkg::Net::OpenTimeout, Pkg::Timeout::Error, RuntimeError]
+[Elsewhere::TimeoutError, Pkg::Timeout::Error, RuntimeError]
+[Elsewhere::TimeoutError, "timed out"]
+:nested
+:top_level

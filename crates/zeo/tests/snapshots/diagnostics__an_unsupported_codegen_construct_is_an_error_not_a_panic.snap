@@ -4,4 +4,4 @@ expression: render(err)
 ---
 zeo::codegen
 
-  × safe-navigation (`&.`) on a call with a splat argument isn't supported yet (zeo limitation)
+  × safe-navigation on a class-method call isn't supported yet (zeo limitation)

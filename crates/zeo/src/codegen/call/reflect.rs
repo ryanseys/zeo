@@ -100,7 +100,16 @@ pub(super) fn try_const_reflection(
 
     let as_class = class_const_in(cx, target, &cname);
     if name == "const_defined?" {
-        let defined = as_class.is_some() || value_const_defined_in(cx, target, &cname);
+        // A BUILTIN's ext constants (`Socket::AF_INET6`, `Float::INFINITY`) are
+        // seeded straight into `const_owners` by `analyze::seed_ext_const_owners`
+        // rather than written as class-body statements, so
+        // `value_const_defined_in`'s "an actual `NAME = ...` in the body" rule
+        // cannot see them -- and the guard they gate
+        // (`unless Socket.const_defined?(:AF_INET6)`) folded the wrong way.
+        // Exact for a builtin: those entries are the seeded table itself.
+        let seeded = cx.compiler.class(target).is_builtin
+            && cx.compiler.class(target).const_owners.contains_key(&cname);
+        let defined = as_class.is_some() || seeded || value_const_defined_in(cx, target, &cname);
         return Some(quote! { zeo_rt::RubyValue::Bool(#defined) });
     }
     // const_get: a class-name constant answers the Class value directly; a

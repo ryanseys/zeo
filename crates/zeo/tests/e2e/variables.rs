@@ -1341,8 +1341,9 @@ fn time_civil_constructors_and_their_seventh_argument() {
 
 #[test]
 fn class_variables_at_module_and_top_level_scope() {
-    // `@@x` written in a module body, in a `def self.` body, and bare at
-    // the top level (whose storage lives on Object) all read back.
+    // `@@x` written in a module body and read back through its own `def self.`
+    // accessors. Bare at the TOP LEVEL it raises instead -- see
+    // `top_level_class_variable_raises` below.
     let result = run_ruby(
         r#"
         module Conf
@@ -1353,31 +1354,38 @@ fn class_variables_at_module_and_top_level_scope() {
         puts Conf.secret.length
         Conf.secret = "hi"
         puts Conf.secret
-        @@plain = 42
-        puts @@plain
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "0\nhi\n42\n");
+    assert_eq!(result.stdout, "0\nhi\n");
 }
 
 #[test]
-fn top_level_class_variable_is_stored_on_object() {
-    // A bare `@@x` written outside any class/module body resolves its storage
-    // to Object, so a later top-level read sees the same value. NOTE a
-    // divergence: Ruby 4.0.6 itself now RAISES `RuntimeError: class variable
-    // access from toplevel` for both the write and the read here (it was a
-    // warning in older rubies). Zeo keeps the older permissive behavior to
-    // match the committed `test/module_cvars.rb` snapshot the conformance
-    // suite scores against; this test pins that intentional choice.
+fn top_level_class_variable_raises() {
+    // A bare `@@x` outside any class/module body has no owning cref, and ruby
+    // 4.0.6 raises `RuntimeError: class variable access from toplevel` for both
+    // the write and the read (it was only a warning in older rubies). zeo used
+    // to store it on `Object` and read it back; this pins the corrected
+    // behaviour, message included.
     let result = run_ruby(
         r#"
-        @@plain = 42
-        puts @@plain
+        begin
+          @@plain = 42
+        rescue RuntimeError => e
+          puts e.message
+        end
+        begin
+          puts @@plain
+        rescue RuntimeError => e
+          puts e.message
+        end
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "42\n");
+    assert_eq!(
+        result.stdout,
+        "class variable access from toplevel\nclass variable access from toplevel\n"
+    );
 }
 
 #[test]

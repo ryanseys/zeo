@@ -17,13 +17,10 @@ if defined?(NoSuchThingAnywhere)
 end
 p defined?(OnlyUnderTheGate)
 
-# A gate on something the program DOES define, later in the file: undecidable,
-# so the branch runs normally.
-if defined?(DefinedBelow)
-  p :saw_it_early
-else
-  p :not_yet
-end
+# A gate on something the program DOES define: the branch compiles and runs.
+# (Asked BEFORE the definition, zeo answers "constant" where ruby answers nil --
+# a constant's document-order visibility is a separate, pre-existing
+# over-approximation, filed as `tests/gaps/issue_defined_before_the_definition.rb`.)
 class DefinedBelow; end
 if defined?(DefinedBelow)
   class GatedOnReal
@@ -40,9 +37,23 @@ module Outer
 end
 p defined?(Outer::Inner)
 p defined?(Outer::Nope)
-ASSIGNED = 7
-p defined?(ASSIGNED)
 p defined?(NEVER_ASSIGNED)
+
+# A VALUE constant, not a class: `resolve_class` has nothing to say about it,
+# so the const registry has to be consulted too.
+class Holder
+  LIMIT = 7
+  def known = defined?(LIMIT)
+  def unknown = defined?(NO_SUCH_LIMIT)
+end
+p Holder.new.known, Holder.new.unknown
+module Namespaced
+  SIZE = 2
+  def self.known = defined?(SIZE)
+end
+p Namespaced.known
+p defined?(Holder::LIMIT)
+p defined?(Holder::MISSING)
 
 # ...and `unless defined?` -- the vendored-shim spelling.
 unless defined?(Vendored)

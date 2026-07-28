@@ -58,7 +58,24 @@ pub(super) fn value_const_defined_in(cx: &Ctx, target: ClassId, cname: &str) -> 
 /// whose whole value is dropping unreachable code at compile time.
 pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
     match &cx.compiler.hir[id] {
-        HirNode::ClassRef(name) => Some(cx.resolve_class(name).is_some()),
+        // A bare name is a class OR a value constant. Only the first was
+        // consulted, so `ASSIGNED = 7; defined?(ASSIGNED)` answered nil where
+        // ruby answers "constant" -- `resolve_class` has nothing to say about a
+        // constant that doesn't name a class. Resolved through the lexical
+        // chain and then `Object`, which is where a top-level one lands.
+        HirNode::ClassRef(name) => {
+            if cx.resolve_class(name).is_some() {
+                return Some(true);
+            }
+            let mut scopes = cx.cref_chain();
+            scopes.push(OBJECT_CLASS);
+            Some(
+                scopes
+                    .iter()
+                    .rev()
+                    .any(|&s| value_const_defined_in(cx, s, name)),
+            )
+        }
         HirNode::QualifiedConstRead(scope, name) => {
             let Some(scope_id) = cx.resolve_class(scope) else {
                 return Some(false);

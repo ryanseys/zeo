@@ -791,7 +791,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let v = box_for_local_storage(cx, name, *value, v);
             let write = super::hoisting::emit_local_write(cx, name, quote! { __v });
             let read = super::hoisting::emit_local_read(cx, name);
-            quote! { { let __v = #v; #write #read } }
+            quote! { { let __v: zeo_rt::RubyValue = #v; #write #read } }
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
@@ -881,7 +881,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // while the write guard below is already held, hanging forever
             // instead of RefCell's old clean "already borrowed" panic.
             let write = emit_ivar_write_stmt(cx, name, quote! { __v.clone() });
-            quote! { { let __v = #v; #write __v } }
+            quote! { { let __v: zeo_rt::RubyValue = #v; #write __v } }
         }
         HirNode::ClassVarRead(name) => {
             let owner = cvar_owner_id(cx, name);
@@ -894,7 +894,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // unboxed concrete-class slot.
             let v = box_if_object_typed(cx, *value, v);
             let write = emit_cvar_write_stmt(cx, name, quote! { __v.clone() });
-            quote! { { let __v = #v; #write __v } }
+            quote! { { let __v: zeo_rt::RubyValue = #v; #write __v } }
         }
         // A bare constant name -- see `HirNode::ClassRef`'s docs on its dual
         // reuse (a call receiver is intercepted before this arm ever runs,
@@ -1044,7 +1044,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `RubyValue` (`zeo_rt::global_set`'s own signature).
             let v = box_if_object_typed(cx, *value, v);
             let bx = cx.box_id;
-            quote! { { let __v = #v; zeo_rt::global_assign(#bx, #name, __v.clone())?; __v } }
+            quote! { { let __v: zeo_rt::RubyValue = #v; zeo_rt::global_assign(#bx, #name, __v.clone())?; __v } }
         }
         HirNode::QualifiedConstRead(scope, name) => emit_const_read(cx, Some(scope), name),
         HirNode::ConstReadOrNil(scope, name) => {
@@ -1073,7 +1073,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `RubyValue` (`zeo_rt::const_set`'s own signature).
             let v = box_if_object_typed(cx, *value, v);
             let write = emit_const_write_stmt(cx, scope.as_deref(), name, quote! { __v.clone() });
-            quote! { { let __v = #v; #write __v } }
+            quote! { { let __v: zeo_rt::RubyValue = #v; #write __v } }
         }
         // Brace-wrapped into a single Rust block EXPRESSION, not spliced as
         // bare statements: every `emit_expr` caller assumes one expression,

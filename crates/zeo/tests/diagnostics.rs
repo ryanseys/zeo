@@ -37,8 +37,11 @@ fn a_parse_failure_renders_without_an_excerpt() {
 /// which is what lets an unsupported repro be checked in as an XFAIL gap.
 #[test]
 fn an_unsupported_codegen_construct_is_an_error_not_a_panic() {
-    let err = zeo::compile_to_rust_with("a = [1, 2]\nx = nil\nx&.push(*a)\n", &Default::default())
-        .expect_err("safe navigation with a splat argument is rejected");
+    let err = zeo::compile_to_rust_with(
+        "class Foo\n  def self.bar = 1\nend\np Foo&.bar\n",
+        &Default::default(),
+    )
+    .expect_err("safe navigation on a class-method call is rejected");
     insta::assert_snapshot!(render(err));
 }
 
