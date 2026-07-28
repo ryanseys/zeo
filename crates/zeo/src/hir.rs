@@ -993,6 +993,31 @@ impl MultiTarget {
         }
     }
 
+    /// Every LEAF target this one denotes, at any nesting depth -- a `Nested`
+    /// group recurses, everything else yields itself. The companion to
+    /// `for_each_node`: that one yields the sub-EXPRESSIONS embedded in a
+    /// target, this one yields the targets themselves, so a pass collecting
+    /// names BY STORAGE CLASS (the ivar/cvar/const registration that decides a
+    /// generated struct's fields and a constant's owning scope) has something
+    /// to match on.
+    ///
+    /// Using `for_each_node` for that silently dropped every ivar, cvar and
+    /// constant written ONLY via a multi-assignment or a `for` target -- those
+    /// arms yield nothing, being leaves with no embedded expression. An ivar
+    /// with no collected name gets no struct field, and the write emitted
+    /// against it doesn't compile (erb's `@src, @encoding, @frozen_string =
+    /// *compiler.compile(str)`); a cvar or constant silently registers against
+    /// the wrong owner, which is worse, because it compiles.
+    ///
+    /// `Global` targets need nothing from this: `emit_target_write` lowers
+    /// them through the dynamic `zeo_rt::global_set`, which declares no storage.
+    pub fn for_each_target(&self, visit: &mut impl FnMut(&MultiTarget)) {
+        match self {
+            MultiTarget::Nested(group) => group.for_each_target(visit),
+            leaf => visit(leaf),
+        }
+    }
+
     /// Every LOCAL-like name this target binds, for hoisting/local-type-
     /// tracking purposes: a plain `Local`, or a `Call` target's own hidden
     /// `tmp_name` synthetic local (bound once per multi-assignment, read
@@ -1024,6 +1049,16 @@ impl MultiTargetGroup {
         }
         if let Some(Some(t)) = &self.splat {
             t.for_each_node(visit);
+        }
+    }
+
+    /// See `MultiTarget::for_each_target`'s docs.
+    pub fn for_each_target(&self, visit: &mut impl FnMut(&MultiTarget)) {
+        for t in self.before.iter().chain(&self.after) {
+            t.for_each_target(visit);
+        }
+        if let Some(Some(t)) = &self.splat {
+            t.for_each_target(visit);
         }
     }
 

@@ -2412,6 +2412,21 @@ pub(crate) fn scan_contains_super_body(hir: &Hir, body: &[NodeId]) -> bool {
 /// bottom-up scan is enough here because ivar *names* -- unlike ivar
 /// *types* -- don't depend on inference, only on which `@name` tokens
 /// appear).
+/// An ivar named by a multi-assignment or `for` TARGET -- `@a, @b = 1, 2` and
+/// `for @x in ...`, where the name appears nowhere else in the body. Such an
+/// ivar still needs a struct field: `emit_target_write` lowers the write to
+/// `self.<name>.lock()` regardless. Collecting it only through
+/// `MultiTarget::for_each_node` missed it entirely (an ivar target embeds no
+/// sub-expression, so that traversal yields nothing), and the write then
+/// referenced a field that was never declared.
+fn collect_ivar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
+    if let crate::hir::MultiTarget::Ivar(name) = target {
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+}
+
 pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
     match &hir[id] {
         // An FFI wrapper body references no instance variables.
@@ -2555,6 +2570,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         }
         HirNode::For { target, iterable, body } => {
             target.for_each_node(&mut |n| collect_ivars(hir, n, out));
+            target.for_each_target(&mut |t| collect_ivar_target(t, out));
             collect_ivars(hir, *iterable, out);
             for &n in body {
                 collect_ivars(hir, n, out);
@@ -2569,6 +2585,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         HirNode::MultiWrite { targets, value } => {
             collect_ivars(hir, *value, out);
             targets.for_each_node(&mut |n| collect_ivars(hir, n, out));
+            targets.for_each_target(&mut |t| collect_ivar_target(t, out));
         }
         HirNode::GlobalWrite(_, value) => collect_ivars(hir, *value, out),
         HirNode::ConstWrite { value, .. } => collect_ivars(hir, *value, out),

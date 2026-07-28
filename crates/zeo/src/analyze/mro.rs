@@ -635,6 +635,19 @@ fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> Cla
     owner
 }
 
+/// A constant named by a multi-assignment or `for` TARGET -- `X, Y = 1, 2` in
+/// a module body. Mirrors the `ConstWrite` arm's own rule: a bare `Const`
+/// counts, a `ScopedConst` (`Foo::NAME, ... = ...`) doesn't, its owner being
+/// already named rather than discovered. See `collect_ivar_target` for why
+/// `MultiTarget::for_each_node` alone couldn't see these.
+fn collect_const_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
+    if let crate::hir::MultiTarget::Const(name) = target {
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+}
+
 /// Mirrors `collect_cvars`'s exact traversal shape, over bare-constant
 /// references instead of `ClassVarRead`/`ClassVarWrite`: a bare `ClassRef`
 /// counts ONLY when `name` ISN'T actually a registered class/module (a real
@@ -784,6 +797,7 @@ fn collect_const_refs(
         }
         HirNode::For { target, iterable, body } => {
             target.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
+            target.for_each_target(&mut |t| collect_const_target(t, out));
             collect_const_refs(compiler, *iterable, cref, out);
             for &n in body {
                 collect_const_refs(compiler, n, cref, out);
@@ -797,6 +811,7 @@ fn collect_const_refs(
         HirNode::MultiWrite { targets, value } => {
             collect_const_refs(compiler, *value, cref, out);
             targets.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
+            targets.for_each_target(&mut |t| collect_const_target(t, out));
         }
         HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
@@ -899,6 +914,18 @@ fn collect_const_refs(
         | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
+    }
+}
+
+/// A cvar named by a multi-assignment or `for` TARGET -- see
+/// `collect_ivar_target`, whose problem this is exactly. The failure here is
+/// quieter and so worse: a cvar missing from this list registers its ownership
+/// against the wrong class, and the program still compiles.
+fn collect_cvar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
+    if let crate::hir::MultiTarget::ClassVar(name) = target {
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
     }
 }
 
@@ -1038,6 +1065,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         }
         HirNode::For { target, iterable, body } => {
             target.for_each_node(&mut |n| collect_cvars(hir, n, out));
+            target.for_each_target(&mut |t| collect_cvar_target(t, out));
             collect_cvars(hir, *iterable, out);
             for &n in body {
                 collect_cvars(hir, n, out);
@@ -1051,6 +1079,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         HirNode::MultiWrite { targets, value } => {
             collect_cvars(hir, *value, out);
             targets.for_each_node(&mut |n| collect_cvars(hir, n, out));
+            targets.for_each_target(&mut |t| collect_cvar_target(t, out));
         }
         HirNode::GlobalWrite(_, value) => collect_cvars(hir, *value, out),
         HirNode::ConstWrite { value, .. } => collect_cvars(hir, *value, out),
