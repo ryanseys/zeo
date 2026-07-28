@@ -976,7 +976,12 @@ ruby_class! {
             let mut i = *a;
             while i >= *b {
                 p.call(&[RubyValue::Int(i)])?;
-                i -= 1;
+                // A `checked_sub`: a `b` of `i64::MIN` must stop after
+                // yielding it, not wrap to `i64::MAX` and spin.
+                match i.checked_sub(1) {
+                    Some(v) => i = v,
+                    None => break,
+                }
             }
             return Ok(recv.clone());
         }
