@@ -77,7 +77,7 @@ pub type RArray = Arc<Freezable<Vec<RubyValue>>>;
 /// nested `Hash`) falls back to pointer IDENTITY -- real Ruby's own default
 /// `Object#hash` before a user overrides it. (A user-defined `#hash` IS
 /// consulted for `Object` keys -- see `hash_key`'s `Object` arm below.)
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum HashKey {
     Nil,
     Bool(bool),
@@ -114,6 +114,100 @@ pub enum HashKey {
     BigInt(num_bigint::BigInt),
     Rational(num_bigint::BigInt, num_bigint::BigInt),
     Complex(Box<(HashKey, HashKey)>),
+}
+
+/// `HashKey::Str`'s hash tag -- shared with [`StrProbe`], whose whole point
+/// is hashing identically to the owned variant.
+const HK_STR_TAG: u8 = 5;
+
+/// Hand-written (not derived) so the borrowed [`StrProbe`] can reproduce the
+/// `Str` arm exactly: explicit variant tags instead of the derive's opaque
+/// discriminant hashing, same field order. `&[u8]` and `Vec<u8>` hash
+/// identically by std's own slice rule, which is what makes the borrowed
+/// twin sound.
+impl std::hash::Hash for HashKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            HashKey::Nil => state.write_u8(0),
+            HashKey::Bool(b) => {
+                state.write_u8(1);
+                b.hash(state);
+            }
+            HashKey::Int(i) => {
+                state.write_u8(2);
+                i.hash(state);
+            }
+            HashKey::Float(f) => {
+                state.write_u8(3);
+                f.hash(state);
+            }
+            HashKey::Symbol(s) => {
+                state.write_u8(4);
+                s.hash(state);
+            }
+            HashKey::Str(b, t) => {
+                state.write_u8(HK_STR_TAG);
+                b.hash(state);
+                t.hash(state);
+            }
+            HashKey::Array(v) => {
+                state.write_u8(6);
+                v.hash(state);
+            }
+            HashKey::Range(a, b, x) => {
+                state.write_u8(7);
+                a.hash(state);
+                b.hash(state);
+                x.hash(state);
+            }
+            HashKey::Class(c) => {
+                state.write_u8(8);
+                c.hash(state);
+            }
+            HashKey::Computed(k) => {
+                state.write_u8(9);
+                k.hash(state);
+            }
+            HashKey::Identity(p) => {
+                state.write_u8(10);
+                p.hash(state);
+            }
+            HashKey::BigInt(b) => {
+                state.write_u8(11);
+                b.hash(state);
+            }
+            HashKey::Rational(n, d) => {
+                state.write_u8(12);
+                n.hash(state);
+                d.hash(state);
+            }
+            HashKey::Complex(c) => {
+                state.write_u8(13);
+                c.hash(state);
+            }
+        }
+    }
+}
+
+/// A borrowed string-key probe, `Hash + Equivalent<HashKey>`: the structural
+/// projection in `hash_key_in` copies every string key's whole byte buffer
+/// per LOOKUP; probing by `&[u8]` + tag skips that on the read paths (and on
+/// `hash_set`'s already-present path). Only meaningful against a structural
+/// (non-identity) table -- every user gates on `compare_by_identity` first.
+struct StrProbe<'a>(&'a [u8], u8);
+
+impl std::hash::Hash for StrProbe<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u8(HK_STR_TAG);
+        self.0.hash(state);
+        self.1.hash(state);
+    }
+}
+
+impl indexmap::Equivalent<HashKey> for StrProbe<'_> {
+    fn equivalent(&self, key: &HashKey) -> bool {
+        matches!(key, HashKey::Str(b, t) if *t == self.1 && b.as_slice() == self.0)
+    }
 }
 
 /// The structural projection (the default, `eql?`/`hash`-based). Every
@@ -435,6 +529,15 @@ pub fn copy_hash_meta(src: &RHash, dst: &RHash) {
 /// `hash_index`.
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
     let g = h.lock();
+    if let RubyValue::Str(s) = key {
+        if !g.compare_by_identity {
+            let sb = s.lock();
+            return g
+                .get(&StrProbe(sb.bytes(), sb.hash_key_tag()))
+                .map(|(_, v)| v.clone())
+                .unwrap_or(RubyValue::Nil);
+        }
+    }
     let k = hash_key_in(key, g.compare_by_identity);
     g.get(&k).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
 }
@@ -447,8 +550,14 @@ pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
 pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal> {
     {
         let g = h.lock();
-        let k = hash_key_in(key, g.compare_by_identity);
-        if let Some((_, v)) = g.get(&k) {
+        let hit = if let (RubyValue::Str(s), false) = (key, g.compare_by_identity) {
+            let sb = s.lock();
+            g.get(&StrProbe(sb.bytes(), sb.hash_key_tag()))
+        } else {
+            let k = hash_key_in(key, g.compare_by_identity);
+            g.get(&k)
+        };
+        if let Some((_, v)) = hit {
             return Ok(v.clone());
         }
     }
@@ -497,6 +606,25 @@ fn snapshot_key(key: RubyValue, by_identity: bool) -> RubyValue {
 /// [`snapshot_key`] a single edit rather than an audit.
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
     let mut g = h.lock();
+    if let RubyValue::Str(s) = &key {
+        if !g.compare_by_identity {
+            // Probe borrowed first: a re-assigned string key (the common
+            // accumulate-into-hash loop) skips the byte-buffer projection
+            // entirely. The guard must drop before `snapshot_key` re-locks
+            // the same string (a non-reentrant Mutex).
+            let hit = {
+                let sb = s.lock();
+                g.get_index_of(&StrProbe(sb.bytes(), sb.hash_key_tag()))
+            };
+            if let Some(i) = hit {
+                let key = snapshot_key(key, false);
+                if let Some((_, pair)) = g.get_index_mut(i) {
+                    *pair = (key, value.clone());
+                }
+                return value;
+            }
+        }
+    }
     let k = hash_key_in(&key, g.compare_by_identity);
     let key = snapshot_key(key, g.compare_by_identity);
     g.insert(k, (key, value.clone()));
@@ -514,6 +642,12 @@ pub fn hash_len(h: &RHash) -> i64 {
 /// a `hash_get(...).is_nil()`-based check alone couldn't distinguish.
 pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
     let g = h.lock();
+    if let RubyValue::Str(s) = key {
+        if !g.compare_by_identity {
+            let sb = s.lock();
+            return g.contains_key(&StrProbe(sb.bytes(), sb.hash_key_tag()));
+        }
+    }
     let k = hash_key_in(key, g.compare_by_identity);
     g.contains_key(&k)
 }
@@ -524,6 +658,14 @@ pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
 /// entries' insertion order, Ruby's own guarantee.
 pub fn hash_delete(h: &RHash, key: &RubyValue) -> RubyValue {
     let mut g = h.lock();
+    if let RubyValue::Str(s) = key {
+        if !g.compare_by_identity {
+            let sb = s.lock();
+            let probe = StrProbe(sb.bytes(), sb.hash_key_tag());
+            let removed = g.shift_remove(&probe);
+            return removed.map(|(_, v)| v).unwrap_or(RubyValue::Nil);
+        }
+    }
     let k = hash_key_in(key, g.compare_by_identity);
     g.shift_remove(&k).map(|(_, v)| v).unwrap_or(RubyValue::Nil)
 }
@@ -981,5 +1123,29 @@ mod compare_by_identity_tests {
         hash_enable_compare_by_identity(&h);
         assert_eq!(hash_len(&h), n);
         assert!(h.lock().compare_by_identity);
+    }
+
+    /// The borrowed probe must hash exactly like the owned `HashKey::Str` it
+    /// stands in for -- the whole soundness condition of `StrProbe`.
+    #[test]
+    fn str_probe_hashes_like_the_owned_key() {
+        use std::hash::{BuildHasher, Hash, Hasher};
+        let state = foldhash::fast::RandomState::default();
+        for text in ["", "a", "key with spaces", "ünïcode"] {
+            let sb = crate::encoding::StrBuf::from_utf8(text.to_string());
+            let owned = HashKey::Str(sb.bytes().to_vec(), sb.hash_key_tag());
+            let (mut h1, mut h2) = (state.build_hasher(), state.build_hasher());
+            owned.hash(&mut h1);
+            StrProbe(sb.bytes(), sb.hash_key_tag()).hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish(), "probe/owned diverged for {text:?}");
+        }
+        // And end to end: a string key stored owned is found via the probe
+        // paths (get/has_key/delete all take them).
+        let h = hash_new(vec![]);
+        hash_set(&h, s("k"), RubyValue::Int(7));
+        assert!(is_int(&hash_get(&h, &s("k")), 7));
+        assert!(hash_has_key(&h, &s("k")));
+        assert!(is_int(&hash_delete(&h, &s("k")), 7));
+        assert!(!hash_has_key(&h, &s("k")));
     }
 }
