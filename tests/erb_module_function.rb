@@ -7,8 +7,8 @@ require "erb"
 p ERB::Util.html_escape("a > b & c")
 p ERB::Util.h("<x>")
 p ERB::Util.url_encode("a b")
-
-p ERB.new("<%= 1 + 1 %> and <%= name %>").result_with_hash(name: "zeo")
+# Rendering a template needs `TOPLEVEL_BINDING` -- see
+# `tests/gaps/issue_erb_render_needs_binding.rb`.
 
 # `module_function` keeps BOTH halves: a public module method and a private
 # instance method for the include-mixin.

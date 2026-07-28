@@ -1127,6 +1127,71 @@ pub fn regexp_find(re: &RRegexp, haystack: &str) -> Option<(usize, usize)> {
     re.engine.captures_first(haystack).and_then(|c| c.get(0))
 }
 
+/// One `StringScanner` hit -- everything the scanner's match surface needs, and
+/// nothing more. Deliberately NOT a `MatchData`: a scanner matches once per
+/// token, and `MatchData` carries an owned copy of the subject, so building one
+/// per `scan` would copy the whole input on every token.
+pub struct ScannerMatch {
+    /// Group byte spans in the SUBJECT's own coordinates (index 0 is the whole
+    /// match) -- rebasing them here is what lets `#pre_match`/`#post_match`
+    /// slice the string directly.
+    pub groups: Vec<Option<(usize, usize)>>,
+    /// `(name, group index)` per named group in the pattern, for `[]` by name
+    /// and `#named_captures`.
+    pub names: Vec<(String, usize)>,
+}
+
+/// Match `pattern` against `subject` at `at`, either `anchored` there or
+/// searching forward from it -- the one entry point behind every
+/// `StringScanner` method that takes a pattern. `pattern` is a `Regexp` or a
+/// `String` matched literally, which CRuby's scanner allows in both positions.
+///
+/// (Documented divergence, inherited from [`regexp_anchored_len`]: `^`/`\A`
+/// and look-behind see the scan position as the string start, since the engine
+/// is handed the tail slice.)
+pub fn scanner_match(
+    pattern: &crate::RubyValue,
+    subject: &str,
+    at: usize,
+    anchored: bool,
+) -> Result<Option<ScannerMatch>, crate::Signal> {
+    let tail = &subject[at..];
+    let (spans, names) = match pattern {
+        crate::RubyValue::Regexp(re) => {
+            let caps = match re.engine.captures_first(tail) {
+                Some(caps) if !anchored || caps.get(0).is_some_and(|(s, _)| s == 0) => caps,
+                _ => return Ok(None),
+            };
+            (caps.spans, re.engine.capture_names())
+        }
+        crate::RubyValue::Str(s) => {
+            let literal = s.lock().to_utf8_lossy().into_owned();
+            let start = match anchored {
+                true if tail.starts_with(&literal) => 0,
+                true => return Ok(None),
+                false => match tail.find(&literal) {
+                    Some(i) => i,
+                    None => return Ok(None),
+                },
+            };
+            (vec![Some((start, start + literal.len()))], Vec::new())
+        }
+        other => {
+            return Err(crate::builtins::type_error!(
+                "wrong argument type {} (expected Regexp)",
+                crate::builtins::class_name_of(other)
+            ));
+        }
+    };
+    Ok(Some(ScannerMatch {
+        groups: spans
+            .into_iter()
+            .map(|span| span.map(|(s, e)| (s + at, e + at)))
+            .collect(),
+        names,
+    }))
+}
+
 /// `Regexp#===` (case/when dispatch) -- same underlying check as
 /// `match?`, exposed separately so `codegen`'s `case/when`/pattern-matching
 /// desugar (`RubyValue::rb_case_eq`) has a name that reads as "the `===`
