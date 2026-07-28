@@ -431,37 +431,36 @@ fn enclosing_frame_label(cx: &Ctx) -> String {
     "<main>".to_string()
 }
 
-/// The `zeo_rt::MethodMeta` registration for one method scope: what Ruby can
-/// ask back about a `def` that its fn pointer can't answer -- the signature
+/// The reflection row for one method scope: what Ruby can ask back about a
+/// `def` that its fn pointer can't answer -- the signature
 /// (`#arity`/`#parameters`) and the `def` keyword's own line
 /// (`#source_location`, and the tail of `#inspect`). One helper for all three
 /// emission sites: a user class's own methods, its `def self.x` methods, and
-/// the methods a reopened builtin gains.
-///
-/// A fact the method doesn't have is left off the chain rather than emitted
-/// empty, so the generated registration stays as small as the `def` is.
-fn method_meta_registration(
+/// the methods a reopened builtin gains. Appends one `zeo_rt::MetaRow` to the
+/// program's single `__META_ROWS` static (see `codegen`'s final assembly) --
+/// one const row per method, registered in one batch call, instead of a
+/// builder chain per method.
+fn push_method_meta_row(
     compiler: &Compiler,
     class: ClassId,
     scope: &crate::compiler::Scope,
     class_method: bool,
-) -> TokenStream {
+) {
     let id = class.0;
     let name = &scope.name;
-    let ctor = format_ident!("{}", if class_method { "singleton" } else { "instance" });
+    let ctor = format_ident!("{}", if class_method { "sing" } else { "inst" });
     let entries = param_descriptor_entries(&scope.params);
-    let params = (!entries.is_empty()).then(|| quote! { .with_params(vec![ #(#entries),* ]) });
-    let defined_at = scope
+    let params = (!entries.is_empty()).then(|| quote! { .params(&[#(#entries),*]) });
+    let at = scope
         .def_node
         .and_then(|n| source_location(compiler, n))
-        .map(|(file, line)| quote! { .defined_at(#file, #line) });
-    let aliased_from = scope
+        .map(|(file, line)| quote! { .at(#file, #line) });
+    let alias = scope
         .alias_of
         .as_ref()
-        .map(|original| quote! { .aliased_from(#original) });
-    quote! {
-        zeo_rt::MethodMeta::#ctor(#id, #name) #params #defined_at #aliased_from .register();
-    }
+        .map(|original| quote! { .alias(#original) });
+    let row = quote! { zeo_rt::MetaRow::#ctor(#id, #name) #params #at #alias };
+    POOLS.with(|p| p.borrow_mut().metas.push(row));
 }
 
 /// The parameter descriptor entries for one method's `Params`, in Ruby's
@@ -475,7 +474,7 @@ fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
         let k = format_ident!("{}", kind);
         match name {
             Some(n) if !n.starts_with("__") => {
-                quote! { (zeo_rt::ParamKind::#k, Some(#n.to_string())) }
+                quote! { (zeo_rt::ParamKind::#k, Some(#n)) }
             }
             _ => quote! { (zeo_rt::ParamKind::#k, None) },
         }
@@ -561,6 +560,9 @@ struct PoolBuilder {
     /// one table instead of allocating a `Vec` + interning names per call.
     pp_ix: HashMap<String, usize>,
     pps: Vec<TokenStream>,
+    /// Every method's reflection row (`push_method_meta_row`), emitted as the
+    /// one `__META_ROWS` static and registered in a single batch call.
+    metas: Vec<TokenStream>,
 }
 
 thread_local! {
@@ -978,19 +980,16 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             .map(|&sid| &compiler.scope(sid).name)
             .collect();
         own.sort();
-        for key in own {
+        if !own.is_empty() {
             registrations.push(quote! {
-                __registry.mark_own(
-                    zeo_rt::ClassId(#id),
-                    zeo_rt::Symbol::intern(#key),
-                );
+                __registry.mark_own_rows(zeo_rt::ClassId(#id), &[#(#own),*]);
             });
         }
         // What each own method's fn pointer can't answer: its signature and
         // its `def` line, baked for `Method`/`UnboundMethod` reflection.
         for &sid in &compiler.class(ClassId(id)).own_methods {
             let scope = compiler.scope(sid);
-            registrations.push(method_meta_registration(compiler, ClassId(id), scope, false));
+            push_method_meta_row(compiler, ClassId(id), scope, false);
         }
         // Every `undef name` in this class's body is recorded so
         // `respond_to?` stops its ancestor walk here -- dispatch itself
@@ -1057,16 +1056,20 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // and on the class that WROTE the `def self.x`, not on every
         // descendant materialization gave a copy to, so `Cache.method(:open)`
         // still reports `Store` as its owner.
-        for &sid in &compiler.class(ClassId(id)).own_class_methods {
-            let scope = compiler.scope(sid);
-            let key = &scope.name;
+        let own_cm: Vec<&String> = compiler
+            .class(ClassId(id))
+            .own_class_methods
+            .iter()
+            .map(|&sid| {
+                let scope = compiler.scope(sid);
+                push_method_meta_row(compiler, ClassId(id), scope, true);
+                &scope.name
+            })
+            .collect();
+        if !own_cm.is_empty() {
             registrations.push(quote! {
-                __registry.mark_own_class_method(
-                    zeo_rt::ClassId(#id),
-                    zeo_rt::Symbol::intern(#key),
-                );
+                __registry.mark_own_class_method_rows(zeo_rt::ClassId(#id), &[#(#own_cm),*]);
             });
-            registrations.push(method_meta_registration(compiler, ClassId(id), scope, true));
         }
         // Singleton-chain super targets: every `extend`ed module method's
         // copy -- winner AND shadowed -- registered per `(module, name)` so
@@ -1444,7 +1447,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // Bake this method's reflection facts -- the `own_methods` loop
             // above only covers user CLASSES, not a reopened builtin (Object,
             // which every top-level `def` materializes onto).
-            let meta = method_meta_registration(compiler, ClassId(target), scope, false);
+            push_method_meta_row(compiler, ClassId(target), scope, false);
             quote! {
                 __registry.define_value_method(
                     zeo_rt::ClassId(#target),
@@ -1452,7 +1455,6 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     zeo_rt::Symbol::intern(#key),
                     #tramp,
                 );
-                #meta
                 #mark_vis
             }
         });
@@ -1644,6 +1646,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             #(#builtin_registrations)*
             #(#registrations)*
             zeo_rt::install_class_registry(__registry);
+            // Every `def`'s reflection facts, from the one static table at
+            // the bottom of this file (see `push_method_meta_row`).
+            zeo_rt::register_meta_rows(__META_ROWS);
             // Seed the CORE constants (`Float::INFINITY`, `Encoding::UTF_8`,
             // `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
             // `Process::CLOCK_*`) -- their owners resolved at compile time;
@@ -1730,7 +1735,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         quote! { static __LITS: zeo_rt::LitPool = zeo_rt::LitPool::new(&[#(#texts),*]); }
     });
     let pps = &pools.pps;
-    quote! { #program #syms #lits #(#pps)* }
+    let metas = &pools.metas;
+    quote! {
+        #program #syms #lits #(#pps)*
+        static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
+    }
 }
 
 /// Every statement written directly in a class/module body -- cvar/const/ivar

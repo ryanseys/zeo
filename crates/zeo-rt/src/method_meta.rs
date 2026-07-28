@@ -144,6 +144,85 @@ impl MethodMeta {
     }
 }
 
+/// One method's compile-time facts as a CONST-constructible row, so codegen
+/// emits a single static table per program instead of a `MethodMeta` builder
+/// chain per method. The `const fn` builders keep the chain's
+/// omit-absent-facts shape (`MetaRow::inst(7, "greet").params(..).at(..)`);
+/// `register_meta_rows` folds a table into the same store
+/// `MethodMeta::register` fills.
+pub struct MetaRow {
+    singleton: bool,
+    class: u32,
+    name: &'static str,
+    params: &'static [(ParamKind, Option<&'static str>)],
+    source: Option<(&'static str, u32)>,
+    aliased_from: Option<&'static str>,
+}
+
+impl MetaRow {
+    pub const fn inst(class: u32, name: &'static str) -> MetaRow {
+        MetaRow {
+            singleton: false,
+            class,
+            name,
+            params: &[],
+            source: None,
+            aliased_from: None,
+        }
+    }
+
+    pub const fn sing(class: u32, name: &'static str) -> MetaRow {
+        MetaRow {
+            singleton: true,
+            ..MetaRow::inst(class, name)
+        }
+    }
+
+    pub const fn params(
+        mut self,
+        params: &'static [(ParamKind, Option<&'static str>)],
+    ) -> MetaRow {
+        self.params = params;
+        self
+    }
+
+    pub const fn at(mut self, file: &'static str, line: u32) -> MetaRow {
+        self.source = Some((file, line));
+        self
+    }
+
+    pub const fn alias(mut self, original: &'static str) -> MetaRow {
+        self.aliased_from = Some(original);
+        self
+    }
+}
+
+pub fn register_meta_rows(rows: &'static [MetaRow]) {
+    let mut map = META.write();
+    for r in rows {
+        let key = MethodKey {
+            class: r.class,
+            kind: if r.singleton {
+                MethodKind::Singleton
+            } else {
+                MethodKind::Instance
+            },
+            name: Symbol::intern(r.name),
+        };
+        let meta = MethodMeta {
+            key,
+            params: r
+                .params
+                .iter()
+                .map(|(k, n)| (*k, n.map(str::to_string)))
+                .collect(),
+            source: r.source,
+            original_name: r.aliased_from.map(Symbol::intern),
+        };
+        map.insert(key, Arc::new(meta));
+    }
+}
+
 static META: LazyLock<RwLock<FMap<MethodKey, Arc<MethodMeta>>>> =
     LazyLock::new(|| RwLock::new(FMap::default()));
 

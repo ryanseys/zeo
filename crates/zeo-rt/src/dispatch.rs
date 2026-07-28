@@ -846,6 +846,22 @@ impl ClassRegistry {
         }
     }
 
+    /// [`mark_own`](Self::mark_own), one call per class instead of one per
+    /// method -- what codegen emits for a class's whole `def` list.
+    pub fn mark_own_rows(&mut self, id: ClassId, names: &[&str]) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.own_methods.extend(names.iter().map(|n| Symbol::intern(n)));
+        }
+    }
+
+    /// [`mark_own_class_method`](Self::mark_own_class_method)'s batch form.
+    pub fn mark_own_class_method_rows(&mut self, id: ClassId, names: &[&str]) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.own_class_methods
+                .extend(names.iter().map(|n| Symbol::intern(n)));
+        }
+    }
+
     /// Registers a builtin-reopen method -- called from
     /// generated `main()` right after the builtin's own `register`, one call
     /// per `def` in a `class String ... end` reopen. `box_id` is the box the
@@ -2659,6 +2675,15 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
         }
         None => panic!("{class_name}: {msg}"),
     }
+}
+
+/// The fixed-arity `ArgumentError` (`zeo_tramp!`'s error leg): one call in
+/// the generated program where a `format!` used to be.
+pub fn arity_error(given: usize, expected: usize) -> Signal {
+    raise_error(
+        "ArgumentError",
+        format!("wrong number of arguments (given {given}, expected {expected})"),
+    )
 }
 
 /// [`raise_error`] plus typed introspection details stamped onto the freshly

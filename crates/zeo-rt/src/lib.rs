@@ -43,6 +43,7 @@ mod regexp;
 mod rproc;
 mod runtime_meta;
 mod signal;
+mod tramp;
 mod symbol;
 mod thread;
 mod value;
@@ -89,7 +90,7 @@ pub use dispatch::{
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
     rescue_matches_any,
     ivar_defined, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, make_name_error,
-    method_name_symbol, raise_error, raise_error_details, raise_method_missing,
+    arity_error, method_name_symbol, raise_error, raise_error_details, raise_method_missing,
     raise_no_block_yield, raise_stop_iteration, raise_with_cause, responds_to,
     responds_to_or_missing, responds_to_value, run_initialize, send, send_in,
     define_in_default_definee, send_dispatch_in, send_super_class_from, send_super_from, send_value,
@@ -104,7 +105,7 @@ pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match,
 };
-pub use method_meta::{MethodKind, MethodMeta, ParamKind};
+pub use method_meta::{MetaRow, MethodKind, MethodMeta, ParamKind, register_meta_rows};
 
 /// The Ruby class name of any value -- what the generated top level suffixes an
 /// uncaught exception's message with (`"msg (ClassName)"`, CRuby's own form).

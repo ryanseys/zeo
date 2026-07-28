@@ -845,6 +845,33 @@ fn emit_arity_check(params: &Params, callee_frame: &TokenStream) -> TokenStream 
     }
 }
 
+/// Whether a signature is PLAIN -- required positionals only (a `&block`
+/// param is fine) -- and so compresses to a `zeo_rt::zeo_tramp!` invocation
+/// instead of the long-form closure. The macro's expansion is
+/// token-for-token the long form for this shape.
+fn plain_signature(params: &Params) -> bool {
+    params.optional.is_empty()
+        && params.rest.is_none()
+        && params.post.is_empty()
+        && params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+}
+
+/// The frame guard as a `zeo_tramp!` argument: the same `let __frame = ...`
+/// statement, minus the trailing semicolon a macro `stmt` fragment must not
+/// carry. `None` (no argument at all) for a def with no location.
+fn tramp_frame_arg(callee_frame: &TokenStream) -> Option<TokenStream> {
+    if callee_frame.is_empty() {
+        return None;
+    }
+    let mut tts: Vec<proc_macro2::TokenTree> = callee_frame.clone().into_iter().collect();
+    if matches!(tts.last(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ';') {
+        tts.pop();
+    }
+    let stmt: TokenStream = tts.into_iter().collect();
+    Some(quote! { , #stmt })
+}
+
 pub fn emit_dynamic_trampoline(
     class_ident: &proc_macro2::Ident,
     method_name: &str,
@@ -853,6 +880,15 @@ pub fn emit_dynamic_trampoline(
     callee_frame: &TokenStream,
 ) -> TokenStream {
     let method_ident = safe_ident(method_name);
+    if plain_signature(params) {
+        let head = format_ident!("{}", if needs_block { "instb" } else { "inst" });
+        let n = params.required.len();
+        let ix = 0..n;
+        let frame_arg = tramp_frame_arg(callee_frame);
+        return quote! {
+            zeo_rt::zeo_tramp!(#head #class_ident, #method_ident, #n, [#(#ix),*] #frame_arg)
+        };
+    }
     let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
 
     let nreq = params.required.len();
@@ -932,6 +968,23 @@ pub fn emit_value_trampoline(
     recv_mode: RecvMode,
     callee_frame: &TokenStream,
 ) -> TokenStream {
+    if plain_signature(params) {
+        let head = format_ident!(
+            "{}{}",
+            if recv_mode == RecvMode::Pass {
+                "pass"
+            } else {
+                "drop"
+            },
+            if needs_block { "b" } else { "" }
+        );
+        let n = params.required.len();
+        let ix = 0..n;
+        let frame_arg = tramp_frame_arg(callee_frame);
+        return quote! {
+            zeo_rt::zeo_tramp!(#head #fn_path, #n, [#(#ix),*] #frame_arg)
+        };
+    }
     let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
 
     let nreq = params.required.len();

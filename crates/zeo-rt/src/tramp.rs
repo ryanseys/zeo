@@ -1,0 +1,89 @@
+//! The fixed-arity dispatch trampolines, as one exported macro instead of a
+//! ~10-line closure per method in the generated program.
+//!
+//! `codegen`'s `emit_dynamic_trampoline`/`emit_value_trampoline` emit a
+//! `zeo_tramp!` invocation whenever a method's signature is PLAIN -- required
+//! positionals only (no optionals, rest, post, or keywords; a `&block`
+//! parameter is fine) -- which is most methods in real code. Every other
+//! signature keeps the long-form closure those emitters build. The expansion
+//! here is token-for-token what the long form produces for the same
+//! signature: exact-count arity check (raising inside the callee's frame when
+//! the def has a location), then positional clones.
+//!
+//! Heads: `inst` downcasts to a generated struct and calls its inherent
+//! method; `pass` forwards the receiver `RubyValue` to a free function (a
+//! builtin-reopen body); `drop` calls a free function with no receiver (a
+//! class method -- which class it is, is baked into the path). The `b`-carrying
+//! variants forward the call-site block to a `&block`-taking method.
+
+/// See the module docs. `$frame` is the callee's `let __frame = ...` guard
+/// STATEMENT (no trailing semicolon), present only when the def has a source
+/// location; it must live in the raising scope so the error's backtrace
+/// carries the callee's frame.
+#[macro_export]
+macro_rules! zeo_tramp {
+    (inst $ty:ty, $meth:ident, $n:literal, [$($ix:literal),*] $(, $frame:stmt)?) => {
+        |recv: &$crate::RObj, args: &[$crate::RubyValue], _blk: Option<$crate::RubyValue>|
+            -> Result<$crate::RubyValue, $crate::Signal> {
+            let this = $crate::downcast_robj::<$ty>(recv)
+                .expect("class_id guarantees this downcast");
+            if args.len() != $n {
+                $($frame;)?
+                return Err($crate::arity_error(args.len(), $n));
+            }
+            <$ty>::$meth(this, $(args[$ix].clone(),)*)
+        }
+    };
+    (instb $ty:ty, $meth:ident, $n:literal, [$($ix:literal),*] $(, $frame:stmt)?) => {
+        |recv: &$crate::RObj, args: &[$crate::RubyValue], blk: Option<$crate::RubyValue>|
+            -> Result<$crate::RubyValue, $crate::Signal> {
+            let this = $crate::downcast_robj::<$ty>(recv)
+                .expect("class_id guarantees this downcast");
+            if args.len() != $n {
+                $($frame;)?
+                return Err($crate::arity_error(args.len(), $n));
+            }
+            <$ty>::$meth(this, $(args[$ix].clone(),)* blk)
+        }
+    };
+    (pass $path:path, $n:literal, [$($ix:literal),*] $(, $frame:stmt)?) => {
+        |recv: &$crate::RubyValue, args: &[$crate::RubyValue], _blk: Option<$crate::RubyValue>|
+            -> Result<$crate::RubyValue, $crate::Signal> {
+            if args.len() != $n {
+                $($frame;)?
+                return Err($crate::arity_error(args.len(), $n));
+            }
+            $path(recv.clone(), $(args[$ix].clone(),)*)
+        }
+    };
+    (passb $path:path, $n:literal, [$($ix:literal),*] $(, $frame:stmt)?) => {
+        |recv: &$crate::RubyValue, args: &[$crate::RubyValue], blk: Option<$crate::RubyValue>|
+            -> Result<$crate::RubyValue, $crate::Signal> {
+            if args.len() != $n {
+                $($frame;)?
+                return Err($crate::arity_error(args.len(), $n));
+            }
+            $path(recv.clone(), $(args[$ix].clone(),)* blk)
+        }
+    };
+    (drop $path:path, $n:literal, [$($ix:literal),*] $(, $frame:stmt)?) => {
+        |_recv: &$crate::RubyValue, args: &[$crate::RubyValue], _blk: Option<$crate::RubyValue>|
+            -> Result<$crate::RubyValue, $crate::Signal> {
+            if args.len() != $n {
+                $($frame;)?
+                return Err($crate::arity_error(args.len(), $n));
+            }
+            $path($(args[$ix].clone(),)*)
+        }
+    };
+    (dropb $path:path, $n:literal, [$($ix:literal),*] $(, $frame:stmt)?) => {
+        |_recv: &$crate::RubyValue, args: &[$crate::RubyValue], blk: Option<$crate::RubyValue>|
+            -> Result<$crate::RubyValue, $crate::Signal> {
+            if args.len() != $n {
+                $($frame;)?
+                return Err($crate::arity_error(args.len(), $n));
+            }
+            $path($(args[$ix].clone(),)* blk)
+        }
+    };
+}
