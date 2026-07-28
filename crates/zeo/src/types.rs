@@ -79,7 +79,12 @@ fn no_locals() -> HashMap<String, TyKind> {
 /// "long"; end` makes the old `length -> Int` narrowing unsound (the
 /// override's result is whatever it returns, so the call types `Poly`).
 /// Free for un-reopened builtins: their materialized method table is empty.
-fn builtin_override(compiler: &Compiler, recv_ty: TyKind, box_id: u32, name: &str) -> bool {
+pub(crate) fn builtin_override(
+    compiler: &Compiler,
+    recv_ty: TyKind,
+    box_id: u32,
+    name: &str,
+) -> bool {
     use crate::compiler::{
         ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, PROC_CLASS,
         RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
@@ -431,6 +436,24 @@ pub fn infer_type_with_locals(
             }
             match recv_ty {
                 t @ (TyKind::Str | TyKind::Array | TyKind::Hash | TyKind::Range) => t,
+                _ => TyKind::Poly,
+            }
+        }
+        // `.to_a` on a built-in collection answers an Array (`Array#to_a` is
+        // identity, `Range`/`Hash` walk into a fresh one) -- same soundness
+        // posture (and same override exclusion) as the `dup` arm above.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && name == "to_a" => {
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
+            if builtin_override(compiler, recv_ty, box_id, name) {
+                return TyKind::Poly;
+            }
+            match recv_ty {
+                TyKind::Array | TyKind::Hash | TyKind::Range => TyKind::Array,
                 _ => TyKind::Poly,
             }
         }

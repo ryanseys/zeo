@@ -1465,6 +1465,33 @@ fn check_frozen(
     Ok(())
 }
 
+/// The typed-receiver fast-path cores for the bare mutators
+/// (`codegen`'s `try_collection_dispatch`): the same
+/// frozen-check-then-mutate the builtin defs run, minus the dispatch and
+/// argument plumbing. Each mirrors its def's no-count branch exactly.
+pub fn array_push_checked(
+    arr: &crate::collections::RArray,
+    value: RubyValue,
+) -> Result<RubyValue, crate::Signal> {
+    check_frozen(arr, &RubyValue::Array(arr.clone()))?;
+    Ok(crate::array_push(arr, value))
+}
+
+pub fn array_pop_checked(arr: &crate::collections::RArray) -> Result<RubyValue, crate::Signal> {
+    check_frozen(arr, &RubyValue::Array(arr.clone()))?;
+    Ok(arr.lock().pop().unwrap_or(RubyValue::Nil))
+}
+
+pub fn array_shift_checked(arr: &crate::collections::RArray) -> Result<RubyValue, crate::Signal> {
+    check_frozen(arr, &RubyValue::Array(arr.clone()))?;
+    let mut guard = arr.lock();
+    Ok(if guard.is_empty() {
+        RubyValue::Nil
+    } else {
+        guard.remove(0)
+    })
+}
+
 /// `Array#join`: each element's `to_s`, joined by `sep`, with nested arrays
 /// flattened recursively under the SAME separator (`[1, [2, 3]].join("-")` ->
 /// `"1-2-3"`).

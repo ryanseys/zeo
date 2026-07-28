@@ -30,6 +30,16 @@ pub(super) fn try_collection_dispatch(
     recv_expr: &TokenStream,
 ) -> Option<TokenStream> {
     let ty = infer(cx, recv_id);
+    // A compile-time reopen of the builtin method anywhere in its chain wins
+    // at every call site -- fall through to ordinary dispatch (the same
+    // check inference's own narrowing rules run).
+    if matches!(
+        ty,
+        TyKind::Array | TyKind::Hash | TyKind::Str | TyKind::Range
+    ) && crate::types::builtin_override(cx.compiler, ty, cx.box_id, name)
+    {
+        return None;
+    }
     let tokens = match (ty, name, args.len()) {
         // Only for a statically-Int index -- Range/other index shapes
         // fall through to the dynamic rows.
@@ -97,6 +107,31 @@ pub(super) fn try_collection_dispatch(
         (TyKind::Array, "length" | "size", 0) => {
             quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len(&(#recv_expr).as_array_unchecked())) }
         }
+        // The bare single-value/no-arg Array mutators and probes -- the
+        // shapes 12M-send list benchmarks live on. Multi-arg `push`, count
+        // forms of `pop`/`shift` (a DIFFERENT return type), and everything
+        // else stay on the dynamic rows. The `*_checked` cores run the same
+        // frozen-check-then-mutate the builtin defs do.
+        (TyKind::Array, "push" | "append" | "<<", 1) => {
+            let val = emit_expr(cx, args[0]);
+            let val = box_if_object_typed(cx, args[0], val);
+            quote! { zeo_rt::array_push_checked(&(#recv_expr).as_array_unchecked(), #val)? }
+        }
+        (TyKind::Array, "pop", 0) => {
+            quote! { zeo_rt::array_pop_checked(&(#recv_expr).as_array_unchecked())? }
+        }
+        (TyKind::Array, "shift", 0) => {
+            quote! { zeo_rt::array_shift_checked(&(#recv_expr).as_array_unchecked())? }
+        }
+        (TyKind::Array, "empty?", 0) => {
+            quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len(&(#recv_expr).as_array_unchecked()) == 0) }
+        }
+        (TyKind::Array, "first", 0) => {
+            quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), 0) }
+        }
+        (TyKind::Array, "last", 0) => {
+            quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), -1) }
+        }
         (TyKind::Hash, "[]", 1) => {
             let key = emit_expr(cx, args[0]);
             // Boxed if Object-typed: an object KEY reaches the
@@ -132,12 +167,18 @@ pub(super) fn try_collection_dispatch(
         (TyKind::Hash, "length" | "size", 0) => {
             quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
         }
+        (TyKind::Hash, "empty?", 0) => {
+            quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked()) == 0) }
+        }
         (TyKind::Str, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             quote! { zeo_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
         }
         (TyKind::Str, "length" | "size", 0) => {
             quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len(&(#recv_expr).as_str_unchecked())) }
+        }
+        (TyKind::Str, "empty?", 0) => {
+            quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len(&(#recv_expr).as_str_unchecked()) == 0) }
         }
         (TyKind::Range, "first", 0) => quote! { (#recv_expr).range_first() },
         (TyKind::Range, "last", 0) => quote! { (#recv_expr).range_last() },
