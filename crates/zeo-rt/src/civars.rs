@@ -14,7 +14,7 @@
 //!     so the key is the RECEIVER class, and a subclass gets its own,
 //!     independent slot.
 //!
-//! Oracle-verified (ruby 4.0.5), which is what pinned the distinction down:
+//! Oracle-verified (ruby 4.0.6), which is what pinned the distinction down:
 //!
 //! ```ruby
 //! class Base

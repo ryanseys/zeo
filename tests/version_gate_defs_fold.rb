@@ -7,7 +7,7 @@
 # fixture with a real-rubygems oracle.)
 
 class Widget
-  # "4.0.5" < "3.0" is false -> the compat module + prepend are dropped (a
+  # "4.0.6" < "3.0" is false -> the compat module + prepend are dropped (a
   # conditional `prepend` zeo cannot express under static MRO).
   if RUBY_VERSION < "3.0"
     module LegacyPatch
@@ -18,7 +18,7 @@ class Widget
     prepend LegacyPatch
   end
 
-  # unless ("4.0.5" >= "3.0" == true) -> also dropped.
+  # unless ("4.0.6" >= "3.0" == true) -> also dropped.
   unless RUBY_VERSION >= "3.0"
     class Nested
       def obsolete; end

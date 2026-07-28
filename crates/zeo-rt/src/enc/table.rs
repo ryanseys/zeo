@@ -84,7 +84,7 @@ pub struct EncodingSpec {
 }
 
 /// A `SingleByte` row -- name/aliases straight from `Encoding#names` under
-/// the ruby 4.0.5 oracle, mapping table generated from the same oracle.
+/// the ruby 4.0.6 oracle, mapping table generated from the same oracle.
 const fn single_byte(
     name: &'static str,
     aliases: &'static [&'static str],
@@ -100,7 +100,7 @@ const fn single_byte(
 }
 
 /// A `MultiByte` row -- name/aliases straight from `Encoding#names` under
-/// the ruby 4.0.5 oracle. Both Shift_JIS and Windows-31J share the `Sjis`
+/// the ruby 4.0.6 oracle. Both Shift_JIS and Windows-31J share the `Sjis`
 /// family (CP932 mappings for both -- the documented divergence).
 const fn multi_byte(
     name: &'static str,

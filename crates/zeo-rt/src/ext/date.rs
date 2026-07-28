@@ -6,7 +6,7 @@
 //! arithmetic (`+`/`-`), ordering, and `wday` trivial and exact. Gregorian
 //! `(year, month, day)` fields are derived on demand via the standard
 //! JDN<->civil formulas. Implemented methods are oracle-verified against ruby
-//! 4.0.5.
+//! 4.0.6.
 //!
 //! `DateTime` shares this table; its time-of-day fields default to midnight
 //! (a documented partial: the calendar half is complete, sub-day fields are

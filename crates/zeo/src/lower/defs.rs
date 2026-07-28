@@ -351,7 +351,7 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
 /// `VERSION` (the value of the runtime `RUBY_VERSION` constant). Mirrors the
 /// loader's hardcoded `RUBY_ENGINE`: zeo compiles to one fixed target, so a
 /// `RUBY_VERSION`-gated definition is statically decidable.
-const TARGET_RUBY_VERSION: &str = "4.0.5";
+const TARGET_RUBY_VERSION: &str = "4.0.6";
 
 /// Toplevel constants zeo's runtime ALWAYS defines, so `defined?(C)` is
 /// statically true. Used to pick the live branch of a feature-probe like

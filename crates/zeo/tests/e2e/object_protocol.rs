@@ -75,7 +75,7 @@ fn to_s_renders_the_canonical_opts_body_form_and_inspect_the_literal_form() {
 fn broken_and_binary_strings_inspect_with_hex_escapes() {
     // A byte that isn't a character in the string's encoding renders as
     // \xNN, and the cross-encoding equality rule keeps ASCII-only strings
-    // equal across encodings. Cross-checked against ruby 4.0.5.
+    // equal across encodings. Cross-checked against ruby 4.0.6.
     let result = run_ruby(
         r#"
         p "abc".b == "abc"
@@ -382,7 +382,7 @@ fn enumerable_min_max_dispatch_a_user_spaceship() {
 // The MRO-walking builtin method tables: Kernel/BasicObject/
 // Comparable resolve as real ancestors on VALUE receivers, reopens are found
 // per-ancestor, Range#=== is real, and arg-type mismatches raise CRuby's
-// TypeError/ArgumentError shapes. Oracle: ruby 4.0.5.
+// TypeError/ArgumentError shapes. Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 /// Comparable's operators and Kernel's universals reach builtin values
@@ -877,7 +877,7 @@ fn class_frozen_false_hash_delete_block_and_default_record_separator() {
 
 #[test]
 fn nil_object_id_range_cover_and_struct_not_equal() {
-    // nil.object_id is 4 (CRuby 4.0.5). Range#cover? accepts a Range argument
+    // nil.object_id is 4 (CRuby 4.0.6). Range#cover? accepts a Range argument
     // (containment). Struct#!= negates the struct's value == (not identity).
     let result = run_ruby(
         r#"
@@ -903,7 +903,7 @@ fn freeze_matrix_covers_the_handle_kinds_and_queue_refuses() {
     // Enumerator, Thread, Mutex (lockable while frozen) -- with the
     // dup-drops/clone-copies flag rule and the flag never aliasing an
     // earlier copy. Queue/SizedQueue refuse to freeze with CRuby's
-    // TypeError. Expected output is verbatim ruby 4.0.5.
+    // TypeError. Expected output is verbatim ruby 4.0.6.
     let result = run_ruby(
         r##"
         pr = proc { 1 }
@@ -977,7 +977,7 @@ fn freeze_matrix_covers_the_handle_kinds_and_queue_refuses() {
 #[test]
 fn dup_and_clone_of_uncopyable_handles_raise_cruby_shapes() {
     // The former loud-panic tier is real, rescuable raises now -- every
-    // message verbatim from ruby 4.0.5. Fiber is the special one: CRuby's
+    // message verbatim from ruby 4.0.6. Fiber is the special one: CRuby's
     // shallow copy succeeds but skips the machine stack, so the COPY is an
     // uninitialized fiber (resume raises) while the original still runs.
     // Concurrent join/value on one Thread hands every joiner the outcome.

@@ -171,7 +171,7 @@ fn object_typed_local_widened_to_poly_across_branches_boxes_correctly() {
 
 // ---- require/require_relative/load compile-time splicing ----
 // Every positive-path expectation below was oracle-verified against real
-// `ruby` (4.0.5) first, per this project's standing convention.
+// `ruby` (4.0.6) first, per this project's standing convention.
 
 #[test]
 fn require_relative_splices_in_document_order_and_shares_the_global_namespace() {
@@ -565,7 +565,7 @@ fn require_gated_extension_constant_is_a_name_error_without_its_require() {
     // The ext require-gate: a require-gated builtin's constant
     // (`Base64`, gated by `"base64"`) is INVISIBLE until `require "base64"`
     // activates it -- referencing it un-required raises `NameError:
-    // uninitialized constant Base64`, oracle-verified against ruby 4.0.5
+    // uninitialized constant Base64`, oracle-verified against ruby 4.0.6
     // (`uninitialized constant Base64 (NameError)`). The gate rides the
     // ordinary `resolve_class` -> unset-constant path, so it's a rescuable
     // RUNTIME NameError, not a compile error.

@@ -154,7 +154,7 @@ fn numeric_breadth_matches_the_oracle() {
 // Kernel breadth: the multi-arg print family, the sprintf
 // engine, rand/srand (property-asserted: our PRNG is deliberately not
 // MT19937), catch/throw, and the user-def-wins interception order fix.
-// Oracle: ruby 4.0.5.
+// Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -492,7 +492,7 @@ fn matchdata_hash_is_value_based() {
 // (Engine::Onig): line anchors with no phantom position after a trailing
 // newline, inline `(?m:)` DOTALL scoping, the absence operator `(?~...)`, and
 // the redundant `a***` that the Rust engines reject but Ruby accepts. Every
-// line is oracle-pinned against ruby 4.0.5.
+// line is oracle-pinned against ruby 4.0.6.
 #[test]
 fn oniguruma_backed_semantics_match_the_oracle() {
     let result = run_ruby(

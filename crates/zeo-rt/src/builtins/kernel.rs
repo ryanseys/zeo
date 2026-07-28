@@ -281,7 +281,7 @@ ruby_module! {
         arity!(args, 0);
         Ok(RubyValue::Int(match recv {
             RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
-            // CRuby 4.0.5's fixed immediate ids: nil 4, true 20, false 0.
+            // CRuby 4.0.6's fixed immediate ids: nil 4, true 20, false 0.
             RubyValue::Nil => 4,
             RubyValue::Bool(true) => 20,
             RubyValue::Bool(false) => 0,
@@ -1041,9 +1041,13 @@ pub fn kernel_string(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 
 /// `Kernel#Array(arg)`: nil -> [], Array -> itself, Hash -> assoc pairs,
 /// Range -> to_a, anything else -> [arg]. (`to_ary`/`to_a` protocol probes
-/// on user objects are a documented scope-cut.)
+/// on user objects are a documented scope-cut, beyond the value-subclass
+/// case below, which IS an Array.)
 pub fn kernel_array(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1);
+    if let Some(a) = crate::builtins::convert::check_to_ary(&args[0])? {
+        return Ok(a);
+    }
     Ok(match &args[0] {
         RubyValue::Nil => RubyValue::Array(crate::array_new(Vec::new())),
         RubyValue::Array(_) => args[0].clone(),

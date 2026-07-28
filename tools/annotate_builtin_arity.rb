@@ -3,7 +3,7 @@
 
 # Re-declares per-name Method#arity annotations on the value-class
 # `builtin_methods!` tables, verified against this ruby's own reflection (run it
-# under the 4.0.5 oracle).
+# under the 4.0.6 oracle).
 #
 # Each builtin row's name literal carries an optional `[n]` arity suffix (CRuby's
 # `rb_define_method` argc, per-name since aliases can diverge -- Array#<< is 1 but
@@ -11,7 +11,7 @@
 # `Klass.instance_method(name).arity`, so the declarations stay honest.
 #
 # Run from the repo root under the oracle:
-#   ~/.local/share/mise/installs/ruby/4.0.5/bin/ruby tools/annotate_builtin_arity.rb
+#   ~/.local/share/mise/installs/ruby/4.0.6/bin/ruby tools/annotate_builtin_arity.rb
 
 require "set"
 

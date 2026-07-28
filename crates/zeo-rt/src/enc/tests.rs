@@ -294,7 +294,7 @@ fn transcode_fallback_consulted_first() {
 }
 
 // --- Single-byte table rows (Windows-125x / ISO-8859-2/-15 / KOI8-R).
-// Every expectation oracle-verified against ruby 4.0.5.
+// Every expectation oracle-verified against ruby 4.0.6.
 
 #[test]
 fn single_byte_tables_map_and_round_trip() {

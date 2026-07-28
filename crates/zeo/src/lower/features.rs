@@ -20,7 +20,7 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
 
 /// Features CRuby has ALREADY loaded before the program's first line, so
 /// `require`ing one answers `false` even the first time. Verified by running
-/// `p require "<f>"` under ruby 4.0.5 for every feature `is_builtin_feature`
+/// `p require "<f>"` under ruby 4.0.6 for every feature `is_builtin_feature`
 /// accepts; only these two came back false.
 ///
 /// Deliberately NOT folded into `Hir::activated_features`: that set also

@@ -3,7 +3,7 @@
 //! receiver's fd (reached through `io::socket_raw_fd`) via `libc`, so a single
 //! implementation serves the whole hierarchy through the ancestor walk.
 //!
-//! Oracle-verified against ruby 4.0.5 over a loopback pair: `#getsockname`/
+//! Oracle-verified against ruby 4.0.6 over a loopback pair: `#getsockname`/
 //! `#getpeername` answer packed `sockaddr` Strings; `#local_address`/
 //! `#remote_address` the matching `Addrinfo`; `#setsockopt` sets an int option;
 //! `#send`/`#recv` move bytes; `#shutdown`/`#close_read`/`#close_write` half-

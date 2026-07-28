@@ -1613,7 +1613,7 @@ fn kwargs_and_double_splats_preserve_source_order() {
     // and the merge is left-to-right last-wins, so the interleaving is
     // observable. The old two-field split got the order wrong for a splat
     // before a pair and couldn't represent two splats at all. All
-    // oracle-verified against ruby 4.0.5.
+    // oracle-verified against ruby 4.0.6.
     let result = run_ruby(
         r#"
         def capture(**h) = h
@@ -1894,7 +1894,7 @@ fn nested_classes_reopen_through_both_definition_forms() {
 }
 
 // -- User-overridable object protocols + Comparable. Every
-// expectation oracle-verified against real ruby 4.0.5.
+// expectation oracle-verified against real ruby 4.0.6.
 
 #[test]
 fn user_defined_equality_dispatches_everywhere() {
@@ -2288,7 +2288,7 @@ fn block_params_are_reassignable() {
 }
 
 // --- This session's correctness fixes. Each covers a behavior the
-// `examples/*.rb` fixtures also exercise end to end against ruby 4.0.5;
+// `examples/*.rb` fixtures also exercise end to end against ruby 4.0.6;
 // these pin the specific shape that was broken, so a regression names
 // itself rather than showing up as an example-wide diff.
 

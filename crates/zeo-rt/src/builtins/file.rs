@@ -1263,7 +1263,7 @@ mod tests {
         assert_eq!(dirname_of("a/b"), "a");
     }
 
-    /// Every row oracle-read from ruby 4.0.5 -- including the two that read
+    /// Every row oracle-read from ruby 4.0.6 -- including the two that read
     /// like off-by-ones: a TRAILING dot IS an extension (`"foo."` -> `"."`),
     /// while a LEADING one is not (`".bashrc"` -> `""`).
     #[test]

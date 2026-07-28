@@ -1,6 +1,6 @@
 # Vendored-stdlib compile gaps (probe log)
 
-Ten pure-Ruby default gems from ruby 4.0.5 are vendored under `gems/`
+Ten pure-Ruby default gems from ruby 4.0.6 are vendored under `gems/`
 (see `gems/UPSTREAM.md`). Requiring each in a probe program (2026-07-21)
 gives the real remaining blocker per gem -- these are compiler work items,
 now surfaced honestly instead of `cannot load such file`:
@@ -63,7 +63,7 @@ and a COMPUTED name (`define_singleton_method(sym_var)`) works everywhere
 statement position, else emit the runtime call.
 
 Backtrace-frame divergences (2026-07-22, from the frame-tracking pass;
-everything else in the 20-case oracle battery matches ruby 4.0.5
+everything else in the 20-case oracle battery matches ruby 4.0.6
 verbatim):
 
 - **No C-method frames.** CRuby shows a frame for most (not all) C

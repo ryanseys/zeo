@@ -326,7 +326,7 @@ fn ruby_version_build_constants_and_file_separators() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "4.0.5\nruby\n0\n/\nnil\ntrue\n");
+    assert_eq!(result.stdout, "4.0.6\nruby\n0\n/\nnil\ntrue\n");
 }
 
 #[test]
@@ -439,7 +439,7 @@ fn file_line_and_dir_name_the_file_the_code_was_written_in() {
 #[test]
 fn pack_and_unpack_roundtrip_core_directives() {
     // Array#pack / String#unpack across the integer, string, base64, hex,
-    // BER and UTF-8 directives. Verified against ruby 4.0.5.
+    // BER and UTF-8 directives. Verified against ruby 4.0.6.
     let result = run_ruby(
         r#"
         p [65, 66, 67].pack("C*")
@@ -544,7 +544,7 @@ fn kernel_caller_and_conversion_functions_resolve_through_every_dispatch_path() 
     // `caller`/`caller_locations` answer an empty Array (no runtime frames in an
     // AOT build), and the private Kernel conversion/format helpers resolve as
     // real methods -- so a splat call, `method(:Integer)`, or a forwarded block
-    // reach them, not only the codegen fast-path. Byte-verified against ruby 4.0.5.
+    // reach them, not only the codegen fast-path. Byte-verified against ruby 4.0.6.
     let result = run_ruby(
         r#"
         def frames; caller; end
@@ -1235,7 +1235,7 @@ fn a_statically_wrong_arity_call_raises_at_runtime_and_dead_code_stays_silent() 
 // --- plan P-B: the core classes (File, Dir, Time, Process, ENV) ------------
 
 /// `File`'s pure-path family: string work that never touches the disk. Every
-/// expectation oracle-read from ruby 4.0.5 -- including the two that read
+/// expectation oracle-read from ruby 4.0.6 -- including the two that read
 /// like off-by-ones (a TRAILING dot IS an extension, a LEADING one is not).
 #[test]
 fn file_pure_path_family() {

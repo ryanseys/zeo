@@ -1,5 +1,5 @@
 # RUBY_* version/build constants and the File::SEPARATOR family that zeo
-# shares with its ruby 4.0.5 oracle. The platform/revision are machine- and
+# shares with its ruby 4.0.6 oracle. The platform/revision are machine- and
 # build-specific, so this checks the STABLE shared values exactly and the
 # dynamic ones structurally, keeping the golden output portable across build
 # hosts AND identical between zeo and the oracle.

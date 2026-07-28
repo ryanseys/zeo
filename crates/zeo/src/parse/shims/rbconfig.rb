@@ -3,7 +3,7 @@
 # Synthesized `rbconfig` shim, built into zeo (spliced by parse/loader.rs when a
 # program `require`s "rbconfig"). Real Ruby generates rbconfig.rb at build time
 # from its own build configuration; zeo has no such build, so it ships this
-# static stand-in describing the target it emulates (ruby 4.0.5). It carries the
+# static stand-in describing the target it emulates (ruby 4.0.6). It carries the
 # keys rubygems + bundler actually read (version, platform, install layout).
 #
 # FIRST-PASS LIMITATION: the platform/arch and install paths below are static

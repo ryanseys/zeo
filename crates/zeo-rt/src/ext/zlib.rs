@@ -1,6 +1,6 @@
 //! `zlib` (CRuby's bundled `zlib` gem). `require "zlib"` activates the `Zlib`
 //! module. The checksum functions (`crc32`, `adler32`) are implemented in Rust
-//! and oracle-verified against ruby 4.0.5; the compression surface
+//! and oracle-verified against ruby 4.0.6; the compression surface
 //! (`deflate`/`inflate`/`gzip`/`gunzip`) is `flate2`-backed (its default
 //! miniz_oxide output is byte-compatible with CRuby's zlib for `deflate`).
 //! `Zlib.gzip` uses a fixed mtime of 0 (a documented divergence from CRuby's
@@ -60,7 +60,7 @@ ruby_module! {
     Zlib = zeo_abi::ZLIB_MODULE;
 
     // `crc32`/`adler32` are CRuby module_functions (usable via `include Zlib`);
-    // the compression calls are plain module methods. Arities match ruby 4.0.5.
+    // the compression calls are plain module methods. Arities match ruby 4.0.6.
     module_function def "crc32" arity -1 (_recv, args, _block) {
         arity!(args, 0..=2);
         Ok(RubyValue::Int(i64::from(crc32(&bytes_arg(args.first())?, u32_arg(args.get(1), 0)))))
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn deflate_matches_ruby_zlib_bytes() {
-        // Ruby 4.0.5: `Zlib.deflate("hello world").bytes`.
+        // Ruby 4.0.6: `Zlib.deflate("hello world").bytes`.
         assert_eq!(
             bytes(f("deflate")(&RubyValue::Nil, &[s("hello world")], None)),
             vec![

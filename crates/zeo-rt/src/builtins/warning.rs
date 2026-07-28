@@ -1,6 +1,6 @@
 //! The `Warning` module: per-category emission flags (`Warning[:cat]` /
 //! `Warning[:cat]=`) and the `Warning.warn` sink. Defaults oracle-verified
-//! against ruby 4.0.5 under a plain (no `-w`) run: `deprecated` false,
+//! against ruby 4.0.6 under a plain (no `-w`) run: `deprecated` false,
 //! `experimental` true, `performance` false. What stdlib needs at load
 //! time (ostruct's `HAS_PERFORMANCE_WARNINGS` probe) plus the flag writes.
 
@@ -127,7 +127,7 @@ mod tests {
             .truthy()
         };
 
-        // Defaults match a plain (no `-w`) ruby 4.0.5 run.
+        // Defaults match a plain (no `-w`) ruby 4.0.6 run.
         assert!(!aref("deprecated"));
         assert!(aref("experimental"));
         assert!(!aref("performance"));

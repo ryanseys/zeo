@@ -2,7 +2,7 @@
 # Import newly-added spinel corpus tests into zeo's conformance suite, TRIAGING
 # each: a test zeo matches `ruby` on lands in tests/spinel/ (a passing corpus
 # case); one zeo diverges on lands in tests/gaps/ (an XFAIL gap to grind down).
-# Goldens are recorded from the ruby 4.0.5 oracle (never from spinel's own
+# Goldens are recorded from the ruby 4.0.6 oracle (never from spinel's own
 # `.expected`, which can diverge). Idempotent: re-running skips tests already
 # present and the ones listed in tests/spinel/REMOVED.txt.
 #

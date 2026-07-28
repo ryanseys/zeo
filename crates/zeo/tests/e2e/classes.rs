@@ -774,7 +774,7 @@ fn reopening_enumerable_reaches_every_includer() {
 
 // -- Correctness fixes (reopening, bare-super forwarding, cycle
 // guards, dup/clone). Every positive expectation below is oracle-verified
-// against real ruby 4.0.5.
+// against real ruby 4.0.6.
 
 #[test]
 fn reopening_a_user_class_adds_and_replaces_methods() {
@@ -889,7 +889,7 @@ fn including_a_nested_module_materializes_its_methods() {
 }
 
 // -- First-class Class/Module values. Every expectation
-// oracle-verified against real ruby 4.0.5.
+// oracle-verified against real ruby 4.0.6.
 
 #[test]
 fn class_values_print_and_compare_by_identity() {
@@ -1037,7 +1037,7 @@ fn explicit_triple_equals_on_class_values_checks_ancestry() {
 
 // ---------------------------------------------------------------------------
 // Builtin-class reopening (root). Every expectation below was
-// oracle-verified against real `ruby` (4.0.5) before being written down.
+// oracle-verified against real `ruby` (4.0.6) before being written down.
 // ---------------------------------------------------------------------------
 
 /// The Box docs' motivating example shape: a fresh method on `class String`,
@@ -1276,7 +1276,7 @@ fn builtin_reopen_methods_reachable_via_send() {
 // ---------------------------------------------------------------------------
 // The CRuby-exact builtin hierarchy (BasicObject/Kernel/
 // Numeric/Rational/Complex/Math/Struct/Enumerator in the ABI; declarative
-// superclass/includes seeding). Oracle: ruby 4.0.5.
+// superclass/includes seeding). Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 /// THE keystone parity test: `.ancestors` for every core class, byte-
@@ -2070,7 +2070,7 @@ fn reopened_prelude_and_parent_methods_resolve_on_subclass_instances() {
     // a reopened exception-prelude class's method visible on rescued
     // subclass instances, late parent reopens and mid-chain module
     // includes visible on deep-leaf instances. Expected output is
-    // verbatim ruby 4.0.5.
+    // verbatim ruby 4.0.6.
     let result = run_ruby(
         r##"
         class StandardError
@@ -2171,7 +2171,7 @@ fn sibling_extend_super_chains_resolve_in_extension_order() {
     // shadowed sibling copies get their own emitted fns registered as
     // singleton super targets (the own_impls distinction, singleton side).
     // A chain also crosses from extends into a parent's `def self.x`.
-    // All three outputs verbatim from ruby 4.0.5.
+    // All three outputs verbatim from ruby 4.0.6.
     let result = run_ruby(
         r#"
         module A

@@ -276,7 +276,7 @@ mod tests {
         assert!(matches!(r, RubyValue::Float(f) if f == 2.0));
     }
 
-    /// All shapes oracle-verified against ruby 4.0.5.
+    /// All shapes oracle-verified against ruby 4.0.6.
     #[test]
     fn rationalize_finds_the_simplest_rational_within_eps() {
         let go = |r: RubyValue, e: RubyValue| parts(&imethod("rationalize")(&r, &[e], None).unwrap());

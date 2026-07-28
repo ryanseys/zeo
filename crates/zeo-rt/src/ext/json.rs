@@ -1,10 +1,10 @@
 //! `json` (CRuby's bundled `json` gem). `require "json"` activates the `JSON`
 //! module. Parsing goes through `serde_json` (its `Value` tree converts cleanly
 //! to `RubyValue`, distinguishing integers from floats); generation is hand-
-//! rolled so integers, bignums, floats, and string escaping match ruby 4.0.5's
+//! rolled so integers, bignums, floats, and string escaping match ruby 4.0.6's
 //! `JSON.generate`/`pretty_generate` output exactly.
 //!
-//! Semantics oracle-verified against ruby 4.0.5: objects -> `Hash` with String
+//! Semantics oracle-verified against ruby 4.0.6: objects -> `Hash` with String
 //! keys (Symbol keys with `symbolize_names: true`), arrays -> `Array`, `null`
 //! -> `nil`, integers -> `Integer` (bignums preserved), reals -> `Float`.
 //!

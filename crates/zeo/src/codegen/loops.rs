@@ -443,7 +443,7 @@ pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> 
 /// Sub-expression form of a multiple assignment: `result = (x, y = rhs)` or
 /// `(a, b = pair)[0]`. Same destructuring as `emit_multi_write`, but the whole
 /// expression YIELDS the raw right-hand side verbatim -- CRuby's rule, verified
-/// against ruby 4.0.5: `(a, b = 5)` -> `5`, `(a, b = 1, 2)` -> `[1, 2]`,
+/// against ruby 4.0.6: `(a, b = 5)` -> `5`, `(a, b = 1, 2)` -> `[1, 2]`,
 /// `(a, b = arr)` -> `arr` (the array itself, not a fresh destructured copy).
 /// The RHS is evaluated exactly once and is already a `RubyValue` in both
 /// branches -- the `Array` branch calls `as_array_unchecked` on it, the scalar

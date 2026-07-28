@@ -3,7 +3,7 @@
 ## Encoding divergences (zeo-enc)
 
 The encoding engine carries 24 encodings. The single-byte tables
-(Windows-125x, ISO-8859-2/-15, KOI8-R) are generated from the ruby 4.0.5
+(Windows-125x, ISO-8859-2/-15, KOI8-R) are generated from the ruby 4.0.6
 oracle itself, so their mappings -- including which vendor-page bytes have
 NO Unicode mapping -- are exact. Known divergences:
 

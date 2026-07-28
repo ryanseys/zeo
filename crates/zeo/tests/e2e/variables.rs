@@ -340,7 +340,7 @@ fn class_level_ivars_are_per_class_and_not_inherited() {
     // The defining property of class-level `@x`, and the whole reason it
     // can't share `@@x`'s storage: a subclass gets its OWN slot, starting
     // empty, even though it inherits the method that reads it. Contrast the
-    // `@@cv` line, which IS shared. Oracle-verified (ruby 4.0.5).
+    // `@@cv` line, which IS shared. Oracle-verified (ruby 4.0.6).
     let result = run_ruby(
         r#"
         class Base
@@ -938,7 +938,7 @@ fn dup_and_clone_on_user_objects_copy_ivars_shallowly() {
 }
 
 // -- Nested classes/modules + constant paths (namespacing).
-// Every positive expectation oracle-verified against real ruby 4.0.5.
+// Every positive expectation oracle-verified against real ruby 4.0.6.
 
 #[test]
 fn nested_classes_define_dispatch_and_resolve_lexical_constants() {
@@ -1159,7 +1159,7 @@ fn math_constants_and_kernel_conversions() {
 }
 
 // ---------------------------------------------------------------------------
-// Struct: compile-time class synthesis. Oracle: ruby 4.0.5.
+// Struct: compile-time class synthesis. Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 /// `Point = Struct.new(:x, :y)` mints a native struct class at runtime (Batch
@@ -1365,7 +1365,7 @@ fn class_variables_at_module_and_top_level_scope() {
 fn top_level_class_variable_is_stored_on_object() {
     // A bare `@@x` written outside any class/module body resolves its storage
     // to Object, so a later top-level read sees the same value. NOTE a
-    // divergence: Ruby 4.0.5 itself now RAISES `RuntimeError: class variable
+    // divergence: Ruby 4.0.6 itself now RAISES `RuntimeError: class variable
     // access from toplevel` for both the write and the read here (it was a
     // warning in older rubies). Zeo keeps the older permissive behavior to
     // match the committed `test/module_cvars.rb` snapshot the conformance
@@ -1601,7 +1601,7 @@ fn data_constructs_positionally_or_by_keyword() {
         p(a == b)
         p a.frozen?
         # The `rescue` modifier needs its own parens inside a call's arguments
-        # (a bare `p(x rescue y)` is a SyntaxError in ruby 4.0.5 too).
+        # (a bare `p(x rescue y)` is a SyntaxError in ruby 4.0.6 too).
         p((Point.new(1) rescue $!.class))
         p((Point.new(x: 1, y: 2, z: 3) rescue $!.class))
         p((a.with(z: 9) rescue $!.class))

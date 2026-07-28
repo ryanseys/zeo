@@ -1,5 +1,5 @@
 //! `Marshal` wire-format + round-trip conformance. Every expected byte string
-//! and round-trip value is pinned to the ruby 4.0.5 oracle
+//! and round-trip value is pinned to the ruby 4.0.6 oracle
 //! (`--disable-error_highlight --disable-did_you_mean`).
 
 use crate::support::run_ruby;

@@ -794,7 +794,7 @@ fn dynamic_kwargs_binding(
 ///
 /// Emits nothing when the method accepts any count (no required/post params
 /// and an unbounded rest). The compile-time `expected` description matches
-/// CRuby's exact shapes (oracle-verified against ruby 4.0.5): `N` fixed,
+/// CRuby's exact shapes (oracle-verified against ruby 4.0.6): `N` fixed,
 /// `N..M` bounded range, `N+` when a rest param leaves the upper bound open.
 /// Both trampolines build their argument bindings identically below, so the
 /// `Option`-built bounds keep a missing lower/upper bound from emitting a
@@ -1030,7 +1030,7 @@ pub fn emit_exc_trampoline(
 ///       = -min - 1        otherwise
 /// ```
 ///
-/// Verified against ruby 4.0.5 across 24 signatures -- including the two
+/// Verified against ruby 4.0.6 across 24 signatures -- including the two
 /// shapes that make the lambda/proc distinction visible:
 /// `->(a, b = 1) {}.arity == -2` but `proc { |a, b = 1| }.arity == 1`.
 pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
@@ -1129,7 +1129,7 @@ fn anon_name<'a>(name: Option<&'a str>, sigil: &'a str) -> &'a str {
 /// it (`|a, **k|` is still exempt), but a rest or post does (`|a, *b|` splats).
 ///
 /// Oracle-derived, not recalled from CRuby's source -- every row below was
-/// read off `ruby 4.0.5` via `def m(x); yield x; end; m([1,2]) { |...| }`:
+/// read off `ruby 4.0.6` via `def m(x); yield x; end; m([1,2]) { |...| }`:
 ///
 /// ```text
 /// |a|             -> no    ambiguous_param0
@@ -1486,7 +1486,7 @@ mod tests {
         p
     }
 
-    /// Every case here was READ OFF ruby 4.0.5 (`p ->(...) {}.arity` /
+    /// Every case here was READ OFF ruby 4.0.6 (`p ->(...) {}.arity` /
     /// `p proc { |...| }.arity`), not derived from our own implementation --
     /// this table IS the specification. See `proc_arity`'s docs for the
     /// formula it encodes.

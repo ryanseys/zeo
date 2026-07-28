@@ -1465,7 +1465,7 @@ fn a_bare_regexp_literal_used_as_an_implicit_condition_is_a_clean_lowering_error
 fn encoding_surface_reports_transcodes_and_raises() {
     // The Encoding engine: a string is bytes + an encoding, queryable and
     // transcodable, with the Encoding class and its constants. `__ENCODING__`
-    // answers the script encoding (UTF-8). Cross-checked against ruby 4.0.5.
+    // answers the script encoding (UTF-8). Cross-checked against ruby 4.0.6.
     let result = run_ruby(
         r##"
         p "hello".encoding
@@ -1792,7 +1792,7 @@ fn exception_objects_expose_their_typed_introspection_accessors() {
     // UncaughtThrowError#tag/#value, and Exception#detailed_message -- populated
     // both at the raise site (a failed fetch / missing method / const miss /
     // uncaught throw) and from an explicit constructor. Byte-verified against
-    // ruby 4.0.5.
+    // ruby 4.0.6.
     let result = run_ruby(
         r#"
         begin; {}.fetch(:sym); rescue KeyError => e; p e.key; end
@@ -1937,7 +1937,7 @@ fn dynamic_dispatch_wrong_arity_raises_a_rescuable_argument_error() {
     // ArgumentError. Now it emits `return Err(raise_error("ArgumentError",
     // ...))`, so the program survives every mismatch and the final line
     // prints. All three message shapes -- fixed `N`, range `N..M`, and the
-    // rest form `N+` -- are oracle-verified against ruby 4.0.5.
+    // rest form `N+` -- are oracle-verified against ruby 4.0.6.
     let result = run_ruby(
         r##"
         class A
@@ -2271,7 +2271,7 @@ fn exception_backtrace_full_message_and_inspect() {
     // backtrace carries the real stamped frames; full_message renders the
     // uncaught-report shape from them; inspect renders "#<Class: msg>" (or
     // the bare class name when the message is empty). Expected output is
-    // verbatim ruby 4.0.5 (the harness compiles as `-e`, same as the
+    // verbatim ruby 4.0.6 (the harness compiles as `-e`, same as the
     // oracle's own `-e` labeling).
     let result = run_ruby(
         r#"
@@ -2888,7 +2888,7 @@ fn frozen_class_and_object_mutation_guards_raise_cruby_frozen_errors() {
     // frozen-object ivar/singleton/extend guards and the frozen-builtin
     // instance_variable_set raises. The cvar guard is on the storage OWNER
     // (`Sub.freeze` doesn't stop a write to Base's `@@z`). Expected output
-    // is verbatim ruby 4.0.5 (addresses normalized in-script).
+    // is verbatim ruby 4.0.6 (addresses normalized in-script).
     let result = run_ruby(
         r##"
         class Foo
@@ -2958,7 +2958,7 @@ fn frozen_class_and_object_mutation_guards_raise_cruby_frozen_errors() {
 fn frozen_collection_mutator_matrix_matches_cruby() {
     // The full String/Array/Hash mutator matrix against a frozen receiver
     // -- every row's outcome (FrozenError, or legal like `str * 2`) is
-    // verbatim ruby 4.0.5. Guard-ordering nuances included: `setbyte`
+    // verbatim ruby 4.0.6. Guard-ordering nuances included: `setbyte`
     // validates index/type BEFORE the frozen check; `transform_values!`
     // returns its blockless enumerator before it.
     let result = run_ruby(
@@ -3128,7 +3128,7 @@ fn raising_to_s_and_inspect_propagate_catchably_through_every_display_consumer()
     // interpolation (string and regexp)/Array+Hash to_s -- never a
     // runtime panic. Partial-output rules are CRuby's own: puts/print/p
     // flush what rendered before the raise, warn flushes nothing.
-    // Expected output is verbatim ruby 4.0.5.
+    // Expected output is verbatim ruby 4.0.6.
     let result = run_ruby(
         r##"
         class Boom
@@ -3242,7 +3242,7 @@ fn raising_to_s_and_inspect_propagate_catchably_through_every_display_consumer()
 
 #[test]
 fn backtrace_frames_match_cruby_across_definition_kinds() {
-    // The comprehensive frame battery, all verbatim ruby 4.0.5 (invoked as
+    // The comprehensive frame battery, all verbatim ruby 4.0.6 (invoked as
     // `-e`, the same label this harness compiles under): method labels
     // (Object#m / Foo#m / Foo.cm / M.modfun / M#mixed), lexical block
     // frames (`block in ...`), caller windows (0-start, past-the-top nil,
@@ -3284,7 +3284,7 @@ fn backtrace_frames_match_cruby_across_definition_kinds() {
 #[test]
 fn uncaught_exception_report_matches_cruby_shape() {
     // The top-level report: innermost frame heads the message line, outer
-    // frames follow tab-indented -- verbatim ruby 4.0.5 (as `-e`).
+    // frames follow tab-indented -- verbatim ruby 4.0.6 (as `-e`).
     let result = run_ruby("def inner; raise \"boom\"; end\ndef outer; inner; end\nouter\n");
     assert!(!result.status.success());
     assert_eq!(
@@ -3301,7 +3301,7 @@ fn arity_errors_attribute_to_the_callee_frame_like_cruby() {
     // callee: the innermost backtrace row is the callee's label at its
     // `def` line, and an `initialize`-less `.new` shows the C-frame shape
     // `'BasicObject#initialize'` at the CALLER's line. This battery was
-    // verified verbatim against ruby 4.0.5 (the arity family was previously
+    // verified verbatim against ruby 4.0.6 (the arity family was previously
     // an excluded, catalogued divergence of the frame-tracking battery).
     let result = run_ruby(
         r#"

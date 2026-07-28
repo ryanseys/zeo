@@ -1,4 +1,4 @@
-# Consolidated CRuby-4.0.5 parity anchor for direct instance_exec: one
+# Consolidated CRuby-4.0.6 parity anchor for direct instance_exec: one
 # file exercising the supported core shapes in combination. Every line's
 # output is cross-checked against `ruby` (the .expected is the oracle).
 

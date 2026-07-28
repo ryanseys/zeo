@@ -486,7 +486,7 @@ ruby_class! {
         let (start, end, _) = range_parts(recv);
         // A beginless range has no minimum -- CRuby raises rather than iterate
         // (which a bare `enumerable_send` would attempt endlessly). Holds
-        // regardless of arg/block (verified against ruby 4.0.5).
+        // regardless of arg/block (verified against ruby 4.0.6).
         if start.is_none() {
             return Err(range_error!("cannot get the minimum of beginless range"));
         }
@@ -517,7 +517,7 @@ ruby_class! {
         let (start, end, exclusive) = range_parts(recv);
         // An endless range has no maximum -- CRuby raises before iterating
         // (which would loop forever). Holds regardless of arg/block (verified
-        // against ruby 4.0.5, including a Float begin: `(1.0..).max`).
+        // against ruby 4.0.6, including a Float begin: `(1.0..).max`).
         if end.is_none() {
             return Err(range_error!("cannot get the maximum of endless range"));
         }

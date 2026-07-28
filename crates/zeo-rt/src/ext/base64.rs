@@ -6,7 +6,7 @@
 //! Living inside `zeo-rt`, it raises proper rescuable
 //! `ArgumentError`/`TypeError`.
 //!
-//! Semantics oracle-verified against ruby 4.0.5: `encode64` = RFC 2045 (a `\n`
+//! Semantics oracle-verified against ruby 4.0.6: `encode64` = RFC 2045 (a `\n`
 //! every 60 chars and at the end; `""` -> `""`); `strict_encode64` = RFC 4648
 //! (no newlines); `urlsafe_encode64` = `-`/`_` alphabet, padding kept;
 //! `decode64` is liberal (skips non-alphabet chars, like `unpack1("m")`);

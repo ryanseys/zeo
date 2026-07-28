@@ -9,7 +9,7 @@
 //! gains class names, module-ness, and per-box method-table keys.
 //!
 //! The table also carries each builtin's SUPERCLASS and INCLUDES -- the
-//! CRuby-exact hierarchy (oracle-verified against ruby 4.0.5) that both the
+//! CRuby-exact hierarchy (oracle-verified against ruby 4.0.6) that both the
 //! compiler's ancestor linearization and the runtime's registry-free fallback
 //! chains are derived from. Ids are APPEND-ONLY: renumbering is technically
 //! safe (nothing persists across builds), but appending keeps generated-code
@@ -39,7 +39,7 @@ pub const RUNTIME_CLASS_ID_BASE: u32 = 1 << 30;
 /// `bootstrap`) and the compiler's compile-time version-gate folding
 /// (`zeo`'s `version_fold`) agree byte-for-byte -- a `RUBY_VERSION < "x"`
 /// guard must fold against the SAME string the running program reports.
-pub const RUBY_VERSION: &str = "4.0.5";
+pub const RUBY_VERSION: &str = "4.0.6";
 
 /// One reserved built-in class/module -- see [`BUILTINS`].
 pub struct BuiltinClass {
@@ -1720,6 +1720,19 @@ fn expand_core(id: ClassId, out: &mut Vec<ClassId>) {
 /// emits a per-program OVERRIDE only when a program actually changes a builtin's
 /// ancestors (so `class Array; include M; end` still works, full-parity, without
 /// every program re-listing the unchanged hierarchy).
+/// Whether this builtin needs a per-program registry entry: `register_builtins`
+/// installs exactly the UNGATED ones, so a `require`-gated class must be
+/// registered by the program that activates it.
+///
+/// Asked of the ABI rather than of the compiler's own `feature_gate`, which a
+/// reopen deliberately clears to materialize the constant -- that changes name
+/// resolution, never who registered the class.
+pub fn is_gated_builtin(id: ClassId) -> bool {
+    BUILTINS
+        .iter()
+        .any(|b| b.id.0 == id.0 && b.feature.is_some())
+}
+
 pub fn declared_ancestors(id: ClassId) -> Vec<ClassId> {
     let mut out = Vec::new();
     expand_core(id, &mut out);

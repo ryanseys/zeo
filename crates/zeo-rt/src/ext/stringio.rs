@@ -7,7 +7,7 @@
 //! shared by reference). Positions are byte offsets; writes overwrite from the
 //! current position and extend the buffer, exactly like a file. The read/write
 //! surface -- including `seek`/`getc`/`readline`/`readlines`/`truncate` -- is
-//! oracle-verified against ruby 4.0.5.
+//! oracle-verified against ruby 4.0.6.
 //!
 //! Documented divergence: strings are handed back as UTF-8 (lossy for non-UTF-8
 //! bytes), matching this runtime's default `Str` -- CRuby's StringIO preserves

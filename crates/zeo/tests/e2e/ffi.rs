@@ -50,7 +50,7 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
 fn file_read_applies_external_and_internal_encodings() {
     // File.read tags bytes with the external encoding (default UTF-8), or a
     // requested one; binread is always ASCII-8BIT; binwrite round-trips raw
-    // bytes. Verified against ruby 4.0.5.
+    // bytes. Verified against ruby 4.0.6.
     let result = run_ruby(
         r#"
         Dir.mktmpdir do |dir|
@@ -77,7 +77,7 @@ fn file_read_applies_external_and_internal_encodings() {
 }
 
 // -- The fiber-backed Enumerator (per CRuby's enumerator.c).
-// Every positive expectation below is oracle-verified against ruby 4.0.5.
+// Every positive expectation below is oracle-verified against ruby 4.0.6.
 
 /// The keystone: external iteration over a method-backed enumerator --
 /// `next` advances a real fiber, `peek` caches without consuming, the
@@ -382,7 +382,7 @@ fn ffi_struct_layout_fields_and_c_call() {
 // A variadic `attach_function [.., :varargs]` builds its call interface at
 // runtime through libffi: `snprintf` formats mixed int/string/double varargs
 // into a buffer (and a call with no varargs at all still works). Oracle-pinned
-// against ruby 4.0.5 + the real `ffi` gem.
+// against ruby 4.0.6 + the real `ffi` gem.
 #[test]
 fn variadic_attach_function_matches_the_oracle() {
     let result = run_ruby(

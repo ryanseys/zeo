@@ -127,7 +127,7 @@ fn numeric_and_time_fractional_and_rounding_coercions() {
     // Rational#round honors the `half:` keyword (:up/:even/:down); Float
     // round/truncate with an extreme ndigits stays finite instead of NaN; and
     // Enumerator.new(callable).size invokes the callable lazily. Byte-verified
-    // against ruby 4.0.5.
+    // against ruby 4.0.6.
     let result = run_ruby(
         r#"
         p Time.utc(2001, 2, 3, 4, 5, 6, 500.5).nsec
@@ -154,7 +154,7 @@ fn numeric_and_time_fractional_and_rounding_coercions() {
 // ---------------------------------------------------------------------------
 // The numeric tower: full-bignum Integer, Rational, Complex,
 // the coercion matrix, literals, Math, Kernel conversions, Float/Math
-// constants. Oracle: ruby 4.0.5, byte-identical.
+// constants. Oracle: ruby 4.0.6, byte-identical.
 // ---------------------------------------------------------------------------
 
 /// Bignum end-to-end: overflow promotion + demotion round trips, big
@@ -544,7 +544,7 @@ fn rational_round_family_takes_precision() {
         result.stdout,
         // floor/ceil/truncate WITH a precision keep the fraction: 157/50 is
         // 3.14, so floor(1)=3.1=(31/10), ceil(1)=3.2=(16/5), truncate(1)=(31/10)
-        // (verified against ruby 4.0.5 -- the previous expectation wrongly kept
+        // (verified against ruby 4.0.6 -- the previous expectation wrongly kept
         // (157/50) for all three).
         "(157/50)\n0\n3\n(31/10)\n(16/5)\n(31/10)\n-4\n"
     );
@@ -834,7 +834,7 @@ fn integer_bit_slice_negative_start_and_width() {
 
 #[test]
 fn rand_float_bound_is_integer_and_digits_radix_messages() {
-    // rand(Float) truncates the bound and draws an Integer (CRuby 4.0.5);
+    // rand(Float) truncates the bound and draws an Integer (CRuby 4.0.6);
     // Integer#digits distinguishes a negative radix from a 0/1 radix.
     let result = run_ruby(
         r#"

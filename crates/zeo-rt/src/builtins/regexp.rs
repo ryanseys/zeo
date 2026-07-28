@@ -318,6 +318,10 @@ fn re_of(recv: &RubyValue) -> &crate::RRegexp {
 fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
     match v {
         RubyValue::Nil => Ok(None),
+        // A Symbol matches as its name, which is not an implicit String
+        // conversion but a case CRuby's regexp entry points special-case --
+        // `delegate.rb` filters `private_instance_methods` with `/…/ =~ m`.
+        RubyValue::Symbol(s) => Ok(Some(s.name())),
         other => Ok(Some(
             crate::builtins::convert::to_rstr(other)?
                 .lock()

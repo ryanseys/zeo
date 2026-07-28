@@ -39,7 +39,7 @@ those are process-random on both sides).
 
 ## Goldens are recorded from ruby, never hand-written
 
-The `.expected` is the **ruby 4.0.5 oracle** output (the target zeo must
+The `.expected` is the **ruby 4.0.6 oracle** output (the target zeo must
 eventually produce). Record/refresh it with:
 
 ```sh

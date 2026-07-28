@@ -3,7 +3,7 @@
 //! what `Socket.getaddrinfo`-family calls, `BasicSocket#local_address`/
 //! `#remote_address`, and `#accept` answer.
 //!
-//! Semantics oracle-verified against ruby 4.0.5: `Addrinfo.tcp("127.0.0.1", 80)`
+//! Semantics oracle-verified against ruby 4.0.6: `Addrinfo.tcp("127.0.0.1", 80)`
 //! has `afamily AF_INET`, `socktype SOCK_STREAM`, `protocol IPPROTO_TCP`;
 //! `#inspect` is `"#<Addrinfo: 127.0.0.1:80 TCP>"` (v6 bracketed, `:port` shown
 //! only when non-zero, the trailing tag `TCP`/`UDP`/`SOCK_STREAM`/... derived

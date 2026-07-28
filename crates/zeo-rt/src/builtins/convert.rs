@@ -58,7 +58,7 @@ fn is_already(v: &RubyValue, target: &str) -> bool {
 /// TypeError, wrong-typed answer the "gives Z" TypeError.
 pub fn convert(v: &RubyValue, target: &str, meth: &str) -> Result<RubyValue, Signal> {
     if is_already(v, target) {
-        return Ok(v.clone());
+        return Ok(payload_of(v.clone()));
     }
     match try_convert(v, target, meth)? {
         Some(converted) => Ok(converted),
@@ -73,9 +73,22 @@ pub fn convert(v: &RubyValue, target: &str, meth: &str) -> Result<RubyValue, Sig
 /// answer is `Ok(None)` -- only a present-and-lying `meth` raises.
 pub fn check_convert(v: &RubyValue, target: &str, meth: &str) -> Result<Option<RubyValue>, Signal> {
     if is_already(v, target) {
-        return Ok(Some(v.clone()));
+        return Ok(Some(payload_of(v.clone())));
     }
     try_convert(v, target, meth)
+}
+
+/// The builtin value behind a value SUBCLASS (`class FormData < String`).
+///
+/// CRuby needs no such step -- a String subclass IS a String to every C
+/// entry point. Here the subclass is an `Object` wrapping its payload, and
+/// every caller of the conversion protocol is asking for the builtin
+/// representation, so this is where the wrapper comes off.
+fn payload_of(v: RubyValue) -> RubyValue {
+    match &v {
+        RubyValue::Object(o) => o.builtin_payload().unwrap_or(v),
+        _ => v,
+    }
 }
 
 /// The shared probe: call `meth` if the receiver's class answers it,
@@ -96,7 +109,7 @@ fn try_convert(v: &RubyValue, target: &str, meth: &str) -> Result<Option<RubyVal
             crate::builtins::class_name_of(&answer)
         ));
     }
-    Ok(Some(answer))
+    Ok(Some(payload_of(answer)))
 }
 
 /// `to_int` protocol, strict: the argument as an Integer value.
@@ -212,6 +225,7 @@ pub fn to_rstr(v: &RubyValue) -> Result<crate::collections::RStr, Signal> {
         _ => unreachable!("to_str post-checks its answer"),
     }
 }
+
 
 /// [`to_ary`] unwrapped to the array handle.
 pub fn to_rary(v: &RubyValue) -> Result<crate::collections::RArray, Signal> {

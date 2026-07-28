@@ -8,7 +8,7 @@
 //! style, which the yaml-rust2 emitter does not match (Psych keeps a sequence
 //! nested under a mapping key at the KEY's indent, not one level deeper).
 //!
-//! Oracle-verified against ruby 4.0.5 for scalars, sequences, mappings, and
+//! Oracle-verified against ruby 4.0.6 for scalars, sequences, mappings, and
 //! their nesting. A YAML syntax error raises `Psych::SyntaxError`, which this
 //! gem's RUBY half (`gems/psych/lib/psych.rb`) defines -- see `ext/json.rs`
 //! for why the exception lives there and not here. Documented divergences:

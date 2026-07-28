@@ -1240,7 +1240,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // OVERRIDE: it lands after `register_builtins` in `main` and replaces
         // the default entry. This keeps the common program free of the ~540
         // identical builtin registrations while preserving full reopen parity.
-        let is_ext = class.feature_gate.is_some();
+        let is_ext = zeo_abi::is_gated_builtin(ClassId(id));
         let ancestors_default = class.ancestors == zeo_abi::declared_ancestors(ClassId(id));
         let register = (!is_overlay && (is_ext || !ancestors_default)).then(|| {
             quote! {

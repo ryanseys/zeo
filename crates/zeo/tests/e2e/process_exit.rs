@@ -80,7 +80,7 @@ fn signal_module_and_signal_exception_surface() {
     // SignalException/Interrupt resolve a signal name<->number (#signo/#signm,
     // arg-form validation) and the Signal module answers list/signame/trap
     // (trap is a validated no-op that records the prior action). Byte-verified
-    // against ruby 4.0.5 on darwin.
+    // against ruby 4.0.6 on darwin.
     let result = run_ruby(
         r#"
         p Interrupt.new.signo

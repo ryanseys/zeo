@@ -352,7 +352,7 @@ fn small_api_matchdata_size_set_join_complex_i_method_source_location() {
 }
 
 // ---------------------------------------------------------------------------
-// Array/Hash/Range Tier A breadth. Oracle: ruby 4.0.5.
+// Array/Hash/Range Tier A breadth. Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 /// The Array Tier A surface: set ops, mutators, sort family, flatten/
@@ -684,7 +684,7 @@ fn array_optional_and_variadic_arities() {
     // optional-`n` and variadic forms Ruby accepts: `last(n)`, `sample(n)`,
     // the block form of `rindex`, the fill span forms, and the variadic
     // set-op siblings `union`/`intersection`/`difference` (distinct from the
-    // binary `|`/`&`/`-`). All oracle-verified against ruby 4.0.5.
+    // binary `|`/`&`/`-`). All oracle-verified against ruby 4.0.6.
     let result = run_ruby(
         r#"
         p [1, 2, 3].last(2)
@@ -883,7 +883,7 @@ fn time_at_units_matchdata_slice_and_float_exponent() {
         result.stdout,
         // MatchData indexes like an array `[full, g1, g2, g3]`, so `md[1, 2]`
         // is `[g1, g2]` and `md[1..]` is `[g1, g2, g3]` (verified against
-        // ruby 4.0.5 -- the previous expectation dropped the first capture).
+        // ruby 4.0.6 -- the previous expectation dropped the first capture).
         "0.5\n5.0e-07\n[\"2024\", \"01\"]\n[\"2024\", \"01\", \"31\"]\ntrue\n5.0e-07\n1.0e+20\n"
     );
 }

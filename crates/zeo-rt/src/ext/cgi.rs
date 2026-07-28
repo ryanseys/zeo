@@ -2,7 +2,7 @@
 //! "cgi/escape"` (or `"cgi"`/`"cgi/util"`, canonicalized by the loader)
 //! activates the `CGI` module's URL/HTML escape functions.
 //!
-//! Pure string transforms, oracle-verified against ruby 4.0.5:
+//! Pure string transforms, oracle-verified against ruby 4.0.6:
 //! `escape`/`unescape` are `application/x-www-form-urlencoded` (space<->`+`);
 //! `escapeURIComponent`/`unescapeURIComponent` percent-encode space as `%20`;
 //! `escapeHTML`/`unescapeHTML` map `& < > " '`. The unreserved set kept by the
@@ -138,7 +138,7 @@ ruby_module! {
     CGI = zeo_abi::CGI_MODULE;
 
     // CRuby exposes these as `CGI.escape` etc. (singleton methods on the module),
-    // so they migrate as `def self.`. Arities match ruby 4.0.5.
+    // so they migrate as `def self.`. Arities match ruby 4.0.6.
     def self."escape" arity 1 (_recv, args, _block) {
         arity!(args, 1);
         Ok(out(percent_encode(&in_bytes(&args[0]), true)))

@@ -801,7 +801,7 @@ mod multi_assign_tests {
     }
 
     /// Splatting a non-Array is ordinary Ruby, not an error.
-    /// Every case here is oracle-verified against ruby 4.0.5.
+    /// Every case here is oracle-verified against ruby 4.0.6.
     #[test]
     fn splatting_an_array_flattens_it_and_nil_contributes_nothing() {
         let mut out = Vec::new();
@@ -911,7 +911,7 @@ mod compare_by_identity_tests {
     /// String key stored BEFORE the switch becomes unreachable by the object
     /// it was stored under -- the hash kept a frozen snapshot of it, and
     /// under identity keying that snapshot is a different object. Verified
-    /// against ruby 4.0.5, which answers `nil` there too.
+    /// against ruby 4.0.6, which answers `nil` there too.
     #[test]
     fn ops_honor_identity_and_reprojection() {
         let h = hash_new(vec![]);

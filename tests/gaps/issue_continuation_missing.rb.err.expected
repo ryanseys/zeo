@@ -1,1 +1,1 @@
-/Users/ryanseys/.local/share/mise/installs/ruby/4.0.5/lib/ruby/4.0.0/arm64-darwin25/continuation.bundle: warning: callcc is obsolete; use Fiber instead
+/Users/ryanseys/.local/share/mise/installs/ruby/4.0.6/lib/ruby/4.0.0/arm64-darwin23/continuation.bundle: warning: callcc is obsolete; use Fiber instead

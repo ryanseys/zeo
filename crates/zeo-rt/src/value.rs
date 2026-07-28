@@ -1142,7 +1142,7 @@ impl RubyValue {
     /// original (`arr.dup[1].equal?(arr[1])`, oracle-verified), only the
     /// top-level container is fresh.
     ///
-    /// Per-kind rules (each oracle-verified against ruby 4.0.5):
+    /// Per-kind rules (each oracle-verified against ruby 4.0.6):
     /// - Immediates/`Symbol`: `dup`/`clone` return self (real Ruby).
     /// - `Str`/`Array`/`Hash`: fresh payload, fresh (or copied) flag.
     /// - `Range`: immutable here and in Ruby -- self suffices (the fresh
@@ -1158,7 +1158,7 @@ impl RubyValue {
     ///   `Queue`/`SizedQueue`: `NoMethodError: undefined method
     ///   'initialize_copy'`; a mid-iteration `Enumerator`: `TypeError:
     ///   can't copy execution context` -- all real, rescuable raises
-    ///   (messages oracle-verified against ruby 4.0.5).
+    ///   (messages oracle-verified against ruby 4.0.6).
     /// - `Fiber`: succeeds, yielding an UNINITIALIZED fiber -- CRuby's
     ///   shallow copy skips the machine stack, so resuming the copy raises
     ///   `FiberError: uninitialized fiber` while the original still works
@@ -1533,7 +1533,7 @@ mod tests {
     }
 
     /// Every expected string below is oracle-verified against
-    /// real ruby 4.0.5 (`p`/`puts` on the same graphs).
+    /// real ruby 4.0.6 (`p`/`puts` on the same graphs).
     #[test]
     fn inspect_marks_a_self_referential_array() {
         let a = array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]);

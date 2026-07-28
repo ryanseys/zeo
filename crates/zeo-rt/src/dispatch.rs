@@ -835,7 +835,13 @@ impl ClassRegistry {
     ) {
         self.entries
             .get_mut(&id.0)
-            .expect("class must be registered before defining value methods on it")
+            .unwrap_or_else(|| {
+                panic!(
+                    "class {} must be registered before defining `{}` on it",
+                    id.0,
+                    name.name()
+                )
+            })
             .value_methods
             .insert((box_id, name), f);
     }

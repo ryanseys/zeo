@@ -8,7 +8,7 @@
 //! no bespoke `--stdlib` flag -- stdlib is delivered as ordinary `-I <lib>`
 //! load-path roots (see the `*_i_root*` e2e tests), and this harness drives
 //! that exact mechanism against a whole `lib` tree. `<lib-dir>` defaults to the
-//! installed oracle's `RbConfig::CONFIG["rubylibdir"]` (the 4.0.5 stdlib the
+//! installed oracle's `RbConfig::CONFIG["rubylibdir"]` (the 4.0.6 stdlib the
 //! runtime is matched against), and may be overridden with a path argument to
 //! point at any other checkout's `lib`.
 //!

@@ -22,7 +22,7 @@ fn load_with_a_wrap_argument_lowers_to_a_runtime_loaderror() {
 
 #[test]
 fn rust_enumerable_matches_real_ruby_across_all_receiver_kinds() {
-    // One oracle-verified sweep (real ruby 4.0.5, byte-for-byte) covering
+    // One oracle-verified sweep (real ruby 4.0.6, byte-for-byte) covering
     // the Rust Enumerable against every receiver kind: Array/Hash/Range
     // literals (the builtin `include Enumerable` set), and a user class
     // (Set) reached through `send`'s ancestor-checked fallback -- plus
@@ -123,7 +123,7 @@ fn is_a_walks_the_cruby_chains() {
 
 // ---------------------------------------------------------------------------
 // Enumerable Tier A breadth (the enum.c architecture: every
-// method drives the receiver's own #each). Oracle: ruby 4.0.5.
+// method drives the receiver's own #each). Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 #[test]

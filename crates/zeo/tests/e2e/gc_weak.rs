@@ -1,5 +1,5 @@
 //! `ObjectSpace::WeakMap`, `ObjectSpace.define_finalizer`, `GC`, and `WeakRef`.
-//! Every expectation is pinned to the ruby 4.0.5 oracle
+//! Every expectation is pinned to the ruby 4.0.6 oracle
 //! (`--disable-error_highlight --disable-did_you_mean`). Weak-reference tests
 //! avoid pinning non-deterministic addresses and only assert liveness/pruning.
 

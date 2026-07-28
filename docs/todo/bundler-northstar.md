@@ -16,7 +16,7 @@ stdlib (`fileutils`/`tempfile`/... — see the worklist), one at a time.
 ## Setup
 
 Upstream source is cloned (gitignored) into `vendor/rubygems` from
-`github.com/rubygems/rubygems` (bundler 4.1.0.dev — matches the ruby 4.0.5 ref
+`github.com/rubygems/rubygems` (bundler 4.1.0.dev — matches the ruby 4.0.6 ref
 tree). Both halves live there:
 
 - rubygems: `vendor/rubygems/lib` (`require "rubygems"`)

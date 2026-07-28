@@ -6,7 +6,7 @@
 //! `scan_until` searches forward (via `regexp::regexp_find`). Patterns may be a
 //! `Regexp` or a `String` (matched literally). The full scan/peek/position
 //! surface -- including `exist?`/`check_until`/`get_byte`/`unscan` -- is
-//! oracle-verified against ruby 4.0.5.
+//! oracle-verified against ruby 4.0.6.
 
 use crate::builtins::{arity, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};

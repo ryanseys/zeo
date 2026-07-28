@@ -116,7 +116,7 @@ fn interpolated_regexp_literal_shares_the_enclosing_scope() {
 #[test]
 fn magic_comment_sets_the_script_encoding() {
     // A `# encoding:` comment on the first line tags every string literal and
-    // __ENCODING__ with that encoding. Verified against ruby 4.0.5. (The
+    // __ENCODING__ with that encoding. Verified against ruby 4.0.6. (The
     // source must start with the comment, so no leading newline here.)
     let result = run_ruby(
         "# encoding: ISO-8859-1\n\
@@ -133,7 +133,7 @@ fn magic_comment_sets_the_script_encoding() {
 }
 
 // ---------------------------------------------------------------------------
-// String + Symbol Tier A breadth. Oracle: ruby 4.0.5.
+// String + Symbol Tier A breadth. Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 
 /// The String Tier A surface: case/strip families, split shapes, chomp,
@@ -217,7 +217,7 @@ fn string_optional_arg_arities() {
     // negation honored); `match`/`match?`/`rindex` take an optional start
     // position; `rindex` also accepts a Regexp; `each_line` an optional
     // separator; `split` an optional limit (positive caps fields, negative
-    // keeps trailing empties). All oracle-verified against ruby 4.0.5.
+    // keeps trailing empties). All oracle-verified against ruby 4.0.6.
     let result = run_ruby(
         r#"
         p "hello world".count("lo")
@@ -647,7 +647,7 @@ fn incompatible_concatenation_raises_the_compatibility_error() {
 // KOI8-R): oracle-generated mapping tables, CRuby's validity model (every
 // byte is a character; unassigned slots refuse only transcoding), and full
 // Unicode case mapping for the windows/ISO pages. All expectations below
-// are the verbatim output of ruby 4.0.5 on the same program.
+// are the verbatim output of ruby 4.0.6 on the same program.
 
 #[test]
 fn single_byte_encodings_validity_length_case_and_lookup() {
@@ -717,7 +717,7 @@ fn single_byte_transcoding_round_trips_and_error_shapes() {
 /// structural walking is CRuby-faithful (a valid-but-unmapped pair is a real
 /// character), mapping via encoding_rs; char ops, transcode round trips,
 /// Integer#chr / << codepoint splits, and all three
-/// InvalidByteSequenceError message forms. Verbatim ruby 4.0.5 output.
+/// InvalidByteSequenceError message forms. Verbatim ruby 4.0.6 output.
 #[test]
 fn multibyte_cjk_encodings_walk_transcode_and_error_shapes() {
     let result = run_ruby(
@@ -777,7 +777,7 @@ fn multibyte_cjk_encodings_walk_transcode_and_error_shapes() {
 /// The wide Unicode rows (UTF-16LE/BE, UTF-32LE/BE): NOT ASCII-compatible
 /// (never ascii_only, even empty; concatenation with anything else only
 /// through an empty side), surrogate-pair walking, scalar-based chr/<<,
-/// \uXXXX-escaped inspect. Verbatim ruby 4.0.5 output.
+/// \uXXXX-escaped inspect. Verbatim ruby 4.0.6 output.
 #[test]
 fn utf16_and_utf32_wide_encodings() {
     let result = run_ruby(

@@ -1055,7 +1055,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // An explicit `Scope::NAME = ...` whose scope isn't a registered
             // class raises `NameError` on the scope BEFORE the RHS is evaluated
             // (`Nope::X = (puts 1; 5)` raises without printing -- verified
-            // against ruby 4.0.5), so short-circuit without emitting `value`.
+            // against ruby 4.0.6), so short-circuit without emitting `value`.
             // (A bare `NAME =` never takes this branch: `const_owner_id_opt`
             // falls back to `Object`/the box surrogate for `scope: None`.)
             if const_owner_id_opt(cx, scope.as_deref(), name).is_none() {
@@ -1959,8 +1959,18 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // The raised `NameError` carries `#name` (the missing leaf as a Symbol) and
     // `#receiver` (the class the lookup ran against -- `Object` at top level, the
     // enclosing module for a nested miss), matching CRuby.
+    // Object is where Ruby's bare-name lookup ends, and the only constants the
+    // compile-time owner map can't already have placed are the ones the runtime
+    // installs (`RUBY_RELEASE_DATE` and friends) -- which is exactly why a bare
+    // read inside a nested module needs this tail. An explicit `Scope::NAME`
+    // gets no such fallback; CRuby doesn't give it one either.
+    let lookup = if scope.is_none() && owner != crate::compiler::OBJECT_CLASS.0 {
+        quote! { zeo_rt::const_get(#owner, #name).or_else(|| zeo_rt::const_get(0u32, #name)) }
+    } else {
+        quote! { zeo_rt::const_get(#owner, #name) }
+    };
     quote! {
-        match zeo_rt::const_get(#owner, #name) {
+        match #lookup {
             Some(__v) => __v,
             None => return Err(zeo_rt::Signal::Raise(zeo_rt::make_name_error(
                 format!("uninitialized constant {}", #qualified),
@@ -1983,7 +1993,7 @@ pub(super) fn emit_const_write_stmt(
     // An explicit `Scope::NAME = ...` whose scope class isn't registered is a
     // `NameError` on the missing scope. CRuby resolves the scope BEFORE
     // evaluating the value (`Nope::X = (puts 1; 5)` raises without printing --
-    // verified against ruby 4.0.5), so the value is deliberately NOT emitted
+    // verified against ruby 4.0.6), so the value is deliberately NOT emitted
     // here. Deferred to runtime so a dead/guarded branch still compiles.
     let Some(owner) = const_owner_id_opt(cx, scope, name) else {
         let err = uninitialized_constant_error(cx, scope.unwrap_or(name));

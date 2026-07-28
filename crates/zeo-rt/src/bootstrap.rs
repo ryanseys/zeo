@@ -87,7 +87,7 @@ pub fn install_core_constants() {
 /// `File::SEPARATOR` family.
 ///
 /// The version, release date, and revision are the pinned oracle's own release
-/// identity (`ruby 4.0.5`) -- fixed for the version exactly as CRuby bakes them
+/// identity (`ruby 4.0.6`) -- fixed for the version exactly as CRuby bakes them
 /// from `version.h`/`revision.h`. `RUBY_PLATFORM` is derived from the *build
 /// target* (`build.rs` -> `ZEO_RUBY_PLATFORM`), and `RUBY_DESCRIPTION` is
 /// *composed* from those parts the same way CRuby's `version.c` builds
@@ -105,8 +105,8 @@ fn seed_ruby_constants() {
     const VERSION: &str = zeo_abi::RUBY_VERSION;
     const ENGINE: &str = "ruby";
     const ENGINE_VERSION: &str = VERSION;
-    const RELEASE_DATE: &str = "2026-05-20";
-    const REVISION: &str = "64336ffd0ee9e1f4c05891695a3d7b49cb709721";
+    const RELEASE_DATE: &str = "2026-07-14";
+    const REVISION: &str = "03b6d3f8898a28604fe6cb00eae3226b821168f4";
     // Build-target-derived, like CRuby's configure-time `RUBY_PLATFORM`.
     const PLATFORM: &str = env!("ZEO_RUBY_PLATFORM");
 

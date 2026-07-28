@@ -9,7 +9,7 @@
 //! concurrently with its resumer (both swaps happen on the resumer's own
 //! stack, either side of the switch).
 //!
-//! Oracle-pinned consequences (ruby 4.0.5): `throw` inside a fiber
+//! Oracle-pinned consequences (ruby 4.0.6): `throw` inside a fiber
 //! cannot see the resumer's `catch` (`UncaughtThrowError` at the throw),
 //! a raise inside a fiber backtraces only the fiber's own frames
 //! (`caller` at the block top is empty), and a method suspended by

@@ -6,7 +6,7 @@
 //! the host `libc` headers so they match the target platform (Darwin's
 //! `AF_INET6 == 30`) exactly, like CRuby's C extension.
 //!
-//! Oracle-verified against ruby 4.0.5 over a loopback pair: a `Socket` bound and
+//! Oracle-verified against ruby 4.0.6 over a loopback pair: a `Socket` bound and
 //! listening accepts a connected `Socket`; `recvfrom` answers `[mesg, Addrinfo]`;
 //! `getaddrinfo("localhost", 80, nil, :STREAM)` resolves `127.0.0.1`/`::1`.
 

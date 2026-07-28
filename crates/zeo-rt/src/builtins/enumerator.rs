@@ -1,6 +1,6 @@
 //! `Enumerator` -- fiber-backed external iteration, per
 //! CRuby's enumerator.c (all mechanisms cited there were read against the
-//! CRuby source and oracle-verified on ruby 4.0.5).
+//! CRuby source and oracle-verified on ruby 4.0.6).
 //!
 //! An enumerator captures exactly what CRuby's `struct enumerator` does:
 //! a receiver, a method name, and the trailing args (`enumerator_init`,

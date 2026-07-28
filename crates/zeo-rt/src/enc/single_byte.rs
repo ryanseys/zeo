@@ -1,6 +1,6 @@
 //! Single-byte encodings beyond Latin-1: per-byte Unicode mapping tables.
 //!
-//! GENERATED from the ruby 4.0.5 oracle (see the script in the commit that
+//! GENERATED from the ruby 4.0.6 oracle (see the script in the commit that
 //! added this file): for every byte 0x80..=0xFF, the Unicode scalar CRuby's
 //! own converter produces, or `None` where CRuby raises
 //! `Encoding::UndefinedConversionError`. Deliberately NOT the WHATWG

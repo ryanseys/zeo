@@ -12,7 +12,7 @@
 //!
 //! The class methods (`Digest::SHA256.hexdigest(str)`) and the streaming
 //! instance API (`new`/`update`/`<<`/`hexdigest`/`digest`/`base64digest`/
-//! `reset`) are oracle-verified against ruby 4.0.5. An instance stores the
+//! `reset`) are oracle-verified against ruby 4.0.6. An instance stores the
 //! accumulated message and hashes it on demand -- simpler than cloning a live
 //! hasher, and identical in result.
 
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn bubble_babble_matches_ruby_reference() {
-        // `Digest.bubblebabble("1234567890")` from ruby 4.0.5.
+        // `Digest.bubblebabble("1234567890")` from ruby 4.0.6.
         assert_eq!(
             bubble_babble(b"1234567890"),
             "xesef-disof-gytuf-katof-movif-baxux"

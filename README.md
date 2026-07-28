@@ -142,7 +142,7 @@ corpus (below), not this list.
 
 ## Compatibility, honestly
 
-zeo targets **CRuby 4.0.5** (the version is single-sourced in `zeo-abi` so the
+zeo targets **CRuby 4.0.6** (the version is single-sourced in `zeo-abi` so the
 compiler's version-gate folding and the runtime's `RUBY_VERSION` can never
 disagree). Compatibility is expressed as **prose, not a percentage** — a green
 corpus run is the record, and a claim like "zeo's `json` is not the `json` gem"
@@ -267,7 +267,7 @@ Ruby from Rust" host API.
 
 Requirements: **Rust ≥ 1.87** (edition 2024; see `rust-version`), a **C
 compiler** (for the vendored Prism and Oniguruma), and — only for re-blessing
-goldens from the oracle — a real **Ruby 4.0.5** matching `mise.toml`.
+goldens from the oracle — a real **Ruby 4.0.6** matching `mise.toml`.
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
@@ -280,7 +280,7 @@ program, at most once per (profile, runtime variant, linkage). You can prebuild
 it explicitly with `cargo build --release -p zeo-rt` (add `--features eval-vm`
 for programs that use dynamic `eval`).
 
-`mise.toml` pins the development toolchain (`ruby = "4.0.5"`, `rust = "1.97.1"`).
+`mise.toml` pins the development toolchain (`ruby = "4.0.6"`, `rust = "1.97.1"`).
 
 ## Testing & conformance
 

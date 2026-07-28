@@ -1386,7 +1386,7 @@ mod tests {
     fn ilookup(n:&str)->Option<crate::builtins::BuiltinMethodFn>{(crate::builtins::registered_table(zeo_abi::TIME_CLASS).unwrap().instance.as_ref().unwrap().lookup)(n)}
 
     /// A fixed instant: 2023-11-14 22:13:20 UTC. Every assertion below was
-    /// read off `ruby 4.0.5` for this same epoch second.
+    /// read off `ruby 4.0.6` for this same epoch second.
     const EPOCH: i64 = 1_700_000_000;
 
     fn utc_at(sec: i64) -> RubyValue {

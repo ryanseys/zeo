@@ -3006,7 +3006,7 @@ mod class_value_tests {
     }
 
     /// The full CRuby-exact chains for the builtin classes
-    /// (oracle: ruby 4.0.5 `.ancestors`).
+    /// (oracle: ruby 4.0.6 `.ancestors`).
     #[test]
     fn builtin_ancestors_match_cruby() {
         let a = analyze_src("");
