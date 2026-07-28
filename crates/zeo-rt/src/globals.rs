@@ -54,22 +54,121 @@ pub fn global_alias(box_id: u32, new_name: &str, old_name: &str) {
         .insert((box_id, new_name.to_string()), target);
 }
 
+/// A global whose value lives somewhere other than the `$foo` table: the
+/// exception being handled, the last child's status, the last match and the
+/// pieces derived from it.
+///
+/// Codegen reads these directly at their own spellings, which is faster and
+/// is where `$1`/`$&` already went. This registry is what makes an ALIAS of
+/// one read the same place -- `require "English"` names every one of them,
+/// and an alias resolves to a NAME, which then lands here.
+enum Special {
+    /// `$!`
+    ErrorInfo,
+    /// `$@` -- the backtrace of `$!`, not a slot of its own.
+    ErrorPosition,
+    /// `$?`
+    ChildStatus,
+    /// `$~`
+    MatchData,
+    /// `$&` is group 0; `$1`..`$n` are the rest.
+    Group(usize),
+    /// `` $` ``
+    PreMatch,
+    /// `$'`
+    PostMatch,
+    /// `$+`
+    LastGroup,
+}
+
+fn special_of(name: &str) -> Option<Special> {
+    Some(match name {
+        "$!" => Special::ErrorInfo,
+        "$@" => Special::ErrorPosition,
+        "$?" => Special::ChildStatus,
+        "$~" => Special::MatchData,
+        "$&" => Special::Group(0),
+        "$`" => Special::PreMatch,
+        "$'" => Special::PostMatch,
+        "$+" => Special::LastGroup,
+        // `$1`.. -- and NOT `$0`, which is the program name.
+        _ => match name.strip_prefix('$')?.parse::<usize>() {
+            Ok(n) if n > 0 => Special::Group(n),
+            _ => return None,
+        },
+    })
+}
+
+fn special_get(special: Special) -> RubyValue {
+    match special {
+        Special::ErrorInfo => crate::current_exception().unwrap_or(RubyValue::Nil),
+        Special::ErrorPosition => match crate::current_exception() {
+            Some(exc) => crate::dispatch::send_value(&exc, crate::Symbol::intern("backtrace"), &[], None)
+                .unwrap_or(RubyValue::Nil),
+            None => RubyValue::Nil,
+        },
+        Special::ChildStatus => crate::last_child_status(),
+        Special::MatchData => crate::last_match(),
+        Special::Group(n) => crate::last_match_group(n),
+        Special::PreMatch => crate::last_match_pre(),
+        Special::PostMatch => crate::last_match_post(),
+        Special::LastGroup => crate::last_match_last_group(),
+    }
+}
+
 /// `nil` for a `$foo` never yet written IN THIS BOX -- matches real Ruby's
 /// own behavior for reading a global before any assignment ran (no
 /// `NameError`, unlike an unset constant -- see `constants::const_get`'s
 /// docs for that distinction).
 pub fn global_get(box_id: u32, name: &str) -> RubyValue {
+    let target = resolve(box_id, name);
+    if let Some(special) = special_of(&target) {
+        return special_get(special);
+    }
     GLOBALS
         .lock()
-        .get(&(box_id, resolve(box_id, name)))
+        .get(&(box_id, target))
         .cloned()
         .unwrap_or(RubyValue::Nil)
 }
 
+/// The plain store, for the runtime's own seeding (`$stdout`, `$0`, ...),
+/// which never targets a [`Special`]. Ruby-level assignment goes through
+/// [`global_assign`].
 pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
     GLOBALS
         .lock()
         .insert((box_id, resolve(box_id, name)), value);
+}
+
+/// `$g = value` as written in Ruby. Assigning a read-only special is a
+/// `NameError` naming the spelling the program used, so an alias reports
+/// itself (`$MATCH is a read-only variable`) rather than its target. At their
+/// own spellings these are SyntaxErrors that prism rejects before lowering,
+/// which is why only the aliased path can reach here.
+pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), crate::Signal> {
+    let target = resolve(box_id, name);
+    match special_of(&target) {
+        None => {
+            GLOBALS.lock().insert((box_id, target), value);
+            Ok(())
+        }
+        Some(Special::MatchData) => {
+            crate::set_last_match(match value {
+                RubyValue::MatchData(m) => Some(m),
+                _ => None,
+            });
+            Ok(())
+        }
+        Some(Special::ErrorPosition) => match crate::current_exception() {
+            Some(exc) => crate::builtins::exception::apply_custom_backtrace(&exc, &value),
+            None => Err(crate::raise_error("ArgumentError", "$! not set".to_string())),
+        },
+        Some(_) => Err(crate::raise_error(
+            "NameError",
+            format!("{name} is a read-only variable"),
+        )),
+    }
 }
 
 /// The globals that CRuby gives a meaningful default: `$/` (the input record
@@ -108,8 +207,16 @@ pub fn seed_default_globals() {
 /// `defined?($g)`, which answers `"global-variable"` only for an assigned
 /// user global and `nil` for one that was never written (unlike `global_get`,
 /// which reads any unset global as `nil`). Predefined special globals
-/// (`$!`, `$~`, ...) are handled by the caller and never reach here.
+/// (`$!`, `$~`, ...) are handled by the caller and never reach here at their
+/// own spellings.
+///
+/// An ALIAS is defined from the moment it is created, whatever its target
+/// currently reads: `defined?($MATCH)` is `"global-variable"` before any
+/// match has run, where `defined?($&)` is nil. Oracle-verified.
 pub fn global_defined(box_id: u32, name: &str) -> bool {
+    if ALIASES.lock().contains_key(&(box_id, name.to_string())) {
+        return true;
+    }
     GLOBALS
         .lock()
         .contains_key(&(box_id, resolve(box_id, name)))

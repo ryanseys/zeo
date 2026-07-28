@@ -344,7 +344,7 @@ pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> 
         MultiTarget::ClassVar(name) => super::expr::emit_cvar_write_stmt(cx, name, value),
         MultiTarget::Global(name) => {
             let bx = cx.box_id;
-            quote! { zeo_rt::global_set(#bx, #name, #value); }
+            quote! { zeo_rt::global_assign(#bx, #name, #value)?; }
         }
         MultiTarget::Const(name) => super::expr::emit_const_write_stmt(cx, None, name, value),
         MultiTarget::ScopedConst { scope, name } => {

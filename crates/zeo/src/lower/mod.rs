@@ -430,14 +430,29 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // (unlike `alias` on a method), so it lowers here. prism gives both
     // names as GlobalVariableReadNodes.
     if let Some(alias) = node.as_alias_global_variable_node() {
-        let name_of = |n: &Node<'_>| -> PResult<String> {
-            let g = n.as_global_variable_read_node().ok_or(
-                "`alias`'s global targets must both be plain `$name` globals (zeo limitation)",
-            )?;
-            Ok(String::from_utf8_lossy(g.name().as_slice()).into_owned())
+        // The SOURCE may also be a special: `alias $MATCH $&`, which is all
+        // `require "English"` does. prism gives those their own node types
+        // (`$&`/`` $` ``/`$'`/`$+`/`$~` are back-references, `$1`.. numbered),
+        // so normalize back to the `$`-spelling the alias table keys on --
+        // `globals::global_get` knows where each one really reads from. The
+        // TARGET is always a plain name: `alias $& $x` is a SyntaxError.
+        let special = |n: &Node<'_>| -> Option<String> {
+            let loc = n
+                .as_back_reference_read_node()
+                .map(|b| b.location())
+                .or_else(|| n.as_numbered_reference_read_node().map(|b| b.location()))?;
+            Some(String::from_utf8_lossy(loc.as_slice()).into_owned())
         };
-        let new_name = name_of(&alias.new_name())?;
-        let old_name = name_of(&alias.old_name())?;
+        let plain = |n: &Node<'_>| -> Option<String> {
+            let g = n.as_global_variable_read_node()?;
+            Some(String::from_utf8_lossy(g.name().as_slice()).into_owned())
+        };
+        let new_name = plain(&alias.new_name())
+            .ok_or("`alias`'s new global name must be a plain `$name` global")?;
+        let old = alias.old_name();
+        let old_name = plain(&old)
+            .or_else(|| special(&old))
+            .ok_or("`alias`'s source must be a `$name` global or a match special")?;
         return Ok(hir.push(HirNode::AliasGlobal(new_name, old_name)));
     }
 

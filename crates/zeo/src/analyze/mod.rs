@@ -926,6 +926,10 @@ fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
         return Some(b);
     }
     match &compiler.hir[id] {
+        // A literal condition: `module English end if false`, the
+        // documentation-anchor idiom the English gem opens with.
+        HirNode::BoolLit(b) => Some(*b),
+        HirNode::NilLit => Some(false),
         HirNode::Call {
             receiver: Some(recv),
             name,

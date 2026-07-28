@@ -103,7 +103,7 @@ pub use fiber::{
     fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
 };
 pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line, synthetic_c_frame};
-pub use globals::{global_alias, global_defined, global_get, global_set};
+pub use globals::{global_alias, global_assign, global_defined, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use ractor::{
     RRactor, RactorData, make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send,

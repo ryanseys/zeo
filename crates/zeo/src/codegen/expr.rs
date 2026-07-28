@@ -1016,7 +1016,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `RubyValue` (`zeo_rt::global_set`'s own signature).
             let v = box_if_object_typed(cx, *value, v);
             let bx = cx.box_id;
-            quote! { { let __v = #v; zeo_rt::global_set(#bx, #name, __v.clone()); __v } }
+            quote! { { let __v = #v; zeo_rt::global_assign(#bx, #name, __v.clone())?; __v } }
         }
         HirNode::QualifiedConstRead(scope, name) => emit_const_read(cx, Some(scope), name),
         HirNode::ConstReadOrNil(scope, name) => {
