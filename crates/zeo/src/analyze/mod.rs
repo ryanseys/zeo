@@ -122,11 +122,110 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
 
     let main_local_types = locals::infer_locals(&compiler, None, 0, &main_statements);
 
+    // With every scope's local types final (reinfer ran inside materialize)
+    // and the main scope's just computed, mark the typed-receiver iterator
+    // sites codegen can fuse into native loops.
+    mark_inline_iter_sites(&mut compiler, &main_statements, &main_local_types);
+
     Ok(Analyzed {
         compiler,
         main_statements,
         main_local_types,
     })
+}
+
+/// Fills [`Compiler::inline_iter_sites`]: every block call whose receiver is
+/// a LOCAL with a statically-known collection/counter type and whose block
+/// has a plain positional signature. The static type only nominates the
+/// site -- the emitted code still match-guards the live receiver and falls
+/// back to the ordinary dynamic dispatch (an Int-typed local can hold a
+/// BigInt after overflow; a shadowing block param can hold anything), so a
+/// wrong nomination costs size, never correctness.
+fn mark_inline_iter_sites(
+    compiler: &mut Compiler,
+    main_statements: &[NodeId],
+    main_local_types: &HashMap<String, TyKind>,
+) {
+    use crate::compiler::InlineIterKind;
+
+    fn plain_positional(params: &Params) -> bool {
+        params.optional.is_empty()
+            && params.rest.is_none()
+            && params.post.is_empty()
+            && params.keywords.is_empty()
+            && params.keyword_rest.is_none()
+            && params.block.is_none()
+            && params.required.iter().all(|p| !p.starts_with("__destr"))
+    }
+
+    fn scan(
+        compiler: &Compiler,
+        id: NodeId,
+        locals: &HashMap<String, TyKind>,
+        out: &mut HashMap<NodeId, InlineIterKind>,
+    ) {
+        if let HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block: Some(block),
+            block_arg: None,
+            ..
+        } = &compiler.hir[id]
+        {
+            if args.is_empty() && kwargs.is_empty() {
+                if let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
+                    (&compiler.hir[*recv], &compiler.hir[*block])
+                {
+                    if plain_positional(params) {
+                        let kind = match (locals.get(rn), name.as_str(), params.required.len()) {
+                            (Some(TyKind::Int), "times", 0 | 1) => Some(InlineIterKind::TimesInt),
+                            (Some(TyKind::Array), "each", 0 | 1) => Some(InlineIterKind::ArrayEach),
+                            (Some(TyKind::Array), "each_with_index", 1 | 2) => {
+                                Some(InlineIterKind::ArrayEachWithIndex)
+                            }
+                            _ => None,
+                        };
+                        if let Some(k) = kind {
+                            out.insert(*block, k);
+                        }
+                    }
+                }
+            }
+        }
+        compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
+    }
+
+    // A user REOPEN of the builtin method wins at every call site -- don't
+    // nominate that method's sites at all (the literal fast paths predate
+    // this rule, but gem-scale code goes through here).
+    let reopened = |cname: &str, m: &str| {
+        compiler.resolve_class(cname, &[], 0).is_some_and(|cid| {
+            compiler
+                .class(cid)
+                .own_methods
+                .iter()
+                .any(|&s| compiler.scope(s).name == m)
+        })
+    };
+    if reopened("Integer", "times")
+        || reopened("Array", "each")
+        || reopened("Array", "each_with_index")
+    {
+        return;
+    }
+
+    let mut sites = HashMap::new();
+    for scope in &compiler.scopes {
+        for &n in &scope.body {
+            scan(compiler, n, &scope.local_types, &mut sites);
+        }
+    }
+    for &n in main_statements {
+        scan(compiler, n, main_local_types, &mut sites);
+    }
+    compiler.inline_iter_sites = sites;
 }
 
 /// One top-level statement of the program walk: intercepts the

@@ -361,6 +361,24 @@ pub struct Compiler {
     /// and per ancestor by `codegen::constfold` -- is a set lookup instead of
     /// a rescan of the class body.
     pub(crate) direct_const_defs: Option<Vec<FSet<String>>>,
+    /// Block call sites whose receiver's STATIC type admits a native inline
+    /// loop (`analyze::mark_inline_iter_sites`), keyed by the BLOCK node.
+    /// Soundness lives in the emitted match GUARD (a mistyped receiver takes
+    /// the dynamic-fallback arm), so the map is purely an optimization hint;
+    /// the escaping-block scans deliberately ignore it -- a marked site keeps
+    /// escaping-style cell captures, correct in both arms.
+    pub inline_iter_sites: HashMap<crate::hir::NodeId, InlineIterKind>,
+}
+
+/// See [`Compiler::inline_iter_sites`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InlineIterKind {
+    /// `n.times { |i| }`, `n` statically `Int`.
+    TimesInt,
+    /// `arr.each { |e| }`, `arr` statically `Array`.
+    ArrayEach,
+    /// `arr.each_with_index { |e, i| }`, `arr` statically `Array`.
+    ArrayEachWithIndex,
 }
 
 /// The compiler-internal hash policy: fast, not DoS-resistant -- these sets
@@ -429,6 +447,7 @@ impl Compiler {
             frozen_crefs: None,
             frozen_fq_names: None,
             direct_const_defs: None,
+            inline_iter_sites: HashMap::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,

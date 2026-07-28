@@ -108,8 +108,8 @@ pub fn is_inline_block_fast_path(
 fn emit_counted_block_splice(
     cx: &Ctx,
     block_id: NodeId,
-    start: i64,
-    stop: i64,
+    start: TokenStream,
+    stop: TokenStream,
     inclusive: bool,
     label_stem: &str,
     result: TokenStream,
@@ -242,6 +242,194 @@ fn emit_counted_block_splice(
         }
     }
 }
+/// `emit_counted_block_splice`'s Array twin: iterate a LIVE view of the
+/// receiver array -- lock per element, never across the body, the runtime
+/// `Array#each` rule -- binding the block's first param from the fetched
+/// element (and, for `each_with_index`, the second from the index).
+/// Evaluates to the receiver handle; `break v` overrides as usual. Expects
+/// the receiver bound as `__iter_arr` by the caller's match arm.
+fn emit_array_each_splice(
+    cx: &Ctx,
+    block_id: NodeId,
+    with_index: bool,
+    label_stem: &str,
+) -> TokenStream {
+    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+        panic!("the inline splice's argument must be a block");
+    };
+    let outer = super::loops::fresh_label(cx, label_stem);
+    let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
+    let nested_captured: std::collections::HashSet<String> =
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+            .locals;
+    let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    if !nested_captured.is_empty() {
+        loop_cx
+            .captured_locals
+            .to_mut()
+            .extend(nested_captured.iter().cloned());
+    }
+    // The element param is untyped (drop any stale OUTER type under the same
+    // name); the index param is `Int` by construction, unless cell-wrapped.
+    if let Some(p) = params.required.first() {
+        loop_cx.local_types.to_mut().remove(p);
+    }
+    if with_index {
+        if let Some(p) = params.required.get(1) {
+            if nested_captured.contains(p) {
+                loop_cx.local_types.to_mut().remove(p);
+            } else {
+                loop_cx
+                    .local_types
+                    .to_mut()
+                    .insert(p.clone(), crate::types::TyKind::Int);
+            }
+        }
+    }
+    for name in &params.block_locals {
+        loop_cx.local_types.to_mut().remove(name);
+    }
+    let cell_wrap = |ident: &proc_macro2::Ident| {
+        quote! {
+            let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+        }
+    };
+    let bind_elem = params.required.first().map(|p| {
+        let ident = safe_ident(p);
+        let plain = quote! { #[allow(unused_mut)] let mut #ident = __iter_e; };
+        if nested_captured.contains(p) {
+            let wrap = cell_wrap(&ident);
+            quote! { #plain #wrap }
+        } else {
+            plain
+        }
+    });
+    let bind_idx = (with_index && params.required.len() >= 2).then(|| {
+        let ident = safe_ident(&params.required[1]);
+        let plain =
+            quote! { #[allow(unused_mut)] let mut #ident = zeo_rt::RubyValue::Int(__iter_i as i64); };
+        if nested_captured.contains(&params.required[1]) {
+            let wrap = cell_wrap(&ident);
+            quote! { #plain #wrap }
+        } else {
+            plain
+        }
+    });
+    let block_locals = params.block_locals.iter().map(|name| {
+        let ident = safe_ident(name);
+        if nested_captured.contains(name) {
+            quote! {
+                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil));
+            }
+        } else {
+            quote! {
+                #[allow(unused_variables, unused_mut)]
+                let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Nil;
+            }
+        }
+    });
+    let implicit_resets = params
+        .implicit_block_locals
+        .iter()
+        .filter(|name| !nested_captured.contains(*name))
+        .map(|name| {
+            let ident = safe_ident(name);
+            quote! { #ident = zeo_rt::RubyValue::Nil; }
+        });
+    let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
+    let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
+    quote! {
+        {
+            let mut __iter_i: usize = 0;
+            #outer: loop {
+                #[allow(unused_variables)]
+                let __iter_e = {
+                    let __g = __iter_arr.lock();
+                    match __g.get(__iter_i) {
+                        Some(__v) => __v.clone(),
+                        None => break #outer zeo_rt::RubyValue::Array(__iter_arr.clone()),
+                    }
+                };
+                #bind_elem
+                #bind_idx
+                #(#block_locals)*
+                #implicit_resets
+                // Advance BEFORE the body so `next` (a `continue #outer`)
+                // still steps; `redo` re-enters the inner label with the
+                // same bound element.
+                __iter_i += 1;
+                #inner
+            }
+        }
+    }
+}
+
+/// A typed-receiver iterator site (`Compiler::inline_iter_sites`): emit the
+/// native loop under a match arm that PROVES the receiver's runtime shape,
+/// with the ordinary dynamic dispatch as the other arm -- an Int-typed
+/// local holding a post-overflow BigInt, or a shadowing block param, just
+/// takes the fallback. The escaping-block scans treated this site as
+/// escaping (cell captures), which both arms share correctly.
+fn emit_typed_iter_inline(
+    cx: &Ctx,
+    kind: crate::compiler::InlineIterKind,
+    recv_id: NodeId,
+    block_id: NodeId,
+    name: &str,
+    block_arg: Option<NodeId>,
+) -> TokenStream {
+    use crate::compiler::InlineIterKind as K;
+    let recv = emit_expr(cx, recv_id);
+    let __bx = cx.box_id;
+    let name_sym = super::pooled_sym(name);
+    let block_value = emit_block_option(cx, Some(block_id), block_arg);
+    let fallback = wrap_dynamic_result(
+        true,
+        quote! {
+            zeo_rt::send_value_in(#__bx, &__iter_other, #name_sym, &[], #block_value)
+        },
+    );
+    match kind {
+        K::TimesInt => {
+            let splice = emit_counted_block_splice(
+                cx,
+                block_id,
+                quote! { 0i64 },
+                quote! { __iter_n },
+                false,
+                "times",
+                quote! { zeo_rt::RubyValue::Int(__iter_n) },
+            );
+            quote! {
+                match #recv {
+                    zeo_rt::RubyValue::Int(__iter_n) => #splice,
+                    __iter_other => #fallback,
+                }
+            }
+        }
+        K::ArrayEach | K::ArrayEachWithIndex => {
+            let splice = emit_array_each_splice(
+                cx,
+                block_id,
+                kind == K::ArrayEachWithIndex,
+                if kind == K::ArrayEachWithIndex {
+                    "each_with_index"
+                } else {
+                    "each"
+                },
+            );
+            quote! {
+                match #recv {
+                    zeo_rt::RubyValue::Array(__iter_arr) => #splice,
+                    __iter_other => #fallback,
+                }
+            }
+        }
+    }
+}
+
 /// Finishes a dynamic-dispatch (`send_value`) emission: `catch_break`
 /// wraps the call ONLY when the call site itself carries a block -- a
 /// `Signal::Break` can only ever target a block attached to THIS call, so
@@ -2145,8 +2333,8 @@ fn dispatch(
             return emit_counted_block_splice(
                 cx,
                 block_id,
-                0,
-                n,
+                quote! { 0i64 },
+                quote! { #n },
                 false,
                 "times",
                 quote! { zeo_rt::RubyValue::Int(#n) },
@@ -2176,8 +2364,8 @@ fn dispatch(
                     return emit_counted_block_splice(
                         cx,
                         block_id,
-                        s,
-                        e,
+                        quote! { #s },
+                        quote! { #e },
                         !exclusive,
                         "range_each",
                         quote! {
@@ -2190,6 +2378,15 @@ fn dispatch(
                     );
                 }
             }
+        }
+    }
+
+    // Typed-receiver iterator fusion (`Compiler::inline_iter_sites`): the
+    // literal shapes above never nominate (their receivers aren't locals),
+    // so ordering is free. See `emit_typed_iter_inline` for the guard rule.
+    if let Some(block_id) = block {
+        if let Some(&kind) = cx.compiler.inline_iter_sites.get(&block_id) {
+            return emit_typed_iter_inline(cx, kind, recv_id, block_id, name, block_arg);
         }
     }
 
