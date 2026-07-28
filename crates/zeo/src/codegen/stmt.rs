@@ -60,6 +60,22 @@ fn stamp_line(
     }
 }
 
+/// `emit_body` for a body whose VALUE is discarded (loop bodies): every
+/// statement -- the last included -- emits in statement position, so a tail
+/// assignment skips its read-back and a pure tail vanishes, instead of
+/// leaving an unused `Clone::clone(&x)` behind for rustc to warn about.
+pub fn emit_body_discard(cx: &Ctx, body: &[NodeId]) -> TokenStream {
+    let mut prev_line = None;
+    let stmts = body
+        .iter()
+        .map(|&stmt| {
+            let tokens = emit_statement(cx, stmt, false, false);
+            stamp_line(cx, stmt, &mut prev_line, tokens, false)
+        })
+        .collect::<Vec<_>>();
+    quote! { #(#stmts)* }
+}
+
 /// `emit_body(.., false)` whose VALUE is always a boxed `RubyValue` -- for
 /// alternative bodies that must agree on one Rust type (if/ternary/case/
 /// pattern arms; `infer` types those expressions `Poly`, so consumers
@@ -203,6 +219,19 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             quote! { #write }
         }
     } else {
+        // A statement-position assignment needs no read-back: Ruby's
+        // "assignment evaluates to its value" matters only in expression
+        // position, and the dropped `Clone::clone(&x)` tail the expression
+        // form appends was pure refcount noise (and a rustc warning) in
+        // every loop body.
+        if !is_tail {
+            if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
+                let v = emit_expr(cx, *value);
+                let v = super::expr::box_for_local_storage(cx, name, *value, v);
+                let write = super::hoisting::emit_local_write(cx, name, quote! { __v });
+                return quote! { { let __v: zeo_rt::RubyValue = #v; #write } };
+            }
+        }
         let e = emit_expr(cx, stmt);
         if is_tail {
             // `raise`/a bare `return`/`retry`/`break`/`next`/`redo` all
@@ -230,10 +259,32 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             } else {
                 e
             }
+        } else if is_pure_statement(&cx.compiler.hir[stmt]) {
+            // A statement-position expression with no effect (a bare local
+            // read, a literal, `self`) emits nothing: the old
+            // `Clone::clone(&x);` statements did real refcount work and drew
+            // rustc's unused-`clone` warnings into every generated program.
+            TokenStream::new()
         } else {
             quote! { #e; }
         }
     }
+}
+
+/// Statement-position shapes Ruby evaluates purely for their (absent) side
+/// effects -- safe to emit nothing for. Deliberately minimal: anything with
+/// interpolation, a call, or a fallible read stays emitted.
+fn is_pure_statement(node: &HirNode) -> bool {
+    matches!(
+        node,
+        HirNode::IntegerLit(_)
+            | HirNode::FloatLit(_)
+            | HirNode::SymbolLit(_)
+            | HirNode::NilLit
+            | HirNode::BoolLit(_)
+            | HirNode::LocalRead(_)
+            | HirNode::SelfRef
+    )
 }
 
 fn is_diverging_tail(node: &HirNode) -> bool {

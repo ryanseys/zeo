@@ -23,7 +23,6 @@ use quote::quote;
 
 use super::Ctx;
 use super::expr::{emit_expr, infer};
-use super::stmt::emit_body;
 use crate::hir::{MultiTarget, MultiTargetGroup, NodeId};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
@@ -47,7 +46,7 @@ pub(super) fn emit_redo_wrapped_body(
     body: &[NodeId],
     redo_label: &Lifetime,
 ) -> TokenStream {
-    let body_val = emit_body(loop_cx, body, false);
+    let body_val = super::stmt::emit_body_discard(loop_cx, body);
     // `body_val` is a whole sequence of statements ending in a tail
     // expression, not one expression -- wrapped in its own `{ }` block (then
     // used as a statement) so it discards as a unit. A bare `#body_val;`
