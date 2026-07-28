@@ -338,7 +338,7 @@ fn wrap_method_return(needs_return_catch: bool, inner: TokenStream) -> TokenStre
 /// The `(file name, 1-based line)` of `node`'s span start -- `None` for a
 /// synthetic node (the exception prelude, `eval` bodies). Backing for
 /// backtrace-frame emission: the file string is baked into the binary and
-/// the line count is a compile-time scan of the registered source.
+/// the line comes from the file's prebuilt newline index (`line_at`).
 pub(crate) fn source_location(
     compiler: &Compiler,
     node: crate::hir::NodeId,
@@ -346,11 +346,7 @@ pub(crate) fn source_location(
     let span = compiler.hir.span(node)?;
     let file = compiler.hir.files.get(span.file.0 as usize)?;
     let upto = (span.start as usize).min(file.source.len());
-    let line = 1 + file.source.as_bytes()[..upto]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count() as u32;
-    Some((file.name.clone(), line))
+    Some((file.name.clone(), file.line_at(upto as u32)))
 }
 
 /// The backtrace-frame push for one method scope: `Class#method` /

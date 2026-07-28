@@ -54,6 +54,21 @@ pub struct SourceFile {
     /// This file's OWN `# frozen_string_literal: true` magic comment (each
     /// required file carries its own, not the entry file's).
     pub frozen_string_literal: bool,
+    /// Byte offset of each line's start (`[0]` is always 0), built once at
+    /// registration -- `line_at` answers in a binary search instead of
+    /// re-counting newlines from byte 0, which made per-statement line
+    /// stamping quadratic in file size at gem scale.
+    line_starts: Vec<u32>,
+}
+
+impl SourceFile {
+    /// The 1-based line containing byte offset `byte`: exactly
+    /// `1 + newlines strictly before byte`, the same count the old linear
+    /// scan produced (a start `s = i + 1` satisfies `s <= byte` iff the
+    /// newline at `i` sits strictly before `byte`).
+    pub fn line_at(&self, byte: u32) -> u32 {
+        self.line_starts.partition_point(|&s| s <= byte) as u32
+    }
 }
 
 /// A `# frozen_string_literal: true` magic comment in the leading comment
@@ -307,10 +322,17 @@ impl Hir {
     pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
         let source = source.into();
         let frozen_string_literal = magic_frozen_string_literal(&source);
+        let mut line_starts = vec![0u32];
+        for (i, b) in source.bytes().enumerate() {
+            if b == b'\n' {
+                line_starts.push((i + 1) as u32);
+            }
+        }
         self.files.push(SourceFile {
             name: name.into(),
             source,
             frozen_string_literal,
+            line_starts,
         });
         FileId((self.files.len() - 1) as u32)
     }
