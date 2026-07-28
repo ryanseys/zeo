@@ -162,10 +162,22 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         // A lambda literal catches its own `Signal::Return` unconditionally --
         // a `return` inside it belongs to the lambda, never the enclosing
         // method (see `hir::HirNode::Lambda`'s docs), so the walk stops here.
-        HirNode::Lambda { .. } => false,
-        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+        HirNode::Lambda {
+            params: _,
+            body: _,
+            method_body: _,
+        } => false,
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: _,
+        } => {
             if let Some(b) = block {
-                let HirNode::Block { body, .. } = &compiler.hir[*b] else {
+                let HirNode::Block { params: _, body } = &compiler.hir[*b] else {
                     panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
                 // An escaping (non-inline) block's body runs as a proc homed to
@@ -206,7 +218,12 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
                 })
                 || body_contains_escaping_return_in(compiler, else_body, in_escaping)
         }
-        HirNode::While { cond, body, .. } => {
+        HirNode::While {
+            cond,
+            body,
+            negate: _,
+            post: _,
+        } => {
             sub(*cond) || body_contains_escaping_return_in(compiler, body, in_escaping)
         }
         HirNode::Loop { body } => body_contains_escaping_return_in(compiler, body, in_escaping),
@@ -227,7 +244,11 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
             found || sub(*value)
         }
         HirNode::GlobalWrite(_, value) => sub(*value),
-        HirNode::ConstWrite { value, .. } => sub(*value),
+        HirNode::ConstWrite {
+            scope: _,
+            name: _,
+            value,
+        } => sub(*value),
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             sub(*n)
@@ -236,20 +257,35 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
             .iter()
             .chain(crate::hir::raise_cause_node(cause).iter())
             .any(|&a| sub(a)),
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+        HirNode::PreExec(body)
+        | HirNode::Seq(body)
+        | HirNode::Eval(body)
+        | HirNode::BoxScope { box_id: _, body } => {
             body_contains_escaping_return_in(compiler, body, in_escaping)
         }
         // A block attached to `.new` / `super` runs as a proc that may be homed
         // to this method, so its body is walked as escaping.
-        HirNode::New { args, block, .. } => {
+        HirNode::New {
+            class_name: _,
+            args,
+            kwargs,
+            block,
+        } => {
             block.is_some_and(|b| {
-                matches!(&compiler.hir[b], HirNode::Block { body, .. }
+                matches!(&compiler.hir[b], HirNode::Block { params: _, body }
                     if body_contains_escaping_return_in(compiler, body, true))
             }) || args.iter().any(|&a| sub(a))
+                || kwargs.iter().flat_map(|kw| kw.node_ids()).any(&sub)
         }
-        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper: _,
+            block,
+            block_arg,
+        } => {
             block.is_some_and(|b| {
-                matches!(&compiler.hir[b], HirNode::Block { body, .. }
+                matches!(&compiler.hir[b], HirNode::Block { params: _, body }
                     if body_contains_escaping_return_in(compiler, body, true))
             }) || args.iter().any(|a| sub(a.node_id()))
                 || kwargs.iter().flat_map(|kw| kw.node_ids()).any(&sub)
@@ -260,9 +296,11 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
             sub(*n)
         }),
         HirNode::HashLit(pairs) => pairs.iter().flat_map(|kw| kw.node_ids()).any(&sub),
-        HirNode::RangeLit { start, end, .. } => {
-            start.is_some_and(&sub) || end.is_some_and(&sub)
-        }
+        HirNode::RangeLit {
+            start,
+            end,
+            exclusive: _,
+        } => start.is_some_and(&sub) || end.is_some_and(&sub),
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
             StrPart::Interp(n) => sub(*n),
             StrPart::Lit(_) | StrPart::Bytes(_) => false,
@@ -298,11 +336,18 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         | HirNode::Redo
         | HirNode::BlockGiven
         | HirNode::SelfRef
-        | HirNode::Block { .. }
+        | HirNode::Block { params: _, body: _ }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
+        | HirNode::BigIntegerLit {
+            negative: _,
+            digits: _,
+        }
+        | HirNode::RationalLit {
+            negative: _,
+            num_digits: _,
+            den_digits: _,
+        }
         // An imaginary literal's inner node is itself a numeric
         // literal by syntax -- a leaf for this walk's purposes.
         | HirNode::ImaginaryLit(_)
@@ -318,16 +363,35 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
+        | HirNode::AliasMethod {
+            new_name: _,
+            old_name: _,
+            is_class_method: _,
+        }
+        | HirNode::MethodVisibility {
+            name: _,
+            visibility: _,
+        }
+        | HirNode::AliasGlobal(_, _)
+        | HirNode::QualifiedConstRead(_, _)
+        | HirNode::ConstReadOrNil(_, _)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => false,
+        | HirNode::ClassDef {
+            name: _,
+            superclass: _,
+            body: _,
+            is_module: _,
+        }
+        | HirNode::DefMethod {
+            name: _,
+            params: _,
+            body: _,
+            is_class_method: _,
+            visibility: _,
+            is_def: _,
+        } => false,
     }
 }
 
@@ -353,13 +417,30 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         // An FFI wrapper body contains no `begin`.
         HirNode::Ffi(_) => false,
-        HirNode::Begin { .. } => true,
+        HirNode::Begin {
+            body: _,
+            rescues: _,
+            else_body: _,
+            ensure_body: _,
+        } => true,
         // Same reasoning as `node_contains_escaping_block`'s `Lambda` arm --
         // a lambda's own body is a fully self-contained closure boundary,
         // so a `begin`/`rescue` lexically inside one never requires the
         // ENCLOSING method to install its own `Signal::Return` catch.
-        HirNode::Lambda { .. } => false,
-        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
+        HirNode::Lambda {
+            params: _,
+            body: _,
+            method_body: _,
+        } => false,
+        HirNode::Call {
+            receiver,
+            name: _,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: _,
+        } => {
             receiver.is_some_and(|r| node_contains_begin(compiler, r))
                 || args.iter().any(|a| {
                     let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
@@ -371,7 +452,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
                     .any(|n| node_contains_begin(compiler, n))
                 || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
                 || block.is_some_and(|b| {
-                    let HirNode::Block { body, .. } = &compiler.hir[b] else {
+                    let HirNode::Block { params: _, body } = &compiler.hir[b] else {
                         panic!("internal error: a Block node should only be reached via the Call that invokes it");
                     };
                     body_contains_begin(compiler, body)
@@ -412,7 +493,12 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             pattern.for_each_node(&mut |n| found |= node_contains_begin(compiler, n));
             found
         }
-        HirNode::While { cond, body, .. } => node_contains_begin(compiler, *cond) || body_contains_begin(compiler, body),
+        HirNode::While {
+            cond,
+            body,
+            negate: _,
+            post: _,
+        } => node_contains_begin(compiler, *cond) || body_contains_begin(compiler, body),
         HirNode::Loop { body } => body_contains_begin(compiler, body),
         HirNode::For { target, iterable, body } => {
             let mut found = false;
@@ -426,7 +512,11 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             found || node_contains_begin(compiler, *value)
         }
         HirNode::GlobalWrite(_, value) => node_contains_begin(compiler, *value),
-        HirNode::ConstWrite { value, .. } => node_contains_begin(compiler, *value),
+        HirNode::ConstWrite {
+            scope: _,
+            name: _,
+            value,
+        } => node_contains_begin(compiler, *value),
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_begin(compiler, *n)
@@ -435,8 +525,29 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             .iter()
             .chain(crate::hir::raise_cause_node(cause).iter())
             .any(|&a| node_contains_begin(compiler, a)),
-        HirNode::New { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
-        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
+        HirNode::New {
+            class_name: _,
+            args,
+            kwargs,
+            block,
+        } => {
+            args.iter().any(|&a| node_contains_begin(compiler, a))
+                || kwargs
+                    .iter()
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|a| node_contains_begin(compiler, a))
+                || block.is_some_and(|b| match &compiler.hir[b] {
+                    HirNode::Block { params: _, body } => body_contains_begin(compiler, body),
+                    _ => false,
+                })
+        }
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper: _,
+            block,
+            block_arg,
+        } => {
             args.iter().any(|a| node_contains_begin(compiler, a.node_id()))
                 || kwargs
                     .iter()
@@ -444,7 +555,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
                     .any(|a| node_contains_begin(compiler, a))
                 || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
                 || block.is_some_and(|b| match &compiler.hir[b] {
-                    HirNode::Block { body, .. } => body_contains_begin(compiler, body),
+                    HirNode::Block { params: _, body } => body_contains_begin(compiler, body),
                     _ => false,
                 })
         }
@@ -455,23 +566,38 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::HashLit(pairs) => {
             pairs.iter().flat_map(|kw| kw.node_ids()).any(|n| node_contains_begin(compiler, n))
         }
-        HirNode::RangeLit { start, end, .. } => {
-            start.is_some_and(|s| node_contains_begin(compiler, s)) || end.is_some_and(|e| node_contains_begin(compiler, e))
+        HirNode::RangeLit {
+            start,
+            end,
+            exclusive: _,
+        } => {
+            start.is_some_and(|s| node_contains_begin(compiler, s))
+                || end.is_some_and(|e| node_contains_begin(compiler, e))
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
             StrPart::Interp(n) => node_contains_begin(compiler, *n),
             StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_begin(compiler, body),
+        HirNode::PreExec(body)
+        | HirNode::Seq(body)
+        | HirNode::Eval(body)
+        | HirNode::BoxScope { box_id: _, body } => body_contains_begin(compiler, body),
         HirNode::Retry
         | HirNode::Redo
         | HirNode::BlockGiven
         | HirNode::SelfRef
-        | HirNode::Block { .. }
+        | HirNode::Block { params: _, body: _ }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
+        | HirNode::BigIntegerLit {
+            negative: _,
+            digits: _,
+        }
+        | HirNode::RationalLit {
+            negative: _,
+            num_digits: _,
+            den_digits: _,
+        }
         // An imaginary literal's inner node is itself a numeric
         // literal by syntax -- a leaf for this walk's purposes.
         | HirNode::ImaginaryLit(_)
@@ -487,16 +613,35 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
+        | HirNode::AliasMethod {
+            new_name: _,
+            old_name: _,
+            is_class_method: _,
+        }
+        | HirNode::MethodVisibility {
+            name: _,
+            visibility: _,
+        }
+        | HirNode::AliasGlobal(_, _)
+        | HirNode::QualifiedConstRead(_, _)
+        | HirNode::ConstReadOrNil(_, _)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => false,
+        | HirNode::ClassDef {
+            name: _,
+            superclass: _,
+            body: _,
+            is_module: _,
+        }
+        | HirNode::DefMethod {
+            name: _,
+            params: _,
+            body: _,
+            is_class_method: _,
+            visibility: _,
+            is_def: _,
+        } => false,
     }
 }
 
@@ -607,7 +752,11 @@ fn walk(
         // COMPOSES through this same walk (its captures flow into the outer
         // block's capture set); the one genuinely unsupported sub-case is
         // rejected downstream at `emit_proc_or_lambda_value`, not here.
-        HirNode::Lambda { params, body, .. } => {
+        HirNode::Lambda {
+            params,
+            body,
+            method_body: _,
+        } => {
             let next_exclusions: HashSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for &n in body {
@@ -642,7 +791,12 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::While { cond, body, .. } => {
+        HirNode::While {
+            cond,
+            body,
+            negate: _,
+            post: _,
+        } => {
             walk(compiler, *cond, in_escaping, param_exclusions, caps, self_class);
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
@@ -674,7 +828,11 @@ fn walk(
         // locals at all -- no capture registration needed, same posture as
         // `ClassVarWrite` just above.
         HirNode::GlobalWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
-        HirNode::ConstWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
+        HirNode::ConstWrite {
+            scope: _,
+            name: _,
+            value,
+        } => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
         HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
@@ -771,13 +929,21 @@ fn walk(
             }
         }
         HirNode::Retry => {}
-        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+        HirNode::Eval(body) | HirNode::BoxScope { box_id: _, body } => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::New { args, block, .. } => {
+        HirNode::New {
+            class_name: _,
+            args,
+            kwargs,
+            block,
+        } => {
             for &a in args {
+                walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
             // A literal block forwarded to `initialize` is a real escaping
@@ -792,7 +958,13 @@ fn walk(
                 }
             }
         }
-        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper: _,
+            block,
+            block_arg,
+        } => {
             // `super` implicitly dispatches on the receiver, so an escaping
             // block containing one must capture `self` -- same flag `SelfRef`/
             // `IvarRead` set above. Without this a `super` in a method-body
@@ -834,7 +1006,11 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::RangeLit { start, end, .. } => {
+        HirNode::RangeLit {
+            start,
+            end,
+            exclusive: _,
+        } => {
             if let Some(s) = start {
                 walk(compiler, *s, in_escaping, param_exclusions, caps, self_class);
             }
@@ -849,7 +1025,15 @@ fn walk(
                 }
             }
         }
-        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: _,
+        } => {
             // A receiverless call dispatches on `self` (see `emit_call`'s
             // implicit-self branch) -- inside an escaping block that's a
             // `self` capture exactly like an ivar reference, otherwise the
@@ -913,7 +1097,14 @@ fn walk(
         // target) and its body is a nested escaping proc. Outside an escaping
         // block it's an ordinary method definition with its own scope --
         // nothing to capture -- so this only fires when `in_escaping`.
-        HirNode::DefMethod { params, body, .. } => {
+        HirNode::DefMethod {
+            name: _,
+            params,
+            body,
+            is_class_method: _,
+            visibility: _,
+            is_def: _,
+        } => {
             if in_escaping {
                 caps.self_captured = true;
                 let next_exclusions: HashSet<String> =
@@ -923,13 +1114,23 @@ fn walk(
                 }
             }
         }
-        HirNode::Block { .. } => {
+        HirNode::Block {
+            params: _,
+            body: _,
+        } => {
             panic!("internal error: a Block node should only be reached via the Call that invokes it")
         }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
+        | HirNode::BigIntegerLit {
+            negative: _,
+            digits: _,
+        }
+        | HirNode::RationalLit {
+            negative: _,
+            num_digits: _,
+            den_digits: _,
+        }
         // An imaginary literal's inner node is itself a numeric
         // literal by syntax -- a leaf for this walk's purposes.
         | HirNode::ImaginaryLit(_)
@@ -942,15 +1143,27 @@ fn walk(
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
+        | HirNode::AliasMethod {
+            new_name: _,
+            old_name: _,
+            is_class_method: _,
+        }
+        | HirNode::MethodVisibility {
+            name: _,
+            visibility: _,
+        }
+        | HirNode::AliasGlobal(_, _)
+        | HirNode::QualifiedConstRead(_, _)
+        | HirNode::ConstReadOrNil(_, _)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::ClassDef { .. } => {}
+        | HirNode::ClassDef {
+            name: _,
+            superclass: _,
+            body: _,
+            is_module: _,
+        } => {}
     }
 }
 

@@ -115,28 +115,9 @@ impl Walker {
             return Vec::new();
         }
         let mut suspended = Vec::new();
-        let mut consider = |n: &str| {
-            if let Some(taken) = self.names.take(n) {
+        for n in params.bound_names() {
+            if let Some(taken) = self.names.take(n.as_str()) {
                 suspended.push(taken);
-            }
-        };
-        for n in &params.required {
-            consider(n);
-        }
-        for (n, _) in &params.optional {
-            consider(n);
-        }
-        for n in &params.post {
-            consider(n);
-        }
-        for kw in &params.keywords {
-            let (crate::hir::KeywordParam::Required(n) | crate::hir::KeywordParam::Optional(n, _)) =
-                kw;
-            consider(n);
-        }
-        for slot in [&params.rest, &params.keyword_rest, &params.block] {
-            if let Some(Some(n)) = slot {
-                consider(n);
             }
         }
         suspended
@@ -177,7 +158,7 @@ impl Walker {
             | HirNode::Eval(body)
             | HirNode::PreExec(body)
             | HirNode::Seq(body)
-            | HirNode::BoxScope { body, .. } => self.visit_all(hir, &body.clone()),
+            | HirNode::BoxScope { box_id: _, body } => self.visit_all(hir, &body.clone()),
             HirNode::And(l, r) | HirNode::Or(l, r) => {
                 self.visit(hir, *l);
                 self.visit(hir, *r);
@@ -222,7 +203,11 @@ impl Walker {
                     self.visit(hir, n);
                 }
             }
-            HirNode::RangeLit { start, end, .. } => {
+            HirNode::RangeLit {
+                start,
+                end,
+                exclusive: _,
+            } => {
                 self.visit_opt(hir, start);
                 self.visit_opt(hir, end);
             }
@@ -236,14 +221,19 @@ impl Walker {
             HirNode::IvarWrite(_, value)
             | HirNode::ClassVarWrite(_, value)
             | HirNode::GlobalWrite(_, value)
-            | HirNode::ConstWrite { value, .. } => self.visit(hir, *value),
+            | HirNode::ConstWrite {
+                scope: _,
+                name: _,
+                value,
+            } => self.visit(hir, *value),
             HirNode::Call {
                 receiver,
+                name: _,
                 args,
                 kwargs,
                 block,
                 block_arg,
-                ..
+                safe: _,
             } => {
                 self.visit_opt(hir, receiver);
                 for a in args.iter() {
@@ -276,9 +266,9 @@ impl Walker {
             HirNode::SuperCall {
                 args,
                 kwargs,
+                zsuper: _,
                 block,
                 block_arg,
-                ..
             } => {
                 let arg_ids: Vec<_> = args.iter().map(|a| a.node_id()).collect();
                 self.visit_all(hir, &arg_ids);
@@ -287,7 +277,12 @@ impl Walker {
                 self.visit_opt(hir, block);
                 self.visit_opt(hir, block_arg);
             }
-            HirNode::Block { params, body } | HirNode::Lambda { params, body, .. } => {
+            HirNode::Block { params, body }
+            | HirNode::Lambda {
+                params,
+                body,
+                method_body: _,
+            } => {
                 let suspended = self.suspend_params(params);
                 for d in params.default_ids() {
                     self.visit(hir, d);
@@ -297,8 +292,26 @@ impl Walker {
             }
             // Genuinely fresh Ruby scopes -- can't capture file-level
             // locals, never descended into (see module docs).
-            HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {}
-            HirNode::While { cond, body, .. } => {
+            HirNode::ClassDef {
+                name: _,
+                superclass: _,
+                body: _,
+                is_module: _,
+            }
+            | HirNode::DefMethod {
+                name: _,
+                params: _,
+                body: _,
+                is_class_method: _,
+                visibility: _,
+                is_def: _,
+            } => {}
+            HirNode::While {
+                cond,
+                body,
+                negate: _,
+                post: _,
+            } => {
                 self.visit(hir, *cond);
                 self.visit_all(hir, &body.clone());
             }
@@ -383,8 +396,17 @@ impl Walker {
                 }
             }
             HirNode::IntegerLit(_)
-            | HirNode::BigIntegerLit { .. }
-            | HirNode::RationalLit { .. }
+            | HirNode::BigIntegerLit {
+                negative: _,
+                digits: _,
+            }
+            | HirNode::RationalLit {
+                negative: _,
+                num_digits: _,
+                den_digits: _,
+            }
+            // `ImaginaryLit`'s child is prism's `numeric()` -- always a
+            // numeric literal, so it holds no name to rename.
             | HirNode::ImaginaryLit(_)
             | HirNode::FloatLit(_)
             | HirNode::SymbolLit(_)
@@ -397,11 +419,18 @@ impl Walker {
             | HirNode::GlobalRead(_)
             | HirNode::LastMatchRef(_)
             | HirNode::Undef(_)
-            | HirNode::AliasMethod { .. }
-            | HirNode::MethodVisibility { .. }
-            | HirNode::AliasGlobal(..)
-            | HirNode::QualifiedConstRead(..)
-            | HirNode::ConstReadOrNil(..)
+            | HirNode::AliasMethod {
+                new_name: _,
+                old_name: _,
+                is_class_method: _,
+            }
+            | HirNode::MethodVisibility {
+                name: _,
+                visibility: _,
+            }
+            | HirNode::AliasGlobal(_, _)
+            | HirNode::QualifiedConstRead(_, _)
+            | HirNode::ConstReadOrNil(_, _)
             | HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
@@ -457,7 +486,11 @@ impl Walker {
             Pattern::Bind(n) => self.bind(n),
             Pattern::Value(n) | Pattern::Pin(n) => self.visit(hir, *n),
             Pattern::ClassCheck(_) => {}
-            Pattern::Range { start, end, .. } => {
+            Pattern::Range {
+                start,
+                end,
+                exclusive: _,
+            } => {
                 self.visit_opt(hir, start);
                 self.visit_opt(hir, end);
             }
@@ -471,7 +504,10 @@ impl Walker {
                 self.bind(n);
             }
             Pattern::Array {
-                pre, rest, post, ..
+                constant: _,
+                pre,
+                rest,
+                post,
             } => {
                 for p in pre.iter_mut().chain(post.iter_mut()) {
                     self.visit_pattern(hir, p);
@@ -481,10 +517,10 @@ impl Walker {
                 }
             }
             Pattern::Find {
+                constant: _,
                 pre_rest,
                 mid,
                 post_rest,
-                ..
             } => {
                 if let Some(n) = pre_rest {
                     self.bind(n);
@@ -496,7 +532,11 @@ impl Walker {
                     self.bind(n);
                 }
             }
-            Pattern::Hash { pairs, rest, .. } => {
+            Pattern::Hash {
+                constant: _,
+                pairs,
+                rest,
+            } => {
                 for (key, val) in pairs.iter_mut() {
                     match val {
                         Some(p) => self.visit_pattern(hir, p),

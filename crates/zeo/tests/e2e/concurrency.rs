@@ -1453,16 +1453,20 @@ fn an_uncaught_exception_in_a_ractor_reraises_at_value() {
 }
 
 #[test]
-#[should_panic(expected = "can not isolate a Proc because it accesses outer variables (x)")]
 fn a_ractor_block_capturing_an_outer_local_is_rejected_at_compile_time() {
     // CRuby raises Ractor::IsolationError at Proc-creation time; the AOT
     // compiler knows the capture set statically and rejects at COMPILE
     // time, with CRuby's own message wording.
-    let _ = zeo::compile_to_rust(
+    let err = zeo::compile_to_rust(
         r#"
         x = 5
         Ractor.new { x + 1 }
         "#,
+    )
+    .expect_err("the capture is rejected");
+    assert_eq!(
+        err,
+        "can not isolate a Proc because it accesses outer variables (x)"
     );
 }
 

@@ -648,8 +648,8 @@ fn collect_const_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>)
     }
 }
 
-/// Mirrors `collect_cvars`'s exact traversal shape, over bare-constant
-/// references instead of `ClassVarRead`/`ClassVarWrite`: a bare `ClassRef`
+/// Every bare-constant reference under `id`, over the shared
+/// `HirNode::for_each_child` walk: a bare `ClassRef`
 /// counts ONLY when `name` ISN'T actually a registered class/module (a real
 /// class reference, e.g. `Foo.bar`, is never a constant-ownership concern --
 /// see `HirNode::ClassRef`'s dual reuse, `codegen::expr`'s docs), and a bare
@@ -661,260 +661,32 @@ fn collect_const_refs(
     cref: &[ClassId],
     out: &mut Vec<String>,
 ) {
-    use crate::hir::{ArrayElem, StrPart};
     let hir = &compiler.hir;
     match &hir[id] {
         // An FFI wrapper body references no constants.
-        HirNode::Ffi(_) => {}
+        HirNode::Ffi(_) => return,
+        // A `class`/`def` body is a fresh Ruby scope, scanned under its own
+        // owner rather than the one this walk is filling.
+        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
         HirNode::ClassRef(name) => {
             if compiler.resolve_class(name, cref, 0).is_none() && !out.contains(name) {
                 out.push(name.clone());
             }
         }
-        HirNode::ConstWrite { scope: None, name, value } => {
+        HirNode::ConstWrite {
+            scope: None, name, ..
+        } => {
             if !out.contains(name) {
                 out.push(name.clone());
             }
-            collect_const_refs(compiler, *value, cref, out);
         }
-        HirNode::ConstWrite { scope: Some(_), value, .. } => collect_const_refs(compiler, *value, cref, out),
-        HirNode::IvarWrite(_, value) | HirNode::LocalWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
-            collect_const_refs(compiler, *value, cref, out)
+        HirNode::For { target, .. } => target.for_each_target(&mut |t| collect_const_target(t, out)),
+        HirNode::MultiWrite { targets, .. } => {
+            targets.for_each_target(&mut |t| collect_const_target(t, out))
         }
-        HirNode::GlobalWrite(_, value) => collect_const_refs(compiler, *value, cref, out),
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
-            collect_const_refs(compiler, *l, cref, out);
-            collect_const_refs(compiler, *r, cref, out);
-        }
-        HirNode::Defined(v) => collect_const_refs(compiler, *v, cref, out),
-        HirNode::If { cond, then_body, else_body } => {
-            collect_const_refs(compiler, *cond, cref, out);
-            for &n in then_body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-            for &n in else_body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::CaseWhen { subject, arms, else_body } => {
-            if let Some(s) = subject {
-                collect_const_refs(compiler, *s, cref, out);
-            }
-            for (values, body) in arms {
-                for e in values {
-                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                    collect_const_refs(compiler, *v, cref, out);
-                }
-                for &n in body {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-            }
-            for &n in else_body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
-            if let Some(r) = receiver {
-                collect_const_refs(compiler, *r, cref, out);
-            }
-            for a in args {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                collect_const_refs(compiler, *n, cref, out);
-            }
-            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                collect_const_refs(compiler, n, cref, out);
-            }
-            if let Some(b) = block {
-                collect_const_refs(compiler, *b, cref, out);
-            }
-            if let Some(b) = block_arg {
-                collect_const_refs(compiler, *b, cref, out);
-            }
-        }
-        HirNode::New { args, block, .. } => {
-            for &a in args {
-                collect_const_refs(compiler, a, cref, out);
-            }
-            if let Some(b) = block {
-                collect_const_refs(compiler, *b, cref, out);
-            }
-        }
-        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
-            for a in args {
-                collect_const_refs(compiler, a.node_id(), cref, out);
-            }
-            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                collect_const_refs(compiler, a, cref, out);
-            }
-            if let Some(b) = block {
-                collect_const_refs(compiler, *b, cref, out);
-            }
-            if let Some(b) = block_arg {
-                collect_const_refs(compiler, *b, cref, out);
-            }
-        }
-        HirNode::Block { body, .. } | HirNode::Lambda { body, .. } => {
-            for &n in body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::ArrayLit(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                collect_const_refs(compiler, *n, cref, out);
-            }
-        }
-        HirNode::HashLit(pairs) => {
-            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::RangeLit { start, end, .. } => {
-            if let Some(s) = start {
-                collect_const_refs(compiler, *s, cref, out);
-            }
-            if let Some(e) = end {
-                collect_const_refs(compiler, *e, cref, out);
-            }
-        }
-        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-            for p in parts {
-                if let StrPart::Interp(n) = p {
-                    collect_const_refs(compiler, *n, cref, out);
-                }
-            }
-        }
-        HirNode::While { cond, body, .. } => {
-            collect_const_refs(compiler, *cond, cref, out);
-            for &n in body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::Loop { body } => {
-            for &n in body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::For { target, iterable, body } => {
-            target.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
-            target.for_each_target(&mut |t| collect_const_target(t, out));
-            collect_const_refs(compiler, *iterable, cref, out);
-            for &n in body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
-            if let Some(v) = v {
-                collect_const_refs(compiler, *v, cref, out);
-            }
-        }
-        HirNode::MultiWrite { targets, value } => {
-            collect_const_refs(compiler, *value, cref, out);
-            targets.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
-            targets.for_each_target(&mut |t| collect_const_target(t, out));
-        }
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
-            for &n in body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-        }
-        HirNode::Yield(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                collect_const_refs(compiler, *n, cref, out);
-            }
-        }
-        HirNode::Raise(args, cause) => {
-            // The `cause:` expression is an ordinary expression and may name
-            // a constant of its own, so it is walked alongside the operands.
-            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
-                collect_const_refs(compiler, a, cref, out);
-            }
-        }
-        HirNode::CaseIn { subject, arms, else_body } => {
-            collect_const_refs(compiler, *subject, cref, out);
-            for arm in arms {
-                arm.pattern.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
-                if let Some((g, _)) = arm.guard {
-                    collect_const_refs(compiler, g, cref, out);
-                }
-                for &n in &arm.body {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-            }
-            if let Some(body) = else_body {
-                for &n in body {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-            }
-        }
-        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            collect_const_refs(compiler, *subject, cref, out);
-            pattern.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
-        }
-        HirNode::Begin {
-            body,
-            rescues,
-            else_body,
-            ensure_body,
-        } => {
-            for &n in body {
-                collect_const_refs(compiler, n, cref, out);
-            }
-            for r in rescues {
-                // A splatted exception list (`rescue *ERRS`) can reference
-                // constants that must resolve like any other const use.
-                for &n in &r.splats {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-                for &n in &r.body {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-            }
-            if let Some(b) = else_body {
-                for &n in b {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-            }
-            if let Some(b) = ensure_body {
-                for &n in b {
-                    collect_const_refs(compiler, n, cref, out);
-                }
-            }
-        }
-        HirNode::Retry => {}
-        HirNode::Redo
-        | HirNode::BlockGiven
-        | HirNode::SelfRef
-        | HirNode::Program(_)
-        | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
-        // An imaginary literal's inner node is itself a numeric
-        // literal by syntax -- a leaf for this walk's purposes.
-        | HirNode::ImaginaryLit(_)
-        | HirNode::FloatLit(_)
-        | HirNode::SymbolLit(_)
-        | HirNode::NilLit
-        | HirNode::BoxHandle(_)
-        | HirNode::BoolLit(_)
-        | HirNode::LocalRead(_)
-        | HirNode::IvarRead(_)
-        | HirNode::ClassVarRead(_)
-        | HirNode::GlobalRead(_)
-        | HirNode::LastMatchRef(_)
-        | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => {}
+        _ => {}
     }
+    hir[id].for_each_child(&mut |n| collect_const_refs(compiler, n, cref, out));
 }
 
 /// A cvar named by a multi-assignment or `for` TARGET -- see
@@ -929,253 +701,26 @@ fn collect_cvar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) 
     }
 }
 
-/// Mirrors `collect_ivars`'s traversal shape exactly, over `ClassVarRead`/
-/// `ClassVarWrite` instead of `IvarRead`/`IvarWrite`.
+/// Every class variable named under `id` -- `collect_ivars` over
+/// `ClassVarRead`/`ClassVarWrite` instead of `IvarRead`/`IvarWrite`.
 fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<String>) {
-    use crate::hir::{ArrayElem, StrPart};
+    let mut record = |name: &str| {
+        if !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+    };
     match &hir[id] {
-        // An FFI wrapper body references no class variables.
-        HirNode::Ffi(_) => {}
-        HirNode::ClassVarRead(name) => {
-            if !out.contains(name) {
-                out.push(name.clone());
-            }
+        // An FFI wrapper body reads only its synthetic parameters.
+        HirNode::Ffi(_) => return,
+        // A `class`/`def` body is a fresh Ruby scope, scanned under its own
+        // owner rather than the one this walk is filling.
+        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
+        HirNode::ClassVarRead(name) | HirNode::ClassVarWrite(name, _) => record(name),
+        HirNode::For { target, .. } => target.for_each_target(&mut |t| collect_cvar_target(t, out)),
+        HirNode::MultiWrite { targets, .. } => {
+            targets.for_each_target(&mut |t| collect_cvar_target(t, out))
         }
-        HirNode::ClassVarWrite(name, value) => {
-            if !out.contains(name) {
-                out.push(name.clone());
-            }
-            collect_cvars(hir, *value, out);
-        }
-        HirNode::IvarWrite(_, value) | HirNode::LocalWrite(_, value) => {
-            collect_cvars(hir, *value, out)
-        }
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
-            collect_cvars(hir, *l, out);
-            collect_cvars(hir, *r, out);
-        }
-        HirNode::Defined(v) => collect_cvars(hir, *v, out),
-        HirNode::If { cond, then_body, else_body } => {
-            collect_cvars(hir, *cond, out);
-            for &n in then_body {
-                collect_cvars(hir, n, out);
-            }
-            for &n in else_body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::CaseWhen { subject, arms, else_body } => {
-            if let Some(s) = subject {
-                collect_cvars(hir, *s, out);
-            }
-            for (values, body) in arms {
-                for e in values {
-                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                    collect_cvars(hir, *v, out);
-                }
-                for &n in body {
-                    collect_cvars(hir, n, out);
-                }
-            }
-            for &n in else_body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
-            if let Some(r) = receiver {
-                collect_cvars(hir, *r, out);
-            }
-            for a in args {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                collect_cvars(hir, *n, out);
-            }
-            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                collect_cvars(hir, n, out);
-            }
-            if let Some(b) = block {
-                collect_cvars(hir, *b, out);
-            }
-            if let Some(b) = block_arg {
-                collect_cvars(hir, *b, out);
-            }
-        }
-        HirNode::New { args, block, .. } => {
-            for &a in args {
-                collect_cvars(hir, a, out);
-            }
-            if let Some(b) = block {
-                collect_cvars(hir, *b, out);
-            }
-        }
-        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
-            for a in args {
-                collect_cvars(hir, a.node_id(), out);
-            }
-            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
-                collect_cvars(hir, a, out);
-            }
-            if let Some(b) = block {
-                collect_cvars(hir, *b, out);
-            }
-            if let Some(b) = block_arg {
-                collect_cvars(hir, *b, out);
-            }
-        }
-        HirNode::Block { body, .. } | HirNode::Lambda { body, .. } => {
-            for &n in body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::ArrayLit(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                collect_cvars(hir, *n, out);
-            }
-        }
-        HirNode::HashLit(pairs) => {
-            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::RangeLit { start, end, .. } => {
-            if let Some(s) = start {
-                collect_cvars(hir, *s, out);
-            }
-            if let Some(e) = end {
-                collect_cvars(hir, *e, out);
-            }
-        }
-        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
-            for p in parts {
-                if let StrPart::Interp(n) = p {
-                    collect_cvars(hir, *n, out);
-                }
-            }
-        }
-        HirNode::While { cond, body, .. } => {
-            collect_cvars(hir, *cond, out);
-            for &n in body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::Loop { body } => {
-            for &n in body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::For { target, iterable, body } => {
-            target.for_each_node(&mut |n| collect_cvars(hir, n, out));
-            target.for_each_target(&mut |t| collect_cvar_target(t, out));
-            collect_cvars(hir, *iterable, out);
-            for &n in body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
-            if let Some(v) = v {
-                collect_cvars(hir, *v, out);
-            }
-        }
-        HirNode::MultiWrite { targets, value } => {
-            collect_cvars(hir, *value, out);
-            targets.for_each_node(&mut |n| collect_cvars(hir, n, out));
-            targets.for_each_target(&mut |t| collect_cvar_target(t, out));
-        }
-        HirNode::GlobalWrite(_, value) => collect_cvars(hir, *value, out),
-        HirNode::ConstWrite { value, .. } => collect_cvars(hir, *value, out),
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
-            for &n in body {
-                collect_cvars(hir, n, out);
-            }
-        }
-        HirNode::Yield(elems) => {
-            for e in elems {
-                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                collect_cvars(hir, *n, out);
-            }
-        }
-        HirNode::Raise(args, cause) => {
-            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
-                collect_cvars(hir, a, out);
-            }
-        }
-        HirNode::CaseIn { subject, arms, else_body } => {
-            collect_cvars(hir, *subject, out);
-            for arm in arms {
-                arm.pattern.for_each_node(&mut |n| collect_cvars(hir, n, out));
-                if let Some((g, _)) = arm.guard {
-                    collect_cvars(hir, g, out);
-                }
-                for &n in &arm.body {
-                    collect_cvars(hir, n, out);
-                }
-            }
-            if let Some(body) = else_body {
-                for &n in body {
-                    collect_cvars(hir, n, out);
-                }
-            }
-        }
-        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            collect_cvars(hir, *subject, out);
-            pattern.for_each_node(&mut |n| collect_cvars(hir, n, out));
-        }
-        HirNode::Begin {
-            body,
-            rescues,
-            else_body,
-            ensure_body,
-        } => {
-            for &n in body {
-                collect_cvars(hir, n, out);
-            }
-            for r in rescues {
-                for &n in &r.body {
-                    collect_cvars(hir, n, out);
-                }
-            }
-            if let Some(b) = else_body {
-                for &n in b {
-                    collect_cvars(hir, n, out);
-                }
-            }
-            if let Some(b) = ensure_body {
-                for &n in b {
-                    collect_cvars(hir, n, out);
-                }
-            }
-        }
-        HirNode::Retry => {}
-        HirNode::Redo
-        | HirNode::BlockGiven
-        | HirNode::SelfRef
-        | HirNode::Program(_)
-        | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
-        // An imaginary literal's inner node is itself a numeric
-        // literal by syntax -- a leaf for this walk's purposes.
-        | HirNode::ImaginaryLit(_)
-        | HirNode::FloatLit(_)
-        | HirNode::SymbolLit(_)
-        | HirNode::NilLit
-        | HirNode::BoxHandle(_)
-        | HirNode::BoolLit(_)
-        | HirNode::LocalRead(_)
-        | HirNode::IvarRead(_)
-        | HirNode::ClassRef(_)
-        | HirNode::GlobalRead(_)
-        | HirNode::LastMatchRef(_)
-        | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => {}
+        _ => {}
     }
+    hir[id].for_each_child(&mut |n| collect_cvars(hir, n, out));
 }

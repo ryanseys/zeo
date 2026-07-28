@@ -152,7 +152,11 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         // A lambda's own body is a fresh, independent local-variable scope
         // (like a non-`.times` escaping block) -- never hoisted into the
         // ENCLOSING scope's prelude.
-        HirNode::Lambda { .. } => {}
+        HirNode::Lambda {
+            params: _,
+            body: _,
+            method_body: _,
+        } => {}
         HirNode::LocalWrite(name, value) => {
             if !out.contains(name) {
                 out.push(name.clone());
@@ -201,7 +205,12 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, n, out);
             }
         }
-        HirNode::While { cond, body, .. } => {
+        HirNode::While {
+            cond,
+            body,
+            negate: _,
+            post: _,
+        } => {
             collect_locals(compiler, *cond, out);
             for &n in body {
                 collect_locals(compiler, n, out);
@@ -240,7 +249,11 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             collect_locals(compiler, *value, out);
         }
         HirNode::GlobalWrite(_, value) => collect_locals(compiler, *value, out),
-        HirNode::ConstWrite { value, .. } => collect_locals(compiler, *value, out),
+        HirNode::ConstWrite {
+            scope: _,
+            name: _,
+            value,
+        } => collect_locals(compiler, *value, out),
         HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 collect_locals(compiler, n, out);
@@ -253,7 +266,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             kwargs,
             block,
             block_arg,
-            ..
+            safe: _,
         } => {
             if let Some(r) = receiver {
                 collect_locals(compiler, *r, out);
@@ -289,7 +302,14 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *b, out);
             }
         }
-        HirNode::New { args, kwargs, .. } => {
+        // A block on `.new` is an escaping block: its own locals stay inside
+        // it, exactly as in the `Call` arm above.
+        HirNode::New {
+            class_name: _,
+            args,
+            kwargs,
+            block: _,
+        } => {
             for &a in args {
                 collect_locals(compiler, a, out);
             }
@@ -297,7 +317,13 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, a, out);
             }
         }
-        HirNode::SuperCall { args, kwargs, block_arg, .. } => {
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper: _,
+            block: _,
+            block_arg,
+        } => {
             for a in args {
                 collect_locals(compiler, a.node_id(), out);
             }
@@ -308,7 +334,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *b, out);
             }
         }
-        HirNode::Block { body, .. } => {
+        HirNode::Block { params: _, body } => {
             // Params intentionally NOT collected -- see module docs.
             for &n in body {
                 collect_locals(compiler, n, out);
@@ -325,7 +351,11 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, n, out);
             }
         }
-        HirNode::RangeLit { start, end, .. } => {
+        HirNode::RangeLit {
+            start,
+            end,
+            exclusive: _,
+        } => {
             if let Some(s) = start {
                 collect_locals(compiler, *s, out);
             }
@@ -340,7 +370,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 }
             }
         }
-        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+        HirNode::Eval(body) | HirNode::BoxScope { box_id: _, body } => {
             for &n in body {
                 collect_locals(compiler, n, out);
             }
@@ -428,8 +458,15 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
-        | HirNode::BigIntegerLit { .. }
-        | HirNode::RationalLit { .. }
+        | HirNode::BigIntegerLit {
+            negative: _,
+            digits: _,
+        }
+        | HirNode::RationalLit {
+            negative: _,
+            num_digits: _,
+            den_digits: _,
+        }
         // An imaginary literal's inner node is itself a numeric
         // literal by syntax -- a leaf for this walk's purposes.
         | HirNode::ImaginaryLit(_)
@@ -446,17 +483,36 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
-        | HirNode::QualifiedConstRead(..)
-        | HirNode::ConstReadOrNil(..)
+        | HirNode::AliasMethod {
+            new_name: _,
+            old_name: _,
+            is_class_method: _,
+        }
+        | HirNode::MethodVisibility {
+            name: _,
+            visibility: _,
+        }
+        | HirNode::AliasGlobal(_, _)
+        | HirNode::QualifiedConstRead(_, _)
+        | HirNode::ConstReadOrNil(_, _)
         | HirNode::BlockGiven
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. } => {}
+        | HirNode::ClassDef {
+            name: _,
+            superclass: _,
+            body: _,
+            is_module: _,
+        }
+        | HirNode::DefMethod {
+            name: _,
+            params: _,
+            body: _,
+            is_class_method: _,
+            visibility: _,
+            is_def: _,
+        } => {}
     }
 }
 

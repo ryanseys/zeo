@@ -1906,6 +1906,268 @@ pub enum HirNode {
     Seq(Vec<NodeId>),
 }
 
+impl HirNode {
+    /// Every child node this one owns, in evaluation order.
+    ///
+    /// The name-collecting passes (`analyze::collect_ivars`,
+    /// `mro::collect_cvars`, `mro::collect_const_refs`) each used to carry
+    /// their own copy of this walk, and the copies drifted: one missed a
+    /// call's keyword arguments, another a `rescue *errs` splat, a third a
+    /// block parameter's default. Every such omission is a silently WRONG
+    /// answer, never a crash. One exhaustive match with no `..` rest pattern
+    /// is what makes a new variant -- or a new field on an existing one --
+    /// a compile error instead.
+    ///
+    /// `ClassDef`/`DefMethod` bodies are children like any other. A pass that
+    /// must stop at a fresh Ruby scope matches those variants ahead of its
+    /// fall-through to here.
+    pub fn for_each_child(&self, visit: &mut impl FnMut(NodeId)) {
+        fn each(ids: impl IntoIterator<Item = NodeId>, visit: &mut impl FnMut(NodeId)) {
+            ids.into_iter().for_each(visit);
+        }
+        fn elems(es: &[ArrayElem], visit: &mut impl FnMut(NodeId)) {
+            for e in es {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                visit(*n);
+            }
+        }
+        fn kws(ks: &[KwArg], visit: &mut impl FnMut(NodeId)) {
+            ks.iter().flat_map(|kw| kw.node_ids()).for_each(visit);
+        }
+        fn defaults(p: &Params, visit: &mut impl FnMut(NodeId)) {
+            p.default_ids().into_iter().for_each(visit);
+        }
+        fn parts(ps: &[StrPart], visit: &mut impl FnMut(NodeId)) {
+            for p in ps {
+                if let StrPart::Interp(n) = p {
+                    visit(*n);
+                }
+            }
+        }
+        match self {
+            HirNode::Program(body)
+            | HirNode::Eval(body)
+            | HirNode::PreExec(body)
+            | HirNode::Seq(body)
+            | HirNode::Loop { body }
+            | HirNode::BoxScope { box_id: _, body } => each(body.iter().copied(), visit),
+            HirNode::Ffi(call) => call.args.iter().for_each(|(a, _)| visit(*a)),
+            HirNode::ImaginaryLit(inner) => visit(*inner),
+            HirNode::And(l, r) | HirNode::Or(l, r) => {
+                visit(*l);
+                visit(*r);
+            }
+            HirNode::Defined(v) => visit(*v),
+            HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                visit(*cond);
+                each(then_body.iter().copied(), visit);
+                each(else_body.iter().copied(), visit);
+            }
+            HirNode::CaseWhen {
+                subject,
+                arms,
+                else_body,
+            } => {
+                each(subject.iter().copied(), visit);
+                for (values, body) in arms {
+                    elems(values, visit);
+                    each(body.iter().copied(), visit);
+                }
+                each(else_body.iter().copied(), visit);
+            }
+            HirNode::ArrayLit(es) | HirNode::Yield(es) => elems(es, visit),
+            HirNode::HashLit(pairs) => kws(pairs, visit),
+            HirNode::RangeLit {
+                start,
+                end,
+                exclusive: _,
+            } => each(start.iter().chain(end).copied(), visit),
+            HirNode::StringLit(ps) | HirNode::RegexpLit(ps, _) => parts(ps, visit),
+            HirNode::LocalWrite(_, value)
+            | HirNode::IvarWrite(_, value)
+            | HirNode::ClassVarWrite(_, value)
+            | HirNode::GlobalWrite(_, value)
+            | HirNode::ConstWrite {
+                scope: _,
+                name: _,
+                value,
+            } => visit(*value),
+            HirNode::Call {
+                receiver,
+                name: _,
+                args,
+                kwargs,
+                block,
+                block_arg,
+                safe: _,
+            } => {
+                each(receiver.iter().copied(), visit);
+                elems(args, visit);
+                kws(kwargs, visit);
+                each(block.iter().chain(block_arg).copied(), visit);
+            }
+            HirNode::New {
+                class_name: _,
+                args,
+                kwargs,
+                block,
+            } => {
+                each(args.iter().copied(), visit);
+                kws(kwargs, visit);
+                each(block.iter().copied(), visit);
+            }
+            HirNode::SuperCall {
+                args,
+                kwargs,
+                zsuper: _,
+                block,
+                block_arg,
+            } => {
+                args.iter().for_each(|a| visit(a.node_id()));
+                kws(kwargs, visit);
+                each(block.iter().chain(block_arg).copied(), visit);
+            }
+            HirNode::Block { params: p, body } => {
+                defaults(p, visit);
+                each(body.iter().copied(), visit);
+            }
+            HirNode::Lambda {
+                params: p,
+                body,
+                method_body: _,
+            } => {
+                defaults(p, visit);
+                each(body.iter().copied(), visit);
+            }
+            HirNode::ClassDef {
+                name: _,
+                superclass: _,
+                body,
+                is_module: _,
+            } => each(body.iter().copied(), visit),
+            HirNode::DefMethod {
+                name: _,
+                params: p,
+                body,
+                is_class_method: _,
+                visibility: _,
+                is_def: _,
+            } => {
+                defaults(p, visit);
+                each(body.iter().copied(), visit);
+            }
+            HirNode::While {
+                cond,
+                body,
+                negate: _,
+                post: _,
+            } => {
+                visit(*cond);
+                each(body.iter().copied(), visit);
+            }
+            HirNode::For {
+                target,
+                iterable,
+                body,
+            } => {
+                target.for_each_node(visit);
+                visit(*iterable);
+                each(body.iter().copied(), visit);
+            }
+            HirNode::MultiWrite { targets, value } => {
+                targets.for_each_node(visit);
+                visit(*value);
+            }
+            HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
+                each(v.iter().copied(), visit)
+            }
+            HirNode::Raise(args, cause) => {
+                each(args.iter().copied(), visit);
+                each(raise_cause_node(cause), visit);
+            }
+            HirNode::CaseIn {
+                subject,
+                arms,
+                else_body,
+            } => {
+                visit(*subject);
+                for arm in arms {
+                    arm.pattern.for_each_node(visit);
+                    arm.guard.iter().for_each(|(g, _)| visit(*g));
+                    each(arm.body.iter().copied(), visit);
+                }
+                else_body.iter().for_each(|b| each(b.iter().copied(), visit));
+            }
+            HirNode::MatchPredicate { subject, pattern }
+            | HirNode::MatchRequired { subject, pattern } => {
+                visit(*subject);
+                pattern.for_each_node(visit);
+            }
+            HirNode::Begin {
+                body,
+                rescues,
+                else_body,
+                ensure_body,
+            } => {
+                each(body.iter().copied(), visit);
+                for r in rescues {
+                    each(r.splats.iter().copied(), visit);
+                    each(r.body.iter().copied(), visit);
+                }
+                else_body
+                    .iter()
+                    .chain(ensure_body)
+                    .for_each(|b| each(b.iter().copied(), visit));
+            }
+            HirNode::IntegerLit(_)
+            | HirNode::BigIntegerLit {
+                negative: _,
+                digits: _,
+            }
+            | HirNode::RationalLit {
+                negative: _,
+                num_digits: _,
+                den_digits: _,
+            }
+            | HirNode::FloatLit(_)
+            | HirNode::SymbolLit(_)
+            | HirNode::NilLit
+            | HirNode::BoolLit(_)
+            | HirNode::BoxHandle(_)
+            | HirNode::SelfRef
+            | HirNode::BlockGiven
+            | HirNode::Redo
+            | HirNode::Retry
+            | HirNode::LocalRead(_)
+            | HirNode::IvarRead(_)
+            | HirNode::ClassVarRead(_)
+            | HirNode::ClassRef(_)
+            | HirNode::GlobalRead(_)
+            | HirNode::LastMatchRef(_)
+            | HirNode::QualifiedConstRead(_, _)
+            | HirNode::ConstReadOrNil(_, _)
+            | HirNode::Include(_)
+            | HirNode::Extend(_)
+            | HirNode::Prepend(_)
+            | HirNode::Undef(_)
+            | HirNode::AliasGlobal(_, _)
+            | HirNode::AliasMethod {
+                new_name: _,
+                old_name: _,
+                is_class_method: _,
+            }
+            | HirNode::MethodVisibility {
+                name: _,
+                visibility: _,
+            } => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod span_tests {
     use super::{FileId, Hir, HirNode, Span};
