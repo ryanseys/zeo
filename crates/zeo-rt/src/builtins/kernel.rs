@@ -110,6 +110,12 @@ ruby_module! {
     def "`"(recv, args, block) {
         crate::builtins::process::backquote(recv, args, block)
     }
+    // `spawn` starts the child WITHOUT waiting and answers its pid -- the
+    // Kernel spelling of `Process.spawn`, which Open3's popen family calls
+    // receiverless from module context.
+    def "spawn"(_recv, args, _block) {
+        crate::builtins::process::spawn_pid(args)
+    }
     // `putc` -- writes one character to `$stdout` and returns its argument.
     // An Integer writes the low byte (`n & 0xff`); a String writes its first
     // character.

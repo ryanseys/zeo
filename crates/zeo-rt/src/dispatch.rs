@@ -1717,6 +1717,7 @@ fn is_hidden_builtin_private(name: &str) -> bool {
             | "pp"
             | "warn"
             | "system"
+            | "spawn"
             | "`"
             | "raise"
             | "fail"
