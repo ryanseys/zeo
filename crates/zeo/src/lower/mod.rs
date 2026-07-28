@@ -187,6 +187,23 @@ pub(crate) fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
     consts::constant_path_name(recv).is_ok_and(|name| name == enclosing)
 }
 
+/// The class a `class Sub < ... end` header names as its superclass.
+///
+/// `< self` inside a class body is the ENCLOSING class -- a compile-time fact,
+/// and the shape optparse gives every argument style (`class NoArgument <
+/// self` inside `class Switch`). Read as a dynamic superclass instead, the
+/// subclass is minted at runtime over a compiled parent, and its instances are
+/// name-keyed `DynObject`s the parent's own methods cannot run against.
+fn superclass_name(hir: &Hir, sc: &Node<'_>) -> PResult<String> {
+    if sc.as_self_node().is_some() {
+        return hir
+            .enclosing_class()
+            .map(str::to_string)
+            .ok_or_else(|| "`< self` names the enclosing class, and there isn't one here".into());
+    }
+    consts::constant_path_name(sc)
+}
+
 pub(crate) fn span_of(hir: &Hir, node: &Node<'_>) -> Span {
     let loc = node.location();
     match hir.lowering_file {
@@ -1087,7 +1104,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // Rust structs -- it has to be minted at runtime too. See
         // `lower_runtime_class`.
         if let Some(sc) = class.superclass() {
-            let runtime_parent = match constant_path_name(&sc) {
+            let runtime_parent = match superclass_name(hir, &sc) {
                 // Not a constant path at all (`< Struct.new(:x)`).
                 Err(_) => true,
                 // A constant path that holds a runtime class VALUE (`Base =
@@ -1120,7 +1137,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         }
         let superclass = match class.superclass() {
             None => None,
-            Some(sc) => Some(constant_path_name(&sc)?),
+            Some(sc) => Some(superclass_name(hir, &sc)?),
         };
         let body = lower_class_body(result, hir, class.body(), superclass.as_deref(), Some(&name))?;
         return Ok(hir.push(HirNode::ClassDef {

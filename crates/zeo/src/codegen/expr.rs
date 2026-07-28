@@ -1471,7 +1471,10 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         // `SomeError.new(...)`, running any custom `initialize` (defaults and
         // `super` chain included), exactly like CRuby's `exc.exception` path.
         let args = match explicit_msg {
-            Some(msg_id) => vec![emit_expr(cx, msg_id)],
+            // Boxed like any other argument: `raise Gem::DependencyResolutionError,
+            // Gem::Resolver::Conflict.new(...)` passes an object-typed
+            // expression, which `initialize` takes as a plain `RubyValue`.
+            Some(msg_id) => vec![box_if_object_typed(cx, msg_id, emit_expr(cx, msg_id))],
             None => vec![],
         };
         return emit_boxed_new(cx, class_name, args);

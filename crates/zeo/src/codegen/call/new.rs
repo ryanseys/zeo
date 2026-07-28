@@ -82,6 +82,13 @@ pub fn emit_new(
             }
         };
     };
+    // A class with its own `def self.new` -- rubygems' `Gem::Package::TarWriter`
+    // wraps construction in a yield-and-close block form. Real Ruby dispatches
+    // `.new` to that method like any other class method; the default
+    // allocate-then-`initialize` below is what its `super` reaches.
+    if cx.compiler.class_method_in_chain(cid, "new").is_some() {
+        return super::reflect::emit_class_method_call_on(cx, cid, "new", args, kwargs, block, None);
+    }
     let ci = cx.compiler.class(cid);
     if cx.compiler.has_generated_struct(cid) {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
@@ -94,8 +101,12 @@ pub fn emit_new(
             // `clone` (an inherent fn on the struct) would hijack.
             //
             // A literal block passed to `.new` is forwarded to `initialize`
-            // (so `yield`/`block_given?` inside it see it); `needs_block`
-            // keeps the callee's block slot lined up either way.
+            // (so `yield`/`block_given?` inside it see it) -- but only when
+            // that `initialize` HAS a block slot. Ruby lets any call carry a
+            // block the callee never looks at; the generated signature has no
+            // parameter for one, so passing it anyway is an arity error on the
+            // generated program.
+            let takes_block = scope.needs_block_param();
             let init = crate::codegen::params::emit_call_args_to(
                 cx,
                 &crate::codegen::params::Callee::Method(quote! { Clone::clone(&__obj) }),
@@ -103,9 +114,9 @@ pub fn emit_new(
                 &scope.params,
                 args,
                 kwargs,
-                block,
+                block.filter(|_| takes_block),
                 None,
-                scope.needs_block_param() || block.is_some(),
+                takes_block,
                 crate::codegen::scope_frame_guard(cx.compiler, scope, false),
             );
             return quote! { { let __obj = #ctor; #init; __obj } };

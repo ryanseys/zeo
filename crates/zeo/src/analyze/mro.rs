@@ -112,10 +112,33 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
         }
     }
 
+    reinfer_local_types(compiler);
+
     resolve_cvars(compiler, main_statements)?;
     resolve_consts(compiler, main_statements)?;
 
     Ok(())
+}
+
+/// Re-run every method scope's local-type inference now that ancestors and
+/// class-method tables are final. The first pass runs at REGISTRATION time,
+/// while classes are still arriving, so an answer that depends on the finished
+/// picture is unreliable there: `X.new` types as an unboxed `Arc<X>` only when
+/// `X` has no `def self.new` of its own, and that method may be registered
+/// after the caller's body was walked. Codegen reads this map and resolves the
+/// same question against the finished tables, so the two disagreeing is a
+/// mismatched-types error on the generated program.
+fn reinfer_local_types(compiler: &mut Compiler) {
+    for sid in 0..compiler.scopes.len() {
+        let scope = &compiler.scopes[sid];
+        let (defining, params, body) = (
+            scope.defining_class,
+            scope.params.clone(),
+            scope.body.clone(),
+        );
+        let types = crate::analyze::method_local_types(compiler, defining, &params, &body);
+        compiler.scopes[sid].local_types = types;
+    }
 }
 
 /// Resolves this class's `pending_aliases` (see `HirNode::AliasMethod`): for

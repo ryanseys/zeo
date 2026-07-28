@@ -32,6 +32,7 @@ mod exceptions;
 mod ffi;
 mod gc_weak;
 mod gems_require;
+mod gems_vendored;
 mod io_files;
 mod language_core;
 mod marshal;

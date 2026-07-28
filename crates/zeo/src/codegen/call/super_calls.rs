@@ -13,7 +13,6 @@ use quote::quote;
 
 use crate::codegen::Ctx;
 use crate::codegen::expr::emit_expr;
-use crate::codegen::ident::safe_ident;
 use crate::hir::{ArrayElem, KwArg, NodeId, Params};
 use proc_macro2::TokenStream;
 
@@ -441,26 +440,31 @@ fn emit_runtime_super_args(
     block_arg: Option<NodeId>,
 ) -> (Vec<TokenStream>, TokenStream) {
     let mut pushes: Vec<TokenStream> = Vec::new();
+    // Bare `super` forwards each parameter by NAME, so every read goes through
+    // `emit_local_read` -- a parameter an escaping block captures lives in a
+    // cell, not in the plain binding, and naming the ident raw hands `super` an
+    // `Arc<Mutex<..>>` (rubygems' `Gem::Resolver::BestSet#prerelease=`).
+    let read = |name: &str| crate::codegen::hoisting::emit_local_read(cx, name);
     if zsuper {
         for name in &current_params.required {
-            let id = safe_ident(name);
-            pushes.push(quote! { __super_args.push(#id.clone()); });
+            let v = read(name);
+            pushes.push(quote! { __super_args.push(#v); });
         }
         for (name, _) in &current_params.optional {
-            let id = safe_ident(name);
-            pushes.push(quote! { __super_args.push(#id.clone()); });
+            let v = read(name);
+            pushes.push(quote! { __super_args.push(#v); });
         }
         if let Some(Some(name)) = &current_params.rest {
-            let id = safe_ident(name);
+            let v = read(name);
             // The `*rest` local is a `RubyValue::Array` post-prologue -- splat
             // its elements (the same idiom `ArrayElem::Splat` uses at call sites).
             pushes.push(quote! {
-                __super_args.extend((#id).as_array_unchecked().lock().iter().cloned());
+                __super_args.extend((#v).as_array_unchecked().lock().iter().cloned());
             });
         }
         for name in &current_params.post {
-            let id = safe_ident(name);
-            pushes.push(quote! { __super_args.push(#id.clone()); });
+            let v = read(name);
+            pushes.push(quote! { __super_args.push(#v); });
         }
         // Bare `super` forwards the current method's KEYWORD arguments too
         // (CRuby's zsuper takes everything) -- appended as one trailing
@@ -475,19 +479,19 @@ fn emit_runtime_super_args(
                     crate::hir::KeywordParam::Required(n)
                     | crate::hir::KeywordParam::Optional(n, _) => n,
                 };
-                let id = safe_ident(key);
+                let v = read(key);
                 kw_pushes.push(quote! {
                     zeo_rt::hash_set(
                         &__kw,
                         zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#key)),
-                        #id.clone(),
+                        #v,
                     );
                 });
             }
             if let Some(Some(krest)) = &current_params.keyword_rest {
-                let id = safe_ident(krest);
+                let v = read(krest);
                 kw_pushes.push(quote! {
-                    for (__k, __v) in (#id).as_hash_unchecked().lock().values().cloned().collect::<Vec<_>>() {
+                    for (__k, __v) in (#v).as_hash_unchecked().lock().values().cloned().collect::<Vec<_>>() {
                         zeo_rt::hash_set(&__kw, __k, __v);
                     }
                 });

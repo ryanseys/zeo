@@ -602,4 +602,28 @@ mod tests {
     fn a_nested_assignment_is_tracked() {
         assert_eq!(ty_of("puts(y = 1)", "y"), TyKind::Int);
     }
+
+    /// A `begin` body compiles inside its own Rust closure while the rescue
+    /// chain, the `ensure`, and everything after it compile outside it -- so an
+    /// object-typed local, whose `let` comes from its own assignment, would be
+    /// confined to that closure. `Poly` puts it in the hoisting prelude, where
+    /// one binding spans every clause.
+    #[test]
+    fn a_local_assigned_inside_a_begin_widens_to_poly() {
+        let src = "class A; end\nbegin\n  x = A.new\nensure\n  nil\nend\n";
+        assert_eq!(ty_of(src, "x"), TyKind::Poly);
+        let src = "class A; end\nbegin\n  raise 'x'\nrescue\n  y = A.new\nend\n";
+        assert_eq!(ty_of(src, "y"), TyKind::Poly);
+        let src = "class A; end\nbegin\n  a, b = A.new, A.new\nensure\n  nil\nend\n";
+        assert_eq!(ty_of(src, "a"), TyKind::Poly);
+        assert_eq!(ty_of(src, "b"), TyKind::Poly);
+    }
+
+    /// ...but a local assigned OUTSIDE the `begin` and merely read inside it
+    /// keeps its type: its binding is already in the enclosing block.
+    #[test]
+    fn a_local_only_read_inside_a_begin_keeps_its_type() {
+        let src = "class A; end\nz = A.new\nbegin\n  z\nensure\n  nil\nend\n";
+        assert!(matches!(ty_of(src, "z"), TyKind::Object(_)));
+    }
 }

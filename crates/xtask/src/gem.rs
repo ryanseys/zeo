@@ -18,6 +18,9 @@
 //! rev    = "<full-sha>"   # resolved + written by `gem sync`; the immutable pin
 //! ```
 //!
+//! A repo that ships more than one gem (`rubygems/rubygems` carries bundler
+//! under `bundler/`) gets one block per gem, distinguished by `subdir`.
+//!
 //! `rev` is trusted as-is once written (the user chose "trust the tag" -- no
 //! cross-check against the local install; `--check-oracle` is an optional extra).
 
@@ -25,21 +28,31 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 /// Parsed CLI arguments for a `gem` subcommand.
+#[derive(Debug)]
 struct ParsedArgs {
     positional: Vec<String>,
     /// The value of `--tag`/`--ref`/`--branch` (all resolve to a git ref).
     tag: Option<String>,
+    /// `--name`: the vendored gem's name, when it isn't the repo's own.
+    name: Option<String>,
+    /// `--subdir`: see [`GemEntry::subdir`].
+    subdir: Option<String>,
     /// Bare `--flag`s, e.g. `--check`, `--check-oracle`.
     flags: Vec<String>,
 }
 
 /// One git-sourced gem in `gems.toml`.
+#[derive(Debug)]
 struct GemEntry {
     name: String,
     github: String,
     tag: String,
     /// The resolved commit SHA -- the reproducible pin. `None` until first sync.
     rev: Option<String>,
+    /// The directory INSIDE the checkout holding the gem's `lib/`, for a repo
+    /// that ships more than one gem (`rubygems/rubygems` carries bundler under
+    /// `bundler/`). `None` means the repo root, which is the usual shape.
+    subdir: Option<String>,
 }
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
@@ -48,7 +61,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         Some("sync") => cmd_sync(root, &args[1..]),
         Some("update") => cmd_update(root, &args[1..]),
         _ => Err(
-            "usage: cargo run -p xtask -- gem <add <owner/repo> [--tag <t>] | \
+            "usage: cargo run -p xtask -- gem \
+             <add <owner/repo> [--tag <t>] [--name <n>] [--subdir <d>] | \
              sync [<name>] [--check] [--check-oracle] | update <name> [--tag <t>]>"
                 .to_string(),
         ),
@@ -64,8 +78,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 
 // --- subcommands ------------------------------------------------------------
 
-/// `gem add <owner/repo> --tag <t>`: append a manifest block (from CLI args --
-/// never parsing Ruby) and vendor it.
+/// `gem add <owner/repo> --tag <t> [--name <n>] [--subdir <d>]`: append a
+/// manifest block (from CLI args -- never parsing Ruby) and vendor it.
 fn cmd_add(root: &Path, args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args)?;
     let owner_repo = parsed
@@ -75,12 +89,16 @@ fn cmd_add(root: &Path, args: &[String]) -> Result<(), String> {
     let tag = parsed
         .tag
         .ok_or("gem add needs --tag <tag>, e.g. --tag v1.8.0")?;
-    let name = owner_repo
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("cannot derive a gem name from {owner_repo:?}"))?
-        .to_string();
+    // The repo's own name, unless a repo shipping several gems named one.
+    let name = match parsed.name {
+        Some(name) => name,
+        None => owner_repo
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("cannot derive a gem name from {owner_repo:?}"))?
+            .to_string(),
+    };
 
     let manifest_path = root.join("gems.toml");
     let mut entries = read_manifest(&manifest_path)?;
@@ -94,6 +112,7 @@ fn cmd_add(root: &Path, args: &[String]) -> Result<(), String> {
         github: owner_repo.clone(),
         tag,
         rev: None,
+        subdir: parsed.subdir,
     });
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     write_manifest(&manifest_path, &entries)?;
@@ -309,7 +328,11 @@ fn cache_dir() -> PathBuf {
 /// stub gemspec. Only `lib/` is upstream source the drift check guards; the
 /// gemspec is deterministic tool output.
 fn vendor(checkout: &Path, dest: &Path, entry: &GemEntry) -> Result<(), String> {
-    let src_lib = checkout.join("lib");
+    let src_root = match &entry.subdir {
+        Some(sub) => checkout.join(sub),
+        None => checkout.to_path_buf(),
+    };
+    let src_lib = src_root.join("lib");
     if !src_lib.is_dir() {
         return Err(format!(
             "{}: upstream has no lib/ directory at {}",
@@ -324,7 +347,11 @@ fn vendor(checkout: &Path, dest: &Path, entry: &GemEntry) -> Result<(), String> 
 
     // Carry any license the gem ships (kept per gems/UPSTREAM.md policy).
     for lic in ["COPYING", "BSDL", "LICENSE", "LICENSE.txt", "LICENSE.md", "MIT-LICENSE"] {
-        let from = checkout.join(lic);
+        // A sub-gem carries its own license when it has one, else the repo's.
+        let from = [src_root.join(lic), checkout.join(lic)]
+            .into_iter()
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| checkout.join(lic));
         if from.is_file() {
             std::fs::copy(&from, dest.join(lic))
                 .map_err(|e| format!("copying {lic}: {e}"))?;
@@ -574,6 +601,7 @@ fn read_manifest(path: &Path) -> Result<Vec<GemEntry>, String> {
                 github: String::new(),
                 tag: String::new(),
                 rev: None,
+                subdir: None,
             });
             continue;
         }
@@ -588,6 +616,7 @@ fn read_manifest(path: &Path) -> Result<Vec<GemEntry>, String> {
             "github" => entry.github = value,
             "tag" => entry.tag = value,
             "rev" => entry.rev = Some(value).filter(|v| !v.is_empty()),
+            "subdir" => entry.subdir = Some(value).filter(|v| !v.is_empty()),
             other => return Err(format!("unknown gems.toml key {other:?}")),
         }
     }
@@ -606,6 +635,9 @@ fn write_manifest(path: &Path, entries: &[GemEntry]) -> Result<(), String> {
         if let Some(rev) = &entry.rev {
             out.push_str(&format!("rev    = {rev:?}\n"));
         }
+        if let Some(subdir) = &entry.subdir {
+            out.push_str(&format!("subdir = {subdir:?}\n"));
+        }
     }
     std::fs::write(path, out).map_err(|e| format!("writing {}: {e}", path.display()))
 }
@@ -616,18 +648,21 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
     let mut parsed = ParsedArgs {
         positional: Vec::new(),
         tag: None,
+        name: None,
+        subdir: None,
         flags: Vec::new(),
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
+        let mut value = || {
+            iter.next()
+                .ok_or_else(|| format!("{arg} needs a value"))
+                .cloned()
+        };
         match arg.as_str() {
-            "--tag" | "--ref" | "--branch" => {
-                parsed.tag = Some(
-                    iter.next()
-                        .ok_or_else(|| format!("{arg} needs a value"))?
-                        .clone(),
-                );
-            }
+            "--tag" | "--ref" | "--branch" => parsed.tag = Some(value()?),
+            "--name" => parsed.name = Some(value()?),
+            "--subdir" => parsed.subdir = Some(value()?),
             flag if flag.starts_with("--") => parsed.flags.push(flag.to_string()),
             other => parsed.positional.push(other.to_string()),
         }
@@ -637,4 +672,144 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
 
 fn short(rev: &str) -> &str {
     &rev[..rev.len().min(12)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zeo-xtask-gem-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("creating the scratch dir");
+        dir
+    }
+
+    fn entry(name: &str, subdir: Option<&str>) -> GemEntry {
+        GemEntry {
+            name: name.to_string(),
+            github: "rubygems/rubygems".to_string(),
+            tag: "v4.0.16".to_string(),
+            rev: Some("f".repeat(40)),
+            subdir: subdir.map(str::to_string),
+        }
+    }
+
+    /// The manifest is this tool's own format, read and written by hand -- so a
+    /// key it can write but not read back is a silent data loss on the next
+    /// `gem sync` (`subdir` vanishing re-vendors bundler as rubygems).
+    #[test]
+    fn every_written_key_reads_back() {
+        let dir = scratch("roundtrip");
+        let path = dir.join("gems.toml");
+        let written = vec![entry("bundler", Some("bundler")), entry("rubygems", None)];
+        write_manifest(&path, &written).expect("writes");
+        let read = read_manifest(&path).expect("reads");
+
+        assert_eq!(read.len(), 2);
+        for (a, b) in written.iter().zip(&read) {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.github, b.github);
+            assert_eq!(a.tag, b.tag);
+            assert_eq!(a.rev, b.rev);
+            assert_eq!(a.subdir, b.subdir);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_manifest_is_an_empty_one_rather_than_an_error() {
+        // `gem add` on a fresh tree has nothing to read yet.
+        assert!(read_manifest(Path::new("/nonexistent/gems.toml")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_unknown_key_is_rejected_instead_of_ignored() {
+        let dir = scratch("unknown-key");
+        let path = dir.join("gems.toml");
+        std::fs::write(&path, "[gems.x]\ngithub = \"a/b\"\nsubdirectory = \"c\"\n").unwrap();
+        let err = read_manifest(&path).unwrap_err();
+        assert!(err.contains("subdirectory"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `subdir` is the whole reason bundler can be vendored at all: one repo,
+    /// two gems, two `lib/` trees. Vendoring the wrong one produces a plausible
+    /// `gems/bundler/lib/` that is actually rubygems.
+    #[test]
+    fn subdir_selects_which_lib_tree_is_vendored() {
+        let dir = scratch("subdir");
+        let checkout = dir.join("checkout");
+        std::fs::create_dir_all(checkout.join("lib")).unwrap();
+        std::fs::write(checkout.join("lib/rubygems.rb"), "# root gem\n").unwrap();
+        std::fs::create_dir_all(checkout.join("bundler/lib")).unwrap();
+        std::fs::write(checkout.join("bundler/lib/bundler.rb"), "# sub gem\n").unwrap();
+        // A license at the repo root and a more specific one in the sub-gem.
+        std::fs::write(checkout.join("LICENSE.txt"), "root license\n").unwrap();
+        std::fs::write(checkout.join("bundler/LICENSE.txt"), "sub license\n").unwrap();
+
+        let dest = dir.join("gems/bundler");
+        vendor(&checkout, &dest, &entry("bundler", Some("bundler"))).expect("vendors");
+        assert!(dest.join("lib/bundler.rb").is_file());
+        assert!(
+            !dest.join("lib/rubygems.rb").exists(),
+            "the repo root's lib/ must not be vendored for a subdir gem"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("LICENSE.txt")).unwrap(),
+            "sub license\n",
+            "a sub-gem's own license wins over the repo's"
+        );
+        let gemspec = std::fs::read_to_string(dest.join("bundler.gemspec")).unwrap();
+        assert!(gemspec.contains("s.version = \"4.0.16\""), "{gemspec}");
+
+        // ...and the same checkout with no `subdir` vendors the root tree.
+        let dest = dir.join("gems/rubygems");
+        vendor(&checkout, &dest, &entry("rubygems", None)).expect("vendors");
+        assert!(dest.join("lib/rubygems.rb").is_file());
+        assert!(!dest.join("lib/bundler.rb").exists());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("LICENSE.txt")).unwrap(),
+            "root license\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_lib_tree_is_a_named_error_not_an_empty_vendor() {
+        let dir = scratch("no-lib");
+        let checkout = dir.join("checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let err = vendor(&checkout, &dir.join("out"), &entry("bundler", Some("bundler")))
+            .unwrap_err();
+        assert!(err.contains("bundler"), "{err}");
+        assert!(err.contains("no lib/"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_takes_its_gem_name_and_subdir_from_the_command_line() {
+        let parsed = parse_args(&[
+            "rubygems/rubygems".into(),
+            "--tag".into(),
+            "v4.0.16".into(),
+            "--name".into(),
+            "bundler".into(),
+            "--subdir".into(),
+            "bundler".into(),
+            "--check".into(),
+        ])
+        .expect("parses");
+        assert_eq!(parsed.positional, ["rubygems/rubygems"]);
+        assert_eq!(parsed.tag.as_deref(), Some("v4.0.16"));
+        assert_eq!(parsed.name.as_deref(), Some("bundler"));
+        assert_eq!(parsed.subdir.as_deref(), Some("bundler"));
+        assert_eq!(parsed.flags, ["--check"]);
+    }
+
+    #[test]
+    fn a_flag_missing_its_value_is_an_error() {
+        let err = parse_args(&["repo".into(), "--tag".into()]).unwrap_err();
+        assert!(err.contains("--tag"), "{err}");
+    }
 }

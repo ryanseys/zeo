@@ -11,6 +11,12 @@ github = "ruby/benchmark"
 tag    = "v0.4.1"
 rev    = "6d878b4c0b96afaa6b234a13bf0ed36910c56913"
 
+[gems.bundler]
+github = "rubygems/rubygems"
+tag    = "v4.0.16"
+rev    = "fc18079dba6c2caf60ea45a68dcd7840e25b38ea"
+subdir = "bundler"
+
 [gems.csv]
 github = "ruby/csv"
 tag    = "v3.3.6"
@@ -85,6 +91,11 @@ rev    = "5229883dca5b451c8bfd322272ccd2ca6d526695"
 github = "ruby/resolv"
 tag    = "v0.7.1"
 rev    = "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
+
+[gems.rubygems]
+github = "rubygems/rubygems"
+tag    = "v4.0.16"
+rev    = "fc18079dba6c2caf60ea45a68dcd7840e25b38ea"
 
 [gems.tempfile]
 github = "ruby/tempfile"

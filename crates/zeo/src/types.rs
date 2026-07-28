@@ -197,7 +197,17 @@ pub fn infer_type_with_locals(
                 //     `zeo-rt`, so a `raise ArgumentError.new(...)` is a
                 //     boxed `RubyValue` built by `construct_by_class_id`, not
                 //     an unboxed `Arc<ArgumentError>` (there is no such struct).
-                Some(cid) if compiler.has_generated_struct(cid) => TyKind::Object(cid),
+                //   - a class with its OWN `def self.new`: the call routes to
+                //     that class method, which answers a `RubyValue` and is
+                //     free to return anything at all (rubygems'
+                //     `Gem::Package::TarWriter.new` answers nil in its block
+                //     form).
+                Some(cid)
+                    if compiler.has_generated_struct(cid)
+                        && compiler.class_method_in_chain(cid, "new").is_none() =>
+                {
+                    TyKind::Object(cid)
+                }
                 _ => TyKind::Poly,
             }
         }
@@ -286,8 +296,19 @@ pub fn infer_type_with_locals(
                 _ => TyKind::Poly,
             },
         },
-        HirNode::LocalWrite(_, value) => {
-            infer_type_with_locals(compiler, defining, box_id, locals, *value)
+        // An assignment's own VALUE is the local's binding read back, so it is
+        // unboxed only when the local itself is (`LocalStorage::Shadowed`, i.e.
+        // the whole-scope type is that same class). A local widened to `Poly`
+        // -- by a second assignment of another class, or by sitting in a
+        // `begin` -- reads back as a `RubyValue`, and claiming `Object` here
+        // would have the caller box an already-boxed value.
+        HirNode::LocalWrite(name, value) => {
+            let value_ty = infer_type_with_locals(compiler, defining, box_id, locals, *value);
+            match (value_ty, locals.get(name)) {
+                (TyKind::Object(cid), Some(&TyKind::Object(slot))) if cid == slot => value_ty,
+                (TyKind::Object(_), _) => TyKind::Poly,
+                _ => value_ty,
+            }
         }
         HirNode::Call {
             receiver: Some(recv),

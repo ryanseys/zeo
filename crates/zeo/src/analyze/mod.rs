@@ -2049,22 +2049,19 @@ fn defer_in_class_body(
 /// bare-`yield`/`block_given?` scanning).
 /// `owner` is whichever class/module this Scope is filed under (and, for a
 /// materialized method, whose concrete struct it'll be generated into);
-/// `defining_class` is whichever class/module's HIR body `params`/`body`
-/// actually came from -- equal to `owner` for an ordinary own-body method,
-/// an ancestor otherwise (see `compiler::Scope::defining_class`'s docs).
-#[allow(clippy::too_many_arguments)] // one fact per parameter; a bundle struct would just rename them
-fn register_method(
-    compiler: &mut Compiler,
-    owner: ClassId,
+/// One method scope's whole-scope local-type map: the body walk, the
+/// parameter defaults, and the parameter shapes that carry a type of their own.
+/// Shared by `register_method` and [`mro::reinfer_local_types`], which re-runs
+/// it once the class tables are final -- codegen reads this map, so the two
+/// must produce the same answer.
+pub(crate) fn method_local_types(
+    compiler: &Compiler,
     defining_class: ClassId,
-    name: String,
-    def_node: Option<NodeId>,
-    params: Params,
-    body: Vec<NodeId>,
-    visibility: Visibility,
-) -> Result<crate::compiler::ScopeId, String> {
+    params: &Params,
+    body: &[NodeId],
+) -> HashMap<String, TyKind> {
     let defining_box = compiler.class(defining_class).box_id;
-    let mut local_types = locals::infer_locals(compiler, Some(defining_class), defining_box, &body);
+    let mut local_types = locals::infer_locals(compiler, Some(defining_class), defining_box, body);
     for id in params.default_ids() {
         locals::track_extra(
             compiler,
@@ -2083,6 +2080,35 @@ fn register_method(
     if let Some(Some(n)) = &params.block {
         local_types.entry(n.clone()).or_insert(TyKind::Proc);
     }
+    // A parameter arrives through the Rust signature as a `RubyValue`, so a
+    // body assignment can never narrow it to an unboxed `Arc<Concrete>`: every
+    // read BEFORE that assignment still sees the signature's binding.
+    // `source_uri = Gem::Uri.new(source_uri)` is the shape -- rubygems rebinds
+    // a parameter to a wrapper built FROM it, and the argument read would
+    // otherwise be boxed as though it were already the wrapper.
+    for n in params.bound_names() {
+        if matches!(local_types.get(&n), Some(TyKind::Object(_))) {
+            local_types.insert(n, TyKind::Poly);
+        }
+    }
+    local_types
+}
+
+/// `defining_class` is whichever class/module's HIR body `params`/`body`
+/// actually came from -- equal to `owner` for an ordinary own-body method,
+/// an ancestor otherwise (see `compiler::Scope::defining_class`'s docs).
+#[allow(clippy::too_many_arguments)] // one fact per parameter; a bundle struct would just rename them
+fn register_method(
+    compiler: &mut Compiler,
+    owner: ClassId,
+    defining_class: ClassId,
+    name: String,
+    def_node: Option<NodeId>,
+    params: Params,
+    body: Vec<NodeId>,
+    visibility: Visibility,
+) -> Result<crate::compiler::ScopeId, String> {
+    let local_types = method_local_types(compiler, defining_class, &params, &body);
     let mut uses_bare_block = false;
     for &n in &body {
         if scan_bare_block_use(&compiler.hir, n) {

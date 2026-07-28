@@ -503,6 +503,12 @@ pub fn emit_call_args_to(
     // temporaries (caller's frame -- CRuby's order), then raise under the
     // CALLEE's frame -- see the comment above `pos_temps` and the
     // `callee_frame` doc above.
+    // `?`-propagated rather than `return`ed: a call whose arguments are wrong
+    // is still an EXPRESSION, and it can sit anywhere one does -- including as
+    // a receiver (`ask(a, b, k: 1) =~ ...` in a class that narrowed `ask`'s
+    // arity). A `return` there types the block as `!`, which is not what the
+    // surrounding position wants; `?` types it as the `RubyValue` every other
+    // expression produces, and unwinds identically.
     let raise_argument_error = |msg: String| {
         let frame = &callee_frame;
         quote! {
@@ -510,7 +516,9 @@ pub fn emit_call_args_to(
                 #(#pos_lets)*
                 #(#kw_lets)*
                 #frame
-                return Err(zeo_rt::raise_error("ArgumentError", #msg.to_string()));
+                Err::<zeo_rt::RubyValue, zeo_rt::Signal>(
+                    zeo_rt::raise_error("ArgumentError", #msg.to_string()),
+                )?
             }
         }
     };

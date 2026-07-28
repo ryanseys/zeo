@@ -2105,12 +2105,15 @@ fn send_class_walking(
             return f(&recv, args, block);
         }
     }
-    Err(raise_method_missing(
-        &recv,
-        &method_name,
-        args,
-        MissingReason::Super,
-    ))
+    // The singleton chain does not stop at the last ancestor: `#<Class:
+    // BasicObject>` inherits from `Class` itself, so a class-method `super`
+    // with nothing above it continues into `Class`'s own INSTANCE methods,
+    // with the class object as `self`. That is where the default
+    // allocate-then-`initialize` lives -- what a `def self.new` wrapping
+    // construction reaches by `super` (rubygems'
+    // `Gem::Package::TarWriter.new`). `send_walking` raises the same
+    // `MissingReason::Super` if that comes up empty too.
+    send_walking(&recv, 0, name, args, block)
 }
 
 /// Dispatch a `super` whose target the COMPILER resolved against the

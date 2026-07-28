@@ -138,14 +138,17 @@ pub fn safe_ident(name: &str) -> Ident {
     if let Some(&(_, escaped)) = OPERATOR_METHOD_NAMES.iter().find(|&&(op, _)| op == name) {
         return Ident::new(escaped, Span::call_site());
     }
-    if let Some(escaped) = escape_special_suffix(name) {
-        // Recurse once, now suffix-free, so the escaped base still gets the
-        // ordinary Rust-keyword check above (e.g. a hypothetical `type?`
-        // would need `r#type_p`... except `_p` already makes it non-keyword;
-        // recursing is what makes that reasoning automatic rather than
-        // assumed).
-        return safe_ident(&escaped);
-    }
+    // The escape runs exactly ONCE -- its own output ends in a marker, so
+    // feeding it back would escape it a second time and undo the very
+    // separation it exists to create (`remote=` and `remote_set` would meet
+    // again at `remote_set_`). The keyword check still applies to whatever
+    // comes out (a hypothetical `type?` would need `r#type_p`... except `_p`
+    // already makes it non-keyword).
+    keyword_safe(&escape_special_suffix(name).unwrap_or_else(|| name.to_string()))
+}
+
+/// A Rust keyword can only be spelled as an identifier in its raw form.
+fn keyword_safe(name: &str) -> Ident {
     if RUST_KEYWORDS.contains(&name) {
         Ident::new_raw(name, Span::call_site())
     } else {
@@ -194,18 +197,29 @@ pub fn class_method_ident(name: &str) -> Ident {
 /// identifier-like base, not a plain name plus a suffix -- those are handled
 /// by `OPERATOR_METHOD_NAMES` above, checked before this function is ever
 /// called.
+///
+/// A marker is a RESERVED ending, so a plain Ruby name that already ends in
+/// one gets a trailing `_`: `remote=` and `remote_set` are two different
+/// methods, and rubygems' `Gem::Resolver::InstallerSet` defines both (a
+/// "duplicate definitions with name `remote_set`" on the generated program --
+/// a miscompile of legal input, exactly like `class_method_ident`'s). Since a
+/// marker never ends in `_`, the escaped form can't collide back.
 fn escape_special_suffix(name: &str) -> Option<String> {
+    const MARKERS: [(&str, &str); 3] = [("?", "_p"), ("!", "_bang"), ("=", "_set")];
     fn is_ident_like(base: &str) -> bool {
         let mut chars = base.chars();
         matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
             && chars.all(|c| c.is_alphanumeric() || c == '_')
     }
-    for (suffix, marker) in [("?", "_p"), ("!", "_bang"), ("=", "_set")] {
+    for (suffix, marker) in MARKERS {
         if let Some(base) = name.strip_suffix(suffix) {
             if is_ident_like(base) {
                 return Some(format!("{base}{marker}"));
             }
         }
+    }
+    if is_ident_like(name) && MARKERS.iter().any(|(_, m)| name.ends_with(m)) {
+        return Some(format!("{name}_"));
     }
     None
 }
@@ -315,9 +329,26 @@ mod tests {
 
     #[test]
     fn a_suffixed_name_whose_base_is_a_keyword_stays_unescaped() {
-        // The `_p` marker already makes it a non-keyword, so no `r#` --
-        // this is what `safe_ident`'s recursion buys (see its comment).
+        // The `_p` marker already makes it a non-keyword, so no `r#`.
         assert_eq!(safe_ident("type?").to_string(), "type_p");
+    }
+
+    /// A marker is a reserved ENDING: a plain Ruby name already spelled that
+    /// way must not land on the mangled form of a different method.
+    /// `Gem::Resolver::InstallerSet` defines both `remote=` and `remote_set`.
+    #[test]
+    fn a_plain_name_ending_in_a_marker_stays_distinct_from_the_mangled_one() {
+        assert_eq!(safe_ident("remote=").to_string(), "remote_set");
+        assert_eq!(safe_ident("remote_set").to_string(), "remote_set_");
+        assert_eq!(safe_ident("remote_set=").to_string(), "remote_set_set");
+        assert_eq!(safe_ident("valid_p").to_string(), "valid_p_");
+        assert_eq!(safe_ident("valid?").to_string(), "valid_p");
+        assert_eq!(safe_ident("save_bang").to_string(), "save_bang_");
+        assert_eq!(safe_ident("save!").to_string(), "save_bang");
+        // A name merely CONTAINING a marker, or ending in a bare `_`, is
+        // untouched -- nothing mangles to either shape.
+        assert_eq!(safe_ident("set_remote").to_string(), "set_remote");
+        assert_eq!(safe_ident("remote_").to_string(), "remote_");
     }
 
     #[test]

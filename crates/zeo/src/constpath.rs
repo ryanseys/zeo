@@ -128,6 +128,18 @@ mod tests {
         assert!(p.is_top_anchored());
     }
 
+    /// A table keyed by fully-qualified name has ONE top level, so both
+    /// spellings of the same constant must reach the same key -- rubygems'
+    /// `class TimeoutError < ::Gem::Timeout::Error` found no forward shell
+    /// while `::Gem::Timeout::Error` and `Gem::Timeout::Error` were two keys.
+    #[test]
+    fn the_anchor_comes_off_for_a_fully_qualified_lookup() {
+        assert_eq!(ConstPath::parse("::A::B").unanchored(), "A::B");
+        assert_eq!(ConstPath::parse("A::B").unanchored(), "A::B");
+        assert_eq!(ConstPath::parse("::Foo").unanchored(), "Foo");
+        assert_eq!(ConstPath::parse("Foo").unanchored(), "Foo");
+    }
+
     #[test]
     fn joined_round_trips_the_original_spelling() {
         for s in ["Foo", "A::B", "::Foo", "::A::B::C"] {
