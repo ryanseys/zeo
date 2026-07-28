@@ -392,6 +392,31 @@ pub const FCNTL_MODULE: ClassId = ClassId(97);
 /// mode before it is put back.
 pub const CONSOLE_MODE_CLASS: ClassId = ClassId(98);
 
+/// `zlib`'s stream classes, mirroring CRuby's:
+///
+/// ```text
+/// Zlib::ZStream          the shared counters/lifecycle (never constructed)
+///  ├ Zlib::Deflate       a compressor
+///  └ Zlib::Inflate       a decompressor
+/// Zlib::GzipFile         the shared gzip header/footer accessors
+///  ├ Zlib::GzipWriter    writes a gzip member to an IO
+///  └ Zlib::GzipReader    reads a gzip member from an IO (includes Enumerable)
+/// ```
+///
+/// `Zlib`'s thirteen exception classes are NOT here -- a gated row registers
+/// no constructor, so they live in `gems/zlib/lib/zlib.rb` (see `ext/mod.rs`).
+pub const ZLIB_ZSTREAM_CLASS: ClassId = ClassId(99);
+/// `Zlib::Deflate < Zlib::ZStream` -- a compressor.
+pub const ZLIB_DEFLATE_CLASS: ClassId = ClassId(100);
+/// `Zlib::Inflate < Zlib::ZStream` -- a decompressor.
+pub const ZLIB_INFLATE_CLASS: ClassId = ClassId(101);
+/// `Zlib::GzipFile` -- the gzip header/footer surface both directions share.
+pub const ZLIB_GZIP_FILE_CLASS: ClassId = ClassId(102);
+/// `Zlib::GzipWriter < Zlib::GzipFile` -- an IO-shaped gzip compressor.
+pub const ZLIB_GZIP_WRITER_CLASS: ClassId = ClassId(103);
+/// `Zlib::GzipReader < Zlib::GzipFile` -- an IO-shaped gzip decompressor.
+pub const ZLIB_GZIP_READER_CLASS: ClassId = ClassId(104);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1206,6 +1231,54 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: None,
+    },
+    BuiltinClass {
+        id: ZLIB_ZSTREAM_CLASS,
+        name: "Zlib::ZStream",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_DEFLATE_CLASS,
+        name: "Zlib::Deflate",
+        is_module: false,
+        superclass: Some(ZLIB_ZSTREAM_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_INFLATE_CLASS,
+        name: "Zlib::Inflate",
+        is_module: false,
+        superclass: Some(ZLIB_ZSTREAM_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_GZIP_FILE_CLASS,
+        name: "Zlib::GzipFile",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_GZIP_WRITER_CLASS,
+        name: "Zlib::GzipWriter",
+        is_module: false,
+        superclass: Some(ZLIB_GZIP_FILE_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_GZIP_READER_CLASS,
+        name: "Zlib::GzipReader",
+        is_module: false,
+        superclass: Some(ZLIB_GZIP_FILE_CLASS),
+        includes: &[ENUMERABLE_CLASS],
+        feature: Some("zlib"),
     },
 ];
 

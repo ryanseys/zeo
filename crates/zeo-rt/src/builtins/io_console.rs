@@ -461,17 +461,12 @@ pub fn cursor(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> 
         let mut reply = String::new();
         // The reply ends at 'R'; a stream that answers nothing (not a real
         // terminal, however it typed) ends the loop at EOF.
-        loop {
-            match send0(recv, "getc")? {
-                RubyValue::Str(s) => {
-                    let c = s.lock().to_utf8_lossy().into_owned();
-                    let done = c == "R";
-                    reply.push_str(&c);
-                    if done {
-                        break;
-                    }
-                }
-                _ => break,
+        while let RubyValue::Str(s) = send0(recv, "getc")? {
+            let c = s.lock().to_utf8_lossy().into_owned();
+            let done = c == "R";
+            reply.push_str(&c);
+            if done {
+                break;
             }
         }
         let digits: Vec<i64> = reply
@@ -615,10 +610,7 @@ mod tests {
     /// Whether the row refused. Raising is registry-backed, and a bare unit
     /// test has no registry, so the raise arrives as a panic rather than an
     /// `Err` -- either one is the refusal being asserted.
-    fn refuses(
-        f: fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>,
-        recv: &RubyValue,
-    ) -> bool {
+    fn refuses(f: crate::builtins::BuiltinMethodFn, recv: &RubyValue) -> bool {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(recv, &[], None))) {
             Err(_) => true,
             Ok(r) => r.is_err(),

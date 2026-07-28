@@ -44,7 +44,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 |---|---|---|
 | `json` | `serde_json`-backed built-in | not the `json` gem; parser/generator options and error subclasses differ |
 | `psych` / `yaml` | `yaml-rust2`-backed built-in | not libyaml; tag/anchor and error-position behaviour differ |
-| `zlib` | `flate2`-backed built-in | not the `zlib` C extension; stream/checksum surface is partial |
+| `zlib` | `flate2`-backed built-in | not the `zlib` C extension; four entry points it doesn't expose are declined — see below |
 | `digest` | RustCrypto-backed built-in | not the OpenSSL `digest` C extension |
 | `openssl` | built-in subset | `OpenSSL::Random` + secure compare only; `Cipher`/`PKey`/`SSL` absent |
 | `strscan` | zeo `StringScanner` | a reimplementation, not the C extension |
@@ -81,6 +81,65 @@ required; zeo's are always present, so the `require` is ceremony (the shape
   `internal_class_of`/`internal_super_of` raise `NotImplementedError` naming
   what they'd need (heap enumeration, a root set, an allocation hook, an
   object header, internal classes).
+
+### `zlib`
+
+The whole class surface is present and real — `ZStream`/`Deflate`/`Inflate`,
+`GzipFile`/`GzipWriter`/`GzipReader`, the 38 constants, and the thirteen
+exception classes (in `gems/zlib/lib/zlib.rb`, the gem's Ruby half). The
+compression itself is flate2's pure-Rust backend (miniz_oxide), and the gzip
+container is written and parsed by zeo, since that backend has no gzip mode.
+What that costs:
+
+- **Four entry points are declined**, each raising `NotImplementedError` that
+  names the missing capability rather than no-op'ing: `Deflate#set_dictionary`,
+  `Inflate#set_dictionary`/`#add_dictionary` (`deflateSetDictionary`/
+  `inflateSetDictionary`), `Inflate#sync` (`inflateSync`), and `Deflate#params`
+  (`deflateParams`). All four are `#[cfg]`'d to flate2's C-zlib and zlib-rs
+  backends. A silent no-op was the wrong answer for the dictionary pair
+  especially: it would produce a stream that decodes to the *wrong bytes*
+  rather than one that fails. `params` records the level and strategy it was
+  given, so a caller reading them back sees what it set; what cannot happen is
+  the change taking effect mid-stream. CRuby's own `params` raises
+  `Zlib::StreamError` in both natural call shapes and segfaults in a third
+  (ruby 4.0.5, `rb_deflate_params`), so nothing depends on it working.
+- **`window_bits` chooses the container, not the window size.** The offset —
+  negative for raw deflate, +16 for gzip, +32 for auto-detect — is honoured
+  exactly, including the `Zlib::Inflate.new(32 + Zlib::MAX_WBITS)` form
+  `Net::HTTP` decodes response bodies with. The magnitude is not: the backend's
+  window is fixed at 32KB, so `Deflate.new(9, 9)` writes a stream a decoder
+  restricted to a 512-byte window could not read. Round-tripping is unaffected.
+- **`mem_level` and `strategy` are accepted and ignored** — both size or steer
+  zlib's internal tables, which the pure-Rust backend fixes. `avail_out=` is
+  likewise recorded and reported back but inert, since zeo grows its own output
+  buffer on demand.
+- **`ZStream#data_type`** answers `TEXT`/`BINARY` from whether the block is all
+  printable. zlib decides it from the literal histogram it builds while
+  compressing, which the backend doesn't expose; the two agree on ordinary text
+  and ordinary binary and can differ on a mixture.
+- **Flush timing differs by a header.** zlib pushes the two-byte stream header
+  out as soon as the first `deflate`/`<<` runs; miniz_oxide holds it until it
+  has compressed data to go with it. So an intermediate `deflate(s)` can answer
+  `""` where CRuby answers `"\x78\x9c"`. The concatenation of every chunk is
+  the same valid stream either way — only the instalment boundaries move.
+- **A corrupt deflate body** reports `Zlib::DataError: invalid or incomplete
+  deflate data` where CRuby names the specific fault ("invalid distance too far
+  back", "invalid code lengths set", …) — miniz_oxide carries no message.
+  Corruption of the gzip *container* is exact: `CRCError`, `LengthError`,
+  `NoFooter` and their CRuby wordings.
+- **`Zlib::ZLIB_VERSION`** names the zlib API level implemented, not a linked
+  libz — there isn't one. `Zlib::VERSION` is the bundled gem's, as CRuby's is.
+
+One quirk is reproduced deliberately rather than fixed. CRuby verifies a gzip
+member's CRC and length only once the buffer it filled has been fully handed
+out, so `GzipReader#read` (which answers everything at once) never reports a
+bad checksum while `#gets`/`#readlines`/`#readpartial` do. zeo follows the same
+rule, so a program that reads a corrupt member with `read` gets the same bytes
+under both.
+
+`Zlib.gzip` used to stamp a fixed mtime of 0 for deterministic output. It now
+stamps the current time, as CRuby does — a divergence removed, not added. A
+caller who wants a reproducible member can set `GzipWriter#mtime=`.
 
 ### `io/console`
 

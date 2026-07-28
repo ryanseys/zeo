@@ -34,7 +34,7 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | digest | `digest`, `digest/*` | `ext-digest` | **done** | `Digest::MD5`/`SHA1`/`SHA256`/`SHA512` — class + streaming API (RustCrypto) |
 | json | `json` | `ext-json` | **done** | `parse` (serde_json, `symbolize_names`), `generate`/`pretty_generate`/`dump` |
 | psych / yaml | `psych`, `yaml` | `ext-psych` | **done** | `load`/`safe_load`/`dump` (yaml-rust2, hand-rolled Psych block-style dump) |
-| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32` plus `deflate`/`inflate`/`gzip`/`gunzip` (flate2/miniz_oxide) |
+| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32`, `deflate`/`inflate`/`gzip`/`gunzip`, and the full class surface — `ZStream`/`Deflate`/`Inflate` over flate2's incremental API, `GzipFile`/`GzipWriter`/`GzipReader` over zeo's own gzip framing (flate2/miniz_oxide) |
 | date | `date` | `ext-date` | **done** | `Date`/`DateTime` over an in-tree Julian-day calendar core |
 | socket | `socket` | `ext-socket` | **done** | full `BasicSocket`/`IPSocket`/`TCPSocket`/`TCPServer`/`UDPSocket`/`UNIXSocket`/`UNIXServer`/`Addrinfo` hierarchy over libc |
 | openssl | `openssl` | `ext-openssl` | **subset** | `OpenSSL::Random` bytes + fixed-length secure compare; `Cipher`/`PKey`/`SSL` still need an FFI or rustls backend |

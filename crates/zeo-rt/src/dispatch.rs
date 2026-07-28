@@ -2353,6 +2353,33 @@ pub fn class_id_by_name(name: &str) -> Option<ClassId> {
         .or_else(|| crate::runtime_meta::runtime_class_id_by_name(name))
 }
 
+/// The classes and modules nested DIRECTLY inside `id`, by their unqualified
+/// names -- `["Error", "ZStream", ...]` for `Zlib`.
+///
+/// A nested class IS a constant of the module it sits in, but zeo registers it
+/// by qualified NAME rather than through the constant table: codegen resolves
+/// `Zlib::Error` statically, so nothing ever `const_set`s it. `Module#constants`
+/// is where the difference becomes visible, and this is what it consults --
+/// the same shape as `class_id_by_name`, read the other way round.
+pub fn nested_class_names(id: ClassId) -> Vec<String> {
+    let Some(prefix) = class_name(id) else {
+        return Vec::new();
+    };
+    let prefix = format!("{prefix}::");
+    let Some(registry) = REGISTRY.get() else {
+        return Vec::new();
+    };
+    registry
+        .by_name
+        .keys()
+        .filter_map(|name| name.strip_prefix(&prefix))
+        // DIRECTLY nested only: `Zlib::GzipFile::Error` belongs to
+        // `Zlib::GzipFile`'s list, not to `Zlib`'s.
+        .filter(|rest| !rest.contains("::"))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs
 /// `Enumerable.class` -> `Module`) -- same graceful `None` as `class_name`.
 pub fn class_is_module(id: ClassId) -> Option<bool> {

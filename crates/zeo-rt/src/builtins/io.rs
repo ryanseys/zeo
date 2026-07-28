@@ -784,8 +784,14 @@ fn io_read_val(
                         Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", path)),
                     }
                 }
-                Ok(RubyValue::Str(crate::collections::string_new(
-                    String::from_utf8_lossy(&buf).into_owned(),
+                // TAG the bytes, never re-encode them. Decoding a read as
+                // UTF-8 replaced every non-UTF-8 byte with U+FFFD, so a file
+                // read through `IO#read` (as opposed to `File.binread`, which
+                // was already byte-faithful) came back corrupted -- see the
+                // same rule on `write_rio` above.
+                Ok(RubyValue::Str(crate::string_from_bytes(
+                    buf,
+                    crate::encoding::UTF_8,
                 )))
             }
             Some(n) => {
@@ -807,8 +813,11 @@ fn io_read_val(
                 if got == 0 && n > 0 {
                     return Ok(RubyValue::Nil);
                 }
-                Ok(RubyValue::Str(crate::collections::string_new(
-                    String::from_utf8_lossy(&buf).into_owned(),
+                // A LENGTHED read is binary in CRuby -- a byte count can land
+                // mid-character, so there is nothing else it could honestly be.
+                Ok(RubyValue::Str(crate::string_from_bytes(
+                    buf,
+                    crate::encoding::ASCII_8BIT,
                 )))
             }
         }
