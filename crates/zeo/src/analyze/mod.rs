@@ -2108,7 +2108,10 @@ fn register_method(
     body: Vec<NodeId>,
     visibility: Visibility,
 ) -> Result<crate::compiler::ScopeId, String> {
-    let local_types = method_local_types(compiler, defining_class, &params, &body);
+    // Deferred to `mro::reinfer_local_types`, which recomputes every scope
+    // against the finished class tables anyway and is the first thing to read
+    // the map -- inferring here too would only be thrown away.
+    let local_types = HashMap::new();
     let mut uses_bare_block = false;
     for &n in &body {
         if scan_bare_block_use(&compiler.hir, n) {

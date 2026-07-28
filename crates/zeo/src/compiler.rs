@@ -347,7 +347,25 @@ pub struct Compiler {
     /// against the original scan.
     class_index: std::cell::RefCell<HashMap<(u32, Option<ClassId>), HashMap<String, ClassId>>>,
     indexed_upto: std::cell::Cell<usize>,
+    /// `cref_of`/`fq_name` answers for every class, precomputed once by
+    /// [`Compiler::freeze_identity_caches`] at `mro::materialize`'s head --
+    /// the fields both walks read (`name`/`lexical_parent`/`qualified_def`)
+    /// are settled by then, and both are otherwise recomputed with a fresh
+    /// allocation at every codegen/const-resolution site. `None` during
+    /// registration, where the walks still compute live.
+    frozen_crefs: Option<Vec<Vec<ClassId>>>,
+    frozen_fq_names: Option<Vec<String>>,
+    /// Per-class set of statement-level bare `NAME = ...` names, frozen with
+    /// the identity caches above so `mro::directly_defines_const` -- probed
+    /// once per (lexical scope, name) during constant-ownership resolution
+    /// and per ancestor by `codegen::constfold` -- is a set lookup instead of
+    /// a rescan of the class body.
+    pub(crate) direct_const_defs: Option<Vec<FSet<String>>>,
 }
+
+/// The compiler-internal hash policy: fast, not DoS-resistant -- these sets
+/// only ever hold program identifiers.
+pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
 
 /// Whether `ZEO_VERIFY_CLASS_INDEX` is set: every `class_in_scope` answer is
 /// then shadow-compared against the original linear scan -- the drift
@@ -408,6 +426,9 @@ impl Compiler {
             assigned_const_names: std::collections::HashSet::new(),
             class_index: std::cell::RefCell::new(HashMap::new()),
             indexed_upto: std::cell::Cell::new(0),
+            frozen_crefs: None,
+            frozen_fq_names: None,
+            direct_const_defs: None,
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -630,12 +651,57 @@ impl Compiler {
         self.box_surrogates.get(&box_id).copied()
     }
 
+    /// Precomputes `cref_of`/`fq_name` for every class -- see
+    /// [`Compiler::frozen_crefs`]. Called once, at `mro::materialize`'s
+    /// head: registration (the only phase that adds classes or writes
+    /// their identity fields) is over by then.
+    pub fn freeze_identity_caches(&mut self) {
+        let crefs = (0..self.classes.len() as u32)
+            .map(|i| self.cref_of(Some(ClassId(i))))
+            .collect();
+        let names = (0..self.classes.len() as u32)
+            .map(|i| self.fq_name(ClassId(i)))
+            .collect();
+        self.frozen_crefs = Some(crefs);
+        self.frozen_fq_names = Some(names);
+        let defs = self
+            .classes
+            .iter()
+            .map(|ci| {
+                ci.class_body_stmts
+                    .iter()
+                    .filter_map(|&n| match &self.hir[n] {
+                        crate::hir::HirNode::ConstWrite {
+                            scope: None, name, ..
+                        } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect();
+        self.direct_const_defs = Some(defs);
+    }
+
+    /// `cref_of` as a borrowed slice, alloc-free -- valid only after
+    /// `freeze_identity_caches` (any post-registration caller).
+    pub fn cref_of_ref(&self, cid: ClassId) -> &[ClassId] {
+        self.frozen_crefs
+            .as_ref()
+            .and_then(|c| c.get(cid.0 as usize))
+            .expect("cref_of_ref before freeze_identity_caches")
+    }
+
     /// The lexical cref chain enclosing (and including) `defining`,
     /// OUTERMOST FIRST -- exactly the `cref` argument `resolve_class`
     /// takes. Walks `lexical_parent` links, stopping above a
     /// `qualified_def` class (the `class Store::Item` form's body does not
     /// see `Store` lexically -- see `ClassInfo::qualified_def`).
     pub fn cref_of(&self, defining: Option<ClassId>) -> Vec<ClassId> {
+        if let (Some(cache), Some(cid)) = (&self.frozen_crefs, defining) {
+            if let Some(chain) = cache.get(cid.0 as usize) {
+                return chain.clone();
+            }
+        }
         let mut chain = Vec::new();
         let mut cur = defining;
         while let Some(cid) = cur {
@@ -656,6 +722,11 @@ impl Compiler {
     /// (naming is a namespace property, cref cutting is not). Used for
     /// error messages wherever real Ruby prints the qualified path.
     pub fn fq_name(&self, cid: ClassId) -> String {
+        if let Some(cache) = &self.frozen_fq_names {
+            if let Some(name) = cache.get(cid.0 as usize) {
+                return name.clone();
+            }
+        }
         let mut segments = vec![self.class(cid).name.clone()];
         let mut cur = self.class(cid).lexical_parent;
         while let Some(p) = cur {

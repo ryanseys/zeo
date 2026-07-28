@@ -67,7 +67,7 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             if cx.resolve_class(name).is_some() {
                 return Some(true);
             }
-            let mut scopes = cx.cref_chain();
+            let mut scopes = cx.cref_chain().to_vec();
             scopes.push(OBJECT_CLASS);
             Some(
                 scopes
@@ -107,7 +107,7 @@ pub(super) fn static_cond(cx: &Ctx, id: NodeId) -> Option<bool> {
     // (`unless VALIDATES_FOR_RESOLUTION`) -- folds against zeo's fixed version /
     // method tables. Resolved in the emit site's lexical cref -- see
     // `crate::guard_fold`.
-    if let Some(b) = crate::guard_fold::static_cond(cx.compiler, &cx.cref_chain(), cx.box_id, id) {
+    if let Some(b) = crate::guard_fold::static_cond(cx.compiler, cx.cref_chain(), cx.box_id, id) {
         return Some(b);
     }
     match &cx.compiler.hir[id] {

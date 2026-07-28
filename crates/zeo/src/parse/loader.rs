@@ -118,6 +118,14 @@ pub(super) struct Loader {
     /// to hang off `Hir`, which made the IR depend on the gem reporter for
     /// bookkeeping no consumer of the arena ever reads.
     gem_records: Vec<crate::gem_report::GemRecord>,
+    /// `resolve_require` results, per feature. Sound as a plain memo because
+    /// every input the search reads (`roots`, `packages`,
+    /// `store_exclusions`) is fully constructed before lowering starts and
+    /// never mutated after; the same feature is otherwise re-searched across
+    /// every file's resolvability pre-scan AND again at its splice.
+    /// `Err` verdicts (ambiguous feature) are not cached -- they abort the
+    /// compile at first sight.
+    require_memo: std::cell::RefCell<HashMap<String, Option<(PathBuf, Option<String>)>>>,
 }
 
 /// Lowers the MAIN file's statements, resolving require/require_relative/
@@ -167,6 +175,7 @@ pub(super) fn lower_main_file(
         splicing: Vec::new(),
         store_exclusions: HashMap::new(),
         gem_records: Vec::new(),
+        require_memo: std::cell::RefCell::new(HashMap::new()),
     };
     // The external gem store: a `--gem-path` + `--lockfile` pair adds
     // the pure-Ruby gems zeo can compile as extra roots, and records a
@@ -968,6 +977,18 @@ impl Loader {
     /// after `rb_find_file_ext` has failed on disk. `Err` is reserved for a
     /// genuine problem (an ambiguous feature, an unsupported path shape).
     fn resolve_require(&self, feature: &str) -> PResult<Option<(PathBuf, Option<String>)>> {
+        if let Some(hit) = self.require_memo.borrow().get(feature) {
+            return Ok(hit.clone());
+        }
+        let resolved = self.resolve_require_uncached(feature)?;
+        self.require_memo
+            .borrow_mut()
+            .insert(feature.to_string(), resolved.clone());
+        Ok(resolved)
+    }
+
+    /// The actual search behind [`Loader::resolve_require`]'s memo.
+    fn resolve_require_uncached(&self, feature: &str) -> PResult<Option<(PathBuf, Option<String>)>> {
         if feature.starts_with("./") || feature.starts_with("../") || feature.starts_with('~') {
             return Err(format!(
                 "`require \"{feature}\"`: `./`/`../`/`~` paths resolve against the runtime working directory in real Ruby, which doesn't exist at compile time -- use `require_relative` instead"

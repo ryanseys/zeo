@@ -205,16 +205,19 @@ impl<'a> Ctx<'a> {
     /// `Compiler::resolve_class` for the resolution order.
     fn resolve_class(&self, name: &str) -> Option<ClassId> {
         self.compiler
-            .resolve_class(name, &self.cref_chain(), self.box_id)
+            .resolve_class(name, self.cref_chain(), self.box_id)
     }
 
     /// The lexical scope chain enclosing the current code, outermost first
     /// (`resolve_class` walks it back-to-front, i.e. innermost-outward) --
     /// `Compiler::cref_of`'s rule, which also honors the
     /// qualified-definition cut (see `ClassInfo::qualified_def`). Empty at
-    /// the top level.
-    fn cref_chain(&self) -> Vec<ClassId> {
-        self.compiler.cref_of(self.defining_class)
+    /// the top level. Borrowed from the frozen identity cache: codegen
+    /// always runs after `mro::materialize` froze it.
+    fn cref_chain(&self) -> &'a [ClassId] {
+        self.defining_class
+            .map(|c| self.compiler.cref_of_ref(c))
+            .unwrap_or(&[])
     }
 
     /// A child context for a native loop's own body -- see `loop_labels`'s

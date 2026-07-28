@@ -18,6 +18,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 # `flock(2)` for the cross-process runtime-build lock in `backend`.
 libc.workspace = true
+# Fast non-DoS-resistant hashing for compiler-internal name sets (same
+# policy zeo-rt already uses for its internal maps).
+foldhash.workspace = true
 
 [build-dependencies]
 # The build.rs projects the compiler's `CLASS_SURFACE` by re-parsing the

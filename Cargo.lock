@@ -1570,6 +1570,7 @@ name = "zeo"
 version = "0.1.0"
 dependencies = [
  "datatest-stable",
+ "foldhash",
  "insta",
  "libc",
  "miette",

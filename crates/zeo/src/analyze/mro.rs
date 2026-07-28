@@ -66,6 +66,7 @@ fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
 /// class-variable ownership. Call once, after `analyze::analyze`'s
 /// top-level registration loop has processed every `ClassDef`.
 pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
+    compiler.freeze_identity_caches();
     let all_ids: Vec<ClassId> = (0..compiler.classes.len() as u32).map(ClassId).collect();
 
     for &cid in &all_ids {
@@ -114,8 +115,7 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
 
     reinfer_local_types(compiler);
 
-    resolve_cvars(compiler, main_statements)?;
-    resolve_consts(compiler, main_statements)?;
+    resolve_cvars_and_consts(compiler, main_statements)?;
 
     Ok(())
 }
@@ -129,15 +129,24 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
 /// same question against the finished tables, so the two disagreeing is a
 /// mismatched-types error on the generated program.
 fn reinfer_local_types(compiler: &mut Compiler) {
-    for sid in 0..compiler.scopes.len() {
-        let scope = &compiler.scopes[sid];
-        let (defining, params, body) = (
-            scope.defining_class,
-            scope.params.clone(),
-            scope.body.clone(),
-        );
-        let types = crate::analyze::method_local_types(compiler, defining, &params, &body);
-        compiler.scopes[sid].local_types = types;
+    // Infer-all-then-write: `method_local_types` never reads another scope's
+    // `local_types` (nothing does until codegen), so the two phases see the
+    // same picture and the per-scope params/body clones the interleaved
+    // mutable write used to force disappear entirely.
+    let all_types: Vec<_> = compiler
+        .scopes
+        .iter()
+        .map(|scope| {
+            crate::analyze::method_local_types(
+                compiler,
+                scope.defining_class,
+                &scope.params,
+                &scope.body,
+            )
+        })
+        .collect();
+    for (scope, types) in compiler.scopes.iter_mut().zip(all_types) {
+        scope.local_types = types;
     }
 }
 
@@ -513,59 +522,89 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
     Ok(())
 }
 
-/// `@@x` ownership: nearest ancestor (including self) that ever claimed the
-/// name first owns the runtime storage -- fixes a real bug found in
-/// zeo's own C implementation (a subclass writing a superclass-only cvar
-/// silently allocates fresh, WRONG per-class storage there, an outright C
-/// compile failure in zeo's case; see the plan). Processed in
-/// declaration order (`compiler.classes`' index order IS file order, since
-/// `resolve_class` resolution already requires a target to be defined
-/// earlier), so every ancestor's own `cvar_owners` is already fully
-/// resolved by the time a later class searches it.
-fn resolve_cvars(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
-    // A bare `@@x` written outside any class/module body lives on `Object`,
-    // exactly as a top-level constant does (see `resolve_consts`). `Object`'s
-    // own bodies are scanned by the loop below too, so seeding it first makes
-    // it the owner every later reference resolves to.
-    let mut top_level_names = Vec::new();
+/// `@@x` ownership (nearest ancestor -- including self -- that ever claimed
+/// the name first owns the runtime storage; fixes a real bug found in zeo's
+/// own C implementation, where a subclass writing a superclass-only cvar
+/// silently allocated fresh, WRONG per-class storage) and bare-constant
+/// ownership (the exact same scheme -- see `const_owner_of` for its extra
+/// lexical/`Object` steps), resolved together: both families' name sets come
+/// out of ONE walk over each class's own bodies, where they previously each
+/// traversed every body in the program. A bare `@@x` or `NAME = ...` written
+/// outside any class/module body lives on `Object` (real Ruby stores
+/// top-level constants on `Object` itself), so `main_statements` -- otherwise
+/// never scanned by anything in this module -- seeds it first, making
+/// `Object` the owner every later reference resolves to. Per-class
+/// resolution runs in declaration order (`compiler.classes`' index order IS
+/// file order, since `resolve_class` already requires a target to be defined
+/// earlier), so every ancestor's own map is fully resolved by the time a
+/// later class searches it.
+fn resolve_cvars_and_consts(
+    compiler: &mut Compiler,
+    main_statements: &[NodeId],
+) -> Result<(), String> {
+    let mut top_consts = NameList::default();
+    let mut top_cvars = NameList::default();
     for &n in main_statements {
-        collect_cvars(&compiler.hir, n, &mut top_level_names);
+        collect_ownership_names(compiler, n, &[], &mut top_consts, &mut top_cvars);
     }
-    for name in top_level_names {
+    for name in top_cvars.names {
         compiler.classes[OBJECT_CLASS.0 as usize]
             .cvar_owners
             .entry(name)
             .or_insert(OBJECT_CLASS);
     }
+    for name in top_consts.names {
+        compiler.classes[OBJECT_CLASS.0 as usize]
+            .const_owners
+            .entry(name)
+            .or_insert(OBJECT_CLASS);
+    }
 
-    let all_ids: Vec<ClassId> = (0..compiler.classes.len() as u32).map(ClassId).collect();
-    for &cid in &all_ids {
-        let names = own_cvar_names(compiler, cid);
-        for name in names {
-            owner_of(compiler, cid, &name);
+    let per_class: Vec<(NameList, NameList)> = (0..compiler.classes.len() as u32)
+        .map(|i| own_ownership_names(compiler, ClassId(i)))
+        .collect();
+    for (i, (_, cvars)) in per_class.iter().enumerate() {
+        for name in &cvars.names {
+            owner_of(compiler, ClassId(i as u32), name);
+        }
+    }
+    for (i, (consts, _)) in per_class.iter().enumerate() {
+        for name in &consts.names {
+            const_owner_of(compiler, ClassId(i as u32), name);
         }
     }
     Ok(())
 }
 
-/// Every `@@x` name referenced anywhere in `class_id`'s own literal body --
-/// its class-body-top-level statements (`@@x = 0` directly inside `class
-/// Foo; ... end`, never inside any method), every `own_methods` body, AND
-/// every `own_class_methods` body (`def self.x` can reference `@@x` too).
-fn own_cvar_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
-    let mut names = Vec::new();
-    for &n in &compiler.class(class_id).class_body_stmts.clone() {
-        collect_cvars(&compiler.hir, n, &mut names);
+/// Both families' names from `class_id`'s own literal bodies -- its
+/// class-body-top-level statements (`@@x = 0` directly inside `class Foo;
+/// ... end`), every `own_methods` body, AND every `own_class_methods` body
+/// (`def self.x` can reference `@@x` too) -- as `(consts, cvars)`, each in
+/// first-reference order. Scanning READS too (not just writes) is what lets
+/// a subclass's own method discover an inherited name's real owner: a name
+/// only ever WRITTEN by an ancestor and merely READ by `class_id` would
+/// otherwise silently resolve to `class_id` itself. Bare-`ClassRef`
+/// classification resolves against THIS class's lexical chain: a bare `Item`
+/// inside `module Store` naming the nested `Store::Item` class must not be
+/// misclassified as a value-constant reference.
+fn own_ownership_names(compiler: &Compiler, class_id: ClassId) -> (NameList, NameList) {
+    let cref = compiler.cref_of_ref(class_id);
+    let mut consts = NameList::default();
+    let mut cvars = NameList::default();
+    for &n in &compiler.class(class_id).class_body_stmts {
+        collect_ownership_names(compiler, n, cref, &mut consts, &mut cvars);
     }
-    let own_methods = compiler.class(class_id).own_methods.clone();
-    let own_class_methods = compiler.class(class_id).own_class_methods.clone();
-    for sid in own_methods.into_iter().chain(own_class_methods) {
-        let body = compiler.scope(sid).body.clone();
-        for &n in &body {
-            collect_cvars(&compiler.hir, n, &mut names);
+    for &sid in compiler
+        .class(class_id)
+        .own_methods
+        .iter()
+        .chain(compiler.class(class_id).own_class_methods.iter())
+    {
+        for &n in &compiler.scope(sid).body {
+            collect_ownership_names(compiler, n, cref, &mut consts, &mut cvars);
         }
     }
-    names
+    (consts, cvars)
 }
 
 /// Resolves (and memoizes onto `ClassInfo::cvar_owners`) which class/module
@@ -578,8 +617,9 @@ fn owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> ClassId {
     if let Some(&owner) = compiler.class(class_id).cvar_owners.get(name) {
         return owner;
     }
-    let ancestors = compiler.class(class_id).ancestors.clone();
-    let owner = ancestors
+    let owner = compiler
+        .class(class_id)
+        .ancestors
         .iter()
         .skip(1) // ancestors[0] is class_id itself
         .find_map(|&anc| compiler.class(anc).cvar_owners.get(name).copied())
@@ -590,69 +630,6 @@ fn owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> ClassId {
     owner
 }
 
-/// A bare (`scope: None`) constant's storage ownership -- the exact same
-/// scheme as `@@x`'s (`resolve_cvars`/`owner_of` above), EXTENDED with one
-/// extra root: real Ruby stores a TOP-LEVEL constant (one written outside
-/// any class/module body at all) on `Object` itself, so `main_statements`
-/// -- the top-level program's own statement list, otherwise never scanned
-/// by anything in this module -- is walked here too, attributing any bare
-/// `ConstWrite` found there to `OBJECT_CLASS`. An explicit `Foo::NAME` write
-/// (`scope: Some(_)`) needs no ownership DISCOVERY at all (its target is
-/// already named at the write site) -- see `codegen::expr::const_owner_id`'s
-/// docs for how the two forms resolve differently at codegen time.
-fn resolve_consts(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
-    let mut top_level_names = Vec::new();
-    for &n in main_statements {
-        collect_const_refs(compiler, n, &[], &mut top_level_names);
-    }
-    for name in top_level_names {
-        compiler.classes[OBJECT_CLASS.0 as usize]
-            .const_owners
-            .entry(name)
-            .or_insert(OBJECT_CLASS);
-    }
-
-    let all_ids: Vec<ClassId> = (0..compiler.classes.len() as u32).map(ClassId).collect();
-    for &cid in &all_ids {
-        let names = own_const_names(compiler, cid);
-        for name in names {
-            const_owner_of(compiler, cid, &name);
-        }
-    }
-    Ok(())
-}
-
-/// Every bare constant NAME either referenced (a `ClassRef` that ISN'T
-/// actually a registered class -- see `collect_const_refs`'s docs) or
-/// written (`ConstWrite { scope: None, .. }`) anywhere in `class_id`'s own
-/// class-body-top-level statements/`own_methods`/`own_class_methods` --
-/// mirrors `own_cvar_names`'s exact scan set. Scanning READS too (not just
-/// writes) is what lets a subclass's own method correctly discover an
-/// inherited constant's real owner (the same reason `own_cvar_names` scans
-/// `ClassVarRead` too): without it, a name only ever WRITTEN by an ancestor
-/// and merely READ (never written) by `class_id` would silently resolve to
-/// `class_id` itself instead of the ancestor that actually owns it.
-fn own_const_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
-    // Class-reference-vs-constant classification inside this class's bodies
-    // resolves against ITS lexical chain: a bare `Item` inside
-    // `module Store` naming the nested `Store::Item` class must not be
-    // misclassified as a value-constant reference.
-    let cref = compiler.cref_of(Some(class_id));
-    let mut names = Vec::new();
-    for &n in &compiler.class(class_id).class_body_stmts.clone() {
-        collect_const_refs(compiler, n, &cref, &mut names);
-    }
-    let own_methods = compiler.class(class_id).own_methods.clone();
-    let own_class_methods = compiler.class(class_id).own_class_methods.clone();
-    for sid in own_methods.into_iter().chain(own_class_methods) {
-        let body = compiler.scope(sid).body.clone();
-        for &n in &body {
-            collect_const_refs(compiler, n, &cref, &mut names);
-        }
-    }
-    names
-}
-
 /// Does `class_id`'s own literal class body assign `NAME = ...` (bare) at
 /// statement level -- real Ruby's "defined in this scope's own const
 /// table"? Statement-level only: a constant assignment nested under
@@ -661,6 +638,11 @@ fn own_const_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
 /// METHOD body is a Ruby SyntaxError -- "dynamic constant assignment" --
 /// so class bodies are genuinely the only place to look).
 pub(crate) fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
+    if let Some(defs) = &compiler.direct_const_defs {
+        return defs
+            .get(class_id.0 as usize)
+            .is_some_and(|set| set.contains(name));
+    }
     compiler.class(class_id).class_body_stmts.iter().any(|&n| {
         matches!(&compiler.hir[n], HirNode::ConstWrite { scope: None, name: w, .. } if w == name)
     })
@@ -684,16 +666,17 @@ fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> Cla
     let owner = if directly_defines_const(compiler, class_id, name) {
         class_id
     } else {
-        let mut lexical = compiler.cref_of(Some(class_id));
-        lexical.pop(); // the last entry is class_id itself, checked above
-        lexical
+        compiler
+            .cref_of_ref(class_id)
             .iter()
             .rev()
+            .skip(1) // the chain ends with class_id itself, checked above
             .copied()
             .find(|&scope| directly_defines_const(compiler, scope, name))
             .or_else(|| {
-                let ancestors = compiler.class(class_id).ancestors.clone();
-                ancestors
+                compiler
+                    .class(class_id)
+                    .ancestors
                     .iter()
                     .skip(1)
                     .find_map(|&anc| compiler.class(anc).const_owners.get(name).copied())
@@ -707,92 +690,84 @@ fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> Cla
     owner
 }
 
-/// A constant named by a multi-assignment or `for` TARGET -- `X, Y = 1, 2` in
-/// a module body. Mirrors the `ConstWrite` arm's own rule: a bare `Const`
-/// counts, a `ScopedConst` (`Foo::NAME, ... = ...`) doesn't, its owner being
-/// already named rather than discovered. See `collect_ivar_target` for why
-/// `MultiTarget::for_each_node` alone couldn't see these.
-fn collect_const_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
-    if let crate::hir::MultiTarget::Const(name) = target {
-        if !out.contains(name) {
-            out.push(name.clone());
+/// A constant or cvar named by a multi-assignment or `for` TARGET -- `X, @@y
+/// = 1, 2` in a module body. Mirrors the walk arms' own rules: a bare
+/// `Const`/`ClassVar` counts, a `ScopedConst` (`Foo::NAME, ... = ...`)
+/// doesn't, its owner being already named rather than discovered. See
+/// `collect_ivar_target` for why `MultiTarget::for_each_node` alone couldn't
+/// see these; the cvar failure mode is the quieter and so worse one -- a
+/// cvar missing from this list registers its ownership against the wrong
+/// class, and the program still compiles.
+fn collect_target_names(
+    target: &crate::hir::MultiTarget,
+    consts: &mut NameList,
+    cvars: &mut NameList,
+) {
+    match target {
+        crate::hir::MultiTarget::Const(name) => consts.push(name),
+        crate::hir::MultiTarget::ClassVar(name) => cvars.push(name),
+        _ => {}
+    }
+}
+
+/// Insertion-ordered name accumulator: the `Vec` keeps first-reference order
+/// (the ownership loops resolve in it), the set makes membership O(1) -- the
+/// per-node `Vec::contains` these walks used was quadratic at gem scale.
+#[derive(Default)]
+struct NameList {
+    names: Vec<String>,
+    seen: crate::compiler::FSet<String>,
+}
+
+impl NameList {
+    fn push(&mut self, name: &str) {
+        if !self.seen.contains(name) {
+            self.seen.insert(name.to_string());
+            self.names.push(name.to_string());
         }
     }
 }
 
-/// Every bare-constant reference under `id`, over the shared
-/// `HirNode::for_each_child` walk: a bare `ClassRef`
-/// counts ONLY when `name` ISN'T actually a registered class/module (a real
-/// class reference, e.g. `Foo.bar`, is never a constant-ownership concern --
-/// see `HirNode::ClassRef`'s dual reuse, `codegen::expr`'s docs), and a bare
-/// `ConstWrite { scope: None, .. }` always counts (an explicit `Foo::NAME`
-/// write needs no ownership DISCOVERY, its target is already named).
-fn collect_const_refs(
+/// Every bare-constant reference AND every class-variable name under `id`,
+/// both families over ONE shared `HirNode::for_each_child` walk. A bare
+/// `ClassRef` counts as a constant ONLY when `name` ISN'T actually a
+/// registered class/module (a real class reference, e.g. `Foo.bar`, is
+/// never a constant-ownership concern -- see `HirNode::ClassRef`'s dual
+/// reuse, `codegen::expr`'s docs); a bare `ConstWrite { scope: None, .. }`
+/// always counts (an explicit `Foo::NAME` write needs no ownership
+/// DISCOVERY, its target is already named); `ClassVarRead`/`ClassVarWrite`
+/// always count.
+fn collect_ownership_names(
     compiler: &Compiler,
     id: crate::hir::NodeId,
     cref: &[ClassId],
-    out: &mut Vec<String>,
+    consts: &mut NameList,
+    cvars: &mut NameList,
 ) {
     let hir = &compiler.hir;
     match &hir[id] {
-        // An FFI wrapper body references no constants.
+        // An FFI wrapper body references no constants and reads only its
+        // synthetic parameters.
         HirNode::Ffi(_) => return,
         // A `class`/`def` body is a fresh Ruby scope, scanned under its own
         // owner rather than the one this walk is filling.
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
         HirNode::ClassRef(name) => {
-            if compiler.resolve_class(name, cref, 0).is_none() && !out.contains(name) {
-                out.push(name.clone());
+            if compiler.resolve_class(name, cref, 0).is_none() {
+                consts.push(name);
             }
         }
         HirNode::ConstWrite {
             scope: None, name, ..
-        } => {
-            if !out.contains(name) {
-                out.push(name.clone());
-            }
+        } => consts.push(name),
+        HirNode::ClassVarRead(name) | HirNode::ClassVarWrite(name, _) => cvars.push(name),
+        HirNode::For { target, .. } => {
+            target.for_each_target(&mut |t| collect_target_names(t, consts, cvars))
         }
-        HirNode::For { target, .. } => target.for_each_target(&mut |t| collect_const_target(t, out)),
         HirNode::MultiWrite { targets, .. } => {
-            targets.for_each_target(&mut |t| collect_const_target(t, out))
+            targets.for_each_target(&mut |t| collect_target_names(t, consts, cvars))
         }
         _ => {}
     }
-    hir[id].for_each_child(&mut |n| collect_const_refs(compiler, n, cref, out));
-}
-
-/// A cvar named by a multi-assignment or `for` TARGET -- see
-/// `collect_ivar_target`, whose problem this is exactly. The failure here is
-/// quieter and so worse: a cvar missing from this list registers its ownership
-/// against the wrong class, and the program still compiles.
-fn collect_cvar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
-    if let crate::hir::MultiTarget::ClassVar(name) = target {
-        if !out.contains(name) {
-            out.push(name.clone());
-        }
-    }
-}
-
-/// Every class variable named under `id` -- `collect_ivars` over
-/// `ClassVarRead`/`ClassVarWrite` instead of `IvarRead`/`IvarWrite`.
-fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<String>) {
-    let mut record = |name: &str| {
-        if !out.iter().any(|n| n == name) {
-            out.push(name.to_string());
-        }
-    };
-    match &hir[id] {
-        // An FFI wrapper body reads only its synthetic parameters.
-        HirNode::Ffi(_) => return,
-        // A `class`/`def` body is a fresh Ruby scope, scanned under its own
-        // owner rather than the one this walk is filling.
-        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
-        HirNode::ClassVarRead(name) | HirNode::ClassVarWrite(name, _) => record(name),
-        HirNode::For { target, .. } => target.for_each_target(&mut |t| collect_cvar_target(t, out)),
-        HirNode::MultiWrite { targets, .. } => {
-            targets.for_each_target(&mut |t| collect_cvar_target(t, out))
-        }
-        _ => {}
-    }
-    hir[id].for_each_child(&mut |n| collect_cvars(hir, n, out));
+    hir[id].for_each_child(&mut |n| collect_ownership_names(compiler, n, cref, consts, cvars));
 }
