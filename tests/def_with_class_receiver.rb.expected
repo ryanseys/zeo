@@ -1,0 +1,7 @@
+25
+465
+"start mail.example:25"
+[:default_port, :default_ssl_port, :default_tls_port, :start]
+false
+"pong"
+[]

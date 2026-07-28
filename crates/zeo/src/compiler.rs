@@ -102,6 +102,16 @@ pub struct ClassInfo {
     /// class, which is what makes an INHERITED name disappear here while
     /// staying live on the ancestor that defined it.
     pub undefined: std::collections::HashSet<String>,
+    /// Names this class's body may `undef_method` at RUNTIME -- an `undef :m`
+    /// under a guard zeo can't decide (`undef :to_a if respond_to?(:to_a)`,
+    /// drb), which lowers to a real send rather than the compile-time
+    /// `undefined` record above.
+    ///
+    /// Whether the name survives is a runtime fact, so codegen can't emit the
+    /// direct call it otherwise would: `may_be_undefined_at_runtime` sends these
+    /// through dynamic dispatch, where the overlay's tombstone is consulted.
+    /// Pay-per-use -- a program with no conditional `undef` is untouched.
+    pub runtime_undefs: std::collections::HashSet<String>,
     /// `(new, old, is_class_method)` aliases whose source method is INHERITED
     /// (not defined in this class's own body) -- recorded by
     /// `analyze::register_class` from a `HirNode::AliasMethod` and resolved by
@@ -352,6 +362,7 @@ impl Compiler {
                 extends: Vec::new(),
                 class_method_prepends: Vec::new(),
                 undefined: std::collections::HashSet::new(),
+                runtime_undefs: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
                 pending_module_functions: Vec::new(),
                 builtin_aliases: Vec::new(),
@@ -608,6 +619,15 @@ impl Compiler {
         segments.join("::")
     }
 
+    /// Whether a runtime `undef_method` anywhere in `cid`'s ancestry could have
+    /// retracted `name` by the time a call runs -- see
+    /// [`ClassInfo::runtime_undefs`]. Codegen must not emit a direct call then.
+    pub fn may_be_undefined_at_runtime(&self, cid: ClassId, name: &str) -> bool {
+        std::iter::once(&cid)
+            .chain(self.class(cid).ancestors.iter())
+            .any(|&anc| self.class(anc).runtime_undefs.contains(name))
+    }
+
     /// The LEAF segment of `cid`'s name -- what CRuby puts in a class-body
     /// backtrace frame (`<module:B>`, never `<module:A::B>`), regardless of how
     /// deeply the class is nested or whether it was defined compact
@@ -633,8 +653,9 @@ impl Compiler {
             extends: Vec::new(),
             class_method_prepends: Vec::new(),
             undefined: std::collections::HashSet::new(),
+            runtime_undefs: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
-                pending_module_functions: Vec::new(),
+            pending_module_functions: Vec::new(),
             builtin_aliases: Vec::new(),
             visibility_overrides: Vec::new(),
             is_module,

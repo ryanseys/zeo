@@ -1196,6 +1196,36 @@ fn literal_class_id(node: &HirNode) -> Option<ClassId> {
     })
 }
 
+/// Every name a class-body statement could `undef_method` when it runs --
+/// `undef :m` under an undecidable guard, which
+/// `lower::lower_node`'s `UndefNode` arm lowers to a receiver-less send. The
+/// whole subtree is scanned, so an `undef` nested several conditionals deep
+/// still counts. See [`ClassInfo::runtime_undefs`].
+fn collect_runtime_undefs(compiler: &Compiler, stmt: NodeId) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![stmt];
+    while let Some(id) = stack.pop() {
+        if let HirNode::Call {
+            receiver: None,
+            name,
+            args,
+            ..
+        } = &compiler.hir[id]
+            && name == "undef_method"
+        {
+            for arg in args {
+                if let ArrayElem::Single(a) = arg
+                    && let HirNode::SymbolLit(s) = &compiler.hir[*a]
+                {
+                    out.push(s.clone());
+                }
+            }
+        }
+        compiler.hir[id].for_each_child(&mut |child| stack.push(child));
+    }
+    out
+}
+
 /// Read-only scan populating [`Compiler::assigned_const_names`]. A flat sweep
 /// of the whole node arena rather than a tree walk: every reachable `ConstWrite`
 /// is in there by construction, and a name written only on a dead branch still
@@ -1772,6 +1802,15 @@ fn register_class(
                 // can see it. This is what lets fileutils' platform-conditional
                 // `StreamUtils_#fu_windows?` reach `FileUtils` via `extend`.
                 register_conditional_defs(compiler, class_id, &[stmt])?;
+                // ...and, symmetrically, a guarded `undef` (`undef :to_a if
+                // respond_to?(:to_a)`, drb) reaches here as a runtime
+                // `undef_method` send. Whether it fires is a runtime fact, so
+                // the names go on record and codegen stops emitting a DIRECT
+                // call for them. See `ClassInfo::runtime_undefs`.
+                let undefs = collect_runtime_undefs(compiler, stmt);
+                compiler.classes[class_id.0 as usize]
+                    .runtime_undefs
+                    .extend(undefs);
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);

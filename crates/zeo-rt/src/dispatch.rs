@@ -981,6 +981,17 @@ impl ClassRegistry {
     /// authoritative below it. This is the dispatch shape `Ruby::Box`'s
     /// per-box overlays extend later (the walk gains a box dimension).
     fn lookup_mro(&self, id: ClassId, name: Symbol) -> Option<&MethodImpl> {
+        // A RUNTIME `undef_method` (`undef :m if <cond>`) tombstones the name in
+        // the overlay, which this frozen table was built too early to know
+        // about. Each position is checked there first so a tombstone terminates
+        // the walk exactly as a compile-time `undef` does -- gated on
+        // `is_live`, so the ordinary lock-free path is untouched.
+        let overlay_live = crate::runtime_meta::is_live();
+        let tombstoned =
+            |cid: ClassId| overlay_live && crate::runtime_meta::overlay_is_undefined(cid, name);
+        if tombstoned(id) {
+            return None;
+        }
         if let Some(e) = self.entries.get(&id.0) {
             if let Some(m) = e.methods.get(&name) {
                 return Some(m);
@@ -990,6 +1001,9 @@ impl ClassRegistry {
             }
         }
         for &anc in self.ancestors_of(id).iter().skip(1) {
+            if tombstoned(anc) {
+                return None;
+            }
             let Some(e) = self.entries.get(&anc.0) else {
                 continue;
             };

@@ -2300,7 +2300,10 @@ fn dispatch(
     // Ordinary call with a statically known receiver class: direct call
     // (Path 1). This is the common case -- `method_in_chain` mirrors
     // `comp_method_in_chain` exactly (compiler.c:404).
-    if let Some(cid) = recv_class {
+    // ...unless a guarded `undef` in the chain may have retracted the name by
+    // the time this runs, in which case only the dynamic path can see the
+    // overlay's tombstone. See `ClassInfo::runtime_undefs`.
+    if let Some(cid) = recv_class.filter(|&c| !cx.compiler.may_be_undefined_at_runtime(c, name)) {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
             let scope = cx.compiler.scope(sid);
             if !bypass_visibility {

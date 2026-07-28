@@ -63,7 +63,9 @@ pub(crate) fn desugar_singleton_class_defs(
     singleton: &ruby_prism::SingletonClassNode<'_>,
 ) -> PResult<Vec<NodeId>> {
     let recv_node = singleton.expression();
-    let inner = lower_class_body(result, hir, singleton.body(), None)?;
+    // `class << obj` opens no cref of its own -- CRuby walks past a
+    // singleton cref, so the body still resolves against the enclosing one.
+    let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
     desugar_singleton_items(result, hir, &recv_node, inner)
 }
 
@@ -918,7 +920,8 @@ fn lower_runtime_class_body(
     name: &str,
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
-    let body = lower_class_body(result, hir, body, None)?;
+    // A runtime class body runs as an ordinary BLOCK, which opens no cref.
+    let body = lower_class_body(result, hir, body, None, None)?;
     if body
         .iter()
         .any(|&n| matches!(hir[n], HirNode::LocalWrite(..)))
@@ -1123,11 +1126,16 @@ fn runtime_nested_class(
     }))
 }
 
+/// `cref` is the class/module name this body OPENS, or `None` for a body that
+/// opens no cref of its own -- a `class << obj` / `class << self` (CRuby walks
+/// past a singleton cref) and a runtime class body, which is an ordinary block.
+/// See `Hir::in_class_body`.
 pub(crate) fn lower_class_body(
     result: &ParseResult,
     hir: &mut Hir,
     body: Option<Node<'_>>,
     superclass: Option<&str>,
+    cref: Option<&str>,
 ) -> PResult<Vec<NodeId>> {
     let stmts: Vec<Node<'_>> = match body {
         None => return Ok(Vec::new()),
@@ -1160,7 +1168,7 @@ pub(crate) fn lower_class_body(
     // This is the ONE place a `class`/`module` body's statements are lowered
     // (the runtime-class desugars route through here too), so it is also the
     // one place the cref chain deepens -- see `Hir::cvar_is_toplevel`.
-    hir.in_class_body(|hir| {
+    let mut lower_stmts = |hir: &mut Hir| {
         for stmt in &stmts {
             if is_ffi {
                 if is_extend_ffi_library(stmt) {
@@ -1190,7 +1198,11 @@ pub(crate) fn lower_class_body(
             )?;
         }
         PResult::Ok(())
-    })?;
+    };
+    match cref {
+        Some(name) => hir.in_class_body(name, lower_stmts)?,
+        None => lower_stmts(hir)?,
+    }
     Ok(out)
 }
 
@@ -1333,7 +1345,7 @@ fn lower_class_body_statement(
             out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);
             return Ok(());
         }
-        let inner = lower_class_body(result, hir, singleton.body(), None)?;
+        let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
         map_class_self_items(hir, &inner, out)?;
         return Ok(());
     }

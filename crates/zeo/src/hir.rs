@@ -169,11 +169,13 @@ pub struct Hir {
     /// one arena, so per-file numbering would make two files' first flip-flops
     /// share a latch.
     pub flip_flops: u32,
-    /// How many `class`/`module` bodies enclose the statement being lowered --
-    /// CRuby's cref chain depth, which is what `@@x` resolves against. `0`
-    /// means the reference is genuinely top-level and must raise; see
-    /// [`cvar_is_toplevel`](Self::cvar_is_toplevel).
-    cref_depth: u32,
+    /// The `class`/`module` bodies enclosing the statement being lowered,
+    /// outermost first, spelled as each definition site wrote them
+    /// (`class Net::SMTP` contributes the one entry `"Net::SMTP"`) -- CRuby's
+    /// cref chain. Empty means the statement is genuinely top-level; see
+    /// [`cvar_is_toplevel`](Self::cvar_is_toplevel) and
+    /// [`enclosing_class`](Self::enclosing_class).
+    cref_names: Vec<String>,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -212,12 +214,19 @@ impl Hir {
         self.nodes.iter()
     }
 
-    /// Lowers `body` as one more level of cref nesting -- see `cref_depth`.
-    pub fn in_class_body<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
-        self.cref_depth += 1;
+    /// Lowers `body` as one more level of cref nesting -- see `cref_names`.
+    pub fn in_class_body<T>(&mut self, name: &str, body: impl FnOnce(&mut Self) -> T) -> T {
+        self.cref_names.push(name.to_string());
         let out = body(self);
-        self.cref_depth -= 1;
+        self.cref_names.pop();
         out
+    }
+
+    /// The innermost enclosing `class`/`module`'s name as written, or `None` at
+    /// the top level -- what tells `def SMTP.foo` written INSIDE `class SMTP`
+    /// (a class method) from `def other.foo` (a per-object singleton).
+    pub fn enclosing_class(&self) -> Option<&str> {
+        self.cref_names.last().map(String::as_str)
     }
 
     /// Whether a `@@x` lowered right here resolves to the TOP-LEVEL cref, in
@@ -231,7 +240,7 @@ impl Hir {
     /// answer by walking `CREF_NEXT` past singleton and eval crefs and
     /// raising when it runs off the end.)
     pub fn cvar_is_toplevel(&self) -> bool {
-        self.cref_depth == 0
+        self.cref_names.is_empty()
     }
 }
 

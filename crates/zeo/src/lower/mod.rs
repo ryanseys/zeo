@@ -171,6 +171,22 @@ pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResu
 /// EXPAND a node into several `HirNode`s without descending through it
 /// (`attr_accessor` -> a pair of `DefMethod`s), which have to stamp that
 /// span themselves.
+/// Whether `recv` is the constant naming the `class`/`module` body being
+/// lowered, spelled the same way that body's own header spelled it.
+///
+/// Comparing the WRITTEN names is what CRuby's cref rule comes to: the body of
+/// `class SMTP` nested in `module Net` sees a bare `SMTP`, but the body of the
+/// compact `class Pkg::Inner` does NOT -- its cref is just `[Pkg::Inner]`, so a
+/// bare `Inner` there is `uninitialized constant Pkg::Inner::Inner`
+/// (oracle-verified). Anything else is a genuine per-object singleton def and
+/// keeps the runtime `define_singleton_method` desugar.
+fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
+    let Some(enclosing) = hir.enclosing_class() else {
+        return false;
+    };
+    consts::constant_path_name(recv).is_ok_and(|name| name == enclosing)
+}
+
 pub(crate) fn span_of(hir: &Hir, node: &Node<'_>) -> Span {
     let loc = node.location();
     match hir.lowering_file {
@@ -1106,7 +1122,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             None => None,
             Some(sc) => Some(constant_path_name(&sc)?),
         };
-        let body = lower_class_body(result, hir, class.body(), superclass.as_deref())?;
+        let body = lower_class_body(result, hir, class.body(), superclass.as_deref(), Some(&name))?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass,
@@ -1122,12 +1138,40 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // already rejects anything but a plain `ConstantReadNode`.
     if let Some(module) = node.as_module_node() {
         let name = constant_path_name(&module.constant_path())?;
-        let body = lower_class_body(result, hir, module.body(), None)?;
+        let body = lower_class_body(result, hir, module.body(), None, Some(&name))?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass: None,
             body,
             is_module: true,
+        }));
+    }
+
+    // `undef :a, :b` in EXPRESSION position -- reached when a class-body
+    // `undef` sits under a guard zeo can't decide at compile time
+    // (`undef :to_a if respond_to?(:to_a)`, drb). `HirNode::Undef` records a
+    // compile-time fact and has no value form, so this becomes the runtime
+    // send the guard can actually gate: `undef_method` on the class body's
+    // `self`, whose overlay tombstone terminates lookup exactly as the static
+    // form's does. The unguarded statement form still takes the static path
+    // (`lower::defs::lower_class_body_statement`).
+    if let Some(undef) = node.as_undef_node() {
+        let args = undef
+            .names()
+            .iter()
+            .map(|n| {
+                let name = defs::alias_target_name(&n)?;
+                Ok(ArrayElem::Single(hir.push(HirNode::SymbolLit(name))))
+            })
+            .collect::<PResult<Vec<_>>>()?;
+        return Ok(hir.push(HirNode::Call {
+            receiver: None,
+            name: "undef_method".to_string(),
+            args,
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
         }));
     }
 
@@ -1140,6 +1184,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         let is_class_method = match def.receiver() {
             None => false,
             Some(r) if r.as_self_node().is_some() => true,
+            // `def SMTP.default_port` written INSIDE `class SMTP` is the older
+            // spelling of `def self.default_port` -- net/smtp uses it
+            // throughout -- so it has to register as a class method, not as a
+            // runtime per-object singleton the compile-time tables never see
+            // (a `class << self; alias a b` naming one couldn't resolve `b`).
+            Some(r) if names_enclosing_class(hir, &r) => true,
             Some(r) => {
                 // `def obj.name` on a NON-`self` receiver -- a
                 // per-object singleton method. Desugar to a runtime install:
