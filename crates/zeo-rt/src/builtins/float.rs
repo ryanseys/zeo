@@ -58,12 +58,20 @@ ruby_class! {
         arity!(args, 1);
         Ok(match crate::builtins::numeric::num_cmp(recv, &args[0]) {
             Some(Some(c)) => RubyValue::Int(c),
-            _ => RubyValue::Nil,
+            Some(None) => RubyValue::Nil,
+            // Outside the native tower: the coerce protocol decides
+            // (`1.5 <=> BigDecimal("2")`), CRuby's rb_num_coerce_cmp.
+            None => crate::builtins::numeric::coerce_cmp(recv, &args[0])?,
         })
     }
     def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
-        Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
+        if recv.rb_eq(&args[0]) {
+            return Ok(RubyValue::Bool(true));
+        }
+        // A non-tower operand answers for itself (`y == x`), CRuby's
+        // num_equal -- how `1.5 == BigDecimal("1.5")` holds.
+        crate::builtins::numeric::reverse_eq(recv, &args[0])
     }
     def "abs" arity 0 | "magnitude" arity 0 (recv, args, _block) {
         arity!(args, 0);

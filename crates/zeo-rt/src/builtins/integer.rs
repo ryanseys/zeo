@@ -639,21 +639,27 @@ ruby_class! {
         };
         Ok(RubyValue::Array(crate::array_new(pair)))
     }
-    // Numeric-tower comparison; a non-numeric argument compares as nil
-    // (real Ruby: `5 <=> "a"` is nil, never an error). Comparable's
-    // operators drive this row.
+    // Numeric-tower comparison; a non-numeric argument that doesn't
+    // `coerce` compares as nil (real Ruby: `5 <=> "a"` is nil, never an
+    // error), while one that does (BigDecimal) compares through the
+    // coerced pair. Comparable's operators drive this row.
     def "<=>" arity 1 (recv, args, _block) {
         arity!(args, 1);
         Ok(match crate::builtins::numeric::num_cmp(recv, &args[0]) {
             Some(Some(c)) => RubyValue::Int(c),
-            _ => RubyValue::Nil,
+            Some(None) => RubyValue::Nil,
+            None => crate::builtins::numeric::coerce_cmp(recv, &args[0])?,
         })
     }
     // Integer's own `==` (cross-tower: `1 == 1.0` is true) -- resolving
-    // before `Comparable#==` in the chain. Non-numeric -> false.
+    // before `Comparable#==` in the chain. A non-tower operand answers for
+    // itself (`y == x`, CRuby's num_equal).
     def "==" arity 1 (recv, args, _block) {
         arity!(args, 1);
-        Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
+        if recv.rb_eq(&args[0]) {
+            return Ok(RubyValue::Bool(true));
+        }
+        crate::builtins::numeric::reverse_eq(recv, &args[0])
     }
     // `div` -- floored integer division (what `/` already does for Ints);
     // `fdiv` -- float division regardless of operand kinds.
