@@ -44,7 +44,10 @@ use parking_lot::Mutex;
 use crate::FMap;
 use std::sync::LazyLock;
 
-static CIVARS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+/// Two-level (class -> name -> value), so reads probe with their borrowed
+/// `&str` instead of allocating a `(u32, String)` key per access -- the
+/// dominant cost of a module-level `@ivar` read loop.
+static CIVARS: LazyLock<Mutex<FMap<u32, FMap<Box<str>, RubyValue>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// `nil` for a class-level `@x` never yet written -- and here that is real
@@ -56,7 +59,8 @@ static CIVARS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
 pub fn class_ivar_get(class_id: u32, name: &str) -> RubyValue {
     CIVARS
         .lock()
-        .get(&(class_id, name.to_string()))
+        .get(&class_id)
+        .and_then(|m| m.get(name))
         .cloned()
         .unwrap_or(RubyValue::Nil)
 }
@@ -70,7 +74,11 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
             class_id,
         )));
     }
-    CIVARS.lock().insert((class_id, name.to_string()), value);
+    CIVARS
+        .lock()
+        .entry(class_id)
+        .or_default()
+        .insert(Box::from(name), value);
     Ok(())
 }
 
@@ -84,10 +92,9 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
 pub fn class_ivar_names(class_id: u32) -> Vec<String> {
     let mut names: Vec<String> = CIVARS
         .lock()
-        .keys()
-        .filter(|(cid, _)| *cid == class_id)
-        .map(|(_, n)| n.clone())
-        .collect();
+        .get(&class_id)
+        .map(|m| m.keys().map(|n| n.to_string()).collect())
+        .unwrap_or_default();
     names.sort();
     names
 }

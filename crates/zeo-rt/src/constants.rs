@@ -17,7 +17,11 @@ use parking_lot::Mutex;
 use crate::FMap;
 use std::sync::LazyLock;
 
-static CONSTANTS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+/// Two-level (owner -> name -> value): the inner map's `Box<str>` keys let
+/// every read probe with its borrowed `&str` -- the pre-split
+/// `(u32, String)` key allocated a fresh `String` per read, once per
+/// ancestor on the fallback walk.
+static CONSTANTS: LazyLock<Mutex<FMap<u32, FMap<Box<str>, RubyValue>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// The `Object`-owned constant names that existed before the program's own top
@@ -38,10 +42,9 @@ static MASTER: LazyLock<Mutex<Option<std::collections::HashSet<String>>>> =
 pub fn seal_master_constants() {
     let names = CONSTANTS
         .lock()
-        .keys()
-        .filter(|(owner, _)| *owner == 0)
-        .map(|(_, name)| name.clone())
-        .collect();
+        .get(&0)
+        .map(|m| m.keys().map(|name| name.to_string()).collect())
+        .unwrap_or_default();
     *MASTER.lock() = Some(names);
 }
 
@@ -59,7 +62,7 @@ pub fn const_get_master(name: &str) -> Option<RubyValue> {
 
 pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     let map = CONSTANTS.lock();
-    if let Some(v) = map.get(&(owner_class_id, name.to_string())) {
+    if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
         return Some(v.clone());
     }
     // Ruby constant lookup continues into the owner's ancestry: a bare
@@ -69,7 +72,7 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     // constants, so this runtime walk covers them.
     for &anc in crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id)) {
         if anc.0 != owner_class_id {
-            if let Some(v) = map.get(&(anc.0, name.to_string())) {
+            if let Some(v) = map.get(&anc.0).and_then(|m| m.get(name)) {
                 return Some(v.clone());
             }
         }
@@ -85,14 +88,14 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 /// must not find it).
 pub fn const_get_scoped(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     let map = CONSTANTS.lock();
-    if let Some(v) = map.get(&(owner_class_id, name.to_string())) {
+    if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
         return Some(v.clone());
     }
     for &anc in crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id)) {
         if anc.0 == owner_class_id || (anc.0 == 0 && owner_class_id != 0) {
             continue;
         }
-        if let Some(v) = map.get(&(anc.0, name.to_string())) {
+        if let Some(v) = map.get(&anc.0).and_then(|m| m.get(name)) {
             return Some(v.clone());
         }
     }
@@ -106,10 +109,9 @@ pub fn const_get_scoped(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 pub fn const_names_of(owner_class_id: u32) -> Vec<String> {
     CONSTANTS
         .lock()
-        .keys()
-        .filter(|(owner, _)| *owner == owner_class_id)
-        .map(|(_, name)| name.clone())
-        .collect()
+        .get(&owner_class_id)
+        .map(|m| m.keys().map(|name| name.to_string()).collect())
+        .unwrap_or_default()
 }
 
 /// Drops `owner`'s OWN binding for `name`, returning it. An inherited
@@ -117,7 +119,8 @@ pub fn const_names_of(owner_class_id: u32) -> Vec<String> {
 pub fn const_remove(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     CONSTANTS
         .lock()
-        .remove(&(owner_class_id, name.to_string()))
+        .get_mut(&owner_class_id)
+        .and_then(|m| m.remove(name))
 }
 
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
@@ -136,7 +139,9 @@ pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
     }
     CONSTANTS
         .lock()
-        .insert((owner_class_id, name.to_string()), value);
+        .entry(owner_class_id)
+        .or_default()
+        .insert(Box::from(name), value);
 }
 
 /// Installs `ARGV` (the program's arguments, minus the binary name, as an

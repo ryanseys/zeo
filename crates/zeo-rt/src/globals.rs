@@ -9,10 +9,33 @@
 use crate::RubyValue;
 use parking_lot::Mutex;
 use crate::FMap;
+use std::borrow::Cow;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-static GLOBALS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+/// Two-level (box -> name -> value): the inner map's `Box<str>` keys let a
+/// read probe with the borrowed `&str` it was handed -- the pre-split
+/// `(u32, String)` key forced a `String` allocation per READ, which is the
+/// wrong side to pay on (reads dominate writes by orders of magnitude).
+static GLOBALS: LazyLock<Mutex<FMap<u32, FMap<Box<str>, RubyValue>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
+
+/// Whether `$stdout`/`$stderr`/`$stdin` was ever ASSIGNED (any box): while
+/// clear -- almost every program, forever -- `current_stdout`/`current_stderr`
+/// skip the alias-resolve + globals lookup entirely and hand back the
+/// singleton. Armed by every assignment path (including eval's); flips once,
+/// never back, so "armed" just means "take the full lookup from now on".
+static STDIO_REDIRECTED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn stdio_redirected() -> bool {
+    STDIO_REDIRECTED.load(Ordering::Acquire)
+}
+
+fn arm_if_stdio(target: &str) {
+    if matches!(target, "$stdout" | "$stderr" | "$stdin") {
+        STDIO_REDIRECTED.store(true, Ordering::Release);
+    }
+}
 
 /// `alias $new $old` -- alias name -> the name whose STORAGE it shares.
 ///
@@ -24,34 +47,42 @@ static GLOBALS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
 ///
 /// Keyed `(box_id, name)` like `GLOBALS` itself, since an alias is
 /// per-box state exactly as the variable is.
-static ALIASES: LazyLock<Mutex<FMap<(u32, String), String>>> =
+static ALIASES: LazyLock<Mutex<FMap<u32, FMap<Box<str>, Box<str>>>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
 
-/// The name whose storage `name` actually refers to -- itself, unless it
-/// was aliased. Chains are followed (`alias $b $a; alias $c $b` makes all
-/// three one slot), with a depth cap: real Ruby resolves the target AT
-/// ALIAS TIME, so a cycle can't arise from Ruby source, but a cap beats
-/// hanging if one ever did.
-fn resolve(box_id: u32, name: &str) -> String {
+/// The name whose storage `name` actually refers to -- itself (borrowed,
+/// the overwhelmingly common case) unless it was aliased. Chains are
+/// followed (`alias $b $a; alias $c $b` makes all three one slot), with a
+/// depth cap: real Ruby resolves the target AT ALIAS TIME, so a cycle
+/// can't arise from Ruby source, but a cap beats hanging if one ever did.
+fn resolve(box_id: u32, name: &'_ str) -> Cow<'_, str> {
     let aliases = ALIASES.lock();
-    let mut cur = name.to_string();
-    for _ in 0..16 {
-        match aliases.get(&(box_id, cur.clone())) {
-            Some(target) => cur = target.clone(),
-            None => return cur,
+    let Some(inner) = aliases.get(&box_id) else {
+        return Cow::Borrowed(name);
+    };
+    let Some(first) = inner.get(name) else {
+        return Cow::Borrowed(name);
+    };
+    let mut cur: &str = first;
+    for _ in 0..15 {
+        match inner.get(cur) {
+            Some(target) => cur = target,
+            None => break,
         }
     }
-    cur
+    Cow::Owned(cur.to_string())
 }
 
 /// `alias $new $old` -- makes `$new` name `$old`'s storage. The target is
 /// resolved through any existing alias first, so every name in a chain
 /// points at the one real slot.
 pub fn global_alias(box_id: u32, new_name: &str, old_name: &str) {
-    let target = resolve(box_id, old_name);
+    let target = resolve(box_id, old_name).into_owned();
     ALIASES
         .lock()
-        .insert((box_id, new_name.to_string()), target);
+        .entry(box_id)
+        .or_default()
+        .insert(Box::from(new_name), target.into_boxed_str());
 }
 
 /// A global whose value lives somewhere other than the `$foo` table: the
@@ -127,18 +158,33 @@ pub fn global_get(box_id: u32, name: &str) -> RubyValue {
     }
     GLOBALS
         .lock()
-        .get(&(box_id, target))
+        .get(&box_id)
+        .and_then(|m| m.get(target.as_ref()))
         .cloned()
         .unwrap_or(RubyValue::Nil)
 }
 
-/// The plain store, for the runtime's own seeding (`$stdout`, `$0`, ...),
-/// which never targets a [`Special`]. Ruby-level assignment goes through
-/// [`global_assign`].
+/// The plain store, for the runtime's own seeding (`$0`, `$/`, ...) and the
+/// eval VM's assignments, which never target a [`Special`] at a read-only
+/// spelling. Ruby-level assignment goes through [`global_assign`].
 pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
+    let target = resolve(box_id, name);
+    arm_if_stdio(&target);
+    store(box_id, target, value);
+}
+
+/// The stdio seeder's non-arming store: the initial `$stdout = <singleton>`
+/// must not flip [`STDIO_REDIRECTED`], or the fast path would never exist.
+pub(crate) fn seed_global(box_id: u32, name: &str, value: RubyValue) {
+    store(box_id, Cow::Borrowed(name), value);
+}
+
+fn store(box_id: u32, target: Cow<'_, str>, value: RubyValue) {
     GLOBALS
         .lock()
-        .insert((box_id, resolve(box_id, name)), value);
+        .entry(box_id)
+        .or_default()
+        .insert(target.into_owned().into_boxed_str(), value);
 }
 
 /// `$g = value` as written in Ruby. Assigning a read-only special is a
@@ -150,7 +196,8 @@ pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), cr
     let target = resolve(box_id, name);
     match special_of(&target) {
         None => {
-            GLOBALS.lock().insert((box_id, target), value);
+            arm_if_stdio(&target);
+            store(box_id, target, value);
             Ok(())
         }
         Some(Special::MatchData) => {
@@ -229,12 +276,18 @@ pub fn seed_loaded_features(paths: &[&str]) {
 /// currently reads: `defined?($MATCH)` is `"global-variable"` before any
 /// match has run, where `defined?($&)` is nil. Oracle-verified.
 pub fn global_defined(box_id: u32, name: &str) -> bool {
-    if ALIASES.lock().contains_key(&(box_id, name.to_string())) {
+    if ALIASES
+        .lock()
+        .get(&box_id)
+        .is_some_and(|m| m.contains_key(name))
+    {
         return true;
     }
+    let target = resolve(box_id, name);
     GLOBALS
         .lock()
-        .contains_key(&(box_id, resolve(box_id, name)))
+        .get(&box_id)
+        .is_some_and(|m| m.contains_key(target.as_ref()))
 }
 
 #[cfg(test)]
