@@ -318,7 +318,17 @@ fn compile_and_run(
     // ~100KB each) to keep the bin-cache small. See `run_ruby_packages`.
     let linkage = zeo::backend::Linkage::Dynamic;
     zeo::backend::ensure_runtime_built(profile(), runtime, linkage)?;
-    zeo::backend::build_binary(&compiled.rust_source, &bin, profile(), runtime, linkage)?;
+    // Unoptimized: a golden test only diffs OUTPUT, its hot paths live in the
+    // release runtime dylib, and `-O2` over a gem-scale generated main costs
+    // rustc tens of minutes on a cold cache.
+    zeo::backend::build_binary(
+        &compiled.rust_source,
+        &bin,
+        profile(),
+        runtime,
+        linkage,
+        zeo::backend::GenOpt::Unoptimized,
+    )?;
 
     let mut cmd = Command::new(&bin);
     cmd.args(args).current_dir(run_cwd);

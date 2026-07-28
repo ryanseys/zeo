@@ -478,12 +478,13 @@ impl Profile {
         }
     }
 
-    /// Extra `rustc` flags for the GENERATED crate itself. Release optimizes
-    /// the generated code, not just the linked runtime rlib: the generated
-    /// main is where typed fast paths (inline Int arithmetic, direct calls)
-    /// live, and at `-O0` those and every cross-crate `#[inline]` hint
-    /// (`FrameGuard::push`, `set_line`) stay unoptimized calls. Debug keeps
-    /// `-O0` for compile speed.
+    /// Extra `rustc` flags for the GENERATED crate when it follows the
+    /// profile (`GenOpt::Optimized`): Release optimizes the generated code,
+    /// not just the linked runtime rlib -- the generated main is where typed
+    /// fast paths (inline Int arithmetic, direct calls) live, and at `-O0`
+    /// those and every cross-crate `#[inline]` hint (`FrameGuard::push`,
+    /// `set_line`) stay unoptimized calls. Debug keeps `-O0` for compile
+    /// speed.
     ///
     /// BOTH strip symbols from the final binary. The bulk of a statically-linked
     /// generated program's size is the `zeo-rt` rlib's debug info (a Debug entry
@@ -496,6 +497,39 @@ impl Profile {
         match self {
             Profile::Debug => &["-C", "strip=symbols"],
             Profile::Release => &["-C", "opt-level=2", "-C", "strip=symbols"],
+        }
+    }
+}
+
+/// Which optimization level the GENERATED crate itself is compiled at --
+/// deliberately decoupled from `Profile`, which also selects the runtime
+/// artifact. The golden suites link the RELEASE runtime (fast per-program
+/// link, and the hot paths all live in the runtime dylib) but build the
+/// generated crate `Unoptimized`: `-O2` over a gem-scale generated main
+/// costs rustc tens of minutes (net/http's 666K-line main: 60+ min, vs
+/// ~100s at `-O0`) for no output difference. `-o`/bench artifacts stay
+/// `Optimized` -- the generated main is where the typed fast paths live,
+/// and a shipped binary is built once.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GenOpt {
+    Optimized,
+    Unoptimized,
+}
+
+impl GenOpt {
+    /// The generated crate's `rustc` flags -- `Profile::rustc_flags` when
+    /// following the profile, the Debug (strip-only) set when unoptimized.
+    fn rustc_flags(self, profile: Profile) -> &'static [&'static str] {
+        match self {
+            GenOpt::Optimized => profile.rustc_flags(),
+            GenOpt::Unoptimized => Profile::Debug.rustc_flags(),
+        }
+    }
+
+    pub(super) fn tag(self) -> &'static [u8] {
+        match self {
+            GenOpt::Optimized => b"gen-opt;",
+            GenOpt::Unoptimized => b"gen-o0;",
         }
     }
 }
@@ -620,6 +654,7 @@ pub fn build_binary(
     profile: Profile,
     runtime: Runtime,
     linkage: Linkage,
+    gen_opt: GenOpt,
 ) -> Result<(), String> {
     // Reclaim dead cache generations (old compiler/runtime) once per process,
     // off the hot path -- see `cache::maybe_sweep_stale_cache`.
@@ -632,7 +667,7 @@ pub fn build_binary(
     let variant_dir = variant_target_dir(runtime, linkage).join(profile.subdir());
     let deps_dir = variant_dir.join("deps");
 
-    let cached = cache::cache_path(rust_source, profile, runtime, linkage)?;
+    let cached = cache::cache_path(rust_source, profile, runtime, linkage, gen_opt)?;
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
@@ -690,7 +725,7 @@ pub fn build_binary(
         .arg(format!("zeo_rt={}", runtime_lib.display()))
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
-    cmd.args(profile.rustc_flags());
+    cmd.args(gen_opt.rustc_flags(profile));
     if linkage == Linkage::Static {
         // Arms the generated crate's mimalloc `#[global_allocator]` (see
         // codegen's main assembly): a self-contained binary owns every

@@ -301,7 +301,7 @@ fn run() -> Result<(), MainError> {
         return Ok(());
     }
 
-    use zeo::backend::{Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
+    use zeo::backend::{GenOpt, Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
 
     // The CLI always produces a SELF-CONTAINED binary -- both the run-once `-e`
     // throwaway and the shipped `-o app` -- so it statically links the runtime.
@@ -326,7 +326,14 @@ fn run() -> Result<(), MainError> {
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-        build_binary(&compiled.rust_source, &bin, profile, runtime, linkage)?;
+        build_binary(
+            &compiled.rust_source,
+            &bin,
+            profile,
+            runtime,
+            linkage,
+            GenOpt::Optimized,
+        )?;
         let status = std::process::Command::new(&bin)
             .status()
             .map_err(|e| format!("running compiled program: {e}"))?;
@@ -355,6 +362,7 @@ fn run() -> Result<(), MainError> {
         profile,
         runtime,
         linkage,
+        GenOpt::Optimized,
     )?)
 }
 

@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use super::{Linkage, Profile, Runtime, runtime_artifact_fingerprint, target_dir};
+use super::{GenOpt, Linkage, Profile, Runtime, runtime_artifact_fingerprint, target_dir};
 
 /// Where compiled generated programs are kept, keyed by their full input.
 ///
@@ -47,8 +47,9 @@ pub(super) fn cache_path(
     profile: Profile,
     runtime: Runtime,
     linkage: Linkage,
+    gen_opt: GenOpt,
 ) -> Result<PathBuf, String> {
-    let generation = generation_hash(profile, runtime, linkage)?;
+    let generation = generation_hash(profile, runtime, linkage, gen_opt)?;
     let root = cache_dir();
     std::fs::create_dir_all(&root).map_err(|e| format!("creating {}: {e}", root.display()))?;
     let dir = root.join(format!("{generation:016x}"));
@@ -69,7 +70,12 @@ pub(super) fn cache_path(
 ///
 /// Errors when that combination's runtime artifact isn't built -- in which case
 /// no process can compute (and so write into) that generation either.
-fn generation_hash(profile: Profile, runtime: Runtime, linkage: Linkage) -> Result<u64, String> {
+fn generation_hash(
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+    gen_opt: GenOpt,
+) -> Result<u64, String> {
     // Profile, runtime variant, AND linkage are part of the generation, not just
     // details: the same source compiles to a debug or release binary (profile),
     // to a lean or prism-carrying binary (runtime), and to a self-contained or
@@ -81,12 +87,10 @@ fn generation_hash(profile: Profile, runtime: Runtime, linkage: Linkage) -> Resu
     let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, profile.tag());
     generation = fnv1a64_with(generation, runtime.tag());
     generation = fnv1a64_with(generation, linkage.tag());
-    // The generated crate's own rustc flags are part of the generation: a
+    // The generated crate's own opt level is part of the generation: a
     // binary built at a different opt-level is a different artifact, and
     // serving a stale one would silently undo (or fake) the optimization.
-    for flag in profile.rustc_flags() {
-        generation = fnv1a64_with(generation, flag.as_bytes());
-    }
+    generation = fnv1a64_with(generation, gen_opt.tag());
     // The runtime artifact's len+mtime: generated programs bind to the exact
     // rlib/dylib they were built against, so a rebuilt runtime must retire the
     // old entries (a dynamic binary linked to a stale dylib ABI would fail to
@@ -155,8 +159,10 @@ fn sweep_stale_cache_generations() {
     for profile in [Profile::Debug, Profile::Release] {
         for runtime in [Runtime::Lean, Runtime::Eval] {
             for linkage in [Linkage::Static, Linkage::Dynamic] {
-                if let Ok(generation) = generation_hash(profile, runtime, linkage) {
-                    live.push(format!("{generation:016x}"));
+                for gen_opt in [GenOpt::Optimized, GenOpt::Unoptimized] {
+                    if let Ok(generation) = generation_hash(profile, runtime, linkage, gen_opt) {
+                        live.push(format!("{generation:016x}"));
+                    }
                 }
             }
         }

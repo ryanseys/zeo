@@ -12,6 +12,15 @@
 [test-groups]
 golden = { max-threads = 8 }
 
+# The net/http-scale programs splice the whole uri+socket+net stack (a
+# ~666K-line generated main). Even unoptimized, a cold rustc takes ~2min
+# alone -- more under the 8-way cold-storm cap -- so just these get extra
+# headroom. First match wins per field, so this must precede the blanket
+# golden override below.
+[[profile.default.overrides]]
+filter = "test(net_http) | test(net_smtp) | test(net_ftp)"
+slow-timeout = { period = "120s", terminate-after = 5 }
+
 [[profile.default.overrides]]
 filter = "binary(spinel) | binary(examples) | binary(gaps)"
 test-group = "golden"
