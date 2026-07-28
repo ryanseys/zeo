@@ -562,13 +562,13 @@ ruby_class! {
             );
         }
         let blk = crate::builtins::basic_object::block_proc(block, "class_eval")?;
-        blk.call_with_self(recv, &[])
+        crate::runtime_meta::with_body_frame(recv_cid(recv), || blk.call_with_self(recv, &[]))
     }
     // `Module#class_exec`/`module_exec(*args) { |*a| ... }` -- like class_eval
     // but forwards positional args to the block's params.
     def "class_exec" | "module_exec" (recv, args, block) {
         let blk = crate::builtins::basic_object::block_proc(block, "class_exec")?;
-        blk.call_with_self(recv, args)
+        crate::runtime_meta::with_body_frame(recv_cid(recv), || blk.call_with_self(recv, args))
     }
     // `Module#class_variable_get/set/defined?` over the linearized ancestry
     // (a `@@x` is owned by the nearest ancestor that first assigned it --

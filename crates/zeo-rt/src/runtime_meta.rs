@@ -194,6 +194,51 @@ thread_local! {
     /// pushes on entry and pops on exit, so the top frame is always the
     /// innermost runtime method -- exactly what a bare `super` there needs.
     static METHOD_FRAMES: RefCell<Vec<(ClassId, Symbol)>> = const { RefCell::new(Vec::new()) };
+
+    /// The stack of runtime class BODIES currently executing -- a
+    /// `Class.new`/`Module.new` block or a `class_eval`. Carries the running
+    /// default visibility and `module_function` mode a bare directive sets,
+    /// as CRuby's cref does, and dies with the body like a cref too.
+    static BODY_FRAMES: RefCell<Vec<BodyFrame>> = const { RefCell::new(Vec::new()) };
+}
+
+#[derive(Clone, Copy)]
+struct BodyFrame {
+    class: ClassId,
+    vis: crate::dispatch::MethodVisibility,
+    module_function: bool,
+}
+
+/// Runs `f` with a fresh body frame for `id`, so bare directives inside it
+/// have somewhere to record themselves.
+pub(crate) fn with_body_frame<T>(
+    id: ClassId,
+    f: impl FnOnce() -> Result<T, Signal>,
+) -> Result<T, Signal> {
+    BODY_FRAMES.with(|s| {
+        s.borrow_mut().push(BodyFrame {
+            class: id,
+            vis: crate::dispatch::MethodVisibility::Public,
+            module_function: false,
+        })
+    });
+    let out = f();
+    BODY_FRAMES.with(|s| {
+        s.borrow_mut().pop();
+    });
+    out
+}
+
+fn current_frame_for(id: ClassId) -> Option<BodyFrame> {
+    BODY_FRAMES.with(|s| s.borrow().iter().rev().find(|f| f.class == id).copied())
+}
+
+fn update_frame_for(id: ClassId, f: impl FnOnce(&mut BodyFrame)) {
+    BODY_FRAMES.with(|s| {
+        if let Some(frame) = s.borrow_mut().iter_mut().rev().find(|fr| fr.class == id) {
+            f(frame);
+        }
+    });
 }
 
 /// A sentinel "defining class" for a per-object singleton method: it is never a
@@ -252,13 +297,40 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
         return runtime_define_singleton_method(&owner, name, body);
     }
     let m = dynamic_from_proc(id, name, body);
+    let frame = current_frame_for(id);
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, m);
-        // A runtime redefinition is PUBLIC (CRuby's `define_method` at
-        // runtime scope) -- drop any earlier `private :name` mark.
-        e.methods_vis.remove(&name);
+        e.undefs.remove(&name);
+        match frame {
+            // Outside a class body a runtime definition is public -- drop any
+            // earlier `private :name` mark.
+            None => {
+                e.methods_vis.remove(&name);
+            }
+            // `module_function` makes the instance copy private and adds a
+            // public module method; a bare `private`/`protected` just marks.
+            Some(f) if f.module_function => {
+                e.methods_vis
+                    .insert(name, crate::dispatch::MethodVisibility::Private);
+            }
+            Some(f) if f.vis != crate::dispatch::MethodVisibility::Public => {
+                e.methods_vis.insert(name, f.vis);
+            }
+            Some(_) => {
+                e.methods_vis.remove(&name);
+            }
+        }
+    }
+    // The module-method half is built with the overlay lock DROPPED:
+    // `extended_class_method` reads the overlay itself.
+    if frame.is_some_and(|f| f.module_function) {
+        if let Some(wrapper) = extended_class_method(id, name) {
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+            e.class_methods.insert(name, wrapper);
+        }
     }
     mark_live();
     Ok(RubyValue::Symbol(name))
@@ -472,6 +544,9 @@ pub fn runtime_set_visibility(
     vis: crate::dispatch::MethodVisibility,
 ) -> Result<RubyValue, Signal> {
     if args.is_empty() {
+        // Bare `private` switches the enclosing body's default for every
+        // subsequent `def`.
+        update_frame_for(id, |f| f.vis = vis);
         return Ok(RubyValue::Nil);
     }
     if crate::dispatch::class_frozen(id) {
@@ -580,6 +655,7 @@ fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
 /// public -- a harmless over-permissiveness; callers use the module method.
 pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if args.is_empty() {
+        update_frame_for(id, |f| f.module_function = true);
         return Ok(RubyValue::Nil);
     }
     if crate::dispatch::class_frozen(id) {
@@ -1111,7 +1187,7 @@ pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
     mark_live();
     let val = RubyValue::Class(new_id);
     if let Some(b) = body {
-        b.call_with_self(&val, &[])?;
+        with_body_frame(new_id, || b.call_with_self(&val, &[]))?;
     }
     Ok(val)
 }
@@ -1142,13 +1218,27 @@ pub fn runtime_class_new(
     anc.extend_from_slice(super_chain);
     let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
 
+    // `Class.new(String)` needs the payload-carrying instance the value bridge
+    // dispatches against, not a name-keyed `DynObject` -- exactly as a compiled
+    // `class Tag < String` registers. Read off `leaked` rather than through
+    // `value_root_of`, which resolves the ancestry via an overlay this entry
+    // isn't in yet.
+    let constructor = if leaked
+        .iter()
+        .copied()
+        .any(crate::builtins::value_subclass::is_payload_root)
+    {
+        crate::builtins::value_subclass::value_subclass_construct
+    } else {
+        dyn_object_construct
+    };
     {
         let mut w = maps().classes.write().unwrap();
         w.insert(
             id_num,
             OverlayEntry {
                 ancestors: leaked,
-                constructor: Some(dyn_object_construct),
+                constructor: Some(constructor),
                 ..Default::default()
             },
         );
@@ -1157,7 +1247,7 @@ pub fn runtime_class_new(
 
     let class_val = RubyValue::Class(new_id);
     if let Some(b) = body {
-        b.call_with_self(&class_val, &[])?;
+        with_body_frame(new_id, || b.call_with_self(&class_val, &[]))?;
     }
     Ok(class_val)
 }
