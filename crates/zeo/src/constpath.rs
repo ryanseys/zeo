@@ -58,6 +58,13 @@ impl<'a> ConstPath<'a> {
         Some(&self.joined[..start + prefix.len()])
     }
 
+    /// The spelling with any `::` anchor removed. `::A::B` and `A::B` name the
+    /// same constant, so a table keyed by FULLY-QUALIFIED name (there is only
+    /// one top level to anchor to) must look both up under the same key.
+    pub fn unanchored(&self) -> &'a str {
+        self.body
+    }
+
     /// Each segment in order, anchor excluded (`::A::B` yields `A`, `B`).
     /// Always at least one item.
     pub fn segments(&self) -> impl Iterator<Item = &'a str> + use<'a> {

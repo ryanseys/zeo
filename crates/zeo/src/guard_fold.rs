@@ -16,6 +16,9 @@
 //!   -derived boolean constant), `unless new.respond_to?(:installable_on_platform?)`,
 //!   `unless method_defined?(:encode_with)`. Whether a class has a method is
 //!   answered by the compiled method tables.
+//! * **Constant probes** -- `if defined? ::Psych::Visitors`. Which constants
+//!   exist is likewise fixed for a whole-program target; see
+//!   [`defined_const_fold`] for the (deliberately narrow) rule.
 //!
 //! Folding these is exactly CRuby's own load-time reachability, and the only
 //! tractable answer under zeo's static MRO (a runtime-conditional
@@ -448,10 +451,51 @@ fn call_fold(
     }
 }
 
+/// Compile-time truth of `defined?(Const)` -- the OTHER whole-definition gate
+/// rubygems and bundler are written in (`if defined? ::Psych::Visitors`,
+/// `unless defined?(Gem::Timeout)`). A name that resolves to a compiled
+/// class/module is `Some(true)`; one the whole program never defines -- not a
+/// `class`/`module` anywhere (`shell_kinds`), never the target of a `NAME = ...`
+/// (`assigned_const_names`) -- is `Some(false)`, which is what lets a branch
+/// depending on a capability zeo doesn't have drop out before it reaches Rust.
+///
+/// Anything in between stays `None`. Both tables are whole-program sweeps taken
+/// BEFORE registration, so the answer doesn't depend on how far the walk has
+/// got -- a class defined later in the flattened require graph is still seen.
+fn defined_const_fold(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+) -> Option<bool> {
+    let joined = match &compiler.hir[node] {
+        HirNode::ClassRef(name) => name.clone(),
+        HirNode::QualifiedConstRead(scope, name) => format!("{scope}::{name}"),
+        _ => return None,
+    };
+    if compiler.resolve_class(&joined, cref, box_id).is_some() {
+        return Some(true);
+    }
+    let path = crate::constpath::ConstPath::parse(&joined);
+    // A definition the walk hasn't reached yet, or one written under a scope
+    // this reference spells differently (`Psych::Visitors` from inside
+    // `module Psych`) -- undecidable, so let the guard run.
+    let suffix = format!("::{}", path.unanchored());
+    let defined_somewhere = compiler
+        .shell_kinds
+        .keys()
+        .any(|(bx, k)| *bx == box_id && (*k == *path.unanchored() || k.ends_with(&suffix)));
+    if defined_somewhere || compiler.assigned_const_names.contains(path.base()) {
+        return None;
+    }
+    Some(false)
+}
+
 /// Compile-time truth of a guard expression, or `None` when it isn't one of the
 /// decidable target-constant forms (leave the condition to run normally).
 fn static_bool(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId) -> Option<bool> {
     match &compiler.hir[node] {
+        HirNode::Defined(inner) => defined_const_fold(compiler, cref, box_id, *inner),
         // A plain `true`/`false` literal is deliberately NOT folded here: literal
         // conditions have their own (if-expression-aware) codegen path, and
         // hijacking it drops leading side-effect statements from a folded branch.

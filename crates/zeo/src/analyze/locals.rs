@@ -47,6 +47,27 @@ pub fn track_extra(
     track_node(compiler, defining, box_id, locals, id);
 }
 
+/// Every local name assigned anywhere under `root`, INCLUDING inside nested
+/// blocks and `def`s -- an over-approximation on purpose: the only caller
+/// uses it to widen types, where naming one local too many costs a little
+/// dispatch speed and naming one too few is a miscompile.
+fn assigned_in(compiler: &Compiler, root: NodeId) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if let HirNode::LocalWrite(name, _) = &compiler.hir[id] {
+            out.insert(name.clone());
+        }
+        if let HirNode::MultiWrite { targets, .. } = &compiler.hir[id] {
+            targets.for_each_local_name(&mut |name| {
+                out.insert(name.to_string());
+            });
+        }
+        compiler.hir[id].for_each_child(&mut |c| stack.push(c));
+    }
+    out
+}
+
 /// Recurses into every sub-expression position a `LocalWrite` could appear
 /// in (mirrors `analyze::collect_ivars`'s traversal shape exactly), so an
 /// assignment nested inside a call's receiver/args/block -- not just a
@@ -364,6 +385,20 @@ fn track_node(
                 for &n in b {
                     track_node(compiler, defining, box_id, locals, n);
                 }
+            }
+            // A `begin` body is emitted inside its OWN Rust closure (see
+            // `codegen::exceptions::emit_begin`), while the rescue chain, the
+            // `ensure`, and everything after the `begin` are emitted outside
+            // it. An object-typed local takes its `let` from its own
+            // assignment (`LocalStorage::Shadowed`), so a name first assigned
+            // in there would be confined to that closure -- unreachable from
+            // `ensure` (an E0425), or, if it was already bound outside,
+            // silently shadowed so the outer read sees the stale value.
+            // Widening to `Poly` puts it back in the hoisting prelude, where
+            // one binding spans every clause. The cost is Path-1 dispatch on
+            // those locals; the alternative is a wrong answer.
+            for name in assigned_in(compiler, id) {
+                locals.insert(name, TyKind::Poly);
             }
         }
         HirNode::Retry => {}

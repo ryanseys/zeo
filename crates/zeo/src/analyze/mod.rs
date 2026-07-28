@@ -1307,8 +1307,10 @@ fn resolve_or_create_container(compiler: &mut Compiler, path: &str, box_id: u32)
     }
     // Only a name the program defines somewhere gets a forward shell; a truly
     // unknown container falls through to the caller's error.
-    let is_module = *compiler.shell_kinds.get(&(box_id, path.to_string()))?;
     let cp = crate::constpath::ConstPath::parse(path);
+    let is_module = *compiler
+        .shell_kinds
+        .get(&(box_id, cp.unanchored().to_string()))?;
     let (lexical_parent, leaf, qualified) = match cp.scope() {
         Some(prefix) => {
             let parent = resolve_or_create_container(compiler, prefix, box_id)?;
@@ -1348,6 +1350,10 @@ fn resolve_or_create_lexical(
     // (`class Gem::StubSpecification`, `qualified_def`). Real Ruby resolves the
     // bare name against the reopen site's `Module.nesting`, not the first
     // definition's.
+    // `::Gem::Timeout::Error` names the top level and nothing else -- the
+    // anchor is precisely a request to SKIP the chain walked below.
+    let anchored = crate::constpath::ConstPath::parse(name).is_top_anchored();
+    let cref: &[ClassId] = if anchored { &[] } else { cref };
     let mut scopes: Vec<ClassId> = cref.iter().rev().copied().collect();
     let mut parent = cref.last().and_then(|&c| compiler.class(c).lexical_parent);
     while let Some(c) = parent {
@@ -1367,7 +1373,8 @@ fn resolve_or_create_lexical(
         if let Some(cid) = compiler.resolve_class(&cand, &[], box_id) {
             return Some(cid);
         }
-        if compiler.shell_kinds.contains_key(&(box_id, cand.clone())) {
+        let key = crate::constpath::ConstPath::parse(&cand).unanchored().to_string();
+        if compiler.shell_kinds.contains_key(&(box_id, key)) {
             return resolve_or_create_container(compiler, &cand, box_id);
         }
     }
