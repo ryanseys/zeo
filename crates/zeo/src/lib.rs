@@ -119,10 +119,19 @@ pub fn compile_to_rust_with(
 /// headroom the compiler's property rather than the caller's.
 const COMPILE_STACK_SIZE: usize = 64 * 1024 * 1024;
 
+/// Whether `ZEO_TIMINGS` is set: the phase-timing report emitted by
+/// `compile_on_this_thread`, `codegen_to_string`, and `backend::build_binary`
+/// as machine-parseable `zeo-timings:` stderr lines (consumed by
+/// `xtask compile-bench`).
+pub fn timings_enabled() -> bool {
+    std::env::var_os("ZEO_TIMINGS").is_some()
+}
+
 fn compile_on_this_thread(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<CompileOutput, CompileError> {
+    let t_start = std::time::Instant::now();
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
@@ -131,6 +140,7 @@ fn compile_on_this_thread(
         opts.gem_path.as_deref(),
         opts.lockfile.as_deref(),
     )?;
+    let t_parse_lower = t_start.elapsed();
     // The disclosure record is fully known once lowering resolved
     // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger
     // lands even if a later stage fails.
@@ -145,9 +155,23 @@ fn compile_on_this_thread(
     // fact (does any eval site survive lowering?), so it belongs here rather
     // than downstream where the arena is already owned by `Analyzed`.
     let needs_eval_vm = hir.uses_runtime_eval();
+    let t_analyze_start = std::time::Instant::now();
     let analyzed = analyze::analyze(hir, root)?;
+    let t_analyze = t_analyze_start.elapsed();
+    let t_codegen_start = std::time::Instant::now();
+    let rust_source = codegen::codegen_to_string(&analyzed)?;
+    if timings_enabled() {
+        eprintln!(
+            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={}",
+            t_parse_lower.as_millis(),
+            t_analyze.as_millis(),
+            t_codegen_start.elapsed().as_millis(),
+            t_start.elapsed().as_millis(),
+            rust_source.len(),
+        );
+    }
     Ok(CompileOutput {
-        rust_source: codegen::codegen_to_string(&analyzed)?,
+        rust_source,
         needs_eval_vm,
     })
 }

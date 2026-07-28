@@ -9,6 +9,9 @@
 //!
 //! - `xtask bench [--filter <substr>] [--runs N] [--update-baseline]`: the
 //!   golden-output performance suite under `bench/` (see `bench.rs`).
+//! - `xtask compile-bench [--filter <substr>] [--runs N] [--update-baseline]`:
+//!   compiler wall time + generated-code size/cleanliness over a fixed program
+//!   set, recorded in `bench/compile-baseline.tsv` (see `compile_bench.rs`).
 //! - `xtask stdlib-status [<lib-dir>]`: sweeps the installed Ruby stdlib `lib`
 //!   (dropped in via `-I`, no bespoke flag) and records which files `zeo`
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
@@ -17,6 +20,7 @@
 //! `cargo test`/nextest -- see `crates/zeo/tests/`.)
 
 mod bench;
+mod compile_bench;
 mod exec;
 mod gem;
 mod gem_compat;
@@ -34,11 +38,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(2).collect();
     match std::env::args().nth(1).as_deref() {
         Some("bench") => bench::main(&root, &args),
+        Some("compile-bench") => compile_bench::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- <bench|stdlib-status|gem-compat|gem>");
+            eprintln!(
+                "usage: cargo run -p xtask -- <bench|compile-bench|stdlib-status|gem-compat|gem>"
+            );
             ExitCode::FAILURE
         }
     }

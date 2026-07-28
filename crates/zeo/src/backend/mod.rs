@@ -632,7 +632,15 @@ pub fn build_binary(
     // as a successful build forever, and the program silently does nothing.
     // That cost real debugging time (two examples "regressed" to empty output
     // with a green exit code). A miss is always safe; a false hit never is.
-    if cache::is_usable_entry(&cached) && cache::link_or_copy(&cached, output).is_ok() {
+    //
+    // `ZEO_CACHE=bypass` skips the read side only (the build still publishes),
+    // so `xtask compile-bench` can measure the real rustc cost on a warm cache.
+    let bypass = std::env::var_os("ZEO_CACHE").is_some_and(|v| v == "bypass");
+    if !bypass && cache::is_usable_entry(&cached) && cache::link_or_copy(&cached, output).is_ok() {
+        if crate::timings_enabled() {
+            let bytes = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0);
+            eprintln!("zeo-timings: rustc=cached bin_bytes={bytes}");
+        }
         return Ok(());
     }
 
@@ -696,6 +704,7 @@ pub fn build_binary(
             }
         }
     }
+    let t_rustc = std::time::Instant::now();
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
     if !status.success() {
@@ -704,6 +713,13 @@ pub fn build_binary(
             "rustc failed compiling the generated program (source at {})",
             src_path.display()
         ));
+    }
+    if crate::timings_enabled() {
+        let bytes = std::fs::metadata(&staged).map(|m| m.len()).unwrap_or(0);
+        eprintln!(
+            "zeo-timings: rustc={}ms bin_bytes={bytes}",
+            t_rustc.elapsed().as_millis()
+        );
     }
     // Publish atomically. A concurrent build of the same source raced us to the
     // same key; since the key covers the whole input, whichever lands is
