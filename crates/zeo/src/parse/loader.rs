@@ -399,12 +399,19 @@ impl Loader {
                                 || a.as_constant_path_node().is_some()
                         });
                     if all_constants {
+                        // Stamped with the `include` line, as the class-body
+                        // form is: an unresolvable target defers to a runtime
+                        // `NameError` raised from this node (see
+                        // `analyze::defer_unresolved_directive`), and these
+                        // nodes are built outside `lower_node`'s span frame.
+                        hir.push_span(crate::lower::span_of(hir, &n));
                         for a in &arg_list {
                             let module = crate::lower::consts::constant_path_name(a)?;
                             let id = hir.push(crate::hir::HirNode::Include(module));
                             combined.push(id);
                             own.push(id);
                         }
+                        hir.pop_span();
                         continue;
                     }
                 }

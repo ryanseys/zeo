@@ -1,0 +1,3 @@
+before
+caught uninitialized constant Registry::Undefined
+after

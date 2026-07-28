@@ -1,0 +1,2 @@
+issue_3330_unresolved_at_typed_slots.rb:5:in '<module:Sock>': uninitialized constant Sock::FFI (NameError)
+	from issue_3330_unresolved_at_typed_slots.rb:4:in '<main>'

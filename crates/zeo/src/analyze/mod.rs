@@ -50,6 +50,7 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let mut shell_kinds = HashMap::new();
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
     compiler.shell_kinds = shell_kinds;
+    compiler.assigned_const_names = collect_assigned_const_names(&compiler.hir);
 
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
@@ -305,10 +306,15 @@ fn process_top_stmt(
         // spreads M's instance methods (and constants) program-wide and a
         // bare `M`-method call resolves through implicit self.
         let m = m.clone();
-        let target = resolve_module_target(compiler, &m, &[], 0)?;
-        compiler.classes[OBJECT_CLASS.0 as usize]
-            .includes
-            .push(target);
+        match resolve_module_target(compiler, &m, &[], 0)? {
+            Some(target) => compiler.classes[OBJECT_CLASS.0 as usize].includes.push(target),
+            // Registration-only otherwise, so the deferred read has to be added
+            // to the statements codegen emits or it would never run.
+            None => {
+                defer_unresolved_directive(compiler, stmt, &m);
+                main_statements.push(stmt);
+            }
+        }
     } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
         // Top-level `undef m` -- Object's reopen, exactly like the
         // `include` above and like the class-body arm in `walk_class_body`.
@@ -1190,6 +1196,22 @@ fn literal_class_id(node: &HirNode) -> Option<ClassId> {
     })
 }
 
+/// Read-only scan populating [`Compiler::assigned_const_names`]. A flat sweep
+/// of the whole node arena rather than a tree walk: every reachable `ConstWrite`
+/// is in there by construction, and a name written only on a dead branch still
+/// counts (see the field's docs -- over-collection is the safe direction).
+fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> {
+    hir.all_nodes()
+        .iter()
+        .filter_map(|node| match node {
+            // `name` is already the leaf -- an explicit `Foo::NAME = ...` keeps
+            // its namespace in the separate `scope` field.
+            HirNode::ConstWrite { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Read-only scan populating `Compiler::shell_kinds`: records every
 /// `class`/`module` definition's fully-qualified name -> `is_module`,
 /// descending through nested bodies, BOTH `if` branches (over-collection is
@@ -1657,13 +1679,19 @@ fn register_class(
             }
             HirNode::Include(m) => {
                 let m = m.clone();
-                let target = resolve_module_target(compiler, &m, &child_cref, box_id)?;
-                compiler.classes[class_id.0 as usize].includes.push(target);
+                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
+                    Some(target) => {
+                        compiler.classes[class_id.0 as usize].includes.push(target)
+                    }
+                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                }
             }
             HirNode::Extend(m) => {
                 let m = m.clone();
-                let target = resolve_module_target(compiler, &m, &child_cref, box_id)?;
-                compiler.classes[class_id.0 as usize].extends.push(target);
+                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
+                    Some(target) => compiler.classes[class_id.0 as usize].extends.push(target),
+                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                }
             }
             // `undef foo, bar` -- recorded here, honored by
             // `mro::materialize_methods`. See `HirNode::Undef`.
@@ -1703,8 +1731,12 @@ fn register_class(
             }
             HirNode::Prepend(m) => {
                 let m = m.clone();
-                let target = resolve_module_target(compiler, &m, &child_cref, box_id)?;
-                compiler.classes[class_id.0 as usize].prepends.push(target);
+                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
+                    Some(target) => {
+                        compiler.classes[class_id.0 as usize].prepends.push(target)
+                    }
+                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                }
             }
             // `IvarWrite`: a bare `@x = expr` in a class body is an ivar on
             // the CLASS OBJECT (`self` in a class body is the class), i.e.
@@ -1883,19 +1915,78 @@ fn register_conditional_defs(
     Ok(())
 }
 
+/// Resolves an `include`/`extend`/`prepend` target name to the class/module it
+/// mixes in -- or `Ok(None)` when the name is nowhere in the program at all, in
+/// which case the caller must let the directive run as ordinary code so the miss
+/// surfaces the way Ruby surfaces it.
+///
+/// Ruby doesn't reject `extend FFI` when `FFI` is undefined: `include`/`extend`/
+/// `prepend` are ordinary method calls, so the constant is READ first and raises
+/// `NameError` from inside the class body -- and only if the body runs. Reporting
+/// it at compile time instead means a program whose module comes from a native
+/// extension zeo doesn't have, or from a branch that never executes, can't be
+/// built at all. See `defer_unresolved_directive` for the rewrite.
+///
+/// A name the program DOES assign (`M = Module.new; include M`) stays a hard
+/// error: the constant would read back fine at runtime and the mixin would then
+/// vanish silently, because a compiled class dispatches off a static MRO that a
+/// runtime splice can't reach. Unknown SUPERCLASSES stay loud for the same
+/// reason -- zeo has to lay out a struct for one.
 fn resolve_module_target(
     compiler: &mut Compiler,
     name: &str,
     cref: &[ClassId],
     box_id: u32,
-) -> Result<ClassId, String> {
-    compiler
+) -> Result<Option<ClassId>, String> {
+    let resolved = compiler
         .resolve_class(name, cref, box_id)
         // A module defined LATER in the flattened list (hoisted deferred
         // require) is created as a forward shell; its methods are added when the
         // real definition reopens the shell (seen at `mro::materialize`).
-        .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id))
-        .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
+        .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id));
+    match resolved {
+        Some(cid) => Ok(Some(cid)),
+        None if !compiler
+            .assigned_const_names
+            .contains(crate::constpath::ConstPath::parse(name).base()) =>
+        {
+            Ok(None)
+        }
+        None => Err(format!(
+            "unknown module `{name}` (must be defined earlier in the file)"
+        )),
+    }
+}
+
+/// Turns an `include`/`extend`/`prepend` whose target `resolve_module_target`
+/// couldn't find into the bare constant READ Ruby evaluates in that argument
+/// position, rewritten IN PLACE so it keeps the directive's own source span --
+/// which is what puts the `NameError` on `include`'s line, inside
+/// `<module:Sock>`, with `<main>` below it.
+///
+/// The read is all that's needed: it always raises (nothing in the program
+/// assigns the name, or `resolve_module_target` would have errored), so no
+/// mixin is lost by not emitting the send itself.
+fn defer_unresolved_directive(compiler: &mut Compiler, stmt: NodeId, name: &str) {
+    compiler.hir[stmt] = HirNode::ClassRef(name.to_string());
+}
+
+/// [`defer_unresolved_directive`] for a directive inside a `class`/`module`
+/// body, filed as an ordinary body statement so it runs at the site's document
+/// position -- the same treatment `walk_class_body`'s catch-all arm gives any
+/// other class-body expression.
+fn defer_in_class_body(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    site_idx: usize,
+    stmt: NodeId,
+    name: &str,
+) {
+    defer_unresolved_directive(compiler, stmt, name);
+    compiler.classes[class_id.0 as usize]
+        .class_body_stmts
+        .push(stmt);
+    compiler.class_body_sites[site_idx].stmts.push(stmt);
 }
 
 /// Registers one method BODY (a class/module's own literal `def`, or a

@@ -1,0 +1,6 @@
+uninitialized constant Outer::Wrap::Missing | name=:Missing | :5:in 'Outer::Wrap.bare'
+uninitialized constant Outer::Wrap::Deep | name=:Deep | :6:in 'Outer::Wrap.scoped'
+uninitialized constant Nowhere | name=:Nowhere | :21:in 'block in <main>'
+uninitialized constant Nowhere | name=:Nowhere | :22:in 'block in <main>'
+uninitialized constant Pkg::Inner::Gone | name=:Gone | :28:in 'block in <module:Inner>'
+reached the include

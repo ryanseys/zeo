@@ -1594,12 +1594,16 @@ pub(super) fn uninitialized_constant_error(cx: &Ctx, name: &str) -> TokenStream 
     // `nil`; where it IS known -- an explicit `Klass.const_get` -- the fold in
     // `call.rs` supplies it precisely.
     let leaf = crate::constpath::ConstPath::parse(name).base();
+    // Stamped here rather than at each of the five call sites: every one of
+    // them raises the value immediately, and an unstamped `NameError` reaches
+    // the top level with an EMPTY backtrace -- no `file:line:in '<module:X>'`
+    // header, no `from` chain.
     quote! {
-        zeo_rt::make_name_error(
+        zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
             format!("uninitialized constant {}", #name),
             #leaf,
             zeo_rt::RubyValue::Nil,
-        )
+        ))
     }
 }
 
@@ -1915,6 +1919,14 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
         if let Some(s) = scope.filter(|s| !s.contains("::")) {
             let scope_owner = const_owner_id_opt(cx, None, s).unwrap_or(0);
             let qualified = format!("{s}::{name}");
+            // A missing SCOPE head is reported the way a missing bare constant
+            // is -- qualified by the enclosing cref (`Outer::Wrap::Deep` for a
+            // `Deep::Missing` written inside `module Outer; module Wrap`), which
+            // is what `qualified` below does for the resolved case.
+            let missing_scope = match cx.defining_class {
+                Some(d) => format!("{}::{s}", cx.compiler.fq_name(d)),
+                None => s.to_string(),
+            };
             return quote! {
                 match zeo_rt::const_get(#scope_owner, #s) {
                     Some(zeo_rt::RubyValue::Class(__cid)) => match zeo_rt::const_get_scoped(__cid.0, #name) {
@@ -1930,7 +1942,7 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
                         format!("{} is not a class/module", __other.inspect_string()),
                     )),
                     None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
-                        format!("uninitialized constant {}", #s),
+                        format!("uninitialized constant {}", #missing_scope),
                         #s,
                         zeo_rt::RubyValue::Nil,
                     )))),
@@ -1972,11 +1984,11 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     quote! {
         match #lookup {
             Some(__v) => __v,
-            None => return Err(zeo_rt::Signal::Raise(zeo_rt::make_name_error(
+            None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
                 format!("uninitialized constant {}", #qualified),
                 #name,
                 zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
-            ))),
+            )))),
         }
     }
 }

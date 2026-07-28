@@ -412,7 +412,12 @@ fn enclosing_frame_label(cx: &Ctx) -> String {
         return format!("{fq}#{m}");
     }
     if let Some(c) = cx.class_self.or(cx.current_class) {
-        return format!("<class:{}>", cx.compiler.fq_name(c));
+        let kind = if cx.compiler.class(c).is_module {
+            "module"
+        } else {
+            "class"
+        };
+        return format!("<{kind}:{}>", cx.compiler.leaf_name(c));
     }
     "<main>".to_string()
 }
@@ -1500,7 +1505,7 @@ pub(crate) fn emit_class_body_site(
             } else {
                 "class"
             };
-            let label = format!("<{kind}:{}>", compiler.fq_name(cid));
+            let label = format!("<{kind}:{}>", compiler.leaf_name(cid));
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
         }
         None => quote! {},

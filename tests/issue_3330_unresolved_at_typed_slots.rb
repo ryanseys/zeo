@@ -1,6 +1,6 @@
-# zeo REJECTS this at compile time ("unknown module `FFI`"); ruby compiles it
-# and raises NameError from the module body at run time. The divergence is
-# WHEN an unresolved constant is reported, not whether it is.
+# `include`/`extend`/`prepend` are ordinary method calls, so an unresolved
+# target is a RUNTIME NameError raised from the class body -- on the directive's
+# own line, with the enclosing bodies below it -- not a compile-time rejection.
 module Sock
   extend FFI
   ffi_lib "c"

@@ -1495,6 +1495,13 @@ fn lower_class_body_statement(
                             } else {
                                 names.into_iter().rev().collect()
                             };
+                            // Stamped with the directive's OWN line, not the
+                            // enclosing class body's: an unresolvable target is
+                            // deferred to a runtime `NameError` raised from
+                            // right here (`analyze::defer_unresolved_directive`),
+                            // and a class-body span would put that frame on the
+                            // `class`/`module` line instead.
+                            hir.push_span(crate::lower::span_of(hir, node));
                             out.extend(ordered.into_iter().map(|n| {
                                 hir.push(match name.as_str() {
                                     "include" => HirNode::Include(n),
@@ -1502,6 +1509,7 @@ fn lower_class_body_statement(
                                     _ => HirNode::Prepend(n),
                                 })
                             }));
+                            hir.pop_span();
                             return Ok(());
                         }
                     }

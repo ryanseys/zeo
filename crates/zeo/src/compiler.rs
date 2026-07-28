@@ -314,6 +314,19 @@ pub struct Compiler {
     /// KIND is known, so a shell is created on demand. A container absent from
     /// this map is genuinely undefined and still errors.
     pub shell_kinds: HashMap<(u32, String), bool>,
+    /// Every constant LEAF name the program assigns anywhere (`NAME = ...`,
+    /// `Foo::NAME = ...`), from a read-only scan of the whole node arena --
+    /// dead branches and nested scopes included, since it is only ever used to
+    /// answer "could this name exist at runtime?" and over-answering `true` is
+    /// the safe direction.
+    ///
+    /// `analyze::resolve_module_target` consults it to tell two failures apart:
+    /// a name NOTHING in the program defines (`extend FFI` with no FFI) defers
+    /// to the runtime `NameError` Ruby raises there, while a name that IS
+    /// assigned but isn't a compile-time module (`M = Module.new; include M`)
+    /// stays a compile error -- deferring that one would silently DROP the
+    /// mixin, since zeo's compiled classes dispatch off a static MRO.
+    pub assigned_const_names: std::collections::HashSet<String>,
 }
 
 /// See [`Compiler::class_body_sites`].
@@ -363,6 +376,7 @@ impl Compiler {
             box_surrogates: HashMap::new(),
             class_body_sites: Vec::new(),
             shell_kinds: HashMap::new(),
+            assigned_const_names: std::collections::HashSet::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -592,6 +606,14 @@ impl Compiler {
         }
         segments.reverse();
         segments.join("::")
+    }
+
+    /// The LEAF segment of `cid`'s name -- what CRuby puts in a class-body
+    /// backtrace frame (`<module:B>`, never `<module:A::B>`), regardless of how
+    /// deeply the class is nested or whether it was defined compact
+    /// (`module A::B`) or nested. Oracle-verified against ruby 4.0.6.
+    pub fn leaf_name(&self, cid: ClassId) -> &str {
+        crate::constpath::ConstPath::parse(&self.class(cid).name).base()
     }
 
     /// `parent: None` for a module (no superclass at all) or a fresh root;
