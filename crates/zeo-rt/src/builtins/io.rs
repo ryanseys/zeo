@@ -249,8 +249,7 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
         }
         IoBackend::Std(StdStream::Stdin) => Err(io_error!("not opened for writing")),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
-        IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => f
-            .write_all(bytes)
+        IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => blocking_write_all(f, bytes)
             .map_err(|e| crate::builtins::file::raise_errno(&e, "write", io.path.as_deref().unwrap_or_default())),
     })
 }
@@ -649,6 +648,63 @@ fn with_file<T>(
     })
 }
 
+/// Park until `fd` is ready for `events`, the way CRuby's `rb_io_wait_readable`
+/// / `rb_io_wait_writable` do. No timeout -- the caller asked for a BLOCKING
+/// operation, and readiness is the only thing it is waiting on.
+fn wait_ready(f: &std::fs::File, events: libc::c_short) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut pfd = libc::pollfd {
+        fd: f.as_raw_fd(),
+        events,
+        revents: 0,
+    };
+    loop {
+        // SAFETY: one initialized `pollfd` describing a descriptor this `File`
+        // owns and keeps alive across the call.
+        if unsafe { libc::poll(&mut pfd, 1, -1) } >= 0 {
+            return Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
+}
+
+/// One `read(2)` with BLOCKING semantics over a descriptor that may carry
+/// `O_NONBLOCK` -- which both ends of an `IO.pipe` do, exactly as CRuby marks
+/// its own. `EAGAIN` on such a descriptor means "nothing yet", not an error,
+/// so this parks in `poll(2)` and retries rather than surfacing it; `EINTR` is
+/// the ordinary retry. Every blocking read row goes through here, because a
+/// user's own `io.nonblock = true` must not change what `#read` means either.
+fn blocking_read(f: &mut std::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::ErrorKind::{Interrupted, WouldBlock};
+    loop {
+        match std::io::Read::read(f, buf) {
+            Err(e) if e.kind() == Interrupted => continue,
+            Err(e) if e.kind() == WouldBlock => wait_ready(f, libc::POLLIN)?,
+            other => return other,
+        }
+    }
+}
+
+/// [`blocking_read`]'s write twin: `write_all` over a descriptor that may be
+/// non-blocking, waiting for room in a full pipe instead of failing.
+fn blocking_write_all(f: &mut std::fs::File, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::ErrorKind::{Interrupted, WouldBlock, WriteZero};
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        match std::io::Write::write(f, rest) {
+            Ok(0) => return Err(WriteZero.into()),
+            Ok(n) => rest = &rest[n..],
+            Err(e) if e.kind() == Interrupted => continue,
+            Err(e) if e.kind() == WouldBlock => wait_ready(f, libc::POLLOUT)?,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 /// `read` / `read(n)` / `read(n, buf)` -- the whole rest, or `n` bytes,
 /// optionally read INTO an existing String `buf` (returned in place of a fresh
 /// one). At EOF, a LENGTHED read answers nil while a whole-rest read answers
@@ -698,23 +754,21 @@ fn io_read_val(
         },
     };
     with_file(recv, |f, path| {
-        use std::io::Read;
         // A socket peer that closes with unread data sends RST, so a read can
         // return ECONNRESET AFTER delivering the bytes already buffered; CRuby
-        // keeps that data and treats the reset as EOF. `Interrupted` is the
-        // standard retry. Neither ever arises for a regular file, so handling
-        // them as end/retry here is harmless off a socket.
-        use std::io::ErrorKind::{ConnectionReset, Interrupted};
+        // keeps that data and treats the reset as EOF. It never arises for a
+        // regular file, so treating it as end here is harmless off a socket.
+        // (EINTR/EAGAIN retries live in `blocking_read`.)
+        use std::io::ErrorKind::ConnectionReset;
         match n {
             None => {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 8192];
                 loop {
-                    match f.read(&mut chunk) {
+                    match blocking_read(f, &mut chunk) {
                         Ok(0) => break,
                         Ok(k) => buf.extend_from_slice(&chunk[..k]),
                         Err(e) if e.kind() == ConnectionReset => break,
-                        Err(e) if e.kind() == Interrupted => continue,
                         Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", path)),
                     }
                 }
@@ -728,11 +782,10 @@ fn io_read_val(
                 // `read` can answer short without being at EOF; loop until
                 // the request is filled or the file genuinely ends.
                 while got < n {
-                    match f.read(&mut buf[got..]) {
+                    match blocking_read(f, &mut buf[got..]) {
                         Ok(0) => break,
                         Ok(k) => got += k,
                         Err(e) if e.kind() == ConnectionReset => break,
-                        Err(e) if e.kind() == Interrupted => continue,
                         Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", path)),
                     }
                 }
@@ -908,7 +961,6 @@ fn line_opts(args: &[RubyValue]) -> LineOpts {
 /// bytes, or EOF. An empty result means EOF. Byte-at-a-time so the position
 /// lands exactly after the line (a buffered read would desync `tell`).
 fn read_line_bytes(f: &mut std::fs::File, opts: &LineOpts) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
     let mut out = Vec::new();
     let mut byte = [0u8; 1];
     loop {
@@ -917,7 +969,7 @@ fn read_line_bytes(f: &mut std::fs::File, opts: &LineOpts) -> std::io::Result<Ve
                 break;
             }
         }
-        match f.read(&mut byte)? {
+        match blocking_read(f, &mut byte)? {
             0 => break,
             _ => {
                 out.push(byte[0]);
@@ -1021,9 +1073,8 @@ fn io_lineno_set(
 /// Read the next whole UTF-8 char from `f` (1-4 bytes by the lead byte), or
 /// `None` at EOF.
 fn read_one_char(f: &mut std::fs::File) -> std::io::Result<Option<String>> {
-    use std::io::Read;
     let mut first = [0u8; 1];
-    if f.read(&mut first)? == 0 {
+    if blocking_read(f, &mut first)? == 0 {
         return Ok(None);
     }
     let b0 = first[0];
@@ -1041,7 +1092,7 @@ fn read_one_char(f: &mut std::fs::File) -> std::io::Result<Option<String>> {
     let mut buf = vec![b0];
     for _ in 1..n {
         let mut b = [0u8; 1];
-        if f.read(&mut b)? == 0 {
+        if blocking_read(f, &mut b)? == 0 {
             break;
         }
         buf.push(b[0]);
@@ -1086,10 +1137,8 @@ fn io_getbyte(
         }
     }
     let b = with_file(recv, |f, path| {
-        use std::io::Read;
         let mut byte = [0u8; 1];
-        match f
-            .read(&mut byte)
+        match blocking_read(f, &mut byte)
             .map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))?
         {
             0 => Ok(None),
@@ -1393,10 +1442,16 @@ fn io_each_codepoint(
         return Err(local_jump_error!("no block given (yield)"));
     };
     let content = with_file(recv, |f, path| {
-        use std::io::Read;
         let mut buf = Vec::new();
-        f.read_to_end(&mut buf)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "each_codepoint", path))?;
+        let mut chunk = [0u8; 8192];
+        loop {
+            match blocking_read(f, &mut chunk)
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "each_codepoint", path))?
+            {
+                0 => break,
+                k => buf.extend_from_slice(&chunk[..k]),
+            }
+        }
         Ok(buf)
     })?;
     for ch in String::from_utf8_lossy(&content).chars() {
@@ -1722,10 +1777,8 @@ fn io_readpartial(
         return Err(arg_error!("length must be an Integer"));
     };
     let bytes = with_file(recv, |f, path| {
-        use std::io::Read;
         let mut buf = vec![0u8; max.max(0) as usize];
-        let got = f
-            .read(&mut buf)
+        let got = blocking_read(f, &mut buf)
             .map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
         buf.truncate(got);
         Ok(buf)
