@@ -135,8 +135,18 @@ impl RubyObject for ValueSubclass {
 }
 
 /// Whether `id` is an instantiable value-builtin payload root (D3).
+///
+/// `StringScanner` earns a place next to the collection roots because it is the
+/// same shape: an instantiable native object a user class wants to inherit the
+/// behaviour of while adding ivars of its own (`csv`'s
+/// `class Scanner < StringScanner` keeps a `@keeps` stack). Nothing about the
+/// bridge is Array/String/Hash-specific -- the payload is just a `RubyValue`,
+/// and here it is the `RubyValue::Object` holding the native scanner.
 pub fn is_payload_root(id: ClassId) -> bool {
-    matches!(id, ARRAY_CLASS | STRING_CLASS | HASH_CLASS)
+    matches!(
+        id,
+        ARRAY_CLASS | STRING_CLASS | HASH_CLASS | zeo_abi::STRING_SCANNER_CLASS
+    )
 }
 
 /// Allocate a value-subclass instance of `class_id` directly around `payload`,
@@ -178,13 +188,19 @@ pub fn register_value_subclass(
 }
 
 /// An empty payload of `root`'s kind -- the pre-`initialize` default for the
-/// user-`initialize` path (a `super` then re-seats it). `Array`/`String`/`Hash`
-/// have real empty forms; nothing else is a payload root.
+/// user-`initialize` path (a `super` then re-seats it). Each payload root has a
+/// real empty form; nothing else is a payload root.
 fn empty_payload(root: ClassId) -> RubyValue {
     match root {
         ARRAY_CLASS => RubyValue::Array(array_new(Vec::new())),
         STRING_CLASS => RubyValue::Str(string_new(String::new())),
         HASH_CLASS => RubyValue::Hash(hash_new(Vec::new())),
+        // A scanner over the empty string -- built through the root's own
+        // constructor, since the native object isn't a `RubyValue` variant.
+        zeo_abi::STRING_SCANNER_CLASS => {
+            let empty = RubyValue::Str(string_new(String::new()));
+            construct_root_payload(root, &[empty], None).unwrap_or(RubyValue::Nil)
+        }
         _ => RubyValue::Nil,
     }
 }

@@ -318,28 +318,7 @@ ruby_module! {
         // `length` truncates. The Range form is served by the same window.
         arity!(args, 0..=2);
         let all = crate::frames::caller_lines(0);
-        let (start, length) = match (args.first(), args.get(1)) {
-            (None, _) => (1usize, None),
-            (Some(RubyValue::Int(s)), len) => {
-                let length = match len {
-                    Some(RubyValue::Int(l)) => Some((*l).max(0) as usize),
-                    _ => None,
-                };
-                ((*s).max(0) as usize, length)
-            }
-            (Some(RubyValue::Range(s, e, excl)), _) => {
-                let lo = match s.as_deref() {
-                    Some(RubyValue::Int(v)) => (*v).max(0) as usize,
-                    _ => 0,
-                };
-                let hi = match e.as_deref() {
-                    Some(RubyValue::Int(v)) => Some(((*v).max(0) as usize).saturating_add(usize::from(!*excl))),
-                    _ => None,
-                };
-                (lo, hi.map(|h| h.saturating_sub(lo)))
-            }
-            _ => (1, None),
-        };
+        let (start, length) = caller_window(args);
         if start > all.len() {
             return Ok(RubyValue::Nil);
         }
@@ -352,13 +331,24 @@ ruby_module! {
         }
         Ok(RubyValue::Array(crate::array_new(window)))
     }
+    // `caller`'s object form: the same window over the same frames, each entry
+    // a `Thread::Backtrace::Location` with real `#path`/`#lineno`/`#label`
+    // (forwardable builds its deprecation message out of them).
     def "caller_locations"(_recv, args, _block) {
-        // Location OBJECTS (`#path`/`#lineno`/`#label`) aren't modeled yet;
-        // the same formatted strings as `caller` keep the
-        // `caller_locations(..)&.first` and iteration idioms working -- a
-        // documented narrowing.
         arity!(args, 0..=2);
-        crate::builtins::kernel::lookup("caller").expect("caller row exists")(_recv, args, _block)
+        let all = crate::frames::caller_frames(0);
+        let (start, length) = caller_window(args);
+        if start > all.len() {
+            return Ok(RubyValue::Nil);
+        }
+        let mut window: Vec<RubyValue> = all[start..]
+            .iter()
+            .map(|(f, l, m)| crate::builtins::backtrace_location::location_new(f, *l, m))
+            .collect();
+        if let Some(l) = length {
+            window.truncate(l);
+        }
+        Ok(RubyValue::Array(crate::array_new(window)))
     }
     // The private `Kernel` conversion and formatting functions, as real methods
     // so they resolve through EVERY dispatch path -- a splat call (`format(*a)`),
@@ -616,9 +606,11 @@ ruby_module! {
     // value model, so they report an empty list.
     def "singleton_methods"(recv, args, _block) {
         arity!(args, 0..=1);
+        // A class's singleton methods are its class methods; any other
+        // receiver's are the ones installed on it BY IDENTITY at runtime.
         let names = match recv {
             RubyValue::Class(cid) => crate::dispatch::class_method_names(*cid),
-            _ => Vec::new(),
+            _ => crate::runtime_meta::singleton_method_names(recv),
         };
         Ok(syms_to_array(names))
     }
@@ -1131,6 +1123,37 @@ pub(crate) fn feature_already_loaded(path: &str) -> bool {
                 .strip_suffix(wanted)
                 .is_some_and(|head| head.ends_with('/'))
     })
+}
+
+/// `caller`/`caller_locations`' shared `(start, length)` window over the frame
+/// list: no argument starts at 1 (skipping the caller's own frame, since these
+/// builtins push none); an Integer `start` with an optional `length`; or a
+/// Range, whose bounds mean the same thing.
+fn caller_window(args: &[RubyValue]) -> (usize, Option<usize>) {
+    match (args.first(), args.get(1)) {
+        (None, _) => (1, None),
+        (Some(RubyValue::Int(s)), len) => {
+            let length = match len {
+                Some(RubyValue::Int(l)) => Some((*l).max(0) as usize),
+                _ => None,
+            };
+            ((*s).max(0) as usize, length)
+        }
+        (Some(RubyValue::Range(s, e, excl)), _) => {
+            let lo = match s.as_deref() {
+                Some(RubyValue::Int(v)) => (*v).max(0) as usize,
+                _ => 0,
+            };
+            let hi = match e.as_deref() {
+                Some(RubyValue::Int(v)) => {
+                    Some(((*v).max(0) as usize).saturating_add(usize::from(!*excl)))
+                }
+                _ => None,
+            };
+            (lo, hi.map(|h| h.saturating_sub(lo)))
+        }
+        _ => (1, None),
+    }
 }
 
 pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {

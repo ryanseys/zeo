@@ -1,0 +1,9 @@
+["Thread::Backtrace::Location", true, 10, "Object#outer", "outer"]
+["Thread::Backtrace::Location", true, 13, "Holder.klass_method", "klass_method"]
+["Thread::Backtrace::Location", true, 14, "Holder#inst", "inst"]
+nil
+Array
+true
+true
+true
+1

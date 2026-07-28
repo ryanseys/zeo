@@ -124,3 +124,17 @@ pub fn caller_lines(start: usize) -> Vec<String> {
             .collect()
     })
 }
+
+/// `caller_lines`' structured twin, for `Kernel#caller_locations`: the same
+/// frames as `(file, line, method)` rather than pre-formatted strings, so each
+/// becomes a `Thread::Backtrace::Location` with real `#path`/`#lineno`/`#label`.
+pub fn caller_frames(start: usize) -> Vec<(&'static str, u32, &'static str)> {
+    FRAMES.with(|f| {
+        f.borrow()
+            .iter()
+            .rev()
+            .skip(start)
+            .map(|fr| (fr.file, fr.line, fr.method))
+            .collect()
+    })
+}

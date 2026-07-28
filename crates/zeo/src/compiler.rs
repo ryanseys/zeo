@@ -774,8 +774,14 @@ impl Compiler {
             return None;
         }
         // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
-        self.superclass_chain(cid)
-            .find(|a| matches!(*a, ARRAY_CLASS | STRING_CLASS | HASH_CLASS))
+        // Kept in step with `zeo_rt::value_subclass::is_payload_root`, which
+        // makes the same call at runtime.
+        self.superclass_chain(cid).find(|a| {
+            matches!(
+                *a,
+                ARRAY_CLASS | STRING_CLASS | HASH_CLASS | zeo_abi::STRING_SCANNER_CLASS
+            )
+        })
     }
 
     /// Whether `cid`'s instances are the native `ValueSubclass`: a user

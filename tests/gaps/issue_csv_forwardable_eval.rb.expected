@@ -1,0 +1,13 @@
+[["a", "b", "c"], ["1", "2", "3"]]
+["x", "y", "z"]
+"a,\"b,c\",\n"
+["name", "age"]
+["zeo", "ruby"]
+["1", "32"]
+{"name" => "zeo", "age" => "1"}
+[["a", "b"], ["1", "2"]]
+[["a", "b"], ["q,uoted", "2"]]
+"h1,h2\n1,\"two, three\"\n"
+["a", "b"]
+true
+CSV::MalformedCSVError

@@ -3005,6 +3005,15 @@ fn send_value_in_reason(
     if let RubyValue::Object(o) = recv {
         return send_in_reason(box_id, o, name, args, block, reason);
     }
+    // A singleton method installed directly on this VALUE (`def SOME_ARRAY.[]`)
+    // is closer than anything its class offers, so it is probed first -- and,
+    // like every other overlay probe, only once something was defined at
+    // runtime, so the ordinary path is untouched.
+    if crate::runtime_meta::is_live() {
+        if let Some(m) = crate::runtime_meta::value_singleton_method(recv, name) {
+            return m.call_with_self_and_block(recv, args, block);
+        }
+    }
     note_dispatch(name);
     let n = name.name();
     let n = n.as_str();

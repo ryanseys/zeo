@@ -1622,6 +1622,12 @@ fn register_class(
                                 | NIL_CLASS
                                 | TRUE_CLASS
                                 | FALSE_CLASS
+                                // `StringScanner`: the same `ValueSubclass`
+                                // payload shape as the collection roots, its
+                                // payload being the native scanner object --
+                                // csv's `class Scanner < StringScanner` adds
+                                // ivars on top of the inherited behaviour.
+                                | zeo_abi::STRING_SCANNER_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

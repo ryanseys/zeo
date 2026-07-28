@@ -113,6 +113,11 @@ struct OverlayMaps {
     /// address -- matching Ruby (`dup` drops singletons). `clone`'s
     /// singleton-carry is a documented fast-follow.
     singletons: RwLock<HashMap<usize, HashMap<Symbol, MethodImpl>>>,
+    /// Singleton methods on a NON-object heap value (`def SOME_ARRAY.[](i)`),
+    /// keyed the same way. Separate from `singletons` because there is no
+    /// `RObj` to bind: the body stays an `RProc` and runs with the value itself
+    /// as `self`. See `value_identity`.
+    value_singletons: RwLock<HashMap<usize, HashMap<Symbol, RProc>>>,
     /// `obj.singleton_class`'s cache: object identity -> the runtime class id
     /// minted for its singleton class (so a second call answers the same id,
     /// matching Ruby's identity).
@@ -132,6 +137,7 @@ fn maps() -> &'static OverlayMaps {
     OVERLAY.get_or_init(|| OverlayMaps {
         classes: RwLock::new(HashMap::new()),
         singletons: RwLock::new(HashMap::new()),
+        value_singletons: RwLock::new(HashMap::new()),
         singleton_classes: RwLock::new(HashMap::new()),
         singleton_owner: RwLock::new(HashMap::new()),
         next_id: AtomicU32::new(RUNTIME_CLASS_ID_BASE),
@@ -153,6 +159,61 @@ fn mark_live() {
 /// data address (drops the vtable half of the fat pointer).
 fn obj_identity(o: &RObj) -> usize {
     Arc::as_ptr(o).cast::<()>() as usize
+}
+
+/// The singleton-table key for any value that can CARRY singleton methods --
+/// its heap identity. `None` for an immediate (Integer/Symbol/nil/true/false),
+/// which Ruby refuses a singleton on.
+///
+/// Not just `RubyValue::Object`: Ruby lets a singleton method be defined on any
+/// heap object, and `def SOME_ARRAY.[](i)` is a real idiom (csv's
+/// `NO_QUOTED_FIELDS`). Every arm here is an `Arc`, so the pointer is a stable
+/// per-object identity for as long as the value lives.
+pub(crate) fn value_identity(v: &RubyValue) -> Option<usize> {
+    let addr = match v {
+        RubyValue::Object(o) => return Some(obj_identity(o)),
+        RubyValue::Array(a) => Arc::as_ptr(a).cast::<()>(),
+        RubyValue::Str(s) => Arc::as_ptr(s).cast::<()>(),
+        RubyValue::Hash(h) => Arc::as_ptr(h).cast::<()>(),
+        RubyValue::Regexp(r) => Arc::as_ptr(r).cast::<()>(),
+        // `nil`/`true`/`false` have exactly ONE instance each, so a fixed key
+        // per value IS a per-object identity -- and CRuby accepts a singleton
+        // on them for that reason. 0/1/2 can never collide with a real `Arc`
+        // pointer, which is non-null and word-aligned.
+        RubyValue::Nil => return Some(0),
+        RubyValue::Bool(true) => return Some(1),
+        RubyValue::Bool(false) => return Some(2),
+        _ => return None,
+    };
+    Some(addr as usize)
+}
+
+/// Every method installed directly on `recv` -- `Object#singleton_methods` for
+/// a non-Class receiver. Both tables, since an ordinary object's singletons and
+/// a bare value's live in different maps (see `value_singletons`).
+pub fn singleton_method_names(recv: &RubyValue) -> Vec<Symbol> {
+    let Some(key) = value_identity(recv) else {
+        return Vec::new();
+    };
+    let mut names: Vec<Symbol> = maps()
+        .singletons
+        .read()
+        .unwrap()
+        .get(&key)
+        .map(|t| t.keys().copied().collect())
+        .unwrap_or_default();
+    if let Some(t) = maps().value_singletons.read().unwrap().get(&key) {
+        names.extend(t.keys().copied());
+    }
+    names
+}
+
+/// The singleton method `name` installed directly on `recv`, or `None`. Always
+/// behind `is_live()`; the identity lookup is what a class-id walk cannot do.
+pub fn value_singleton_method(recv: &RubyValue, name: Symbol) -> Option<RProc> {
+    let key = value_identity(recv)?;
+    let s = maps().value_singletons.read().unwrap();
+    s.get(&key).and_then(|t| t.get(&name)).cloned()
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +866,10 @@ pub fn runtime_define_singleton_from_method(
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
+        // Only an ordinary object, unlike `runtime_define_singleton_method`
+        // below: the body here is a snapshot of a compiled instance method,
+        // whose signature takes an `RObj` receiver, so there is nothing to bind
+        // a bare Array/String to.
         other => Err(type_error!(
             "can't define singleton method for {}",
             immediate_kind(other)
@@ -849,10 +914,26 @@ pub fn runtime_define_singleton_method(
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
-        other => Err(type_error!(
-            "can't define singleton method for {}",
-            immediate_kind(other)
-        )),
+        other => {
+            // Any other heap value (`def SOME_ARRAY.[](i)`) -- see
+            // `value_identity`. The body stays an `RProc`, called with the value
+            // itself as `self`, because a bare Array has no `RObj` to bind.
+            let Some(key) = value_identity(other) else {
+                return Err(type_error!("can't define singleton"));
+            };
+            // `nil`/`true`/`false` report as frozen but still accept a
+            // singleton -- CRuby's singleton class for them IS their class, and
+            // takes no frozen check (oracle-verified). Every other value does.
+            if !matches!(other, RubyValue::Nil | RubyValue::Bool(_)) {
+                crate::builtins::check_frozen(recv)?;
+            }
+            {
+                let mut w = maps().value_singletons.write().unwrap();
+                w.entry(key).or_default().insert(name, body);
+            }
+            mark_live();
+            Ok(RubyValue::Symbol(name))
+        }
     }
 }
 
@@ -1453,15 +1534,22 @@ pub fn overlay_own_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
 /// `respond_to?`'s identity-keyed probe, since the class-id walk can't see a
 /// singleton installed on one specific object.
 pub fn object_has_singleton_method(recv: &RubyValue, name: Symbol) -> bool {
-    let RubyValue::Object(o) = recv else {
+    let Some(key) = value_identity(recv) else {
         return false;
     };
-    maps()
+    let by_object = maps()
         .singletons
         .read()
         .unwrap()
-        .get(&obj_identity(o))
-        .is_some_and(|t| t.contains_key(&name))
+        .get(&key)
+        .is_some_and(|t| t.contains_key(&name));
+    by_object
+        || maps()
+            .value_singletons
+            .read()
+            .unwrap()
+            .get(&key)
+            .is_some_and(|t| t.contains_key(&name))
 }
 
 /// Whether class `id`'s OWN overlay table defines instance method `name` -- a

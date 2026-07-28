@@ -1,0 +1,11 @@
+true
+true
+true
+true
+DRb::DRbIdConv
+[:alive?, :check_insecure_method, :config]
+true
+true
+true
+DRb::DRbBadURI
+true

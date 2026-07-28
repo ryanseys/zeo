@@ -379,6 +379,10 @@ pub const UNIX_SERVER_CLASS: ClassId = ClassId(94);
 /// `Addrinfo` -- a resolved socket address (family/type/protocol + endpoint),
 /// what `getaddrinfo`/`#local_address`/`#remote_address` answer.
 pub const ADDRINFO_CLASS: ClassId = ClassId(95);
+/// `Thread::Backtrace::Location` -- one entry of a backtrace as an OBJECT
+/// (`#path`/`#lineno`/`#label`), what `Kernel#caller_locations` answers and
+/// `Exception#backtrace_locations` would.
+pub const BACKTRACE_LOCATION_CLASS: ClassId = ClassId(96);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1166,6 +1170,15 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: Some("socket"),
+    },
+    // Ungated: `caller_locations` is core Kernel, available with no require.
+    BuiltinClass {
+        id: BACKTRACE_LOCATION_CLASS,
+        name: "Thread::Backtrace::Location",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
     },
 ];
 

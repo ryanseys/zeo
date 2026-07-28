@@ -1,0 +1,16 @@
+Keeper
+true
+StringScanner
+" world"
+11
+true
+""
+[:@keeps]
+"k=v"
+"k"
+"v"
+["k", "v"]
+true
+6
+3
+"def"

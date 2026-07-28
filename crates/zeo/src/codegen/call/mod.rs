@@ -942,15 +942,31 @@ pub fn emit_call(
                 // `Thread.new(*args) { |*params| }` -- constructor args pass
                 // through to the block's params, matching CRuby.
                 ("Thread", "new") => {
-                    let Some(block_id) = block else {
-                        if block_arg.is_some() {
-                            return crate::codegen::unsupported(
-                                "`Thread.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)",
+                    // `&proc` is the same conversion every other call site's
+                    // block argument goes through -- drb's
+                    // `Thread.new(&method(:main_loop))` needs it -- so a
+                    // missing block is the only remaining error.
+                    let proc = match (block, block_arg) {
+                        (Some(block_id), _) => procs::emit_proc_value(cx, block_id),
+                        (None, Some(arg)) => {
+                            let v = emit_expr(cx, arg);
+                            let v = box_if_object_typed(cx, arg, v);
+                            // `&nil` is "no block", which `Thread.new` rejects
+                            // exactly as a missing literal one does.
+                            let missing = raise::emit_simple_error(
+                                cx,
+                                "ThreadError",
+                                "must be called with a block",
                             );
+                            quote! {
+                                match zeo_rt::block_arg_to_proc(#v)? {
+                                    Some(__p) => __p,
+                                    None => Err(zeo_rt::Signal::Raise(#missing))?,
+                                }
+                            }
                         }
-                        return raise::emit_missing_block_raise(cx, "Thread");
+                        (None, None) => return raise::emit_missing_block_raise(cx, "Thread"),
                     };
-                    let proc = procs::emit_proc_value(cx, block_id);
                     let arg_exprs: Vec<TokenStream> = args
                         .iter()
                         .map(|&a| {

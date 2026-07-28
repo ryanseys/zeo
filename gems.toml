@@ -11,6 +11,16 @@ github = "ruby/benchmark"
 tag    = "v0.4.1"
 rev    = "6d878b4c0b96afaa6b234a13bf0ed36910c56913"
 
+[gems.csv]
+github = "ruby/csv"
+tag    = "v3.3.6"
+rev    = "0873ab362d996f12796c3c3e8998b5be657a9b12"
+
+[gems.drb]
+github = "ruby/drb"
+tag    = "v2.2.3"
+rev    = "a4f74442da5ece44f99fd4ff4f0299a3efa25004"
+
 [gems.erb]
 github = "ruby/erb"
 tag    = "v6.0.6"
