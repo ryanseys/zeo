@@ -644,6 +644,31 @@ struct ClassEntry {
     /// `ruby_class!`'s `__register` beside the constructor. `None` for
     /// modules/builtins.
     allocator: Option<AllocatorFn>,
+    /// Box-0 VALUE-receiver dispatch, flattened: exactly what the per-send
+    /// ancestor walk (reopen row, then builtin table, per ancestor) would
+    /// find, memoized the first time a dynamic send asks. Lives inside the
+    /// frozen registry and is consulted only while `runtime_meta` is dormant
+    /// and the caller is box 0, so there is NOTHING to invalidate:
+    /// post-install definitions all go through the overlay, whose `is_live`
+    /// gate is probed ahead of this on every tier.
+    flat_value: OnceLock<crate::FMap<Symbol, FlatHit>>,
+    /// The class-receiver twin (`File.read`, `Math.sqrt`): the frozen
+    /// `class_methods` rows over the builtin class-method table, flattened.
+    /// Frozen-layer-only like `flat_value`, but box-free (class methods are
+    /// not box-scoped) so it serves every box; the runtime overlay is still
+    /// probed ahead of it when live.
+    flat_class: OnceLock<crate::FMap<Symbol, ValueMethodFn>>,
+}
+
+/// One flattened dispatch answer: the function, which ancestor supplied it,
+/// and whether it came from a builtin table (a value-subclass payload
+/// rewraps only builtin hits at its payload root -- reopen rows always run
+/// against the boxed receiver, mirroring the walk).
+#[derive(Clone, Copy)]
+struct FlatHit {
+    f: ValueMethodFn,
+    owner: ClassId,
+    builtin: bool,
 }
 
 #[derive(Default)]
@@ -693,8 +718,72 @@ impl ClassRegistry {
                 own_class_methods: FSet::default(),
                 constructor,
                 allocator: None,
+                flat_value: OnceLock::new(),
+                flat_class: OnceLock::new(),
             },
         );
+    }
+
+    /// The flattened box-0 value-dispatch answer for `(id, name)`, building
+    /// `id`'s map on first use. Outer `None` means `id` has no registry
+    /// entry at all -- the caller must run the ordinary walk; inner `None`
+    /// is a genuine miss (proceed to the alias/method_missing tail).
+    fn flat_value_hit(&self, id: ClassId, name: Symbol) -> Option<Option<FlatHit>> {
+        let entry = self.entries.get(&id.0)?;
+        let map = entry.flat_value.get_or_init(|| {
+            let mut map = crate::FMap::default();
+            for &anc in entry.ancestors.iter() {
+                // Reopen rows first, then the builtin table -- the walk's own
+                // per-ancestor order; `or_insert`-style first-wins across
+                // ancestors is the walk's most-derived-first rule.
+                if let Some(anc_entry) = self.entries.get(&anc.0) {
+                    for (&(b, sym), &f) in &anc_entry.value_methods {
+                        if b == 0 {
+                            map.entry(sym).or_insert(FlatHit {
+                                f,
+                                owner: anc,
+                                builtin: false,
+                            });
+                        }
+                    }
+                }
+                if let Some(lookup) = crate::builtins::class_table(anc) {
+                    for &n in crate::builtins::class_table_names(anc) {
+                        if let Some(f) = lookup(n) {
+                            map.entry(Symbol::intern(n)).or_insert(FlatHit {
+                                f,
+                                owner: anc,
+                                builtin: true,
+                            });
+                        }
+                    }
+                }
+            }
+            map
+        });
+        Some(map.get(&name).copied())
+    }
+
+    /// `flat_value_hit`'s class-receiver twin: user `def self.x` rows over
+    /// the builtin class-method table for `id` itself (no ancestry -- the
+    /// walk the caller falls back to covers Class/Module).
+    fn flat_class_hit(&self, id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+        let entry = self.entries.get(&id.0)?;
+        let map = entry.flat_class.get_or_init(|| {
+            let mut map = crate::FMap::default();
+            for (&sym, &f) in &entry.class_methods {
+                map.entry(sym).or_insert(f);
+            }
+            if let Some(lookup) = crate::builtins::class_method_table(id) {
+                for &n in crate::builtins::class_method_table_names(id) {
+                    if let Some(f) = lookup(n) {
+                        map.entry(Symbol::intern(n)).or_insert(f);
+                    }
+                }
+            }
+            map
+        });
+        map.get(&name).copied()
     }
 
     /// Registers the no-`initialize` allocator backing `Class#allocate` --
@@ -3112,16 +3201,12 @@ fn send_value_in_reason(
                 return p.call_with_self_and_block(recv, args, block);
             }
         }
-        // A USER `def self.x` first -- ahead of the builtin table below, so
-        // a class defining its own `self.name`/`self.new` overrides
-        // `Class#name`/`Class#new` rather than being shadowed by them. Real
-        // Ruby's placement rule: the singleton method is strictly closer
-        // than the one inherited from Class/Module.
-        if let Some(f) = REGISTRY
-            .get()
-            .and_then(|r| r.entries.get(&cid.0))
-            .and_then(|e| e.class_methods.get(&name).copied())
-        {
+        // A USER `def self.x` and the builtin Class/Module table, flattened
+        // into one probe (user rows win -- real Ruby's placement rule: the
+        // singleton method is strictly closer than one inherited from
+        // Class/Module). A class with NO registry entry (a never-required
+        // feature-gated ext) still gets the direct builtin probe below.
+        if let Some(f) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
             return f(recv, args, block);
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid) {
@@ -3148,16 +3233,42 @@ fn send_value_in_reason(
     // the Kernel universals, BasicObject's `==`, and the
     // `Enumerable`/`Comparable` module tables (whose rows drive the
     // receiver's own `each`/`<=>`) -- is an ordinary `class_table` hit.
-    for &anc in ancestors_of_value(recv.class_id()) {
-        if let Some(f) = value_method(anc, box_id, name) {
-            return f(recv, args, block);
+    //
+    // Box 0 with a dormant overlay -- almost every send in almost every
+    // program -- takes the flattened one-probe form of the same walk
+    // (`flat_value_hit`); a per-box patch or live overlay keeps the full
+    // walk, whose per-ancestor `(box, name)` probe it needs.
+    let cid = recv.class_id();
+    if box_id == 0 && !crate::runtime_meta::is_live() {
+        if let Some(hit) = REGISTRY.get().and_then(|r| r.flat_value_hit(cid, name)) {
+            if let Some(hit) = hit {
+                return (hit.f)(recv, args, block);
+            }
+            // A genuine flat miss: fall through to the alias tail below.
+        } else {
+            for &anc in ancestors_of_value(cid) {
+                if let Some(f) = value_method(anc, box_id, name) {
+                    return f(recv, args, block);
+                }
+                if let Some(table) = crate::builtins::class_table(anc) {
+                    if let Some(f) = table(n) {
+                        return f(recv, args, block);
+                    }
+                }
+            }
         }
+    } else {
         // `Math`'s module functions reach here too when `Math` is mixed in
         // (`include Math` -> a private `sqrt(x)`), as an ordinary `class_table`
         // hit on its registered instance table -- no special arm needed.
-        if let Some(table) = crate::builtins::class_table(anc) {
-            if let Some(f) = table(n) {
+        for &anc in ancestors_of_value(cid) {
+            if let Some(f) = value_method(anc, box_id, name) {
                 return f(recv, args, block);
+            }
+            if let Some(table) = crate::builtins::class_table(anc) {
+                if let Some(f) = table(n) {
+                    return f(recv, args, block);
+                }
             }
         }
     }
@@ -3259,25 +3370,55 @@ fn send_in_reason(
     // ordinary object, so this costs one field read on the miss path.
     let payload = recv.builtin_payload();
     let payload_root = recv.builtin_root();
-    for &anc in ancestors_of_value(id) {
-        if let Some(f) = value_method(anc, box_id, name) {
-            return f(&boxed, args, block);
+    // Same flat-vs-walk split as `send_value_in_reason`: box 0 with a
+    // dormant overlay takes the one-probe flattened walk; anything else
+    // keeps the per-ancestor probes it needs.
+    let flat = if box_id == 0 && !crate::runtime_meta::is_live() {
+        REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
+    } else {
+        None
+    };
+    match flat {
+        Some(Some(hit)) => {
+            // At the payload root, a BUILTIN hit runs against the wrapped
+            // value and re-wraps a self-return (`push`/`<<`) back to the
+            // subclass; reopen rows always run against the boxed receiver.
+            if hit.builtin && payload_root == Some(hit.owner) {
+                if let Some(ref p) = payload {
+                    let result = (hit.f)(p, args, block)?;
+                    return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                        result, p, recv, n,
+                    ));
+                }
+            }
+            return (hit.f)(&boxed, args, block);
         }
-        // `include Math` reaches its module functions here as an ordinary
-        // `class_table` hit on Math's registered instance table.
-        if let Some(table) = crate::builtins::class_table(anc) {
-            if let Some(f) = table(n) {
-                // At the payload root, run against the wrapped value and
-                // re-wrap a self-return (`push`/`<<`) back to the subclass.
-                if payload_root == Some(anc) {
-                    if let Some(ref p) = payload {
-                        let result = f(p, args, block)?;
-                        return Ok(crate::builtins::value_subclass::rewrap_self_return(
-                            result, p, recv, n,
-                        ));
+        // A genuine flat miss: straight to the alias tail below.
+        Some(None) => {}
+        None => {
+            for &anc in ancestors_of_value(id) {
+                if let Some(f) = value_method(anc, box_id, name) {
+                    return f(&boxed, args, block);
+                }
+                // `include Math` reaches its module functions here as an
+                // ordinary `class_table` hit on Math's registered instance
+                // table.
+                if let Some(table) = crate::builtins::class_table(anc) {
+                    if let Some(f) = table(n) {
+                        // At the payload root, run against the wrapped value
+                        // and re-wrap a self-return (`push`/`<<`) back to the
+                        // subclass.
+                        if payload_root == Some(anc) {
+                            if let Some(ref p) = payload {
+                                let result = f(p, args, block)?;
+                                return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                                    result, p, recv, n,
+                                ));
+                            }
+                        }
+                        return f(&boxed, args, block);
                     }
                 }
-                return f(&boxed, args, block);
             }
         }
     }

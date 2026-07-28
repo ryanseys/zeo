@@ -27,6 +27,7 @@ bm_getivar	1784705672	0.120
 bm_getivar_module	1784676372	4.411
 bm_getivar_module	1784705685	4.023
 bm_getivar_module	1785266130	2.991
+bm_getivar_module	1785266619	1.534
 bm_huffman	1784676376	0.255
 bm_huffman	1784705686	0.227
 bm_huffman	1784733205	0.230
@@ -34,6 +35,7 @@ bm_inline	1784676390	4.393
 bm_inline	1784705694	2.523
 bm_io_wordcount	1784676396	0.501
 bm_io_wordcount	1784705697	0.478
+bm_io_wordcount	1785266629	0.431
 bm_jekyll_lite	1784676396	0.017
 bm_jekyll_lite	1784705699	0.022
 bm_json_parse	1784676401	1.441
@@ -117,6 +119,7 @@ bm_tarai	1784676655	0.475
 bm_tarai	1784705897	0.363
 bm_template	1784676667	3.667
 bm_template	1784705907	3.153
+bm_template	1785266627	2.360
 bm_throw	1784676671	0.556
 bm_throw	1784705908	0.265
 bm_wordfreq	1784676671	0.024
