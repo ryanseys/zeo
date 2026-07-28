@@ -208,9 +208,25 @@ pub(crate) fn emit_proc_or_lambda_value(
     }
     // Cell-wrap this block's own PARAMS that a nested block captures (after the
     // plain param binding reads its value).
+    //
+    // DESTRUCTURED names are excluded, for the reason `params::emit_prologue`
+    // excludes them on the method path: `emit_destructures` (inside
+    // `param_bindings` below) declares each one itself via `emit_local_decl`,
+    // which already yields a CELL when a nested block captures it -- so
+    // wrapping here too wrapped the cell in a second cell. Ownership is split
+    // exactly: this site wraps the params the Rust closure signature binds,
+    // `emit_destructures` owns the ones it binds itself. `pp`'s
+    // `seplist { |(member, value)| ... group { value } }` is the shape that
+    // found it.
+    //
+    // Note this is NOT the method path's other exclusion: an ASSIGNED name
+    // still needs wrapping here, because `emit_proc_param_bindings` always
+    // emits a plain `let mut`, never a cell.
+    let destructured: std::collections::HashSet<String> =
+        params.destructured_names().into_iter().collect();
     let mut nested_param_names: Vec<&String> = own_params
         .iter()
-        .filter(|n| nested_captured.contains(*n))
+        .filter(|n| nested_captured.contains(*n) && !destructured.contains(*n))
         .collect();
     nested_param_names.sort();
     let nested_param_wraps = nested_param_names.into_iter().map(|name| {
