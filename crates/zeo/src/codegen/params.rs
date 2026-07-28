@@ -1249,7 +1249,11 @@ pub fn emit_proc_param_bindings(
     let rest_let = params.rest.iter().flatten().map(|name| {
         let ident = safe_ident(name);
         quote! {
-            let #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Array(zeo_rt::array_new(
+            // `mut` for the same reason every other parameter binding here
+            // carries it: a Ruby parameter is an ordinary reassignable local,
+            // whatever slot it arrived in.
+            #[allow(unused_mut)]
+            let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Array(zeo_rt::array_new(
                 (#nreq + __opt_bound..#nreq + __opt_bound + __rest_count)
                     .filter_map(|__i| __positional.get(__i).cloned())
                     .collect()
@@ -1287,7 +1291,8 @@ pub fn emit_proc_param_bindings(
         KeywordParam::Required(name) => {
             let ident = safe_ident(name);
             quote! {
-                let #ident: zeo_rt::RubyValue = match &__kw_source {
+                #[allow(unused_mut)]
+                let mut #ident: zeo_rt::RubyValue = match &__kw_source {
                     Some(zeo_rt::RubyValue::Hash(__h))
                         if zeo_rt::hash_has_key(
                             __h,
@@ -1312,7 +1317,11 @@ pub fn emit_proc_param_bindings(
             let ident = safe_ident(name);
             let default_expr = emit_expr(cx, *default);
             quote! {
-                let #ident: zeo_rt::RubyValue = match &__kw_source {
+                // `mut`: a keyword parameter is reassignable like any other
+                // (tempfile's `def initialize(..., mode: 0, ...)` then does
+                // `mode |= File::RDWR`).
+                #[allow(unused_mut)]
+                let mut #ident: zeo_rt::RubyValue = match &__kw_source {
                     Some(zeo_rt::RubyValue::Hash(__h)) => {
                         let __v = zeo_rt::hash_get(__h, &zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)));
                         if __v.is_nil() { #default_expr } else { __v }
@@ -1325,7 +1334,8 @@ pub fn emit_proc_param_bindings(
     let keyword_rest_let = params.keyword_rest.iter().flatten().map(|name| {
         let ident = safe_ident(name);
         quote! {
-            let #ident: zeo_rt::RubyValue = match &__kw_source {
+            #[allow(unused_mut)]
+            let mut #ident: zeo_rt::RubyValue = match &__kw_source {
                 Some(zeo_rt::RubyValue::Hash(__h)) => {
                     let __declared: &[&str] = &[#(#kw_names),*];
                     // The locked map yields `(&HashKey, &(key, value))` --

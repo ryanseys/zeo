@@ -256,8 +256,21 @@ impl Walker {
                 self.visit_opt(hir, block);
                 self.visit_opt(hir, block_arg);
             }
-            HirNode::New { args, block, .. } => {
+            // Every field is bound by name, `class_name` included: a `..` here
+            // silently swallowed `kwargs`, so `File.new(fd, path: path)` renamed
+            // the local at its write site but not the read inside the keyword
+            // argument, leaving an undeclared identifier behind (tempfile.rb's
+            // `path`, which rustc reports as a collision with the built-in
+            // `#[path]` attribute rather than as the unbound name it is).
+            HirNode::New {
+                class_name: _,
+                args,
+                kwargs,
+                block,
+            } => {
                 self.visit_all(hir, &args.clone());
+                let kw_ids: Vec<_> = kwargs.iter().flat_map(|kw| kw.node_ids()).collect();
+                self.visit_all(hir, &kw_ids);
                 self.visit_opt(hir, block);
             }
             HirNode::SuperCall {
