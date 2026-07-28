@@ -681,6 +681,12 @@ pub fn build_binary(
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
     cmd.args(profile.rustc_flags());
+    if linkage == Linkage::Static {
+        // Arms the generated crate's mimalloc `#[global_allocator]` (see
+        // codegen's main assembly): a self-contained binary owns every
+        // allocation, so the swap is safe there and only there.
+        cmd.arg("--cfg").arg("zeo_static_alloc");
+    }
     if linkage == Linkage::Dynamic {
         // Share ONE std with the dylib (a Rust dylib forces this), and bake the
         // rpaths that let the produced binary find both the runtime dylib and

@@ -1438,6 +1438,16 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             non_snake_case
         )]
 
+        // Statically-linked binaries (`zeo foo.rb -o app`, the bench suite)
+        // swap in mimalloc: Ruby workloads are allocation-heavy, and a
+        // self-contained binary owns every allocation. The backend passes
+        // the cfg only for `Linkage::Static` -- a dynamic-linked test binary
+        // must never free the shared dylib's allocations with a different
+        // allocator.
+        #[cfg(zeo_static_alloc)]
+        #[global_allocator]
+        static __ALLOC: zeo_rt::MiMalloc = zeo_rt::MiMalloc;
+
         #(#classes)*
         #(#class_method_containers)*
         #(#builtin_reopens)*

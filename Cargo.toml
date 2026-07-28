@@ -58,6 +58,13 @@ libc = "0.2"
 # maps sit on the dynamic-dispatch hot path. Ruby-VISIBLE hashing
 # (`Object#hash`) stays on DefaultHasher -- see collections.rs.
 foldhash = "0.1"
+# The global allocator STATICALLY-linked generated binaries opt into (the
+# `zeo_static_alloc` cfg the backend passes for `-o` builds): Ruby workloads
+# are allocation-heavy (every Arc payload, String, Vec), and mimalloc
+# reliably beats system malloc there. Dynamic-linked test binaries keep the
+# system allocator -- an exe-defined allocator must not free the dylib's
+# allocations.
+mimalloc = "0.1"
 # Link-time auto-registration: the `ruby_class!` macro registers each class's
 # method/constant table into a `BUILTIN_TABLES` distributed slice the runtime
 # collects, replacing the hand-written `ClassId`->lookup match tables.
