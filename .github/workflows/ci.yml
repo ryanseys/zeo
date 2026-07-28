@@ -61,18 +61,21 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      # The workspace unit + e2e tests. The e2e suite compiles generated
-      # programs against the prebuilt RELEASE runtime (small stripped rlib ->
-      # far cheaper per-test link), so build both runtime variants first to keep
-      # nextest's parallel test processes from racing the one cargo build.
-      # `cargo nextest` builds crates only in debug, so the release rlib won't
-      # exist unless built explicitly here. The Eval variant lives in its own
-      # target dir (see `build::variant_target_dir`).
-      - run: cargo build -p zeo-rt --release
-      - run: cargo build -p zeo-rt --release --features eval-vm --target-dir target/zeo-rt-eval
+      # The workspace unit + e2e tests. Prebuild every (runtime, linkage)
+      # zeo-rt combination the suites link -- including the DYNAMIC dylibs the
+      # golden harness uses -- through the same backend::build_runtime path
+      # the harnesses call, so no test process pays a lazy cargo build behind
+      # the runtime flock. With the artifacts known-fresh,
+      # ZEO_ASSUME_RUNTIME_FRESH skips the per-test-process stat walk and
+      # cache-sweep trigger.
+      - run: cargo run -p xtask -- prebuild-runtimes
       - run: cargo nextest run --workspace
+        env:
+          ZEO_ASSUME_RUNTIME_FRESH: "1"
       # nextest doesn't run doctests; keep them covered.
       - run: cargo test --workspace --doc
+        env:
+          ZEO_ASSUME_RUNTIME_FRESH: "1"
       # The tests/ golden suites -- examples, the full ~2368-test spinel corpus,
       # and the gaps XFAIL tracker -- all run under `cargo nextest run --workspace`
       # above (datatest-stable targets tests/{examples,spinel,gaps}.rs) --

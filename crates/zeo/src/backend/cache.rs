@@ -96,27 +96,20 @@ fn generation_hash(profile: Profile, runtime: Runtime, linkage: Linkage) -> Resu
         generation,
         runtime_artifact_fingerprint(profile, runtime, linkage)?.as_bytes(),
     );
-    // The COMPILER's own fingerprint (this executable's len+mtime): the
-    // generated program's typed fast paths and its whole codegen come from
-    // `zeo`, so a recompiled compiler yields different binaries even against an
-    // unchanged runtime rlib. Folding it in ROLLS the generation on a compiler
-    // rebuild, so the old compiler's entries become a dead generation
-    // `sweep_stale_cache_generations` reclaims -- instead of piling up forever
-    // under a still-"live" runtime generation (the dominant leak in a
-    // compiler-dev loop). All of `cargo nextest`'s per-test processes share one
-    // test binary, so they agree on this within a run.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Ok(m) = std::fs::metadata(&exe) {
-            let exe_mtime = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            generation =
-                fnv1a64_with(generation, format!("exe:{}:{exe_mtime};", m.len()).as_bytes());
-        }
-    }
+    // The COMPILER's own fingerprint: the generated program's typed fast
+    // paths and its whole codegen come from `zeo`, so a CHANGED compiler
+    // yields different binaries even against an unchanged runtime rlib.
+    // A build.rs content hash over every code-shaping source (this crate,
+    // zeo-dsl/zeo-abi, the zeo-rt headers the surface projection reads, the
+    // lockfile) -- NOT the executable's len+mtime -- so a mere rebuild of
+    // identical source keeps the generation (and a restored CI bin-cache)
+    // live, while any real compiler change still rolls it and
+    // `sweep_stale_cache_generations` reclaims the dead generation. The CLI
+    // and the test binaries embed the same env, so they share generations.
+    generation = fnv1a64_with(
+        generation,
+        concat!("zeo:", env!("ZEO_COMPILER_FINGERPRINT"), ";").as_bytes(),
+    );
     Ok(generation)
 }
 
@@ -128,6 +121,12 @@ fn generation_hash(profile: Profile, runtime: Runtime, linkage: Linkage) -> Resu
 /// (best-effort removal). Called from `build_binary`'s hot path -- cheap after
 /// the first process cleans up (a bare readdir once nothing is stale).
 pub(super) fn maybe_sweep_stale_cache() {
+    // Under `ZEO_ASSUME_RUNTIME_FRESH` (CI, after its explicit prebuild) the
+    // cache dir was just restored/validated; skip the per-process read_dir +
+    // per-generation artifact stats nextest's process-per-test model repeats.
+    if std::env::var_os("ZEO_ASSUME_RUNTIME_FRESH").is_some() {
+        return;
+    }
     static SWEPT: OnceLock<()> = OnceLock::new();
     SWEPT.get_or_init(|| {
         std::thread::spawn(sweep_stale_cache_generations);

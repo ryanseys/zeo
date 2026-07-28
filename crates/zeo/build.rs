@@ -57,6 +57,70 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     std::fs::write(Path::new(&out_dir).join("class_surface.rs"), code)
         .expect("writing class_surface.rs");
+
+    emit_compiler_fingerprint(Path::new(&manifest_dir));
+}
+
+/// A deterministic content hash over everything that shapes GENERATED CODE:
+/// this crate's sources (and this script), the shared front-end crates, the
+/// zeo-rt headers the surface projection reads, and the lockfile (a dep bump
+/// can change emission). `backend::cache` folds it into the bin-cache
+/// generation, replacing the compiler executable's len+mtime -- so a REBUILD
+/// of identical source keeps the cache warm (what lets CI restore
+/// `target/zeo-bin-cache` usefully) while any real compiler change still
+/// rolls it.
+fn emit_compiler_fingerprint(manifest_dir: &Path) {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut fold = |bytes: &[u8]| {
+        for &b in bytes {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in [
+        manifest_dir.join("src"),
+        manifest_dir.join("../zeo-dsl/src"),
+        manifest_dir.join("../zeo-abi/src"),
+        manifest_dir.join("../zeo-rt/src/builtins"),
+        manifest_dir.join("../zeo-rt/src/ext"),
+    ] {
+        collect_rs_files(&dir, &mut files);
+    }
+    files.push(manifest_dir.join("build.rs"));
+    files.push(manifest_dir.join("../../Cargo.lock"));
+    files.sort();
+    for path in files {
+        if let Ok(bytes) = std::fs::read(&path) {
+            // Path RELATIVE to the manifest so the hash is machine-portable.
+            let rel = path
+                .strip_prefix(manifest_dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            fold(rel.as_bytes());
+            fold(&bytes);
+        }
+    }
+    println!("cargo:rerun-if-changed=../../Cargo.lock");
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=../zeo-dsl/src");
+    println!("cargo:rerun-if-changed=../zeo-abi/src");
+    println!("cargo:rustc-env=ZEO_COMPILER_FINGERPRINT={h:016x}");
+}
+
+fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
 }
 
 /// One builtin class's projected surface.

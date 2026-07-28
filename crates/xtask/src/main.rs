@@ -24,6 +24,7 @@ mod compile_bench;
 mod exec;
 mod gem;
 mod gem_compat;
+mod prebuild;
 mod stdlib_status;
 
 use std::path::PathBuf;
@@ -39,12 +40,14 @@ fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         Some("bench") => bench::main(&root, &args),
         Some("compile-bench") => compile_bench::main(&root, &args),
+        Some("prebuild-runtimes") => prebuild::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
         _ => {
             eprintln!(
-                "usage: cargo run -p xtask -- <bench|compile-bench|stdlib-status|gem-compat|gem>"
+                "usage: cargo run -p xtask -- \
+                 <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem>"
             );
             ExitCode::FAILURE
         }

@@ -232,6 +232,16 @@ pub fn ensure_runtime_built(
             // so a driver that prebuilt the workspace still gets the cheap path.
             // When stale (or missing), `build_runtime` shells cargo, which does
             // the real incremental rebuild.
+            // `ZEO_ASSUME_RUNTIME_FRESH` (CI sets it right after its explicit
+            // prebuild step): existence IS freshness, skipping the ~150-stat
+            // recursive source walk every nextest test process otherwise
+            // repeats. A missing artifact still falls through and builds, so
+            // the env can never link nothing.
+            if std::env::var_os("ZEO_ASSUME_RUNTIME_FRESH").is_some()
+                && runtime_artifact(profile, runtime, linkage).is_ok()
+            {
+                return Ok(());
+            }
             if !runtime_artifact_is_stale(profile, runtime, linkage) {
                 return Ok(());
             }
