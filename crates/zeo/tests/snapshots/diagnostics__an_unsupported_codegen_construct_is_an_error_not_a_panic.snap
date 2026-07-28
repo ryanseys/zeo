@@ -1,0 +1,7 @@
+---
+source: crates/zeo/tests/diagnostics.rs
+expression: render(err)
+---
+zeo::codegen
+
+  × safe-navigation (`&.`) on a call with a splat argument isn't supported yet (zeo limitation)

@@ -347,9 +347,9 @@ fn bind_new_args(
         || !params.keywords.is_empty()
         || params.keyword_rest.is_some()
     {
-        panic!(
+        return Err(crate::codegen::unsupported(format!(
             "`{class_name}.new`: an `initialize` with splat/post/keyword parameters isn't supported yet (zeo limitation)"
-        );
+        )));
     }
     if arg_exprs.len() < nreq || arg_exprs.len() > nreq + nopt {
         let msg = format!(

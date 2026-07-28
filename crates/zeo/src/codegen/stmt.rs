@@ -138,11 +138,10 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
                     _ => "?",
                 };
                 let loc = crate::codegen::source_location(cx.compiler, stmt);
-                panic!(
+                crate::codegen::unsupported(format!(
                     "`class`/`module` in a position the analyze walk doesn't register \
-                     (e.g. inside a top-level `begin`) isn't supported yet (zeo limitation): \
-                     {nm} at {loc:?}"
-                )
+                     isn't supported yet (zeo limitation): {nm} at {loc:?}"
+                ))
             });
         return if is_tail {
             let nil = tail_nil(wrap_ok);

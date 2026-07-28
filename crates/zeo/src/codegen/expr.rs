@@ -1299,7 +1299,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. } => {
-            panic!("internal error: unexpected top-level-only node in expression position")
+            let loc = crate::codegen::source_location(cx.compiler, id);
+            crate::codegen::unsupported(format!(
+                "a definition-level construct used as a VALUE isn't supported yet (zeo limitation): {loc:?}"
+            ))
         }
     }
 }

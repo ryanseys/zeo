@@ -911,8 +911,8 @@ pub fn emit_call(
                 ("Fiber", "new") => {
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
-                            panic!(
-                                "`Fiber.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)"
+                            return crate::codegen::unsupported(
+                                "`Fiber.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)",
                             );
                         }
                         return raise::emit_missing_block_raise(cx, "Fiber");
@@ -944,8 +944,8 @@ pub fn emit_call(
                 ("Thread", "new") => {
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
-                            panic!(
-                                "`Thread.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)"
+                            return crate::codegen::unsupported(
+                                "`Thread.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)",
                             );
                         }
                         return raise::emit_missing_block_raise(cx, "Thread");
@@ -981,7 +981,9 @@ pub fn emit_call(
                 ("Ractor", "new") => {
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
-                            panic!("`Ractor.new` requires a literal block (zeo limitation)");
+                            return crate::codegen::unsupported(
+                                "`Ractor.new` requires a literal block (zeo limitation)",
+                            );
                         }
                         return raise::emit_missing_block_raise(cx, "Ractor");
                     };
@@ -1014,13 +1016,13 @@ pub fn emit_call(
                         .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
                         .min()
                     {
-                        panic!(
+                        return crate::codegen::unsupported(format!(
                             "can not isolate a Proc because it accesses outer variables ({outer})"
-                        );
+                        ));
                     }
                     if block_caps.self_captured {
-                        panic!(
-                            "can not isolate a Proc because it accesses instance variables of the enclosing object"
+                        return crate::codegen::unsupported(
+                            "can not isolate a Proc because it accesses instance variables of the enclosing object",
                         );
                     }
                     let proc = procs::emit_proc_value(cx, block_id);
@@ -1085,8 +1087,8 @@ pub fn emit_call(
             let is_static = cx.compiler.class_method_in_chain(target, name).is_some();
             if is_static {
                 if safe {
-                    panic!(
-                        "safe-navigation on a class-method call isn't supported yet (zeo limitation)"
+                    return crate::codegen::unsupported(
+                        "safe-navigation on a class-method call isn't supported yet (zeo limitation)",
                     );
                 }
                 return reflect::emit_class_method_call_on(

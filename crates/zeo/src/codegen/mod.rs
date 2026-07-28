@@ -500,8 +500,41 @@ fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
     out
 }
 
+thread_local! {
+    static UNSUPPORTED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Records a construct codegen can't emit, keeping the FIRST message so the
+/// report names the earliest failure rather than the deepest. Emission runs to
+/// completion; `codegen_to_string` turns the record into a `CompileError`.
+///
+/// This exists because a `panic!` here unwinds straight through the test
+/// harness, which makes an unsupported construct impossible to check in as an
+/// XFAIL repro. Genuine compiler-invariant violations still panic.
+pub(crate) fn record_unsupported(message: impl Into<String>) {
+    UNSUPPORTED.with_borrow_mut(|slot| {
+        slot.get_or_insert_with(|| message.into());
+    });
+}
+
+/// [`record_unsupported`] plus a `nil` stand-in for expression and statement
+/// position. The stand-in is never compiled -- `codegen_to_string` fails before
+/// the token stream is parsed.
+pub(crate) fn unsupported(message: impl Into<String>) -> TokenStream {
+    record_unsupported(message);
+    quote! { zeo_rt::RubyValue::Nil }
+}
+
+fn take_unsupported() -> Option<String> {
+    UNSUPPORTED.with_borrow_mut(|slot| slot.take())
+}
+
 pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, crate::diagnostics::CompileError> {
+    take_unsupported();
     let tokens = codegen(analyzed);
+    if let Some(message) = take_unsupported() {
+        return Err(crate::diagnostics::CompileError::codegen(message));
+    }
     let file: syn::File = syn::parse2(tokens).map_err(|e| {
         crate::diagnostics::CompileError::codegen(format!(
             "codegen produced invalid Rust (this is a zeo bug): {e}"
@@ -1709,10 +1742,10 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
             .iter()
             .any(|&cs| compiler.scope(cs).name == *n)
         {
-            panic!(
+            return unsupported(format!(
                 "the built-in class `{}` defines both an instance method and a class method named `{n}` -- not supported yet (zeo limitation: they share one generated container)",
                 ci.name
-            );
+            ));
         }
     }
     let mod_ident = ident::class_ident(compiler, cid);

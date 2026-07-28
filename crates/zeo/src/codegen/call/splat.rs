@@ -36,8 +36,8 @@ pub(super) fn emit_splat_call(
 ) -> TokenStream {
     let __bx = cx.box_id;
     if safe {
-        panic!(
-            "safe-navigation (`&.`) on a call with a splat argument isn't supported yet (zeo limitation)"
+        return crate::codegen::unsupported(
+            "safe-navigation (`&.`) on a call with a splat argument isn't supported yet (zeo limitation)",
         );
     }
     let recv_obj_expr = match receiver {

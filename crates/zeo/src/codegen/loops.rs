@@ -282,7 +282,7 @@ pub fn emit_break(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
     match &cx.loop_labels {
         Some((_, outer)) => quote! { break #outer #value_expr },
         None if cx.in_real_proc => quote! { return Err(zeo_rt::Signal::Break(#value_expr)) },
-        None => panic!("`break` outside a supported loop construct (zeo limitation)"),
+        None => super::unsupported("`break` outside a supported loop construct (zeo limitation)"),
     }
 }
 
@@ -309,7 +309,7 @@ pub fn emit_next(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
             };
             quote! { return Err(zeo_rt::Signal::Next(#value_expr)) }
         }
-        None => panic!("`next` outside a supported loop construct (zeo limitation)"),
+        None => super::unsupported("`next` outside a supported loop construct (zeo limitation)"),
     }
 }
 
@@ -320,7 +320,7 @@ pub fn emit_redo(cx: &Ctx) -> TokenStream {
     match &cx.loop_labels {
         Some((redo, _)) => quote! { continue #redo },
         None if cx.in_real_proc => quote! { return Err(zeo_rt::Signal::Redo) },
-        None => panic!("`redo` outside a supported loop construct (zeo limitation)"),
+        None => super::unsupported("`redo` outside a supported loop construct (zeo limitation)"),
     }
 }
 

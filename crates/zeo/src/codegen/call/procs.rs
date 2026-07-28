@@ -183,9 +183,9 @@ pub(crate) fn emit_proc_or_lambda_value(
             .iter()
             .find(|n| !block_caps.assigned.contains(n.as_str()))
         {
-            panic!(
+            return crate::codegen::unsupported(format!(
                 "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
-            );
+            ));
         }
     }
 

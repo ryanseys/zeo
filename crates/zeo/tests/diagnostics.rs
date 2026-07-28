@@ -33,6 +33,15 @@ fn a_parse_failure_renders_without_an_excerpt() {
     insta::assert_snapshot!(render(err));
 }
 
+/// A construct codegen can't emit reports as an error rather than unwinding,
+/// which is what lets an unsupported repro be checked in as an XFAIL gap.
+#[test]
+fn an_unsupported_codegen_construct_is_an_error_not_a_panic() {
+    let err = zeo::compile_to_rust_with("a = [1, 2]\nx = nil\nx&.push(*a)\n", &Default::default())
+        .expect_err("safe navigation with a splat argument is rejected");
+    insta::assert_snapshot!(render(err));
+}
+
 /// A failure past lowering carries its stage as the diagnostic code
 /// (message-only until analyze sites gain spans).
 #[test]

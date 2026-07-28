@@ -144,9 +144,9 @@ pub(super) fn emit_class_method_call_on(
 ) -> TokenStream {
     let target_name = &cx.compiler.class(target).name;
     let Some((_, sid)) = cx.compiler.class_method_in_chain(target, name) else {
-        panic!(
+        return crate::codegen::unsupported(format!(
             "unsupported call `{target_name}.{name}` (a zeo gap, or no such class method is defined)"
-        );
+        ));
     };
     let scope = cx.compiler.scope(sid);
     let target_ident = crate::codegen::ident::class_ident(cx.compiler, target);
