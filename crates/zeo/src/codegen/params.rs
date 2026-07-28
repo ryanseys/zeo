@@ -2074,6 +2074,7 @@ mod tests {
             local_types: std::borrow::Cow::Owned(std::collections::HashMap::new()),
             label_counter: &label_counter,
             loop_labels: None,
+            next_yields_value: false,
             for_var_override: None,
             captured_locals: std::borrow::Cow::Borrowed(&empty),
             self_ident: quote::format_ident!("__self"),

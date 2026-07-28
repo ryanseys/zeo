@@ -191,6 +191,17 @@ fn mark_inline_iter_sites(
                             ((Some(TyKind::Array), "each_with_index", 0), 1 | 2) => {
                                 Some(K::ArrayEachWithIndex)
                             }
+                            ((Some(TyKind::Array), "map" | "collect", 0), 0 | 1) => {
+                                Some(K::ArrayMap)
+                            }
+                            ((Some(TyKind::Array), "select" | "filter" | "find_all", 0), 0 | 1) => {
+                                Some(K::ArraySelect)
+                            }
+                            ((Some(TyKind::Array), "reject", 0), 0 | 1) => Some(K::ArrayReject),
+                            ((Some(TyKind::Array), "sum", 0), 0 | 1) => Some(K::ArraySum),
+                            ((Some(TyKind::Hash), "each" | "each_pair", 0), 0..=2) => {
+                                Some(K::HashEach)
+                            }
                             _ => None,
                         };
                         if let Some(k) = kind {
@@ -228,6 +239,24 @@ fn mark_inline_iter_sites(
         (K::RangeEachInt, reopened("Range", "each")),
         (K::ArrayEach, reopened("Array", "each")),
         (K::ArrayEachWithIndex, reopened("Array", "each_with_index")),
+        // Aliases are SEPARATE method entries in Ruby; redefining either one
+        // suppresses the whole kind (conservative, and vanishingly rare).
+        (
+            K::ArrayMap,
+            reopened("Array", "map") || reopened("Array", "collect"),
+        ),
+        (
+            K::ArraySelect,
+            reopened("Array", "select")
+                || reopened("Array", "filter")
+                || reopened("Array", "find_all"),
+        ),
+        (K::ArrayReject, reopened("Array", "reject")),
+        (K::ArraySum, reopened("Array", "sum")),
+        (
+            K::HashEach,
+            reopened("Hash", "each") || reopened("Hash", "each_pair"),
+        ),
     ];
     let suppressed = |k: &K| sup.iter().any(|(sk, s)| sk == k && *s);
     compiler.times_literal_suppressed = suppressed(&K::TimesInt);

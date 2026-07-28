@@ -41,6 +41,26 @@ pub(super) fn fresh_label(cx: &Ctx, tag: &str) -> Lifetime {
 /// construct below (and by `.times`'s block inlining in `codegen::call`).
 /// `loop_cx` must already carry this loop's own `(redo_label, outer_label)`
 /// pair (see `Ctx::loop_labels`).
+/// `emit_redo_wrapped_body`'s VALUE twin, for the value-consuming iterator
+/// splices (`map`/`select`/`sum`/...): the inner redo loop is an EXPRESSION
+/// evaluating to the iteration's value -- the body's tail on a normal pass,
+/// or whatever a value-mode `next` broke out with (`emit_next`'s
+/// `next_yields_value` arm). `redo` still re-enters the label, so the value
+/// that finally surfaces is the re-run's, exactly once per element.
+pub(super) fn emit_redo_wrapped_body_value(
+    loop_cx: &Ctx,
+    body: &[NodeId],
+    redo_label: &Lifetime,
+) -> TokenStream {
+    let body_val = super::stmt::emit_body(loop_cx, body, false);
+    quote! {
+        #redo_label: loop {
+            zeo_rt::check_ints()?;
+            break #redo_label { #body_val };
+        }
+    }
+}
+
 pub(super) fn emit_redo_wrapped_body(
     loop_cx: &Ctx,
     body: &[NodeId],
@@ -294,6 +314,16 @@ pub fn emit_break(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
 /// escaping past `Proc::call` itself.
 pub fn emit_next(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
     match &cx.loop_labels {
+        // A value-consuming splice's `next v`: v IS this iteration's value,
+        // so break the inner redo loop with it -- control lands on the
+        // splice's own collect step (see `emit_redo_wrapped_body_value`).
+        Some((redo, _)) if cx.next_yields_value => {
+            let value_expr = match value {
+                Some(v) => emit_expr(cx, v),
+                None => quote! { zeo_rt::RubyValue::Nil },
+            };
+            quote! { break #redo #value_expr }
+        }
         Some((_, outer)) => match value {
             None => quote! { continue #outer },
             Some(v) => {

@@ -735,6 +735,90 @@ fn collect_to_a(recv: &RubyValue) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Array(array_new(items)))
 }
 
+/// `Enumerable#sum`'s accumulator -- CRuby's numeric ladder minus the
+/// Rational leg: pure-Int accumulation, switching to Kahan-Babuska
+/// compensated f64 summation on the first Float (enum.c:4659-4710's
+/// algorithm), and to generic `+` dispatch on the first non-numeric
+/// (sticking there). Public because the fused inline `sum` loop
+/// (`codegen`'s typed-iterator splices) accumulates through the very same
+/// type -- one definition of the arithmetic.
+pub enum SumAcc {
+    Int(i64),
+    Float { sum: f64, compensation: f64 },
+    Generic(RubyValue),
+}
+
+impl SumAcc {
+    pub fn new(init: RubyValue) -> SumAcc {
+        match init {
+            RubyValue::Int(n) => SumAcc::Int(n),
+            RubyValue::Float(f) => SumAcc::Float {
+                sum: f,
+                compensation: 0.0,
+            },
+            other => SumAcc::Generic(other),
+        }
+    }
+    pub fn add(self, v: RubyValue) -> Result<SumAcc, Signal> {
+        Ok(match (self, v) {
+            (SumAcc::Int(a), RubyValue::Int(b)) => match a.checked_add(b) {
+                Some(n) => SumAcc::Int(n),
+                None => panic!(
+                    "integer overflow in Enumerable#sum (zeo limitation: no Bignum promotion here)"
+                ),
+            },
+            (SumAcc::Int(a), RubyValue::Float(b)) => SumAcc::Float {
+                sum: a as f64 + b,
+                compensation: 0.0,
+            },
+            (
+                SumAcc::Float { sum, compensation },
+                v @ (RubyValue::Int(_) | RubyValue::Float(_)),
+            ) => {
+                let x = match v {
+                    RubyValue::Int(i) => i as f64,
+                    RubyValue::Float(f) => f,
+                    _ => unreachable!(),
+                };
+                // Kahan-Babuska: t = sum + x, compensating with
+                // whichever operand lost precision.
+                let t = sum + x;
+                let compensation = if sum.abs() >= x.abs() {
+                    compensation + ((sum - t) + x)
+                } else {
+                    compensation + ((x - t) + sum)
+                };
+                SumAcc::Float {
+                    sum: t,
+                    compensation,
+                }
+            }
+            (SumAcc::Int(a), other) => SumAcc::Generic(send_value(
+                &RubyValue::Int(a),
+                Symbol::intern("+"),
+                &[other],
+                None,
+            )?),
+            (SumAcc::Float { sum, compensation }, other) => SumAcc::Generic(send_value(
+                &RubyValue::Float(sum + compensation),
+                Symbol::intern("+"),
+                &[other],
+                None,
+            )?),
+            (SumAcc::Generic(a), other) => {
+                SumAcc::Generic(send_value(&a, Symbol::intern("+"), &[other], None)?)
+            }
+        })
+    }
+    pub fn finish(self) -> RubyValue {
+        match self {
+            SumAcc::Int(n) => RubyValue::Int(n),
+            SumAcc::Float { sum, compensation } => RubyValue::Float(sum + compensation),
+            SumAcc::Generic(v) => v,
+        }
+    }
+}
+
 ruby_module! {
     Enumerable = zeo_abi::ENUMERABLE_CLASS;
 
@@ -1005,84 +1089,12 @@ ruby_module! {
     // (sticking there). The optional block is applied to the PACKED element
     // (single argument -- `rb_yield(i)`, enum.c:4712-4746).
     def "sum"(recv, args, block) {
-        enum Acc {
-            Int(i64),
-            Float { sum: f64, compensation: f64 },
-            Generic(RubyValue),
-        }
-        impl Acc {
-            fn add(self, v: RubyValue) -> Result<Acc, Signal> {
-                Ok(match (self, v) {
-                    (Acc::Int(a), RubyValue::Int(b)) => match a.checked_add(b) {
-                        Some(n) => Acc::Int(n),
-                        None => panic!(
-                            "integer overflow in Enumerable#sum (zeo limitation: no Bignum promotion here)"
-                        ),
-                    },
-                    (Acc::Int(a), RubyValue::Float(b)) => Acc::Float {
-                        sum: a as f64 + b,
-                        compensation: 0.0,
-                    },
-                    (
-                        Acc::Float { sum, compensation },
-                        v @ (RubyValue::Int(_) | RubyValue::Float(_)),
-                    ) => {
-                        let x = match v {
-                            RubyValue::Int(i) => i as f64,
-                            RubyValue::Float(f) => f,
-                            _ => unreachable!(),
-                        };
-                        // Kahan-Babuska: t = sum + x, compensating with
-                        // whichever operand lost precision.
-                        let t = sum + x;
-                        let compensation = if sum.abs() >= x.abs() {
-                            compensation + ((sum - t) + x)
-                        } else {
-                            compensation + ((x - t) + sum)
-                        };
-                        Acc::Float {
-                            sum: t,
-                            compensation,
-                        }
-                    }
-                    (Acc::Int(a), other) => Acc::Generic(send_value(
-                        &RubyValue::Int(a),
-                        Symbol::intern("+"),
-                        &[other],
-                        None,
-                    )?),
-                    (Acc::Float { sum, compensation }, other) => Acc::Generic(send_value(
-                        &RubyValue::Float(sum + compensation),
-                        Symbol::intern("+"),
-                        &[other],
-                        None,
-                    )?),
-                    (Acc::Generic(a), other) => {
-                        Acc::Generic(send_value(&a, Symbol::intern("+"), &[other], None)?)
-                    }
-                })
-            }
-            fn finish(self) -> RubyValue {
-                match self {
-                    Acc::Int(n) => RubyValue::Int(n),
-                    Acc::Float { sum, compensation } => RubyValue::Float(sum + compensation),
-                    Acc::Generic(v) => v,
-                }
-            }
-        }
         let init = match args.len() {
             0 => RubyValue::Int(0),
             1 => args[0].clone(),
             _ => panic!("Enumerable#sum takes at most one argument"),
         };
-        let acc = Arc::new(Mutex::new(Some(match init {
-            RubyValue::Int(n) => Acc::Int(n),
-            RubyValue::Float(f) => Acc::Float {
-                sum: f,
-                compensation: 0.0,
-            },
-            other => Acc::Generic(other),
-        })));
+        let acc = Arc::new(Mutex::new(Some(SumAcc::new(init))));
         let blk = match block {
             Some(RubyValue::Proc(p)) => Some(p),
             _ => None,

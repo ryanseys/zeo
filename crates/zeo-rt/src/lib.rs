@@ -134,6 +134,7 @@ pub use runtime_meta::{
     runtime_define_singleton_method, send_super_dynamic,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push};
+pub use builtins::enumerable::SumAcc;
 pub use pools::{LitPool, SymPool};
 pub use symbol::Symbol;
 pub use thread::{

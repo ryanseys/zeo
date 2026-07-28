@@ -170,6 +170,7 @@ mod tests {
                 local_types: Cow::Borrowed(&self.empty_locals),
                 label_counter: &self.labels,
                 loop_labels: None,
+                next_yields_value: false,
                 for_var_override: None,
                 captured_locals: Cow::Borrowed(&self.empty_captures),
                 self_ident: self.self_ident.clone(),

@@ -268,27 +268,50 @@ fn emit_counted_block_splice(
         }
     }
 }
+/// How an inlined Array-iterator splice CONSUMES each iteration.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrayIterMode {
+    /// `each`/`each_with_index`: body value discarded; evaluates to the
+    /// receiver handle.
+    Each { with_index: bool },
+    /// `map`: block values collect into the result array.
+    Map,
+    /// `select` (`keep: true`) / `reject`: the block value is the predicate,
+    /// the ORIGINAL element is what collects -- a param reassignment inside
+    /// the body must not change what lands in the result (CRuby).
+    Filter { keep: bool },
+    /// `sum` (block form): block values accumulate through `zeo_rt::SumAcc`,
+    /// the runtime `sum`'s own numeric ladder.
+    Sum,
+}
+
 /// `emit_counted_block_splice`'s Array twin: iterate a LIVE view of the
 /// receiver array -- lock per element, never across the body, the runtime
-/// `Array#each` rule -- binding the block's first param from the fetched
-/// element (and, for `each_with_index`, the second from the index).
-/// Evaluates to the receiver handle; `break v` overrides as usual. Expects
-/// the receiver bound as `__iter_arr` by the caller's match arm.
-fn emit_array_each_splice(
+/// `Array#each` rule (Enumerable's `map`/`select`/`sum` drive `each`, so
+/// they share it) -- binding the block's first param from the fetched
+/// element (and, for `each_with_index`, the second from the index). The
+/// value-consuming modes wrap the body in the VALUE redo loop and set
+/// `next_yields_value`, so `next v` surfaces `v` as that iteration's value
+/// (see `loops::emit_redo_wrapped_body_value`); `break v` overrides the
+/// whole splice's value as usual. Expects the receiver bound as
+/// `__iter_arr` by the caller's match arm.
+fn emit_array_iter_splice(
     cx: &Ctx,
     block_id: NodeId,
-    with_index: bool,
+    mode: ArrayIterMode,
     label_stem: &str,
 ) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
         panic!("the inline splice's argument must be a block");
     };
+    let with_index = mode == ArrayIterMode::Each { with_index: true };
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
     let nested_captured: std::collections::HashSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    loop_cx.next_yields_value = !matches!(mode, ArrayIterMode::Each { .. });
     if !nested_captured.is_empty() {
         loop_cx
             .captured_locals
@@ -365,26 +388,178 @@ fn emit_array_each_splice(
             super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
         });
     let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
-    let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
+    // The per-mode pieces: accumulator setup, the exhaustion value, an
+    // element keep-alive for the filter modes (the RESULT collects the
+    // pristine element even if the body reassigns its param), and the
+    // body-value consumer. `Each` discards the body value and answers the
+    // receiver; everything else runs the body in VALUE mode.
+    let setup = match mode {
+        ArrayIterMode::Each { .. } => quote! {},
+        ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
+            quote! { let mut __iter_out: Vec<zeo_rt::RubyValue> = Vec::new(); }
+        }
+        ArrayIterMode::Sum => {
+            quote! { let mut __iter_acc = zeo_rt::SumAcc::new(zeo_rt::RubyValue::Int(0)); }
+        }
+    };
+    let result = match mode {
+        ArrayIterMode::Each { .. } => quote! { zeo_rt::RubyValue::Array(__iter_arr.clone()) },
+        ArrayIterMode::Map | ArrayIterMode::Filter { .. } => {
+            quote! { zeo_rt::RubyValue::Array(zeo_rt::array_new(__iter_out)) }
+        }
+        ArrayIterMode::Sum => quote! { __iter_acc.finish() },
+    };
+    let keep_orig = matches!(mode, ArrayIterMode::Filter { .. })
+        .then(|| quote! { let __iter_orig = __iter_e.clone(); });
+    let (inner, consume) = match mode {
+        ArrayIterMode::Each { .. } => {
+            (super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo), quote! {})
+        }
+        ArrayIterMode::Map => (
+            super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
+            quote! { __iter_out.push(__iter_y); },
+        ),
+        ArrayIterMode::Filter { keep } => (
+            super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
+            quote! { if __iter_y.truthy() == #keep { __iter_out.push(__iter_orig); } },
+        ),
+        ArrayIterMode::Sum => (
+            super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
+            quote! { __iter_acc = __iter_acc.add(__iter_y)?; },
+        ),
+    };
+    let inner = if matches!(mode, ArrayIterMode::Each { .. }) {
+        inner
+    } else {
+        quote! { let __iter_y = #inner; #consume }
+    };
     quote! {
         {
             let mut __iter_i: usize = 0;
+            #setup
             #outer: loop {
                 #[allow(unused_variables)]
                 let __iter_e = {
                     let __g = __iter_arr.lock();
                     match __g.get(__iter_i) {
                         Some(__v) => __v.clone(),
-                        None => break #outer zeo_rt::RubyValue::Array(__iter_arr.clone()),
+                        None => break #outer #result,
                     }
                 };
+                #keep_orig
                 #bind_elem
                 #bind_idx
                 #(#block_locals)*
                 #implicit_resets
-                // Advance BEFORE the body so `next` (a `continue #outer`)
-                // still steps; `redo` re-enters the inner label with the
-                // same bound element.
+                // Advance BEFORE the body so `next` (in value mode: the
+                // inner break) still steps; `redo` re-enters the inner
+                // label with the same bound element.
+                __iter_i += 1;
+                #inner
+            }
+        }
+    }
+}
+
+/// The Hash twin: walk the same pairs SNAPSHOT the runtime `Hash#each`
+/// takes (one lock acquisition, then lock-free iteration -- the block may
+/// mutate the receiver), binding the block's params per CRuby's tuple rule:
+/// `|k, v|` auto-splats the pair, a single param receives it whole as a
+/// two-element Array. Evaluates to the receiver handle, and holds the same
+/// synthetic `Hash#each` C-frame the runtime method shows in a
+/// block-raised backtrace. Expects the receiver bound as `__iter_h` by the
+/// caller's match arm.
+fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenStream {
+    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+        panic!("the inline splice's argument must be a block");
+    };
+    let outer = super::loops::fresh_label(cx, label_stem);
+    let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
+    let nested_captured: std::collections::HashSet<String> =
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+            .locals;
+    let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    if !nested_captured.is_empty() {
+        loop_cx
+            .captured_locals
+            .to_mut()
+            .extend(nested_captured.iter().cloned());
+    }
+    for p in &params.required {
+        loop_cx.local_types.to_mut().remove(p);
+    }
+    for name in &params.block_locals {
+        loop_cx.local_types.to_mut().remove(name);
+    }
+    let cell_wrap = |ident: &proc_macro2::Ident| {
+        quote! {
+            let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+        }
+    };
+    let bind_one = |p: &String, value: TokenStream| {
+        let ident = safe_ident(p);
+        let plain = quote! { #[allow(unused_mut)] let mut #ident = #value; };
+        if nested_captured.contains(p) {
+            let wrap = cell_wrap(&ident);
+            quote! { #plain #wrap }
+        } else {
+            plain
+        }
+    };
+    let binds = match params.required.len() {
+        0 => quote! {},
+        // One param takes the pair WHOLE (the runtime's `yield_tuple` rule).
+        1 => bind_one(
+            &params.required[0],
+            quote! {
+                zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![__iter_k, __iter_v]))
+            },
+        ),
+        _ => {
+            let k = bind_one(&params.required[0], quote! { __iter_k });
+            let v = bind_one(&params.required[1], quote! { __iter_v });
+            quote! { #k #v }
+        }
+    };
+    let block_locals = params.block_locals.iter().map(|name| {
+        let ident = safe_ident(name);
+        if nested_captured.contains(name) {
+            quote! {
+                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil));
+            }
+        } else {
+            quote! {
+                #[allow(unused_variables, unused_mut)]
+                let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Nil;
+            }
+        }
+    });
+    let implicit_resets = params
+        .implicit_block_locals
+        .iter()
+        .filter(|name| !nested_captured.contains(*name))
+        .map(|name| {
+            // Storage-aware: see the counted splice's identical note.
+            super::hoisting::emit_local_write(&loop_cx, name, quote! { zeo_rt::RubyValue::Nil })
+        });
+    let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
+    let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
+    quote! {
+        {
+            let __iter_frame = zeo_rt::synthetic_c_frame("Hash#each");
+            let __iter_pairs = zeo_rt::hash_pairs_snapshot(&__iter_h);
+            let mut __iter_i: usize = 0;
+            #outer: loop {
+                if __iter_i >= __iter_pairs.len() {
+                    break #outer zeo_rt::RubyValue::Hash(__iter_h.clone());
+                }
+                #[allow(unused_variables)]
+                let (__iter_k, __iter_v) = __iter_pairs[__iter_i].clone();
+                #binds
+                #(#block_locals)*
+                #implicit_resets
                 __iter_i += 1;
                 #inner
             }
@@ -534,21 +709,31 @@ fn emit_typed_iter_inline(
                 }
             }
         }
-        K::ArrayEach | K::ArrayEachWithIndex => {
-            let splice = emit_array_each_splice(
-                cx,
-                block_id,
-                kind == K::ArrayEachWithIndex,
-                if kind == K::ArrayEachWithIndex {
-                    "each_with_index"
-                } else {
-                    "each"
-                },
-            );
+        K::ArrayEach | K::ArrayEachWithIndex | K::ArrayMap | K::ArraySelect | K::ArrayReject
+        | K::ArraySum => {
+            let mode = match kind {
+                K::ArrayEach => ArrayIterMode::Each { with_index: false },
+                K::ArrayEachWithIndex => ArrayIterMode::Each { with_index: true },
+                K::ArrayMap => ArrayIterMode::Map,
+                K::ArraySelect => ArrayIterMode::Filter { keep: true },
+                K::ArrayReject => ArrayIterMode::Filter { keep: false },
+                _ => ArrayIterMode::Sum,
+            };
+            let splice = emit_array_iter_splice(cx, block_id, mode, name);
             let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
                     zeo_rt::RubyValue::Array(__iter_arr) if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    __iter_other => #fallback,
+                }
+            }
+        }
+        K::HashEach => {
+            let splice = emit_hash_each_splice(cx, block_id, name);
+            let fallback = fallback(quote! { &[] });
+            quote! {
+                match #recv {
+                    zeo_rt::RubyValue::Hash(__iter_h) if zeo_rt::iter_inline_ok(#__bx) => #splice,
                     __iter_other => #fallback,
                 }
             }

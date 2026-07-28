@@ -108,6 +108,14 @@ struct Ctx<'a> {
     /// `codegen::loops`) always target the NEAREST one: Ruby has no labeled
     /// break, so a loop's own body simply shadows this field for itself.
     loop_labels: Option<(Lifetime, Lifetime)>,
+    /// Whether this position's `next` must SURFACE its value: true only
+    /// inside a VALUE-consuming spliced iterator block (`map`/`select`/
+    /// `sum`/...), whose inner redo loop evaluates to the iteration's value
+    /// -- `next v` then breaks that inner loop with `v` instead of
+    /// continuing the outer label (see `loops::emit_next` and
+    /// `call`'s `emit_array_iter_value_splice`). `in_loop` resets it: a
+    /// plain loop nested inside the block owns its own `next` again.
+    next_yields_value: bool,
     /// A `for`-loop's own index variable's statically-known element type,
     /// active only while emitting THAT loop's body -- overrides whatever
     /// `local_types` (a single flat map covering the WHOLE enclosing scope,
@@ -225,6 +233,7 @@ impl<'a> Ctx<'a> {
     fn in_loop(&self, redo: Lifetime, outer: Lifetime) -> Ctx<'a> {
         Ctx {
             loop_labels: Some((redo, outer)),
+            next_yields_value: false,
             ..self.clone()
         }
     }
@@ -296,6 +305,7 @@ impl<'a> Ctx<'a> {
         }
         Ctx {
             loop_labels: None,
+            next_yields_value: false,
             for_var_override: None,
             self_ident: if needs_self_capture {
                 format_ident!("__self")
@@ -1528,6 +1538,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         local_types: std::borrow::Cow::Borrowed(&analyzed.main_local_types),
         label_counter: &main_label_counter,
         loop_labels: None,
+        next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&main_captures.locals),
         self_ident: format_ident!("self"),
@@ -1775,6 +1786,7 @@ pub(crate) fn emit_class_body_site(
         local_types: std::borrow::Cow::Borrowed(&no_locals),
         label_counter: &label_counter,
         loop_labels: None,
+        next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&captures.locals),
         self_ident: format_ident!("self"),
@@ -1931,6 +1943,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         local_types: std::borrow::Cow::Borrowed(&scope.local_types),
         label_counter: &label_counter,
         loop_labels: None,
+        next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&no_captures.locals),
         self_ident: format_ident!("self"),
@@ -2159,6 +2172,7 @@ fn emit_builtin_method_fn(
         local_types: std::borrow::Cow::Borrowed(&scope.local_types),
         label_counter: &label_counter,
         loop_labels: None,
+        next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
         self_ident: format_ident!("__self"),
@@ -2239,6 +2253,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             local_types: std::borrow::Cow::Borrowed(&scope.local_types),
             label_counter: &method_label_counter,
             loop_labels: None,
+            next_yields_value: false,
             for_var_override: None,
             captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
             self_ident: format_ident!("self"),

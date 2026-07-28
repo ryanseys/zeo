@@ -576,8 +576,7 @@ ruby_class! {
     def "transform_values" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "transform_values", args, block);
-        let pairs: Vec<(RubyValue, RubyValue)> =
-            recv_hash!(recv).lock().values().cloned().collect();
+        let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
             out.push((k, p.call(&[v])?));
@@ -597,8 +596,7 @@ ruby_class! {
         if mapping.is_none() && blk.is_none() {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys", args));
         }
-        let pairs: Vec<(RubyValue, RubyValue)> =
-            recv_hash!(recv).lock().values().cloned().collect();
+        let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
             out.push((map_transform_key(&mapping, &blk, k)?, v));
@@ -666,8 +664,7 @@ ruby_class! {
         // A block-raised exception shows a 'Hash#each' C-frame between the
         // block and the caller in CRuby's backtrace.
         let _frame = crate::frames::synthetic_c_frame("Hash#each");
-        let pairs: Vec<(RubyValue, RubyValue)> =
-            recv_hash!(recv).lock().values().cloned().collect();
+        let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
         for (k, v) in pairs {
             // CRuby yields the pair as ONE array, so `{ |pair| }` and a
             // forwarded 1-arg callable (`&method(:m)`) get it whole while

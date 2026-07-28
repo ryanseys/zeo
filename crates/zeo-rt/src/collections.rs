@@ -400,6 +400,14 @@ pub fn array_new(elems: Vec<RubyValue>) -> RArray {
     Arc::new(Freezable::new(elems))
 }
 
+/// The pairs snapshot `Hash#each` iterates -- cloned under ONE lock
+/// acquisition, so the block runs lock-free and may mutate the receiver
+/// (today's runtime rule). Public because the fused inline `each` loop
+/// walks the very same snapshot.
+pub fn hash_pairs_snapshot(h: &RHash) -> Vec<(RubyValue, RubyValue)> {
+    h.lock().values().cloned().collect()
+}
+
 /// Ruby's own `Array#[]`: negative indices count from the end, and an
 /// out-of-range index returns `nil` rather than raising/panicking.
 pub fn array_get(arr: &RArray, index: i64) -> RubyValue {

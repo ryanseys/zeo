@@ -396,6 +396,21 @@ pub enum InlineIterKind {
     ArrayEach,
     /// `arr.each_with_index { |e, i| }`, `arr` statically `Array`.
     ArrayEachWithIndex,
+    /// `arr.map { |e| }` / `collect`, `arr` statically `Array` -- the first
+    /// of the VALUE-consuming kinds, where each iteration's block value is
+    /// collected rather than discarded (see `Ctx::next_yields_value`).
+    ArrayMap,
+    /// `arr.select { |e| }` / `filter` / `find_all`, `arr` statically `Array`.
+    ArraySelect,
+    /// `arr.reject { |e| }`, `arr` statically `Array`.
+    ArrayReject,
+    /// `arr.sum { |e| }` (block form, no init argument), `arr` statically
+    /// `Array`; accumulates through `zeo_rt::SumAcc`, the runtime `sum`'s
+    /// own ladder.
+    ArraySum,
+    /// `h.each { |k, v| }` / `each_pair`, `h` statically `Hash`; walks the
+    /// same pairs snapshot the runtime `Hash#each` takes.
+    HashEach,
 }
 
 /// The compiler-internal hash policy: fast, not DoS-resistant -- these sets
