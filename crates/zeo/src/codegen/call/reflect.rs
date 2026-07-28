@@ -78,7 +78,14 @@ pub(super) fn try_const_reflection(
     {
         return None;
     }
-    let [arg] = args else { return None };
+    // Only the inheriting form folds -- this fold searches the ancestry. An
+    // explicit `false` falls through to `rmodule.rs`, which restricts to the
+    // receiver's own table.
+    let arg = match args {
+        [a] => a,
+        [a, inherit] if matches!(cx.compiler.hir[*inherit], HirNode::BoolLit(true)) => a,
+        _ => return None,
+    };
     let cname = literal_name_arg(cx, *arg)?;
 
     if !is_valid_const_name(&cname) {

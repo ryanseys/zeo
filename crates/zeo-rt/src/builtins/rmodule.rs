@@ -61,6 +61,30 @@ fn method_defined_with_vis(
     Ok(vis == Some(want))
 }
 
+/// A Symbol-or-String constant name; TypeError on anything else.
+fn const_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(s.name()),
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            other.inspect_string()
+        )),
+    }
+}
+
+/// `cid`'s own constant table first, then its ancestry when `inherit`. Shared
+/// by `const_get` and `const_defined?` so the two can't disagree.
+fn const_lookup(cid: crate::ClassId, name: &str, inherit: bool) -> Option<RubyValue> {
+    crate::constants::const_get(cid.0, name).or_else(|| {
+        inherit.then(|| {
+            crate::dispatch::ancestors_of_value(cid)
+                .iter()
+                .find_map(|anc| crate::constants::const_get(anc.0, name))
+        })?
+    })
+}
+
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
 fn inherit_flag(args: &[RubyValue]) -> bool {
@@ -163,23 +187,26 @@ ruby_class! {
     def "public_constant" (recv, args, _block) {
         constant_visibility_no_op(recv, args)
     }
-    // `Module#const_get(name)` -- resolve a constant on this module (walking the
-    // ancestry), a NameError "uninitialized constant <name>" on a miss.
     def "const_get" (recv, args, _block) {
         arity!(args, 1..=2);
-        let cid = recv_cid(recv);
-        let name = match &args[0] {
-            RubyValue::Symbol(s) => s.name(),
-            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => {
-                return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
-            }
-        };
-        crate::constants::const_get(cid.0, &name)
-            .or_else(|| crate::dispatch::ancestors_of_value(cid)
-                .iter()
-                .find_map(|anc| crate::constants::const_get(anc.0, &name)))
+        let name = const_name_arg(&args[0])?;
+        const_lookup(recv_cid(recv), &name, inherit_flag(&args[1..]))
             .ok_or_else(|| name_error!("uninitialized constant {name}"))
+    }
+    def "const_defined?" (recv, args, _block) {
+        arity!(args, 1..=2);
+        let name = const_name_arg(&args[0])?;
+        let found = const_lookup(recv_cid(recv), &name, inherit_flag(&args[1..])).is_some();
+        Ok(RubyValue::Bool(found))
+    }
+    // Returns the removed value; NameError when the constant isn't this
+    // module's own (an inherited one doesn't count).
+    def "remove_const" (recv, args, _block) {
+        arity!(args, 1);
+        let cid = recv_cid(recv);
+        let name = const_name_arg(&args[0])?;
+        crate::constants::const_remove(cid.0, &name)
+            .ok_or_else(|| name_error!("constant {name} not defined"))
     }
     def "constants" (recv, args, _block) {
         arity!(args, 0..=1);

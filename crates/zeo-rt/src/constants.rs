@@ -75,6 +75,14 @@ pub fn const_names_of(owner_class_id: u32) -> Vec<String> {
         .collect()
 }
 
+/// Drops `owner`'s OWN binding for `name`, returning it. An inherited
+/// constant is left alone -- `Module#remove_const` only removes its own.
+pub fn const_remove(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    CONSTANTS
+        .lock()
+        .remove(&(owner_class_id, name.to_string()))
+}
+
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
     // Naming an anonymous runtime class (`Foo = Class.new`): the FIRST
     // constant it's bound to becomes its name, matching CRuby -- so `Foo.name`
