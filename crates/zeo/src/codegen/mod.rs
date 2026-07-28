@@ -1275,15 +1275,28 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         });
     }
 
-    // Builtin-alias rows exist -> validate them at startup, inside the
-    // fallible closure (`NameError` for a source that resolves nowhere --
-    // real Ruby's timing, the class body executing). Omitted entirely for
-    // the common aliasless program, whose generated source stays unchanged.
-    let validate_aliases = compiler
+    // Builtin-alias rows exist -> validate them (`NameError` for a source that
+    // resolves nowhere). A class with a BODY SITE validates there instead, at
+    // the position its `alias_method` was written -- CRuby's own timing, and
+    // the only one that sees a source the body itself defines. What is left
+    // here is the classes with no body of their own to run. Omitted entirely
+    // for the common aliasless program, whose generated source is unchanged.
+    let unbodied: Vec<u32> = compiler
         .classes
         .iter()
-        .any(|c| !c.builtin_aliases.is_empty())
-        .then(|| quote! { zeo_rt::validate_aliases()?; });
+        .enumerate()
+        .filter(|(i, c)| {
+            !c.builtin_aliases.is_empty()
+                && !compiler
+                    .class_body_sites
+                    .iter()
+                    .any(|s| s.class.0 as usize == *i)
+        })
+        .map(|(i, _)| i as u32)
+        .collect();
+    let validate_aliases = (!unbodied.is_empty()).then(|| {
+        quote! { #(zeo_rt::validate_class_aliases(zeo_rt::ClassId(#unbodied))?;)* }
+    });
 
     let main_label_counter = Cell::new(0u32);
     // Top-level implicit-self calls dispatch on the global `main_object()`
@@ -1463,11 +1476,20 @@ pub(crate) fn emit_class_body_site(
     compiler: &Compiler,
     site: &crate::compiler::ClassBodySite,
 ) -> TokenStream {
+    let cid = site.class;
+    // `alias_method`'s source is checked as THIS body runs -- CRuby's timing,
+    // and the only one that sees a source the body itself defines (bundler's
+    // `Runtime` does `definition_method :specs`, a `define_method` wrapper,
+    // and then `alias_method :gems, :specs`). Emitted even for an otherwise
+    // empty body, which is what an alias-only class has.
+    let alias_check = (!compiler.class(cid).builtin_aliases.is_empty()).then(|| {
+        let id = cid.0;
+        quote! { zeo_rt::validate_class_aliases(zeo_rt::ClassId(#id))?; }
+    });
     let stmts = &site.stmts;
     if stmts.is_empty() {
-        return quote! {};
+        return quote! { #alias_check };
     }
-    let cid = site.class;
     let label_counter = Cell::new(0u32);
     // A class body is an ordinary Ruby scope with ordinary locals, and an
     // escaping block written in it closes over them exactly as one written at
@@ -1533,7 +1555,7 @@ pub(crate) fn emit_class_body_site(
         }
         None => quote! {},
     };
-    quote! { { #frame #body }?; }
+    quote! { { #frame #body }?; #alias_check }
 }
 
 /// The `ClassDef` markers whose sites execute INLINE, in document order:

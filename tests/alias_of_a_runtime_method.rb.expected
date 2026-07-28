@@ -1,0 +1,11 @@
+"answering specs"
+"answering specs"
+"answering requires"
+[:gems, :requires, :specs]
+true
+"answering specs"
+"HI"
+"hi"
+[:hello, :shout, :yell]
+:first
+NameError

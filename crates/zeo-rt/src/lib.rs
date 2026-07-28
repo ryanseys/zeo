@@ -79,7 +79,7 @@ pub use dispatch::{
     responds_to_or_missing, responds_to_value, run_initialize, send, send_in,
     define_in_default_definee, send_dispatch_in, send_super_class_from, send_super_from, send_value,
     send_value_in,
-    send_value_public_in, send_value_vcall_in, stamp_backtrace, validate_aliases, value_class,
+    send_value_public_in, send_value_vcall_in, stamp_backtrace, validate_aliases, validate_class_aliases, value_class,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value};

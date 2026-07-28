@@ -860,6 +860,16 @@ impl ClassRegistry {
     /// registration. Pure data here; `validate_aliases` (run at program
     /// start, inside the fallible closure) is what raises `NameError` for a
     /// source that resolves nowhere.
+    /// The NEW names `id`'s own builtin-alias rows define -- what reflection
+    /// has to list, since an alias is a name indirection here rather than a
+    /// copied method entry. Empty for an unregistered or aliasless id.
+    fn alias_names(&self, id: ClassId) -> Vec<Symbol> {
+        self.entries
+            .get(&id.0)
+            .map(|e| e.aliases.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
     pub fn register_alias(&mut self, id: ClassId, new: &str, old: &str) {
         self.entries
             .get_mut(&id.0)
@@ -1768,6 +1778,19 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
                 let sym = Symbol::intern(n);
                 if seen.insert(sym) {
                     out.push(sym);
+                }
+            }
+        }
+        // A builtin alias is stored as a NAME INDIRECTION rather than a copied
+        // entry (see `ClassInfo::builtin_aliases`), so nothing above lists it --
+        // but `alias_method :gems, :specs` defines `gems` as far as Ruby is
+        // concerned, and reflection has to say so. Aliases are public.
+        if filter.matches(MethodVisibility::Public) {
+            if let Some(r) = reg {
+                for new in r.alias_names(anc) {
+                    if seen.insert(new) {
+                        out.push(new);
+                    }
                 }
             }
         }
@@ -2904,31 +2927,47 @@ pub fn validate_aliases() -> Result<(), Signal> {
     let mut ids: Vec<u32> = r.entries.keys().copied().collect();
     ids.sort_unstable();
     for id in ids {
-        let entry = &r.entries[&id];
-        if entry.aliases.is_empty() {
+        validate_class_aliases(ClassId(id))?;
+    }
+    Ok(())
+}
+
+/// One class's builtin-alias sources, checked where CRuby checks them: as that
+/// class's BODY runs. A source can be created by the body itself -- bundler's
+/// `Runtime` does `definition_method :specs` (a `define_method` wrapper) and
+/// then `alias_method :gems, :specs` -- so a single sweep before any body has
+/// run answers "undefined" for a method that is about to exist.
+pub fn validate_class_aliases(id: ClassId) -> Result<(), Signal> {
+    let Some(r) = REGISTRY.get() else {
+        return Ok(());
+    };
+    let Some(entry) = r.entries.get(&id.0) else {
+        return Ok(());
+    };
+    if entry.aliases.is_empty() {
+        return Ok(());
+    }
+    let mut olds: Vec<Symbol> = entry.aliases.values().copied().collect();
+    olds.sort_by_key(|s| s.name());
+    olds.dedup();
+    for old in olds {
+        let n = old.name();
+        let n = n.as_str();
+        if PARSE_SPECIAL_KERNEL.contains(&n) {
             continue;
         }
-        let mut olds: Vec<Symbol> = entry.aliases.values().copied().collect();
-        olds.sort_by_key(|s| s.name());
-        olds.dedup();
-        for old in olds {
-            let n = old.name();
-            let n = n.as_str();
-            if PARSE_SPECIAL_KERNEL.contains(&n) {
-                continue;
-            }
-            let resolves = ancestors_of_value(ClassId(id)).iter().any(|&anc| {
-                r.lookup(anc, old).is_some()
-                    || r.lookup_value_method(anc, 0, old).is_some()
-                    || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
-            });
-            if !resolves {
-                let kind = if entry.is_module { "module" } else { "class" };
-                return Err(crate::builtins::name_error!(
-                    "undefined method '{n}' for {kind} '{}'",
-                    entry.name
-                ));
-            }
+        let resolves = ancestors_of_value(id).iter().any(|&anc| {
+            r.lookup(anc, old).is_some()
+                || r.lookup_value_method(anc, 0, old).is_some()
+                || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
+                || crate::runtime_meta::overlay_own_method(anc, old).is_some()
+        });
+        if !resolves {
+            let kind = if entry.is_module { "module" } else { "class" };
+            return Err(crate::builtins::name_error!(
+                "undefined method '{n}' for {kind} '{}'",
+                entry.name
+            ));
         }
     }
     Ok(())
