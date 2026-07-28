@@ -1373,7 +1373,7 @@ pub fn responds_to_or_missing(
     if responds_to_value(recv, name, include_all) {
         return Ok(true);
     }
-    let rtm = Symbol::intern("respond_to_missing?");
+    let rtm = crate::symbol::wk::respond_to_missing();
     let args = [RubyValue::Symbol(name), RubyValue::Bool(include_all)];
     let id = recv.class_id();
     if let RubyValue::Object(o) = recv {
@@ -1408,7 +1408,7 @@ pub(crate) fn obj_dig(cur: RubyValue, rest: &[RubyValue]) -> Result<RubyValue, S
     if cur.is_nil() {
         return Ok(RubyValue::Nil);
     }
-    let dig = Symbol::intern("dig");
+    let dig = crate::symbol::wk::dig();
     if !responds_to_value(&cur, dig, false) {
         return Err(type_error!(
             "{} does not have #dig method",
@@ -2243,7 +2243,7 @@ pub fn send_dispatch_in(
         return Err(crate::builtins::arg_error!("no method name given"));
     };
     let target = method_name_symbol(target)?;
-    if send_name == Symbol::intern("public_send") {
+    if send_name == crate::symbol::wk::public_send() {
         send_value_public_in(box_id, recv, target, rest, block)
     } else {
         send_value_in(box_id, recv, target, rest, block)
@@ -2439,7 +2439,7 @@ pub fn run_initialize(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<(), Signal> {
-    if let Some(f) = registry().lookup_mro(class, Symbol::intern("initialize")) {
+    if let Some(f) = registry().lookup_mro(class, crate::symbol::wk::initialize()) {
         f.call(recv, args, block)?;
         return Ok(());
     }
@@ -2482,9 +2482,38 @@ pub fn has_instance_method(id: ClassId, name: Symbol) -> bool {
     registry().lookup(id, name).is_some()
 }
 
+/// Class ids carrying a box-0 `to_s`/`inspect` builtin reopen, precomputed at
+/// install: `display_with`/`inspect_with` probe the registry per RENDERED
+/// VALUE to honor `class Integer; def to_s`-style overrides, and almost every
+/// program has none -- this set makes that probe a lock-free contains check.
+static DISPLAY_REOPENS: OnceLock<crate::FSet<u32>> = OnceLock::new();
+
+/// Whether `id` might carry a display-affecting reopen. `true` before the
+/// registry is installed (unit tests run registry-less), so the probe is
+/// never skipped when it could matter.
+pub(crate) fn has_display_reopen(id: ClassId) -> bool {
+    match DISPLAY_REOPENS.get() {
+        Some(set) => set.contains(&id.0),
+        None => true,
+    }
+}
+
 /// Called once from generated `main()`, after every class's `__register` has
 /// populated the registry passed in.
 pub fn install_class_registry(registry: ClassRegistry) {
+    let to_s = crate::symbol::wk::to_s();
+    let inspect = crate::symbol::wk::inspect();
+    let mut reopens = crate::FSet::default();
+    for (id, entry) in &registry.entries {
+        if entry
+            .value_methods
+            .keys()
+            .any(|&(b, s)| b == 0 && (s == to_s || s == inspect))
+        {
+            reopens.insert(*id);
+        }
+    }
+    let _ = DISPLAY_REOPENS.set(reopens);
     REGISTRY
         .set(registry)
         .unwrap_or_else(|_| panic!("class registry installed twice"));
@@ -2499,10 +2528,16 @@ thread_local! {
     static CURRENT_METHOD: std::cell::Cell<Option<Symbol>> = const { std::cell::Cell::new(None) };
 }
 
-/// Record the method being dispatched (for `ZEO_ARITY_DEBUG`). Cheap enough
-/// (a thread-local `Cell` set) to run unconditionally on every dispatch.
+/// Whether `ZEO_ARITY_DEBUG` is set -- read once, so `note_dispatch` costs a
+/// bool load per dispatch instead of an unconditional thread-local write.
+static ARITY_DEBUG: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var_os("ZEO_ARITY_DEBUG").is_some());
+
+/// Record the method being dispatched (for `ZEO_ARITY_DEBUG`).
 fn note_dispatch(name: Symbol) {
-    CURRENT_METHOD.with(|c| c.set(Some(name)));
+    if *ARITY_DEBUG {
+        CURRENT_METHOD.with(|c| c.set(Some(name)));
+    }
 }
 
 /// Under `ZEO_ARITY_DEBUG`, append ` [method: X]` to an arity error so the
@@ -2510,13 +2545,11 @@ fn note_dispatch(name: Symbol) {
 /// "wrong number of arguments" pile. A no-op (and no env lookup on the common
 /// path) unless the message is an arity error.
 fn arity_debug_context(msg: String) -> String {
-    if !msg.starts_with("wrong number of arguments")
-        || std::env::var_os("ZEO_ARITY_DEBUG").is_none()
-    {
+    if !msg.starts_with("wrong number of arguments") || !*ARITY_DEBUG {
         return msg;
     }
     match CURRENT_METHOD.with(|c| c.get()) {
-        Some(sym) => format!("{msg} [method: {}]", sym.name().as_str()),
+        Some(sym) => format!("{msg} [method: {}]", sym.name_str()),
         None => msg,
     }
 }
@@ -3058,8 +3091,7 @@ fn send_value_in_reason(
         }
     }
     note_dispatch(name);
-    let n = name.name();
-    let n = n.as_str();
+    let n = name.name_str();
     // CLASS/MODULE-level methods (`File.read`, `Time.now`, `Math.sqrt`):
     // this runtime has no singleton-method tables, so a class value gets its
     // own table probed ahead of the walk. The walk itself describes INSTANCE
@@ -3190,16 +3222,20 @@ fn send_in_reason(
     // `ENV.dup` must raise, not shallow-copy. The Hash-snapshot fallback for
     // ENV's read-only Enumerable surface stays AFTER the registry walk, so ENV
     // still inherits `object_id`/`equal?`/etc. from Object.
-    let boxed = RubyValue::Object(recv.clone());
-    let is_env = crate::builtins::env::is_env(&boxed);
+    //
+    // A pointer compare, and the boxed handle is built only past the
+    // `lookup_mro` hit below -- the ~100%-hit path pays neither an Arc bump
+    // nor a downcast.
+    let is_env = crate::builtins::env::is_env_obj(recv);
     if is_env {
-        if let Some(f) = crate::builtins::env::lookup(name.name().as_str()) {
-            return f(&boxed, args, block);
+        if let Some(f) = crate::builtins::env::lookup(name.name_str()) {
+            return f(&RubyValue::Object(recv.clone()), args, block);
         }
     }
     if let Some(f) = registry().lookup_mro(id, name) {
         return f.call(recv, args, block);
     }
+    let boxed = RubyValue::Object(recv.clone());
 
     if is_env {
         // ENV's read-only Hash/Enumerable surface (`count`, `min`, `value?`,
@@ -3216,8 +3252,7 @@ fn send_in_reason(
     // Enumerable/Comparable module tables all resolve as real ancestor
     // methods, so `method_missing` fires only AFTER them -- real Ruby finds
     // a real (module) method first, always.
-    let n = name.name();
-    let n = n.as_str();
+    let n = name.name_str();
     // Value-subclass payload bridge (D3): `class Stack < Array` carries a
     // `RubyValue::Array` payload; at its payload root the inherited builtin
     // method runs against that value, not the boxed object. `None` for every
@@ -3256,7 +3291,7 @@ fn send_in_reason(
     }
     // method_missing fallback, with `name` prepended to args (mirrors
     // CRuby's own protocol) -- AFTER every real method, per real Ruby.
-    let mm = Symbol::intern("method_missing");
+    let mm = crate::symbol::wk::method_missing();
     let mm_impl = crate::runtime_meta::is_live()
         .then(|| crate::runtime_meta::resolve_dynamic(recv, id, mm))
         .flatten()
@@ -3274,12 +3309,7 @@ fn send_in_reason(
     // Thread's `join`/`value` if uncaught there, and printed by the
     // top-level uncaught handler otherwise. Shares the one method-missing
     // raiser with every other failure mode.
-    Err(raise_method_missing(
-        &RubyValue::Object(recv.clone()),
-        &name.to_string(),
-        args,
-        reason,
-    ))
+    Err(raise_method_missing(&boxed, &name.to_string(), args, reason))
 }
 
 #[cfg(test)]

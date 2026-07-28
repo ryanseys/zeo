@@ -367,7 +367,7 @@ pub fn array_splat_into(out: &mut Vec<RubyValue>, value: &RubyValue) -> Result<(
         RubyValue::Array(a) => out.extend(a.lock().iter().cloned()),
         RubyValue::Nil => {}
         other => {
-            let to_a = crate::Symbol::intern("to_a");
+            let to_a = crate::symbol::wk::to_a();
             if crate::dispatch::responds_to(other.class_id(), to_a, false) {
                 let arr = crate::dispatch::send_value(other, to_a, &[], None)?;
                 match arr {
@@ -459,7 +459,7 @@ pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal
     match proc {
         Some(p) => crate::dispatch::send_value(
             &p,
-            crate::Symbol::intern("call"),
+            crate::symbol::wk::call(),
             &[RubyValue::Hash(h.clone()), key.clone()],
             None,
         ),

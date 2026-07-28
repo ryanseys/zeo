@@ -52,14 +52,17 @@ pub fn env_value() -> RubyValue {
     V.clone()
 }
 
-/// Whether `v` IS the ENV singleton -- how dispatch decides to consult
+/// Whether `o` IS the ENV singleton -- how dispatch decides to consult
 /// `lookup` (identity, since ENV shares `Object` with every other plain
-/// object; see the module docs).
-pub fn is_env(v: &RubyValue) -> bool {
-    match v {
-        RubyValue::Object(o) => o.as_any().downcast_ref::<REnv>().is_some(),
-        _ => false,
-    }
+/// object; see the module docs). A pointer compare against the singleton's
+/// data address, so the dispatch hot path pays neither a `TypeId` downcast
+/// nor a boxed `RubyValue`.
+pub fn is_env_obj(o: &crate::dispatch::RObj) -> bool {
+    static ADDR: LazyLock<usize> = LazyLock::new(|| match env_value() {
+        RubyValue::Object(o) => Arc::as_ptr(&o) as *const () as usize,
+        _ => 0,
+    });
+    Arc::as_ptr(o) as *const () as usize == *ADDR
 }
 
 pub fn seed_env() {
@@ -461,8 +464,12 @@ mod tests {
     fn env_is_an_object_not_a_hash() {
         let e = env_value();
         assert_eq!(e.class_id(), OBJECT_CLASS);
-        assert!(is_env(&e));
-        assert!(!is_env(&s("nope")));
+        let RubyValue::Object(o) = &e else {
+            panic!("ENV must be an Object");
+        };
+        assert!(is_env_obj(o));
+        let other: crate::dispatch::RObj = std::sync::Arc::new(crate::dispatch::Object::default());
+        assert!(!is_env_obj(&other));
     }
 
     #[test]

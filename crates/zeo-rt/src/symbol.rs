@@ -1,5 +1,5 @@
 //! A Ruby symbol: an interned integer id. Interning is pure runtime via a
-//! `HashMap` -- every literal and every runtime-computed symbol goes through
+//! map -- every literal and every runtime-computed symbol goes through
 //! the same `Symbol::intern`, so two occurrences of the same name always
 //! compare equal, however they were produced.
 //!
@@ -9,6 +9,11 @@
 //! could never guarantee (each thread would build its own independent
 //! table). Migrated to a `LazyLock<Mutex<_>>` static for this reason, not
 //! just as a mechanical `Rc`->`Arc` swap.
+//!
+//! Names are LEAKED, once per distinct symbol: Ruby symbols are immortal
+//! (never garbage collected), so the leak is the intended lifetime -- and it
+//! is what lets [`Symbol::name_str`] hand out allocation-free `&'static`
+//! names on the dispatch hot path instead of cloning a `String` per send.
 
 use crate::FMap;
 use parking_lot::Mutex;
@@ -19,8 +24,8 @@ pub struct Symbol(u32);
 
 #[derive(Default)]
 struct Interner {
-    names: Vec<String>,
-    by_name: FMap<String, u32>,
+    names: Vec<&'static str>,
+    by_name: FMap<&'static str, u32>,
 }
 
 static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(|| Mutex::new(Interner::default()));
@@ -32,9 +37,10 @@ impl Symbol {
         if let Some(&id) = i.by_name.get(name) {
             return Symbol(id);
         }
+        let name: &'static str = Box::leak(name.to_string().into_boxed_str());
         let id = i.names.len() as u32;
-        i.names.push(name.to_string());
-        i.by_name.insert(name.to_string(), id);
+        i.names.push(name);
+        i.by_name.insert(name, id);
         Symbol(id)
     }
 
@@ -44,13 +50,54 @@ impl Symbol {
         self.0
     }
 
+    /// The interned text, allocation-free -- what the dispatch path reads.
+    pub fn name_str(self) -> &'static str {
+        INTERNER.lock().names[self.0 as usize]
+    }
+
     pub fn name(&self) -> String {
-        INTERNER.lock().names[self.0 as usize].clone()
+        self.name_str().to_string()
     }
 }
 
 impl std::fmt::Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.name())
+        f.write_str(self.name_str())
+    }
+}
+
+/// Well-known symbols the runtime itself dispatches on (`to_s` per rendered
+/// value, `initialize` per construction, `===` per case arm, ...): interned
+/// once, then a lock-free copy -- replacing a global-mutex `Symbol::intern`
+/// round-trip per call at those sites.
+pub(crate) mod wk {
+    use super::Symbol;
+    use std::sync::OnceLock;
+
+    macro_rules! wk_symbols {
+        ($($name:ident => $text:literal),* $(,)?) => {
+            $(pub(crate) fn $name() -> Symbol {
+                static S: OnceLock<Symbol> = OnceLock::new();
+                *S.get_or_init(|| Symbol::intern($text))
+            })*
+        };
+    }
+
+    wk_symbols! {
+        backtrace => "backtrace",
+        call => "call",
+        case_eq => "===",
+        chomp => "chomp",
+        dig => "dig",
+        each => "each",
+        initialize => "initialize",
+        inspect => "inspect",
+        method_missing => "method_missing",
+        public_send => "public_send",
+        respond_to_missing => "respond_to_missing?",
+        to_a => "to_a",
+        to_ary => "to_ary",
+        to_s => "to_s",
+        write => "write",
     }
 }

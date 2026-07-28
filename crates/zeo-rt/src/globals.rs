@@ -103,7 +103,7 @@ fn special_get(special: Special) -> RubyValue {
     match special {
         Special::ErrorInfo => crate::current_exception().unwrap_or(RubyValue::Nil),
         Special::ErrorPosition => match crate::current_exception() {
-            Some(exc) => crate::dispatch::send_value(&exc, crate::Symbol::intern("backtrace"), &[], None)
+            Some(exc) => crate::dispatch::send_value(&exc, crate::symbol::wk::backtrace(), &[], None)
                 .unwrap_or(RubyValue::Nil),
             None => RubyValue::Nil,
         },

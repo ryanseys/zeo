@@ -1,0 +1,11 @@
+# bench/compile-baseline.tsv -- xtask compile-bench --update-baseline
+# name	frontend_ms	rust_lines	rust_bytes	rustc_ms	bin_bytes	warnings
+bm_fib	8	1417	64656	498	6954000	0
+bm_json_parse	10	1918	103615	946	7036800	3
+bm_micro_lisp	29	6091	374021	4180	7450128	11
+bm_template	10	2016	97286	571	6987040	3
+core_classes	15	4498	261644	1582	7070016	0
+gem_rubygems	60	16744	1055937	6364	7930672	32
+hello	7	1277	58463	739	6937440	0
+optparse_subset	16	3970	260675	1738	7186304	2
+uri_parse_and_build	300	86713	5758938	51762	13004560	67

@@ -265,7 +265,7 @@ pub fn write_str(target: &RubyValue, s: &str) -> Result<(), Signal> {
     }
     crate::dispatch::send_value(
         target,
-        crate::symbol::Symbol::intern("write"),
+        crate::symbol::wk::write(),
         &[RubyValue::Str(crate::collections::string_new(
             s.to_string(),
         ))],
@@ -285,7 +285,7 @@ pub fn write_bytes(target: &RubyValue, bytes: &[u8]) -> Result<(), Signal> {
     }
     crate::dispatch::send_value(
         target,
-        crate::symbol::Symbol::intern("write"),
+        crate::symbol::wk::write(),
         &[RubyValue::Str(crate::collections::string_from_bytes(
             bytes.to_vec(),
             crate::encoding::ASCII_8BIT,
@@ -315,7 +315,7 @@ pub fn write_value(target: &RubyValue, v: &RubyValue) -> Result<i64, Signal> {
         }
         crate::dispatch::send_value(
             target,
-            crate::symbol::Symbol::intern("write"),
+            crate::symbol::wk::write(),
             std::slice::from_ref(v),
             None,
         )?;
@@ -941,7 +941,7 @@ fn line_opts(args: &[RubyValue]) -> LineOpts {
     let mut chomp = false;
     let mut positional = args;
     if let Some(RubyValue::Hash(h)) = args.last() {
-        chomp = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp")))
+        chomp = crate::collections::hash_get(h, &RubyValue::Symbol(crate::symbol::wk::chomp()))
             .truthy();
         positional = &args[..args.len() - 1];
     }

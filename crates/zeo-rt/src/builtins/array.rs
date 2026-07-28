@@ -1649,7 +1649,7 @@ fn walk_permutations(
 /// exactly like CRuby's `rb_iter_break`, so an endless source terminates. A
 /// source with no `each` at all keeps the respond-to TypeError.
 fn take_items_via_each(src: &RubyValue, n: usize) -> Result<Vec<RubyValue>, crate::Signal> {
-    let each = crate::Symbol::intern("each");
+    let each = crate::symbol::wk::each();
     if !crate::dispatch::responds_to_value(src, each, false) {
         return Err(type_error!(
             "wrong argument type {} (must respond to :each)",
@@ -1736,7 +1736,7 @@ fn splice_elems(value: &RubyValue) -> Result<Vec<RubyValue>, crate::Signal> {
     if let RubyValue::Array(a) = value {
         return Ok(a.lock().clone());
     }
-    let to_ary = crate::Symbol::intern("to_ary");
+    let to_ary = crate::symbol::wk::to_ary();
     if crate::dispatch::responds_to(value.class_id(), to_ary, false) {
         match crate::dispatch::send_value(value, to_ary, &[], None)? {
             RubyValue::Array(a) => return Ok(a.lock().clone()),

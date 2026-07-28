@@ -251,9 +251,9 @@ impl RubyValue {
         // for an identity-shaped `to_s`). A RAISING override propagates --
         // `puts obj` with a raising `to_s` is a catchable exception in
         // Ruby, not a crash.
-        if !matches!(self, RubyValue::Object(_)) {
+        if !matches!(self, RubyValue::Object(_)) && crate::dispatch::has_display_reopen(self.class_id()) {
             if let Some(f) =
-                crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("to_s"))
+                crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::to_s())
             {
                 return match f(self, &[], None)? {
                     RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
@@ -428,9 +428,9 @@ impl RubyValue {
         // probe's position inside the recursive worker reproduces. Same
         // `Str`-payload shortcut as `display_with`'s probe; a raising
         // override propagates.
-        if !matches!(self, RubyValue::Object(_)) {
+        if !matches!(self, RubyValue::Object(_)) && crate::dispatch::has_display_reopen(self.class_id()) {
             if let Some(f) =
-                crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("inspect"))
+                crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::inspect())
             {
                 return match f(self, &[], None)? {
                     RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
@@ -1404,7 +1404,7 @@ pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::
         RubyValue::Object(_) | RubyValue::Class(_) => {
             let matched = crate::dispatch::send_value(
                 pattern,
-                crate::Symbol::intern("==="),
+                crate::symbol::wk::case_eq(),
                 std::slice::from_ref(subject),
                 None,
             )?;
