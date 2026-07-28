@@ -23,7 +23,7 @@ use super::{convert_name_of, type_error};
 use crate::dispatch::{responds_to_value, send_value};
 use crate::{ClassId, RubyValue, Signal, Symbol};
 
-/// The class behind a conversion target name -- the five types this protocol
+/// The class behind a conversion target name -- the types this protocol
 /// covers. `target` is the name used in the error messages, so the mapping is
 /// by that name.
 fn target_class(target: &str) -> Option<ClassId> {
@@ -33,6 +33,7 @@ fn target_class(target: &str) -> Option<ClassId> {
         "Array" => zeo_abi::ARRAY_CLASS,
         "Hash" => zeo_abi::HASH_CLASS,
         "Float" => zeo_abi::FLOAT_CLASS,
+        "Regexp" => zeo_abi::REGEXP_CLASS,
         _ => return None,
     })
 }
@@ -78,6 +79,26 @@ pub fn check_convert(v: &RubyValue, target: &str, meth: &str) -> Result<Option<R
     try_convert(v, target, meth)
 }
 
+/// The same probe as [`check_convert`], but the answer keeps the class it came
+/// with -- what the USER-facing `Klass.try_convert(obj)` hands back.
+///
+/// CRuby's `rb_check_convert_type` returns the very object it was given (its
+/// type check is on `T_STRING`/`T_ARRAY`/..., which a subclass instance
+/// satisfies), so `String.try_convert(Name.new("ada"))` is that `Name`, the
+/// same object. Every OTHER caller of this protocol is a builtin that wants
+/// the payload it can operate on, which is why [`check_convert`] unwraps and
+/// this doesn't.
+pub fn try_convert_value(
+    v: &RubyValue,
+    target: &str,
+    meth: &str,
+) -> Result<Option<RubyValue>, Signal> {
+    if is_already(v, target) {
+        return Ok(Some(v.clone()));
+    }
+    try_convert_raw(v, target, meth)
+}
+
 /// The builtin value behind a value SUBCLASS (`class FormData < String`).
 ///
 /// CRuby needs no such step -- a String subclass IS a String to every C
@@ -91,9 +112,16 @@ fn payload_of(v: RubyValue) -> RubyValue {
     }
 }
 
-/// The shared probe: call `meth` if the receiver's class answers it,
-/// type-checking a non-nil result. `Ok(None)` = no method / nil answer.
+/// The shared probe, unwrapped for a builtin caller. `Ok(None)` = no method /
+/// nil answer.
 fn try_convert(v: &RubyValue, target: &str, meth: &str) -> Result<Option<RubyValue>, Signal> {
+    Ok(try_convert_raw(v, target, meth)?.map(payload_of))
+}
+
+/// Call `meth` if the receiver's class answers it, type-checking a non-nil
+/// result and handing it back as it came -- a `to_str` answering a String
+/// SUBCLASS satisfies the check and stays that subclass.
+fn try_convert_raw(v: &RubyValue, target: &str, meth: &str) -> Result<Option<RubyValue>, Signal> {
     let sym = Symbol::intern(meth);
     if !responds_to_value(v, sym, true) {
         return Ok(None);
@@ -109,7 +137,7 @@ fn try_convert(v: &RubyValue, target: &str, meth: &str) -> Result<Option<RubyVal
             crate::builtins::class_name_of(&answer)
         ));
     }
-    Ok(Some(payload_of(answer)))
+    Ok(Some(answer))
 }
 
 /// `to_int` protocol, strict: the argument as an Integer value.
@@ -264,6 +292,25 @@ mod tests {
         assert!(matches!(to_index(&RubyValue::Int(7)).unwrap(), 7));
         let s = RubyValue::Str(string_new("x".into()));
         assert!(matches!(to_str(&s).unwrap(), RubyValue::Str(_)));
+    }
+
+    /// The identity door, on the paths that need no registry: an argument
+    /// already of the target type comes back untouched, `Regexp` included --
+    /// the target the table gained when `Regexp.try_convert` started honouring
+    /// `to_regexp`.
+    #[test]
+    fn try_convert_value_hands_back_an_already_target() {
+        let s = RubyValue::Str(string_new("x".into()));
+        let out = try_convert_value(&s, "String", "to_str").unwrap().unwrap();
+        assert!(
+            matches!((&s, &out), (RubyValue::Str(a), RubyValue::Str(b)) if std::sync::Arc::ptr_eq(a, b))
+        );
+
+        let re = RubyValue::Regexp(crate::regexp_new("ab+", false, false, false).unwrap());
+        let out = try_convert_value(&re, "Regexp", "to_regexp")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(out, RubyValue::Regexp(_)));
     }
 
     /// NUM2LONG's Float acceptance: truncation inside `[-2^63, 2^63)`.

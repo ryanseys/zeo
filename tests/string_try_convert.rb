@@ -7,15 +7,25 @@ s = "hello"
 p String.try_convert(s)
 p String.try_convert(s).equal?(s)
 
-# A subclass is already a String too.
+# A subclass is already a String too -- and `try_convert` hands back the very
+# object, so it comes out still wearing its own class.
 class Name < String; end
-p String.try_convert(Name.new("ada")).class
+sub = Name.new("ada")
+p String.try_convert(sub).class
+p String.try_convert(sub).equal?(sub)
 
 # Defines `to_str`: converted through it.
 class Path
   def to_str = "/tmp/x"
 end
 p String.try_convert(Path.new)
+
+# ...and a `to_str` that answers a String SUBCLASS satisfies the check without
+# being flattened to a plain String.
+class Quacker
+  def to_str = Name.new("quack")
+end
+p String.try_convert(Quacker.new).class
 
 # `to_s` alone is NOT the protocol -- only `to_str` is.
 class Labelled

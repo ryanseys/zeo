@@ -25,23 +25,10 @@ ruby_class! {
     // `Array.try_convert(obj)`: `obj` if it's already an Array, its `to_ary`
     // if it defines one (which must yield an Array or nil), else nil. Unlike
     // `Array(obj)` it never wraps or raises for a non-convertible value.
+    // Answers the object it was handed, so a `class L < Array` stays an `L`.
     def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
-        let v = &args[0];
-        if matches!(v, RubyValue::Array(_)) {
-            return Ok(v.clone());
-        }
-        let to_ary = crate::Symbol::intern("to_ary");
-        if crate::dispatch::responds_to(v.class_id(), to_ary, false) {
-            return match crate::dispatch::send_value(v, to_ary, &[], None)? {
-                r @ (RubyValue::Array(_) | RubyValue::Nil) => Ok(r),
-                other => Err(type_error!("can't convert {} to Array ({}#to_ary gives {})",
-                        crate::builtins::class_name_of(v),
-                        crate::builtins::class_name_of(v),
-                        crate::builtins::class_name_of(&other))),
-            };
-        }
-        Ok(RubyValue::Nil)
+        Ok(convert::try_convert_value(&args[0], "Array", "to_ary")?.unwrap_or(RubyValue::Nil))
     }
     def self."new"(_recv, args, block) {
         arity!(args, 0..=2);

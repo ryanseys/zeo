@@ -73,24 +73,11 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     // `Hash.try_convert(obj)`: `obj` if it's already a Hash, its `to_hash` if
-    // it defines one (which must yield a Hash or nil), else nil.
+    // it defines one (which must yield a Hash or nil), else nil. Answers the
+    // object it was handed, so a `class H < Hash` stays an `H`.
     def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
-        let v = &args[0];
-        if matches!(v, RubyValue::Hash(_)) {
-            return Ok(v.clone());
-        }
-        let to_hash = crate::Symbol::intern("to_hash");
-        if crate::dispatch::responds_to(v.class_id(), to_hash, false) {
-            return match crate::dispatch::send_value(v, to_hash, &[], None)? {
-                r @ (RubyValue::Hash(_) | RubyValue::Nil) => Ok(r),
-                other => Err(type_error!("can't convert {} to Hash ({}#to_hash gives {})",
-                        crate::builtins::class_name_of(v),
-                        crate::builtins::class_name_of(v),
-                        crate::builtins::class_name_of(&other))),
-            };
-        }
-        Ok(RubyValue::Nil)
+        Ok(convert::try_convert_value(&args[0], "Hash", "to_hash")?.unwrap_or(RubyValue::Nil))
     }
 
     def "[]" arity 1 (recv, args, _block) {

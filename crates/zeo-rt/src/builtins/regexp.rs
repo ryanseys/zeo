@@ -94,14 +94,13 @@ ruby_class! {
             .map_err(|e| regexp_error!("{e}"))
     }
 
-    // `Regexp.try_convert(obj)` -- `obj` if it is already a Regexp, else `nil`
-    // (never raises, unlike a coercion).
+    // `Regexp.try_convert(obj)` -- `obj` if it is already a Regexp, its
+    // `to_regexp` if it defines one, else `nil`. Only a present-and-lying
+    // `to_regexp` raises.
     def self."try_convert" arity 1 (_recv, args, _block) {
         arity!(args, 1);
-        Ok(match &args[0] {
-            RubyValue::Regexp(_) => args[0].clone(),
-            _ => RubyValue::Nil,
-        })
+        Ok(crate::builtins::convert::try_convert_value(&args[0], "Regexp", "to_regexp")?
+            .unwrap_or(RubyValue::Nil))
     }
 
     // `Regexp.linear_time?(re_or_str, flags = nil)` -- see the instance method.
