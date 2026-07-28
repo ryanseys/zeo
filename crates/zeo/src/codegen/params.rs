@@ -183,7 +183,12 @@ pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream 
     // evaluates, not at the end of the prologue. Required (and post) params
     // are bound by the Rust signature itself, so only their wraps emit,
     // first.
-    let mut pieces: Vec<TokenStream> = Vec::new();
+    // Ahead of every binding: the locals the defaults below themselves assign.
+    let mut pieces: Vec<TokenStream> = vec![super::hoisting::emit_param_default_decls(
+        cx,
+        &params.default_ids(),
+        &params.bound_names(),
+    )];
     for name in params.required.iter().chain(&params.post) {
         pieces.extend(wrap_if_captured(name));
     }

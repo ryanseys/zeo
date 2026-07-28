@@ -1132,12 +1132,7 @@ pub fn emit_call(
     }
 
     if safe {
-        if !kwargs.is_empty() {
-            panic!(
-                "keyword arguments on a safe-navigation (`&.`) call aren't supported yet (zeo limitation)"
-            );
-        }
-        return path2::emit_safe_call(cx, recv_id, name, args, block, block_arg);
+        return path2::emit_safe_call(cx, recv_id, name, args, kwargs, block, block_arg);
     }
 
     let recv_expr = emit_expr(cx, recv_id);

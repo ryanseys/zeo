@@ -102,6 +102,27 @@ pub fn compile_to_rust_with(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<CompileOutput, CompileError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("zeo-compile".into())
+            .stack_size(COMPILE_STACK_SIZE)
+            .spawn_scoped(scope, || compile_on_this_thread(source, opts))
+            .expect("spawning the compiler thread")
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })
+}
+
+/// Stack depth scales with source nesting depth, and `resolv` alone exceeds the
+/// ~2 MiB a spawned thread gets by default -- the CLI survived only because a
+/// main thread gets 8 MiB. Compiling on an explicitly-sized thread makes that
+/// headroom the compiler's property rather than the caller's.
+const COMPILE_STACK_SIZE: usize = 64 * 1024 * 1024;
+
+fn compile_on_this_thread(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<CompileOutput, CompileError> {
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),

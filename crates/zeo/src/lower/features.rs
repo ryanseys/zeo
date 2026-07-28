@@ -56,11 +56,13 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // compile-time frontend (`extend FFI::Library` / `attach_function`, the
     // `lower_class_body` FFI pre-scan) is orthogonal -- it emits `extern "C"` +
     // `#[link]` inline and never needs a constant. See [[ffi-real-gem-api]].
-    // `weakref` (WeakRef) and `objspace` (ObjectSpace::WeakMap /
-    // define_finalizer / count_objects) name always-on builtins here, so both
-    // requires are pure no-ops -- their classes resolve unconditionally.
+    // `weakref` (WeakRef), `objspace` (ObjectSpace::WeakMap /
+    // define_finalizer / count_objects) and `fiber` (Fiber) name always-on
+    // builtins here, so those requires are pure no-ops -- their classes resolve
+    // unconditionally. CRuby answers `false` for `require "fiber"` too, Fiber
+    // being core there as well.
     matches!(
         feature,
-        "tmpdir" | "set" | "time" | "io/console" | "io/wait" | "weakref" | "objspace"
+        "tmpdir" | "set" | "time" | "io/console" | "io/wait" | "weakref" | "objspace" | "fiber"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }

@@ -169,6 +169,20 @@ fn build_read_string(
 /// Whether a trailing keyword Hash carries `name: <truthy>`. Keywords reach
 /// a builtin as one trailing `RubyValue::Hash` (the G2 convention), so this
 /// is the shared reader for the option keywords the File rows accept.
+/// An option keyword's raw value from a trailing Hash, `None` when absent --
+/// the distinction `kwarg_truthy` collapses, and which a keyword defaulting to
+/// true (`autoclose:`) needs.
+fn kwarg(trailing: Option<&RubyValue>, name: &str) -> Option<RubyValue> {
+    let RubyValue::Hash(h) = trailing? else {
+        return None;
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern(name));
+    match crate::collections::hash_get(h, &key) {
+        RubyValue::Nil => None,
+        v => Some(v),
+    }
+}
+
 fn kwarg_truthy(trailing: Option<&RubyValue>, name: &str) -> bool {
     let Some(RubyValue::Hash(h)) = trailing else {
         return false;
@@ -177,6 +191,28 @@ fn kwarg_truthy(trailing: Option<&RubyValue>, name: &str) -> bool {
     // `hash_get` answers nil for a miss, which is falsy -- exactly the
     // "absent means off" rule these option keywords want.
     crate::collections::hash_get(h, &key).truthy()
+}
+
+/// `File.new(fd, ...)` -- CRuby's descriptor form. `path:` names the file the
+/// handle reports; `autoclose: false` adopts a `dup` instead, so closing this
+/// handle leaves the caller's descriptor open (`#fileno` then answers the copy,
+/// where CRuby shares the number).
+fn file_from_fd(fd: i64, opts: Option<&RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::FromRawFd;
+    // Absent means autoclose, so only an explicit falsy value takes the dup.
+    let raw = match kwarg(opts, "autoclose") {
+        Some(v) if !v.truthy() => {
+            let copy = unsafe { libc::dup(fd as libc::c_int) };
+            if copy < 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "dup", ""));
+            }
+            copy
+        }
+        _ => fd as libc::c_int,
+    };
+    // SAFETY: the caller vouches for the descriptor, as it does for `IO.new`.
+    let f = unsafe { std::fs::File::from_raw_fd(raw) };
+    Ok(crate::builtins::io::file_value(f, kwarg_str(opts, "path")))
 }
 
 /// The String value of an option keyword in a trailing Hash (`mode: "w"`),
@@ -544,6 +580,14 @@ ruby_class! {
     const LOCK_EX = RubyValue::Int(libc::LOCK_EX as i64);
     const LOCK_UN = RubyValue::Int(libc::LOCK_UN as i64);
     const LOCK_NB = RubyValue::Int(libc::LOCK_NB as i64);
+    const NOCTTY = RubyValue::Int(libc::O_NOCTTY as i64);
+    const NOFOLLOW = RubyValue::Int(libc::O_NOFOLLOW as i64);
+    const SYNC = RubyValue::Int(libc::O_SYNC as i64);
+    const DSYNC = RubyValue::Int(libc::O_DSYNC as i64);
+    // Windows-only flags; 0 on POSIX, exactly as CRuby defines them here.
+    const BINARY = RubyValue::Int(0);
+    const SHARE_DELETE = RubyValue::Int(0);
+    const NULL = RubyValue::Str(crate::string_new("/dev/null".to_string()));
 
     // `File.open(path, mode = "r")` -- with a block, yields the file and
     // CLOSES it afterwards no matter how the block leaves (return, raise,
@@ -551,6 +595,15 @@ ruby_class! {
     // file for the caller to close.
     def self."open" | "new" (_recv, args, block) {
         arity!(args, 1..=3);
+        if let RubyValue::Int(fd) = &args[0] {
+            let io = file_from_fd(*fd, args.last())?;
+            let Some(RubyValue::Proc(p)) = block else {
+                return Ok(io);
+            };
+            let out = p.call(std::slice::from_ref(&io));
+            let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
+            return out;
+        }
         let path = path_arg(&args[0], "open")?;
         // The mode is a String (`"w"`), an Integer O_* bitmask
         // (`File::WRONLY | File::CREAT`), a `mode:` keyword in a trailing Hash,
@@ -566,7 +619,7 @@ ruby_class! {
         // Gvl-released: open(2) itself can block (a FIFO with no peer).
         let f = crate::gvl::without_gvl(|| opts.open(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
-        let io = crate::builtins::io::file_value(f, path);
+        let io = crate::builtins::io::file_value(f, Some(path));
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(io);
         };

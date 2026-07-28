@@ -470,6 +470,34 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
     emit_hoisted_body_with_extra_roots(cx, body, &[], &[], wrap_ok)
 }
 
+/// The locals a parameter DEFAULT assigns -- `def m(a = (flag = true; nil))`,
+/// where Ruby scopes `flag` to the whole method and leaves it nil when the
+/// default doesn't run. The prelude below is too late to declare these: the
+/// default is emitted earlier, by `params::emit_prologue`. Parameters are
+/// excluded because only that prologue can bind them (an optional or keyword
+/// parameter is still an `Option<..>` until it unwraps it).
+fn param_default_locals(cx: &Ctx, default_ids: &[NodeId], param_names: &[String]) -> Vec<String> {
+    let mut names = Vec::new();
+    for &id in default_ids {
+        collect_locals(cx.compiler, id, &mut names);
+    }
+    names.retain(|n| !param_names.iter().any(|p| p == n));
+    names
+}
+
+/// Declarations for `param_default_locals`, to emit immediately BEFORE
+/// `params::emit_prologue`.
+pub fn emit_param_default_decls(
+    cx: &Ctx,
+    default_ids: &[NodeId],
+    param_names: &[String],
+) -> TokenStream {
+    let decls = param_default_locals(cx, default_ids, param_names)
+        .into_iter()
+        .map(|name| emit_local_decl(cx, &name));
+    quote! { #(#decls)* }
+}
+
 /// Same as `emit_hoisted_body`, but additionally scans `extra_roots` (a
 /// method's own `Params::default_ids()` -- see `hir::Params`'s docs) for
 /// names to declare in the hoisting prelude. A default's own
@@ -501,9 +529,13 @@ pub fn emit_hoisted_body_with_extra_roots(
     for &n in extra_roots {
         collect_locals(cx.compiler, n, &mut names);
     }
+    let predeclared = param_default_locals(cx, extra_roots, param_names);
     let decls = names.iter().filter_map(|n| {
         let ident = safe_ident(n);
         let is_param = param_names.iter().any(|p| p == n);
+        if predeclared.contains(n) {
+            return None;
+        }
         match local_storage(cx, n) {
             // `#[allow(unused_assignments)]`: the `Nil` default is
             // frequently overwritten before ever being read (e.g. a local's

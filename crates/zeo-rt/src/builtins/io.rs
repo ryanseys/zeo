@@ -51,9 +51,11 @@ pub struct RIo {
     /// shared state even behind an `Arc`, unlike the stateless std-stream
     /// singletons this started as.
     backend: parking_lot::Mutex<IoBackend>,
-    /// The path this was opened from, for error messages and `#path`; empty
-    /// for the std streams.
-    path: String,
+    /// The path this was opened from, for error messages and `#path`. `None`
+    /// when there is no associated file (a pipe, a std stream, or a
+    /// `File.new(fd)` given no `path:`) -- distinct from `Some("")`, which
+    /// `File.new(fd, path: "")` produces and `#path` must answer as `""`.
+    path: Option<String>,
     /// `#lineno` -- the count of lines read via `gets`/`readline`/`each_line`,
     /// which CRuby tracks per-IO and lets a program set with `lineno=`.
     lineno: std::sync::atomic::AtomicI64,
@@ -116,7 +118,7 @@ impl RIo {
     /// The one place RIo's default per-handle state (unset binmode, autoclose
     /// on, no pushed-back bytes, lineno 0) is established, so every constructor
     /// agrees.
-    fn new(backend: IoBackend, path: String) -> RIo {
+    fn new(backend: IoBackend, path: Option<String>) -> RIo {
         RIo {
             backend: parking_lot::Mutex::new(backend),
             path,
@@ -133,7 +135,7 @@ impl RIo {
 /// value that reports `class_id` for `#class` but reads/writes like a `Pipe`.
 /// Shared by `TCPSocket.new` and `TCPServer#accept` (see `builtins::socket`).
 pub(crate) fn socket_value(f: std::fs::File, class_id: ClassId) -> RubyValue {
-    let mut io = RIo::new(IoBackend::Pipe(Some(f)), String::new());
+    let mut io = RIo::new(IoBackend::Pipe(Some(f)), None);
     io.class_override = Some(class_id);
     RubyValue::Object(Arc::new(io))
 }
@@ -165,17 +167,17 @@ pub(crate) fn socket_raw_fd(recv: &RubyValue) -> Option<std::os::fd::RawFd> {
 }
 
 fn std_io(stream: StdStream) -> RubyValue {
-    RubyValue::Object(Arc::new(RIo::new(IoBackend::Std(stream), String::new())))
+    RubyValue::Object(Arc::new(RIo::new(IoBackend::Std(stream), None)))
 }
 
 /// Wrap an already-open file as a Ruby `File` value.
-pub(crate) fn file_value(f: std::fs::File, path: String) -> RubyValue {
+pub(crate) fn file_value(f: std::fs::File, path: Option<String>) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::File(Some(f)), path)))
 }
 
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
 fn pipe_value(f: std::fs::File) -> RubyValue {
-    RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), String::new())))
+    RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), None)))
 }
 
 pub fn stdout_value() -> RubyValue {
@@ -249,7 +251,7 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
         IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => f
             .write_all(bytes)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "write", &io.path)),
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "write", io.path.as_deref().unwrap_or_default())),
     })
 }
 
@@ -591,7 +593,7 @@ fn io_inspect(
         Some(StdStream::Stdout) => "#<IO:<STDOUT>>".to_string(),
         Some(StdStream::Stderr) => "#<IO:<STDERR>>".to_string(),
         None => match as_rio(recv) {
-            Some(io) => format!("#<File:{}>", io.path),
+            Some(io) => format!("#<File:{}>", io.path.as_deref().unwrap_or_default()),
             None => "#<IO>".to_string(),
         },
     };
@@ -604,14 +606,25 @@ fn io_path(
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    match as_rio(recv) {
-        Some(io) if !io.path.is_empty() => Ok(RubyValue::Str(crate::collections::string_new(
-            io.path.clone(),
-        ))),
-        // A std stream has no path -- real Ruby raises IOError for `#path`
-        // on one, rather than answering nil.
-        _ => Err(io_error!("not a file")),
+    let Some(io) = as_rio(recv) else {
+        return Err(io_error!("not a file"));
+    };
+    // A std stream reports its bracketed name; anything else answers its path,
+    // or nil when it has none (a pipe, or `File.new(fd)` with no `path:`).
+    if let IoBackend::Std(stream) = &*io.backend.lock() {
+        let name = match stream {
+            StdStream::Stdin => "<STDIN>",
+            StdStream::Stdout => "<STDOUT>",
+            StdStream::Stderr => "<STDERR>",
+        };
+        return Ok(RubyValue::Str(crate::collections::string_new(
+            name.to_string(),
+        )));
     }
+    Ok(match &io.path {
+        Some(p) => RubyValue::Str(crate::collections::string_new(p.clone())),
+        None => RubyValue::Nil,
+    })
 }
 
 /// Run `f` against the receiver's open file, or raise the IOError a closed
@@ -628,7 +641,7 @@ fn with_file<T>(
     let Some(io) = as_rio(recv) else {
         return Err(io_error!("not a file"));
     };
-    let path = io.path.clone();
+    let path = io.path.clone().unwrap_or_default();
     crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
         IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(file, &path),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
@@ -1356,7 +1369,7 @@ fn io_reopen(
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1..=2);
     let path = match as_rio(&args[0]) {
-        Some(other) => other.path.clone(),
+        Some(other) => other.path.clone().unwrap_or_default(),
         None => crate::builtins::file::path_arg(&args[0], "reopen")?,
     };
     let f = std::fs::File::open(&path)
@@ -2315,7 +2328,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("zeo_rt_io_test_{tag}_{}", std::process::id()));
         let f = std::fs::File::create(&path).expect("temp file");
-        (file_value(f, path.display().to_string()), path)
+        (file_value(f, Some(path.display().to_string())), path)
     }
 
     #[test]

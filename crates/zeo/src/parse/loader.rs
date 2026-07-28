@@ -212,17 +212,26 @@ pub(super) fn lower_main_file(
     // `"-e"` for a pathless source string.
     let main_file = hir.add_file(main_name, source);
     let prev_file = hir.lowering_file.replace(main_file);
-    let statements = loader.lower_file_statements(
-        hir,
-        &result,
-        program.statements().body(),
-        dir.as_deref(),
-        None,
-        0,
-    );
+    let lowered = loader.preload_ambient_features(hir).and_then(|mut all| {
+        all.extend(loader.lower_file_statements(
+            hir,
+            &result,
+            program.statements().body(),
+            dir.as_deref(),
+            None,
+            0,
+        )?);
+        Ok(all)
+    });
     hir.lowering_file = prev_file;
-    Ok((statements?, loader.gem_records))
+    Ok((lowered?, loader.gem_records))
 }
+
+/// What `ruby` has already loaded before the main script's first line: it
+/// requires rubygems at startup, which requires `rbconfig`. So `RbConfig` is
+/// ambient in every Ruby process, and libraries read it without requiring it
+/// (`resolv.rb` consults `::RbConfig::CONFIG['host_os']` at load time).
+const PRELOADED_FEATURES: &[&str] = &["rbconfig"];
 
 impl Loader {
     /// Records how one `require`d library was satisfied, deduped by
@@ -698,6 +707,18 @@ impl Loader {
     /// generates at build time). Splice the embedded shim source, deduped per
     /// box like any other require. Returns `None` when `feature` names no shim,
     /// so the caller falls through to the static-ext table.
+    /// Splices `PRELOADED_FEATURES` ahead of the main file. A later explicit
+    /// `require` of one then answers false, exactly as in CRuby.
+    fn preload_ambient_features(&mut self, hir: &mut Hir) -> PResult<Vec<NodeId>> {
+        let mut out = Vec::new();
+        for feature in PRELOADED_FEATURES {
+            if let Some(spliced) = self.splice_synthetic_shim(hir, feature, 0)? {
+                out.extend(spliced);
+            }
+        }
+        Ok(out)
+    }
+
     fn splice_synthetic_shim(
         &mut self,
         hir: &mut Hir,

@@ -25,6 +25,7 @@ pub(super) fn emit_safe_call(
     recv_id: NodeId,
     name: &str,
     args: &[NodeId],
+    kwargs: &[crate::hir::KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
 ) -> TokenStream {
@@ -38,10 +39,13 @@ pub(super) fn emit_safe_call(
         None => emit_expr(cx, recv_id),
     };
     let name_expr = quote! { zeo_rt::Symbol::intern(#name) };
-    let arg_exprs = args.iter().map(|&a| {
-        let e = emit_expr(cx, a);
-        box_if_object_typed(cx, a, e)
-    });
+    let arg_exprs = args
+        .iter()
+        .map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        })
+        .chain(super::emit_kwargs_trailing_hash(cx, kwargs));
     // `recv&.name(args) { block }` -- the block rides the same `send_value_in`
     // block slot a plain dynamic dispatch uses (nil short-circuits before it is
     // ever entered, matching Ruby).

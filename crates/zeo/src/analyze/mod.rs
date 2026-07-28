@@ -337,6 +337,7 @@ fn process_top_stmt(
         // statement (codegen's `constfold::static_cond` already folds
         // decidable conditions at emission time).
         if !branch_has_top_defs(compiler, then_body) && !branch_has_top_defs(compiler, else_body) {
+            register_nested_class_defs(compiler, stmt)?;
             main_statements.push(stmt);
             return Ok(());
         }
@@ -398,9 +399,107 @@ fn process_top_stmt(
         // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
         // class-body `prepend M` produces no runtime statement.
     } else {
+        register_nested_class_defs(compiler, stmt)?;
         main_statements.push(stmt);
     }
     Ok(())
+}
+
+/// Registers every `class`/`module` reachable from a statement the walk keeps
+/// whole -- a `begin` clause, a block body, a loop body, a `case` arm.
+/// Registration is a compile-time fact about shape, so the marker stays put and
+/// `codegen::stmt`'s `ClassDef` arm still runs the body at its document
+/// position; the `BoxScope` arm above splits it the same way.
+fn register_nested_class_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<(), String> {
+    let mut nested = Vec::new();
+    collect_nested_bodies(compiler, stmt, &mut nested);
+    for s in nested {
+        let HirNode::ClassDef {
+            name,
+            superclass,
+            body,
+            is_module,
+        } = &compiler.hir[s]
+        else {
+            continue;
+        };
+        let (name, superclass, body, is_module) =
+            (name.clone(), superclass.clone(), body.clone(), *is_module);
+        register_class(
+            compiler,
+            name,
+            superclass,
+            is_module,
+            &body,
+            &[],
+            0,
+            Some(s),
+        )?;
+    }
+    Ok(())
+}
+
+/// Every statement nested inside `node`'s sub-bodies, in document order. Bound
+/// with explicit fields rather than a `..` rest so a new statement-bearing
+/// variant can't join silently.
+fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId>) {
+    let children: Vec<NodeId> = match &compiler.hir[node] {
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => body
+            .iter()
+            .chain(rescues.iter().flat_map(|r| r.body.iter()))
+            .chain(else_body.iter().flatten())
+            .chain(ensure_body.iter().flatten())
+            .copied()
+            .collect(),
+        HirNode::Block { params: _, body } | HirNode::Loop { body } => body.clone(),
+        HirNode::While {
+            cond: _,
+            body,
+            negate: _,
+            post: _,
+        } => body.clone(),
+        HirNode::For {
+            target: _,
+            iterable: _,
+            body,
+        } => body.clone(),
+        HirNode::If {
+            cond: _,
+            then_body,
+            else_body,
+        } => then_body.iter().chain(else_body).copied().collect(),
+        HirNode::CaseWhen {
+            subject: _,
+            arms,
+            else_body,
+        } => arms
+            .iter()
+            .flat_map(|(_, body)| body.iter())
+            .chain(else_body)
+            .copied()
+            .collect(),
+        HirNode::Call {
+            receiver: _,
+            name: _,
+            args: _,
+            kwargs: _,
+            block,
+            block_arg: _,
+            safe: _,
+        } => block.iter().copied().collect(),
+        _ => return,
+    };
+    // Each child is itself a candidate and may nest further -- the
+    // `File.open { begin ... rescue; module M; end; end }` shape.
+    for child in children {
+        out.push(child);
+        collect_nested_bodies(compiler, child, out);
+    }
 }
 
 /// If `stmt` is a `begin/rescue` whose body provably cannot raise -- the
