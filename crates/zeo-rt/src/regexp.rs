@@ -364,6 +364,13 @@ fn translate_ruby_escapes(source: &str) -> String {
             }
             // A leading `^` keeps the "next `]` is literal" rule alive (`[^]`).
             '^' if class_start => out.push('^'),
+            '[' if chars.peek() == Some(&':') => {
+                class_start = false;
+                match take_posix_class(&mut chars) {
+                    Some(expansion) => out.push_str(&expansion),
+                    None => out.push('['),
+                }
+            }
             '\\' => {
                 class_start = false;
                 translate_escape_in_class(&mut out, &mut chars);
@@ -379,13 +386,101 @@ fn translate_ruby_escapes(source: &str) -> String {
 
 type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
 
+/// The Unicode set a POSIX bracket class denotes, as a bare class body. Ruby's
+/// `[[:alpha:]]` matches any Unicode letter; the `regex` crate's own POSIX
+/// classes are ASCII-only, so they are spelled out as properties instead.
+/// `None` leaves the source untouched, which sends the pattern to Onig.
+fn posix_class_expansion(name: &str, negated: bool) -> Option<String> {
+    let (p, n) = if negated { ("\\P", "\\p") } else { ("\\p", "\\P") };
+    Some(match name {
+        "alpha" => format!("{p}{{Alphabetic}}"),
+        "upper" => format!("{p}{{Uppercase}}"),
+        "lower" => format!("{p}{{Lowercase}}"),
+        "digit" => format!("{p}{{Nd}}"),
+        "space" => format!("{p}{{White_Space}}"),
+        "cntrl" => format!("{p}{{Cc}}"),
+        "alnum" if !negated => "\\p{Alphabetic}\\p{Nd}".to_string(),
+        "punct" if !negated => "\\p{P}\\p{S}".to_string(),
+        "word" if !negated => "\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}".to_string(),
+        "blank" if !negated => "\\p{Zs}\\t".to_string(),
+        "graph" if !negated => "^\\p{Z}\\p{C}".to_string(),
+        "print" if !negated => format!("{n}{{C}}"),
+        // ASCII in Ruby too, so these need no widening.
+        "xdigit" if !negated => "0-9A-Fa-f".to_string(),
+        "ascii" if !negated => "\\x00-\\x7F".to_string(),
+        _ => return None,
+    })
+}
+
+/// Consumes a `[:name:]` / `[:^name:]` sequence (the opening `[` is already
+/// eaten) and answers its expansion. Leaves `chars` untouched on anything that
+/// isn't a well-formed POSIX class.
+fn take_posix_class(chars: &mut Chars) -> Option<String> {
+    let mut probe = chars.clone();
+    probe.next()?; // the ':'
+    let negated = probe.peek() == Some(&'^');
+    if negated {
+        probe.next();
+    }
+    let mut name = String::new();
+    loop {
+        match probe.next()? {
+            ':' if probe.peek() == Some(&']') => {
+                probe.next();
+                break;
+            }
+            c if c.is_ascii_alphabetic() => name.push(c),
+            _ => return None,
+        }
+    }
+    let expansion = posix_class_expansion(&name, negated)?;
+    *chars = probe;
+    Some(expansion)
+}
+
 /// Escape translation OUTSIDE a character class: `\e` -> ESC, `\0...` octal
 /// (a leading zero is never a backreference), everything else (`\1`..`\9`
 /// backrefs, `\k`, `\d`, ...) passes through for the engine to interpret.
+/// The ASCII expansion of a perl-style class escape, as a bare set body (no
+/// brackets) plus whether it is the negated form. Ruby's `\w`/`\d`/`\s`/`\h`
+/// are ASCII-only; both Rust engines read them as Unicode by default, so they
+/// have to be spelled out rather than passed through.
+fn ascii_class_body(c: char) -> Option<(&'static str, bool)> {
+    match c {
+        'w' => Some(("0-9A-Za-z_", false)),
+        'W' => Some(("0-9A-Za-z_", true)),
+        'd' => Some(("0-9", false)),
+        'D' => Some(("0-9", true)),
+        // Ruby's `\s` has included \v since 2.0.
+        's' => Some((" \\t\\r\\n\\x0b\\x0c", false)),
+        'S' => Some((" \\t\\r\\n\\x0b\\x0c", true)),
+        'h' => Some(("0-9A-Fa-f", false)),
+        'H' => Some(("0-9A-Fa-f", true)),
+        _ => None,
+    }
+}
+
 fn translate_escape_outside(out: &mut String, chars: &mut Chars) {
     match chars.next() {
         Some('e') => out.push_str("\\x1b"),
         Some('0') => push_octal(out, 0, chars),
+        Some(c) if ascii_class_body(c).is_some() => {
+            let (body, negated) = ascii_class_body(c).expect("checked above");
+            out.push('[');
+            if negated {
+                out.push('^');
+            }
+            out.push_str(body);
+            out.push(']');
+        }
+        // `\b` is an ASCII word boundary in Ruby; `(?-u:...)` scopes the
+        // assertion's own word definition without letting the pattern match
+        // invalid UTF-8 (a zero-width assertion can't).
+        Some(c @ ('b' | 'B')) => {
+            out.push_str("(?-u:\\");
+            out.push(c);
+            out.push(')');
+        }
         // Ruby `\Z` = end of string, or just before a single trailing newline.
         // Neither Rust engine knows `\Z`; the equivalent lookahead does the
         // same job and (via its `(?=`) routes the pattern to the fancy engine.
@@ -406,6 +501,16 @@ fn translate_escape_in_class(out: &mut String, chars: &mut Chars) {
         Some('e') => out.push_str("\\x1b"),
         Some(d @ '0'..='7') => push_octal(out, d.to_digit(8).unwrap(), chars),
         Some(c @ ('k' | 'g')) => out.push(c),
+        // Inside a class the expansion nests: `[\w-]` -> `[[0-9A-Za-z_]-]`.
+        Some(c) if ascii_class_body(c).is_some() => {
+            let (body, negated) = ascii_class_body(c).expect("checked above");
+            out.push('[');
+            if negated {
+                out.push('^');
+            }
+            out.push_str(body);
+            out.push(']');
+        }
         Some(next) => {
             out.push('\\');
             out.push(next);
