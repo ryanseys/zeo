@@ -32,6 +32,7 @@ use crate::dispatch::{
 use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
 use std::any::Any;
 use std::cell::RefCell;
+use crate::{FMap, FSet};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -56,25 +57,25 @@ struct OverlayEntry {
     /// no-runtime-GC policy: a runtime class lives for the process.
     ancestors: &'static [ClassId],
     /// Instance methods, self = the receiver object (`MethodImpl::Dynamic`).
-    methods: HashMap<Symbol, MethodImpl>,
+    methods: FMap<Symbol, MethodImpl>,
     /// Explicit RUNTIME visibility marks (`Foo.class_eval { private :m }`,
     /// an alias inheriting its source's visibility): nearest ancestor's mark
     /// wins in `instance_method_visibility`'s walk. A name absent here but
     /// present in `methods` is public (a runtime `define_method` is). Keyed
     /// separately from `methods` because a mark can target a FROZEN-registry
     /// or builtin method the overlay never carries a body for.
-    methods_vis: HashMap<Symbol, crate::dispatch::MethodVisibility>,
+    methods_vis: FMap<Symbol, crate::dispatch::MethodVisibility>,
     /// Class/singleton-on-class methods (`def self.x`, `define_singleton_method`
     /// on a `Class` value): self = the `RubyValue::Class`, which the RObj-shaped
     /// `MethodImpl` can't carry -- so these are the raw `RProc`, invoked via
     /// `call_with_self(class_value, args)`.
-    class_methods: HashMap<Symbol, RProc>,
+    class_methods: FMap<Symbol, RProc>,
     constructor: Option<ConstructorFn>,
     /// Names `undef_method` removed. An ENTRY, not a deletion: it TERMINATES
     /// the MRO walk here, so an ancestor's still-live definition can't answer
     /// for a descendant that undef'd the name. Mirrors the frozen registry's
     /// `ClassEntry::undefined_methods`.
-    undefs: HashSet<Symbol>,
+    undefs: FSet<Symbol>,
     /// The address the anonymous `#<Class:0x...>` rendering reports -- a real
     /// leaked allocation, so it is unique, stable, and 16 hex digits wide like
     /// every other object's. Not `ancestors.as_ptr()`: `include`/`prepend`
@@ -88,11 +89,11 @@ impl Default for OverlayEntry {
             name: RwLock::new(None),
             is_module: false,
             ancestors: &[],
-            methods: HashMap::new(),
-            methods_vis: HashMap::new(),
-            class_methods: HashMap::new(),
+            methods: FMap::default(),
+            methods_vis: FMap::default(),
+            class_methods: FMap::default(),
             constructor: None,
-            undefs: HashSet::new(),
+            undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
         }
     }
@@ -107,26 +108,26 @@ impl OverlayEntry {
 }
 
 struct OverlayMaps {
-    classes: RwLock<HashMap<u32, OverlayEntry>>,
+    classes: RwLock<FMap<u32, OverlayEntry>>,
     /// Per-object singleton methods, keyed by the receiver's `Arc` DATA address
     /// (object identity). Not carried across `dup` -- a fresh `Arc` is a fresh
     /// address -- matching Ruby (`dup` drops singletons). `clone`'s
     /// singleton-carry is a documented fast-follow.
-    singletons: RwLock<HashMap<usize, HashMap<Symbol, MethodImpl>>>,
+    singletons: RwLock<FMap<usize, FMap<Symbol, MethodImpl>>>,
     /// Singleton methods on a NON-object heap value (`def SOME_ARRAY.[](i)`),
     /// keyed the same way. Separate from `singletons` because there is no
     /// `RObj` to bind: the body stays an `RProc` and runs with the value itself
     /// as `self`. See `value_identity`.
-    value_singletons: RwLock<HashMap<usize, HashMap<Symbol, RProc>>>,
+    value_singletons: RwLock<FMap<usize, FMap<Symbol, RProc>>>,
     /// `obj.singleton_class`'s cache: object identity -> the runtime class id
     /// minted for its singleton class (so a second call answers the same id,
     /// matching Ruby's identity).
-    singleton_classes: RwLock<HashMap<usize, ClassId>>,
+    singleton_classes: RwLock<FMap<usize, ClassId>>,
     /// The inverse plus the owner value: a singleton-class id -> the object (or
     /// class) it belongs to. A `define_method` on that id installs a per-object
     /// singleton (or, for a class owner, a class method) rather than an ordinary
     /// instance method -- which is exactly what `class << obj` semantics mean.
-    singleton_owner: RwLock<HashMap<u32, RubyValue>>,
+    singleton_owner: RwLock<FMap<u32, RubyValue>>,
     next_id: AtomicU32,
 }
 
@@ -135,11 +136,11 @@ static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
     OVERLAY.get_or_init(|| OverlayMaps {
-        classes: RwLock::new(HashMap::new()),
-        singletons: RwLock::new(HashMap::new()),
-        value_singletons: RwLock::new(HashMap::new()),
-        singleton_classes: RwLock::new(HashMap::new()),
-        singleton_owner: RwLock::new(HashMap::new()),
+        classes: RwLock::new(FMap::default()),
+        singletons: RwLock::new(FMap::default()),
+        value_singletons: RwLock::new(FMap::default()),
+        singleton_classes: RwLock::new(FMap::default()),
+        singleton_owner: RwLock::new(FMap::default()),
         next_id: AtomicU32::new(RUNTIME_CLASS_ID_BASE),
     })
 }
@@ -1443,7 +1444,7 @@ pub fn runtime_class_new(
 /// other runtime class's.
 pub fn intern_native_class(
     root: ClassId,
-    methods: HashMap<Symbol, MethodImpl>,
+    methods: FMap<Symbol, MethodImpl>,
     constructor: ConstructorFn,
 ) -> ClassId {
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);

@@ -718,7 +718,7 @@ pub(crate) fn define_value_class(
 
     // Per-member accessor closures: a reader for every member, plus a writer
     // for a mutable Struct. Each captures its slot index.
-    let mut methods: HashMap<Symbol, MethodImpl> = HashMap::new();
+    let mut methods: crate::FMap<Symbol, MethodImpl> = crate::FMap::default();
     for (i, &m) in members.iter().enumerate() {
         methods.insert(
             m,

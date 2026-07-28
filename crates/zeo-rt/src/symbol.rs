@@ -10,8 +10,8 @@
 //! table). Migrated to a `LazyLock<Mutex<_>>` static for this reason, not
 //! just as a mechanical `Rc`->`Arc` swap.
 
+use crate::FMap;
 use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -20,7 +20,7 @@ pub struct Symbol(u32);
 #[derive(Default)]
 struct Interner {
     names: Vec<String>,
-    by_name: HashMap<String, u32>,
+    by_name: FMap<String, u32>,
 }
 
 static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(|| Mutex::new(Interner::default()));

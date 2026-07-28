@@ -53,6 +53,11 @@ prettyplease = "0.2"
 parking_lot = "0.12"
 indexmap = "2"
 libc = "0.2"
+# Internal-map hashing (interner, dispatch registry, globals/constants):
+# SipHash's DoS resistance buys nothing for process-internal keys, and these
+# maps sit on the dynamic-dispatch hot path. Ruby-VISIBLE hashing
+# (`Object#hash`) stays on DefaultHasher -- see collections.rs.
+foldhash = "0.1"
 # Link-time auto-registration: the `ruby_class!` macro registers each class's
 # method/constant table into a `BUILTIN_TABLES` distributed slice the runtime
 # collects, replacing the hand-written `ClassId`->lookup match tables.

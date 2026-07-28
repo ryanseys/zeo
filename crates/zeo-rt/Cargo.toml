@@ -25,6 +25,7 @@ linkme.workspace = true
 ruby-prism = { workspace = true, optional = true }
 parking_lot.workspace = true
 indexmap.workspace = true
+foldhash.workspace = true
 regex.workspace = true
 # Backtracking regex engine for the constructs the linear-time `regex` crate
 # structurally can't do -- in-pattern backreferences and look-around. Selected

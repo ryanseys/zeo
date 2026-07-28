@@ -1,5 +1,11 @@
 //! zeo-rt: the runtime library every zeo-generated program links against.
 
+/// Internal maps (interner, dispatch registry, globals/constants): foldhash
+/// instead of SipHash -- process-internal keys need speed, not DoS
+/// resistance. Ruby-visible `Object#hash` keeps `DefaultHasher`.
+pub(crate) type FMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
+pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
+
 mod arith;
 mod bootstrap;
 mod builtins;

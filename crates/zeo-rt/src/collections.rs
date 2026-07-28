@@ -259,8 +259,14 @@ pub fn value_hash_code(v: &RubyValue) -> i64 {
 /// proc-backed hash and vice versa), so they sit side by side and are read
 /// independently. Deref/DerefMut to the map keep the many `h.lock().<map op>`
 /// call sites (insert/get/iter/len/...) compiling unchanged.
+/// The entry table's concrete type: insertion-ordered, foldhash-hashed.
+/// INTERNAL hashing only -- Ruby-visible `Object#hash` values stay on
+/// `DefaultHasher` (see `value_hash_code`), and iteration order is the
+/// insertion order `IndexMap` maintains regardless of hasher.
+pub type HashPairs = IndexMap<HashKey, (RubyValue, RubyValue), foldhash::fast::RandomState>;
+
 pub struct RHashData {
-    map: IndexMap<HashKey, (RubyValue, RubyValue)>,
+    map: HashPairs,
     pub default: RubyValue,
     pub default_proc: Option<RubyValue>,
     /// `Hash#compare_by_identity`: when set, keys project by object identity
@@ -271,7 +277,7 @@ pub struct RHashData {
 impl RHashData {
     fn new() -> RHashData {
         RHashData {
-            map: IndexMap::new(),
+            map: HashPairs::default(),
             default: RubyValue::Nil,
             default_proc: None,
             compare_by_identity: false,
@@ -280,7 +286,7 @@ impl RHashData {
 }
 
 impl std::ops::Deref for RHashData {
-    type Target = IndexMap<HashKey, (RubyValue, RubyValue)>;
+    type Target = HashPairs;
     fn deref(&self) -> &Self::Target {
         &self.map
     }
@@ -403,7 +409,7 @@ pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
 /// `Hash.new`'s two argument shapes.
 pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>) -> RHash {
     Arc::new(Freezable::new(RHashData {
-        map: IndexMap::new(),
+        map: HashPairs::default(),
         default,
         default_proc,
         compare_by_identity: false,
@@ -584,7 +590,7 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
         .iter()
         .map(|k| hash_key(&RubyValue::Symbol(crate::Symbol::intern(k))))
         .collect();
-    let pairs: IndexMap<HashKey, (RubyValue, RubyValue)> = h
+    let pairs: HashPairs = h
         .lock()
         .iter()
         .filter(|(k, _)| !excluded.contains(k))

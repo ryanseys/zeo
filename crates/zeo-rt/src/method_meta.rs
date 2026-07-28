@@ -12,7 +12,7 @@
 
 use crate::{ClassId, RubyValue, Symbol};
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use crate::FMap;
 use std::sync::{Arc, LazyLock};
 
 /// One parameter's kind, matching the leading symbol Ruby's `#parameters`
@@ -144,8 +144,8 @@ impl MethodMeta {
     }
 }
 
-static META: LazyLock<RwLock<HashMap<MethodKey, Arc<MethodMeta>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static META: LazyLock<RwLock<FMap<MethodKey, Arc<MethodMeta>>>> =
+    LazyLock::new(|| RwLock::new(FMap::default()));
 
 /// The row for `name` as resolved on `class`, walking the ancestry so an
 /// inherited method resolves against the ancestor that defined it (matching

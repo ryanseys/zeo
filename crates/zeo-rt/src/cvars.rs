@@ -21,11 +21,11 @@
 
 use crate::RubyValue;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use crate::FMap;
 use std::sync::LazyLock;
 
-static CVARS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CVARS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// `nil` for a `@@x` never yet written -- matches real Ruby's own behavior
 /// for reading a class variable before any assignment ever ran (a

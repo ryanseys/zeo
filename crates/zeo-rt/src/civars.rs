@@ -41,11 +41,11 @@
 
 use crate::RubyValue;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use crate::FMap;
 use std::sync::LazyLock;
 
-static CIVARS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CIVARS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// `nil` for a class-level `@x` never yet written -- and here that is real
 /// Ruby's ACTUAL behavior, not this runtime's usual approximation of it:

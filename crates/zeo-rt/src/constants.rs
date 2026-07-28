@@ -14,11 +14,11 @@
 
 use crate::RubyValue;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use crate::FMap;
 use std::sync::LazyLock;
 
-static CONSTANTS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CONSTANTS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// The `Object`-owned constant names that existed before the program's own top
 /// level ran -- `RUBY_VERSION`, `ARGV`, the seeded encodings, everything

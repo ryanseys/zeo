@@ -1600,6 +1600,7 @@ dependencies = [
  "encoding_rs",
  "fancy-regex",
  "flate2",
+ "foldhash",
  "getrandom",
  "indexmap",
  "jiff",

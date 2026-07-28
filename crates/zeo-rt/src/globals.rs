@@ -8,11 +8,11 @@
 
 use crate::RubyValue;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use crate::FMap;
 use std::sync::LazyLock;
 
-static GLOBALS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static GLOBALS: LazyLock<Mutex<FMap<(u32, String), RubyValue>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// `alias $new $old` -- alias name -> the name whose STORAGE it shares.
 ///
@@ -24,8 +24,8 @@ static GLOBALS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
 ///
 /// Keyed `(box_id, name)` like `GLOBALS` itself, since an alias is
 /// per-box state exactly as the variable is.
-static ALIASES: LazyLock<Mutex<HashMap<(u32, String), String>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static ALIASES: LazyLock<Mutex<FMap<(u32, String), String>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
 
 /// The name whose storage `name` actually refers to -- itself, unless it
 /// was aliased. Chains are followed (`alias $b $a; alias $c $b` makes all

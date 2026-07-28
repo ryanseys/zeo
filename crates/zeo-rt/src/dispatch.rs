@@ -8,7 +8,8 @@
 use crate::builtins::{arg_error, frozen_error, name_error, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use crate::{FMap, FSet};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
 /// Identifies a Ruby class at runtime. This is the SHARED `zeo-abi` type --
@@ -528,7 +529,7 @@ struct ClassEntry {
     /// already MATERIALIZED directly onto this class -- see the plan's Part
     /// 6), but `is_a`/rescue-by-class matching does.
     ancestors: Vec<ClassId>,
-    methods: HashMap<Symbol, MethodImpl>,
+    methods: FMap<Symbol, MethodImpl>,
     /// Methods added by reopening a BUILTIN class -- keyed off
     /// the receiver's `class_id()` with no ancestor walk needed (the only
     /// reopenable builtins are leaf value classes; Object/module reopens are
@@ -547,7 +548,7 @@ struct ClassEntry {
     /// the same id in every box -- so, unlike CRuby, they are not isolated
     /// per box. Per-box state on distinct USER classes (their own `ClassId`
     /// per box) and per-box instance-method monkeypatches both work.
-    value_methods: HashMap<(u32, Symbol), ValueMethodFn>,
+    value_methods: FMap<(u32, Symbol), ValueMethodFn>,
     /// This class's OWN method implementations -- what `super` resolution
     /// walks. `methods` above is the FLATTENED instance-dispatch set (an
     /// entry's winner can be a prepended module's or an ancestor's copy),
@@ -558,7 +559,7 @@ struct ClassEntry {
     /// (native exception sets), and `define_super_target_value` (a
     /// dynamic-self bridge for an own def shadowed in its own class's
     /// flattened table).
-    own_impls: HashMap<Symbol, MethodImpl>,
+    own_impls: FMap<Symbol, MethodImpl>,
     /// The names in `methods`/`value_methods` that Ruby considers PRIVATE
     /// (`private def x`, and every top-level `def` -- which is a private
     /// method of Object). Dispatch itself ignores this (an implicit-self
@@ -568,7 +569,7 @@ struct ClassEntry {
     /// private methods" rule. Kernel's own C-implemented privates
     /// (`puts`/`p`/...) aren't here -- they have no registry entry at all
     /// and are special-cased in `responds_to`.
-    private_methods: HashSet<Symbol>,
+    private_methods: FSet<Symbol>,
     /// The names in `methods`/`value_methods` this class marks PROTECTED
     /// (`protected def x`, a bare `protected` section, `protected :x`). Parallel
     /// to `private_methods`; a name in neither set is public. Materialization
@@ -576,7 +577,7 @@ struct ClassEntry {
     /// set is authoritative for the class itself (no ancestor walk needed to
     /// answer "is THIS class's `name` protected"). Consumed by the
     /// `protected_*` reflection and the `*_method_defined?` family.
-    protected_methods: HashSet<Symbol>,
+    protected_methods: FSet<Symbol>,
     /// Names this class's body `undef`'d. Mirrors CRuby, where `undef`
     /// inserts an "undefined" method entry that TERMINATES the lookup
     /// rather than deleting anything -- so an inherited name stops
@@ -587,7 +588,7 @@ struct ClassEntry {
     /// only ever reads this class's own table. `respond_to?` is the one
     /// consumer, because it WALKS the ancestors and would otherwise find
     /// the ancestor's still-live definition.
-    undefined_methods: HashSet<Symbol>,
+    undefined_methods: FSet<Symbol>,
     /// `new -> old` NAME indirections for aliases of INHERITED BUILTIN
     /// methods (`alias_method :raise!, :raise`): the source has no user
     /// `Scope` to clone a body from -- it lives in the static builtin
@@ -599,7 +600,7 @@ struct ClassEntry {
     /// `validate_aliases` raises `NameError` at program start for a source
     /// that resolves nowhere (real Ruby's timing -- the class body
     /// executing).
-    aliases: HashMap<Symbol, Symbol>,
+    aliases: FMap<Symbol, Symbol>,
     /// This class's own CLASS methods (`def self.x`, `class << self`,
     /// `extend`) -- reached when a `RubyValue::Class` receiver is sent to
     /// dynamically (`handler.run(...)`, where `handler` holds a class), the
@@ -616,7 +617,7 @@ struct ClassEntry {
     /// here is always this exact class's own entry. That is also what keeps
     /// class-level `@x` storage correct through this path -- each copy
     /// carries its own class id (see `civars`' docs).
-    class_methods: HashMap<Symbol, ValueMethodFn>,
+    class_methods: FMap<Symbol, ValueMethodFn>,
     /// Per-POSITION singleton-chain super targets, keyed `(module id,
     /// name)`: one emitted copy of every `extend`ed module's method (winner
     /// AND shadowed -- the flattened `class_methods` above keeps only
@@ -625,19 +626,19 @@ struct ClassEntry {
     /// the module's generic bridge, so a sibling-extend chain (`extend A`
     /// then `extend B`, each `super`ing to the next) resolves every hop
     /// with the RECEIVER's context.
-    singleton_super_targets: HashMap<(u32, Symbol), ValueMethodFn>,
+    singleton_super_targets: FMap<(u32, Symbol), ValueMethodFn>,
     /// The names DEFINED DIRECTLY on this class (not materialized from an
     /// ancestor) -- what `instance_methods(false)` needs, since `methods`
     /// above holds the flattened, fully-materialized set (dispatch's own
     /// requirement -- see `ancestors`' docs). Populated by codegen's
     /// `mark_own` beside `mark_private`. Empty means "unknown/none recorded",
     /// in which case reflection falls back to the materialized set.
-    own_methods: HashSet<Symbol>,
+    own_methods: FSet<Symbol>,
     /// `own_methods`' class-method twin: the names whose `def self.x` is
     /// written HERE, as opposed to materialized down from an ancestor. Only
     /// reflection needs the distinction -- `Cache.method(:open).owner` has to
     /// answer `Store` even though materialization gave `Cache` a copy.
-    own_class_methods: HashSet<Symbol>,
+    own_class_methods: FSet<Symbol>,
     constructor: Option<ConstructorFn>,
     /// The no-`initialize` allocator backing `Class#allocate` -- registered by
     /// `ruby_class!`'s `__register` beside the constructor. `None` for
@@ -647,12 +648,12 @@ struct ClassEntry {
 
 #[derive(Default)]
 pub struct ClassRegistry {
-    entries: HashMap<u32, ClassEntry>,
+    entries: FMap<u32, ClassEntry>,
     /// Fully-qualified class NAME -> id, so the runtime can construct an
     /// exception by name (`raise_error("ArgumentError", ...)`) without the
     /// generated program installing a name->constructor factory. Populated by
     /// `register` alongside `entries`. See `construct_exception`.
-    by_name: HashMap<String, u32>,
+    by_name: FMap<String, u32>,
 }
 
 impl ClassRegistry {
@@ -679,17 +680,17 @@ impl ClassRegistry {
                 name: name.to_string(),
                 is_module,
                 ancestors,
-                methods: HashMap::new(),
-                own_impls: HashMap::new(),
-                value_methods: HashMap::new(),
-                private_methods: HashSet::new(),
-                protected_methods: HashSet::new(),
-                undefined_methods: HashSet::new(),
-                aliases: HashMap::new(),
-                class_methods: HashMap::new(),
-                singleton_super_targets: HashMap::new(),
-                own_methods: HashSet::new(),
-                own_class_methods: HashSet::new(),
+                methods: FMap::default(),
+                own_impls: FMap::default(),
+                value_methods: FMap::default(),
+                private_methods: FSet::default(),
+                protected_methods: FSet::default(),
+                undefined_methods: FSet::default(),
+                aliases: FMap::default(),
+                class_methods: FMap::default(),
+                singleton_super_targets: FMap::default(),
+                own_methods: FSet::default(),
+                own_class_methods: FSet::default(),
                 constructor,
                 allocator: None,
             },
@@ -2309,8 +2310,8 @@ pub fn class_name(id: ClassId) -> Option<String> {
 /// mechanism. Empty in the overwhelmingly common no-`freeze` program: the
 /// guard paths (cvar/civar writes, runtime method definition) pay one
 /// short-held lock + hash probe only when actually reached.
-static FROZEN_CLASSES: std::sync::LazyLock<parking_lot::Mutex<HashSet<u32>>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashSet::new()));
+static FROZEN_CLASSES: std::sync::LazyLock<parking_lot::Mutex<FSet<u32>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(FSet::default()));
 
 /// `Foo.frozen?`'s storage half -- see `FROZEN_CLASSES`.
 pub fn class_frozen(id: ClassId) -> bool {

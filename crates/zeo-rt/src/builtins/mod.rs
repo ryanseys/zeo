@@ -19,7 +19,6 @@
 //! TypeError, not NoMethodError).
 
 use crate::{ClassId, RubyValue, Signal};
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub(crate) mod argf;
@@ -125,7 +124,7 @@ pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 /// The registered tables indexed by `ClassId` for O(1) routing, built once
 /// from the link-time-collected slice.
 pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
-    static MAP: LazyLock<HashMap<u32, &'static BuiltinClassTable>> =
+    static MAP: LazyLock<crate::FMap<u32, &'static BuiltinClassTable>> =
         LazyLock::new(|| BUILTIN_TABLES.iter().map(|t| (t.id.0, t)).collect());
     MAP.get(&id.0).copied()
 }
@@ -263,7 +262,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
 /// generated program's registry carries identical chains for builtins
 /// (both derive from the one ABI table) plus richer ones for user classes.
 pub(crate) fn fallback_ancestors(id: ClassId) -> &'static [ClassId] {
-    static CHAINS: LazyLock<HashMap<u32, Vec<ClassId>>> = LazyLock::new(|| {
+    static CHAINS: LazyLock<crate::FMap<u32, Vec<ClassId>>> = LazyLock::new(|| {
         fn edges(id: ClassId) -> (&'static [ClassId], Option<ClassId>) {
             if id == zeo_abi::OBJECT_CLASS {
                 return (zeo_abi::OBJECT_INCLUDES, Some(zeo_abi::OBJECT_SUPERCLASS));
@@ -284,7 +283,7 @@ pub(crate) fn fallback_ancestors(id: ClassId) -> &'static [ClassId] {
                 linearize(p, out);
             }
         }
-        let mut chains = HashMap::new();
+        let mut chains = crate::FMap::default();
         for id in
             std::iter::once(zeo_abi::OBJECT_CLASS).chain(zeo_abi::BUILTINS.iter().map(|b| b.id))
         {
