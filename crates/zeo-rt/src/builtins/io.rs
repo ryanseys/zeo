@@ -180,7 +180,7 @@ pub(crate) fn file_value(f: std::fs::File, path: Option<String>) -> RubyValue {
 }
 
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
-fn pipe_value(f: std::fs::File) -> RubyValue {
+pub(crate) fn pipe_value(f: std::fs::File) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), None)))
 }
 
@@ -190,7 +190,7 @@ fn pipe_value(f: std::fs::File) -> RubyValue {
 /// leaking into an unrelated child holds the reader's EOF open forever, the
 /// classic popen-family deadlock. `dup2` at exec time clears the flag on the
 /// child's own stdio copies, so redirect targets still arrive open.
-fn set_fd_cloexec(fd: libc::c_int) {
+pub(crate) fn set_fd_cloexec(fd: libc::c_int) {
     // SAFETY: the caller just created `fd` and owns it.
     unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
 }

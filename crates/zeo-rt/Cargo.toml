@@ -135,10 +135,12 @@ ext-all = [
     "ext-etc",
     "ext-pathname",
     "ext-fcntl",
+    "ext-pty",
 ]
 ext-base64 = []
 ext-etc = []
 ext-fcntl = []
+ext-pty = []
 ext-pathname = []
 ext-monitor = []
 ext-stringio = []

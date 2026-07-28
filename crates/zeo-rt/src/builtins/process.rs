@@ -540,16 +540,7 @@ ruby_module! {
     // thread, so it does not touch the caller's `$?`.
     def self.detach(_recv, args, _block) {
         arity!(args, 1);
-        let pid = int_arg(&args[0])?;
-        let reaper = crate::RProc::new(move |_args: &[RubyValue]| {
-            match raw_waitpid(pid, 0) {
-                Ok(Some((reaped, raw))) => Ok(new_status(reaped, raw)),
-                // A pid that is already gone (or never ours) yields nil rather
-                // than propagating ECHILD out of the detached thread.
-                _ => Ok(RubyValue::Nil),
-            }
-        });
-        Ok(crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new()))
+        Ok(detach_thread(int_arg(&args[0])?))
     }
     // `Process.spawn([env,] command... [,options])` -- start a child WITHOUT
     // waiting (unlike `system`), answering its pid; the child is reapable with
@@ -1034,6 +1025,21 @@ fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
 fn hash_truthy(h: &crate::collections::RHash, key: &str) -> bool {
     let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(key)));
     !v.is_nil() && !matches!(v, RubyValue::Bool(false))
+}
+
+/// The background reaper `Process.detach` answers: a Thread whose value is the
+/// child's `Process::Status` (nil if the pid was already gone). Also what
+/// `PTY.spawn`'s block form leaves behind, CRuby's own detach call there.
+pub(crate) fn detach_thread(pid: i64) -> RubyValue {
+    let reaper = crate::RProc::new(move |_args: &[RubyValue]| {
+        match raw_waitpid(pid, 0) {
+            Ok(Some((reaped, raw))) => Ok(new_status(reaped, raw)),
+            // A pid that is already gone (or never ours) yields nil rather
+            // than propagating ECHILD out of the detached thread.
+            _ => Ok(RubyValue::Nil),
+        }
+    });
+    crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new())
 }
 
 /// Start a child without waiting, answering its pid -- the shared engine of

@@ -42,6 +42,7 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | pathname | `pathname` | `ext-pathname` | **done** | focused native `Pathname` over File/Dir |
 | monitor | `monitor` | `ext-monitor` | **done** | `Monitor` + `MonitorMixin` |
 | fcntl | `fcntl` | `ext-fcntl` | **done** | `Fcntl`'s `fcntl(2)`/`open(2)` flag constants, read from `libc` and `#[cfg]`'d per platform as CRuby `#ifdef`s them |
+| pty | `pty` | `ext-pty` | **done** | `PTY.open`/`spawn`/`getpty`/`check` over `openpty(3)`, the child under a real controlling terminal; `ChildExited` is the gem's Ruby half, and a `check(pid, true)` raise carries only the message — its `#status` answers nil (a by-name raise can't attach one) |
 
 The IO-core extensions have landed as unconditional rows on the `IO` table:
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
@@ -112,7 +113,7 @@ compile-time-`extern` model can't reach without libffi, hence the extra dep.
 
 ## Out of scope (VM internals / tooling)
 
-`rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism), `pty`,
+`rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism),
 `win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
 
 ## Adding an extension

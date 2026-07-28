@@ -83,6 +83,8 @@ pub(crate) mod openssl;
 pub(crate) mod pathname;
 #[cfg(feature = "ext-psych")]
 pub(crate) mod psych;
+#[cfg(feature = "ext-pty")]
+pub(crate) mod pty;
 #[cfg(feature = "ext-socket")]
 pub(crate) mod socket;
 #[cfg(feature = "ext-stringio")]

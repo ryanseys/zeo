@@ -416,6 +416,11 @@ pub const ZLIB_GZIP_FILE_CLASS: ClassId = ClassId(102);
 pub const ZLIB_GZIP_WRITER_CLASS: ClassId = ClassId(103);
 /// `Zlib::GzipReader < Zlib::GzipFile` -- an IO-shaped gzip decompressor.
 pub const ZLIB_GZIP_READER_CLASS: ClassId = ClassId(104);
+/// `pty`: the `PTY` module -- pseudo-terminal allocation (`.open`) and
+/// child processes run under one (`.spawn`/`.getpty`, `.check`). Its
+/// `ChildExited` exception lives in the gem's Ruby half (`gems/pty`), the
+/// same split as `Zlib`'s errors.
+pub const PTY_MODULE: ClassId = ClassId(105);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1279,6 +1284,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(ZLIB_GZIP_FILE_CLASS),
         includes: &[ENUMERABLE_CLASS],
         feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: PTY_MODULE,
+        name: "PTY",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("pty"),
     },
 ];
 
