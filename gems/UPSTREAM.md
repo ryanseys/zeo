@@ -24,7 +24,7 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 
 **zeo-authored Ruby halves** of libraries whose native half lives in
 `zeo-rt` (`json`, `monitor`, `optparse`, `psych`, `strscan`, `zlib`, `pty`,
-`syslog`, `nkf`) -- these are intended to match upstream behaviour;
+`syslog`, `nkf`, `ffi`) -- these are intended to match upstream behaviour;
 divergences are documented in `docs/COMPATIBILITY.md`. Two files inside them
 are faithful vendored copies rather than zeo-authored:
 `syslog/lib/syslog/logger.rb` (`Syslog::Logger`, from the ruby 4.0.5
@@ -38,6 +38,18 @@ deviations, both tagged `zeo:` in-file: the JRuby loader branch is reduced
 to `require "bigdecimal.so"`, and `private_class_method def` helpers are
 plain defs until that compiler gap closes
 (`tests/gaps/issue_private_class_method_def.rb`).
+
+`fiddle/` follows the same vendored pattern: `closure.rb`, `function.rb`
+and `version.rb` are verbatim from the ruby 4.0.5 fiddle-1.1.8 gem, and
+`ffi_backend.rb` -- the gem's own pure-Ruby Fiddle over the ffi API, its
+JRuby/TruffleRuby path -- is vendored with `zeo:`-tagged deviations
+(mechanical AOT rewrites, plus aligning the backend's observable messages
+and return shapes with the C extension the oracle runs; the list is in
+`docs/COMPATIBILITY.md` `### fiddle`). `lib/fiddle.rb` and the gemspec are
+zeo-authored (upstream's branches on RUBY_ENGINE and builds its `TYPE_*`
+constants with a `const_set` loop). The `Importer` DSL files
+(`import`/`struct`/`types`/`pack`/`value`/`cparser`) are not vendored --
+`Importer` builds methods with `module_eval` on computed strings.
 
 When bumping the oracle Ruby, re-vendor the first table from the new
 installation and update the versions here.

@@ -225,6 +225,49 @@ Known divergences of the native slice:
   `private_class_method def` is unwrapped to a plain def (a compiler gap,
   `tests/gaps/issue_private_class_method_def.rb`) -- visibility-only.
 
+### `fiddle`
+
+fiddle 1.x ships its own pure-Ruby FFI backend (`lib/fiddle/ffi_backend.rb`,
+the JRuby/TruffleRuby path), and that is the fiddle zeo runs: the backend is
+vendored in `gems/fiddle/` over zeo's ffi runtime tier (`FFI::Type`,
+`FFI::DynamicLibrary` over `dlopen(3)`, `FFI::Function` /
+`FFI::VariadicInvoker` over libffi, `FFI.errno`) instead of the fiddle C
+extension. The vendored backend carries `zeo:`-tagged deviations of two
+kinds: mechanical ones (the `attach_function`-built `LibC` bindings rebuilt
+over `DynamicLibrary` + `Function`; the `Types.const_get` symbol resolution
+as an explicit table; the LP64 collapse of the type-size `if` chains) and
+CRuby-alignment ones, where the backend's own behavior differs from the C
+extension the oracle runs (error messages like `unknown symbol "x"` /
+`unknown type 99` / `wrong argument type Integer (expected Array)`, dlopen
+failures carrying the raw `dlerror(3)` text, `NULL.to_s` raising
+`ArgumentError "NULL pointer given"`, `Pointer#==` answering `false` for a
+non-Pointer, and `Fiddle.malloc` returning the raw address Integer of a real
+libc `malloc`). The golden (`tests/fiddle.rb`) compares all of this live
+against the C-extension oracle. Known divergences:
+
+- **`fiddle/import` and `fiddle/struct` are not included** (nor
+  `types`/`pack`/`value`/`cparser`, which exist to serve them): the
+  `Importer` DSL builds its methods with `module_eval` on computed strings,
+  which AOT compilation can't express. `require`ing them is a `LoadError`.
+- **`Handle#sym_defined?` answers true/false** (the backend's behavior);
+  the C extension leaks the address-or-nil, which is only ever used as a
+  truthy.
+- **`Fiddle.dlwrap` answers a `Fiddle::Pointer`** (for a String, over a
+  malloc'd copy of its bytes -- the backend's behavior); the C extension
+  returns the object's VALUE address, which has no zeo equivalent.
+- **`Pointer#inspect` carries no object id** and prints the backend's
+  format; the C extension's includes the Ruby object address
+  (nondeterministic in either case).
+- **NULL dereference raises instead of crashing**: `Fiddle::NULL.ptr` and
+  writing through address 0 SEGFAULT the C extension; here they raise
+  (`DLError` / `FFI::NullPointerError`), as the backend does.
+- **`TYPE_CONST_STRING` returns answer a `Pointer`, not a `String`** (the
+  backend maps `CONST_STRING` to `POINTER`); as a variadic *argument* type
+  it converts correctly.
+- `Fiddle::Closure#free` is bookkeeping only -- the libffi closure lives as
+  long as the object (the gem frees it eagerly; calling through a freed
+  closure is undefined behavior there, an error here).
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream

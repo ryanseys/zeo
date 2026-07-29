@@ -449,6 +449,31 @@ pub const NKF_MODULE: ClassId = ClassId(109);
 /// `Kernel#BigDecimal` function is the one constructor.
 pub const BIGDECIMAL_CLASS: ClassId = ClassId(110);
 
+/// `FFI::Type` -- the ffi gem's type objects (`FFI::Type::INT32.size`).
+/// The canonical instances live on this class and `Builtin` as constants;
+/// `fiddle`'s FFI backend keys its whole type table off them.
+pub const FFI_TYPE_CLASS: ClassId = ClassId(111);
+/// `FFI::Type::Builtin < FFI::Type` -- the class of the canonical scalar
+/// type instances (`FFI::Type::Builtin::VOID`, `::POINTER`, ...).
+pub const FFI_TYPE_BUILTIN_CLASS: ClassId = ClassId(112);
+/// `FFI::DynamicLibrary` -- `dlopen(3)` handles: `.open(name, flags)` and
+/// `#find_function` over `dlsym`, with the `RTLD_*` constants.
+pub const FFI_DYNAMIC_LIBRARY_CLASS: ClassId = ClassId(113);
+/// `FFI::Function < FFI::Pointer` -- a callable C function pointer built at
+/// RUNTIME (libffi): from a code address, or from a Ruby `Proc` (a closure
+/// trampoline). The compile-time `attach_function` path never constructs one;
+/// `fiddle` is the consumer.
+pub const FFI_FUNCTION_CLASS: ClassId = ClassId(114);
+/// `FFI::VariadicInvoker` -- the runtime call builder for a variadic C
+/// function; each `#call` marshals trailing `(type, value)` pairs.
+pub const FFI_VARIADIC_INVOKER_CLASS: ClassId = ClassId(115);
+/// `FFI::AbstractMemory` -- the gem's abstract base of `Pointer`/`Buffer`.
+/// Constant-only here (never instantiated): it exists so `is_a?` checks in
+/// the gem's own Ruby (fiddle's FFI backend) answer correctly.
+pub const FFI_ABSTRACT_MEMORY_CLASS: ClassId = ClassId(116);
+/// `FFI::AutoPointer < FFI::Pointer` -- constant-only, for `is_a?` checks.
+pub const FFI_AUTO_POINTER_CLASS: ClassId = ClassId(117);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1016,7 +1041,9 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: FFI_POINTER_CLASS,
         name: "FFI::Pointer",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
+        // The gem's hierarchy: `Pointer < AbstractMemory` (a forward edge --
+        // the `AbstractMemory` row lives with the other late FFI ids).
+        superclass: Some(FFI_ABSTRACT_MEMORY_CLASS),
         includes: &[],
         feature: Some("ffi"),
     },
@@ -1359,6 +1386,66 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(NUMERIC_CLASS),
         includes: &[],
         feature: Some("bigdecimal"),
+    },
+    // The ffi gem's runtime tier (dlopen + libffi calls), added for fiddle's
+    // pure-Ruby FFI backend. `Builtin < Type` nests under it, so the `Type`
+    // row precedes it. `Function < Pointer` and the constant-only
+    // `AbstractMemory`/`AutoPointer` complete the gem's `is_a?` lattice.
+    BuiltinClass {
+        id: FFI_TYPE_CLASS,
+        name: "FFI::Type",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_TYPE_BUILTIN_CLASS,
+        name: "FFI::Type::Builtin",
+        is_module: false,
+        superclass: Some(FFI_TYPE_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_DYNAMIC_LIBRARY_CLASS,
+        name: "FFI::DynamicLibrary",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_FUNCTION_CLASS,
+        name: "FFI::Function",
+        is_module: false,
+        superclass: Some(FFI_POINTER_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_VARIADIC_INVOKER_CLASS,
+        name: "FFI::VariadicInvoker",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_ABSTRACT_MEMORY_CLASS,
+        name: "FFI::AbstractMemory",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_AUTO_POINTER_CLASS,
+        name: "FFI::AutoPointer",
+        is_module: false,
+        superclass: Some(FFI_POINTER_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
     },
 ];
 

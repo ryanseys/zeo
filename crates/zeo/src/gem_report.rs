@@ -68,6 +68,8 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "cgi" | "cgi/escape" => Some("a zeo reimplementation of CGI escaping"),
         "nkf" => Some("a zeo reimplementation over its own encoding engine; not the nkf C library"),
         "bigdecimal" => Some("native core reimplemented; the gem's Ruby half is vendored upstream"),
+        "ffi" => Some("zeo's own FFI (compile-time externs + a libffi runtime tier); not the ffi gem"),
+        "fiddle" => Some("the gem's own FFI backend over zeo's ffi; not the fiddle C extension"),
         _ => None,
     }
 }

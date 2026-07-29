@@ -11,7 +11,7 @@ use super::{
     read_int_array, read_int_m, str_bytes, wrap_address, write_float_array, write_float_m,
     write_int_array, write_int_m,
 };
-use crate::builtins::{arity, type_error};
+use crate::builtins::{arity, index_error, type_error};
 use crate::RubyValue;
 use zeo_abi::FFI_POINTER_CLASS;
 use zeo_macros::ruby_class;
@@ -107,14 +107,14 @@ ruby_class! {
         let p = ptr_of(recv);
         match args.first() {
             None | Some(RubyValue::Nil) => {
+                p.check_bounds(0, 1)?;
                 let bytes = unsafe { std::ffi::CStr::from_ptr(p.base as *const c_char) }.to_bytes().to_vec();
                 Ok(bytes_to_str(bytes))
             }
             Some(len) => {
                 let n = crate::ffi::to_i64(len)? as usize;
                 p.check_bounds(0, n)?;
-                let bytes = unsafe { std::slice::from_raw_parts(p.base, n) }.to_vec();
-                Ok(bytes_to_str(bytes))
+                Ok(bytes_to_str(unsafe { p.read_bytes_at(0, n) }))
             }
         }
     }
@@ -125,13 +125,20 @@ ruby_class! {
         let p = ptr_of(recv);
         match args.get(1) {
             None | Some(RubyValue::Nil) => {
+                p.check_bounds(off, 1)?;
                 let bytes = unsafe { std::ffi::CStr::from_ptr(p.base.add(off) as *const c_char) }.to_bytes().to_vec();
                 Ok(bytes_to_str(bytes))
             }
             Some(len) => {
+                // Bounded NUL-terminated read: up to `len` bytes, stopping at
+                // the first NUL (the gem's `get_string`; `read_string(len)`
+                // stays exact).
                 let n = crate::ffi::to_i64(len)? as usize;
                 p.check_bounds(off, n)?;
-                let bytes = unsafe { std::slice::from_raw_parts(p.base.add(off), n) }.to_vec();
+                let mut bytes = unsafe { p.read_bytes_at(off, n) };
+                if let Some(nul) = bytes.iter().position(|&b| b == 0) {
+                    bytes.truncate(nul);
+                }
                 Ok(bytes_to_str(bytes))
             }
         }
@@ -144,7 +151,7 @@ ruby_class! {
         let p = ptr_of(recv);
         p.check_bounds(off, bytes.len() + 1)?;
         unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.base.add(off), bytes.len());
+            p.write_bytes_at(off, &bytes);
             p.base.add(off + bytes.len()).write(0);
         }
         Ok(recv.clone())
@@ -155,7 +162,7 @@ ruby_class! {
         let n = crate::ffi::to_i64(&args[0])? as usize;
         let p = ptr_of(recv);
         p.check_bounds(0, n)?;
-        Ok(bytes_to_str(unsafe { std::slice::from_raw_parts(p.base, n) }.to_vec()))
+        Ok(bytes_to_str(unsafe { p.read_bytes_at(0, n) }))
     }
     def "get_bytes"(recv, args, _b) {
         arity!(args, 2);
@@ -163,16 +170,31 @@ ruby_class! {
         let n = crate::ffi::to_i64(&args[1])? as usize;
         let p = ptr_of(recv);
         p.check_bounds(off, n)?;
-        Ok(bytes_to_str(unsafe { std::slice::from_raw_parts(p.base.add(off), n) }.to_vec()))
+        Ok(bytes_to_str(unsafe { p.read_bytes_at(off, n) }))
     }
-    // `put_bytes(offset, str)` / `write_bytes(str)` -- raw bytes, no NUL.
+    // `put_bytes(offset, str, index = 0, length = nil)` -- raw bytes (a slice
+    // of `str` starting at `index`), no NUL.
     def "put_bytes"(recv, args, _b) {
-        arity!(args, 2);
+        arity!(args, 2..=4);
         let off = crate::ffi::to_i64(&args[0])? as usize;
-        let bytes = str_bytes(&args[1])?;
+        let mut bytes = str_bytes(&args[1])?;
+        let idx = match args.get(2) {
+            None | Some(RubyValue::Nil) => 0,
+            Some(v) => crate::ffi::to_i64(v)? as usize,
+        };
+        let len = match args.get(3) {
+            None | Some(RubyValue::Nil) => bytes.len().saturating_sub(idx),
+            Some(v) => crate::ffi::to_i64(v)? as usize,
+        };
+        if idx + len > bytes.len() {
+            return Err(index_error!(
+                "index {idx} or length {len} is out of string"
+            ));
+        }
+        bytes = bytes[idx..idx + len].to_vec();
         let p = ptr_of(recv);
         p.check_bounds(off, bytes.len())?;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.base.add(off), bytes.len()) };
+        unsafe { p.write_bytes_at(off, &bytes) };
         Ok(recv.clone())
     }
     def "write_bytes"(recv, args, _b) {
@@ -180,7 +202,7 @@ ruby_class! {
         let bytes = str_bytes(&args[0])?;
         let p = ptr_of(recv);
         p.check_bounds(0, bytes.len())?;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.base, bytes.len()) };
+        unsafe { p.write_bytes_at(0, &bytes) };
         Ok(recv.clone())
     }
 
@@ -204,6 +226,16 @@ ruby_class! {
     def "null?"(recv, args, _b) {
         arity!(args, 0);
         Ok(RubyValue::Bool(ptr_of(recv).address() == 0))
+    }
+    // Whether the extent is known (owned buffers yes, raw addresses no) --
+    // fiddle sizes its wrappers off this.
+    def "size_limit?"(recv, args, _b) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(ptr_of(recv).size.is_some()))
+    }
+    def "to_ptr"(recv, args, _b) {
+        arity!(args, 0);
+        Ok(recv.clone())
     }
     def "address" | "to_i"(recv, args, _b) {
         arity!(args, 0);

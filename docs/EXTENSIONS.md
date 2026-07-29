@@ -115,6 +115,32 @@ interface per runtime call, since its trailing arity/types aren't known at
 compile time. These are the one part of the gem that the pure
 compile-time-`extern` model can't reach without libffi, hence the extra dep.
 
+**The runtime object tier — `Type`, `DynamicLibrary`, `Function`,
+`VariadicInvoker`, `FFI.errno`.** The same libffi machinery is also exposed
+as the gem's own runtime classes, so code that treats a C call as *data*
+(fiddle's pure-Ruby FFI backend is the consumer) runs unchanged:
+`FFI::Type::Builtin::*` are the canonical type objects (`#size`/`#alignment`
+drive fiddle's whole `SIZEOF_*`/`ALIGN_*` table); `FFI::DynamicLibrary.open`
+is `dlopen(3)` (`nil` = the process image) with `#find_function` over
+`dlsym`; `FFI::Function.new(ret, args, ptr_or_proc)` builds a callable
+function pointer at runtime — from a code address, or from a `Proc` (a
+libffi closure, so the object doubles as a C callback) — and IS an
+`FFI::Pointer` (`Function < Pointer`, as in the gem);
+`FFI::VariadicInvoker#call` marshals trailing `(type, value)` pairs with the
+C default argument promotions. The gem's Ruby half lives in `gems/ffi/`
+(`Error`/`NullPointerError`, `Platform`, `DataConverter`); every NULL
+read/write through a `Pointer` raises `FFI::NullPointerError` rather than
+crashing.
+
+**fiddle rides this.** `require "fiddle"` loads `gems/fiddle/` — fiddle
+1.1.8's own `lib/fiddle/ffi_backend.rb` (its JRuby/TruffleRuby path)
+vendored over the tier above, plus its `closure`/`function`/`version` files
+verbatim. `Fiddle.dlopen`, `Fiddle::Function`, `Fiddle::Pointer`,
+`Closure::BlockCaller` callbacks (qsort works), and `TYPE_VARIADIC` calls
+are all oracle-matched against the C extension (`tests/fiddle.rb`); the
+`Importer` DSL (`fiddle/import`/`fiddle/struct`) is not included — see
+`docs/COMPATIBILITY.md` `### fiddle` for that and the other divergences.
+
 ## Out of scope (VM internals / tooling)
 
 `rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism),
