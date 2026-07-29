@@ -1127,22 +1127,26 @@ fn rbconfig_shim_is_built_in() {
     );
 }
 
-// A `require` need not be a top-level statement. Whole-program AOT
-// hoists a non-top-level literal `require`/`require_relative` to a compile-time
-// splice (loaded before the file's own code, like the rubygems/bundler
-// `require "x" unless defined?(X)` idiom), so it works inside a method, a
-// top-level conditional, and a begin/rescue-LoadError guard. Oracle-pinned.
+// A `require` need not be a top-level statement. Loading the file still runs
+// one written in a conditional, a `begin`, or a class body, so whole-program
+// AOT splices it at compile time. A method body is the exception -- see
+// `a_library_only_a_method_body_requires_is_not_compiled_in`. Oracle-pinned.
 #[test]
 fn require_works_in_non_top_level_positions() {
     let result = run_ruby(
         r#"
+        require "ostruct" if RUBY_VERSION
         def make_struct
           require "ostruct"
           OpenStruct.new(a: 1, b: 2).b
         end
         puts make_struct
 
-        require "set" if RUBY_VERSION
+        begin
+          require "set"
+        rescue LoadError
+          abort "no set"
+        end
         puts Set.new([1, 1, 2, 3]).size
 
         def with_json
@@ -1158,6 +1162,34 @@ fn require_works_in_non_top_level_positions() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "2\n3\n{\"k\":1}\n");
+}
+
+// A library ONLY a method body requires is not compiled in: CRuby would load
+// it when the method runs, and zeo has no runtime loader. The call becomes a
+// runtime `Kernel#require`, so the omission surfaces as a rescuable `LoadError`
+// at the require site -- never as silently wrong output. Requiring the same
+// library from any load-time position brings it back (the test above).
+//
+// This is a deliberate divergence from CRuby, taken because eager loading put
+// the file ahead of the requires its own file makes at top level, and drew
+// every lazy dependency into the binary: `require "rubygems"` dropped from
+// 2.69M generated lines to 779K once `Gem.use_gemdeps`'s `require "bundler"`
+// stopped dragging bundler, thor, net/http, uri and pub_grub along.
+#[test]
+fn a_library_only_a_method_body_requires_is_not_compiled_in() {
+    let result = run_ruby(
+        r#"
+        def lazy
+          require "ostruct"
+          "loaded"
+        rescue LoadError => e
+          e.message
+        end
+        puts lazy
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "cannot load such file -- ostruct\n");
 }
 
 // A dynamic `load`/`require` (a runtime-computed target) does not fail the

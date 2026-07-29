@@ -465,6 +465,42 @@ at the FFI path (see `docs/EXTENSIONS.md`), zeo's intended escape hatch.
 Examples that trigger the named error today: `sqlite3`, `nokogiri`, `pg`,
 `mysql2`, `bcrypt`, `nio4r`, `grpc`, `msgpack`, and similar.
 
+## Required only from a method body
+
+A plain `require` that **only a method body** reaches is not compiled in.
+
+```ruby
+def render
+  require "erb"          # not loaded -- raises LoadError when `render` runs
+  ERB.new(@src).result
+end
+```
+
+CRuby loads `erb` when `render` is first called. Zeo has no runtime loader, so
+it must either load the file at program start or not at all, and loading it
+early is worse than it looks: the file lands *ahead* of the requires its own
+file makes at top level, and every lazy dependency is drawn into the binary.
+`rubygems.rb` shows both faults at once — `Gem.use_gemdeps` says
+`require "bundler"`, which ran bundler's `rubygems_ext` against a
+`Gem::Specification` whose class body had not executed yet, and inflated
+`require "rubygems"` from 779K generated lines to 2.69M.
+
+So the call is left alone and becomes a runtime `Kernel#require`. It answers
+`false` if any load-time position did require the library, and otherwise raises
+CRuby's own `LoadError` at the require site — rescuable, and never silently
+wrong output. Compile time discloses it too: a `deferred-require` entry in
+`zeo-gems.json` and one warning per library.
+
+To compile the library in, require it from any position the file's **load**
+executes — the top level, a conditional, a `begin`, a class body:
+
+```ruby
+require "erb"            # now compiled in; the one inside `render` answers false
+```
+
+A `require_relative` is exempt from all of this. It names a file of the same
+program rather than a library boundary, so it is loaded wherever it is written.
+
 ## Compiling against an installed gem store
 
 `zeo app.rb --gem-path "$(gem env gemdir)" --lockfile Gemfile.lock` resolves
@@ -508,7 +544,9 @@ object per library the program required:
                "diverges": true, "note": "serde_json-backed; not the json gem"},
   "optparse": {"by": "bundled-gem", "path": "gems/optparse/lib/optparse.rb"},
   "base64":   {"by": "builtin-ext", "feature": "base64",
-               "diverges": true, "note": "a zeo reimplementation of Base64"}
+               "diverges": true, "note": "a zeo reimplementation of Base64"},
+  "erb":      {"by": null, "excluded": "deferred-require",
+               "reason": "required only from a method body, ..."}
 }
 ```
 

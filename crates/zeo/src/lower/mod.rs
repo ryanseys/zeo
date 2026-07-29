@@ -1807,24 +1807,25 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         if call.receiver().is_none()
             && matches!(name.as_str(), "require" | "require_relative" | "load")
         {
-            // A non-top-level `require`/`require_relative` of a LITERAL
-            // feature is a compile-time no-op here: the loader's eager
-            // pre-pass (`Loader::lower_file_statements`) has already spliced
-            // the target file -- the same compile-time-require treatment
-            // `autoload` gets -- so the CALL only has to report a load result.
+            // A non-top-level `require`/`require_relative` of a LITERAL feature
+            // is usually a compile-time no-op: the loader's eager pre-pass
+            // (`Loader::lower_file_statements`) already spliced the target, so
+            // the CALL only reports a load result.
             //
             // A native builtin has nothing to splice; its whole effect is to
-            // activate a gated feature (a compile-time act from any position),
-            // and `activated_features` doubles as CRuby's loaded-features
+            // activate a gated feature, which is a compile-time act from any
+            // position. `activated_features` doubles as CRuby's loaded-features
             // table, so `require` folds to the bool `insert` reports
-            // (`load.c:1413`: true the first time, false thereafter). A file
-            // feature folds to `true`: it is loaded eagerly at program start,
-            // so the `unless defined?`/`if <cond>` guards around these requires
-            // short-circuit at runtime and the return value is rarely read.
+            // (`load.c:1413`: true the first time, false thereafter). A spliced
+            // file folds to `true`: it loads at program start, so the `unless
+            // defined?`/`if <cond>` guards around these requires short-circuit
+            // and the return value is rarely read.
             //
-            // A LITERAL `require`/`require_relative` folds to its load-result
-            // bool (the file was already spliced by the pre-pass, or a builtin
-            // feature was activated).
+            // Two kinds of require are NOT spliced and must keep their call: a
+            // plain `require` the loader could not resolve, and one only a
+            // method body reaches (`Hir::deferred_requires`). Both fall through
+            // to the runtime `Kernel#require`, which answers `false` for an
+            // already-loaded feature and raises `LoadError` otherwise.
             if matches!(name.as_str(), "require" | "require_relative") {
                 if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
                     if name == "require" && features::is_builtin_feature(&feature) {
@@ -1834,10 +1835,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
                         return Ok(hir.push(HirNode::BoolLit(first)));
                     }
-                    // A plain `require` the loader couldn't resolve is NOT spliced;
-                    // fall through to the runtime `Kernel#require` (raising
-                    // `LoadError`) instead of folding to a loaded-no-op `true`.
-                    if !(name == "require" && hir.unresolvable_requires.contains(&feature)) {
+                    let unresolvable =
+                        name == "require" && hir.unresolvable_requires.contains(&feature);
+                    if !unresolvable && !hir.deferred_requires.contains(&feature) {
                         return Ok(hir.push(HirNode::BoolLit(true)));
                     }
                 }

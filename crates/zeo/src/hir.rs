@@ -160,6 +160,15 @@ pub struct Hir {
     /// (`begin; require "x"; rescue LoadError`) is caught at runtime -- exactly
     /// CRuby's semantics. (A missing `require_relative` stays a compile error.)
     pub unresolvable_requires: std::collections::HashSet<String>,
+    /// Features named only from inside a method BODY, which zeo therefore does
+    /// not load. CRuby loads such a file when the method runs; whole-program
+    /// AOT has no runtime loader, so the honest answer is to leave it out and
+    /// let the CALL lower to a runtime `Kernel#require`. That answers `false`
+    /// if another position did load the feature, and raises `LoadError` if
+    /// nothing did. Loading it eagerly instead put it BEFORE the requires the
+    /// file itself makes at top level, and dragged every lazy dependency into
+    /// the binary.
+    pub deferred_requires: std::collections::HashSet<String>,
     /// How many of the root `Program`'s leading statements came from the
     /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
     /// `parse_and_lower_with`. `analyze` marks the classes

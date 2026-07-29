@@ -40,6 +40,13 @@
 //!   at compile time only). A missing `require_relative` DOES stay a compile
 //!   error: it names a project-local file that must exist, never an optional
 //!   dependency.
+//! - A plain `require` only a METHOD BODY names is NOT loaded. CRuby loads that
+//!   file when the method runs; zeo has no runtime loader, so loading it early
+//!   put it ahead of the requires the file itself makes at top level, and drew
+//!   every lazy dependency into the binary. The call becomes a runtime
+//!   `Kernel#require` instead, and the gem report discloses the omission
+//!   (`gem_report::DEFERRED_KIND`). A `require_relative` is exempt: it names a
+//!   file of this same program, not a library boundary.
 //!
 //! GEMS sit on top of that: a `.gemspec`-manifested directory
 //! contributing one or more search roots (`require_paths`, default
@@ -251,7 +258,24 @@ pub(super) fn lower_main_file(
             Ok(all)
         });
     hir.lowering_file = prev_file;
-    Ok((lowered?, loader.gem_records))
+    let lowered = lowered?;
+    // Disclose the libraries no position outside a method body required, so
+    // zeo left them out. `record_gem` is first-wins, and every real
+    // satisfaction is already recorded, so only the truly absent ones land.
+    let mut deferred: Vec<&String> = hir.deferred_requires.iter().collect();
+    deferred.sort();
+    for name in deferred {
+        loader.record_gem(crate::gem_report::GemRecord {
+            name: name.clone(),
+            by: crate::gem_report::SatisfiedBy::Excluded {
+                kind: crate::gem_report::DEFERRED_KIND.to_string(),
+                reason: "required only from a method body, which whole-program AOT does not \
+                         load; require it at top level to compile it in"
+                    .to_string(),
+            },
+        });
+    }
+    Ok((lowered, loader.gem_records))
 }
 
 /// Whether the ambient rbconfig shim must be compiled in: some spliced
@@ -307,8 +331,9 @@ impl Loader {
         let mut own = Vec::new();
 
         // Collect every require/require_relative in the file (any nesting) once,
-        // for two uses below: (1) a resolvability pre-scan HERE, and (2) the
-        // eager splice of non-top-level requires AFTER the statement loop.
+        // for three uses below: (1) a resolvability pre-scan HERE, (2) recording
+        // the method-body-only requires zeo declines to load, and (3) the eager
+        // splice of the rest AFTER the statement loop.
         let mut requires = RequireCollector::default();
         {
             use ruby_prism::Visit as _;
@@ -328,21 +353,23 @@ impl Loader {
             if call.name().as_slice() != b"require" {
                 continue;
             }
-            // Extract the literal feature EXACTLY as `lower_require_statement`
-            // and `lower_call_general` do (lower the arg, read its folded string
-            // literal), so all three agree on which requires are literal. The
-            // throwaway arg node is harmless append-only arena bookkeeping.
-            let arg_list: Vec<_> = call
-                .arguments()
-                .map(|a| a.arguments().iter().collect())
-                .unwrap_or_default();
-            let [arg] = arg_list.as_slice() else { continue };
-            let arg_id = lower_node(result, hir, arg)?;
-            let Some(feature) = crate::lower::eval_splice::literal_string_text(hir, arg_id) else {
+            let Some(feature) = literal_feature(result, hir, call)? else {
                 continue;
             };
             if !self.require_resolvable(&feature) {
                 hir.unresolvable_requires.insert(feature);
+            }
+        }
+        // A plain `require` only a METHOD BODY reaches is not loaded (see
+        // `Hir::deferred_requires`). Record the feature so its CALL stays a
+        // runtime `Kernel#require`. A builtin is exempt: it needs no splice, so
+        // deferring it would turn a working require into a `LoadError`.
+        for call in &requires.deferred {
+            let Some(feature) = literal_feature(result, hir, call)? else {
+                continue;
+            };
+            if !is_builtin_feature(&feature) {
+                hir.deferred_requires.insert(feature);
             }
         }
 
@@ -538,17 +565,14 @@ impl Loader {
             }
         }
 
-        // Non-top-level `require`/`require_relative` (inside a method,
-        // conditional, `begin`, block -- anywhere the file-level loop above
-        // does NOT resolve): exactly like `autoload`, splice each RESOLVABLE
-        // literal target eagerly here (the CALL itself folds to a bool no-op in
-        // `lower_call_general`). An unresolvable plain `require` isn't hoisted
-        // (`lower_require_statement` returns `None` for it, from the pre-scan
-        // set); its CALL lowers to a runtime `Kernel#require` instead. Deduped
-        // through the shared `required` table, so a target already loaded at top
-        // level (or shared across sites) splices exactly once. Over-
-        // approximation: a require in a never-taken branch still loads -- benign,
-        // since every extension is statically linked anyway.
+        // Non-top-level `require`/`require_relative` that loading this file
+        // still runs: a conditional, a `begin`, a class body, a block. Splice
+        // each resolvable literal target here, as `autoload` does; the CALL
+        // folds to a bool no-op in `lower_call_general`. An unresolvable plain
+        // `require` is not hoisted -- its CALL becomes a runtime
+        // `Kernel#require`. The shared `required` table dedups, so a target
+        // already loaded at top level splices once. A require in a never-taken
+        // branch still loads: benign, since every extension links statically.
         let mut hoisted = Vec::new();
         for call in &requires.calls {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
@@ -1379,25 +1403,41 @@ fn is_native_feature(feature: &str) -> bool {
     feature.ends_with(".so") || feature.ends_with(".o") || feature.ends_with(".bundle")
 }
 
-/// Collects every receiver-less `autoload` call in a statement tree,
-/// descending through the STRUCTURAL containers stdlib nests them in --
-/// `module`/`class`/`class << self` bodies (e.g. `module URI; autoload
-/// :Generic, "uri/generic"; end`, `module Bundler; class Settings; autoload
-/// :Mirror, File.expand_path("mirror", __dir__); end; end`). An `autoload`
-/// inside a method/block/conditional body isn't collected here (it's
-/// genuinely runtime-dynamic, like a non-top-level `require`); it lowers to a
-/// no-op without a splice, so its constant stays undefined -- a loud
-/// NameError on reference, not silent, and documented.
-/// Collects every receiver-less `require`/`require_relative` call ANYWHERE in a
-/// file's tree -- method bodies, conditionals, `begin`, blocks included -- via
-/// prism's generic traversal (`Visit`), so the loader can eager-splice targets
-/// a non-top-level require names. Top-level requires are collected too but are
-/// harmless: they were already spliced by the file-level loop and dedup skips
-/// the second attempt. `load` and receiver-bearing (`box.require`) forms are
-/// excluded -- they are not eager-splice-able.
+/// The feature a `require`/`require_relative` names, or `None` if the argument
+/// is not one constant string. Lowers the argument and reads its folded
+/// literal, exactly as `lower_require_statement` and `lower_call_general` do,
+/// so all three agree on which requires are literal.
+fn literal_feature(
+    result: &ruby_prism::ParseResult,
+    hir: &mut Hir,
+    call: &ruby_prism::CallNode<'_>,
+) -> PResult<Option<String>> {
+    let arg_list: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    let [arg] = arg_list.as_slice() else {
+        return Ok(None);
+    };
+    let arg_id = lower_node(result, hir, arg)?;
+    Ok(crate::lower::eval_splice::literal_string_text(hir, arg_id))
+}
+
+/// Collects every receiver-less `require`/`require_relative` call in a file's
+/// tree, split by whether LOADING the file runs it. Top-level requires land in
+/// `calls` too, but dedup skips the second splice attempt. `load` and
+/// receiver-bearing (`box.require`) forms are excluded: they cannot be
+/// eager-spliced.
 #[derive(Default)]
 struct RequireCollector<'a> {
+    /// Requires to splice: everything outside a method body, plus every
+    /// `require_relative`.
     calls: Vec<ruby_prism::CallNode<'a>>,
+    /// A plain `require` only a method BODY reaches. These are not spliced, but
+    /// their names are still wanted (see `Hir::deferred_requires`).
+    deferred: Vec<ruby_prism::CallNode<'a>>,
+    /// Enclosing `def`s. Nonzero means a `require` here is deferred.
+    defs: u32,
 }
 
 impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
@@ -1406,9 +1446,27 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             if call.receiver().is_none()
                 && matches!(call.name().as_slice(), b"require" | b"require_relative")
             {
-                self.calls.push(call);
+                if self.defs == 0 || call.name().as_slice() == b"require_relative" {
+                    self.calls.push(call);
+                } else {
+                    self.deferred.push(call);
+                }
             }
         }
+    }
+
+    // A method body does not run at load time, so a `require` there names a
+    // lazy LIBRARY: CRuby loads it only when the method is called, and eager
+    // splicing gets both the order and the binary size wrong. Descend, but keep
+    // those requires out of the splice. A `require_relative` is exempt -- it
+    // names a file of this same program, not a library boundary, and it must
+    // stay loaded for `def x; require_relative "part"; end` to work at all.
+    // `def self.x` and a `class << self` body are the same case: both are
+    // `DefNode`s.
+    fn visit_def_node(&mut self, node: &ruby_prism::DefNode<'pr>) {
+        self.defs += 1;
+        ruby_prism::visit_def_node(self, node);
+        self.defs -= 1;
     }
 
     // A `require` under a statically-false guard (`require 'open3/jruby_windows'
@@ -1525,6 +1583,15 @@ fn engine_string_eq(a: &ruby_prism::Node<'_>, b: &ruby_prism::Node<'_>) -> Optio
     Some(b.as_string_node()?.unescaped() == RUBY_ENGINE.as_bytes())
 }
 
+/// Collects every receiver-less `autoload` call in a statement tree,
+/// descending through the STRUCTURAL containers stdlib nests them in --
+/// `module`/`class`/`class << self` bodies (e.g. `module URI; autoload
+/// :Generic, "uri/generic"; end`, `module Bundler; class Settings; autoload
+/// :Mirror, File.expand_path("mirror", __dir__); end; end`). An `autoload`
+/// inside a method/block/conditional body isn't collected here (it's
+/// genuinely runtime-dynamic, like a non-top-level `require`); it lowers to a
+/// no-op without a splice, so its constant stays undefined -- a loud
+/// NameError on reference, not silent, and documented.
 fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::CallNode<'a>>) {
     if let Some(stmts) = node.as_statements_node() {
         for n in stmts.body().iter() {

@@ -40,14 +40,19 @@ pub enum SatisfiedBy {
     BundledGem { path: String },
     /// A file found on a `-I` load root (the installed Ruby's own stdlib).
     StdlibRoot { path: String },
-    /// Recorded but unavailable.
-    #[allow(dead_code)]
+    /// Recorded but unavailable: a native gem the external store located but
+    /// zeo has no ext for, or a library only a method body required.
     Excluded { kind: String, reason: String },
 }
 
 /// The mnemonic slug the substitution warning carries, and the value
 /// `--nowarn=<slug>` suppresses.
 pub const SUBSTITUTE_SLUG: &str = "zeo-builtin-substitute";
+
+/// `Excluded::kind` for a library only a method body required. zeo does not
+/// load it, so the record is the only breadcrumb before the runtime
+/// `LoadError`.
+pub const DEFERRED_KIND: &str = "deferred-require";
 
 /// If zeo's implementation of `name` is NOT the upstream gem/extension,
 /// the note explaining what it actually is. `Some` here is exactly the
@@ -142,7 +147,14 @@ pub fn emit_warnings(records: &[GemRecord], nowarn: &HashSet<String>) {
     }
     let mut seen = HashSet::new();
     for r in records {
-        if let Some(note) = substitution_note(&r.name) {
+        if let SatisfiedBy::Excluded { kind, reason } = &r.by {
+            if kind == DEFERRED_KIND && seen.insert(r.name.as_str()) {
+                eprintln!(
+                    "zeo: warning: '{}' is not compiled in ({reason}) [{SUBSTITUTE_SLUG}]",
+                    r.name
+                );
+            }
+        } else if let Some(note) = substitution_note(&r.name) {
             if seen.insert(r.name.as_str()) {
                 eprintln!(
                     "zeo: warning: '{}' is satisfied by zeo's built-in implementation \
