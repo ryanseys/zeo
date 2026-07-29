@@ -1,0 +1,42 @@
+-- constants --
+0
+1
+2
+771
+772
+true
+0
+10
+62
+-- context defaults --
+OpenSSL::SSL::SSLContext
+0
+false
+nil
+2
+1
+true
+OpenSSL::X509::Store
+-- context overrides --
+0
+true
+1
+true
+"/nonexistent-bundle.pem"
+-- store --
+OpenSSL::X509::Store
+false
+-- unconnected socket --
+OpenSSL::SSL::SSLSocket
+nil
+true
+nil
+"example.com"
+"PINIT"
+true
+true
+true
+-- errors --
+OpenSSL::OpenSSLError
+true
+Object

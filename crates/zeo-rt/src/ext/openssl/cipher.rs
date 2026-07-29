@@ -576,7 +576,7 @@ mod tests {
         let key = bytes(&[1u8; 32]);
         let c = cm("new")(&RubyValue::Nil, &[s("aes-256-gcm")], None).unwrap();
         im("encrypt")(&c, &[], None).unwrap();
-        im("key=")(&c, &[key.clone()], None).unwrap();
+        im("key=")(&c, std::slice::from_ref(&key), None).unwrap();
         im("iv_len=")(&c, &[RubyValue::Int(12)], None).unwrap();
         im("iv=")(&c, &[bytes(&[5u8; 12])], None).unwrap();
         im("auth_data=")(&c, &[s("aad")], None).unwrap();

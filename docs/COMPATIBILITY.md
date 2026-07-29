@@ -347,6 +347,59 @@ this event"`, `"unknown event: x"`) are oracle-matched live
 - `enable(target:)`/`enable(target_line:)` filtering and
   `TracePoint.allow_reentry` are not implemented.
 
+### `openssl`
+
+Backed by the official rust-openssl bindings over a **vendored OpenSSL
+3.x**, so the digest, cipher, BN and TLS primitives are the same EVP
+implementations CRuby's C extension binds — algorithm outputs, tags and
+error messages match by construction rather than by reimplementation.
+What differs is the surface around them.
+
+**Shipped**: `Digest` (+ `MD4`/`MD5`/`RIPEMD160`/`SHA1`/`SHA224`/
+`SHA256`/`SHA384`/`SHA512`), `HMAC`, `KDF.pbkdf2_hmac`/`hkdf`/`scrypt`
+(and the `PKCS5` shim), `BN`, `Cipher`, `Random`, the secure compares,
+the version constants, and CLIENT-side `SSL::SSLContext`/`SSLSocket`
+with `X509::Store`/`Certificate`.
+
+**Declined** (raise `NoMethodError`/`NameError` rather than pretending):
+`PKey` key generation and signing, X509 certificate issuance, PKCS#7,
+ASN1, `SSLServer` and TLS `accept`. Zeo compiles clients, not
+certificate authorities.
+
+Divergences:
+
+- **`OpenSSL::Digest` sits under `Object`**, not under the `digest`
+  framework's `Digest::Class`; zeo's digest classes are native tables
+  with no shared Ruby superclass. `is_a?(Digest::Instance)` answers
+  false, though every method that contract names is present.
+- **Camellia, IDEA and SEED are absent from the vendored build**
+  (openssl-src's defaults): their names appear in `Cipher.ciphers` —
+  which reports CRuby's own NID table — but `Cipher.new` raises
+  `CipherError`, the same way RC4 and Blowfish do on both runtimes
+  (OpenSSL 3 moved those to the legacy provider).
+- **`Cipher::AES`/`AES256`-style shorthand subclasses are absent.**
+  Spell the algorithm out: `Cipher.new("aes-256-cbc")`.
+- **The trust store is configured, not enumerated.** `X509::Store`'s
+  mutators are accepted and do nothing; what decides trust is the
+  context's `ca_file` or, failing that, the first existing system CA
+  bundle (the probe list from upstream's own `openssl.rb`, since a
+  vendored library's compiled-in cert path belongs to the build machine).
+- **`OpenSSL::Buffering` is not a module in the ancestry**: the buffered
+  IO surface (`read`/`gets`/`puts`/`readpartial`/…) is implemented
+  directly on `SSLSocket`.
+- **`read_nonblock`/`write_nonblock`/`connect_nonblock` block.** They
+  drive a blocking descriptor and never answer `:wait_readable`, so a
+  caller's own socket timeout does not interrupt them.
+- **`Certificate#subject`/`#issuer` answer a String** (OpenSSL's
+  one-line DN), where CRuby answers an `X509::Name` whose `to_s` is that
+  string.
+- **`post_connection_check` verifies presence, not the name again**:
+  hostname checking already happened inside the handshake (libssl's X509
+  verify param), so what remains is the no-certificate case.
+- Session resumption (`SSLSocket#session`), ALPN, client certificates
+  and the verify/session callbacks are not implemented;
+  `session_cache_mode` is carried but inert.
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream

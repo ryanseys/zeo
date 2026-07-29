@@ -32,6 +32,7 @@ pub(crate) mod digest;
 pub(crate) mod hmac;
 pub(crate) mod kdf;
 pub(crate) mod random;
+pub(crate) mod ssl;
 
 use crate::builtins::{arg_error, arity};
 use crate::dispatch::raise_error;
