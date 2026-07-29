@@ -2975,7 +2975,7 @@ pub fn coerce_raise_arg(value: RubyValue) -> Result<RubyValue, Signal> {
         // error classes -- rather than a literal name, which codegen builds
         // directly. `#exception` runs any custom `initialize`.
         RubyValue::Class(cid) if is_a(*cid, zeo_abi::EXCEPTION_CLASS) => {
-            send_value(&value, Symbol::intern("exception"), &[], None)?
+            build_exception(&value, &[])?
         }
         RubyValue::Str(s) => build("RuntimeError", s.lock().to_utf8_lossy().into_owned()),
         _ => build("TypeError", "exception class/object expected".to_string()),
@@ -3003,7 +3003,22 @@ pub fn coerce_raise_arg_with_message(
             "exception class/object expected".to_string(),
         ));
     }
-    send_value(&value, Symbol::intern("exception"), msg, None)
+    build_exception(&value, msg)
+}
+
+/// `obj.exception(msg)` -- the constructor `raise` reaches an Exception class
+/// or instance through. A class MINTED at runtime (`Foo = Class.new(StdErr)`)
+/// carries no `exception` of its own, and class-method lookup does not walk
+/// ancestors, so it is built through `new` instead; both run the same
+/// `initialize`.
+fn build_exception(value: &RubyValue, msg: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let exception = Symbol::intern("exception");
+    let has_own = match value {
+        RubyValue::Class(cid) => class_method_owner(*cid, exception).is_some(),
+        _ => true,
+    };
+    let name = if has_own { exception } else { Symbol::intern("new") };
+    send_value(value, name, msg, None)
 }
 
 /// The exhausted-iteration raise: a rescuable `StopIteration`

@@ -1567,17 +1567,12 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
     }
     if let Some(msg_id) = explicit_msg {
         // `raise <expr>, message` where `<expr>` didn't resolve to a class
-        // above. A constant-SHAPED operand that failed to resolve is an
-        // undefined constant: CRuby evaluates it -- and raises `uninitialized
-        // constant` -- before the message is ever consulted, so lowering it as
-        // an ordinary const read yields the correctly-scoped runtime NameError
-        // (and compiles cleanly in a dead/rescued branch). A genuinely
-        // COMPUTED class operand (a variable, a call) stays unsupported.
-        if const_path_of(cx, node).is_some() {
-            return emit_expr(cx, node);
-        }
-        // A genuinely COMPUTED class/exception operand (`raise klass, msg`):
-        // coerce at runtime like `Kernel#raise` (`klass.exception(msg)`).
+        // above -- a variable, a call, or a constant-SHAPED operand that names
+        // no compiled class (an alias, `Foo = Class.new`, or nothing at all).
+        // All of them coerce at runtime like `Kernel#raise` does
+        // (`klass.exception(msg)`), and the operand is evaluated FIRST, so an
+        // undefined constant raises its own `uninitialized constant` before
+        // the message is ever consulted -- Ruby's order.
         let class_expr = emit_expr(cx, node);
         let msg_expr = emit_expr(cx, msg_id);
         return quote! {
@@ -2008,6 +2003,15 @@ fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
                 .then(|| cx.resolve_class(name))
                 .flatten()
         })
+}
+
+/// Split a written constant PATH into the `(scope, leaf)` pair
+/// [`emit_const_read`] takes: `"M::ALIAS"` -> `(Some("M"), "ALIAS")`.
+pub(super) fn split_const_path(path: &str) -> (Option<&str>, &str) {
+    match path.rsplit_once("::") {
+        Some((scope, leaf)) => (Some(scope), leaf),
+        None => (None, path),
+    }
 }
 
 pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {

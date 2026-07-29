@@ -257,15 +257,23 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String], splats: &[NodeId]) -> To
     }
     let static_checks = classes.iter().map(|name| {
         let Some(cid) = cx.resolve_class(name) else {
-            // A `rescue UndefinedConst` names a constant that isn't a class
-            // here. CRuby evaluates a rescue clause's class expression only
-            // while MATCHING an actually-raised exception, and an undefined
-            // constant there is a runtime NameError -- deferred to that point
-            // (this `||`-joined check runs only when a rescue is being matched,
-            // and short-circuits if an earlier listed class already matched),
-            // so a `rescue` clause that never fires still compiles.
-            let err = super::expr::uninitialized_constant_error(cx, name);
-            return super::expr::raise_in_expr_position(err, quote! { bool });
+            // The name doesn't resolve to a class HERE, but it may still be a
+            // constant holding one (`ALIAS = Base`), or one bound at runtime
+            // (`Foo = Class.new`). Ruby evaluates a rescue clause's class
+            // expression only while MATCHING an actually-raised exception, so
+            // reading it at that point is both what Ruby does and what defers
+            // a genuinely undefined constant's NameError to the moment Ruby
+            // raises one (this `||`-joined check runs only while matching, and
+            // short-circuits once an earlier listed class has matched) -- so a
+            // `rescue` clause that never fires still compiles.
+            let (scope, leaf) = super::expr::split_const_path(name);
+            let val = super::expr::emit_const_read(cx, scope, leaf);
+            return quote! {
+                match zeo_rt::rescue_matches_any(&__exc, &(#val)) {
+                    Ok(__m) => __m,
+                    Err(__s) => return Err(__s),
+                }
+            };
         };
         // The raw baked id, not `#ident::CLASS_ID`: a rescue target may be
         // a MODULE (`rescue Alertable => e` -- real Ruby matches any

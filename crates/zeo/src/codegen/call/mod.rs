@@ -1973,14 +1973,17 @@ fn dispatch(
                     .and_then(|t| cx.resolve_class(t))
             });
             let Some(target) = resolved else {
-                // A constant bound to a RUNTIME class (`Foo = Class.new`):
-                // resolve it at runtime and ancestry-check its id.
+                // A constant bound to a RUNTIME class (`Foo = Class.new`), or
+                // one ALIASING a compiled class (`ALIAS = Base`): read the
+                // constant -- through the owner its own PATH names, so a
+                // qualified `M::ALIAS` is looked up under `M` -- and
+                // ancestry-check the id it holds.
                 let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+                let (scope, leaf) = super::expr::split_const_path(&target_name);
+                let read = super::expr::emit_const_read(cx, scope, leaf);
                 return quote! {
                     {
-                        let __rtc = zeo_rt::const_get(0, #target_name).ok_or_else(|| {
-                            zeo_rt::raise_error("NameError", format!("uninitialized constant {}", #target_name))
-                        })?;
+                        let __rtc = #read;
                         match __rtc {
                             zeo_rt::RubyValue::Class(__tid) => zeo_rt::RubyValue::Bool(
                                 zeo_rt::is_a((#recv_boxed).class_id(), __tid)),
