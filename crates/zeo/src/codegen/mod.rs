@@ -463,6 +463,21 @@ fn push_method_meta_row(
     POOLS.with(|p| p.borrow_mut().metas.push(row));
 }
 
+/// One `__VM_ROWS` row -- see `PoolBuilder::vm_rows`.
+fn push_vm_row(target: u32, box_id: u32, key: &str, tramp: TokenStream) {
+    POOLS.with_borrow_mut(|p| p.vm_rows.push(quote! { (#target, #box_id, #key, #tramp) }));
+}
+
+/// One `__CM_ROWS` row -- see `PoolBuilder::cm_rows`.
+fn push_cm_row(id: u32, key: &str, tramp: TokenStream) {
+    POOLS.with_borrow_mut(|p| p.cm_rows.push(quote! { (#id, #key, #tramp) }));
+}
+
+/// One `__VIS_ROWS` row -- see `PoolBuilder::vis_rows` for the verb scheme.
+fn push_vis_row(id: u32, key: &str, verb: u8) {
+    POOLS.with_borrow_mut(|p| p.vis_rows.push(quote! { (#id, #key, #verb) }));
+}
+
 /// The parameter descriptor entries for one method's `Params`, in Ruby's
 /// canonical `#parameters` order (required, optional, rest, post, keywords,
 /// keyword-rest, block). Internal destructure-slot names (`__destr_N`) are
@@ -563,6 +578,17 @@ struct PoolBuilder {
     /// Every method's reflection row (`push_method_meta_row`), emitted as the
     /// one `__META_ROWS` static and registered in a single batch call.
     metas: Vec<TokenStream>,
+    /// `define_value_method` rows (`(class, box, name, trampoline)`), emitted
+    /// as the one `__VM_ROWS` static and applied in a single
+    /// `define_value_rows` call after every `register` -- each row's entry
+    /// exists by then, and preserving row order preserves last-wins.
+    vm_rows: Vec<TokenStream>,
+    /// `define_class_method` rows (`__CM_ROWS`), same shape minus the box.
+    cm_rows: Vec<TokenStream>,
+    /// `mark_private`/`mark_protected`/`mark_public` rows (`__VIS_ROWS`,
+    /// verb 0/1/2) -- ONE ordered stream for all three verbs, because a
+    /// `public :m` promotion must stay AFTER the private stamp it clears.
+    vis_rows: Vec<TokenStream>,
 }
 
 thread_local! {
@@ -925,49 +951,34 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // Each PRIVATE method materialized onto this class -- its own
         // `private def x`, plus every top-level `def` (a private method of
         // Object, which materialization copies onto every class) -- is
-        // recorded so `respond_to?` skips it. Emitted next to the class's
-        // registration rather than inside `ruby_class!`, which has no
-        // visibility channel of its own. See `ClassRegistry::mark_private`.
+        // recorded so `respond_to?` skips it. A `__VIS_ROWS` row rather than
+        // a call inside `ruby_class!`, which has no visibility channel of
+        // its own. See `ClassRegistry::mark_visibility_rows`.
         let id = idx as u32;
         for &sid in &compiler.class(ClassId(id)).methods {
             let scope = compiler.scope(sid);
             let key = &scope.name;
             match scope.visibility {
-                crate::hir::Visibility::Private => registrations.push(quote! {
-                    __registry.mark_private(
-                        zeo_rt::ClassId(#id),
-                        zeo_rt::Symbol::intern(#key),
-                    );
-                }),
+                crate::hir::Visibility::Private => push_vis_row(id, key, 0),
                 // A protected method is recorded so the `protected_*` reflection
                 // and `protected_method_defined?` can report it (and `public_*`
-                // exclude it). See `ClassRegistry::mark_protected`.
-                crate::hir::Visibility::Protected => registrations.push(quote! {
-                    __registry.mark_protected(
-                        zeo_rt::ClassId(#id),
-                        zeo_rt::Symbol::intern(#key),
-                    );
-                }),
+                // exclude it).
+                crate::hir::Visibility::Protected => push_vis_row(id, key, 1),
                 crate::hir::Visibility::Public => {}
             }
         }
         // A `private`/`public`/`protected :m` re-declaring an INHERITED method's
-        // visibility overrides the materialized stamp above -- emitted after the
-        // loop so the override wins (a HashSet insert/remove). `mark_public`
-        // clears any private/protected mark, promoting the method.
+        // visibility overrides the materialized stamp above -- rows appended
+        // after the loop so the override wins (`mark_visibility_rows` applies
+        // in order). `mark_public` clears any private/protected mark,
+        // promoting the method.
         for (name, vis) in &compiler.class(ClassId(id)).visibility_overrides {
-            let mark = match vis {
-                crate::hir::Visibility::Private => quote! {
-                    __registry.mark_private(zeo_rt::ClassId(#id), zeo_rt::Symbol::intern(#name));
-                },
-                crate::hir::Visibility::Protected => quote! {
-                    __registry.mark_protected(zeo_rt::ClassId(#id), zeo_rt::Symbol::intern(#name));
-                },
-                crate::hir::Visibility::Public => quote! {
-                    __registry.mark_public(zeo_rt::ClassId(#id), zeo_rt::Symbol::intern(#name));
-                },
+            let verb = match vis {
+                crate::hir::Visibility::Private => 0,
+                crate::hir::Visibility::Protected => 1,
+                crate::hir::Visibility::Public => 2,
             };
-            registrations.push(mark);
+            push_vis_row(id, name, verb);
         }
         // Each method DEFINED DIRECTLY on this class (not materialized from an
         // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
@@ -1042,14 +1053,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 &scope_frame_guard(compiler, scope, true),
             );
             // Keyed on the real Ruby name, not the mangled Rust ident.
-            let key = &scope.name;
-            registrations.push(quote! {
-                __registry.define_class_method(
-                    zeo_rt::ClassId(#id),
-                    zeo_rt::Symbol::intern(#key),
-                    #tramp,
-                );
-            });
+            push_cm_row(id, &scope.name, tramp);
         }
         // A class method's reflection keys on the SINGLETON table, so
         // `Api.method(:fetch)` and `Api.new.method(:fetch)` can't collide --
@@ -1403,7 +1407,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // slightly earlier than their file position (builtins register
         // ahead of user classes), a documented approximation that only
         // matters if a builtin's class body reads a user class.
-        let value_defs = class.methods.iter().map(|&sid| {
+        for &sid in &class.methods {
             let scope = compiler.scope(sid);
             let mod_ident = ident::class_ident(compiler, ClassId(id));
             let method_ident = safe_ident(&scope.name);
@@ -1416,48 +1420,26 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 params::RecvMode::Pass,
                 &scope_frame_guard(compiler, scope, false),
             );
-            // The dispatch KEY is the real Ruby name, not the escaped
-            // Rust ident -- same reasoning as `emit_class`'s
-            // `dispatch_key`.
-            let key = &scope.name;
             let ci = compiler.class(ClassId(id));
-            let box_id = ci.box_id;
             // A per-box OVERLAY's methods register on the ROOT
-            // builtin's entry, keyed by the overlay's box.
+            // builtin's entry, keyed by the overlay's box. The row KEY is
+            // the real Ruby name, not the escaped Rust ident -- same
+            // reasoning as `emit_class`'s `dispatch_key`.
             let target = ci.builtin_overlay.map_or(id, |root| root.0);
+            push_vm_row(target, ci.box_id, &scope.name, tramp);
             // A PRIVATE `def` (every top-level def, and an explicit
             // `private def x`) is recorded so `respond_to?` skips it; a
-            // PROTECTED one so the `protected_*` reflection reports it. See
-            // `ClassRegistry::mark_private`/`mark_protected`.
-            let mark_vis = match scope.visibility {
-                crate::hir::Visibility::Private => Some(quote! {
-                    __registry.mark_private(
-                        zeo_rt::ClassId(#target),
-                        zeo_rt::Symbol::intern(#key),
-                    );
-                }),
-                crate::hir::Visibility::Protected => Some(quote! {
-                    __registry.mark_protected(
-                        zeo_rt::ClassId(#target),
-                        zeo_rt::Symbol::intern(#key),
-                    );
-                }),
-                crate::hir::Visibility::Public => None,
-            };
+            // PROTECTED one so the `protected_*` reflection reports it.
+            match scope.visibility {
+                crate::hir::Visibility::Private => push_vis_row(target, &scope.name, 0),
+                crate::hir::Visibility::Protected => push_vis_row(target, &scope.name, 1),
+                crate::hir::Visibility::Public => {}
+            }
             // Bake this method's reflection facts -- the `own_methods` loop
             // above only covers user CLASSES, not a reopened builtin (Object,
             // which every top-level `def` materializes onto).
             push_method_meta_row(compiler, ClassId(target), scope, false);
-            quote! {
-                __registry.define_value_method(
-                    zeo_rt::ClassId(#target),
-                    #box_id,
-                    zeo_rt::Symbol::intern(#key),
-                    #tramp,
-                );
-                #mark_vis
-            }
-        });
+        }
         builtin_class_bodies.extend(hoisted_sites_for(ClassId(id)));
         // Always-on builtins with their DEFAULT ancestors are registered
         // once by `zeo_rt::register_builtins` -- so emit a base register
@@ -1492,7 +1474,6 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         });
         builtin_registrations.push(quote! {
             #register
-            #(#value_defs)*
             #(#alias_rows)*
         });
     }
@@ -1588,16 +1569,29 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     });
 
     // User-module method bridges (see `emit_user_module_bridges`): their value-
-    // method registrations run LAST, after every module's own
+    // method registrations ride `__VM_ROWS`, applied after every module's own
     // `__registry.register` above has created the entry they attach to.
-    let (um_containers, um_regs) = emit_user_module_bridges(compiler);
-    registrations.extend(um_regs);
+    let um_containers = emit_user_module_bridges(compiler);
 
     // Exceptions are constructed at runtime by NAME from the registered
     // classes (`ClassRegistry::construct_exception`) -- no per-program
     // factory. The prelude classes register their `ConstructorFn` via
     // `ruby_class!`'s `__register`, which is what the runtime construction
     // path uses.
+
+    // The batched registration-row calls. Safe to read the pools here:
+    // every `__VM_ROWS`/`__CM_ROWS`/`__VIS_ROWS` row is pushed by the
+    // registration loops and bridge emitter ABOVE, not by anything the
+    // program quote below interpolates lazily.
+    let row_calls = POOLS.with_borrow(|p| {
+        let vm = (!p.vm_rows.is_empty())
+            .then(|| quote! { __registry.define_value_rows(__VM_ROWS); });
+        let cm = (!p.cm_rows.is_empty())
+            .then(|| quote! { __registry.define_class_rows(__CM_ROWS); });
+        let vis = (!p.vis_rows.is_empty())
+            .then(|| quote! { __registry.mark_visibility_rows(__VIS_ROWS); });
+        quote! { #vm #cm #vis }
+    });
 
     let program = quote! {
         // Lints that mirror RUBY-source properties, not codegen defects: an
@@ -1645,6 +1639,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // then the program's own user classes.
             #(#builtin_registrations)*
             #(#registrations)*
+            // The batched registration rows (`__VM_ROWS`/`__CM_ROWS`/
+            // `__VIS_ROWS` -- see `PoolBuilder`), applied after every
+            // `register` above so each row's entry exists.
+            #row_calls
             zeo_rt::install_class_registry(__registry);
             // Every `def`'s reflection facts, from the one static table at
             // the bottom of this file (see `push_method_meta_row`).
@@ -1736,9 +1734,28 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     });
     let pps = &pools.pps;
     let metas = &pools.metas;
+    let vm_rows = (!pools.vm_rows.is_empty()).then(|| {
+        let rows = &pools.vm_rows;
+        quote! {
+            static __VM_ROWS: &[(u32, u32, &str, zeo_rt::ValueMethodFn)] = &[#(#rows),*];
+        }
+    });
+    let cm_rows = (!pools.cm_rows.is_empty()).then(|| {
+        let rows = &pools.cm_rows;
+        quote! {
+            static __CM_ROWS: &[(u32, &str, zeo_rt::ValueMethodFn)] = &[#(#rows),*];
+        }
+    });
+    let vis_rows = (!pools.vis_rows.is_empty()).then(|| {
+        let rows = &pools.vis_rows;
+        quote! {
+            static __VIS_ROWS: &[(u32, &str, u8)] = &[#(#rows),*];
+        }
+    });
     quote! {
         #program #syms #lits #(#pps)*
         static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
+        #vm_rows #cm_rows #vis_rows
     }
 }
 
@@ -2011,12 +2028,11 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
 /// own methods into a dedicated `__um_<id>_<Name>` container of `RubyValue`-self
 /// free functions and register them as value methods on the module's id, the
 /// same shape builtin modules (`Comparable`) use. Include is untouched (it still
-/// materializes off `own_methods` at compile time). Returns (containers, regs);
-/// the regs run AFTER the module's own `__registry.register` (its entry must
+/// materializes off `own_methods` at compile time). The registrations ride
+/// `__VM_ROWS`, applied after every `__registry.register` (each entry must
 /// exist first -- `define_value_method` asserts it).
-fn emit_user_module_bridges(compiler: &Compiler) -> (Vec<TokenStream>, Vec<TokenStream>) {
+fn emit_user_module_bridges(compiler: &Compiler) -> Vec<TokenStream> {
     let mut containers = Vec::new();
-    let mut regs = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx == 0 || class.is_builtin || class.is_bootstrap || !class.is_module {
             continue;
@@ -2048,18 +2064,10 @@ fn emit_user_module_bridges(compiler: &Compiler) -> (Vec<TokenStream>, Vec<Token
                 params::RecvMode::Pass,
                 &scope_frame_guard(compiler, scope, false),
             );
-            let key = &scope.name;
-            regs.push(quote! {
-                __registry.define_value_method(
-                    zeo_rt::ClassId(#id),
-                    0u32,
-                    zeo_rt::Symbol::intern(#key),
-                    #tramp,
-                );
-            });
+            push_vm_row(id, 0, &scope.name, tramp);
         }
     }
-    (containers, regs)
+    containers
 }
 
 fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {

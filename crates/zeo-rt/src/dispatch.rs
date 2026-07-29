@@ -862,6 +862,38 @@ impl ClassRegistry {
         }
     }
 
+    /// [`define_value_method`](Self::define_value_method)'s batch form --
+    /// the program's one `__VM_ROWS` static, applied after every `register`
+    /// (each row's entry must exist; row order preserves last-wins).
+    pub fn define_value_rows(&mut self, rows: &[(u32, u32, &str, ValueMethodFn)]) {
+        for &(id, box_id, name, f) in rows {
+            self.define_value_method(ClassId(id), box_id, Symbol::intern(name), f);
+        }
+    }
+
+    /// [`define_class_method`](Self::define_class_method)'s batch form
+    /// (`__CM_ROWS`).
+    pub fn define_class_rows(&mut self, rows: &[(u32, &str, ValueMethodFn)]) {
+        for &(id, name, f) in rows {
+            self.define_class_method(ClassId(id), Symbol::intern(name), f);
+        }
+    }
+
+    /// The `mark_private`/`mark_protected`/`mark_public` batch form
+    /// (`__VIS_ROWS`; verb 0/1/2 respectively). Rows apply IN ORDER: a later
+    /// `public :m` promotion must clear an earlier private/protected stamp,
+    /// and vice versa.
+    pub fn mark_visibility_rows(&mut self, rows: &[(u32, &str, u8)]) {
+        for &(id, name, verb) in rows {
+            let sym = Symbol::intern(name);
+            match verb {
+                0 => self.mark_private(ClassId(id), sym),
+                1 => self.mark_protected(ClassId(id), sym),
+                _ => self.mark_public(ClassId(id), sym),
+            }
+        }
+    }
+
     /// Registers a builtin-reopen method -- called from
     /// generated `main()` right after the builtin's own `register`, one call
     /// per `def` in a `class String ... end` reopen. `box_id` is the box the
