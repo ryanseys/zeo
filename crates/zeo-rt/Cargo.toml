@@ -145,9 +145,11 @@ ext-all = [
     "ext-nkf",
     "ext-bigdecimal",
     "ext-coverage",
+    "ext-tracepoint",
 ]
 ext-base64 = []
 ext-coverage = []
+ext-tracepoint = []
 ext-etc = []
 ext-fcntl = []
 ext-pty = []

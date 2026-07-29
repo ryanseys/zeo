@@ -67,6 +67,8 @@ pub(crate) mod bigdecimal;
 pub(crate) mod cgi;
 #[cfg(feature = "ext-coverage")]
 pub(crate) mod coverage;
+#[cfg(feature = "ext-tracepoint")]
+pub(crate) mod tracepoint;
 #[cfg(feature = "ext-date")]
 pub(crate) mod date;
 #[cfg(feature = "ext-digest")]

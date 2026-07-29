@@ -480,6 +480,12 @@ pub const FFI_AUTO_POINTER_CLASS: ClassId = ClassId(117);
 /// `supported?(:branches)`/`(:methods)` answer false.
 pub const COVERAGE_MODULE: ClassId = ClassId(118);
 
+/// `TracePoint` -- execution tracing over the runtime's frame/line
+/// instrumentation (`set_line`, `FrameGuard`). Core (require-less), so
+/// ungated; the runtime half lives behind the `ext-tracepoint` cargo
+/// feature. `:line`/`:call`/`:return`/`:class`/`:end`/`:raise` only.
+pub const TRACEPOINT_CLASS: ClassId = ClassId(119);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1460,6 +1466,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("coverage"),
+    },
+    BuiltinClass {
+        id: TRACEPOINT_CLASS,
+        name: "TracePoint",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
     },
 ];
 

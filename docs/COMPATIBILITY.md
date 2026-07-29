@@ -300,6 +300,53 @@ nil/0/count line shapes, and every error message are oracle-matched live
 - `Coverage.line_stub` is not implemented: it parses a source file at
   runtime, and an AOT binary ships no parser.
 
+### `TracePoint`
+
+CRuby's TracePoint hooks the VM's trace instructions; zeo has no VM, so
+`TracePoint` rides the instrumentation the runtime already carries for
+backtraces: the per-statement line stamp fires `:line`, the frame
+push/pop pair fires `:call`/`:return` (and `:class`/`:end`, classified
+by the frame's label), and the raise channel fires `:raise`. When no
+tracepoint is enabled each hook is one relaxed atomic load. The
+lifecycle (`enable`/`disable` answering the previous state, their
+block-scoped forms, `enabled?`, `TracePoint.trace`), `event`/`path`/
+`lineno`/`method_id`/`callee_id`/`defined_class` (singleton classes
+included: `#<Class:Foo>`)/`raised_exception`, reverse-enable-order
+dispatch across multiple tracepoints, reentrancy suppression while a
+handler runs, `:return` firing when an exception unwinds a method, and
+the inspect/error shapes (`"access from outside"`, `"not supported by
+this event"`, `"unknown event: x"`) are oracle-matched live
+(`tests/tracepoint.rb`). Known divergences:
+
+- **The six reachable events only**: `:b_call`/`:b_return` (blocks),
+  `:c_call`/`:c_return` (builtins run as native code, not method
+  frames), `:rescue`, `:thread_begin`/`:thread_end`, `:fiber_switch`,
+  and `:script_compiled` never fire, so `TracePoint.new` naming one
+  raises `RuntimeError: event :x is not supported by zeo` where CRuby
+  accepts it -- loud, not a handler that silently never runs.
+- **`#self`, `#binding`, `#return_value`, `#parameters`,
+  `#eval_script`, `#instruction_sequence` are not implemented**: the
+  lightweight frame deliberately carries no receiver or bindings.
+- **An explicit early `return` reports the `end` line** for `:return`
+  where CRuby reports the `return` statement's line (the frame pop
+  cannot tell the exit paths apart; an exception unwind reports the
+  `end` line too, where CRuby reports the raise line).
+- **`def` lines fire no `:line`**: definitions are compile-time (the
+  coverage `def`-line caveat again). Class-body directive lines the
+  compiler consumes (`attr_accessor`, `include`) are likewise silent.
+- **Top-level lines of a required file report the entry file's path**:
+  spliced top-level code runs under the `<main>` frame. Code inside
+  methods and class bodies reports its own file.
+- **`callee_id` equals `method_id`** for an aliased call (labels carry
+  the defining name).
+- **A handler that raises aborts the program** with the uncaught
+  report after `at_exit`/finalizers -- there is no `Result` channel
+  from inside a line stamp or a frame pop. Observably close to CRuby,
+  where the propagated exception is not catchable by a `rescue` around
+  the traced call either.
+- `enable(target:)`/`enable(target_line:)` filtering and
+  `TracePoint.allow_reentry` are not implemented.
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream

@@ -2768,7 +2768,7 @@ pub fn raise_with_cause(exc: RubyValue) -> RubyValue {
 /// cause (that is `raise`'s job, and an explicit `cause: nil` SUPPRESSES
 /// chaining precisely by never calling `raise_with_cause`).
 pub fn stamp_backtrace(exc: RubyValue) -> RubyValue {
-    crate::builtins::exception::attach_backtrace(&exc);
+    crate::builtins::exception::attach_backtrace_quiet(&exc);
     exc
 }
 

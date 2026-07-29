@@ -353,6 +353,23 @@ pub(crate) fn source_location(
     Some((file.name.clone(), line))
 }
 
+/// The line `node`'s span ENDS on -- a `def`/`class` node's `end` keyword
+/// line, which is what `TracePoint` reports for `:return`/`:end` (0, the
+/// no-trace-events marker, when the node is span-less).
+pub(crate) fn source_end_line(compiler: &Compiler, node: crate::hir::NodeId) -> u32 {
+    let Some(span) = compiler.hir.span(node) else {
+        return 0;
+    };
+    let Some(file) = compiler.hir.files.get(span.file.0 as usize) else {
+        return 0;
+    };
+    let upto = (span.end as usize).min(file.source.len());
+    1 + file.source.as_bytes()[..upto]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() as u32
+}
+
 /// The backtrace-frame push for one method scope: `Class#method` /
 /// `Class.method` labels (CRuby's shapes), the `def` keyword's line as the
 /// initial line (what a prologue-raised arity error reports,
@@ -391,7 +408,12 @@ pub(crate) fn scope_frame_guard(
         compiler.fq_name(scope.defining_class),
         scope.name
     );
-    quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
+    // The `def`'s `end` line, `TracePoint`'s `:return` lineno; a scope
+    // located only through its body (no `def_node`) stays 0 = untraced.
+    let end_line = scope
+        .def_node
+        .map_or(0, |n| source_end_line(compiler, n));
+    quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
 }
 
 /// The frame label of the scope ENCLOSING the current emission position --
@@ -1457,7 +1479,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     let main_frame = match compiler.hir.files.first() {
         Some(f) => {
             let file = &f.name;
-            quote! { let __frame = zeo_rt::FrameGuard::push(#file, "<main>", 0); }
+            quote! { let __frame = zeo_rt::FrameGuard::push(#file, "<main>", 0, 0); }
         }
         None => quote! {},
     };
@@ -1680,7 +1702,11 @@ pub(crate) fn emit_class_body_site(
                 "class"
             };
             let label = format!("<{kind}:{}>", compiler.leaf_name(cid));
-            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
+            // The body's `end` line, `TracePoint`'s `:end` lineno.
+            let end_line = site
+                .def_node
+                .map_or(0, |n| source_end_line(compiler, n));
+            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
         }
         None => quote! {},
     };

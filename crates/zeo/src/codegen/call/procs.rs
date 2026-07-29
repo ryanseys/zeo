@@ -282,7 +282,9 @@ pub(crate) fn emit_proc_or_lambda_value(
                 1 => format!("block in {base}"),
                 n => format!("block ({n} levels) in {base}"),
             };
-            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
+            // end_line 0: a block frame fires no entry/exit trace events
+            // (CRuby's `:b_call`/`:b_return`, which zeo does not ship).
+            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, 0); }
         }
         None => quote! {},
     };

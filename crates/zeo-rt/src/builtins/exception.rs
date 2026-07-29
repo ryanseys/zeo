@@ -385,6 +385,23 @@ pub fn attach_cause(exc_value: &RubyValue) {
 /// for a non-exception operand. Called wherever `attach_cause` is (the
 /// runtime raise channel and codegen's raise emission).
 pub fn attach_backtrace(exc_value: &RubyValue) {
+    attach_backtrace_quiet(exc_value);
+    // Every raise channel passes through here exactly once (a RE-raise
+    // passes again, and fires again -- CRuby's rule), making it
+    // `TracePoint`'s `:raise` choke point. After the stamp, so the handler
+    // sees a backtraced exception. `stamp_backtrace` -- CONSTRUCTION, not
+    // a raise -- takes the quiet path below instead.
+    #[cfg(feature = "ext-tracepoint")]
+    if crate::ext::tracepoint::tracing() {
+        crate::ext::tracepoint::fire_raise(exc_value);
+    }
+}
+
+/// [`attach_backtrace`]'s stamp without the `:raise` event, for the one
+/// caller that is not a raise: `stamp_backtrace`, which runs at exception
+/// CONSTRUCTION (codegen's `emit_boxed_new`) just before the raise path
+/// stamps -- and fires -- for the same exception.
+pub(crate) fn attach_backtrace_quiet(exc_value: &RubyValue) {
     let RubyValue::Object(o) = exc_value else {
         return;
     };
