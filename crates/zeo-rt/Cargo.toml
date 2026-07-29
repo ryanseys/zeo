@@ -144,8 +144,10 @@ ext-all = [
     "ext-readline",
     "ext-nkf",
     "ext-bigdecimal",
+    "ext-coverage",
 ]
 ext-base64 = []
+ext-coverage = []
 ext-etc = []
 ext-fcntl = []
 ext-pty = []

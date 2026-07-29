@@ -70,6 +70,9 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "bigdecimal" => Some("native core reimplemented; the gem's Ruby half is vendored upstream"),
         "ffi" => Some("zeo's own FFI (compile-time externs + a libffi runtime tier); not the ffi gem"),
         "fiddle" => Some("the gem's own FFI backend over zeo's ffi; not the fiddle C extension"),
+        "coverage" => {
+            Some("line coverage over zeo's AOT instrumentation; not the VM coverage extension")
+        }
         _ => None,
     }
 }

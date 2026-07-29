@@ -534,6 +534,113 @@ fn take_unsupported() -> Option<String> {
     UNSUPPORTED.with_borrow_mut(|slot| slot.take())
 }
 
+thread_local! {
+    /// The line-coverage collector -- `Some` only while emitting a program
+    /// that required `coverage` (set by `codegen`, drained into the
+    /// `coverage_install` table by `coverage_install_tokens`). A program
+    /// without the require collects and emits NOTHING, which is the whole
+    /// cost model: the instrumentation isn't a checked branch per line, it's
+    /// absent.
+    static COVERAGE: std::cell::RefCell<Option<CovCollect>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Default)]
+struct CovCollect {
+    /// Statement-stamped lines per span file -- every line
+    /// `stmt::stamp_line` stamps is a coverable line (CRuby's line events at
+    /// the same granularity), collected as emission goes.
+    stmt_lines: std::collections::BTreeMap<String, std::collections::BTreeSet<u32>>,
+}
+
+pub(crate) fn coverage_active() -> bool {
+    COVERAGE.with_borrow(|c| c.is_some())
+}
+
+pub(crate) fn coverage_record_stmt(file: &str, line: u32) {
+    COVERAGE.with_borrow_mut(|c| {
+        if let Some(c) = c {
+            c.stmt_lines
+                .entry(file.to_string())
+                .or_default()
+                .insert(line);
+        }
+    });
+}
+
+/// `def` lines per file: definitions the emitted statement stream never
+/// stamps -- top-level and class-body `def`s are intercepted at analyze
+/// (`process_top_stmt` / `register_body_def_method`) and compiled statically,
+/// so no runtime statement passes their line. CRuby reports a definition
+/// line's execution count, which for these is exactly once, when the file
+/// loads -- `Coverage.result` adds the static 1 for a covered file.
+fn coverage_def_lines(
+    compiler: &Compiler,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<u32>> {
+    fn walk(
+        compiler: &Compiler,
+        body: &[crate::hir::NodeId],
+        out: &mut std::collections::BTreeMap<String, std::collections::BTreeSet<u32>>,
+    ) {
+        for &s in body {
+            match &compiler.hir[s] {
+                crate::hir::HirNode::DefMethod { .. } => {
+                    if let Some((file, line)) = source_location(compiler, s) {
+                        out.entry(file).or_default().insert(line);
+                    }
+                }
+                crate::hir::HirNode::ClassDef { body, .. } => {
+                    let body = body.clone();
+                    walk(compiler, &body, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    let programs: Vec<Vec<crate::hir::NodeId>> = compiler
+        .hir
+        .iter()
+        .filter_map(|n| match n {
+            crate::hir::HirNode::Program(stmts) => Some(stmts.clone()),
+            _ => None,
+        })
+        .collect();
+    for stmts in &programs {
+        walk(compiler, stmts, &mut out);
+    }
+    out
+}
+
+/// The `zeo_rt::coverage_install` call for a coverage-activated program:
+/// one row per source file -- its total line count (the result array's
+/// length), the statement lines collected during emission, and the `def`
+/// lines from the HIR walk. `None` when coverage wasn't activated.
+fn coverage_install_tokens(compiler: &Compiler) -> Option<TokenStream> {
+    let collect = COVERAGE.with_borrow_mut(|c| c.take())?;
+    let defs = coverage_def_lines(compiler);
+    let mut seen = std::collections::HashSet::new();
+    let rows: Vec<TokenStream> = compiler
+        .hir
+        .files
+        .iter()
+        .filter(|f| seen.insert(f.name.clone()))
+        .filter_map(|f| {
+            let stmt = collect.stmt_lines.get(&f.name);
+            let def = defs.get(&f.name);
+            if stmt.is_none() && def.is_none() {
+                return None;
+            }
+            let name = &f.name;
+            let total = f.source.lines().count() as u32;
+            let stmts = stmt.into_iter().flatten();
+            let defl = def.into_iter().flatten();
+            Some(quote! { (#name, #total, &[#(#stmts),*], &[#(#defl),*]) })
+        })
+        .collect();
+    Some(quote! { zeo_rt::coverage_install(&[#(#rows),*]); })
+}
+
 pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, crate::diagnostics::CompileError> {
     take_unsupported();
     let tokens = codegen(analyzed);
@@ -553,6 +660,16 @@ pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, crate::diagnosti
 
 fn codegen(analyzed: &Analyzed) -> TokenStream {
     let compiler = &analyzed.compiler;
+
+    // Line coverage collects only for a program that required `coverage` --
+    // see the `COVERAGE` thread-local's docs.
+    COVERAGE.set(
+        compiler
+            .hir
+            .activated_features
+            .contains("coverage")
+            .then(CovCollect::default),
+    );
 
     // `Object` (index 0, built into `zeo-rt`), every MODULE, and every
     // reserved BUILT-IN placeholder (`Integer`/`Array`/etc. -- see
@@ -578,7 +695,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .iter()
         .enumerate()
         .filter(|&(idx, _)| compiler.has_generated_struct(ClassId(idx as u32)))
-        .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)));
+        .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)))
+        // Eager: the coverage collector (fed by every body emission) is
+        // drained before the final `quote!` would consume a lazy iterator.
+        .collect::<Vec<_>>();
 
     // Class methods (`def self.x`, and instance methods pulled in via
     // `extend`) get their own container -- an ADDITIONAL plain `impl` block
@@ -594,7 +714,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .filter(|&(idx, class)| {
             idx != 0 && !class.is_builtin && !class.is_bootstrap && !class.class_methods.is_empty()
         })
-        .map(|(idx, _)| emit_class_methods(compiler, ClassId(idx as u32)));
+        .map(|(idx, _)| emit_class_methods(compiler, ClassId(idx as u32)))
+        // Eager -- see `classes` above.
+        .collect::<Vec<_>>();
 
     // A REOPENED builtin class: one `pub mod __bm_<Name>`
     // container per builtin that gained any methods, holding its instance
@@ -614,7 +736,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             (class.is_builtin || idx == 0)
                 && (!class.methods.is_empty() || !class.class_methods.is_empty())
         })
-        .map(|(idx, _)| emit_builtin_reopen(compiler, ClassId(idx as u32)));
+        .map(|(idx, _)| emit_builtin_reopen(compiler, ClassId(idx as u32)))
+        // Eager -- see `classes` above.
+        .collect::<Vec<_>>();
 
     // Class-body statements run at their DOCUMENT position: a site whose
     // `ClassDef` marker is reachable from `main_statements` (directly, via
@@ -1362,6 +1486,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     let (um_containers, um_regs) = emit_user_module_bridges(compiler);
     registrations.extend(um_regs);
 
+    // Every body has been emitted by now, so the coverage collector (fed by
+    // `stmt::stamp_line` during those emissions) is complete.
+    let coverage_install = coverage_install_tokens(compiler);
+
     // Exceptions are constructed at runtime by NAME from the registered
     // classes (`ClassRegistry::construct_exception`) -- no per-program
     // factory. The prelude classes register their `ConstructorFn` via
@@ -1401,6 +1529,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // answers an already-loaded feature, instead of raising LoadError
             // because an AOT binary has no runtime loader.
             zeo_rt::seed_loaded_features(&[#(#loaded_features),*]);
+            #coverage_install
             // Ruby's own PARSE-time warnings (a duplicated hash key, ...),
             // collected by the front end and replayed before the program's
             // first line -- where CRuby prints them.

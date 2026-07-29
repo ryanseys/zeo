@@ -474,6 +474,12 @@ pub const FFI_ABSTRACT_MEMORY_CLASS: ClassId = ClassId(116);
 /// `FFI::AutoPointer < FFI::Pointer` -- constant-only, for `is_a?` checks.
 pub const FFI_AUTO_POINTER_CLASS: ClassId = ClassId(117);
 
+/// `coverage`: the `Coverage` MODULE -- line-coverage measurement over the
+/// AOT line instrumentation (the compiler emits per-statement hit counters
+/// and a coverable-line table when a program requires it). Lines only;
+/// `supported?(:branches)`/`(:methods)` answer false.
+pub const COVERAGE_MODULE: ClassId = ClassId(118);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1446,6 +1452,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(FFI_POINTER_CLASS),
         includes: &[],
         feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: COVERAGE_MODULE,
+        name: "Coverage",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("coverage"),
     },
 ];
 

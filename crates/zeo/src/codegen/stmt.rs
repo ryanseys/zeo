@@ -34,29 +34,47 @@ pub fn emit_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
     quote! { #(#stmts)* }
 }
 
-/// Prepend a `zeo_rt::set_line` stamp when this statement's source line
+/// Prepend a `zeo_rt::set_line` stamp when this statement's source location
 /// differs from the previous statement's -- what keeps the current
 /// backtrace frame's line tracking execution (CRuby's per-frame PC line,
 /// at statement granularity). A TAIL expression keeps its value by
 /// wrapping in a block. Synthetic statements stamp nothing.
+///
+/// Under coverage (the program required `coverage`), each stamp also emits
+/// a `cov_line` hit beside it and records the line as coverable; and a
+/// mid-stream FILE change -- which only the top-level walk ever has, at the
+/// point where a spliced `require`'s statements begin -- emits the
+/// `cov_file_loaded` mark that makes the file reportable iff measurement is
+/// set up when its top level runs (CRuby's own inclusion rule; the entry
+/// file never marks, so it is never reported, also CRuby's rule).
 fn stamp_line(
     cx: &Ctx,
     stmt: NodeId,
-    prev_line: &mut Option<u32>,
+    prev_line: &mut Option<(String, u32)>,
     tokens: TokenStream,
     is_tail: bool,
 ) -> TokenStream {
-    let Some((_, line)) = crate::codegen::source_location(cx.compiler, stmt) else {
+    let Some((file, line)) = crate::codegen::source_location(cx.compiler, stmt) else {
         return tokens;
     };
-    if *prev_line == Some(line) {
+    if prev_line.as_ref().is_some_and(|(f, l)| *f == file && *l == line) {
         return tokens;
     }
-    *prev_line = Some(line);
+    let mut cov = TokenStream::new();
+    if crate::codegen::coverage_active() {
+        let entering_spliced_file = prev_line.as_ref().is_some_and(|(f, _)| *f != file)
+            && cx.compiler.hir.files.first().is_none_or(|f0| f0.name != file);
+        if entering_spliced_file {
+            cov.extend(quote! { zeo_rt::cov_file_loaded(#file); });
+        }
+        crate::codegen::coverage_record_stmt(&file, line);
+        cov.extend(quote! { zeo_rt::cov_line(#file, #line); });
+    }
+    *prev_line = Some((file, line));
     if is_tail {
-        quote! { { zeo_rt::set_line(#line); #tokens } }
+        quote! { { zeo_rt::set_line(#line); #cov #tokens } }
     } else {
-        quote! { zeo_rt::set_line(#line); #tokens }
+        quote! { zeo_rt::set_line(#line); #cov #tokens }
     }
 }
 

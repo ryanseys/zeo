@@ -268,6 +268,38 @@ against the C-extension oracle. Known divergences:
   long as the object (the gem frees it eagerly; calling through a freed
   closure is undefined behavior there, an error here).
 
+### `coverage`
+
+CRuby's coverage extension instruments iseqs as the VM compiles them; zeo
+has no VM, so requiring `coverage` makes the COMPILER emit the
+instrumentation instead -- a hit counter beside every statement's line
+stamp, a load mark where each spliced file's top level begins, and a
+per-file coverable-line table. A program that doesn't require `coverage`
+carries none of it. The lifecycle
+(`start`/`setup`/`resume`/`suspend`/`result`/`peek_result`/`running?`/
+`state`), the inclusion rule (a file is reported iff its top level began
+while measurement was set up; the entry script never qualifies), the
+nil/0/count line shapes, and every error message are oracle-matched live
+(`tests/coverage.rb`). Known divergences:
+
+- **Lines only**: `supported?(:lines)` is true; `:branches`, `:methods`,
+  `:oneshot_lines` and `:eval` answer FALSE (CRuby supports them), and a
+  `start`/`setup` requesting one raises `RuntimeError`. Tools that check
+  `supported?` first (simplecov does) degrade gracefully.
+- **`def` lines report the definition count statically**: a definition
+  executes once, at its file's load, so a covered file's `def` lines report
+  1. A definition statement re-executed at runtime (a `def` inside a method
+  body called n times) still reports 1 where CRuby reports n.
+- **Statically-decided code isn't coverable**: a top-level `if` branch the
+  compiler splices away (`if defined?(Ractor)` guards) reads nil where
+  CRuby reads 0 -- the code was never compiled, the same reason the branch
+  can't raise. Class-body DIRECTIVE lines the compiler consumes
+  (`attr_accessor`, `private`, `include`) read nil for the same reason.
+- **Result keys are the compile-time span paths** (build-machine paths for
+  bundled-gem files) -- the `$LOAD_PATH`/`$LOADED_FEATURES` caveat again.
+- `Coverage.line_stub` is not implemented: it parses a source file at
+  runtime, and an AOT binary ships no parser.
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream

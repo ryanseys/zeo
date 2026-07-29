@@ -103,6 +103,8 @@ pub use fiber::{
     fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
 };
 pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line, synthetic_c_frame};
+#[cfg(feature = "ext-coverage")]
+pub use ext::coverage::{cov_file_loaded, cov_line, coverage_install};
 pub use builtins::rmodule::const_defined_in;
 pub use globals::{
     global_alias, global_assign, global_defined, global_get, global_set, seed_loaded_features,

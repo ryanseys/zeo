@@ -47,6 +47,7 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | readline | `readline` | `ext-readline` | **done** | `Readline.readline` — rustyline (pure Rust) on a terminal, a plain chomped read off `Readline.input =` or a non-tty stdin; the Enumerable `HISTORY` object, `completion_proc` wired into rustyline's completer, and the stored word-break/quote attribute surface. `VERSION` reports `"rustyline"` the way libedit builds report `"EditLine wrapper"` |
 | nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/COMPATIBILITY.md` |
 | bigdecimal | `bigdecimal`, `bigdecimal/*` | `ext-bigdecimal` | **done** | `BigDecimal` over a BigUint coefficient — bigdecimal 4.x's C slice (exact add/sub/mult, division to the documented precision rule, the rounding engine, mode/limit state, conversions, `Kernel#BigDecimal`); `**`/`power`/`sqrt`/`BigMath`/`to_d` are the gem's own Ruby, vendored in `gems/bigdecimal` and compiled like user code |
+| coverage | `coverage` | `ext-coverage` | **subset** | line coverage over the AOT line instrumentation: requiring `coverage` makes the COMPILER emit per-statement hit counters plus a per-file coverable-line table, and `Coverage` replays CRuby's whole lifecycle (`start`/`setup`/`resume`/`suspend`/`result`/`peek_result`/`state`, oracle-matched errors included). A file is reported iff its top level began while measurement was set up — the entry script never is, exactly CRuby's rule. Lines only: `supported?(:branches)`/`(:methods)` answer false — see `docs/COMPATIBILITY.md` |
 
 The IO-core extensions have landed as unconditional rows on the `IO` table:
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
@@ -143,7 +144,7 @@ are all oracle-matched against the C extension (`tests/fiddle.rb`); the
 
 ## Out of scope (VM internals / tooling)
 
-`rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism),
+`rubyvm`, `continuation`, `ripper` (we have ruby-prism),
 `win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
 
 ## Adding an extension
