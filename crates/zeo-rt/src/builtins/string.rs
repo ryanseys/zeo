@@ -114,6 +114,76 @@ pub(crate) fn succ_str(s: &str) -> String {
     chars.into_iter().collect()
 }
 
+/// `String#succ` on BYTES -- the same rule as [`succ_str`] with bytes for
+/// characters, which is what CRuby's `str_succ` runs for a single-byte
+/// (or broken) string. Only the no-alphanumeric branch differs: there the
+/// increment CARRIES left across 0xff and, if it runs off the front,
+/// prepends 0x01 (`"\xff" -> "\x01\x00"`).
+pub(crate) fn succ_bytes(s: &[u8]) -> Vec<u8> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let mut bytes = s.to_vec();
+    let n = bytes.len();
+    let mut found_alnum = false;
+    let mut done = false;
+    let mut prev_was_nonchar = false;
+    let mut last_wrapped: Option<u8> = None;
+    let mut carry_pos = 0usize;
+    let mut carry_byte = b'1';
+    for i in (0..n).rev() {
+        let c = bytes[i];
+        if prev_was_nonchar {
+            if let Some(w) = last_wrapped {
+                let flip = (w.is_ascii_alphabetic() && c.is_ascii_digit())
+                    || (w.is_ascii_digit() && c.is_ascii_alphabetic());
+                if flip {
+                    break;
+                }
+            }
+        }
+        if !c.is_ascii_alphanumeric() {
+            prev_was_nonchar = true;
+            continue;
+        }
+        prev_was_nonchar = false;
+        found_alnum = true;
+        carry_pos = i;
+        carry_byte = match c {
+            b'a'..=b'z' => b'a',
+            b'A'..=b'Z' => b'A',
+            _ => b'1',
+        };
+        let (next, wrapped) = match c {
+            b'z' => (b'a', true),
+            b'Z' => (b'A', true),
+            b'9' => (b'0', true),
+            _ => (c + 1, false),
+        };
+        bytes[i] = next;
+        if !wrapped {
+            done = true;
+            break;
+        }
+        last_wrapped = Some(next);
+    }
+    if !found_alnum {
+        for i in (0..n).rev() {
+            let (next, carry) = bytes[i].overflowing_add(1);
+            bytes[i] = next;
+            if !carry {
+                return bytes;
+            }
+        }
+        bytes.insert(0, 1);
+        return bytes;
+    }
+    if !done {
+        bytes.insert(carry_pos, carry_byte);
+    }
+    bytes
+}
+
 /// Expands `a-c` ranges in a `tr`/`delete`/`squeeze`/`count` charset.
 fn expand_charset(set: &str) -> Vec<char> {
     let chars: Vec<char> = set.chars().collect();
@@ -2458,7 +2528,19 @@ ruby_class! {
     }
     def "succ" arity 0 | "next" arity 0 (recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(succ_str(&recv_str!(recv).lock().to_utf8_lossy())))
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        // A single-byte or broken string increments BYTES -- routing it
+        // through `to_utf8_lossy` would rewrite every high byte.
+        if buf.encoding() == crate::encoding::ASCII_8BIT
+            || std::str::from_utf8(buf.bytes()).is_err()
+        {
+            let out = succ_bytes(buf.bytes());
+            let enc = buf.encoding();
+            drop(buf);
+            return Ok(RubyValue::Str(crate::string_from_bytes(out, enc)));
+        }
+        Ok(str_value(succ_str(&buf.to_utf8_lossy())))
     }
     // `upto(other[, exclusive])` -- yields successive `succ` values from self
     // through `other` (excluding `other` when `exclusive`); a blockless call
