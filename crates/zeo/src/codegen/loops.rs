@@ -53,10 +53,13 @@ pub(super) fn emit_redo_wrapped_body_value(
     redo_label: &Lifetime,
 ) -> TokenStream {
     let body_val = super::stmt::emit_body(loop_cx, body, false);
+    // Parenthesized: a brace-block value after a labeled `break` trips
+    // rustc's confusability lint (`break 'l { .. }` reads like an unlabeled
+    // break of a labeled block).
     quote! {
         #redo_label: loop {
             zeo_rt::check_ints()?;
-            break #redo_label { #body_val };
+            break #redo_label ({ #body_val });
         }
     }
 }
@@ -322,7 +325,9 @@ pub fn emit_next(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
                 Some(v) => emit_expr(cx, v),
                 None => quote! { zeo_rt::RubyValue::Nil },
             };
-            quote! { break #redo #value_expr }
+            // Parenthesized for the same brace-value lint the wrapper's own
+            // break guards against.
+            quote! { break #redo (#value_expr) }
         }
         Some((_, outer)) => match value {
             None => quote! { continue #outer },
