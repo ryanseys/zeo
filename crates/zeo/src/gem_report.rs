@@ -59,7 +59,7 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "psych" | "yaml" => Some("yaml-rust2-backed; not libyaml/the psych gem"),
         "zlib" => Some("flate2-backed; not the zlib C extension"),
         "digest" => Some("RustCrypto-backed; not the OpenSSL digest C extension"),
-        "openssl" => Some("RustCrypto-backed; not OpenSSL"),
+        "openssl" => Some("a vendored OpenSSL 3 via rust-openssl; PKey generation, X509 issuance and SSLServer are absent"),
         "strscan" => Some("a zeo reimplementation of StringScanner"),
         "stringio" => Some("a zeo reimplementation of StringIO"),
         "date" => Some("a zeo reimplementation of Date/DateTime"),

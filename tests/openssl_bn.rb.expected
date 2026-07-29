@@ -1,0 +1,62 @@
+-- construction --
+OpenSSL::BN
+255
+255
+255
+-42
+255
+1361129467683753853853498429727072845824
+OpenSSL::BN
+true
+true
+OpenSSL::BNError
+-- encodings --
+"255"
+"FF"
+1
+"00000003010001"
+65537
+65537
+-- arithmetic --
+256
+250
+510
+[63, 3]
+3
+81
+4080
+15
+65025
+75
+65
+45
+50
+5
+5
+OpenSSL::BNError
+15
+-- predicates + comparison --
+8
+1
+false
+false
+true
+true
+true
+true
+true
+-1
+-1
+-1
+true
+true
+false
+true
+false
+511
+255
+true
+-- randomness contracts --
+true
+true
+true

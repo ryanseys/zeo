@@ -1324,10 +1324,7 @@ fn two_threads_parked_in_accept_on_one_server_each_get_a_client() {
 #[test]
 fn yaml_loads_and_entropy_draws_run_concurrently_under_the_armed_gvl() {
     // The ext tail of the sweep: two threads Psych-load the same file
-    // while a third draws OS entropy, all in ZEO_GVL=1 mode. Entropy goes
-    // through OpenSSL.random_bytes -- the module-level spelling, since
-    // the nested OpenSSL::Random constant is a catalogued gap
-    // (docs/todo/stdlib-gaps.md).
+    // while a third draws OS entropy, all in ZEO_GVL=1 mode.
     let result = run_ruby_configured(
         r#"
         require "yaml"
@@ -1335,7 +1332,7 @@ fn yaml_loads_and_entropy_draws_run_concurrently_under_the_armed_gvl() {
         y = File.join(ENV["TMPDIR"] || "/tmp", "zeo_yaml_probe_#{Process.pid}.yml")
         File.write(y, "name: zeo\ncount: 3\n")
         loads = 2.times.map { Thread.new { YAML.load_file(y) } }
-        entropy = Thread.new { OpenSSL.random_bytes(16) }
+        entropy = Thread.new { OpenSSL::Random.random_bytes(16) }
         docs = loads.map(&:value)
         p docs[0]["name"]
         p docs[1]["count"]

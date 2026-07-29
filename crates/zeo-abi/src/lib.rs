@@ -486,6 +486,52 @@ pub const COVERAGE_MODULE: ClassId = ClassId(118);
 /// feature. `:line`/`:call`/`:return`/`:class`/`:end`/`:raise` only.
 pub const TRACEPOINT_CLASS: ClassId = ClassId(119);
 
+/// The `openssl` class surface (the `OpenSSL` module itself is
+/// [`OPENSSL_MODULE`], an early row). Backed by the vendored OpenSSL 3.x the
+/// `openssl` crate builds, so the digest/cipher/BN/TLS behavior is CRuby's
+/// own EVP implementations. CRuby parents `OpenSSL::Digest` under the
+/// `digest` framework's `Digest::Class`; zeo's digest classes are native
+/// tables with no shared Ruby superclass, so it sits under `Object` (a
+/// documented divergence). The exception hierarchy lives in
+/// `gems/openssl/lib` -- see `ext/mod.rs` on why a gated native class
+/// cannot register a constructible exception.
+pub const OPENSSL_DIGEST_CLASS: ClassId = ClassId(120);
+/// `OpenSSL::Digest`'s fixed algorithm subclasses, one id each, all served
+/// by the shared digest table (the `Digest::MD5`-style aliasing).
+pub const OPENSSL_DIGEST_MD4_CLASS: ClassId = ClassId(121);
+pub const OPENSSL_DIGEST_MD5_CLASS: ClassId = ClassId(122);
+pub const OPENSSL_DIGEST_RIPEMD160_CLASS: ClassId = ClassId(123);
+pub const OPENSSL_DIGEST_SHA1_CLASS: ClassId = ClassId(124);
+pub const OPENSSL_DIGEST_SHA224_CLASS: ClassId = ClassId(125);
+pub const OPENSSL_DIGEST_SHA256_CLASS: ClassId = ClassId(126);
+pub const OPENSSL_DIGEST_SHA384_CLASS: ClassId = ClassId(127);
+pub const OPENSSL_DIGEST_SHA512_CLASS: ClassId = ClassId(128);
+/// `OpenSSL::HMAC` -- streaming keyed MAC.
+pub const OPENSSL_HMAC_CLASS: ClassId = ClassId(129);
+/// `OpenSSL::KDF` -- `pbkdf2_hmac`/`hkdf`/`scrypt` module functions.
+pub const OPENSSL_KDF_MODULE: ClassId = ClassId(130);
+/// `OpenSSL::BN` -- OpenSSL's BIGNUM.
+pub const OPENSSL_BN_CLASS: ClassId = ClassId(131);
+/// `OpenSSL::Cipher` -- the EVP symmetric-cipher surface.
+pub const OPENSSL_CIPHER_CLASS: ClassId = ClassId(132);
+/// `OpenSSL::SSL` -- the TLS module (constants + the two classes below).
+pub const OPENSSL_SSL_MODULE: ClassId = ClassId(133);
+/// `OpenSSL::SSL::SSLContext` -- client-side TLS configuration.
+pub const OPENSSL_SSL_CONTEXT_CLASS: ClassId = ClassId(134);
+/// `OpenSSL::SSL::SSLSocket` -- a client TLS session over an IO.
+pub const OPENSSL_SSL_SOCKET_CLASS: ClassId = ClassId(135);
+/// `OpenSSL::X509` -- the certificate module (verify-side only: zeo ships
+/// no issuance).
+pub const OPENSSL_X509_MODULE: ClassId = ClassId(136);
+/// `OpenSSL::X509::Store` -- the CA trust store a context verifies against.
+pub const OPENSSL_X509_STORE_CLASS: ClassId = ClassId(137);
+/// `OpenSSL::X509::Certificate` -- a parsed certificate (peer certs).
+pub const OPENSSL_X509_CERT_CLASS: ClassId = ClassId(138);
+/// `OpenSSL::X509::Name` -- a certificate subject/issuer DN.
+pub const OPENSSL_X509_NAME_CLASS: ClassId = ClassId(139);
+/// `OpenSSL::Random` -- CSPRNG bytes (`random_bytes`).
+pub const OPENSSL_RANDOM_MODULE: ClassId = ClassId(140);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1474,6 +1520,174 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: None,
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_CLASS,
+        name: "OpenSSL::Digest",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_MD4_CLASS,
+        name: "OpenSSL::Digest::MD4",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_MD5_CLASS,
+        name: "OpenSSL::Digest::MD5",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_RIPEMD160_CLASS,
+        name: "OpenSSL::Digest::RIPEMD160",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_SHA1_CLASS,
+        name: "OpenSSL::Digest::SHA1",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_SHA224_CLASS,
+        name: "OpenSSL::Digest::SHA224",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_SHA256_CLASS,
+        name: "OpenSSL::Digest::SHA256",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_SHA384_CLASS,
+        name: "OpenSSL::Digest::SHA384",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_DIGEST_SHA512_CLASS,
+        name: "OpenSSL::Digest::SHA512",
+        is_module: false,
+        superclass: Some(OPENSSL_DIGEST_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_HMAC_CLASS,
+        name: "OpenSSL::HMAC",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_KDF_MODULE,
+        name: "OpenSSL::KDF",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_BN_CLASS,
+        name: "OpenSSL::BN",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_CIPHER_CLASS,
+        name: "OpenSSL::Cipher",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_SSL_MODULE,
+        name: "OpenSSL::SSL",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_SSL_CONTEXT_CLASS,
+        name: "OpenSSL::SSL::SSLContext",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_SSL_SOCKET_CLASS,
+        name: "OpenSSL::SSL::SSLSocket",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_X509_MODULE,
+        name: "OpenSSL::X509",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_X509_STORE_CLASS,
+        name: "OpenSSL::X509::Store",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_X509_CERT_CLASS,
+        name: "OpenSSL::X509::Certificate",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_X509_NAME_CLASS,
+        name: "OpenSSL::X509::Name",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_RANDOM_MODULE,
+        name: "OpenSSL::Random",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("openssl"),
     },
 ];
 

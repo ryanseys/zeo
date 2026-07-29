@@ -94,6 +94,11 @@ yaml-rust2 = { workspace = true, optional = true }
 # library, resolved through the same bare-rustc link as onig. Pulled in only by
 # `ext-ffi`.
 libffi = { workspace = true, optional = true }
+# `openssl` extension: the official rust-openssl bindings over a vendored
+# OpenSSL 3.x -- the same EVP digest/cipher/BN/TLS implementations CRuby's C
+# extension binds, so behavior matches by construction. Pulled in only by
+# `ext-openssl`.
+openssl = { workspace = true, optional = true }
 # The P-B core classes: `Process.clock_gettime`'s clock ids, and (for Time)
 # `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the OS
 # already owns. Deliberately libc rather than chrono: Time's strftime and
@@ -170,7 +175,7 @@ ext-date = []
 ext-zlib = ["dep:flate2"]
 ext-psych = ["dep:yaml-rust2"]
 ext-socket = []
-ext-openssl = []
+ext-openssl = ["dep:openssl"]
 ext-ffi = ["dep:libffi"]
 
 [lints]

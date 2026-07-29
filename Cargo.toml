@@ -99,6 +99,12 @@ flate2 = "1"
 serde_json = "1"
 yaml-rust2 = "0.10"
 rustyline = "15"
+# The `openssl` extension's backend: the official rust-openssl bindings over a
+# VENDORED OpenSSL 3.x (openssl-src builds the C library with cc+perl+make,
+# never linking a system libssl -- the onig/libffi precedent). Chosen over a
+# RustCrypto/rustls patchwork so digests, ciphers, BN and TLS are the same
+# EVP implementations CRuby's extension binds.
+openssl = { version = "0.10", features = ["vendored"] }
 
 # The workspace-wide lint gate (each member opts in with `[lints] workspace =
 # true`). Warnings are errors in CI (`cargo clippy -- -D warnings`); the lint
