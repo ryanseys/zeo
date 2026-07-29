@@ -161,6 +161,23 @@ fn emit_counted_block_splice(
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    // This block's OWN param/block-local names shadow a same-named OUTER
+    // captured local (`rescue => e` cell-hoisted in the enclosing scope,
+    // then `arr.each { |e| ... }` spliced here): the spliced binding is a
+    // plain per-iteration `let`, so body reads must not route through the
+    // outer cell -- `in_proc`'s exact rule. `nested_captured` re-adds any
+    // of them a nested escaping block really captures.
+    if params
+        .required
+        .iter()
+        .chain(&params.block_locals)
+        .any(|n| loop_cx.captured_locals.contains(n))
+    {
+        loop_cx
+            .captured_locals
+            .to_mut()
+            .retain(|n| !params.required.contains(n) && !params.block_locals.contains(n));
+    }
     if !nested_captured.is_empty() {
         loop_cx
             .captured_locals
@@ -312,6 +329,23 @@ fn emit_array_iter_splice(
             .locals;
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
     loop_cx.next_yields_value = !matches!(mode, ArrayIterMode::Each { .. });
+    // This block's OWN param/block-local names shadow a same-named OUTER
+    // captured local (`rescue => e` cell-hoisted in the enclosing scope,
+    // then `arr.each { |e| ... }` spliced here): the spliced binding is a
+    // plain per-iteration `let`, so body reads must not route through the
+    // outer cell -- `in_proc`'s exact rule. `nested_captured` re-adds any
+    // of them a nested escaping block really captures.
+    if params
+        .required
+        .iter()
+        .chain(&params.block_locals)
+        .any(|n| loop_cx.captured_locals.contains(n))
+    {
+        loop_cx
+            .captured_locals
+            .to_mut()
+            .retain(|n| !params.required.contains(n) && !params.block_locals.contains(n));
+    }
     if !nested_captured.is_empty() {
         loop_cx
             .captured_locals
@@ -479,6 +513,23 @@ fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenS
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    // This block's OWN param/block-local names shadow a same-named OUTER
+    // captured local (`rescue => e` cell-hoisted in the enclosing scope,
+    // then `arr.each { |e| ... }` spliced here): the spliced binding is a
+    // plain per-iteration `let`, so body reads must not route through the
+    // outer cell -- `in_proc`'s exact rule. `nested_captured` re-adds any
+    // of them a nested escaping block really captures.
+    if params
+        .required
+        .iter()
+        .chain(&params.block_locals)
+        .any(|n| loop_cx.captured_locals.contains(n))
+    {
+        loop_cx
+            .captured_locals
+            .to_mut()
+            .retain(|n| !params.required.contains(n) && !params.block_locals.contains(n));
+    }
     if !nested_captured.is_empty() {
         loop_cx
             .captured_locals
