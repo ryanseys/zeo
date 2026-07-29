@@ -1313,7 +1313,14 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     anc.push(new_id);
     anc.extend_from_slice(super_chain);
     let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
-    let real_name = crate::dispatch::class_name(real).unwrap_or_else(|| "Object".to_string());
+    // A CLASS receiver's singleton is named after the class itself --
+    // CRuby's `#<Class:Melody>` -- not after `real` (the class of a Class
+    // is `Class`, which would name every one `#<Class:Class>`).
+    let named = match recv {
+        RubyValue::Class(cid) => *cid,
+        _ => real,
+    };
+    let real_name = crate::dispatch::class_name(named).unwrap_or_else(|| "Object".to_string());
     {
         let mut w = maps().classes.write().unwrap();
         w.insert(
