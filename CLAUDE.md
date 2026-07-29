@@ -1,0 +1,2 @@
+- Use ASD-STE100 Simplified Technical English
+- Use active voice
