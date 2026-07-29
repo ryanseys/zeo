@@ -1579,11 +1579,11 @@ pub(super) fn emit_boxed_new(
     // generated struct to `new_handle` -- `emit_new_with_arg_tokens` already
     // returns a fully-boxed `RubyValue` built by the runtime.
     if cx.compiler.is_native_backed(cid) {
-        let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
+        let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs, None);
         return quote! { zeo_rt::stamp_backtrace(#ctor) };
     }
     let class_ident = super::ident::class_ident(cx.compiler, cid);
-    let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
+    let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs, None);
     quote! { zeo_rt::stamp_backtrace(zeo_rt::RubyValue::Object(#class_ident::new_handle(#ctor))) }
 }
 
