@@ -34,26 +34,39 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | digest | `digest`, `digest/*` | `ext-digest` | **done** | `Digest::MD5`/`SHA1`/`SHA256`/`SHA512` — class + streaming API (RustCrypto) |
 | json | `json` | `ext-json` | **done** | `parse` (serde_json, `symbolize_names`), `generate`/`pretty_generate`/`dump` |
 | psych / yaml | `psych`, `yaml` | `ext-psych` | **done** | `load`/`safe_load`/`dump` (yaml-rust2, hand-rolled Psych block-style dump) |
-| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32` plus `deflate`/`inflate`/`gzip`/`gunzip` (flate2/miniz_oxide) |
+| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32`, `deflate`/`inflate`/`gzip`/`gunzip`, and the full class surface — `ZStream`/`Deflate`/`Inflate` over flate2's incremental API, `GzipFile`/`GzipWriter`/`GzipReader` over zeo's own gzip framing (flate2/miniz_oxide) |
 | date | `date` | `ext-date` | **done** | `Date`/`DateTime` over an in-tree Julian-day calendar core |
 | socket | `socket` | `ext-socket` | **done** | full `BasicSocket`/`IPSocket`/`TCPSocket`/`TCPServer`/`UDPSocket`/`UNIXSocket`/`UNIXServer`/`Addrinfo` hierarchy over libc |
 | openssl | `openssl` | `ext-openssl` | **subset** | `OpenSSL::Random` bytes + fixed-length secure compare; `Cipher`/`PKey`/`SSL` still need an FFI or rustls backend |
 | etc | `etc` | `ext-etc` | **done** | `Etc` over libc (`getpwnam`/`getgrgid`/… + `Passwd`/`Group` structs, `sysconf`/`uname`/`nprocessors`) |
 | pathname | `pathname` | `ext-pathname` | **done** | focused native `Pathname` over File/Dir |
 | monitor | `monitor` | `ext-monitor` | **done** | `Monitor` + `MonitorMixin` |
+| fcntl | `fcntl` | `ext-fcntl` | **done** | `Fcntl`'s `fcntl(2)`/`open(2)` flag constants, read from `libc` and `#[cfg]`'d per platform as CRuby `#ifdef`s them |
+| pty | `pty` | `ext-pty` | **done** | `PTY.open`/`spawn`/`getpty`/`check` over `openpty(3)`, the child under a real controlling terminal; `ChildExited` is the gem's Ruby half, and a `check(pid, true)` raise carries only the message — its `#status` answers nil (a by-name raise can't attach one) |
+| syslog | `syslog`, `syslog/logger` | `ext-syslog` | **done** | `Syslog` over `syslog(3)` — `open`/`log`/`mask` lifecycle, priority shortcuts, the full constant set, `LOG_MASK`/`LOG_UPTO`; the `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules are the gem's Ruby half, and `Syslog::Logger` is vendored upstream (its extend-on-include hook is a known gap: `tests/gaps/issue_included_hook_not_fired.rb`) |
+| readline | `readline` | `ext-readline` | **done** | `Readline.readline` — rustyline (pure Rust) on a terminal, a plain chomped read off `Readline.input =` or a non-tty stdin; the Enumerable `HISTORY` object, `completion_proc` wired into rustyline's completer, and the stored word-break/quote attribute surface. `VERSION` reports `"rustyline"` the way libedit builds report `"EditLine wrapper"` |
+| nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/COMPATIBILITY.md` |
+| bigdecimal | `bigdecimal`, `bigdecimal/*` | `ext-bigdecimal` | **done** | `BigDecimal` over a BigUint coefficient — bigdecimal 4.x's C slice (exact add/sub/mult, division to the documented precision rule, the rounding engine, mode/limit state, conversions, `Kernel#BigDecimal`); `**`/`power`/`sqrt`/`BigMath`/`to_d` are the gem's own Ruby, vendored in `gems/bigdecimal` and compiled like user code |
+| coverage | `coverage` | `ext-coverage` | **subset** | line coverage over the AOT line instrumentation: requiring `coverage` makes the COMPILER emit per-statement hit counters plus a per-file coverable-line table, and `Coverage` replays CRuby's whole lifecycle (`start`/`setup`/`resume`/`suspend`/`result`/`peek_result`/`state`, oracle-matched errors included). A file is reported iff its top level began while measurement was set up — the entry script never is, exactly CRuby's rule. Lines only: `supported?(:branches)`/`(:methods)` answer false — see `docs/COMPATIBILITY.md` |
+| TracePoint | *(core — no require)* | `ext-tracepoint` | **subset** | execution tracing over the instrumentation the runtime already carries for backtraces: `set_line` fires `:line`, `FrameGuard` push/pop fire `:call`/`:return`/`:class`/`:end` (classified by the frame label), and the raise channel fires `:raise`. `event`/`path`/`lineno`/`method_id`/`callee_id`/`defined_class`/`raised_exception`, the enable/disable lifecycle (block forms included), `TracePoint.trace`, reverse-enable-order dispatch, in-handler reentrancy suppression, and CRuby's inspect/error shapes — all oracle-matched. When nothing is enabled the hooks cost one relaxed atomic load per statement/call. `:b_call`/`:c_call`-family events, `#self`/`#binding`/`#return_value`, and the other bounds are in `docs/COMPATIBILITY.md` |
 
 The IO-core extensions have landed as unconditional rows on the `IO` table:
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
-and `require "io/console"` (`IO#winsize` over `ioctl`) are pure ceremony — the
-methods are always present. `ARGF` is a live builtin (`zeo_abi::ARGF_CLASS`), and
-`rbconfig` resolves through a synthetic shim (see `docs/todo/bundler-northstar.md`).
+and `require "io/console"` (the terminal modes — `raw`/`cooked`/`echo=`/
+`getch`/`getpass` over `termios(3)`, `winsize` over `ioctl`, and the cursor
+escapes; `crates/zeo-rt/src/builtins/io_console.rs`) are pure ceremony — the
+methods are always present. `objspace` is the same shape: `ObjectSpace` is a
+live builtin, so `memsize_of`/`reachable_objects_from`/`count_symbols` answer
+without the require (`crates/zeo-rt/src/builtins/objspace.rs`; what it declines
+and why is in [`docs/COMPATIBILITY.md`](COMPATIBILITY.md)). `ARGF` is a live
+builtin (`zeo_abi::ARGF_CLASS`), and `rbconfig` resolves through a synthetic
+shim (see `docs/todo/bundler-northstar.md`).
 
 ## Deferred (catalogued, no module yet)
 
 | Extension | `require` | Why deferred |
 |---|---|---|
-| io/nonblock | `io/nonblock` | would add `IO#nonblock`/`#nonblock=` (fcntl `O_NONBLOCK`) |
-| fcntl | `fcntl` | a constant-only module (`Fcntl::O_*`) — needs the module-constant exposure seam, not a method table |
+| _(none currently)_ | | |
 
 ## FFI — the real `ffi` gem, AOT-compiled
 
@@ -104,10 +117,36 @@ interface per runtime call, since its trailing arity/types aren't known at
 compile time. These are the one part of the gem that the pure
 compile-time-`extern` model can't reach without libffi, hence the extra dep.
 
+**The runtime object tier — `Type`, `DynamicLibrary`, `Function`,
+`VariadicInvoker`, `FFI.errno`.** The same libffi machinery is also exposed
+as the gem's own runtime classes, so code that treats a C call as *data*
+(fiddle's pure-Ruby FFI backend is the consumer) runs unchanged:
+`FFI::Type::Builtin::*` are the canonical type objects (`#size`/`#alignment`
+drive fiddle's whole `SIZEOF_*`/`ALIGN_*` table); `FFI::DynamicLibrary.open`
+is `dlopen(3)` (`nil` = the process image) with `#find_function` over
+`dlsym`; `FFI::Function.new(ret, args, ptr_or_proc)` builds a callable
+function pointer at runtime — from a code address, or from a `Proc` (a
+libffi closure, so the object doubles as a C callback) — and IS an
+`FFI::Pointer` (`Function < Pointer`, as in the gem);
+`FFI::VariadicInvoker#call` marshals trailing `(type, value)` pairs with the
+C default argument promotions. The gem's Ruby half lives in `gems/ffi/`
+(`Error`/`NullPointerError`, `Platform`, `DataConverter`); every NULL
+read/write through a `Pointer` raises `FFI::NullPointerError` rather than
+crashing.
+
+**fiddle rides this.** `require "fiddle"` loads `gems/fiddle/` — fiddle
+1.1.8's own `lib/fiddle/ffi_backend.rb` (its JRuby/TruffleRuby path)
+vendored over the tier above, plus its `closure`/`function`/`version` files
+verbatim. `Fiddle.dlopen`, `Fiddle::Function`, `Fiddle::Pointer`,
+`Closure::BlockCaller` callbacks (qsort works), and `TYPE_VARIADIC` calls
+are all oracle-matched against the C extension (`tests/fiddle.rb`); the
+`Importer` DSL (`fiddle/import`/`fiddle/struct`) is not included — see
+`docs/COMPATIBILITY.md` `### fiddle` for that and the other divergences.
+
 ## Out of scope (VM internals / tooling)
 
-`objspace`, `rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism),
-`pty`, `win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
+`rubyvm`, `continuation`, `ripper` (we have ruby-prism),
+`win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
 
 ## Adding an extension
 

@@ -383,6 +383,108 @@ pub const ADDRINFO_CLASS: ClassId = ClassId(95);
 /// (`#path`/`#lineno`/`#label`), what `Kernel#caller_locations` answers and
 /// `Exception#backtrace_locations` would.
 pub const BACKTRACE_LOCATION_CLASS: ClassId = ClassId(96);
+/// `fcntl`: the `Fcntl` module's `fcntl(2)`/`open(2)` flag constants. No
+/// methods -- CRuby's extension is a constant table, and `IO#fcntl` is IO's.
+pub const FCNTL_MODULE: ClassId = ClassId(97);
+/// `IO::ConsoleMode` -- a saved terminal mode, what `IO#console_mode` hands
+/// back and `IO#console_mode=` restores. Not constructible from Ruby (CRuby's
+/// has no `initialize` either); its `raw`/`raw!`/`echo=` rows edit the saved
+/// mode before it is put back.
+pub const CONSOLE_MODE_CLASS: ClassId = ClassId(98);
+
+/// `zlib`'s stream classes, mirroring CRuby's:
+///
+/// ```text
+/// Zlib::ZStream          the shared counters/lifecycle (never constructed)
+///  ├ Zlib::Deflate       a compressor
+///  └ Zlib::Inflate       a decompressor
+/// Zlib::GzipFile         the shared gzip header/footer accessors
+///  ├ Zlib::GzipWriter    writes a gzip member to an IO
+///  └ Zlib::GzipReader    reads a gzip member from an IO (includes Enumerable)
+/// ```
+///
+/// `Zlib`'s thirteen exception classes are NOT here -- a gated row registers
+/// no constructor, so they live in `gems/zlib/lib/zlib.rb` (see `ext/mod.rs`).
+pub const ZLIB_ZSTREAM_CLASS: ClassId = ClassId(99);
+/// `Zlib::Deflate < Zlib::ZStream` -- a compressor.
+pub const ZLIB_DEFLATE_CLASS: ClassId = ClassId(100);
+/// `Zlib::Inflate < Zlib::ZStream` -- a decompressor.
+pub const ZLIB_INFLATE_CLASS: ClassId = ClassId(101);
+/// `Zlib::GzipFile` -- the gzip header/footer surface both directions share.
+pub const ZLIB_GZIP_FILE_CLASS: ClassId = ClassId(102);
+/// `Zlib::GzipWriter < Zlib::GzipFile` -- an IO-shaped gzip compressor.
+pub const ZLIB_GZIP_WRITER_CLASS: ClassId = ClassId(103);
+/// `Zlib::GzipReader < Zlib::GzipFile` -- an IO-shaped gzip decompressor.
+pub const ZLIB_GZIP_READER_CLASS: ClassId = ClassId(104);
+/// `pty`: the `PTY` module -- pseudo-terminal allocation (`.open`) and
+/// child processes run under one (`.spawn`/`.getpty`, `.check`). Its
+/// `ChildExited` exception lives in the gem's Ruby half (`gems/pty`), the
+/// same split as `Zlib`'s errors.
+pub const PTY_MODULE: ClassId = ClassId(105);
+/// `syslog`: the `Syslog` module over the system `syslog(3)` facility --
+/// `open`/`log`/`mask` plus the priority/facility/option constant set. Its
+/// `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules live in the
+/// gem's Ruby half (`gems/syslog`).
+pub const SYSLOG_MODULE: ClassId = ClassId(106);
+/// `readline`: the `Readline` module -- `readline` line input (rustyline on a
+/// terminal, a plain read everywhere else) plus the completion/word-break
+/// attribute surface.
+pub const READLINE_MODULE: ClassId = ClassId(107);
+/// The class of the `Readline::HISTORY` singleton -- the one history list as
+/// an Enumerable object (`push`/`<<`/`[]`/`delete_at`/`each`/...). Not
+/// constructible from Ruby. Deliberately NOT named `Readline::HISTORY`: the
+/// compiler resolves a builtin's name as a CONSTANT PATH, and that spelling
+/// must resolve to the runtime-seeded singleton OBJECT, not to its class.
+pub const READLINE_HISTORY_CLASS: ClassId = ClassId(108);
+/// `nkf`: the `NKF` module -- Network Kanji Filter, Japanese text encoding
+/// conversion (`.nkf` over an option string, `.guess`) rebuilt over the
+/// runtime's own encoding engine. The `Kconv` wrapper is the gem's Ruby
+/// half (`gems/nkf`).
+pub const NKF_MODULE: ClassId = ClassId(109);
+/// `bigdecimal`: the `BigDecimal` class -- arbitrary-precision decimal
+/// arithmetic. The native half is bigdecimal 4.x's C slice (exact
+/// arithmetic, division precision, rounding, mode state); `power`/`sqrt`/
+/// `BigMath` and the `to_d` family are the gem's own Ruby, vendored in
+/// `gems/bigdecimal`. Not constructible via `new` (CRuby removed it); the
+/// `Kernel#BigDecimal` function is the one constructor.
+pub const BIGDECIMAL_CLASS: ClassId = ClassId(110);
+
+/// `FFI::Type` -- the ffi gem's type objects (`FFI::Type::INT32.size`).
+/// The canonical instances live on this class and `Builtin` as constants;
+/// `fiddle`'s FFI backend keys its whole type table off them.
+pub const FFI_TYPE_CLASS: ClassId = ClassId(111);
+/// `FFI::Type::Builtin < FFI::Type` -- the class of the canonical scalar
+/// type instances (`FFI::Type::Builtin::VOID`, `::POINTER`, ...).
+pub const FFI_TYPE_BUILTIN_CLASS: ClassId = ClassId(112);
+/// `FFI::DynamicLibrary` -- `dlopen(3)` handles: `.open(name, flags)` and
+/// `#find_function` over `dlsym`, with the `RTLD_*` constants.
+pub const FFI_DYNAMIC_LIBRARY_CLASS: ClassId = ClassId(113);
+/// `FFI::Function < FFI::Pointer` -- a callable C function pointer built at
+/// RUNTIME (libffi): from a code address, or from a Ruby `Proc` (a closure
+/// trampoline). The compile-time `attach_function` path never constructs one;
+/// `fiddle` is the consumer.
+pub const FFI_FUNCTION_CLASS: ClassId = ClassId(114);
+/// `FFI::VariadicInvoker` -- the runtime call builder for a variadic C
+/// function; each `#call` marshals trailing `(type, value)` pairs.
+pub const FFI_VARIADIC_INVOKER_CLASS: ClassId = ClassId(115);
+/// `FFI::AbstractMemory` -- the gem's abstract base of `Pointer`/`Buffer`.
+/// Constant-only here (never instantiated): it exists so `is_a?` checks in
+/// the gem's own Ruby (fiddle's FFI backend) answer correctly.
+pub const FFI_ABSTRACT_MEMORY_CLASS: ClassId = ClassId(116);
+/// `FFI::AutoPointer < FFI::Pointer` -- constant-only, for `is_a?` checks.
+pub const FFI_AUTO_POINTER_CLASS: ClassId = ClassId(117);
+
+/// `coverage`: the `Coverage` MODULE -- line-coverage measurement over the
+/// AOT line instrumentation (the compiler emits per-statement hit counters
+/// and a coverable-line table when a program requires it). Lines only;
+/// `supported?(:branches)`/`(:methods)` answer false.
+pub const COVERAGE_MODULE: ClassId = ClassId(118);
+
+/// `TracePoint` -- execution tracing over the runtime's frame/line
+/// instrumentation (`set_line`, `FrameGuard`). Core (require-less), so
+/// ungated; the runtime half lives behind the `ext-tracepoint` cargo
+/// feature. `:line`/`:call`/`:return`/`:class`/`:end`/`:raise` only.
+pub const TRACEPOINT_CLASS: ClassId = ClassId(119);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -951,7 +1053,9 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: FFI_POINTER_CLASS,
         name: "FFI::Pointer",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
+        // The gem's hierarchy: `Pointer < AbstractMemory` (a forward edge --
+        // the `AbstractMemory` row lives with the other late FFI ids).
+        superclass: Some(FFI_ABSTRACT_MEMORY_CLASS),
         includes: &[],
         feature: Some("ffi"),
     },
@@ -1175,6 +1279,197 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass {
         id: BACKTRACE_LOCATION_CLASS,
         name: "Thread::Backtrace::Location",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: FCNTL_MODULE,
+        name: "Fcntl",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("fcntl"),
+    },
+    // Ungated: `io/console`'s methods are unconditional rows on the IO table
+    // (see `docs/EXTENSIONS.md`), so the mode object they hand back has to
+    // resolve without a require too.
+    BuiltinClass {
+        id: CONSOLE_MODE_CLASS,
+        name: "IO::ConsoleMode",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: ZLIB_ZSTREAM_CLASS,
+        name: "Zlib::ZStream",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_DEFLATE_CLASS,
+        name: "Zlib::Deflate",
+        is_module: false,
+        superclass: Some(ZLIB_ZSTREAM_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_INFLATE_CLASS,
+        name: "Zlib::Inflate",
+        is_module: false,
+        superclass: Some(ZLIB_ZSTREAM_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_GZIP_FILE_CLASS,
+        name: "Zlib::GzipFile",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_GZIP_WRITER_CLASS,
+        name: "Zlib::GzipWriter",
+        is_module: false,
+        superclass: Some(ZLIB_GZIP_FILE_CLASS),
+        includes: &[],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: ZLIB_GZIP_READER_CLASS,
+        name: "Zlib::GzipReader",
+        is_module: false,
+        superclass: Some(ZLIB_GZIP_FILE_CLASS),
+        includes: &[ENUMERABLE_CLASS],
+        feature: Some("zlib"),
+    },
+    BuiltinClass {
+        id: PTY_MODULE,
+        name: "PTY",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("pty"),
+    },
+    BuiltinClass {
+        id: SYSLOG_MODULE,
+        name: "Syslog",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("syslog"),
+    },
+    BuiltinClass {
+        id: READLINE_MODULE,
+        name: "Readline",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("readline"),
+    },
+    BuiltinClass {
+        id: READLINE_HISTORY_CLASS,
+        name: "Readline::History",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[ENUMERABLE_CLASS],
+        feature: Some("readline"),
+    },
+    BuiltinClass {
+        id: NKF_MODULE,
+        name: "NKF",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("nkf"),
+    },
+    BuiltinClass {
+        id: BIGDECIMAL_CLASS,
+        name: "BigDecimal",
+        is_module: false,
+        superclass: Some(NUMERIC_CLASS),
+        includes: &[],
+        feature: Some("bigdecimal"),
+    },
+    // The ffi gem's runtime tier (dlopen + libffi calls), added for fiddle's
+    // pure-Ruby FFI backend. `Builtin < Type` nests under it, so the `Type`
+    // row precedes it. `Function < Pointer` and the constant-only
+    // `AbstractMemory`/`AutoPointer` complete the gem's `is_a?` lattice.
+    BuiltinClass {
+        id: FFI_TYPE_CLASS,
+        name: "FFI::Type",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_TYPE_BUILTIN_CLASS,
+        name: "FFI::Type::Builtin",
+        is_module: false,
+        superclass: Some(FFI_TYPE_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_DYNAMIC_LIBRARY_CLASS,
+        name: "FFI::DynamicLibrary",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_FUNCTION_CLASS,
+        name: "FFI::Function",
+        is_module: false,
+        superclass: Some(FFI_POINTER_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_VARIADIC_INVOKER_CLASS,
+        name: "FFI::VariadicInvoker",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_ABSTRACT_MEMORY_CLASS,
+        name: "FFI::AbstractMemory",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: FFI_AUTO_POINTER_CLASS,
+        name: "FFI::AutoPointer",
+        is_module: false,
+        superclass: Some(FFI_POINTER_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: COVERAGE_MODULE,
+        name: "Coverage",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("coverage"),
+    },
+    BuiltinClass {
+        id: TRACEPOINT_CLASS,
+        name: "TracePoint",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
         includes: &[],
@@ -1683,6 +1978,14 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     ExceptionClass {
         id: exc_id(62),
         name: "Errno::ECHILD",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    // `Errno::ENOTTY` -- what every `io/console` method raises for a stream
+    // that isn't a terminal (`IO#raw`, `#echo?`, `#winsize`, ...).
+    ExceptionClass {
+        id: exc_id(63),
+        name: "Errno::ENOTTY",
         superclass: Some(exc_id(31)),
         is_module: false,
     },

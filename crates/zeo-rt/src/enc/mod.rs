@@ -19,6 +19,7 @@ mod case;
 mod coderange;
 mod defaults;
 mod inspect;
+pub(crate) mod iso2022jp;
 mod mb;
 mod single_byte;
 mod strbuf;
@@ -35,11 +36,12 @@ pub use mb::{MbCodepointError, MbFamily, mb_codepoint_bytes};
 pub use single_byte::SingleByteTable;
 pub use strbuf::{IncompatibleEncodings, StrBuf, compat_concat_enc};
 pub use table::{
-    ASCII_8BIT, BIG5, ENCODINGS, EUC_JP, EncKind, EncodingId, EncodingSpec, GBK, ISO_8859_1,
-    ISO_8859_2, ISO_8859_15, KOI8_R, SHIFT_JIS, US_ASCII, UTF_8, UTF_16BE, UTF_16LE, UTF_32BE,
-    UTF_32LE, WINDOWS_31J, WINDOWS_1250, WINDOWS_1251, WINDOWS_1252, WINDOWS_1253, WINDOWS_1254,
-    WINDOWS_1255, WINDOWS_1256, WINDOWS_1257, all, find,
+    ASCII_8BIT, BIG5, ENCODINGS, EUC_JP, EncKind, EncodingId, EncodingSpec, GBK, ISO_2022_JP,
+    ISO_8859_1, ISO_8859_2, ISO_8859_15, KOI8_R, SHIFT_JIS, US_ASCII, UTF_8, UTF_16, UTF_16BE,
+    UTF_16LE, UTF_32, UTF_32BE, UTF_32LE, WINDOWS_31J, WINDOWS_1250, WINDOWS_1251, WINDOWS_1252,
+    WINDOWS_1253, WINDOWS_1254, WINDOWS_1255, WINDOWS_1256, WINDOWS_1257, all, find,
 };
+pub(crate) use transcode::{Unit, decode};
 pub use transcode::{
     NewlineMode, TranscodeError, TranscodeFallback, TranscodeOptions, XmlMode, encode_scalar,
     transcode,

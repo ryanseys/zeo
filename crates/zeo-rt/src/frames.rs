@@ -29,6 +29,11 @@ pub struct Frame {
     pub file: &'static str,
     pub line: u32,
     pub method: &'static str,
+    /// The scope's `end` keyword line, `TracePoint`'s `:return`/`:end`
+    /// lineno. 0 marks a frame that never fires entry/exit trace events
+    /// (`<main>`, blocks, synthetic C frames). Fills what was padding, so
+    /// a `Frame` stays 40 bytes.
+    pub end_line: u32,
 }
 
 // A frame push/pop pair runs on EVERY method call -- plain TLS keeps it
@@ -52,8 +57,24 @@ impl FrameGuard {
     // generated crate, which is a separate rustc invocation -- without the
     // hint (and an optimized generated build) each is a cross-crate call.
     #[inline]
-    pub fn push(file: &'static str, method: &'static str, line: u32) -> FrameGuard {
-        FRAMES.with(|f| f.borrow_mut().push(Frame { file, line, method }));
+    pub fn push(
+        file: &'static str,
+        method: &'static str,
+        line: u32,
+        end_line: u32,
+    ) -> FrameGuard {
+        FRAMES.with(|f| {
+            f.borrow_mut().push(Frame {
+                file,
+                line,
+                method,
+                end_line,
+            })
+        });
+        #[cfg(feature = "ext-tracepoint")]
+        if end_line != 0 && crate::ext::tracepoint::tracing() {
+            crate::ext::tracepoint::fire_entry(file, method, line);
+        }
         FrameGuard(())
     }
 }
@@ -61,9 +82,31 @@ impl FrameGuard {
 impl Drop for FrameGuard {
     #[inline]
     fn drop(&mut self) {
+        // The tracing gate comes FIRST so the untraced path pops in place,
+        // exactly the pre-tracepoint code plus one predicted branch --
+        // moving the popped `Frame` out unconditionally cost bm_fib ~8%.
+        #[cfg(feature = "ext-tracepoint")]
+        if crate::ext::tracepoint::tracing() {
+            return traced_pop();
+        }
         FRAMES.with(|f| {
             f.borrow_mut().pop();
         });
+    }
+}
+
+/// The pop while tracing is on: `:return`/`:end` for an event-bearing
+/// frame. `#[cold]`-outlined so `Drop`'s inlined fast path stays small.
+/// The frame is bound OUTSIDE the borrow -- the handler runs Ruby code
+/// that pushes frames of its own.
+#[cfg(feature = "ext-tracepoint")]
+#[cold]
+fn traced_pop() {
+    let popped = FRAMES.with(|f| f.borrow_mut().pop());
+    if let Some(fr) = popped {
+        if fr.end_line != 0 {
+            crate::ext::tracepoint::fire_exit(&fr);
+        }
     }
 }
 
@@ -76,7 +119,12 @@ pub fn synthetic_c_frame(method: &'static str) -> FrameGuard {
     FRAMES.with(|f| {
         let mut stack = f.borrow_mut();
         let (file, line) = stack.last().map_or(("", 0), |fr| (fr.file, fr.line));
-        stack.push(Frame { file, line, method });
+        stack.push(Frame {
+            file,
+            line,
+            method,
+            end_line: 0,
+        });
     });
     FrameGuard(())
 }
@@ -90,6 +138,17 @@ pub fn set_line(line: u32) {
             fr.line = line;
         }
     });
+    #[cfg(feature = "ext-tracepoint")]
+    if crate::ext::tracepoint::tracing() {
+        crate::ext::tracepoint::fire_line(line);
+    }
+}
+
+/// The innermost frame, copied out -- `TracePoint`'s `:raise` event derives
+/// its path/lineno/method from the frame executing the raise.
+#[cfg(feature = "ext-tracepoint")]
+pub fn current_frame() -> Option<Frame> {
+    FRAMES.with(|f| f.borrow().last().copied())
 }
 
 /// The innermost frame's `file:line`, for a caller-location label like

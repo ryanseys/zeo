@@ -594,6 +594,48 @@ pub(crate) fn num_coerce_bin(
     Err(coercion_error(recv, arg))
 }
 
+/// CRuby's `rb_num_coerce_cmp` tail: a `<=>` whose operand is outside the
+/// native tower asks it to `coerce` and compares the returned pair; an
+/// operand with no `coerce` is simply incomparable (nil). What lets
+/// `1.5 <=> BigDecimal("2")` (and through Comparable, `1.5 < bd`) work.
+pub(crate) fn coerce_cmp(recv: &RubyValue, arg: &RubyValue) -> Result<RubyValue, Signal> {
+    let coerce = crate::Symbol::intern("coerce");
+    if !matches!(arg, RubyValue::Object(_))
+        || !crate::dispatch::responds_to(arg.class_id(), coerce, false)
+    {
+        return Ok(RubyValue::Nil);
+    }
+    let pair = crate::dispatch::send_value(arg, coerce, std::slice::from_ref(recv), None)?;
+    if let RubyValue::Array(a) = &pair {
+        let items: Vec<RubyValue> = a.lock().iter().cloned().collect();
+        if items.len() == 2 {
+            return crate::dispatch::send_value(
+                &items[0],
+                crate::Symbol::intern("<=>"),
+                std::slice::from_ref(&items[1]),
+                None,
+            );
+        }
+    }
+    Ok(RubyValue::Nil)
+}
+
+/// CRuby's `num_equal` tail for `Integer#==`/`Float#==`: equality with an
+/// object outside the tower is THE OPERAND's question (`y == x`), which is
+/// how `1.5 == BigDecimal("1.5")` answers true.
+pub(crate) fn reverse_eq(recv: &RubyValue, arg: &RubyValue) -> Result<RubyValue, Signal> {
+    if !matches!(arg, RubyValue::Object(_)) {
+        return Ok(RubyValue::Bool(false));
+    }
+    let r = crate::dispatch::send_value(
+        arg,
+        crate::Symbol::intern("=="),
+        std::slice::from_ref(recv),
+        None,
+    )?;
+    Ok(RubyValue::Bool(r.truthy()))
+}
+
 /// The coercion TypeError a generic Numeric row raises (named by the
 /// RECEIVER's class, CRuby's shape; the ARGUMENT reads per
 /// `coerce_operand_name`'s special-constant rule).

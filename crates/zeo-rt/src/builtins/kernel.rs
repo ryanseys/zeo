@@ -110,6 +110,12 @@ ruby_module! {
     def "`"(recv, args, block) {
         crate::builtins::process::backquote(recv, args, block)
     }
+    // `spawn` starts the child WITHOUT waiting and answers its pid -- the
+    // Kernel spelling of `Process.spawn`, which Open3's popen family calls
+    // receiverless from module context.
+    def "spawn"(_recv, args, _block) {
+        crate::builtins::process::spawn_pid(args)
+    }
     // `putc` -- writes one character to `$stdout` and returns its argument.
     // An Integer writes the low byte (`n & 0xff`); a String writes its first
     // character.
@@ -375,6 +381,13 @@ ruby_module! {
     }
     def "Rational"(_recv, args, _block) {
         kernel_rational(args)
+    }
+    // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
+    // removed). Present whenever the extension is compiled in; like `Time`'s
+    // extra methods, it answers even without `require "bigdecimal"`.
+    #[cfg(feature = "ext-bigdecimal")]
+    def "BigDecimal"(_recv, args, _block) {
+        crate::ext::bigdecimal::kernel_big_decimal(args)
     }
     def "Complex"(_recv, args, _block) {
         kernel_complex(args)

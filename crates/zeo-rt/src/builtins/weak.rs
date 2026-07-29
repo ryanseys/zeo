@@ -1,19 +1,17 @@
-//! `ObjectSpace` (CRuby gc.c / weakmap.c) and its `WeakMap` primitive.
+//! `ObjectSpace::WeakMap` (CRuby weakmap.c), `WeakRef`, and the finalizer
+//! registry behind `ObjectSpace.define_finalizer`. The `ObjectSpace` module
+//! itself is next door in `objspace.rs`, which stands on the registry here.
 //!
 //! zeo's memory model is `Arc` refcounting, not a tracing collector (the
 //! plan's accepted trade -- cycles leak). That shapes what this module can
-//! honestly offer:
-//!
-//! - `ObjectSpace::WeakMap` holds `Arc::downgrade`d handles to its keys and
-//!   values, so an entry vanishes once the last STRONG reference elsewhere
-//!   drops. Dead entries are pruned lazily on access and eagerly at
-//!   `GC.start`. Only the common heap kinds (`Object`/`String`/`Array`/`Hash`)
-//!   are tracked weakly; every other value -- immediates, and the rarer
-//!   Arc-backed kinds (`Proc`/`Regexp`/...) -- is held STRONGLY, a bounded,
-//!   documented best-effort divergence (weak-referencing those is rare, and a
-//!   strongly-held entry simply never expires rather than expiring wrongly).
-//! - `each_object`/`_id2ref` can't be served without heap enumeration / an
-//!   id-to-object table, so they raise `NotImplementedError` (decision #4).
+//! honestly offer: a `WeakMap` holds `Arc::downgrade`d handles to its keys and
+//! values, so an entry vanishes once the last STRONG reference elsewhere
+//! drops. Dead entries are pruned lazily on access and eagerly at `GC.start`.
+//! Only the common heap kinds (`Object`/`String`/`Array`/`Hash`) are tracked
+//! weakly; every other value -- immediates, and the rarer Arc-backed kinds
+//! (`Proc`/`Regexp`/...) -- is held STRONGLY, a bounded, documented
+//! best-effort divergence (weak-referencing those is rare, and a strongly-held
+//! entry simply never expires rather than expiring wrongly).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
@@ -26,14 +24,13 @@ use crate::encoding::StrBuf;
 use crate::{RubyValue, Signal, Symbol};
 use zeo_abi::{ClassId, WEAKMAP_CLASS, WEAKREF_CLASS};
 
-use super::{arg_error, arity, local_jump_error, not_impl_error, type_error};
-use zeo_macros::ruby_module;
+use super::{arg_error, arity, local_jump_error, type_error};
 
 /// A weak handle to a Ruby value's liveness. The heap kinds carry a real
 /// `Weak` to their backing `Arc`; everything else is kept alive strongly
 /// (immediates never die anyway, and weak-referencing the rarer heap kinds is
 /// uncommon enough that "never expires" is the accepted best-effort answer).
-enum WeakTarget {
+pub(super) enum WeakTarget {
     Strong(RubyValue),
     Object(Weak<dyn RubyObject>),
     Str(Weak<Freezable<StrBuf>>),
@@ -42,7 +39,7 @@ enum WeakTarget {
 }
 
 impl WeakTarget {
-    fn downgrade(v: &RubyValue) -> WeakTarget {
+    pub(super) fn downgrade(v: &RubyValue) -> WeakTarget {
         match v {
             RubyValue::Object(o) => WeakTarget::Object(Arc::downgrade(o)),
             RubyValue::Str(s) => WeakTarget::Str(Arc::downgrade(s)),
@@ -53,7 +50,7 @@ impl WeakTarget {
     }
 
     /// The referent if it's still alive, else `None`.
-    fn upgrade(&self) -> Option<RubyValue> {
+    pub(super) fn upgrade(&self) -> Option<RubyValue> {
         match self {
             WeakTarget::Strong(v) => Some(v.clone()),
             WeakTarget::Object(w) => w.upgrade().map(RubyValue::Object),
@@ -66,7 +63,7 @@ impl WeakTarget {
 
 /// Whether two values are the SAME object (identity), the keying `WeakMap`
 /// and `equal?` use: immediates compare by value, heap kinds by `Arc` pointer.
-fn same_object(a: &RubyValue, b: &RubyValue) -> bool {
+pub(super) fn same_object(a: &RubyValue, b: &RubyValue) -> bool {
     match (a, b) {
         (RubyValue::Nil, RubyValue::Nil) => true,
         (RubyValue::Bool(x), RubyValue::Bool(y)) => x == y,
@@ -555,17 +552,17 @@ pub fn register_weak(registry: &mut ClassRegistry) {
 /// captured at registration (the referent may be gone by the time the
 /// callback runs, so the id -- CRuby's finalizer argument -- must be kept
 /// independently). `target` detects collection for the `GC.start` sweep.
-struct Finalizer {
-    target: WeakTarget,
-    object_id: i64,
-    callback: RubyValue,
+pub(super) struct Finalizer {
+    pub(super) target: WeakTarget,
+    pub(super) object_id: i64,
+    pub(super) callback: RubyValue,
 }
 
-static FINALIZERS: Mutex<Vec<Finalizer>> = Mutex::new(Vec::new());
+pub(super) static FINALIZERS: Mutex<Vec<Finalizer>> = Mutex::new(Vec::new());
 
 /// CRuby's object id for a value -- the Integer a finalizer callback receives.
 /// Mirrors `Kernel#object_id` (the immediate shapes and heap-pointer ids).
-fn object_id_i64(v: &RubyValue) -> i64 {
+pub(super) fn object_id_i64(v: &RubyValue) -> i64 {
     match v {
         RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
         RubyValue::Nil => 4,
@@ -623,70 +620,6 @@ pub fn run_finalizers() {
     }
 }
 
-ruby_module! {
-    ObjectSpace = zeo_abi::OBJECTSPACE_MODULE;
-
-    // `define_finalizer(obj, callable)` or `define_finalizer(obj) { |id| }` --
-    // best-effort: the callback runs when `obj` is seen collected (`GC.start`)
-    // and unconditionally at program exit, receiving obj's id.
-    def self."define_finalizer"(_recv, args, block) {
-        arity!(args, 1..=2);
-        let obj = &args[0];
-        let callback = match (args.get(1), block) {
-            (Some(cb), _) => {
-                if !crate::dispatch::responds_to(cb.class_id(), Symbol::intern("call"), false) {
-                    return Err(arg_error!(
-                        "wrong type argument {} (should be callable)",
-                        crate::builtins::class_name_of(cb)
-                    ));
-                }
-                cb.clone()
-            }
-            (None, Some(b)) => b,
-            (None, None) => {
-                return Err(arg_error!("tried to create Proc object without a block"));
-            }
-        };
-        FINALIZERS.lock().push(Finalizer {
-            target: WeakTarget::downgrade(obj),
-            object_id: object_id_i64(obj),
-            callback,
-        });
-        // CRuby returns `[0, callable]` (arity + the finalizer); the arity slot
-        // is an internal detail callers don't read.
-        Ok(RubyValue::Array(array_new(vec![RubyValue::Int(0), obj.clone()])))
-    }
-    // Remove every finalizer registered for `obj` (by identity). Returns obj.
-    def self."undefine_finalizer"(_recv, args, _block) {
-        arity!(args, 1);
-        let obj = &args[0];
-        FINALIZERS.lock().retain(|f| match f.target.upgrade() {
-            Some(t) => !same_object(&t, obj),
-            None => true,
-        });
-        Ok(obj.clone())
-    }
-    // A `WeakMap` of every live object of a class -- zeo has no heap
-    // enumeration, so this is an honest NotImplementedError (decision #4).
-    def self."each_object"(_recv, _args, _block) {
-        Err(not_impl_error!("ObjectSpace.each_object is not available (zeo has no heap enumeration)"))
-    }
-    // No id->object table exists under Arc refcounting.
-    def self."_id2ref"(_recv, _args, _block) {
-        Err(not_impl_error!("ObjectSpace._id2ref is not available (zeo has no id-to-object table)"))
-    }
-    // `garbage_collect` is `GC.start` by another name -- a no-op sweep (plus
-    // the finalizer/weakmap sweep once those land).
-    def self."garbage_collect"(_recv, _args, _block) {
-        Ok(RubyValue::Nil)
-    }
-    // An empty per-class census: no fabricated counts, matching `GC.stat`'s
-    // empty-Hash posture.
-    def self."count_objects"(_recv, _args, _block) {
-        Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,58 +669,4 @@ mod tests {
         assert_eq!(m.live_pairs().len(), 0);
     }
 
-    /// `ObjectSpace`'s `ruby_module!`-generated class methods are reachable only
-    /// through the dispatch table (their Rust fn names are mangled), so the
-    /// tests call them the way real dispatch does -- through the registered
-    /// class-method `lookup`.
-    fn os_cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        let tbl = crate::builtins::registered_table(zeo_abi::OBJECTSPACE_MODULE)
-            .expect("ObjectSpace is a registered builtin table")
-            .class
-            .as_ref()
-            .expect("ObjectSpace has class methods");
-        (tbl.lookup)(name).unwrap_or_else(|| panic!("ObjectSpace.{name} is defined"))
-    }
-
-    #[test]
-    fn garbage_collect_is_a_nil_no_op_and_count_objects_is_empty() {
-        let nil = RubyValue::Nil;
-        assert!(matches!(
-            os_cmethod("garbage_collect")(&nil, &[], None).unwrap(),
-            RubyValue::Nil
-        ));
-        let RubyValue::Hash(h) = os_cmethod("count_objects")(&nil, &[], None).unwrap() else {
-            panic!("count_objects is a Hash")
-        };
-        assert_eq!(h.lock().len(), 0);
-    }
-
-    #[test]
-    fn heap_enumeration_methods_are_honest_not_implemented_errors() {
-        let nil = RubyValue::Nil;
-        for name in ["each_object", "_id2ref"] {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                os_cmethod(name)(&nil, &[RubyValue::Int(0)], None)
-            }));
-            // NotImplementedError raised; registry-less in a bare unit test, so
-            // it either panics or returns Err.
-            assert!(r.is_err() || r.unwrap().is_err(), "{name} should not succeed");
-        }
-    }
-
-    #[test]
-    fn define_and_undefine_finalizer_round_trip() {
-        let obj = a_string("finalizable");
-        // A block finalizer registers; the return is CRuby's [0, obj] pair.
-        let r = os_cmethod("define_finalizer")(&RubyValue::Nil, std::slice::from_ref(&obj), Some(block_proc()));
-        assert!(r.is_ok(), "define_finalizer with a block succeeds");
-        // undefine_finalizer answers the object it was given.
-        let back = os_cmethod("undefine_finalizer")(&RubyValue::Nil, std::slice::from_ref(&obj), None).unwrap();
-        assert!(same_object(&back, &obj));
-    }
-
-    /// A trivial callable (a `Proc`) for `define_finalizer`'s block slot.
-    fn block_proc() -> RubyValue {
-        RubyValue::Proc(crate::RProc::new(|_args: &[RubyValue]| Ok(RubyValue::Nil)))
-    }
 }

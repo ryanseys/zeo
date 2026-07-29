@@ -608,12 +608,18 @@ ruby_class! {
     }
     def "join" as join (recv, args, _block) {
         arity!(args, 0..=1);
+        // BYTE concatenation under the encoding-compatibility rule, the same
+        // way `String#+` does it -- never through the lossy display text,
+        // which replaced every non-UTF-8 byte with U+FFFD and so could not
+        // rejoin the pieces of a compressed stream (or anything else binary).
         let sep = match args.first() {
-            None | Some(RubyValue::Nil) => String::new(),
-            Some(other) => convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned(),
+            None | Some(RubyValue::Nil) => None,
+            Some(other) => Some(convert::to_rstr(other)?.lock().clone()),
         };
         let elems = recv_array!(recv).lock().clone();
-        Ok(RubyValue::Str(crate::string_new(join_recursive(&elems, &sep))))
+        let mut out = crate::string_new(String::new()).lock().clone();
+        join_into(&mut out, &elems, sep.as_ref())?;
+        Ok(RubyValue::Str(crate::collections::string_wrap(out)))
     }
     def "index" | "find_index"(recv, args, block) {
         // Live per-element probes: neither the block nor `rb_eq` (a user
@@ -1486,15 +1492,45 @@ pub fn array_shift_checked(arr: &crate::collections::RArray) -> Result<RubyValue
 /// `Array#join`: each element's `to_s`, joined by `sep`, with nested arrays
 /// flattened recursively under the SAME separator (`[1, [2, 3]].join("-")` ->
 /// `"1-2-3"`).
-fn join_recursive(elems: &[RubyValue], sep: &str) -> String {
-    elems
-        .iter()
-        .map(|e| match e {
-            RubyValue::Array(inner) => join_recursive(&inner.lock().clone(), sep),
-            _ => e.to_display_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(sep)
+/// `Array#join`'s body: append each element's bytes to `out`, separated by
+/// `sep`, flattening nested arrays as Ruby does. Byte-faithful -- a String
+/// element contributes its own bytes under its own encoding, and only a
+/// NON-String goes through `to_s`.
+fn join_into(
+    out: &mut crate::enc::StrBuf,
+    elems: &[RubyValue],
+    sep: Option<&crate::enc::StrBuf>,
+) -> Result<(), crate::Signal> {
+    for (i, e) in elems.iter().enumerate() {
+        if i > 0 {
+            if let Some(sep) = sep {
+                push_or_raise(out, sep)?;
+            }
+        }
+        match e {
+            RubyValue::Array(inner) => join_into(out, &inner.lock().clone(), sep)?,
+            RubyValue::Str(s) => push_or_raise(out, &s.lock().clone())?,
+            other => {
+                let text = crate::string_new(other.to_display_string());
+                let text = text.lock().clone();
+                push_or_raise(out, &text)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn push_or_raise(out: &mut crate::enc::StrBuf, part: &crate::enc::StrBuf) -> Result<(), crate::Signal> {
+    out.push_buf(part).map_err(|_| {
+        crate::dispatch::raise_error(
+            "Encoding::CompatibilityError",
+            format!(
+                "incompatible character encodings: {} and {}",
+                out.encoding().inspect_name(),
+                part.encoding().inspect_name()
+            ),
+        )
+    })
 }
 
 /// Per-element `eql?` (class-strict): `1.eql?(1.0)` is false because Integer

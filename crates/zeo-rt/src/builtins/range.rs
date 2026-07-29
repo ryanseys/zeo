@@ -259,10 +259,48 @@ ruby_class! {
         if matches!(start, Some(RubyValue::Float(_))) || matches!(end, Some(RubyValue::Float(_))) {
             return range_bsearch_float(start, end, exclusive, &p);
         }
-        let (Some(RubyValue::Int(lo0)), Some(RubyValue::Int(hi0))) = (start, end) else {
+        let Some(RubyValue::Int(lo0)) = start else {
             return Err(type_error!("can't do binary search for the given Range"));
         };
-        let (mut lo, mut hi) = (*lo0, if exclusive { *hi0 } else { *hi0 + 1 });
+        let hi0 = match end {
+            Some(RubyValue::Int(h)) => Some(if exclusive { *h } else { *h + 1 }),
+            None => None,
+            Some(_) => return Err(type_error!("can't do binary search for the given Range")),
+        };
+        let (mut lo, mut hi) = match hi0 {
+            Some(h) => (*lo0, h),
+            // Endless (`(1..).bsearch`): bracket the answer first by
+            // doubling an offset from the start, then bisect as usual. A
+            // block that never brackets walks off the fixnum end -> nil.
+            None => {
+                let mut lo = *lo0;
+                let mut hi = None;
+                let mut offset: i64 = 1;
+                while hi.is_none() {
+                    let Some(cand) = lo0.checked_add(offset) else {
+                        return Ok(RubyValue::Nil);
+                    };
+                    let r = p.call(&[RubyValue::Int(cand)])?;
+                    let cmp = match r {
+                        RubyValue::Int(n) => Some(n.cmp(&0)),
+                        RubyValue::Float(f) => f.partial_cmp(&0.0),
+                        _ => None,
+                    };
+                    match cmp {
+                        Some(std::cmp::Ordering::Equal) => return Ok(RubyValue::Int(cand)),
+                        Some(std::cmp::Ordering::Less) => hi = Some(cand),
+                        Some(std::cmp::Ordering::Greater) => lo = cand + 1,
+                        None if r.truthy() => hi = Some(cand + 1),
+                        None => lo = cand + 1,
+                    }
+                    let Some(next) = offset.checked_mul(2) else {
+                        return Ok(RubyValue::Nil);
+                    };
+                    offset = next;
+                }
+                (lo, hi.expect("loop exits with a bound"))
+            }
+        };
         // `found` tracks the first true (find-minimum) or an exact `0` hit
         // (find-any); a non-zero numeric result only narrows the bounds, so
         // find-any with no hit leaves `found` unset -> nil.

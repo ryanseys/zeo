@@ -56,7 +56,38 @@ pub(crate) enum Unit {
 }
 
 /// Decodes `bytes` under `from` into a sequence of units.
-fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
+pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
+    // The dummy rows have no per-character structure (kind `Binary`), but
+    // they DO have converters -- CRuby's exact split. ISO-2022-JP is the
+    // stateful escape codec; dummy UTF-16/32 read an endianness off their
+    // BOM, and without one the whole string is one invalid unit
+    // (`"a\x00" on UTF-16`, oracle-verified).
+    if from == crate::enc::table::ISO_2022_JP {
+        return crate::enc::iso2022jp::decode_units(bytes);
+    }
+    if from == crate::enc::table::UTF_16 || from == crate::enc::table::UTF_32 {
+        let bom: &[(&[u8], EncodingId)] = if from == crate::enc::table::UTF_16 {
+            &[
+                (b"\xFE\xFF", crate::enc::table::UTF_16BE),
+                (b"\xFF\xFE", crate::enc::table::UTF_16LE),
+            ]
+        } else {
+            &[
+                (b"\x00\x00\xFE\xFF", crate::enc::table::UTF_32BE),
+                (b"\xFF\xFE\x00\x00", crate::enc::table::UTF_32LE),
+            ]
+        };
+        if bytes.is_empty() {
+            return Vec::new();
+        }
+        return match bom.iter().find(|(mark, _)| bytes.starts_with(mark)) {
+            Some((mark, real)) => decode(&bytes[mark.len()..], *real),
+            None => vec![Unit::Invalid(
+                bytes.to_vec(),
+                crate::enc::mb::InvalidStyle::Plain,
+            )],
+        };
+    }
     match from.kind() {
         EncKind::Latin1 => bytes.iter().map(|b| Unit::Char(*b as char)).collect(),
         EncKind::Ascii | EncKind::Binary => bytes
@@ -194,12 +225,28 @@ pub fn transcode(
     fallback: Option<TranscodeFallback<'_>>,
 ) -> Result<Vec<u8>, TranscodeError> {
     let mut fallback = fallback;
+    // Dummy targets, mirroring the decode side: UTF-16/32 write a BOM then
+    // big-endian code units; ISO-2022-JP threads a stateful escape encoder
+    // through the loop (`jis`), finished after the last unit.
+    let (to, bom): (EncodingId, &[u8]) = if to == crate::enc::table::UTF_16 {
+        (crate::enc::table::UTF_16BE, b"\xFE\xFF")
+    } else if to == crate::enc::table::UTF_32 {
+        (crate::enc::table::UTF_32BE, b"\x00\x00\xFE\xFF")
+    } else {
+        (to, &[])
+    };
+    let mut jis = (to == crate::enc::table::ISO_2022_JP)
+        .then(|| crate::enc::iso2022jp::Encoder::new(false));
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    out.extend_from_slice(bom);
     for unit in decode(bytes, from) {
         match unit {
             Unit::Invalid(raw, style) => {
                 if opts.invalid_replace {
-                    out.extend_from_slice(&replacement(opts, to));
+                    match jis.as_mut() {
+                        Some(enc) => emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out),
+                        None => out.extend_from_slice(&replacement(opts, to)),
+                    }
                 } else {
                     let esc: String = raw.iter().map(|b| quote_byte(*b)).collect();
                     // CRuby's three forms, oracle-verified: `incomplete
@@ -234,7 +281,10 @@ pub fn transcode(
             // all three ways.
             Unit::Unmapped(raw) => {
                 if opts.undef_replace {
-                    out.extend_from_slice(&replacement(opts, to));
+                    match jis.as_mut() {
+                        Some(enc) => emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out),
+                        None => out.extend_from_slice(&replacement(opts, to)),
+                    }
                 } else {
                     let escaped: String = raw.iter().map(|b| quote_byte(*b)).collect();
                     let msg = if to == crate::enc::table::UTF_8 && transcoder_name(from) == from.name() {
@@ -254,29 +304,44 @@ pub fn transcode(
                 }
             }
             Unit::Char(c) => {
-                if let Some(bytes) = encode_char(c, to) {
-                    apply_xml(&mut out, c, &bytes, opts, to);
-                    if opts.xml.is_none() {
-                        maybe_newline(&mut out, c, &bytes, opts);
+                match jis.as_mut() {
+                    Some(enc) => {
+                        if enc.push(c, &mut out).is_ok() {
+                            continue;
+                        }
                     }
-                    continue;
+                    None => {
+                        if let Some(bytes) = encode_char(c, to) {
+                            apply_xml(&mut out, c, &bytes, opts, to);
+                            if opts.xml.is_none() {
+                                maybe_newline(&mut out, c, &bytes, opts);
+                            }
+                            continue;
+                        }
+                    }
                 }
                 // Undefined in the target: fallback, then :undef, then error.
                 let mut buf = [0u8; 4];
                 let s = c.encode_utf8(&mut buf);
                 if let Some(f) = fallback.as_deref_mut() {
                     if let Some(rep) = f(s) {
-                        out.extend(
-                            rep.chars()
-                                .flat_map(|c| encode_char(c, to).unwrap_or_default()),
-                        );
+                        match jis.as_mut() {
+                            Some(enc) => emit_via(enc, &rep, &mut out),
+                            None => out.extend(
+                                rep.chars()
+                                    .flat_map(|c| encode_char(c, to).unwrap_or_default()),
+                            ),
+                        }
                         continue;
                     }
                 }
                 if let Some(xml) = opts.xml {
                     push_xml_ref(&mut out, c, xml);
                 } else if opts.undef_replace {
-                    out.extend_from_slice(&replacement(opts, to));
+                    match jis.as_mut() {
+                        Some(enc) => emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out),
+                        None => out.extend_from_slice(&replacement(opts, to)),
+                    }
                 } else {
                     return Err(TranscodeError::UndefinedConversion(undef_message(
                         c, from, to,
@@ -285,7 +350,20 @@ pub fn transcode(
             }
         }
     }
+    if let Some(enc) = jis.as_mut() {
+        enc.finish(&mut out);
+    }
     Ok(out)
+}
+
+/// Replacement text through the stateful ISO-2022-JP encoder -- raw bytes
+/// would land inside a kanji run and corrupt the mode. Characters the
+/// encoder can't take (a non-JIS replacement string) are dropped, matching
+/// `encode_char`'s `unwrap_or_default` on the stateless path.
+fn emit_via(enc: &mut crate::enc::iso2022jp::Encoder, text: &str, out: &mut Vec<u8>) {
+    for c in text.chars() {
+        let _ = enc.push(c, out);
+    }
 }
 
 /// How CRuby quotes one byte inside an error message's `"..."`: printable

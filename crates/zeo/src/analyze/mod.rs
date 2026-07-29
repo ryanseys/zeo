@@ -1275,6 +1275,9 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         // `Errno::ECHILD` -- `Process.wait` with no children (matches
         // `zeo-abi::EXCEPTION_CLASSES` exc_id(62)).
         ("Errno::ECHILD", "SystemCallError"),
+        // `Errno::ENOTTY` -- every `io/console` method on a stream that isn't
+        // a terminal (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(63)).
+        ("Errno::ENOTTY", "SystemCallError"),
     ] {
         register_class(
             compiler,
@@ -2046,7 +2049,11 @@ fn register_body_def_method(
     // operator fast paths are emitted unconditionally at every static call
     // site, so a user operator would be silently bypassed there -- a loud
     // rejection beats dispatch that only sometimes honors the override.
+    // `BigDecimal` is exempt: it is an Object-payload builtin no call site
+    // fast-paths, and its own gem defines `**` in Ruby (bigdecimal 4.x
+    // splits the class between C and Ruby exactly there).
     if compiler.class(class_id).is_builtin
+        && compiler.class(class_id).name != "BigDecimal"
         && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
     {
         return Err(format!(

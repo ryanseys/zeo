@@ -10,6 +10,28 @@ use crate::enc::transcode::{Unit, decode_utf8};
 /// non-Unicode encoding -- becomes `\xNN`, exactly as CRuby shows it.
 pub fn inspect(buf: &StrBuf) -> String {
     let mut out = String::from("\"");
+    // A dummy encoding's string has no readable characters at all: CRuby
+    // renders every byte as `\xNN`, EXCEPT the named control escapes
+    // (`"a\nb".force_encoding("ISO-2022-JP")` is `"\x61\n\x62"` -- even
+    // printable ASCII is hex, but `\n`/`\e` keep their mnemonics;
+    // oracle-verified).
+    if buf.encoding().is_dummy() {
+        for b in buf.bytes() {
+            match b {
+                0x07 => out.push_str("\\a"),
+                0x08 => out.push_str("\\b"),
+                b'\t' => out.push_str("\\t"),
+                b'\n' => out.push_str("\\n"),
+                0x0B => out.push_str("\\v"),
+                0x0C => out.push_str("\\f"),
+                b'\r' => out.push_str("\\r"),
+                0x1B => out.push_str("\\e"),
+                _ => out.push_str(&format!("\\x{b:02X}")),
+            }
+        }
+        out.push('"');
+        return out;
+    }
     match buf.encoding().kind() {
         EncKind::Utf8 => {
             let units = decode_utf8(buf.bytes());

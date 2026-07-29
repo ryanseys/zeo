@@ -26,11 +26,14 @@
 //! marshaling has). (2) `#address`/`#inspect` expose a real heap address for an
 //! owned buffer, so they are non-deterministic and never golden-tested.
 
+mod dynamic_library;
+mod function;
 mod memory_pointer;
 mod pointer;
+mod types;
 
 use crate::builtins::{arg_error, arity, index_error, type_error};
-use crate::dispatch::{RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::sync::Arc;
@@ -68,7 +71,7 @@ impl Drop for OwnedBuf {
 unsafe impl Send for OwnedBuf {}
 unsafe impl Sync for OwnedBuf {}
 
-/// An `FFI::Pointer` / `FFI::MemoryPointer` instance.
+/// An `FFI::Pointer` / `FFI::MemoryPointer` / `FFI::Function` instance.
 pub struct RPointer {
     /// The real C address this points at (owned buffer data, or a raw address).
     base: *mut u8,
@@ -77,8 +80,13 @@ pub struct RPointer {
     size: Option<usize>,
     /// The owned buffer keeping `base` alive; `None` for a raw address.
     owner: Option<Arc<OwnedBuf>>,
-    /// `FFI_POINTER_CLASS` or `FFI_MEMORY_POINTER_CLASS` -- governs `.class`.
+    /// `FFI_POINTER_CLASS`, `FFI_MEMORY_POINTER_CLASS` or
+    /// `FFI_FUNCTION_CLASS` -- governs `.class`.
     class: ClassId,
+    /// The `FFI::Function` payload (call signature + any live Proc closure).
+    /// An `FFI::Function` IS a `Pointer` in the gem's hierarchy, so it shares
+    /// this struct -- the whole `Pointer` instance table works on it unchanged.
+    func: Option<Arc<function::FuncData>>,
     frozen: AtomicBool,
 }
 
@@ -94,6 +102,7 @@ impl RPointer {
             size: Some(size),
             owner: Some(owner),
             class,
+            func: None,
             frozen: AtomicBool::new(false),
         }
     }
@@ -112,6 +121,7 @@ impl RPointer {
             size: None,
             owner: None,
             class,
+            func: None,
             frozen: AtomicBool::new(false),
         }
     }
@@ -124,6 +134,7 @@ impl RPointer {
             size: self.size.map(|s| s.saturating_sub(delta)),
             owner: self.owner.clone(),
             class: FFI_POINTER_CLASS,
+            func: None,
             frozen: AtomicBool::new(false),
         }
     }
@@ -134,7 +145,13 @@ impl RPointer {
 
     /// Reject an out-of-bounds access on a sized (owned) buffer, exactly where
     /// the gem raises `IndexError`; a raw address (unknown size) is unchecked.
+    /// A NULL pointer rejects every non-empty access first, as the gem's
+    /// `FFI::NullPointerError` does (the class itself is defined by the ffi
+    /// gem's Ruby half, `gems/ffi`, so it is raisable by name).
     fn check_bounds(&self, off: usize, len: usize) -> Result<(), Signal> {
+        if len > 0 && self.base.is_null() {
+            return Err(null_pointer_error());
+        }
         if let Some(size) = self.size {
             if off + len > size {
                 return Err(index_error!(
@@ -143,6 +160,23 @@ impl RPointer {
             }
         }
         Ok(())
+    }
+
+    /// Read `n` raw bytes at `off`. A zero-length read never touches the
+    /// address, so it is valid even on NULL (fiddle's `NULL.to_str` -> `""`).
+    unsafe fn read_bytes_at(&self, off: usize, n: usize) -> Vec<u8> {
+        if n == 0 {
+            return Vec::new();
+        }
+        unsafe { std::slice::from_raw_parts(self.base.add(off), n) }.to_vec()
+    }
+
+    /// Write `bytes` at `off`; empty writes never touch the address.
+    unsafe fn write_bytes_at(&self, off: usize, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.base.add(off), bytes.len()) };
     }
 
     unsafe fn read_int(&self, off: usize, bytes: usize, signed: bool) -> i64 {
@@ -225,6 +259,7 @@ impl RubyObject for RPointer {
             size: self.size,
             owner: self.owner.clone(),
             class: self.class,
+            func: self.func.clone(),
             frozen: AtomicBool::new(false),
         };
         if copy_frozen {
@@ -232,6 +267,16 @@ impl RubyObject for RPointer {
         }
         Arc::new(p)
     }
+}
+
+/// The gem's `FFI::NullPointerError` -- defined by the ffi gem's Ruby half
+/// (`gems/ffi/lib/ffi.rb`), which every `require "ffi"` loads, so raising it
+/// by name from here works (the `strscan` pattern; see `ext/mod.rs`).
+fn null_pointer_error() -> Signal {
+    raise_error(
+        "FFI::NullPointerError",
+        "invalid memory access at address=0x0".to_string(),
+    )
 }
 
 /// The `RPointer` behind a receiver -- the table only dispatches on one.
@@ -474,6 +519,35 @@ pub fn type_size(sym: &str) -> Option<usize> {
         | "ssize_t" | "double" | "pointer" => 8,
         _ => return None,
     })
+}
+
+/// The C `errno` slot for this thread.
+fn errno_location() -> *mut libc::c_int {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::__error()
+    }
+    #[cfg(not(target_os = "macos"))]
+    unsafe {
+        libc::__errno_location()
+    }
+}
+
+zeo_macros::ruby_module! {
+    FFI = zeo_abi::FFI_MODULE;
+
+    // `FFI.errno` / `FFI.errno=` -- the saved C errno; fiddle's `last_error`
+    // reads through this.
+    def self."errno"(_recv, args, _b) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(unsafe { *errno_location() } as i64))
+    }
+    def self."errno="(_recv, args, _b) {
+        arity!(args, 1);
+        let v = crate::ffi::to_i64(&args[0])?;
+        unsafe { *errno_location() = v as libc::c_int };
+        Ok(args[0].clone())
+    }
 }
 
 #[cfg(test)]

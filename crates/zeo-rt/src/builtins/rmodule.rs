@@ -230,7 +230,13 @@ ruby_class! {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         let mut push_owner = |owner: crate::ClassId, out: &mut Vec<RubyValue>| {
-            for name in crate::constants::const_names_of(owner.0) {
+            // Two sources, because a module's constants are stored two ways: an
+            // ordinary `FOO = 1` lands in the constant table, while a nested
+            // `class Bar` is registered by its qualified NAME and never reaches
+            // that table (codegen resolves `Foo::Bar` statically). Both are
+            // constants of `Foo` as far as Ruby is concerned.
+            let named = crate::constants::const_names_of(owner.0);
+            for name in named.into_iter().chain(crate::dispatch::nested_class_names(owner)) {
                 if seen.insert(name.clone()) {
                     out.push(RubyValue::Symbol(crate::Symbol::intern(&name)));
                 }

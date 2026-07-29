@@ -502,14 +502,22 @@ impl Compiler {
             // A nested builtin name (`"Digest::SHA256"`, `"Enumerator::Lazy"`)
             // is stored as its LEAF under a lexical parent, so a constant path
             // (`Digest::SHA256`) descends into it like any user-nested class.
-            // The parent is an earlier BUILTINS row (already seeded).
+            // The parent is an earlier BUILTINS row (already seeded) -- itself
+            // possibly nested (`"FFI::Type::Builtin"` descends FFI -> Type),
+            // so the prefix is resolved by the same leaf-under-parent walk.
             let path = crate::constpath::ConstPath::parse(b.name);
             let nested = path.scope().map(|parent| {
-                let pid = compiler
-                    .classes
-                    .iter()
-                    .position(|c| c.is_builtin && c.name == parent)
-                    .map(|i| ClassId(i as u32));
+                let mut pid: Option<ClassId> = None;
+                for seg in crate::constpath::ConstPath::parse(parent).segments() {
+                    pid = compiler
+                        .classes
+                        .iter()
+                        .position(|c| c.is_builtin && c.name == seg && c.lexical_parent == pid)
+                        .map(|i| ClassId(i as u32));
+                    if pid.is_none() {
+                        break;
+                    }
+                }
                 (path.base().to_string(), pid)
             });
             let ci = &mut compiler.classes[id.0 as usize];

@@ -15,15 +15,14 @@ pub struct RunResult {
 
 /// The runtime profile the e2e harness links generated programs against.
 ///
-/// Release by default -- the same choice the conformance harness makes: the
-/// small stripped release rlib links far faster than the large debug one, and
-/// that per-test link is the dominant cost of this suite. A developer chasing a
-/// runtime panic sets `ZEO_RUNTIME_PROFILE=debug` for a symbolicated runtime
-/// (the release runtime is `strip = "symbols"`). Reading the env from many
-/// `#[test]` threads is safe: the data race `from_env_or` warns about is
-/// `set_var` vs `var_os`, and this only ever reads.
+/// `-O0`, matching the golden harness: these tests assert what a program
+/// prints, and optimizing a throwaway binary only spends rustc time. It also
+/// keeps the runtime symbolicated, which is what you want chasing a panic.
+/// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back. Reading the
+/// env from many `#[test]` threads is safe: the data race `from_env_or` warns
+/// about is `set_var` vs `var_os`, and this only ever reads.
 fn harness_profile() -> zeo::backend::Profile {
-    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Release)
+    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
 }
 
 pub fn run_ruby(source: &str) -> RunResult {

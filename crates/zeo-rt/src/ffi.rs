@@ -211,7 +211,7 @@ fn promote(k: FfiKind) -> FfiKind {
 /// Map a varargs `:type` Symbol name to its kind, mirroring the compile-time
 /// `ffi_type_of` table in `zeo`'s `lower/ffi.rs`.
 #[cfg(feature = "ext-ffi")]
-fn kind_from_symbol(name: &str) -> Result<FfiKind, Signal> {
+pub fn kind_from_symbol(name: &str) -> Result<FfiKind, Signal> {
     use FfiKind::*;
     Ok(match name {
         "char" | "int8" => I8,
@@ -320,7 +320,20 @@ fn marshal_va(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
                 _owner: Some(c),
             }
         }
-        Pointer => plain(VaInner::Ptr(to_pointer(v)?)),
+        // A String bound to a `:pointer` argument passes a NUL-terminated
+        // copy of its bytes, exactly as the gem marshals it (how fiddle's
+        // `strlen.call("...")` reaches C).
+        Pointer => match v {
+            RubyValue::Str(_) => {
+                let c = to_cstring(v)?;
+                let ptr = c.as_ptr() as *mut c_void;
+                VaVal {
+                    inner: VaInner::Ptr(ptr),
+                    _owner: Some(c),
+                }
+            }
+            _ => plain(VaInner::Ptr(to_pointer(v)?)),
+        },
         Void => return Err(type_error!("`:void` is not a valid FFI argument type")),
     })
 }
@@ -330,6 +343,52 @@ fn marshal_va(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
 #[cfg(feature = "ext-ffi")]
 pub fn va_fixed(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
     marshal_va(kind, v)
+}
+
+/// Marshal one argument of a FIXED-signature runtime call (`FFI::Function`).
+/// Identical to the fixed-variadic marshaling except `:bool`, which a fixed
+/// prototype passes as the one-byte C `_Bool` rather than a promoted `int`.
+#[cfg(feature = "ext-ffi")]
+pub fn marshal_fixed(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
+    if kind == FfiKind::Bool {
+        return Ok(VaVal {
+            inner: VaInner::U8(u8::from(to_bool(v))),
+            _owner: None,
+        });
+    }
+    marshal_va(kind, v)
+}
+
+/// Marshal one PROMOTED variadic argument from a runtime `(type, value)` pair
+/// (`FFI::VariadicInvoker#call`); the compile-time varargs path resolves its
+/// pairs through `va_parse_pairs` instead.
+#[cfg(feature = "ext-ffi")]
+pub fn va_promoted(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
+    marshal_va(promote(kind), v)
+}
+
+/// Call a fixed-signature C function at `addr` with already-marshaled
+/// arguments, through a runtime-built CIF. `FFI::Function#call`'s engine; the
+/// compile-time `attach_function` path emits a direct `extern "C"` call and
+/// never comes through here.
+///
+/// # Safety
+/// `addr` must be a valid C function whose signature is described by the kinds
+/// of `vals` and `ret`.
+#[cfg(feature = "ext-ffi")]
+pub unsafe fn call_fixed(
+    addr: *const c_void,
+    vals: Vec<VaVal>,
+    ret: FfiKind,
+) -> Result<RubyValue, Signal> {
+    use libffi::middle::{Cif, CodePtr};
+    if addr.is_null() {
+        return Err(arg_error!("FFI call to a NULL function pointer"));
+    }
+    let cif = Cif::new(vals.iter().map(VaVal::ty), kind_type(ret));
+    let args: Vec<libffi::middle::Arg> = vals.iter().map(VaVal::arg).collect();
+    let code = CodePtr::from_ptr(addr);
+    Ok(unsafe { call_and_wrap(&cif, code, &args, ret) })
 }
 
 /// Parse the trailing `*rest` of a variadic call -- a flat Array of alternating

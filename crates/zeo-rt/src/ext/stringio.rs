@@ -15,7 +15,7 @@
 
 use crate::builtins::{arity, eof_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
-use crate::{RubyValue, string_new};
+use crate::RubyValue;
 use zeo_macros::ruby_class;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -24,6 +24,16 @@ use zeo_abi::STRINGIO_CLASS;
 
 struct State {
     bytes: Vec<u8>,
+    /// The buffer's encoding, which every read but `read(len)` is tagged with.
+    ///
+    /// A `StringIO` is a byte buffer that REMEMBERS what its bytes mean: the
+    /// string it was built from carries an encoding, and CRuby hands that same
+    /// encoding back out of `string`/`read`/`gets`/`getc`. Without it, binary
+    /// content cannot survive a round-trip -- decoding the bytes as UTF-8 to
+    /// answer a read replaces every non-UTF-8 byte with U+FFFD, which is
+    /// silent corruption of exactly the data a StringIO is most often used to
+    /// carry (a compressed stream, an image, a socket capture).
+    enc: crate::encoding::EncodingId,
     pos: usize,
     closed: bool,
 }
@@ -34,10 +44,11 @@ pub struct RStringIO {
 }
 
 impl RStringIO {
-    fn with_bytes(bytes: Vec<u8>) -> RStringIO {
+    fn with_bytes(bytes: Vec<u8>, enc: crate::encoding::EncodingId) -> RStringIO {
         RStringIO {
             state: Mutex::new(State {
                 bytes,
+                enc,
                 pos: 0,
                 closed: false,
             }),
@@ -67,7 +78,7 @@ impl RubyObject for RStringIO {
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let s = self.state.lock();
-        let io = RStringIO::with_bytes(s.bytes.clone());
+        let io = RStringIO::with_bytes(s.bytes.clone(), s.enc);
         io.state.lock().pos = s.pos;
         if copy_frozen {
             io.set_frozen();
@@ -96,8 +107,20 @@ fn arg_bytes(v: &RubyValue) -> Vec<u8> {
     }
 }
 
-fn bytes_to_str(bytes: &[u8]) -> RubyValue {
-    RubyValue::Str(string_new(String::from_utf8_lossy(bytes).into_owned()))
+/// Bytes out of the buffer, tagged with the buffer's own encoding -- what
+/// `string`/`read`/`gets`/`getc`/`readlines` all answer.
+fn bytes_to_str(bytes: &[u8], enc: crate::encoding::EncodingId) -> RubyValue {
+    RubyValue::Str(crate::string_from_bytes(bytes.to_vec(), enc))
+}
+
+/// Bytes out of the buffer as ASCII-8BIT. `read(len)` is the one read that
+/// ignores the buffer's encoding -- CRuby documents it as reading in binary
+/// mode, because a length in BYTES can land mid-character.
+fn bytes_to_binary(bytes: &[u8]) -> RubyValue {
+    RubyValue::Str(crate::string_from_bytes(
+        bytes.to_vec(),
+        crate::encoding::ASCII_8BIT,
+    ))
 }
 
 /// Overwrite-from-`pos` write, extending the buffer as a file would.
@@ -117,7 +140,8 @@ ruby_class! {
     // The whole buffer as a String, independent of position.
     def "string" (recv, args, _block) {
         arity!(args, 0);
-        Ok(bytes_to_str(&io_of(recv).state.lock().bytes))
+        let s = io_of(recv).state.lock();
+        Ok(bytes_to_str(&s.bytes, s.enc))
     }
     // The IO encoding pair, as `IO` answers it: the buffer's own encoding
     // outward, and no transcoding on the way in. csv's writer reads both to
@@ -125,7 +149,7 @@ ruby_class! {
     def "external_encoding" (recv, args, _block) {
         arity!(args, 0);
         crate::dispatch::send_value(
-            &bytes_to_str(&io_of(recv).state.lock().bytes),
+            &{ let s = io_of(recv).state.lock(); bytes_to_str(&s.bytes, s.enc) },
             crate::Symbol::intern("encoding"),
             &[],
             None,
@@ -142,7 +166,7 @@ ruby_class! {
             None | Some(RubyValue::Nil) => {
                 let out = s.bytes[s.pos.min(s.bytes.len())..].to_vec();
                 s.pos = s.bytes.len();
-                Ok(bytes_to_str(&out))
+                Ok(bytes_to_str(&out, s.enc))
             }
             Some(v) => {
                 let n = crate::builtins::convert::to_index(v)?;
@@ -156,7 +180,7 @@ ruby_class! {
                 let end = (s.pos + n).min(s.bytes.len());
                 let out = s.bytes[s.pos..end].to_vec();
                 s.pos = end;
-                Ok(bytes_to_str(&out))
+                Ok(bytes_to_binary(&out))
             }
         }
     }
@@ -210,7 +234,7 @@ ruby_class! {
             .unwrap_or(s.bytes.len());
         let line = s.bytes[s.pos..end].to_vec();
         s.pos = end;
-        Ok(bytes_to_str(&line))
+        Ok(bytes_to_str(&line, s.enc))
     }
     def "each_line" | "each" (recv, args, block) {
         arity!(args, 0);
@@ -292,10 +316,10 @@ ruby_class! {
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
         }
-        let len = utf8_char_len(s.bytes[s.pos]).min(s.bytes.len() - s.pos);
+        let len = char_len(s.enc, s.bytes[s.pos]).min(s.bytes.len() - s.pos);
         let ch = s.bytes[s.pos..s.pos + len].to_vec();
         s.pos += len;
-        Ok(bytes_to_str(&ch))
+        Ok(bytes_to_str(&ch, s.enc))
     }
     // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
     def "readline" (recv, args, _block) {
@@ -331,11 +355,27 @@ ruby_class! {
 
     def self."new" | "open" (_recv, args, _block) {
         arity!(args, 0..=2); // (string=""[, mode]) -- mode ignored for now
-        let bytes = match args.first() {
-            None | Some(RubyValue::Nil) => Vec::new(),
-            Some(v) => crate::builtins::convert::to_rstr(v)?.lock().bytes().to_vec(),
+        // An empty `StringIO.new` is UTF-8, as the `""` it stands in for is.
+        let (bytes, enc) = match args.first() {
+            None | Some(RubyValue::Nil) => (Vec::new(), crate::encoding::UTF_8),
+            Some(v) => {
+                let s = crate::builtins::convert::to_rstr(v)?;
+                let s = s.lock();
+                (s.bytes().to_vec(), s.encoding())
+            }
         };
-        Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes))))
+        Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes, enc))))
+    }
+}
+
+/// How many bytes the character starting with `lead` occupies in `enc`. Only
+/// UTF-8 is multi-byte here; in a binary buffer every byte is its own
+/// character, which is why `getc` on one answers a single byte.
+fn char_len(enc: crate::encoding::EncodingId, lead: u8) -> usize {
+    if enc == crate::encoding::UTF_8 {
+        utf8_char_len(lead)
+    } else {
+        1
     }
 }
 
@@ -379,6 +419,7 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::string_new;
 
     fn s(text: &str) -> RubyValue {
         RubyValue::Str(string_new(text.to_string()))
@@ -431,6 +472,59 @@ mod tests {
         assert_eq!(text(&im("gets")(&io, &[], None).unwrap()), "a\n");
         assert_eq!(text(&im("gets")(&io, &[], None).unwrap()), "b");
         assert!(matches!(im("gets")(&io, &[], None).unwrap(), RubyValue::Nil));
+    }
+
+    /// A StringIO over BINARY content must hand the same bytes back. Decoding
+    /// them as UTF-8 to answer a read replaced every non-UTF-8 byte with
+    /// U+FFFD -- silent corruption, and the reason a gzip member could not
+    /// survive a `StringIO` round-trip. Byte 0x8b is a gzip header byte and
+    /// is not valid UTF-8 on its own, which is what makes it the case to pin.
+    #[test]
+    fn binary_content_survives_a_round_trip() {
+        let raw: Vec<u8> = vec![0x1f, 0x8b, 0x08, 0x00, 0xc8];
+        let binary = RubyValue::Str(crate::string_from_bytes(
+            raw.clone(),
+            crate::encoding::ASCII_8BIT,
+        ));
+        let io = cm("new")(&RubyValue::Nil, &[binary], None).unwrap();
+
+        for method in ["string", "read"] {
+            let got = im(method)(&io, &[], None).unwrap();
+            let RubyValue::Str(s) = &got else {
+                panic!("{method} should answer a String, got {got:?}");
+            };
+            assert_eq!(s.lock().bytes(), &raw[..], "{method} corrupted the bytes");
+            assert_eq!(s.lock().encoding(), crate::encoding::ASCII_8BIT);
+            im("rewind")(&io, &[], None).unwrap();
+        }
+
+        // `read(len)` is the one read CRuby answers in binary regardless, and
+        // a byte count may land mid-character -- so it must not re-encode.
+        let head = im("read")(&io, &[RubyValue::Int(2)], None).unwrap();
+        let RubyValue::Str(head) = head else { panic!("read(2) should answer a String") };
+        assert_eq!(head.lock().bytes(), &raw[..2]);
+
+        // In a binary buffer every byte is its own character.
+        im("rewind")(&io, &[], None).unwrap();
+        let ch = im("getc")(&io, &[], None).unwrap();
+        let RubyValue::Str(ch) = ch else { panic!("getc should answer a String") };
+        assert_eq!(ch.lock().bytes(), &[0x1f]);
+    }
+
+    /// The other half of the same rule: a UTF-8 buffer keeps ITS encoding, and
+    /// `getc` there walks whole characters rather than bytes.
+    #[test]
+    fn utf8_content_keeps_its_encoding_and_char_boundaries() {
+        let io = cm("new")(
+            &RubyValue::Nil,
+            &[RubyValue::Str(string_new("\u{e9}a".to_string()))],
+            None,
+        )
+        .unwrap();
+        let ch = im("getc")(&io, &[], None).unwrap();
+        let RubyValue::Str(ch) = ch else { panic!("getc should answer a String") };
+        assert_eq!(ch.lock().bytes(), "\u{e9}".as_bytes());
+        assert_eq!(ch.lock().encoding(), crate::encoding::UTF_8);
     }
 
     #[test]

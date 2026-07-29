@@ -288,8 +288,13 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
 
 // ---- compile + run via the zeo library (same path as e2e `run_ruby`) ----
 
+/// `-O0`. A golden asserts what a program PRINTS, never how fast it runs, and
+/// `-C opt-level=2` is pure cost here -- ruinous once a vendored-gem golden
+/// splices a whole require graph into one crate (`gem_net_http.rb` generates
+/// 45MB of Rust, which rustc will not optimize inside ten minutes).
+/// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back.
 fn profile() -> zeo::backend::Profile {
-    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Release)
+    zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
 }
 
 /// Compile `source` with zeo and run the produced binary in `run_cwd` with

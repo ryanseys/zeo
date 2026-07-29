@@ -1183,7 +1183,12 @@ impl RubyValue {
             RubyValue::Regexp(re) => RubyValue::Regexp(re.dup_data(keep_frozen)),
             RubyValue::MatchData(m) => RubyValue::MatchData(m.dup_data(keep_frozen)),
             RubyValue::Str(s) => {
-                let fresh = crate::string_new(s.lock().to_utf8_lossy().into_owned());
+                // Copy the BUFFER -- bytes and encoding both. Rebuilding the
+                // copy from `to_utf8_lossy` text made `dup` re-encode: a
+                // BINARY 0x8B came back as UTF-8 0xC2 0x8B, so a duplicated
+                // compressed stream or packed record was silently a different
+                // string. Same rule as `String#+` (see `builtins::string`).
+                let fresh = crate::collections::string_wrap(s.lock().clone());
                 if keep_frozen {
                     fresh.set_frozen();
                 }

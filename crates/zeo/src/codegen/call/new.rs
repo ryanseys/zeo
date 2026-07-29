@@ -153,7 +153,7 @@ pub fn emit_new(
             }
         });
     }
-    emit_new_with_arg_tokens(cx, class_name, arg_exprs)
+    emit_new_with_arg_tokens(cx, class_name, arg_exprs, block)
 }
 /// The bare `Arc<Concrete>` struct literal for one generated class -- every
 /// ivar `Nil`, unfrozen. Shared by `emit_new`'s general-binder path and
@@ -195,6 +195,7 @@ pub fn emit_new_with_arg_tokens(
     cx: &Ctx,
     class_name: &str,
     arg_exprs: Vec<TokenStream>,
+    block: Option<NodeId>,
 ) -> TokenStream {
     let __bx = cx.box_id;
     let cid = cx
@@ -221,12 +222,21 @@ pub fn emit_new_with_arg_tokens(
     {
         let id = cid.0;
         let new_sym = super::super::pooled_sym("new");
+        // A literal block threads through to the runtime row -- it is the
+        // whole constructor argument for `TracePoint.new(:line) { ... }`.
+        let block_expr = match block {
+            Some(b) => {
+                let p = super::procs::emit_proc_value(cx, b);
+                quote! { Some(#p) }
+            }
+            None => quote! { None },
+        };
         return quote! {
             zeo_rt::send_value_in(#__bx,
                 &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)),
                 #new_sym,
                 &[#(#arg_exprs),*],
-                None,
+                #block_expr,
             )?
         };
     }

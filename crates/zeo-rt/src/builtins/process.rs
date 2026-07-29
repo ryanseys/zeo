@@ -540,16 +540,7 @@ ruby_module! {
     // thread, so it does not touch the caller's `$?`.
     def self.detach(_recv, args, _block) {
         arity!(args, 1);
-        let pid = int_arg(&args[0])?;
-        let reaper = crate::RProc::new(move |_args: &[RubyValue]| {
-            match raw_waitpid(pid, 0) {
-                Ok(Some((reaped, raw))) => Ok(new_status(reaped, raw)),
-                // A pid that is already gone (or never ours) yields nil rather
-                // than propagating ECHILD out of the detached thread.
-                _ => Ok(RubyValue::Nil),
-            }
-        });
-        Ok(crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new()))
+        Ok(detach_thread(int_arg(&args[0])?))
     }
     // `Process.spawn([env,] command... [,options])` -- start a child WITHOUT
     // waiting (unlike `system`), answering its pid; the child is reapable with
@@ -559,11 +550,7 @@ ruby_module! {
     // redirects to files or to each other). Std fds are inherited unless
     // redirected. See that helper for the options not yet honored.
     def self.spawn(_recv, args, _block) {
-        let mut cmd = build_spawn_command(args)?;
-        match cmd.spawn() {
-            Ok(child) => Ok(RubyValue::Int(child.id() as i64)),
-            Err(e) => Err(spawn_error(&e)),
-        }
+        spawn_pid(args)
     }
     // `Process.exec([env,] command... [,options])` -- REPLACE the current
     // process image (execvp), never returning on success. Shares spawn's
@@ -715,7 +702,7 @@ fn errno_fail(syscall: &str) -> crate::Signal {
 /// which `raise_errno` does not name, so it is raised explicitly; `EINTR` is
 /// retried, as CRuby's own wait loop does. The syscall runs GVL-released so a
 /// blocking wait cannot stall sibling threads.
-fn raw_waitpid(pid: i64, flags: i64) -> Result<Option<(i64, i32)>, Signal> {
+pub(crate) fn raw_waitpid(pid: i64, flags: i64) -> Result<Option<(i64, i32)>, Signal> {
     loop {
         let mut raw: libc::c_int = 0;
         let ret = crate::gvl::without_gvl(|| unsafe {
@@ -866,7 +853,7 @@ impl RubyObject for RProcessStatus {
     }
 }
 
-fn new_status(pid: i64, raw: i32) -> RubyValue {
+pub(crate) fn new_status(pid: i64, raw: i32) -> RubyValue {
     RubyValue::Object(Arc::new(RProcessStatus { pid, raw }))
 }
 
@@ -965,7 +952,7 @@ pub fn last_child_status() -> RubyValue {
     LAST_CHILD_STATUS.with(|c| c.borrow().clone())
 }
 
-fn set_last_child_status(v: RubyValue) {
+pub(crate) fn set_last_child_status(v: RubyValue) {
     LAST_CHILD_STATUS.with(|c| *c.borrow_mut() = v);
 }
 
@@ -1040,10 +1027,35 @@ fn hash_truthy(h: &crate::collections::RHash, key: &str) -> bool {
     !v.is_nil() && !matches!(v, RubyValue::Bool(false))
 }
 
+/// The background reaper `Process.detach` answers: a Thread whose value is the
+/// child's `Process::Status` (nil if the pid was already gone). Also what
+/// `PTY.spawn`'s block form leaves behind, CRuby's own detach call there.
+pub(crate) fn detach_thread(pid: i64) -> RubyValue {
+    let reaper = crate::RProc::new(move |_args: &[RubyValue]| {
+        match raw_waitpid(pid, 0) {
+            Ok(Some((reaped, raw))) => Ok(new_status(reaped, raw)),
+            // A pid that is already gone (or never ours) yields nil rather
+            // than propagating ECHILD out of the detached thread.
+            _ => Ok(RubyValue::Nil),
+        }
+    });
+    crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new())
+}
+
+/// Start a child without waiting, answering its pid -- the shared engine of
+/// `Process.spawn` and `Kernel#spawn` (Open3 calls the latter receiverless).
+pub(crate) fn spawn_pid(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let mut cmd = build_spawn_command(args)?;
+    match cmd.spawn() {
+        Ok(child) => Ok(RubyValue::Int(child.id() as i64)),
+        Err(e) => Err(spawn_error(&e)),
+    }
+}
+
 /// Turn a `spawn`/`exec` argument list into a ready `Command`: peel an optional
 /// leading `env` Hash and trailing `options` Hash (CRuby keys on POSITION, not
 /// key type), build the command from what's left, then layer env + options on.
-fn build_spawn_command(args: &[RubyValue]) -> Result<Command, Signal> {
+pub(crate) fn build_spawn_command(args: &[RubyValue]) -> Result<Command, Signal> {
     let mut rest = args;
 
     // A leading Hash is the environment; a trailing Hash is the options. Order,
@@ -1161,22 +1173,40 @@ fn apply_spawn_options(cmd: &mut Command, opts: &crate::collections::RHash) -> R
                 cmd.current_dir(cmd_str(&v)?);
             }
             OptKey::In => {
-                cmd.stdin(Stdio::from(open_redirect_file(&v, false)?));
+                let f = match crate::builtins::io::dup_fd_file(&v) {
+                    Some(f) => f,
+                    None => open_redirect_file(&v, false)?,
+                };
+                cmd.stdin(Stdio::from(f));
             }
-            // `merge_fd` catches `:out => :err` / `[:child, :err]`; anything else
-            // is a file (or `[name, mode]`) target.
+            // `merge_fd` catches `:out => :err` / `[:child, :err]`; an IO value
+            // (Open3's pipe ends) hands its fd over; anything else is a file
+            // (or `[name, mode]`) target.
             OptKey::Out => match merge_fd(&v) {
                 Some(2) => out_to_err = true,
                 Some(_) => {}
-                None => out = Some(open_redirect_file(&v, true)?),
+                None => {
+                    out = Some(match crate::builtins::io::dup_fd_file(&v) {
+                        Some(f) => f,
+                        None => open_redirect_file(&v, true)?,
+                    })
+                }
             },
             OptKey::Err => match merge_fd(&v) {
                 Some(1) => err_to_out = true,
                 Some(_) => {}
-                None => err = Some(open_redirect_file(&v, true)?),
+                None => {
+                    err = Some(match crate::builtins::io::dup_fd_file(&v) {
+                        Some(f) => f,
+                        None => open_redirect_file(&v, true)?,
+                    })
+                }
             },
             OptKey::OutErr => {
-                let f = open_redirect_file(&v, true)?;
+                let f = match crate::builtins::io::dup_fd_file(&v) {
+                    Some(f) => f,
+                    None => open_redirect_file(&v, true)?,
+                };
                 // A dup (try_clone) shares the file offset, so the two streams
                 // interleave into one file as CRuby's shared-fd redirect does.
                 out = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
@@ -1320,7 +1350,7 @@ fn open_redirect_file(spec: &RubyValue, write: bool) -> Result<std::fs::File, Si
 /// Map a `spawn`/`exec` failure (`Command::spawn`/`exec`) to the matching
 /// `Errno` exception, CRuby's own behaviour (a missing program is
 /// `Errno::ENOENT`).
-fn spawn_error(e: &std::io::Error) -> Signal {
+pub(crate) fn spawn_error(e: &std::io::Error) -> Signal {
     crate::builtins::file::raise_errno(e, "exec", "")
 }
 

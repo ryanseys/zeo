@@ -21,6 +21,17 @@ golden = { max-threads = 8 }
 filter = "test(net_http) | test(net_smtp) | test(net_ftp)"
 slow-timeout = { period = "120s", terminate-after = 5 }
 
+# The vendored-gem goldens splice a whole require graph into one program --
+# `net/http` alone reaches ~40 files -- and a cold `rustc` over that takes
+# minutes on its own, several more when seven siblings are compiling beside it.
+# Slow is not stuck, so these get their own deadline rather than dragging the
+# general backstop up for the other ~2600. FIRST, because nextest resolves each
+# setting from the earliest override that matches and the one below matches
+# these too (its `test-group` still applies -- this one doesn't set it).
+[[profile.default.overrides]]
+filter = "binary(examples) & test(/^example::gem_/)"
+slow-timeout = { period = "120s", terminate-after = 5 }
+
 [[profile.default.overrides]]
 filter = "binary(spinel) | binary(examples) | binary(gaps)"
 test-group = "golden"

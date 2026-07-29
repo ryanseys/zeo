@@ -119,6 +119,8 @@ pub use fiber::{
     fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
 };
 pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line, synthetic_c_frame};
+#[cfg(feature = "ext-coverage")]
+pub use ext::coverage::{cov_file_loaded, cov_line, coverage_install};
 pub use builtins::rmodule::const_defined_in;
 pub use globals::{
     global_alias, global_assign, global_defined, global_get, global_set, seed_loaded_features,
@@ -497,9 +499,12 @@ mod tests {
 
     ruby_class! {
         class Point : Object {
-            id: 100;
+            // Test ids sit FAR above the builtin range -- a builtin id here
+            // (100 was zlib's `Deflate` once ids grew past it) makes the
+            // registry answer the real table and every downcast below panic.
+            id: 9100;
             name: "Point";
-            ancestors: [100, 0, 25, 24]; // [Point, Object, Kernel, BasicObject]
+            ancestors: [9100, 0, 25, 24]; // [Point, Object, Kernel, BasicObject]
             ivars { x }
             def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = Some(x); Ok(RubyValue::Nil) }
             def x(self: std::sync::Arc<Self>) { Ok(self.x.lock().clone().unwrap_or(RubyValue::Nil)) }
@@ -524,9 +529,9 @@ mod tests {
 
     ruby_class! {
         class Greeter : Object {
-            id: 101;
+            id: 9101;
             name: "Greeter";
-            ancestors: [101, 0, 25, 24];
+            ancestors: [9101, 0, 25, 24];
             ivars { }
             def hello(self: std::sync::Arc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
             def method_missing(self: std::sync::Arc<Self>, name: RubyValue) {
@@ -553,9 +558,9 @@ mod tests {
 
     ruby_class! {
         class Temp : Object {
-            id: 102;
+            id: 9102;
             name: "Temp";
-            ancestors: [102, 22, 0, 25, 24]; // [Temp, Comparable, Object, Kernel, BasicObject]
+            ancestors: [9102, 22, 0, 25, 24]; // [Temp, Comparable, Object, Kernel, BasicObject]
             ivars { deg }
             def cmp(self: std::sync::Arc<Self>, other: RubyValue) {
                 let mine = self.deg.lock().clone().unwrap_or(RubyValue::Nil);

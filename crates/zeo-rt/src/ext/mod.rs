@@ -48,10 +48,11 @@
 //! 2. **Module** `ext/<name>.rs` declaring its class with the `ruby_class!`
 //!    (instances) or `ruby_module!` (module functions) DSL (mirror `base64.rs`
 //!    for a module, `stringio.rs` for a class with instances).
-//! 3. **Dispatch arms** in `builtins/mod.rs`: add a `#[cfg(feature =
-//!    "ext-<name>")]` arm to `class_method_table` and/or `class_table`, plus
-//!    `class_table_names` (reflection). Cfg-gate them so a feature-off build
-//!    drops them cleanly.
+//! 3. **Nothing.** `ruby_class!`/`ruby_module!` self-register through `linkme`
+//!    into `BUILTIN_TABLES`, and `class_table` consults `registered_table(id)`
+//!    first, so no hand-written dispatch arm is needed. The exception is
+//!    id-ALIASING (one table answering for several ids), which still wants an
+//!    explicit arm in `builtins/mod.rs`.
 //! 4. **Cargo feature** `ext-<name>` in `zeo-rt/Cargo.toml`, added to the
 //!    `ext-all` umbrella (with `dep:` entries if it needs an optional crate).
 //! 5. **Module declaration** below, cfg-gated.
@@ -60,30 +61,46 @@
 
 #[cfg(feature = "ext-base64")]
 pub(crate) mod base64;
+#[cfg(feature = "ext-bigdecimal")]
+pub(crate) mod bigdecimal;
 #[cfg(feature = "ext-cgi")]
 pub(crate) mod cgi;
+#[cfg(feature = "ext-coverage")]
+pub(crate) mod coverage;
+#[cfg(feature = "ext-tracepoint")]
+pub(crate) mod tracepoint;
 #[cfg(feature = "ext-date")]
 pub(crate) mod date;
 #[cfg(feature = "ext-digest")]
 pub(crate) mod digest;
 #[cfg(feature = "ext-etc")]
 pub(crate) mod etc;
+#[cfg(feature = "ext-fcntl")]
+pub(crate) mod fcntl;
 #[cfg(feature = "ext-ffi")]
 pub(crate) mod ffi;
 #[cfg(feature = "ext-json")]
 pub(crate) mod json;
 #[cfg(feature = "ext-monitor")]
 pub(crate) mod monitor;
+#[cfg(feature = "ext-nkf")]
+pub(crate) mod nkf;
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
 #[cfg(feature = "ext-pathname")]
 pub(crate) mod pathname;
 #[cfg(feature = "ext-psych")]
 pub(crate) mod psych;
+#[cfg(feature = "ext-pty")]
+pub(crate) mod pty;
+#[cfg(feature = "ext-readline")]
+pub(crate) mod readline;
 #[cfg(feature = "ext-socket")]
 pub(crate) mod socket;
 #[cfg(feature = "ext-stringio")]
 pub(crate) mod stringio;
+#[cfg(feature = "ext-syslog")]
+pub(crate) mod syslog;
 #[cfg(feature = "ext-strscan")]
 pub(crate) mod strscan;
 #[cfg(feature = "ext-zlib")]

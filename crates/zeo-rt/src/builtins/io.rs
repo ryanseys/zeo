@@ -73,6 +73,9 @@ pub struct RIo {
     /// still using a `Pipe`-shaped fd for read/write. `None` for ordinary
     /// files, pipes, and std streams (their class comes from the backend).
     class_override: Option<ClassId>,
+    /// The child this IO is connected to, for an `IO.popen` handle (0 = none).
+    /// `#pid` answers it, and `#close` reaps the child and sets `$?`.
+    child_pid: std::sync::atomic::AtomicI64,
 }
 
 impl RubyObject for RIo {
@@ -127,6 +130,7 @@ impl RIo {
             autoclose: std::sync::atomic::AtomicBool::new(true),
             unget: parking_lot::Mutex::new(Vec::new()),
             class_override: None,
+            child_pid: std::sync::atomic::AtomicI64::new(0),
         }
     }
 }
@@ -176,8 +180,63 @@ pub(crate) fn file_value(f: std::fs::File, path: Option<String>) -> RubyValue {
 }
 
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
-fn pipe_value(f: std::fs::File) -> RubyValue {
+pub(crate) fn pipe_value(f: std::fs::File) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), None)))
+}
+
+/// Mark a freshly created raw descriptor close-on-exec, as CRuby marks every
+/// fd it creates (and as Rust's own `File` opens already are). A child must
+/// receive only the stdio deliberately handed to it -- a pipe write end
+/// leaking into an unrelated child holds the reader's EOF open forever, the
+/// classic popen-family deadlock. `dup2` at exec time clears the flag on the
+/// child's own stdio copies, so redirect targets still arrive open.
+pub(crate) fn set_fd_cloexec(fd: libc::c_int) {
+    // SAFETY: the caller just created `fd` and owns it.
+    unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+}
+
+/// Wrap an `IO.popen` handle: a pipe-backed IO carrying the child's pid, so
+/// `#pid` answers it and `#close` reaps the child into `$?`.
+pub(crate) fn popen_value(f: std::fs::File, pid: i64) -> RubyValue {
+    let io = RIo::new(IoBackend::Pipe(Some(f)), None);
+    io.child_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+    RubyValue::Object(Arc::new(io))
+}
+
+/// Duplicate the descriptor behind an fd-backed IO value into an owned `File`
+/// -- what a spawn redirect target (`out: pipe_w`, Open3's shape) hands the
+/// child. The dup leaves the Ruby IO open and independent; `None` means the
+/// value is not an open fd-backed IO (a filename target, or a StringIO).
+pub(crate) fn dup_fd_file(v: &RubyValue) -> Option<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let io = as_rio(v)?;
+    let fd = match &*io.backend.lock() {
+        IoBackend::Pipe(Some(f)) | IoBackend::File(Some(f)) => f.as_raw_fd(),
+        IoBackend::Std(StdStream::Stdin) => 0,
+        IoBackend::Std(StdStream::Stdout) => 1,
+        IoBackend::Std(StdStream::Stderr) => 2,
+        IoBackend::Pipe(None) | IoBackend::File(None) => return None,
+    };
+    // SAFETY: `fd` is open (borrowed from the live backend above); `dup(2)`
+    // hands back a fresh descriptor this File then owns.
+    let dup = unsafe { libc::dup(fd) };
+    if dup < 0 {
+        return None;
+    }
+    // The child's stdio must be BLOCKING -- `IO.pipe` ends carry `O_NONBLOCK`,
+    // and a child (`cat`, ...) fails on the resulting `EAGAIN`. CRuby's exec
+    // machinery clears the flag on the child's fds 0..2 the same way (the
+    // shared file description means the parent's end goes blocking too, there
+    // as here; the parent's read rows handle both).
+    set_fd_cloexec(dup);
+    // SAFETY: `dup` is the fresh, owned descriptor just created.
+    unsafe {
+        let flags = libc::fcntl(dup, libc::F_GETFL);
+        if flags >= 0 && flags & libc::O_NONBLOCK != 0 {
+            libc::fcntl(dup, libc::F_SETFL, flags & !libc::O_NONBLOCK);
+        }
+        Some(std::fs::File::from_raw_fd(dup))
+    }
 }
 
 pub fn stdout_value() -> RubyValue {
@@ -477,6 +536,28 @@ pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
     }
 }
 
+/// The receiver's fd -- `#fileno` without the `RubyValue` round trip, for the
+/// libc calls (`ioctl`, `poll`, `termios`) that need a raw descriptor.
+pub(crate) fn raw_fd(recv: &RubyValue) -> Result<libc::c_int, Signal> {
+    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
+        unreachable!("io_fileno answers an Int");
+    };
+    Ok(fd as libc::c_int)
+}
+
+/// How CRuby names a stream in an `Errno` message: `<STDIN>` and friends for a
+/// std stream, the path for a file, empty for anything else.
+pub(crate) fn stream_label(recv: &RubyValue) -> String {
+    match stream_of(recv) {
+        Some(StdStream::Stdin) => "<STDIN>".to_string(),
+        Some(StdStream::Stdout) => "<STDOUT>".to_string(),
+        Some(StdStream::Stderr) => "<STDERR>".to_string(),
+        None => as_rio(recv)
+            .and_then(|io| io.path.clone())
+            .unwrap_or_default(),
+    }
+}
+
 fn stream_of(recv: &RubyValue) -> Option<StdStream> {
     match &*as_rio(recv)?.backend.lock() {
         IoBackend::Std(s) => Some(*s),
@@ -503,6 +584,19 @@ fn io_fileno(
     }))
 }
 
+/// `pid` -- the child an `IO.popen` handle is connected to, `nil` for every
+/// other IO (CRuby's split exactly).
+fn io_pid(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    match as_rio(recv).map(|io| io.child_pid.load(std::sync::atomic::Ordering::Relaxed)) {
+        Some(pid) if pid != 0 => Ok(RubyValue::Int(pid)),
+        _ => Ok(RubyValue::Nil),
+    }
+}
+
 fn io_tty(
     recv: &RubyValue,
     _args: &[RubyValue],
@@ -518,27 +612,20 @@ fn io_tty(
     }))
 }
 
-/// `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`.
-///
-/// **Documented divergence.** CRuby raises `Errno::ENOTTY` ("Inappropriate
-/// ioctl for device") when the stream isn't a terminal; here a failed ioctl
-/// answers `[0, 0]`. That is deliberate: the corpus expectation is checked in
-/// rather than oracle-generated, its header states the `[0, 0]` contract, and
-/// the conformance harness always redirects stdout -- so raising would make
-/// the test unrunnable rather than more faithful. A program that must
-/// distinguish the two cases should ask `tty?` first.
+/// `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`, or
+/// `Errno::ENOTTY` when the stream isn't a terminal, as CRuby answers. The
+/// rest of the console surface is in `io_console.rs`; this row predates it.
 fn io_winsize(
     recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 0);
-    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
-        unreachable!("io_fileno answers an Int");
-    };
+    let fd = raw_fd(recv)?;
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    // A nonzero return leaves `ws` zeroed, which is the answer we want.
-    unsafe { libc::ioctl(fd as libc::c_int, libc::TIOCGWINSZ, &mut ws) };
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } != 0 {
+        return Err(super::io_console::not_a_terminal(recv, "IO#winsize"));
+    }
     Ok(RubyValue::Array(crate::collections::array_new(vec![
         RubyValue::Int(ws.ws_row as i64),
         RubyValue::Int(ws.ws_col as i64),
@@ -566,11 +653,8 @@ fn io_wait_for(
             }
         }
     };
-    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
-        unreachable!("io_fileno answers an Int");
-    };
     let mut pfd = libc::pollfd {
-        fd: fd as libc::c_int,
+        fd: raw_fd(recv)?,
         events,
         revents: 0,
     };
@@ -784,8 +868,14 @@ fn io_read_val(
                         Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", path)),
                     }
                 }
-                Ok(RubyValue::Str(crate::collections::string_new(
-                    String::from_utf8_lossy(&buf).into_owned(),
+                // TAG the bytes, never re-encode them. Decoding a read as
+                // UTF-8 replaced every non-UTF-8 byte with U+FFFD, so a file
+                // read through `IO#read` (as opposed to `File.binread`, which
+                // was already byte-faithful) came back corrupted -- see the
+                // same rule on `write_rio` above.
+                Ok(RubyValue::Str(crate::string_from_bytes(
+                    buf,
+                    crate::encoding::UTF_8,
                 )))
             }
             Some(n) => {
@@ -807,8 +897,11 @@ fn io_read_val(
                 if got == 0 && n > 0 {
                     return Ok(RubyValue::Nil);
                 }
-                Ok(RubyValue::Str(crate::collections::string_new(
-                    String::from_utf8_lossy(&buf).into_owned(),
+                // A LENGTHED read is binary in CRuby -- a byte count can land
+                // mid-character, so there is nothing else it could honestly be.
+                Ok(RubyValue::Str(crate::string_from_bytes(
+                    buf,
+                    crate::encoding::ASCII_8BIT,
                 )))
             }
         }
@@ -902,7 +995,9 @@ fn io_eof(
 }
 
 /// `close` -- idempotent (a second close is a no-op, as in Ruby), and it
-/// DROPS the descriptor, so every later operation raises IOError.
+/// DROPS the descriptor, so every later operation raises IOError. Closing an
+/// `IO.popen` handle also waits for the child and sets `$?`, CRuby's contract
+/// (the fd must drop FIRST -- a `w`-mode child only exits on stdin's EOF).
 fn io_close(
     recv: &RubyValue,
     _args: &[RubyValue],
@@ -914,6 +1009,16 @@ fn io_close(
                 slot.take();
             }
             IoBackend::Std(_) => {}
+        }
+        let pid = io.child_pid.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if pid != 0 {
+            if let Ok(Some((reaped, raw))) =
+                crate::gvl::without_gvl(|| crate::builtins::process::raw_waitpid(pid, 0))
+            {
+                crate::builtins::process::set_last_child_status(
+                    crate::builtins::process::new_status(reaped, raw),
+                );
+            }
         }
     }
     Ok(RubyValue::Nil)
@@ -1588,7 +1693,20 @@ fn io_close_write(
         return Err(io_error!("not opened for writing"));
     }
     if let Some(io) = as_rio(recv) {
-        io.backend.lock().close_file();
+        let mut b = io.backend.lock();
+        if let IoBackend::Pipe(Some(f)) = &*b {
+            use std::os::fd::AsRawFd;
+            // A socket half-closes: `shutdown(2)` the write direction and keep
+            // reading -- what `Socket#close_write` means, and what lets a
+            // duplex `IO.popen` handle deliver EOF to the child while the
+            // parent still reads its answer. ENOTSOCK (an ordinary pipe fd)
+            // falls through to the full close.
+            // SAFETY: the fd is open, borrowed from the live backend.
+            if unsafe { libc::shutdown(f.as_raw_fd(), libc::SHUT_WR) } == 0 {
+                return Ok(RubyValue::Nil);
+            }
+        }
+        b.close_file();
     }
     Ok(RubyValue::Nil)
 }
@@ -1605,7 +1723,16 @@ fn io_close_read(
         return Err(io_error!("not opened for reading"));
     }
     if let Some(io) = as_rio(recv) {
-        io.backend.lock().close_file();
+        let mut b = io.backend.lock();
+        if let IoBackend::Pipe(Some(f)) = &*b {
+            use std::os::fd::AsRawFd;
+            // The read-direction mirror of `close_write` above.
+            // SAFETY: the fd is open, borrowed from the live backend.
+            if unsafe { libc::shutdown(f.as_raw_fd(), libc::SHUT_RD) } == 0 {
+                return Ok(RubyValue::Nil);
+            }
+        }
+        b.close_file();
     }
     Ok(RubyValue::Nil)
 }
@@ -2052,6 +2179,40 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "fileno" | "to_i" => io_fileno,
         "tty?" | "isatty" => io_tty,
         "winsize" => io_winsize,
+        // `io/console` (see `io_console.rs`) -- unconditional rows, so its
+        // require is ceremony.
+        "winsize=" => super::io_console::winsize_set,
+        "raw" => super::io_console::raw,
+        "raw!" => super::io_console::raw_bang,
+        "cooked" => super::io_console::cooked,
+        "cooked!" => super::io_console::cooked_bang,
+        "echo?" => super::io_console::echo_p,
+        "echo=" => super::io_console::echo_set,
+        "noecho" => super::io_console::noecho,
+        "getch" => super::io_console::getch,
+        "getpass" => super::io_console::getpass,
+        "iflush" => super::io_console::iflush,
+        "oflush" => super::io_console::oflush,
+        "ioflush" => super::io_console::ioflush,
+        "ttyname" => super::io_console::ttyname,
+        "console_mode" => super::io_console::console_mode,
+        "console_mode=" => super::io_console::console_mode_set,
+        "pressed?" => super::io_console::pressed_p,
+        "check_winsize_changed" => super::io_console::check_winsize_changed,
+        "beep" => super::io_console::beep,
+        "clear_screen" => super::io_console::clear_screen,
+        "erase_line" => super::io_console::erase_line,
+        "erase_screen" => super::io_console::erase_screen,
+        "goto" => super::io_console::goto,
+        "goto_column" => super::io_console::goto_column,
+        "cursor" => super::io_console::cursor,
+        "cursor=" => super::io_console::cursor_set,
+        "cursor_up" => super::io_console::cursor_up,
+        "cursor_down" => super::io_console::cursor_down,
+        "cursor_left" => super::io_console::cursor_left,
+        "cursor_right" => super::io_console::cursor_right,
+        "scroll_forward" => super::io_console::scroll_forward,
+        "scroll_backward" => super::io_console::scroll_backward,
         "nonblock?" => io_nonblock_p,
         "nonblock" => io_nonblock_scoped,
         "nonblock=" => io_nonblock_assign,
@@ -2093,6 +2254,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "mtime" => io_mtime,
         "size" => io_size,
         "pipe?" => io_pipe_p,
+        "pid" => io_pid,
         "fsync" | "fdatasync" => io_fsync,
         "close" => io_close,
         "close_read" => io_close_read,
@@ -2128,6 +2290,38 @@ pub fn lookup_names() -> &'static [&'static str] {
         "tty?",
         "isatty",
         "winsize",
+        "winsize=",
+        "raw",
+        "raw!",
+        "cooked",
+        "cooked!",
+        "echo?",
+        "echo=",
+        "noecho",
+        "getch",
+        "getpass",
+        "iflush",
+        "oflush",
+        "ioflush",
+        "ttyname",
+        "console_mode",
+        "console_mode=",
+        "pressed?",
+        "check_winsize_changed",
+        "beep",
+        "clear_screen",
+        "erase_line",
+        "erase_screen",
+        "goto",
+        "goto_column",
+        "cursor",
+        "cursor=",
+        "cursor_up",
+        "cursor_down",
+        "cursor_left",
+        "cursor_right",
+        "scroll_forward",
+        "scroll_backward",
         "nonblock?",
         "nonblock",
         "nonblock=",
@@ -2177,6 +2371,7 @@ pub fn lookup_names() -> &'static [&'static str] {
         "mtime",
         "size",
         "pipe?",
+        "pid",
         "fsync",
         "fdatasync",
         "close",
@@ -2220,9 +2415,11 @@ fn io_class_pipe(
         ));
     }
     // Both ends start non-blocking, as CRuby's do -- `IO.pipe` there hands back
-    // fds it has already marked, which `#nonblock?` reports.
+    // fds it has already marked, which `#nonblock?` reports -- and
+    // close-on-exec, also as CRuby's (see `set_fd_cloexec`).
     for fd in fds {
         set_fd_nonblock(fd, true)?;
+        set_fd_cloexec(fd);
     }
     // SAFETY: `pipe(2)` just handed us these two fresh, owned fds.
     let r = pipe_value(unsafe { std::fs::File::from_raw_fd(fds[0]) });
@@ -2235,6 +2432,112 @@ fn io_class_pipe(
     let _ = io_close(&r, &[], None);
     let _ = io_close(&w, &[], None);
     let _ = recv; // `IO.pipe`'s receiver is unused
+    out
+}
+
+/// `IO.popen([env,] cmd, mode = "r" [, opts])` -- spawn `cmd` with the far end
+/// of a pipe as its stdout (`"r"`), its stdin (`"w"`), or both (`"r+"`/`"w+"`),
+/// answering the near end as an IO that knows its child: `#pid` answers the
+/// child's, and `#close` reaps it into `$?`. `cmd` is a shell String or a
+/// direct argv Array; env and options hashes ride through the spawn builder.
+/// A duplex mode uses a `socketpair(2)` so ONE descriptor serves both
+/// directions (the historical popen trick), keeping the handle on the
+/// ordinary pipe backend. With a block, yields the IO and closes it after.
+fn io_class_popen(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    use std::os::fd::FromRawFd;
+    use std::process::Stdio;
+    crate::builtins::arity!(args, 1..=4);
+
+    let mut rest = args;
+    let mut spawn_args: Vec<RubyValue> = Vec::new();
+    if let Some(env @ RubyValue::Hash(_)) = rest.first() {
+        spawn_args.push(env.clone());
+        rest = &rest[1..];
+    }
+    let cmd_arg = rest.first().ok_or_else(|| arg_error!("no command given"))?;
+    rest = &rest[1..];
+    match cmd_arg {
+        // `IO.popen("-")` forks the interpreter itself -- there is no second
+        // interpreter image to run in an AOT-compiled program.
+        RubyValue::Str(s) if s.lock().to_utf8_lossy() == "-" => {
+            return Err(not_impl_error!("IO.popen(\"-\") (fork) is not supported by zeo"));
+        }
+        RubyValue::Array(a) => spawn_args.extend(a.lock().iter().cloned()),
+        other => spawn_args.push(other.clone()),
+    }
+    let mode = match rest.first() {
+        Some(RubyValue::Str(m)) => {
+            rest = &rest[1..];
+            m.lock().to_utf8_lossy().into_owned()
+        }
+        _ => "r".to_string(),
+    };
+    if let Some(opts @ RubyValue::Hash(_)) = rest.first() {
+        spawn_args.push(opts.clone());
+    }
+    // "r+", "rb:UTF-8", ... -- only the direction matters on Unix.
+    let mode = mode.split(':').next().unwrap_or("r");
+    let duplex = mode.contains('+');
+    let write = mode.starts_with('w') || mode.starts_with('a');
+
+    let mut cmd = crate::builtins::process::build_spawn_command(&spawn_args)?;
+    let io = if duplex {
+        let mut fds = [0 as libc::c_int; 2];
+        // SAFETY: `fds` is a 2-element array `socketpair(2)` fills.
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) } != 0 {
+            return Err(crate::builtins::file::raise_errno(
+                &std::io::Error::last_os_error(),
+                "popen",
+                "",
+            ));
+        }
+        // Close-on-exec like every fd this runtime creates; the child's copies
+        // are re-opened by the exec-time `dup2` (see `set_fd_cloexec`).
+        for fd in fds {
+            set_fd_cloexec(fd);
+        }
+        // SAFETY: `socketpair(2)` just handed us these two fresh, owned fds.
+        let parent = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+        // SAFETY: as above -- the child end, handed to the Command.
+        let child_end = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+        cmd.stdin(Stdio::from(
+            child_end
+                .try_clone()
+                .map_err(|e| crate::builtins::process::spawn_error(&e))?,
+        ));
+        cmd.stdout(Stdio::from(child_end));
+        let child = cmd.spawn().map_err(|e| crate::builtins::process::spawn_error(&e))?;
+        popen_value(parent, i64::from(child.id()))
+    } else {
+        if write {
+            cmd.stdin(Stdio::piped());
+        } else {
+            cmd.stdout(Stdio::piped());
+        }
+        let mut child = cmd.spawn().map_err(|e| crate::builtins::process::spawn_error(&e))?;
+        let f: std::fs::File = if write {
+            std::os::fd::OwnedFd::from(child.stdin.take().expect("stdin was piped")).into()
+        } else {
+            std::os::fd::OwnedFd::from(child.stdout.take().expect("stdout was piped")).into()
+        };
+        popen_value(f, i64::from(child.id()))
+    };
+    // `Command` keeps the Stdio fds it was handed until it drops -- for the
+    // duplex socketpair that is the child's own end, and holding it here would
+    // deny the parent its EOF forever. The block form reads below, so drop NOW.
+    drop(cmd);
+
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(io);
+    };
+    let out = p.call(std::slice::from_ref(&io));
+    // The close both drops the fd and reaps the child into `$?`, so the block
+    // form leaves `$?` set even when the block never read to EOF.
+    let _ = io_close(&io, &[], None);
     out
 }
 
@@ -2324,6 +2627,8 @@ fn io_class_new(
 pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "pipe" => io_class_pipe,
+        "popen" => io_class_popen,
+        "console" => super::io_console::io_class_console,
         "copy_stream" => io_class_copy_stream,
         "sysopen" => io_class_sysopen,
         "new" | "open" | "for_fd" => io_class_new,
@@ -2340,6 +2645,8 @@ pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 pub fn lookup_class_names() -> &'static [&'static str] {
     &[
         "pipe",
+        "popen",
+        "console",
         "copy_stream",
         "sysopen",
         "new",
