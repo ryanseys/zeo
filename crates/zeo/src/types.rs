@@ -67,6 +67,18 @@ pub enum TyKind {
 /// Ruby class with two payloads.)
 pub const INT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"];
 
+/// Numeric binary operators whose result stays `Float` when the operand
+/// pair is Float-Float or mixed Int/Float (Ruby's numeric-tower promotion
+/// widens the `Int` side) -- the exact operand shapes `codegen::call`'s
+/// native float lane covers, whose success value is always a `Float`:
+/// `%` and `**` RAISE on their edge cases (zero modulus, negative base to
+/// a fractional power -- the latter a documented divergence from CRuby's
+/// Complex promotion) rather than returning another class, so `**` CAN be
+/// here even though the Int-Int table excludes it. `<=>` is absent
+/// (`NaN <=> x` is nil) and the comparisons return booleans, which this
+/// value-result table doesn't type.
+pub const FLOAT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "**"];
+
 /// An empty locals map, for callers that have no per-scope local-type
 /// context available (or don't need it) -- see `infer_type`.
 fn no_locals() -> HashMap<String, TyKind> {
@@ -321,17 +333,43 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if matches!(args.as_slice(), [crate::hir::ArrayElem::Single(_)])
-            && INT_RESULT_BINARY_OPS.contains(&name.as_str()) =>
+            && (INT_RESULT_BINARY_OPS.contains(&name.as_str())
+                || FLOAT_RESULT_BINARY_OPS.contains(&name.as_str())) =>
         {
             let crate::hir::ArrayElem::Single(arg) = args[0] else {
                 unreachable!("guarded above")
             };
             let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
             let arg_ty = infer_type_with_locals(compiler, defining, box_id, locals, arg);
-            if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
+            if recv_ty == TyKind::Int
+                && arg_ty == TyKind::Int
+                && INT_RESULT_BINARY_OPS.contains(&name.as_str())
+            {
                 TyKind::Int
+            } else if matches!(
+                (recv_ty, arg_ty),
+                (TyKind::Float, TyKind::Float)
+                    | (TyKind::Float, TyKind::Int)
+                    | (TyKind::Int, TyKind::Float)
+            ) && FLOAT_RESULT_BINARY_OPS.contains(&name.as_str())
+            {
+                TyKind::Float
             } else {
                 TyKind::Poly
+            }
+        }
+        // Unary `-@`/`+@` on a statically-`Float` receiver stays `Float`
+        // (`codegen::call`'s native float-unary lane wraps `float_neg`/
+        // `float_pos` in `RubyValue::Float` for exactly this shape).
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && (name == "-@" || name == "+@") => {
+            match infer_type_with_locals(compiler, defining, box_id, locals, *recv) {
+                TyKind::Float => TyKind::Float,
+                _ => TyKind::Poly,
             }
         }
         // `.class` on a receiver whose class is statically known is a

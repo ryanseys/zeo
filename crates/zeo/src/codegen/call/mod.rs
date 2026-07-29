@@ -2921,11 +2921,12 @@ fn dispatch(
                     None => quote! { &(#arg_expr) },
                 };
                 // One inline Int-Int fast arm (the hot `def add(a, b); a +
-                // b; end` case); EVERY other operand shape -- Float pairs,
-                // mixed promotion, Bignum/Rational/Complex lanes, user
-                // operator methods, builtin rows -- resolves through
-                // `send_value`'s MRO walk, whose Integer/Float operator
-                // rows drive the same one tower matrix.
+                // b; end` case), plus Float-Float/mixed arms for the TOTAL
+                // float operators below; every other operand shape --
+                // Bignum/Rational/Complex lanes, user operator methods,
+                // builtin rows -- resolves through `send_value`'s MRO walk,
+                // whose Integer/Float operator rows drive the same one
+                // tower matrix.
                 let int_arm = int_entry.map(|&(_, rt_fn, kind)| {
                     let func = format_ident!("{rt_fn}");
                     let call = match kind {
@@ -2951,10 +2952,40 @@ fn dispatch(
                         ) => #call,
                     }
                 });
+                // Float-Float and mixed Int/Float arms, exactly the tower's
+                // own `Flo` lane (`num_to_f64_unchecked` promotes a small
+                // `Int` with the same `as f64`): the TOTAL operators only.
+                // `%`/`**` (edge cases raise) and `<=>` (`NaN` is nil) keep
+                // the MRO rows; a `BigInt` operand falls through too. The
+                // comparisons are `float_lt`-family IEEE semantics -- what
+                // CRuby's own `Float#<` answers for `NaN` (false, never the
+                // `Comparable` fallback's ArgumentError).
+                let float_arms = ops::FLOAT_BINARY_OPS
+                    .iter()
+                    .find(|&&(op, _, _)| op == name && op != "%" && op != "**")
+                    .map(|&(_, rt_fn, result_ty)| {
+                        let func = format_ident!("{rt_fn}");
+                        let wrapper = format_ident!("{result_ty}");
+                        quote! {
+                            (
+                                zeo_rt::RubyValue::Float(__r),
+                                zeo_rt::RubyValue::Float(__a),
+                            ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r, *__a)),
+                            (
+                                zeo_rt::RubyValue::Float(__r),
+                                zeo_rt::RubyValue::Int(__a),
+                            ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r, *__a as f64)),
+                            (
+                                zeo_rt::RubyValue::Int(__r),
+                                zeo_rt::RubyValue::Float(__a),
+                            ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r as f64, *__a)),
+                        }
+                    });
                 let name_sym = super::pooled_sym(name);
                 return quote! {
                     match (#recv_operand, #arg_operand) {
                         #int_arm
+                        #float_arms
                         (__dyn_recv, __dyn_arg) => zeo_rt::send_value_in(#__bx,
                             __dyn_recv,
                             #name_sym,
@@ -2969,12 +3000,21 @@ fn dispatch(
             let int_entry = ops::INT_UNARY_OPS.iter().find(|(op, _)| *op == name);
             let float_entry = ops::FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name);
             if int_entry.is_some() || float_entry.is_some() {
-                // Same shape as the binary fallback: inline Int fast arm,
-                // everything else through the MRO walk's unary rows.
+                // Same shape as the binary fallback: inline Int and Float
+                // fast arms, everything else through the MRO walk's unary
+                // rows.
                 let int_arm = int_entry.map(|&(_, rt_fn)| {
                     let func = format_ident!("{rt_fn}");
                     quote! {
                         __r @ zeo_rt::RubyValue::Int(_) => zeo_rt::#func(__r),
+                    }
+                });
+                let float_arm = float_entry.map(|&(_, rt_fn)| {
+                    let func = format_ident!("{rt_fn}");
+                    quote! {
+                        zeo_rt::RubyValue::Float(__r) => {
+                            zeo_rt::RubyValue::Float(zeo_rt::#func(*__r))
+                        }
                     }
                 });
                 let recv_operand = match borrowable_operand(cx, recv_id) {
@@ -2985,6 +3025,7 @@ fn dispatch(
                 return quote! {
                     match #recv_operand {
                         #int_arm
+                        #float_arm
                         __dyn_recv => zeo_rt::send_value_in(#__bx,
                             __dyn_recv,
                             #name_sym,
