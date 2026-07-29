@@ -1406,41 +1406,46 @@ pub fn kernel_printf(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Nil)
 }
 
-/// The process-wide PRNG behind `rand`/`srand` -- xorshift64*, reseedable.
-/// DOCUMENTED DIVERGENCE: not CRuby's MT19937, so seeded SEQUENCES differ;
-/// oracle tests assert ranges/properties, never exact values.
-static PRNG: parking_lot::Mutex<(u64, u64)> = parking_lot::Mutex::new((0, 0)); // (state, seed)
+/// The process-wide generator behind `rand`/`srand` -- MT19937, so a program
+/// that `srand`s a fixed seed draws ruby's own sequence. Lazily seeded from
+/// the clock on first use; `seed` is what `srand` reports back.
+static PRNG: parking_lot::Mutex<Option<(crate::mt::Mt, u64)>> = parking_lot::Mutex::new(None);
 
-pub(crate) fn prng_next() -> u64 {
+/// The live generator, seeding it from the clock if nothing has yet.
+fn with_prng<T>(f: impl FnOnce(&mut crate::mt::Mt) -> T) -> T {
     let mut guard = PRNG.lock();
-    if guard.0 == 0 {
-        // First use, unseeded: derive from the clock.
+    let entry = guard.get_or_insert_with(|| {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0x9e3779b97f4a7c15);
-        *guard = (now | 1, now);
-    }
-    let mut x = guard.0;
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-    guard.0 = x;
-    x.wrapping_mul(0x2545f4914f6cdd1d)
+        (
+            crate::mt::Mt::from_bigint(&num_bigint::BigInt::from(now)),
+            now,
+        )
+    });
+    f(&mut entry.0)
+}
+
+/// One uniform integer in `[0, limit]` from the process-wide generator.
+pub(crate) fn prng_limited(limit: u64) -> u64 {
+    with_prng(|mt| mt.limited(limit))
+}
+
+/// One uniform Float in `[0, 1)` from the process-wide generator.
+pub(crate) fn prng_real() -> f64 {
+    with_prng(crate::mt::Mt::next_real)
 }
 
 /// `Kernel#rand`: no arg -> Float in [0, 1); positive Integer n -> Integer
 /// in [0, n); Float x -> Float in [0, x).
 pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 0..=1);
-    let r = prng_next();
     Ok(match args.first() {
-        None | Some(RubyValue::Nil) | Some(RubyValue::Int(0)) => {
-            RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64)
-        }
-        Some(RubyValue::Int(n)) if *n > 0 => RubyValue::Int((r % (*n as u64)) as i64),
+        None | Some(RubyValue::Nil) | Some(RubyValue::Int(0)) => RubyValue::Float(prng_real()),
+        Some(RubyValue::Int(n)) if *n > 0 => RubyValue::Int(prng_limited(*n as u64 - 1) as i64),
         // A negative bound draws from `[0, |n|)` (a non-negative Integer).
-        Some(RubyValue::Int(n)) => RubyValue::Int((r % n.unsigned_abs()) as i64),
+        Some(RubyValue::Int(n)) => RubyValue::Int(prng_limited(n.unsigned_abs() - 1) as i64),
         // A bignum bound (`rand(2**70)`) draws from `[0, |n|)`: assemble enough
         // random words to cover the magnitude, then reduce mod |n|.
         Some(RubyValue::BigInt(n)) => {
@@ -1451,14 +1456,8 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             } else {
                 n.clone()
             };
-            let words = (magnitude.bits() / 64 + 1) as usize;
-            let mut bytes = r.to_le_bytes().to_vec();
-            for _ in 1..words {
-                bytes.extend_from_slice(&prng_next().to_le_bytes());
-            }
-            crate::builtins::integer::int_value(
-                BigInt::from_bytes_le(Sign::Plus, &bytes) % magnitude,
-            )
+            let _ = Sign::Plus;
+            crate::builtins::integer::int_value(with_prng(|mt| mt.bigint_below(&magnitude)))
         }
         Some(RubyValue::Float(x)) => {
             // A non-finite bound has no Integer image: CRuby's `dbl2ival`
@@ -1474,13 +1473,13 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             // below 1 truncates to 0, i.e. the plain `[0.0, 1.0)` Float draw.
             let n = x.trunc();
             if n >= 1.0 {
-                RubyValue::Int((r % (n as u64)) as i64)
+                RubyValue::Int(prng_limited(n as u64 - 1) as i64)
             } else {
-                RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64)
+                RubyValue::Float(prng_real())
             }
         }
         Some(RubyValue::Range(lo, hi, exclusive)) => {
-            return kernel_rand_range(r, lo.as_deref(), hi.as_deref(), *exclusive);
+            return kernel_rand_range(lo.as_deref(), hi.as_deref(), *exclusive);
         }
         Some(other) => {
             return Err(arg_error!(
@@ -1495,7 +1494,6 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// a Float. An empty/reversed range answers nil (CRuby's rule, NOT an error); a
 /// beginless or endless range raises Errno::EDOM.
 fn kernel_rand_range(
-    r: u64,
     lo: Option<&RubyValue>,
     hi: Option<&RubyValue>,
     exclusive: bool,
@@ -1506,14 +1504,13 @@ fn kernel_rand_range(
             "Numerical argument out of domain".to_string(),
         ));
     };
-    let unit = (r >> 11) as f64 / (1u64 << 53) as f64;
     match (lo, hi) {
         (RubyValue::Int(a), RubyValue::Int(b)) => {
             let span = b - a + i64::from(!exclusive);
             if span <= 0 {
                 return Ok(RubyValue::Nil);
             }
-            Ok(RubyValue::Int(a + (r % span as u64) as i64))
+            Ok(RubyValue::Int(a + prng_limited(span as u64 - 1) as i64))
         }
         _ => {
             let (Some(a), Some(b)) = (num_to_f64(lo), num_to_f64(hi)) else {
@@ -1525,6 +1522,13 @@ fn kernel_rand_range(
             if b < a || (b == a && exclusive) {
                 return Ok(RubyValue::Nil);
             }
+            // An inclusive range draws through a `[0, 1]` unit (see
+            // `Random#rand`'s range arm).
+            let unit = if exclusive {
+                prng_real()
+            } else {
+                with_prng(crate::mt::Mt::next_real_inclusive)
+            };
             Ok(RubyValue::Float(a + unit * (b - a)))
         }
     }
@@ -1550,8 +1554,11 @@ pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             .unwrap_or(1),
     };
     let mut guard = PRNG.lock();
-    let previous = guard.1;
-    *guard = (new_seed | 1, new_seed);
+    let previous = guard.as_ref().map_or(0, |(_, seed)| *seed);
+    *guard = Some((
+        crate::mt::Mt::from_bigint(&num_bigint::BigInt::from(new_seed)),
+        new_seed,
+    ));
     Ok(crate::builtins::integer::int_value(
         num_bigint::BigInt::from(previous),
     ))

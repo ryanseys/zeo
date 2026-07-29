@@ -1078,20 +1078,19 @@ ruby_class! {
     }
     // `sample` answers ONE random element (nil when empty); `sample(n)` an
     // ARRAY of up to n DISTINCT elements (a partial Fisher-Yates shuffle).
-    // Shares Kernel#rand's PRNG (srand-reseedable; documented MT19937
-    // divergence -- tests assert membership/length, not values).
+    // Shares Kernel#rand's generator, which `srand` reseeds.
     def "sample"(recv, args, _block) {
         // A trailing `random:` keyword supplies the RNG (a Random-like object
         // responding to `rand`); without it the shared PRNG is used.
         let (args, random) = take_random_kwarg(args);
         arity!(args, 0..=1);
-        let mut items = recv_array!(recv).lock().clone();
+        let items = recv_array!(recv).lock().clone();
+        let len = items.len();
         let Some(v) = args.first() else {
-            return Ok(if items.is_empty() {
+            return Ok(if len == 0 {
                 RubyValue::Nil
             } else {
-                let i = rand_below(&random, items.len())?;
-                items[i].clone()
+                items[rand_below(&random, len)?].clone()
             });
         };
         // `sample`'s own negative message, checked AFTER conversion (so
@@ -1100,20 +1099,50 @@ ruby_class! {
         if n < 0 {
             return Err(arg_error!("negative sample number"));
         }
-        let take = (n as usize).min(items.len());
-        for i in 0..take {
-            let j = i + rand_below(&random, items.len() - i)?;
-            items.swap(i, j);
+        // Ruby draws once per pick, over a range that narrows by one each
+        // time, and has two ways of turning that draw into a distinct index.
+        // Up to ten picks it keeps them in a small sorted list and shifts the
+        // draw past every index already taken; past that it runs a VIRTUAL
+        // partial Fisher-Yates, reading each position through a map of where
+        // an earlier swap moved it. Both are reproduced here because a
+        // seeded `sample` is expected to replay ruby's own answer.
+        const SORTED_PICKS_MAX: usize = 10;
+        let take = (n as usize).min(len);
+        let mut out = Vec::with_capacity(take);
+        if take <= SORTED_PICKS_MAX {
+            let mut taken: Vec<usize> = Vec::with_capacity(take);
+            for i in 0..take {
+                let mut j = rand_below(&random, len - i)?;
+                let mut at = taken.len();
+                for (pos, &t) in taken.iter().enumerate() {
+                    if j < t {
+                        at = pos;
+                        break;
+                    }
+                    j += 1;
+                }
+                taken.insert(at, j);
+                out.push(items[j].clone());
+            }
+        } else {
+            let mut moved: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for i in 0..take {
+                let j = i + rand_below(&random, len - i)?;
+                let from = *moved.get(&i).unwrap_or(&i);
+                let read = *moved.get(&j).unwrap_or(&j);
+                moved.insert(j, from);
+                out.push(items[read].clone());
+            }
         }
-        items.truncate(take);
-        Ok(RubyValue::Array(crate::array_new(items.into_vec())))
+        Ok(RubyValue::Array(crate::array_new(out)))
     }
     def "shuffle"(recv, args, _block) {
+        let (args, random) = take_random_kwarg(args);
         arity!(args, 0);
         let mut items = recv_array!(recv).lock().to_vec();
-        // Fisher-Yates over the shared PRNG.
+        // Fisher-Yates, top down, exactly as ruby walks it.
         for i in (1..items.len()).rev() {
-            let j = (crate::builtins::kernel::prng_next() % (i as u64 + 1)) as usize;
+            let j = rand_below(&random, i + 1)?;
             items.swap(i, j);
         }
         Ok(RubyValue::Array(crate::array_new(items)))
@@ -1298,15 +1327,16 @@ ruby_class! {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    // In-place Fisher-Yates shuffle over the shared PRNG (mirrors `shuffle`
-    // but writes back and answers the receiver).
+    // In-place Fisher-Yates shuffle (mirrors `shuffle` but writes back and
+    // answers the receiver).
     def "shuffle!"(recv, args, _block) {
+        let (args, random) = take_random_kwarg(args);
         arity!(args, 0);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let mut items = handle.lock().clone();
         for i in (1..items.len()).rev() {
-            let j = (crate::builtins::kernel::prng_next() % (i as u64 + 1)) as usize;
+            let j = rand_below(&random, i + 1)?;
             items.swap(i, j);
         }
         *handle.lock() = items;
@@ -1423,7 +1453,8 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
     out
 }
 
-/// Split off a trailing `random:` keyword argument (Array#sample accepts it).
+/// Split off a trailing `random:` keyword argument (`sample` and `shuffle`
+/// both accept one).
 fn take_random_kwarg(args: &[RubyValue]) -> (&[RubyValue], Option<RubyValue>) {
     if let Some(RubyValue::Hash(h)) = args.last() {
         let key = RubyValue::Symbol(crate::Symbol::intern("random"));
@@ -1447,7 +1478,7 @@ fn rand_below(random: &Option<RubyValue>, bound: usize) -> Result<usize, crate::
             )?;
             Ok((convert::to_index(&r)?.rem_euclid(bound as i64)) as usize)
         }
-        None => Ok((crate::builtins::kernel::prng_next() % bound as u64) as usize),
+        None => Ok(crate::builtins::kernel::prng_limited(bound as u64 - 1) as usize),
     }
 }
 

@@ -580,7 +580,7 @@ ruby_class! {
         };
         let pid = std::process::id();
         let path = loop {
-            let rand = crate::builtins::kernel::prng_next();
+            let rand = crate::builtins::kernel::prng_limited(u64::MAX);
             let n = MKTMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let candidate = parent.join(format!("{prefix}{pid}-{n}-{rand:x}{suffix}"));
             match std::fs::create_dir(&candidate) {

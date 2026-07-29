@@ -152,8 +152,9 @@ fn numeric_breadth_matches_the_oracle() {
 
 // ---------------------------------------------------------------------------
 // Kernel breadth: the multi-arg print family, the sprintf
-// engine, rand/srand (property-asserted: our PRNG is deliberately not
-// MT19937), catch/throw, and the user-def-wins interception order fix.
+// engine, rand/srand (property-asserted here; the exact seeded sequence is
+// pinned in `tests/random_seeded_sequence.rb`), catch/throw, and the
+// user-def-wins interception order fix.
 // Oracle: ruby 4.0.6.
 // ---------------------------------------------------------------------------
 

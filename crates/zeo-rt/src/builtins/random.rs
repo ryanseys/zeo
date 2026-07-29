@@ -1,9 +1,7 @@
-//! `Random` -- a seedable PRNG. Backed by the same xorshift64* generator as the
-//! process-wide `Kernel#rand` (kernel.rs), but with PER-INSTANCE state so two
-//! `Random.new(seed)`s are independent yet each reproducible. DOCUMENTED
-//! DIVERGENCE: not CRuby's MT19937, so a seeded SEQUENCE differs from MRI's; the
-//! oracle tests assert reproducibility, ranges, and return types -- never exact
-//! values.
+//! `Random` -- a seedable PRNG. MT19937 (see `crate::mt`), read through ruby's
+//! own draw primitives, with PER-INSTANCE state so two `Random.new(seed)`s are
+//! independent yet each reproducible -- and each reproduces ruby's sequence for
+//! that seed, number for number.
 
 use std::sync::Arc;
 use zeo_macros::ruby_class;
@@ -23,7 +21,7 @@ use crate::{ClassId, Signal};
 /// A `Random` instance: the live generator word plus the integer seed it was
 /// created from (what `Random#seed` reports).
 pub struct RandomObj {
-    state: Mutex<u64>,
+    state: Mutex<crate::mt::Mt>,
     seed: RubyValue,
     frozen: AtomicBool,
 }
@@ -49,78 +47,38 @@ impl RubyObject for RandomObj {
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(RandomObj {
-            state: Mutex::new(*self.state.lock()),
+            state: Mutex::new(self.state.lock().clone()),
             seed: self.seed.clone(),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
 }
 
-/// One xorshift64* step (the multiplier scrambles the low bits the raw shifts
-/// leave weak) -- identical to kernel.rs's `prng_next`, over per-instance state.
-fn next_u64(state: &Mutex<u64>) -> u64 {
-    let mut guard = state.lock();
-    let mut x = *guard;
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-    *guard = x;
-    x.wrapping_mul(0x2545_f491_4f6c_dd1d)
-}
-
-/// A uniform Float in `[0, 1)` from a generator word (53 significant bits, like
-/// CRuby's `rb_random_real`).
-fn to_unit_float(r: u64) -> f64 {
-    (r >> 11) as f64 / (1u64 << 53) as f64
-}
-
-/// Scramble an integer seed so nearby seeds (`5`, `6`) diverge immediately
-/// (SplitMix64's finalizer) and never yield the all-zero dead state.
-fn scramble(seed: u64) -> u64 {
-    let mut z = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    (z ^ (z >> 31)) | 1
-}
-
-/// Fold an arbitrary-precision seed down to a generator word. Different
-/// integers give different words (FNV-1a over the two's-complement bytes), so a
-/// `Random.new(1e300)` and `Random.new(2e300)` are distinct generators.
-fn scramble_bigint(b: &BigInt) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for byte in b.to_signed_bytes_le() {
-        h ^= byte as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    scramble(h)
-}
-
-/// Resolve a `Random.new(seed)` argument to `(generator word, integer seed
-/// value)`. An Integer is used directly; a Float is TRUNCATED to an integer
-/// seed (CRuby's rule; a plain C cast of an out-of-range float is UB, so go
-/// through `BigInt`); no argument seeds from the clock.
-fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
-    match arg {
+/// Resolve a `Random.new(seed)` argument to `(generator, integer seed value)`.
+/// An Integer seeds by its magnitude; a Float is TRUNCATED to an integer seed
+/// (ruby's rule; a plain cast of an out-of-range float is UB, so go through
+/// `BigInt`); no argument seeds from the clock.
+fn seed_from(arg: Option<&RubyValue>) -> Result<(crate::mt::Mt, RubyValue), Signal> {
+    let from_big = |b: BigInt| (crate::mt::Mt::from_bigint(&b), int_value(b));
+    Ok(match arg {
         None | Some(RubyValue::Nil) => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
                 .unwrap_or(0x9e37_79b9_7f4a_7c15);
-            Ok((scramble(now), int_value(BigInt::from(now))))
+            from_big(BigInt::from(now))
         }
-        Some(RubyValue::Int(n)) => Ok((scramble(*n as u64), RubyValue::Int(*n))),
-        Some(RubyValue::BigInt(b)) => Ok((scramble_bigint(b), RubyValue::BigInt(b.clone()))),
+        Some(RubyValue::Int(n)) => from_big(BigInt::from(*n)),
+        Some(RubyValue::BigInt(b)) => from_big((**b).clone()),
         Some(RubyValue::Float(x)) => {
-            let truncated =
-                BigInt::from_f64(x.trunc()).ok_or_else(|| float_domain_error!("{x}"))?;
-            Ok((scramble_bigint(&truncated), int_value(truncated)))
+            from_big(BigInt::from_f64(x.trunc()).ok_or_else(|| float_domain_error!("{x}"))?)
         }
         Some(other) => match crate::builtins::convert::to_int(other)? {
-            RubyValue::Int(n) => Ok((scramble(n as u64), RubyValue::Int(n))),
-            RubyValue::BigInt(b) => Ok((scramble_bigint(&b), RubyValue::BigInt(b))),
+            RubyValue::Int(n) => from_big(BigInt::from(n)),
+            RubyValue::BigInt(b) => from_big((*b).clone()),
             _ => unreachable!("to_int post-checks its answer"),
         },
-    }
+    })
 }
 
 /// The shared `rand`/`Random#rand` bound logic. `None` -> Float `[0,1)`; a
@@ -132,15 +90,15 @@ fn edom() -> Signal {
     raise_error("Errno::EDOM", "Numerical argument out of domain".to_string())
 }
 
-fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue, Signal> {
+fn rand_with(state: &Mutex<crate::mt::Mt>, bound: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let invalid = |v: &RubyValue| arg_error!("invalid argument - {}", v.to_display_string());
     match bound {
-        None | Some(RubyValue::Nil) => Ok(RubyValue::Float(to_unit_float(next_u64(state)))),
+        None | Some(RubyValue::Nil) => Ok(RubyValue::Float(state.lock().next_real())),
         Some(RubyValue::Int(n)) => {
             if *n <= 0 {
                 return Err(invalid(bound.unwrap()));
             }
-            Ok(RubyValue::Int((next_u64(state) % (*n as u64)) as i64))
+            Ok(RubyValue::Int(state.lock().limited(*n as u64 - 1) as i64))
         }
         Some(RubyValue::Float(x)) => {
             // Unlike `Kernel#rand` (FloatDomainError), `Random#rand`/`Random.rand`
@@ -154,9 +112,9 @@ fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue,
             // `rand(0.0)` behaves like the no-argument draw ([0.0, 1.0) unit
             // float), same as `rand(0)`; only a negative bound is invalid.
             if *x == 0.0 {
-                return Ok(RubyValue::Float(to_unit_float(next_u64(state))));
+                return Ok(RubyValue::Float(state.lock().next_real()));
             }
-            Ok(RubyValue::Float(to_unit_float(next_u64(state)) * x))
+            Ok(RubyValue::Float(state.lock().next_real() * x))
         }
         Some(RubyValue::BigInt(b)) => {
             // A bignum bound (`rand(2**70)`) draws enough random words to cover
@@ -176,19 +134,14 @@ fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue,
 /// A uniform-ish random `BigInt` in `[0, n)` for a positive `n`: draw enough
 /// 64-bit words to cover `n`'s bit length, assemble a non-negative BigInt, and
 /// reduce mod `n`.
-fn random_bigint_below(state: &Mutex<u64>, n: &BigInt) -> BigInt {
-    let words = (n.bits() / 64 + 1) as usize;
-    let mut bytes = Vec::with_capacity(words * 8);
-    for _ in 0..words {
-        bytes.extend_from_slice(&next_u64(state).to_le_bytes());
-    }
-    BigInt::from_bytes_le(num_bigint::Sign::Plus, &bytes) % n
+fn random_bigint_below(state: &Mutex<crate::mt::Mt>, n: &BigInt) -> BigInt {
+    state.lock().bigint_below(n)
 }
 
 /// `rand(a..b)` / `rand(a...b)` -- an Integer range yields an Integer, a range
 /// with a Float endpoint yields a Float.
 fn rand_range(
-    state: &Mutex<u64>,
+    state: &Mutex<crate::mt::Mt>,
     lo: &Option<Box<RubyValue>>,
     hi: &Option<Box<RubyValue>>,
     exclusive: bool,
@@ -216,7 +169,7 @@ fn rand_range(
             if span <= 0 {
                 return Err(invalid());
             }
-            Ok(RubyValue::Int(a + (next_u64(state) % span as u64) as i64))
+            Ok(RubyValue::Int(a + state.lock().limited(span as u64 - 1) as i64))
         }
         _ => {
             let a = to_f64(lo)?;
@@ -227,9 +180,14 @@ fn rand_range(
             if b < a || (b == a && exclusive) {
                 return Err(invalid());
             }
-            Ok(RubyValue::Float(
-                a + to_unit_float(next_u64(state)) * (b - a),
-            ))
+            // An INCLUSIVE range must be able to answer its own endpoint, so
+            // ruby draws it through a `[0, 1]` unit rather than `[0, 1)`.
+            let unit = if exclusive {
+                state.lock().next_real()
+            } else {
+                state.lock().next_real_inclusive()
+            };
+            Ok(RubyValue::Float(a + unit * (b - a)))
         }
     }
 }
@@ -254,13 +212,8 @@ fn bytes_count(v: &RubyValue) -> Result<i64, Signal> {
 }
 
 /// `n` random bytes as a BINARY string, drawn from `state`.
-fn random_bytes(state: &Mutex<u64>, n: usize) -> RubyValue {
-    let mut out = Vec::with_capacity(n);
-    while out.len() < n {
-        out.extend_from_slice(&next_u64(state).to_le_bytes());
-    }
-    out.truncate(n);
-    RubyValue::Str(crate::string_from_bytes(out, ASCII_8BIT))
+fn random_bytes(state: &Mutex<crate::mt::Mt>, n: usize) -> RubyValue {
+    RubyValue::Str(crate::string_from_bytes(state.lock().bytes(n), ASCII_8BIT))
 }
 
 /// `n` bytes from the OS cryptographic entropy source (getrandom(2) /
@@ -281,9 +234,9 @@ fn as_random(recv: &RubyValue) -> Arc<RandomObj> {
 }
 
 fn new_random(seed_arg: Option<&RubyValue>) -> Result<RubyValue, Signal> {
-    let (word, seed) = seed_from(seed_arg)?;
+    let (mt, seed) = seed_from(seed_arg)?;
     Ok(RubyValue::Object(Arc::new(RandomObj {
-        state: Mutex::new(word),
+        state: Mutex::new(mt),
         seed,
         frozen: AtomicBool::new(false),
     })))
@@ -324,17 +277,17 @@ ruby_class! {
     // suitable for `Random.new`. Drawn from the default generator.
     def self."new_seed"(_recv, args, _block) {
         crate::builtins::arity!(args, 0);
-        let r = next_u64(&default_state().state);
-        Ok(RubyValue::Int((r >> 1) as i64 | 1))
+        let r = default_state().state.lock().limited(u64::from(u32::MAX));
+        Ok(RubyValue::Int(r as i64 | 1))
     }
     // `Random.srand(seed = clock)` -- reseeds the DEFAULT generator, answering
     // the previous seed.
     def self."srand"(_recv, args, _block) {
         crate::builtins::arity!(args, 0..=1);
-        let (word, seed) = seed_from(args.first())?;
+        let (mt, seed) = seed_from(args.first())?;
         let mut guard = DEFAULT.lock();
         let previous = guard.as_ref().map(|r| r.seed.clone()).unwrap_or(RubyValue::Int(0));
-        *guard = Some(Arc::new(RandomObj { state: Mutex::new(word), seed, frozen: AtomicBool::new(false) }));
+        *guard = Some(Arc::new(RandomObj { state: Mutex::new(mt), seed, frozen: AtomicBool::new(false) }));
         Ok(previous)
     }
 
@@ -372,12 +325,14 @@ ruby_class! {
         if Arc::ptr_eq(&me, &other) {
             return Ok(RubyValue::Bool(true));
         }
+        // Ruby compares two Randoms by their seed and their POSITION in the
+        // stream, which the next word stands for -- and a peek costs nothing
+        // here, since both generators are already reproducible from the seed.
         // Sequential (the tuple form would hold both guards to statement
         // end -- an opposite-order deadlock under parallel threads).
-        let my_state = *me.state.lock();
-        let other_state = *other.state.lock();
-        let eq = me.seed.rb_eq(&other.seed) && my_state == other_state;
-        Ok(RubyValue::Bool(eq))
+        let mine = me.state.lock().clone().next_u32();
+        let theirs = other.state.lock().clone().next_u32();
+        Ok(RubyValue::Bool(me.seed.rb_eq(&other.seed) && mine == theirs))
     }
 }
 
@@ -404,6 +359,11 @@ mod tests {
     // panic message IS the assertion (the codebase's convention for those).
     use super::*;
 
+    /// One word from a generator, for the tests that compare two streams.
+    fn draw(state: &Mutex<crate::mt::Mt>) -> u32 {
+        state.lock().next_u32()
+    }
+
     fn r#gen(seed: i64) -> Arc<RandomObj> {
         let RubyValue::Object(o) = new_random(Some(&RubyValue::Int(seed))).unwrap() else {
             panic!("Random.new gave a non-object")
@@ -416,23 +376,23 @@ mod tests {
         let a = r#gen(5);
         let b = r#gen(5);
         for _ in 0..16 {
-            assert_eq!(next_u64(&a.state), next_u64(&b.state));
+            assert_eq!(draw(&a.state), draw(&b.state));
         }
     }
 
     #[test]
     fn different_seeds_diverge_immediately() {
-        assert_ne!(next_u64(&r#gen(5).state), next_u64(&r#gen(6).state));
+        assert_ne!(draw(&r#gen(5).state), draw(&r#gen(6).state));
     }
 
     #[test]
     fn float_seed_truncates_to_an_integer_and_is_reproducible() {
         // 1e300 == 1e300 -> same generator; 1e300 != 2e300 -> distinct.
-        let (w1, s1) = seed_from(Some(&RubyValue::Float(1e300))).unwrap();
-        let (w1b, _) = seed_from(Some(&RubyValue::Float(1e300))).unwrap();
-        let (w2, _) = seed_from(Some(&RubyValue::Float(2e300))).unwrap();
-        assert_eq!(w1, w1b);
-        assert_ne!(w1, w2);
+        let (mut w1, s1) = seed_from(Some(&RubyValue::Float(1e300))).unwrap();
+        let (mut w1b, _) = seed_from(Some(&RubyValue::Float(1e300))).unwrap();
+        let (mut w2, _) = seed_from(Some(&RubyValue::Float(2e300))).unwrap();
+        assert_eq!(w1.next_u32(), w1b.next_u32());
+        assert_ne!(w1.next_u32(), w2.next_u32());
         assert!(
             matches!(s1, RubyValue::BigInt(_)),
             "seed reported as the truncated integer"
@@ -521,7 +481,7 @@ mod tests {
         let dup = downcast_robj::<RandomObj>(&r.dup_object(false)).unwrap();
         // A copy starts from the same word, so the first draw matches; the two
         // then advance independently (separate Mutexes).
-        assert_eq!(next_u64(&r.state), next_u64(&dup.state));
+        assert_eq!(draw(&r.state), draw(&dup.state));
     }
 
     #[test]
