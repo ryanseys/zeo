@@ -484,6 +484,17 @@ impl Profile {
     /// still trims the last of the per-program symbols.
     fn rustc_flags(self) -> &'static [&'static str] {
         match self {
+            // `-O0` frames are an order of magnitude fatter than optimized
+            // ones, so a Debug binary gets a roomier main stack (64MB vs the
+            // 8MB default): deep Ruby recursion that comfortably fits
+            // optimized frames (the corpus's 2000-deep returning-proc chain)
+            // overflows the default at `-O0`.
+            Profile::Debug if cfg!(target_os = "macos") => &[
+                "-C",
+                "strip=symbols",
+                "-C",
+                "link-arg=-Wl,-stack_size,0x4000000",
+            ],
             Profile::Debug => &["-C", "strip=symbols"],
             Profile::Release => &["-C", "opt-level=2", "-C", "strip=symbols"],
         }
