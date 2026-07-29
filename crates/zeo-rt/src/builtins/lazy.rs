@@ -42,6 +42,13 @@ enum LazyOp {
     /// Pairs each value with an incrementing index (`with_index([offset])`),
     /// yielding `[value, index]`.
     WithIndex(i64),
+    /// Every window of `n` CONSECUTIVE values, as an Array. A source shorter
+    /// than `n` yields nothing.
+    EachCons(usize),
+    /// Consecutive non-overlapping runs of `n` values. The last run is short
+    /// when the source does not divide evenly, and arrives at exhaustion (see
+    /// [`flush`]).
+    EachSlice(usize),
 }
 
 /// The per-run mutable state for the stateful ops (a fresh set is built at the
@@ -51,6 +58,8 @@ enum OpState {
     Count(i64),
     Dropping(bool),
     Seen(HashSet<crate::collections::HashKey>),
+    /// The values `each_cons`/`each_slice` have buffered but not yet emitted.
+    Window(Vec<RubyValue>),
 }
 
 impl OpState {
@@ -59,6 +68,7 @@ impl OpState {
             LazyOp::Take(_) | LazyOp::Drop(_) | LazyOp::WithIndex(_) => OpState::Count(0),
             LazyOp::DropWhile(_) => OpState::Dropping(true),
             LazyOp::Uniq(_) => OpState::Seen(HashSet::new()),
+            LazyOp::EachCons(_) | LazyOp::EachSlice(_) => OpState::Window(Vec::new()),
             _ => OpState::None,
         }
     }
@@ -137,6 +147,8 @@ fn clone_ops(ops: &[LazyOp]) -> Vec<LazyOp> {
             LazyOp::Uniq(k) => LazyOp::Uniq(k.clone()),
             LazyOp::Compact => LazyOp::Compact,
             LazyOp::WithIndex(n) => LazyOp::WithIndex(*n),
+            LazyOp::EachCons(n) => LazyOp::EachCons(*n),
+            LazyOp::EachSlice(n) => LazyOp::EachSlice(*n),
         })
         .collect()
 }
@@ -341,6 +353,35 @@ fn push(
                 push(ops, st, idx + 1, val, sink)
             }
         }
+        LazyOp::EachCons(n) => {
+            // The window slides by one: emit a COPY, then drop its head.
+            let window = match &mut st[idx] {
+                OpState::Window(buf) => {
+                    buf.push(val);
+                    if buf.len() < *n {
+                        return Ok(Flow::Continue);
+                    }
+                    let full = buf.clone();
+                    buf.remove(0);
+                    full
+                }
+                _ => unreachable!("EachCons state"),
+            };
+            push(ops, st, idx + 1, RubyValue::Array(array_new(window)), sink)
+        }
+        LazyOp::EachSlice(n) => {
+            let slice = match &mut st[idx] {
+                OpState::Window(buf) => {
+                    buf.push(val);
+                    if buf.len() < *n {
+                        return Ok(Flow::Continue);
+                    }
+                    std::mem::take(buf)
+                }
+                _ => unreachable!("EachSlice state"),
+            };
+            push(ops, st, idx + 1, RubyValue::Array(array_new(slice)), sink)
+        }
         LazyOp::Uniq(key) => {
             let probe = match key {
                 Some(p) => p.call(std::slice::from_ref(&val))?,
@@ -371,8 +412,30 @@ fn pack(mut vals: Vec<RubyValue>) -> RubyValue {
     }
 }
 
+/// Emits what a BUFFERING op still holds once the source ends: `each_slice`'s
+/// short final run. `each_cons` holds a partial window, which is never a
+/// window, so it emits nothing. Runs left to right, so an earlier op's leftover
+/// reaches a later one before that one flushes in turn.
+fn flush(ops: &[LazyOp], st: &mut [OpState], sink: &mut Sink) -> Result<(), Signal> {
+    for idx in 0..ops.len() {
+        if !matches!(ops[idx], LazyOp::EachSlice(_)) {
+            continue;
+        }
+        let rest = match &mut st[idx] {
+            OpState::Window(buf) if !buf.is_empty() => std::mem::take(buf),
+            _ => continue,
+        };
+        if push(ops, st, idx + 1, RubyValue::Array(array_new(rest)), sink)? == Flow::Stop {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 /// Drives the source through the chain into `sink`, pulling only as far as the
-/// sink/ops allow (a `Stop` ends the loop before the next pull).
+/// sink/ops allow (a `Stop` ends the loop before the next pull). Only a source
+/// that ends NATURALLY flushes: a `Stop` means the sink already has what it
+/// asked for.
 fn drive(lazy: &RLazy, sink: &mut Sink) -> Result<(), Signal> {
     let src = enumerator_for(&lazy.source, "each", &[]);
     let RubyValue::Enumerator(e) = &src else {
@@ -381,10 +444,41 @@ fn drive(lazy: &RLazy, sink: &mut Sink) -> Result<(), Signal> {
     let mut st: Vec<OpState> = lazy.ops.iter().map(OpState::for_op).collect();
     while let Some(vals) = pull_next(e)? {
         if push(&lazy.ops, &mut st, 0, pack(vals), sink)? == Flow::Stop {
-            break;
+            return Ok(());
         }
     }
-    Ok(())
+    flush(&lazy.ops, &mut st, sink)
+}
+
+/// `each_cons`/`each_slice` -- one grouping op appended. WITH a block CRuby
+/// runs the whole chain at once for the block's side effects and answers the
+/// RECEIVER, so the groups are not passed on and an endless source never
+/// returns -- there as here.
+fn each_group(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    slice: bool,
+) -> Result<RubyValue, Signal> {
+    // The caller's own name, so `each_slice(0)` reports "invalid slice size"
+    // and `each_cons(0)` reports "invalid size", exactly as the eager rows do.
+    let n = crate::builtins::enumerable::slice_size(
+        args,
+        if slice { "each_slice" } else { "each_cons" },
+    )?;
+    let grouped = extend(
+        recv,
+        if slice {
+            LazyOp::EachSlice(n)
+        } else {
+            LazyOp::EachCons(n)
+        },
+    );
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(grouped);
+    };
+    drive(lazy_of(&grouped), &mut Sink::Each(&p))?;
+    Ok(recv.clone())
 }
 
 fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal> {
@@ -418,6 +512,15 @@ ruby_class! {
                 (LazyOp::Take(n), RubyValue::Float(_)) => RubyValue::Int(*n),
                 (LazyOp::Drop(n), RubyValue::Int(s)) => RubyValue::Int((s - n).max(0)),
                 (LazyOp::Drop(_), s @ RubyValue::Float(_)) => s,
+                // A window/slice op leaves an endless source endless.
+                (LazyOp::EachCons(n), RubyValue::Int(s)) => {
+                    RubyValue::Int((s - *n as i64 + 1).max(0))
+                }
+                (LazyOp::EachSlice(n), RubyValue::Int(s)) => {
+                    let n = *n as i64;
+                    RubyValue::Int((s + n - 1) / n)
+                }
+                (LazyOp::EachCons(_) | LazyOp::EachSlice(_), s @ RubyValue::Float(_)) => s,
                 _ => RubyValue::Nil,
             };
             if matches!(size, RubyValue::Nil) {
@@ -496,6 +599,16 @@ ruby_class! {
     def "compact"(recv, args, _block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Compact))
+    }
+    // `each_cons(n)` / `each_slice(n)` -- lazy since ruby 3.1, so an infinite
+    // source stays workable.
+    def "each_cons"(recv, args, block) {
+        arity!(args, 1);
+        each_group(recv, args, block, false)
+    }
+    def "each_slice"(recv, args, block) {
+        arity!(args, 1);
+        each_group(recv, args, block, true)
     }
     def "lazy"(recv, args, _block) {
         arity!(args, 0);

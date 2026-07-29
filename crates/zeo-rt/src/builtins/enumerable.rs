@@ -457,7 +457,7 @@ fn min_max_by(
     Ok(best.map(|(_, e)| e).unwrap_or(RubyValue::Nil))
 }
 
-fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
+pub(crate) fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
     let Some(RubyValue::Int(n)) = args.first() else {
         panic!("Enumerable#{method} takes one Integer argument");
     };

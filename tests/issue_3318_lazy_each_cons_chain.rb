@@ -1,6 +1,5 @@
-# Same lost laziness as `issue_3313_lazy_each_cons`, reached through a longer
-# chain (`each_cons(2).map { }.first(3)` and a re-`lazy`-ed select). The
-# infinite source is never stopped, so the harness kills it at 60s.
+# The same laziness as `issue_3313_lazy_each_cons`, through a longer chain
+# (`each_cons(2).map { }.first(3)` and a re-`lazy`-ed select).
 r = (1..Float::INFINITY).lazy.each_cons(2).map { |a, b| a + b }.first(3)
 p r
 lz = (1..Float::INFINITY).lazy.each_cons(2)
