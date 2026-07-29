@@ -77,10 +77,14 @@ pub enum LocalStorage {
 }
 
 pub fn local_storage(cx: &Ctx, name: &str) -> LocalStorage {
-    if matches!(cx.local_types.get(name), Some(TyKind::Object(_))) {
-        LocalStorage::Shadowed
-    } else if cx.captured_locals.contains(name) {
+    let object_typed = matches!(cx.local_types.get(name), Some(TyKind::Object(_)));
+    // In a `binding` scope the cell wins even over `Shadowed`: a Binding hands
+    // its locals out BY REFERENCE, and an unboxed `Arc<Concrete>` has no slot
+    // to share (see `Ctx::binding_names`).
+    if cx.captured_locals.contains(name) && (!object_typed || cx.binding_names.is_some()) {
         LocalStorage::Captured
+    } else if object_typed {
+        LocalStorage::Shadowed
     } else {
         LocalStorage::Hoisted
     }
@@ -540,6 +544,21 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
     emit_hoisted_body_with_extra_roots(cx, body, &[], &[], wrap_ok)
 }
 
+/// [`emit_hoisted_body`] with `preamble` spliced in AFTER the declarations and
+/// before the first statement. The one caller is `TOPLEVEL_BINDING`, which has
+/// to name the top-level frame's cells (so it can't come earlier) and has to
+/// exist before any statement runs (so it can't come later).
+pub fn emit_hoisted_body_after_decls(
+    cx: &Ctx,
+    body: &[NodeId],
+    preamble: TokenStream,
+    wrap_ok: bool,
+) -> TokenStream {
+    let decls = emit_hoisted_decls(cx, body, &[], &[]);
+    let inner = emit_body(cx, body, wrap_ok);
+    quote! { #decls #preamble #inner }
+}
+
 /// The locals a parameter DEFAULT assigns -- `def m(a = (flag = true; nil))`,
 /// where Ruby scopes `flag` to the whole method and leaves it nil when the
 /// default doesn't run. The prelude below is too late to declare these: the
@@ -592,6 +611,19 @@ pub fn emit_hoisted_body_with_extra_roots(
     param_names: &[String],
     wrap_ok: bool,
 ) -> TokenStream {
+    let decls = emit_hoisted_decls(cx, body, extra_roots, param_names);
+    let inner = emit_body(cx, body, wrap_ok);
+    quote! { #decls #inner }
+}
+
+/// The declaration half of [`emit_hoisted_body_with_extra_roots`] on its own,
+/// so a caller can splice something between the prelude and the statements.
+fn emit_hoisted_decls(
+    cx: &Ctx,
+    body: &[NodeId],
+    extra_roots: &[NodeId],
+    param_names: &[String],
+) -> TokenStream {
     let mut names = Vec::new();
     for &n in body {
         collect_locals(cx.compiler, n, &mut names);
@@ -631,8 +663,7 @@ pub fn emit_hoisted_body_with_extra_roots(
             LocalStorage::Shadowed => None,
         }
     });
-    let inner = emit_body(cx, body, wrap_ok);
-    quote! { #(#decls)* #inner }
+    quote! { #(#decls)* }
 }
 
 /// ONE local's declaration, per its storage class -- the same rule

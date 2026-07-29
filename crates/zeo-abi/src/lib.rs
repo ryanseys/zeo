@@ -531,6 +531,10 @@ pub const OPENSSL_X509_CERT_CLASS: ClassId = ClassId(138);
 pub const OPENSSL_X509_NAME_CLASS: ClassId = ClassId(139);
 /// `OpenSSL::Random` -- CSPRNG bytes (`random_bytes`).
 pub const OPENSSL_RANDOM_MODULE: ClassId = ClassId(140);
+/// `Binding` -- a captured scope: its `self`, its locals (shared cells the
+/// compiled frame keeps writing to), and the lexical context a `def` or a
+/// constant inside `Binding#eval` resolves against.
+pub const BINDING_CLASS: ClassId = ClassId(141);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -1688,6 +1692,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: BINDING_CLASS,
+        name: "Binding",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
     },
 ];
 

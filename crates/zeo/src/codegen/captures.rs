@@ -124,6 +124,104 @@ pub fn block_captures(
     caps
 }
 
+/// Whether anything in this scope needs the scope itself as a value: a bare,
+/// receiver-less, argument-less `binding` (the only form that names the
+/// CURRENT scope), or a receiver-less dynamic `eval`, which CRuby runs in the
+/// caller's own frame and zeo therefore compiles into a Binding of it.
+/// Descends through blocks and lambdas (a `binding` taken inside one still
+/// exposes the enclosing scope's locals) but stops at a `def`/`class` body,
+/// which is a scope of its own.
+fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
+    match &compiler.hir[id] {
+        HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
+        HirNode::Call {
+            receiver: None,
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: _,
+        } if (name == "binding" && args.is_empty()
+            || name == "eval" && (1..=4).contains(&args.len()))
+            && kwargs.is_empty()
+            && block.is_none()
+            && block_arg.is_none() =>
+        {
+            return true;
+        }
+        _ => {}
+    }
+    let mut found = false;
+    compiler.hir[id].for_each_child(&mut |n| {
+        if !found {
+            found = scope_calls_binding(compiler, n);
+        }
+    });
+    found
+}
+
+/// A scope that materializes a `Binding` has to hand out every one of its own
+/// locals BY REFERENCE, so this promotes them all to the `Captured` cell
+/// storage class (`codegen::hoisting::LocalStorage`) and answers the ordered
+/// name list the `binding` call site emits -- CRuby's `local_variables` order:
+/// parameters first, then locals by first assignment.
+///
+/// `None`, and no promotion at all, when nothing in the scope calls `binding`
+/// -- which is every scope in almost every program, so the cost is paid only
+/// by the frames that actually ask for it. `force` is `TOPLEVEL_BINDING`'s
+/// door in: the top-level frame has to be materialized when anything anywhere
+/// can READ that constant, with no `binding` call in sight.
+///
+/// An AOT-spliced `eval("literal")` (`HirNode::Eval`) gets the NAME LIST
+/// without the promotion: `codegen::call` reads it to resolve a bare name in
+/// the snippet back to the scope's local (see `Ctx::in_eval_splice`), and
+/// nothing there needs a cell.
+pub fn binding_scope_names(
+    compiler: &Compiler,
+    body: &[NodeId],
+    params: &Params,
+    captures: &mut Captures,
+    force: bool,
+) -> Option<std::rc::Rc<Vec<String>>> {
+    let promote = force || body.iter().any(|&n| scope_calls_binding(compiler, n));
+    if !promote && !body.iter().any(|&n| scope_splices_eval(compiler, n)) {
+        return None;
+    }
+    let mut names = params.bound_names();
+    let mut assigned = Vec::new();
+    for &n in body {
+        super::hoisting::collect_locals(compiler, n, &mut assigned);
+    }
+    for n in assigned {
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    }
+    if promote {
+        captures.locals.extend(names.iter().cloned());
+    }
+    Some(std::rc::Rc::new(names))
+}
+
+/// Whether this scope contains an AOT-spliced `eval("literal")` -- the shape
+/// that needs the name list but no cell promotion. Same walk boundary as
+/// [`scope_calls_binding`].
+fn scope_splices_eval(compiler: &Compiler, id: NodeId) -> bool {
+    match &compiler.hir[id] {
+        HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
+        HirNode::Eval(_) => return true,
+        _ => {}
+    }
+    let mut found = false;
+    compiler.hir[id].for_each_child(&mut |n| {
+        if !found {
+            found = scope_splices_eval(compiler, n);
+        }
+    });
+    found
+}
+
 /// Whether `body` (a WHOLE method's own body) contains a `return` that is
 /// lexically INSIDE an escaping (non-inline, non-lambda) block -- the only
 /// shape that raises a `Signal::Return` homed to THIS method, which its

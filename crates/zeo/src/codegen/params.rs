@@ -2130,6 +2130,8 @@ mod tests {
             next_yields_value: false,
             for_var_override: None,
             captured_locals: std::borrow::Cow::Borrowed(&empty),
+            binding_names: None,
+            in_eval_splice: false,
             self_ident: quote::format_ident!("__self"),
             in_real_proc: false,
             self_is_dynamic: false,

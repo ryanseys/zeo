@@ -137,6 +137,20 @@ struct Ctx<'a> {
     /// block's own Ctx must SHADOW these for its own parameter names (see
     /// `in_proc`), which means owning a modified copy.
     captured_locals: std::borrow::Cow<'a, HashSet<String>>,
+    /// `Some` exactly in a scope that calls `Kernel#binding`, holding that
+    /// scope's own local names in `local_variables` order -- what the
+    /// `binding` call site hands the runtime (`codegen::call::emit_binding`),
+    /// and the marker that makes cell storage outrank `LocalStorage::Shadowed`
+    /// (a Binding shares slots by reference, so an object-typed local can't
+    /// stay an unboxed `Arc<Concrete>`). See
+    /// `codegen::captures::binding_scope_names`.
+    binding_names: Option<std::rc::Rc<Vec<String>>>,
+    /// Whether the code being emitted came from an AOT-spliced
+    /// `eval("literal")` (`HirNode::Eval`). That snippet was parsed on its
+    /// OWN, so prism could not know a bare name is one of the enclosing
+    /// scope's locals and handed it over as a vcall; Ruby resolves it as the
+    /// local, which `emit_call` does here against `binding_names`.
+    in_eval_splice: bool,
     /// The identifier that stands for `self` in THIS position -- ordinarily
     /// the literal `self`, but rebound to a fresh capture-alias identifier
     /// while emitting an escaping block's own body that captured `self`
@@ -204,6 +218,32 @@ struct Ctx<'a> {
     runtime_super_params: Option<std::rc::Rc<crate::hir::Params>>,
 }
 
+/// The local-type map a scope emits under, given its `binding_names`. An
+/// object-typed local in a `binding` scope loses its static type: it lives in
+/// a cell now (`hoisting::local_storage`), and every fast path that type
+/// unlocks -- a direct `Klass::m(x)` call, a struct-field ivar read -- needs
+/// the unboxed `Arc<Concrete>` the cell no longer holds. Dropping the type
+/// routes those through ordinary dynamic dispatch instead, which is what the
+/// value in the cell supports.
+fn binding_scope_local_types<'a>(
+    binding_names: Option<&std::rc::Rc<Vec<String>>>,
+    captured: &HashSet<String>,
+    types: &'a HashMap<String, TyKind>,
+) -> std::borrow::Cow<'a, HashMap<String, TyKind>> {
+    let Some(names) = binding_names else {
+        return std::borrow::Cow::Borrowed(types);
+    };
+    let demoted = |n: &String| {
+        captured.contains(n) && matches!(types.get(n), Some(TyKind::Object(_)))
+    };
+    if !names.iter().any(demoted) {
+        return std::borrow::Cow::Borrowed(types);
+    }
+    let mut owned = types.clone();
+    owned.retain(|n, _| !demoted(n));
+    std::borrow::Cow::Owned(owned)
+}
+
 impl<'a> Ctx<'a> {
     /// Resolves a class/module NAME as seen from the code currently being
     /// emitted -- the one funnel every codegen name-resolution site goes
@@ -234,6 +274,15 @@ impl<'a> Ctx<'a> {
         Ctx {
             loop_labels: Some((redo, outer)),
             next_yields_value: false,
+            ..self.clone()
+        }
+    }
+
+    /// A child context for an AOT-spliced `eval("literal")` body -- see
+    /// `in_eval_splice`'s docs.
+    fn in_eval_splice(&self) -> Ctx<'a> {
+        Ctx {
+            in_eval_splice: true,
             ..self.clone()
         }
     }
@@ -1650,11 +1699,27 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     let main_label_counter = Cell::new(0u32);
     // Top-level implicit-self calls dispatch on the global `main_object()`
     // (no capture needed), so no `self_class` here.
-    let main_captures = captures::collect_escaping_captures(
+    // `TOPLEVEL_BINDING` IS the top-level frame's binding, so a program that
+    // can read it -- anywhere, including inside a required gem's method
+    // (erb's `new_toplevel`) -- deoptimizes the top level to cells exactly as
+    // a literal `binding` call there would.
+    let wants_toplevel_binding = compiler
+        .hir
+        .all_nodes()
+        .iter()
+        .any(|n| matches!(n, crate::hir::HirNode::ClassRef(c) if c == "TOPLEVEL_BINDING"));
+    let mut main_captures = captures::collect_escaping_captures(
         compiler,
         &analyzed.main_statements,
         &crate::hir::Params::default(),
         None,
+    );
+    let main_binding = captures::binding_scope_names(
+        compiler,
+        &analyzed.main_statements,
+        &crate::hir::Params::default(),
+        &mut main_captures,
+        wants_toplevel_binding,
     );
     let cx = Ctx {
         compiler,
@@ -1664,12 +1729,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // Top-level `self` is `main`, an ordinary Object -- not a class.
         class_self: None,
         current_method: None,
-        local_types: std::borrow::Cow::Borrowed(&analyzed.main_local_types),
+        local_types: binding_scope_local_types(
+            main_binding.as_ref(),
+            &main_captures.locals,
+            &analyzed.main_local_types,
+        ),
         label_counter: &main_label_counter,
         loop_labels: None,
         next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&main_captures.locals),
+        binding_names: main_binding.clone(),
+        in_eval_splice: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -1677,7 +1748,16 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         block_depth: 0,
         has_blk_binding: false,
     };
-    let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
+    let toplevel_binding = wants_toplevel_binding.then(|| {
+        let value = call::emit_binding_value(&cx, "<main>", 0);
+        quote! { zeo_rt::const_set(0, "TOPLEVEL_BINDING", #value); }
+    });
+    let main_body = hoisting::emit_hoisted_body_after_decls(
+        &cx,
+        &analyzed.main_statements,
+        quote! { #toplevel_binding },
+        true,
+    );
     // The top level's own backtrace frame -- CRuby's `<main>` (its file is
     // the main script; statement emission stamps the line as it goes).
     let main_frame = match compiler.hir.files.first() {
@@ -1941,8 +2021,15 @@ pub(crate) fn emit_class_body_site(
     // the top level does (`yesno = CompletingHash.new; %w[- no].each { |el|
     // yesno[el] = false }`, optparse's own accept-table setup). Left empty,
     // every such name was re-declared nil INSIDE the closure.
-    let captures =
+    let mut captures =
         captures::collect_escaping_captures(compiler, stmts, &crate::hir::Params::default(), None);
+    let binding_names = captures::binding_scope_names(
+        compiler,
+        stmts,
+        &crate::hir::Params::default(),
+        &mut captures,
+        false,
+    );
     let no_locals = HashMap::new();
     let cx = Ctx {
         compiler,
@@ -1966,6 +2053,8 @@ pub(crate) fn emit_class_body_site(
         next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&captures.locals),
+        binding_names,
+        in_eval_splice: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -2102,8 +2191,10 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let method_ident = ident::class_method_ident(&scope.name);
     let sig_params = params::emit_signature_params_free(params, needs_block);
     let label_counter = Cell::new(0u32);
-    let no_captures =
+    let mut no_captures =
         captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
+    let binding_names =
+        captures::binding_scope_names(compiler, &scope.body, &scope.params, &mut no_captures, false);
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -2121,12 +2212,18 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         // See `Ctx::class_self`'s docs.
         class_self: scope.class,
         current_method: Some(scope.name.clone()),
-        local_types: std::borrow::Cow::Borrowed(&scope.local_types),
+        local_types: binding_scope_local_types(
+            binding_names.as_ref(),
+            &no_captures.locals,
+            &scope.local_types,
+        ),
         label_counter: &label_counter,
         loop_labels: None,
         next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&no_captures.locals),
+        binding_names,
+        in_eval_splice: false,
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -2329,8 +2426,10 @@ fn emit_builtin_method_fn(
     let needs_block = scope.needs_block_param();
     let sig_params = params::emit_signature_params(&scope.params, needs_block);
     let label_counter = Cell::new(0u32);
-    let method_captures =
+    let mut method_captures =
         captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+    let binding_names =
+        captures::binding_scope_names(compiler, &scope.body, &scope.params, &mut method_captures, false);
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -2341,12 +2440,18 @@ fn emit_builtin_method_fn(
         // storage.
         class_self: None,
         current_method: Some(scope.name.clone()),
-        local_types: std::borrow::Cow::Borrowed(&scope.local_types),
+        local_types: binding_scope_local_types(
+            binding_names.as_ref(),
+            &method_captures.locals,
+            &scope.local_types,
+        ),
         label_counter: &label_counter,
         loop_labels: None,
         next_yields_value: false,
         for_var_override: None,
         captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
+        binding_names,
+        in_eval_splice: false,
         self_ident: format_ident!("__self"),
         in_real_proc: false,
         // `__self` here is the `RubyValue` receiver parameter, not an
@@ -2412,8 +2517,15 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let needs_block = scope.needs_block_param();
         let sig_params = params::emit_signature_params(&scope.params, needs_block);
         let method_label_counter = Cell::new(0u32);
-        let method_captures =
+        let mut method_captures =
             captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+        let binding_names = captures::binding_scope_names(
+            compiler,
+            &scope.body,
+            &scope.params,
+            &mut method_captures,
+            false,
+        );
         let method_cx = Ctx {
             compiler,
             box_id: compiler.class(scope.defining_class).box_id,
@@ -2422,12 +2534,18 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             // An instance method -- see the matching note in `emit_method_fn`.
             class_self: None,
             current_method: Some(scope.name.clone()),
-            local_types: std::borrow::Cow::Borrowed(&scope.local_types),
+            local_types: binding_scope_local_types(
+                binding_names.as_ref(),
+                &method_captures.locals,
+                &scope.local_types,
+            ),
             label_counter: &method_label_counter,
             loop_labels: None,
             next_yields_value: false,
             for_var_override: None,
             captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
+            binding_names,
+            in_eval_splice: false,
             self_ident: format_ident!("self"),
             in_real_proc: false,
             self_is_dynamic: false,

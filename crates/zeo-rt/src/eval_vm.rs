@@ -20,11 +20,12 @@
 //! singleton for `instance_eval`, `self`'s class for a plain `eval`), run
 //! blocks passed to calls, and `yield`/`return` inside an eval-defined
 //! method; each such method/block re-parses its own captured source per
-//! invocation. What it does NOT yet see is the CALLER's own local variables:
-//! those live as Rust stack slots the interpreter can't reach without codegen
-//! materializing a `Binding` (the next increment, with a first-class
-//! `binding`). A local ASSIGNED inside an eval is visible to later statements
-//! of the SAME eval, held in `Env::locals`.
+//! invocation. The CALLER's own locals come along too: a compiled `eval` site
+//! materializes its scope as a `Binding` (see `builtins::binding`), whose
+//! cells ARE this interpreter's `Env::scope`, so the source reads and writes
+//! them. Without an explicit binding that scope is a CHILD of the caller's, so
+//! a local the source introduces dies with the call -- `Binding#eval` runs in
+//! the Binding itself and keeps it.
 
 // Feature-split imports: the interpreter (`mod imp`, eval-vm on) raises
 // NameError for unresolved constants; the feature-off stub raises
@@ -34,6 +35,7 @@
 use crate::builtins::name_error;
 #[cfg(not(feature = "eval-vm"))]
 use crate::builtins::not_impl_error;
+use crate::builtins::binding::RBinding;
 use crate::{RubyValue, Signal};
 
 /// Which surface invoked the eval -- it decides where a `def` inside the
@@ -107,9 +109,94 @@ pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<Ru
     eval_value_mode(src, self_val, box_id, EvalMode::Caller)
 }
 
+/// The compiled receiver-less `eval(src[, binding[, file[, line]]])` site.
+/// CRuby runs a bare `eval` -- and one given a `nil` binding -- in the
+/// CALLER's own frame, so codegen hands that frame over as `scope`,
+/// materialized right at the call site (`codegen::call::emit_binding_value`);
+/// that is what lets the source read and write the caller's locals. An
+/// explicit non-nil binding wins over it, and must be a `Binding`.
+pub fn eval_value_in_scope(
+    src: RubyValue,
+    scope: RubyValue,
+    binding: RubyValue,
+    file: RubyValue,
+    line: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let chosen = if binding.is_nil() { &scope } else { &binding };
+    let Some(b) = crate::builtins::binding::as_binding(chosen) else {
+        return Err(crate::builtins::type_error!(
+            "wrong argument type {} (expected binding)",
+            crate::dispatch::class_name(binding.class_id())
+                .unwrap_or_else(|| "Object".to_string())
+        ));
+    };
+    // Without an explicit binding the source runs in a CHILD of the caller's
+    // frame: it reads and writes the caller's locals, but a name it introduces
+    // is its own and dies with the call. `Binding#eval` keeps them, because
+    // there the Binding IS the scope.
+    let implicit;
+    let b = if binding.is_nil() {
+        implicit = RBinding {
+            self_val: b.self_val.clone(),
+            scope: b.scope.child(),
+            file: b.file.clone(),
+            line: b.line,
+            box_id: b.box_id,
+            cref: b.cref,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        };
+        &implicit
+    } else {
+        b
+    };
+    let file = match &file {
+        RubyValue::Nil => None,
+        v => Some(
+            crate::builtins::convert::to_rstr(v)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
+        ),
+    };
+    let line = match &line {
+        RubyValue::Nil => None,
+        v => Some(crate::builtins::convert::to_index(v)? as u32),
+    };
+    eval_with_binding(&src, b, file, line)
+}
+
+/// `Binding#eval` and `Kernel#eval(src, binding, ...)` -- the source runs in
+/// the captured scope: `b`'s locals ARE the eval's locals (shared cells, so a
+/// write reaches the compiled frame), `b`'s `self` is the receiver, and `b`'s
+/// cref is what a constant resolves against. `file`/`line` override what
+/// `__FILE__`/`__LINE__` report, as CRuby's own 3rd/4th `eval` arguments do.
+pub fn eval_with_binding(
+    src: &RubyValue,
+    b: &RBinding,
+    file: Option<String>,
+    line: Option<u32>,
+) -> Result<RubyValue, Signal> {
+    let code = crate::builtins::convert::to_rstr(src)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    #[cfg(feature = "eval-vm")]
+    {
+        imp::eval_in_binding(&code, b, file, line)
+    }
+    #[cfg(not(feature = "eval-vm"))]
+    {
+        let _ = (code, b, file, line);
+        Err(not_impl_error!(
+            "string eval requires the eval VM (build zeo-rt with --features eval-vm)"
+        ))
+    }
+}
+
 #[cfg(feature = "eval-vm")]
 mod imp {
     use super::*;
+    use crate::builtins::binding::BindingScope;
     use crate::builtins::{arg_error, type_error};
     use crate::{RProc, Symbol};
     use ruby_prism::{DefNode, Node, NodeList, StatementsNode};
@@ -133,11 +220,14 @@ mod imp {
     struct Env {
         /// The `self` every implicit-receiver call and `@ivar` access binds to.
         self_val: RubyValue,
-        /// Locals defined DURING this eval (not the caller's). A local read
-        /// prism resolved (it was assigned earlier in the eval source) but
-        /// which no executed statement has written yet reads as `nil`, exactly
-        /// as a declared-but-unassigned Ruby local does.
-        locals: HashMap<String, RubyValue>,
+        /// This scope's local variables. A plain eval starts with an empty
+        /// scope of its own; an eval THROUGH a `Binding` runs directly in that
+        /// Binding's, so the caller's compiled locals are readable and a write
+        /// reaches the frame's own cell. A local read prism resolved (it was
+        /// assigned earlier in the eval source) but which no executed statement
+        /// has written yet reads as `nil`, exactly as a declared-but-unassigned
+        /// Ruby local does.
+        scope: Arc<BindingScope>,
         /// Defining box for constant/global resolution.
         box_id: u32,
         /// Where a bare `def` installs (see [`Definee`]).
@@ -152,7 +242,24 @@ mod imp {
         /// out its own text to re-parse on each later invocation (the eval VM
         /// holds no `'src`-lifetime nodes past the call that built them).
         src: Arc<str>,
+        /// The lexical class a constant read resolves against before the top
+        /// level -- a `Binding`'s captured cref. `None` everywhere else, which
+        /// keeps the plain eval's documented top-level-first rule.
+        cref: Option<crate::ClassId>,
+        /// What `__FILE__`/`__LINE__` report, and where a `binding` taken
+        /// inside this eval says it came from -- `eval`'s own 3rd/4th
+        /// arguments when given, `("(eval)", 1)` otherwise.
+        file: Arc<str>,
+        line: u32,
     }
+
+    /// The environment a fresh (non-`Binding`) eval scope starts from: no
+    /// locals, no cref, `(eval)` as its source.
+    fn fresh_scope() -> Arc<BindingScope> {
+        Arc::new(BindingScope::new(Vec::new()))
+    }
+
+    const EVAL_FILE: &str = "(eval)";
 
     pub(super) fn eval_string(
         src: &str,
@@ -174,12 +281,49 @@ mod imp {
         let definee = initial_definee(&self_val, mode);
         let mut env = Env {
             self_val,
-            locals: HashMap::new(),
+            scope: fresh_scope(),
             box_id,
             definee,
             block: None,
             method_args: None,
             src: Arc::from(src),
+            cref: None,
+            file: Arc::from(EVAL_FILE),
+            line: 1,
+        };
+        eval_list(&program.statements().body(), &mut env)
+    }
+
+    /// [`super::eval_with_binding`]'s interpreter half -- the same walk, run
+    /// against the captured scope instead of a fresh one.
+    pub(super) fn eval_in_binding(
+        src: &str,
+        b: &RBinding,
+        file: Option<String>,
+        line: Option<u32>,
+    ) -> Result<RubyValue, Signal> {
+        let result = ruby_prism::parse(src.as_bytes());
+        if let Some(err) = result.errors().next() {
+            return Err(crate::dispatch::raise_error(
+                "SyntaxError",
+                err.message().to_string(),
+            ));
+        }
+        let program = result
+            .node()
+            .as_program_node()
+            .ok_or_else(|| internal("eval: expected a top-level ProgramNode"))?;
+        let mut env = Env {
+            self_val: b.self_val.clone(),
+            scope: Arc::clone(&b.scope),
+            box_id: b.box_id,
+            definee: initial_definee(&b.self_val, EvalMode::Caller),
+            block: None,
+            method_args: None,
+            src: Arc::from(src),
+            cref: b.cref,
+            file: Arc::from(file.as_deref().unwrap_or(EVAL_FILE)),
+            line: line.unwrap_or(1),
         };
         eval_list(&program.statements().body(), &mut env)
     }
@@ -253,6 +397,19 @@ mod imp {
         if node.as_self_node().is_some() {
             return Ok(env.self_val.clone());
         }
+        if node.as_source_file_node().is_some() {
+            return Ok(RubyValue::Str(crate::string_new(env.file.to_string())));
+        }
+        if node.as_source_line_node().is_some() {
+            // `eval`'s `lineno` argument numbers the source's FIRST line, so a
+            // `__LINE__` further in counts newlines from there.
+            let upto = node.location().start_offset().min(env.src.len());
+            let within = env.src.as_bytes()[..upto]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u32;
+            return Ok(RubyValue::Int((env.line + within) as i64));
+        }
         if let Some(istr) = node.as_interpolated_string_node() {
             return eval_interpolated(&istr.parts(), env);
         }
@@ -260,12 +417,12 @@ mod imp {
         // ---- locals ---------------------------------------------------------
         if let Some(lvr) = node.as_local_variable_read_node() {
             let name = String::from_utf8_lossy(lvr.name().as_slice()).into_owned();
-            return Ok(env.locals.get(&name).cloned().unwrap_or(RubyValue::Nil));
+            return Ok(env.scope.get(&name).unwrap_or(RubyValue::Nil));
         }
         if let Some(lvw) = node.as_local_variable_write_node() {
             let name = String::from_utf8_lossy(lvw.name().as_slice()).into_owned();
             let value = eval_node(&lvw.value(), env)?;
-            env.locals.insert(name, value.clone());
+            env.scope.set(&name, value.clone());
             return Ok(value);
         }
 
@@ -301,8 +458,14 @@ mod imp {
         // ---- constants ------------------------------------------------------
         if let Some(cr) = node.as_constant_read_node() {
             let name = String::from_utf8_lossy(cr.name().as_slice()).into_owned();
-            // Top-level-first scope: constants resolve against the root
-            // (`Object`, class id 0), the lexical top of an eval'd chunk.
+            // A `Binding`'s cref first (`binding.eval("K")` inside `module M`
+            // finds `M::K`), then the root -- an eval'd chunk with no captured
+            // lexical scope resolves against `Object`, class id 0.
+            if let Some(cref) = env.cref {
+                if let Some(v) = crate::constants::const_get(cref.0, &name) {
+                    return Ok(v);
+                }
+            }
             return const_lookup(0, &name);
         }
         if let Some(cp) = node.as_constant_path_node() {
@@ -601,12 +764,15 @@ mod imp {
         let class_val = RubyValue::Class(class_id);
         let mut body_env = Env {
             self_val: class_val,
-            locals: HashMap::new(),
+            scope: fresh_scope(),
             box_id: env.box_id,
             definee: Definee::Class(class_id),
             block: None,
             method_args: None,
             src: Arc::clone(&env.src),
+            cref: Some(class_id),
+            file: Arc::clone(&env.file),
+            line: env.line,
         };
         eval_opt_stmts(body.and_then(|b| b.as_statements_node()), &mut body_env)
     }
@@ -693,7 +859,7 @@ mod imp {
 
         let mut env = Env {
             self_val: self_val.clone(),
-            locals: HashMap::new(),
+            scope: fresh_scope(),
             box_id,
             // A nested `def` inside a method body installs on the receiver's
             // class -- the common lexical case.
@@ -701,6 +867,9 @@ mod imp {
             block,
             method_args: Some(args.to_vec()),
             src: Arc::from(snippet),
+            cref: None,
+            file: Arc::from(EVAL_FILE),
+            line: 1,
         };
         bind_params(&def, args, &env.block.clone(), &mut env)?;
 
@@ -711,7 +880,7 @@ mod imp {
     }
 
     /// Bind a method call's positional args, keyword args, and block to the
-    /// def's parameters, writing each into `env.locals`. Covers required,
+    /// def's parameters, writing each into `env.scope`. Covers required,
     /// optional (with defaults), rest, post, required/optional keyword, and
     /// block parameters -- the shapes real methods use. Destructuring params
     /// and `**kwrest` are surfaced as a `NotImplementedError` for now.
@@ -775,7 +944,7 @@ mod imp {
         // then the rest splat.
         for (i, p) in reqs.iter().enumerate() {
             let name = required_name(p)?;
-            env.locals.insert(name, positional[i].clone());
+            env.scope.set(&name, positional[i].clone());
         }
         let mid_end = positional.len() - n_post;
         let mut cursor = n_req;
@@ -791,7 +960,7 @@ mod imp {
             } else {
                 eval_node(&p.value(), env)?
             };
-            env.locals.insert(name, value);
+            env.scope.set(&name, value);
         }
         if let Some(r) = rest {
             // A named `*rest` collects the leftover middle; an anonymous `*`
@@ -800,14 +969,14 @@ mod imp {
                 if let Some(name) = rp.name() {
                     let collected: Vec<RubyValue> = positional[cursor..mid_end].to_vec();
                     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
-                    env.locals
-                        .insert(name, RubyValue::Array(crate::array_new(collected)));
+                    env.scope
+                        .set(&name, RubyValue::Array(crate::array_new(collected)));
                 }
             }
         }
         for (i, p) in posts.iter().enumerate() {
             let name = required_name(p)?;
-            env.locals.insert(name, positional[mid_end + i].clone());
+            env.scope.set(&name, positional[mid_end + i].clone());
         }
 
         bind_keywords(&keywords, params.keyword_rest().is_some(), &kwargs, env)?;
@@ -815,8 +984,8 @@ mod imp {
         if let Some(bp) = params.block() {
             if let Some(name) = bp.name() {
                 let name = String::from_utf8_lossy(name.as_slice()).into_owned();
-                env.locals
-                    .insert(name, block.clone().unwrap_or(RubyValue::Nil));
+                env.scope
+                    .set(&name, block.clone().unwrap_or(RubyValue::Nil));
             }
         }
         Ok(())
@@ -850,7 +1019,7 @@ mod imp {
                     .cloned()
                     .ok_or_else(|| arg_error!("missing keyword: :{name}"))?;
                 consumed.push(name.clone());
-                env.locals.insert(name, value);
+                env.scope.set(&name, value);
             } else if let Some(p) = kw.as_optional_keyword_parameter_node() {
                 let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
                 let name = name.trim_end_matches(':').to_string();
@@ -859,7 +1028,7 @@ mod imp {
                     None => eval_node(&p.value(), env)?,
                 };
                 consumed.push(name.clone());
-                env.locals.insert(name, value);
+                env.scope.set(&name, value);
             } else {
                 return Err(internal("eval: unsupported keyword-parameter form"));
             }
@@ -947,7 +1116,7 @@ mod imp {
         }
         if let Some(local) = operand.as_local_variable_read_node() {
             let name = String::from_utf8_lossy(local.name().as_slice()).into_owned();
-            return match env.locals.contains_key(&name) {
+            return match env.scope.defined(&name) {
                 true => answer("local-variable"),
                 false => Ok(RubyValue::Nil),
             };
@@ -1023,6 +1192,32 @@ mod imp {
             None => env.self_val.clone(),
         };
         let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+        // A bare identifier that names a local of THIS scope is a variable
+        // read, not a call. prism can't know that -- it parses the eval source
+        // standalone, so `x` in `eval("x + 1", b)` arrives as a vcall while
+        // `x = 1` in the same source arrives as a real write. CRuby seeds its
+        // parser with the binding's locals; the equivalent here is to check
+        // the scope before dispatching.
+        if call.receiver().is_none()
+            && call.arguments().is_none()
+            && call.block().is_none()
+            && let Some(v) = env.scope.get(&name)
+        {
+            return Ok(v);
+        }
+        // `binding` inside an eval names THIS scope -- the very cells the
+        // source has been assigning, which is what makes ERB's
+        // `b.eval("tap {|;v| break binding}")` hand back a usable scope.
+        if name == "binding" && call.receiver().is_none() && call.arguments().is_none() {
+            return Ok(crate::builtins::binding::binding_value(
+                env.self_val.clone(),
+                Arc::clone(&env.scope),
+                env.file.to_string(),
+                env.line,
+                env.box_id,
+                env.cref,
+            ));
+        }
         let sym = crate::Symbol::intern(&name);
 
         let mut args = Vec::new();
@@ -1128,12 +1323,15 @@ mod imp {
         };
         let mut env = Env {
             self_val: self_val.clone(),
-            locals: HashMap::new(),
+            scope: fresh_scope(),
             box_id,
             definee: Definee::Class(block_definee(self_val)),
             block: None,
             method_args: None,
             src: Arc::from(snippet),
+            cref: None,
+            file: Arc::from(EVAL_FILE),
+            line: 1,
         };
         bind_block_params(&block, args, &mut env)?;
         eval_opt_stmts(block.body().and_then(|b| b.as_statements_node()), &mut env)
@@ -1169,8 +1367,8 @@ mod imp {
         };
         for (i, p) in reqs.iter().enumerate() {
             let name = required_name(p)?;
-            env.locals
-                .insert(name, effective.get(i).cloned().unwrap_or(RubyValue::Nil));
+            env.scope
+                .set(&name, effective.get(i).cloned().unwrap_or(RubyValue::Nil));
         }
         if let Some(rest) = params.rest() {
             if let Some(rp) = rest.as_rest_parameter_node() {
@@ -1178,8 +1376,8 @@ mod imp {
                     let collected: Vec<RubyValue> =
                         effective.iter().skip(reqs.len()).cloned().collect();
                     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
-                    env.locals
-                        .insert(name, RubyValue::Array(crate::array_new(collected)));
+                    env.scope
+                        .set(&name, RubyValue::Array(crate::array_new(collected)));
                 }
             }
         }

@@ -402,6 +402,30 @@ identity check upstream's `verify_certificate_identity` does (SAN
 dNSName/iPAddress deciding when present, CN only in their absence,
 left-most-label wildcards), independent of the connection's verify mode.
 
+### `Binding`
+
+`Kernel#binding` is a core surface, not a substitution: `#receiver`,
+`#source_location`, `#local_variables`, `#local_variable_get`/`_set`/
+`_defined?`, `#eval`, `#dup`/`#clone` and `TOPLEVEL_BINDING` all behave as
+CRuby's, sharing the compiled frame's own slots so writes flow both ways
+(`docs/EVAL_VM.md` explains how codegen gives just those frames cell
+storage). The bounds:
+
+- **A Binding taken inside an INLINE-SPLICED iterator block** (`n.times { |i|
+  ... }` and the other bodies zeo splices into the enclosing Rust scope
+  rather than building a `Proc` for) carries that block's own parameters only
+  when the enclosing scope is already a binding scope. Elsewhere the spliced
+  parameter is a plain per-iteration `let` with no cell to share, so it is
+  ABSENT from `local_variables` rather than wrongly bound. Real (escaping)
+  blocks and lambdas carry theirs unconditionally.
+- **`Proc#binding`** is not implemented — a compiled `Proc` is a Rust closure
+  with no separate environment object to hand back.
+- **`Binding#irb`**, `#implicit_parameter_get`/`_defined?`/`#implicit_parameters`
+  are not implemented.
+- A `send(:eval, str)` hides the eval site from the compiler's
+  `uses_runtime_eval` scan, so that binary may not link the eval VM at all;
+  the failure mode is the runtime's own `NotImplementedError`.
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream

@@ -1904,15 +1904,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         if name == "eval" && call.receiver().is_none() {
             // A single string-LITERAL argument keeps the zero-cost AOT path:
             // the source is parsed and INLINED at compile time (`HirNode::Eval`),
-            // needs no runtime parser, and can even see the surrounding scope's
-            // locals. Every other shape -- a non-literal source expression, or
-            // the `binding`/`filename`/`lineno` argument forms -- falls through
-            // to the ordinary implicit-self `Call` lowering below, which
-            // dispatches `Kernel#eval` into the runtime eval VM (feature-gated,
-            // so a build without it raises NotImplementedError
-            // at the call). The VM runs in a top-level-first scope: correct
-            // `self`, but no access to the caller's own locals (a first-class
-            // `binding` is the next increment).
+            // needs no runtime parser, and still sees the surrounding scope's
+            // locals -- prism parses the snippet on its own, so a bare name
+            // arrives as a vcall, and `codegen::call` resolves it back against
+            // the scope (`Ctx::in_eval_splice`). Every other shape -- a
+            // non-literal source expression, or the `binding`/`filename`/
+            // `lineno` argument forms -- falls through to the ordinary
+            // implicit-self `Call` lowering below, which routes `Kernel#eval`
+            // into the runtime eval VM (feature-gated, so a build without it
+            // raises NotImplementedError at the call), carrying a `Binding` of
+            // the calling scope so that path sees the caller's locals too.
             let arg_list: Vec<_> = call
                 .arguments()
                 .map(|a| a.arguments().iter().collect())

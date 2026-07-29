@@ -97,10 +97,6 @@ pub(crate) fn emit_proc_or_lambda_value(
         .filter(|n| cx.captured_locals.contains(*n))
         .collect();
     genuine.sort();
-    let capture_clones = genuine.iter().map(|name| {
-        let ident = safe_ident(name);
-        quote! { let #ident = ::std::sync::Arc::clone(&#ident); }
-    });
     let mut own_only: std::collections::HashSet<String> = block_caps
         .locals
         .iter()
@@ -171,14 +167,37 @@ pub(crate) fn emit_proc_or_lambda_value(
     // `params::emit_prologue`'s `captured_param_wraps`). Without this the inner
     // block would fresh-declare the name and read `nil`.
     let own_params = crate::codegen::captures::own_param_names(params);
-    let nested_captured: std::collections::HashSet<String> =
-        crate::codegen::captures::collect_escaping_captures(
-            cx.compiler,
-            body,
-            params,
-            cx.current_class,
-        )
-        .locals;
+    let mut nested_caps = crate::codegen::captures::collect_escaping_captures(
+        cx.compiler,
+        body,
+        params,
+        cx.current_class,
+    );
+    // A `binding` inside this block exposes the block's OWN names too, so they
+    // need the same cell promotion a nested block's capture would give them --
+    // which is exactly what putting them in `nested_captured` arranges.
+    let block_binding =
+        crate::codegen::captures::binding_scope_names(cx.compiler, body, params, &mut nested_caps, false);
+    let nested_captured: std::collections::HashSet<String> = nested_caps.locals;
+    // ... and it exposes the ENCLOSING scope's locals by name, not by
+    // syntactic reference, so every one of those cells is cloned in -- minus
+    // any the block's own names shadow, which the block answers itself.
+    if let Some(own) = &block_binding {
+        let mut extra: Vec<&String> = cx
+            .binding_names
+            .iter()
+            .flat_map(|names| names.iter())
+            .filter(|n| {
+                cx.captured_locals.contains(*n) && !own.contains(*n) && !genuine.contains(n)
+            })
+            .collect();
+        extra.sort();
+        genuine.extend(extra);
+    }
+    let capture_clones = genuine.iter().map(|name| {
+        let ident = safe_ident(name);
+        quote! { let #ident = ::std::sync::Arc::clone(&#ident); }
+    });
     // A name that is both this block's own local AND captured by a nested
     // block is cell-declared below (`nested_local_decls`) and lives in
     // `proc_cx.captured_locals`; it must therefore leave `own_only`, or the
@@ -229,6 +248,18 @@ pub(crate) fn emit_proc_or_lambda_value(
             .to_mut()
             .extend(nested_captured.iter().cloned());
     }
+    // What a `binding` in this body sees: the block's own names first, then
+    // the enclosing scope's -- CRuby's innermost-scope-first
+    // `local_variables` order.
+    proc_cx.binding_names = block_binding.map(|own| {
+        let mut names = (*own).clone();
+        for n in cx.binding_names.iter().flat_map(|outer| outer.iter()) {
+            if !names.contains(n) {
+                names.push(n.clone());
+            }
+        }
+        std::rc::Rc::new(names)
+    });
     // Cell-wrap this block's own PARAMS that a nested block captures (after the
     // plain param binding reads its value).
     //

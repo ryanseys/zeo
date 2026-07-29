@@ -25,6 +25,7 @@ pub(crate) mod argf;
 pub(crate) mod array;
 pub(crate) mod backtrace_location;
 pub(crate) mod basic_object;
+pub(crate) mod binding;
 pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod condition_variable;

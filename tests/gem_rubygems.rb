@@ -2,15 +2,11 @@
 # requirement matching and platform parsing are what every gemspec and lockfile
 # is written against, and they are pure computation.
 #
-# Entered at those files rather than at `rubygems`, for two reasons that are
-# worth stating rather than hiding:
-#
-#   * `rubygems.rb` reaches `require "bundler"` from a METHOD body. zeo's
-#     require graph is static, so that require is spliced where it is written,
-#     and bundler's `rubygems_ext` then runs before `rubygems/specification`
-#     does -- not the order CRuby loads them in.
-#   * `Gem::Specification` evals its attribute writers through
-#     `eval <<~RUBY, binding, ...`, and `Kernel#binding` is an open gap.
+# Entered at those files rather than at `rubygems`, for a reason worth stating
+# rather than hiding: `rubygems.rb` reaches `require "bundler"` from a METHOD
+# body. zeo's require graph is static, so that require is spliced where it is
+# written, and bundler's `rubygems_ext` then runs before
+# `rubygems/specification` does -- not the order CRuby loads them in.
 #
 # `Gem::Platform.local` is left out for the same reason as the umbrella file:
 # it reads `Gem.target_rbconfig`, which `rubygems.rb` defines.

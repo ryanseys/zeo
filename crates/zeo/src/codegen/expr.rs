@@ -968,6 +968,25 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // matter). Yields the raw RHS verbatim, as real Ruby does.
             super::loops::emit_multi_write_value(cx, targets, *value)
         }
+        // `binding` is intercepted HERE rather than in `emit_call` because it
+        // is the one call whose emission needs its own node: the Binding
+        // carries the call site's file and line as its `source_location`.
+        HirNode::Call {
+            receiver: None,
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe: _,
+        } if name == "binding"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && block.is_none()
+            && block_arg.is_none() =>
+        {
+            super::call::emit_binding(cx, id)
+        }
         HirNode::Call {
             receiver,
             name,
@@ -1120,7 +1139,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { { #b } }
         }
         HirNode::Eval(body) => {
-            let b = super::stmt::emit_body(cx, body, false);
+            let b = super::stmt::emit_body(&cx.in_eval_splice(), body, false);
             quote! { { #b } }
         }
         // A synthesized `attach_function` wrapper body: declare the C

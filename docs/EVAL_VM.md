@@ -1,4 +1,4 @@
-# Runtime `eval` and the `binding` gap
+# Runtime `eval` and `binding`
 
 `zeo` handles `eval("literal string")` at *compile time* (`HirNode::Eval`, wired
 up in `parse/mod.rs`): the recognizer parses the literal, lowers it, and splices
@@ -47,7 +47,7 @@ can't know in advance whether a program evals. Built without the feature, the
 VM's entry point is an honest stub that raises `NotImplementedError` naming
 `--features eval-vm`.
 
-### What the VM does, and the one gap
+### What the VM does
 
 An `eval` runs with a correct `self`: its receiver's ivars, implicit-self calls,
 constants, and globals all resolve. The invoking surface decides where a `def`
@@ -56,16 +56,45 @@ inside the source installs (CRuby's "default definee"): an instance method for
 `eval` (a top-level eval's `self` is the main object, so `def` lands on
 `Object`). Eval'd code can `def` methods, run blocks passed to calls, and
 `yield`/`return` inside an eval-defined method; each such method or block
-re-parses its own captured source per invocation. A local *assigned* inside an
-eval is visible to later statements of the same eval (held in `Env::locals`).
+re-parses its own captured source per invocation.
 
-What the VM does **not** yet reach is the **caller's own local variables**: those
-live as Rust stack slots the interpreter can't touch without codegen
-materializing a `Binding`. A first-class `binding` — the value that exposes a
-compiled call site's own locals to the interpreter — is the next increment, and
-the real prerequisite for bidirectional local sharing. That is why dynamic
-`eval` and `binding` are naturally scoped together: a faithful caller-local
-`eval` is most of the way to `binding` already.
+## `Binding` — the caller's locals, by reference
+
+A `Binding` is the one place an AOT compiler has to give ground. Every other
+Ruby local is a Rust stack slot; a scope that hands its locals to code that
+isn't compiled yet needs them addressable by NAME and shared by REFERENCE. The
+compiler answers exactly that, and only where it's asked
+(`codegen::captures::binding_scope_names`): a scope containing a `binding` call
+— or a dynamic `eval`, or a read of `TOPLEVEL_BINDING` — gives **its own**
+locals the `Arc<Mutex<RubyValue>>` cell storage class that escaping-block
+captures already use, then hands the `(name, cell)` list to
+`zeo_rt::binding_new`. Every other scope in the program is untouched: the
+deoptimization is per-frame and pay-per-use, which is what "a method calling
+`binding` deoptimizes only its own locals" means in practice.
+
+Because the cells are shared rather than snapshotted, mutation flows both ways —
+`b.local_variable_set(:x, 5)` is visible to the compiled scope, and a later
+`x = 6` there is visible through `b`. A Binding also carries its `self`, its box,
+and its lexical class (CRuby's cref), which is what makes `binding.eval("K")`
+inside `module M` find `M::K` and a `def` inside it install where CRuby's does.
+The scope object is two-tiered exactly as CRuby's environment is: `dup` copies
+the Binding but not the environment (a write through the copy reaches the
+original's locals), while a local ADDED to the copy stays on the copy.
+
+That makes `eval` faithful in both directions. A receiver-less `eval(src)`
+compiles into a Binding of the calling frame, so the source reads and writes the
+caller's own locals; new locals it introduces live in a child layer and die with
+the call, as CRuby's do. `Binding#eval` and `eval(src, b)` run in the Binding
+itself, where new locals persist. The AOT literal-splice path resolves a bare
+name in the snippet back to the enclosing scope's local the same way
+(`Ctx::in_eval_splice`), so `x = 1; eval("x + 1")` needs no runtime parser at
+all and still answers `2`.
+
+**Bounds.** A `binding` inside an inline-spliced iterator block sees that
+block's own parameters only when the enclosing scope is already a binding scope
+(the spliced param is otherwise a plain per-iteration `let`); `Proc#binding`
+isn't implemented; and a `send(:eval, str)` still hides the eval site from
+`uses_runtime_eval`, so its binary may not link the VM at all.
 
 ## Runtime metaprogramming without a parser
 

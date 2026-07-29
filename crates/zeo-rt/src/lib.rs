@@ -51,6 +51,7 @@ mod value;
 pub use arith::*;
 pub use bootstrap::{install_core_constants, register_builtins};
 pub use builtins::BuiltinMethodFn;
+pub use builtins::binding::{LocalCell, RBinding, binding_new};
 pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, complex_new};
 pub use builtins::enumerable::each_values;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
@@ -98,7 +99,7 @@ pub use dispatch::{
     send_value_public_in, send_value_vcall_in, stamp_backtrace, validate_aliases, validate_class_aliases, value_class,
 };
 pub use encoding::{EncodingId, StrBuf};
-pub use eval_vm::{eval_string, eval_value};
+pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use flipflop::{flip_flop_on, flip_flop_set};
 pub use lastmatch::{

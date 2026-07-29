@@ -1,0 +1,28 @@
+-- identity --
+Binding
+false
+true
+true
+true
+true
+6
+-- the frame's own locals --
+[:x, :b, :e, :later]
+100
+true
+false
+-- writes flow both ways --
+5
+7
+42
+43
+-- a name the frame has no slot for is the Binding's own --
+7
+[:evaled, :added, :x, :b, :e, :later]
+nil
+-- errors --
+[NameError, "local variable 'nope' is not defined for #<Binding:0xADDR>"]
+[TypeError, "1 is not a symbol nor a string"]
+[NoMethodError, "undefined method 'new' for class Binding"]
+-- declared after the capture --
+9

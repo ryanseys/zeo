@@ -12,8 +12,7 @@
 //! would shadow the post-walk numeric `<=>` today.
 
 use crate::builtins::{
-    arg_error, arity, block_or_enum, local_jump_error, need_block, not_impl_error,
-    type_error,
+    arg_error, arity, block_or_enum, local_jump_error, need_block, type_error,
 };
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
@@ -187,17 +186,35 @@ ruby_module! {
     // `self` is the CALLER's own, since this universal Kernel row is reached
     // through the receiver's MRO walk -- so `eval("@x")` at the top level reads
     // the main object's ivar, and the same call inside a method reads that
-    // receiver's. The binding/filename/lineno arguments are the next
-    // increment: an explicit non-nil binding is a clean NotImplementedError,
-    // filename/lineno are accepted and ignored.
+    // receiver's. An explicit `Binding` argument instead runs the source in
+    // THAT captured scope (its locals, its `self`, its cref); `nil` means the
+    // current context, as in CRuby. The filename/lineno arguments set what
+    // `__FILE__`/`__LINE__` report inside the source.
     def "eval"(recv, args, _block) {
         arity!(args, 1..=4);
-        if let Some(binding) = args.get(1) {
-            if !binding.is_nil() {
-                return Err(not_impl_error!("eval with an explicit binding is not supported yet"));
+        let file = match args.get(2) {
+            Some(v) if !v.is_nil() => {
+                Some(crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned())
+            }
+            _ => None,
+        };
+        let line = match args.get(3) {
+            Some(v) if !v.is_nil() => Some(crate::builtins::convert::to_index(v)? as u32),
+            _ => None,
+        };
+        match args.get(1) {
+            None | Some(RubyValue::Nil) => crate::eval_value(args[0].clone(), recv.clone(), 0),
+            Some(b) => {
+                let Some(b) = crate::builtins::binding::as_binding(b) else {
+                    return Err(type_error!(
+                        "wrong argument type {} (expected binding)",
+                        crate::dispatch::class_name(b.class_id())
+                            .unwrap_or_else(|| "Object".to_string())
+                    ));
+                };
+                crate::eval_vm::eval_with_binding(&args[0], b, file, line)
             }
         }
-        crate::eval_value(args[0].clone(), recv.clone(), 0)
     }
     // `catch(tag = new object) { |tag| ... }` / `throw(tag[, value])` /
     // `sleep(secs)` -- universal Kernel methods. The static codegen fast path

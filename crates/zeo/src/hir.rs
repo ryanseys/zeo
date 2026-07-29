@@ -440,13 +440,11 @@ impl Hir {
     /// output.
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
-            HirNode::Call {
-                name,
-                receiver,
-                args,
-                ..
-            } => match name.as_str() {
-                "eval" => receiver.is_none(),
+            HirNode::Call { name, args, .. } => match name.as_str() {
+                // Any `eval`, receiver or not: `Binding#eval` runs its source
+                // through the same VM, and a Binding is an ordinary value a
+                // call site can hold in anything.
+                "eval" => true,
                 "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
                 _ => false,
             },

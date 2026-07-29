@@ -31,6 +31,71 @@ use crate::hir::{ArrayElem, HirNode, KwArg, NodeId, Visibility};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
+/// An inline-spliced block (`n.times { |i| ... }` and friends) inside a
+/// `binding` scope. Such a block shares the enclosing Rust scope, so its own
+/// parameter and block-local names are ordinary per-iteration `let`s that no
+/// Binding could share -- unless they join `nested_captured`, which is the set
+/// the splice sites already cell-wrap for a nested escaping block's sake.
+/// Answers the name list a `binding` inside the spliced body emits: this
+/// block's own names first, then the enclosing scope's, minus any it shadows.
+/// `None` (and no promotion) outside a `binding` scope.
+fn inline_block_binding_names(
+    cx: &Ctx,
+    params: &crate::hir::Params,
+    nested_captured: &mut std::collections::HashSet<String>,
+) -> Option<std::rc::Rc<Vec<String>>> {
+    let outer = cx.binding_names.as_ref()?;
+    let own: Vec<String> = params
+        .required
+        .iter()
+        .chain(&params.block_locals)
+        .cloned()
+        .collect();
+    nested_captured.extend(own.iter().cloned());
+    let mut names = own.clone();
+    names.extend(outer.iter().filter(|n| !own.contains(n)).cloned());
+    Some(std::rc::Rc::new(names))
+}
+
+/// `Kernel#binding` -- this scope, as a value. `Ctx::binding_names` holds the
+/// names (in `local_variables` order), each of which
+/// `captures::binding_scope_names` already promoted to cell storage, so the
+/// call site just clones the `Arc`s into the runtime object; the compiled code
+/// keeps reading and writing the very same cells.
+///
+/// A name whose storage ISN'T a cell at this exact position is skipped: an
+/// inline-spliced block's own parameter (`x = 1; 3.times { |x| binding }`)
+/// shadows the enclosing cell with a plain per-iteration `let`, and it is the
+/// shadow that is in scope here. Such a block's own parameters are absent from
+/// the Binding rather than wrongly bound -- see `docs/COMPATIBILITY.md`.
+pub(crate) fn emit_binding(cx: &Ctx, id: NodeId) -> TokenStream {
+    let (file, line) =
+        super::source_location(cx.compiler, id).unwrap_or_else(|| ("(eval)".to_string(), 0));
+    emit_binding_value(cx, &file, line)
+}
+
+/// [`emit_binding`] with the source location supplied -- `TOPLEVEL_BINDING`,
+/// whose `source_location` CRuby reports as `["<main>", 0]`.
+pub(crate) fn emit_binding_value(cx: &Ctx, file: &str, line: u32) -> TokenStream {
+    let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
+    let box_id = cx.box_id;
+    // `u32::MAX`, not `0`: `ClassId(0)` is `Object`, a cref a top-level
+    // binding must not claim (see `zeo_rt::binding_new`).
+    let cref = cx.defining_class.map_or(u32::MAX, |c| c.0);
+    let entries = cx
+        .binding_names
+        .iter()
+        .flat_map(|names| names.iter())
+        .filter(|n| super::hoisting::local_storage(cx, n) == super::hoisting::LocalStorage::Captured)
+        .map(|n| {
+            let ident = safe_ident(n);
+            quote! { (#n, ::std::sync::Arc::clone(&#ident)) }
+        });
+    quote! {
+        zeo_rt::binding_new(#recv, vec![#(#entries),*], #file, #line, #box_id, #cref)
+    }
+}
+
 // Re-exports so every pre-existing `crate::codegen::call::<name>` path used
 // by sibling `codegen` modules keeps resolving after this file split --
 // each name still lives at its original address as far as any caller
@@ -157,10 +222,12 @@ fn emit_counted_block_splice(
     // `emit_proc_or_lambda_value`'s `nested_param_wraps`. Without
     // this, the nested block would fresh-declare the name and read
     // `nil`.
-    let nested_captured: std::collections::HashSet<String> =
+    let mut nested_captured: std::collections::HashSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
+    let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    loop_cx.binding_names = splice_binding;
     // This block's OWN param/block-local names shadow a same-named OUTER
     // captured local (`rescue => e` cell-hoisted in the enclosing scope,
     // then `arr.each { |e| ... }` spliced here): the spliced binding is a
@@ -324,10 +391,12 @@ fn emit_array_iter_splice(
     let with_index = mode == ArrayIterMode::Each { with_index: true };
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
-    let nested_captured: std::collections::HashSet<String> =
+    let mut nested_captured: std::collections::HashSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
+    let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    loop_cx.binding_names = splice_binding;
     loop_cx.next_yields_value = !matches!(mode, ArrayIterMode::Each { .. });
     // This block's OWN param/block-local names shadow a same-named OUTER
     // captured local (`rescue => e` cell-hoisted in the enclosing scope,
@@ -509,10 +578,12 @@ fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenS
     };
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
-    let nested_captured: std::collections::HashSet<String> =
+    let mut nested_captured: std::collections::HashSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
+    let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    loop_cx.binding_names = splice_binding;
     // This block's OWN param/block-local names shadow a same-named OUTER
     // captured local (`rescue => e` cell-hoisted in the enclosing scope,
     // then `arr.each { |e| ... }` spliced here): the spliced binding is a
@@ -1008,13 +1079,36 @@ pub fn emit_call(
         .collect();
     let args = &args[..];
 
+    // A bare name inside an AOT-spliced `eval("literal")` that IS one of the
+    // enclosing scope's locals. prism parsed the snippet on its own, so it
+    // could only hand the name over as a vcall; Ruby resolves it as the local,
+    // whose declaration the hoisting prelude has already emitted. Restricted
+    // to the splice: outside one, a name prism called a vcall genuinely isn't
+    // a local, because it would have parsed as a read if it were.
+    if cx.in_eval_splice
+        && is_vcall
+        && receiver.is_none()
+        && args.is_empty()
+        && kwargs.is_empty()
+        && block.is_none()
+        && block_arg.is_none()
+        && cx
+            .binding_names
+            .iter()
+            .flat_map(|names| names.iter())
+            .any(|n| n == name)
+    {
+        return super::hoisting::emit_local_read(cx, name);
+    }
+
     // `binding.local_variable_get(:name)` -- with a literal symbol naming an
     // in-scope local, this is the one Binding operation with a fully STATIC
-    // answer (the value of that local), so it lowers to a direct read. It is
-    // also the only way to read a reserved-word parameter (`def f(then:)` ->
+    // answer (the value of that local), so it lowers to a direct read,
+    // materializing no Binding and deoptimizing no scope. It is also the only
+    // way to read a reserved-word parameter (`def f(then:)` ->
     // `binding.local_variable_get(:then)`). The receiver must be a bare
     // `binding` call; a stored Binding (`b = binding; b.local_variable_get`)
-    // is out of scope (it would need a captured-scope object).
+    // goes through the real object.
     if name == "local_variable_get" && args.len() == 1 {
         if let Some(rid) = receiver {
             if let HirNode::Call {
@@ -1036,28 +1130,35 @@ pub fn emit_call(
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
-        // Receiver-less `eval(src)` with a single positional argument (not the
-        // `binding`/`filename`/`lineno` forms, no block): route straight to the
-        // runtime eval VM in the CURRENT box dimension. `cx.box_id` is 0 at top
-        // level (an ordinary `Kernel#eval`) and the box's id inside a `BoxScope`
-        // (a `box.eval(dynamic_source)`), so this one path serves both -- and
-        // threading `box_id` here is what fixes dynamic `Kernel#eval` inside a
-        // box, not just `box.eval`. The single string-LITERAL form never reaches
-        // here: it lowered to `HirNode::Eval` (an AOT inline splice) at lower
-        // time. Like that literal path, this treats `eval` as `Kernel#eval`
-        // rather than resolving a user-defined override.
+        // Receiver-less `eval(src[, binding[, file[, line]]])`: route straight
+        // to the runtime eval VM, carrying THIS scope -- CRuby evaluates a bare
+        // `eval` (or one given a `nil` binding) in the caller's own frame, so
+        // the call site materializes a Binding of itself and hands it over,
+        // which is what lets the source read and write the caller's locals. An
+        // explicit binding argument wins over it. `emit_binding_value` carries
+        // `cx.box_id` too, 0 at top level (an ordinary `Kernel#eval`) and the
+        // box's id inside a `BoxScope` (`box.eval(dynamic_source)`), so this one
+        // path serves both. The single string-LITERAL form never reaches here:
+        // it lowered to `HirNode::Eval` (an AOT inline splice) at lower time.
+        // Like that literal path, this treats `eval` as `Kernel#eval` rather
+        // than resolving a user-defined override.
         if name == "eval"
-            && args.len() == 1
+            && (1..=4).contains(&args.len())
             && kwargs.is_empty()
             && block.is_none()
             && block_arg.is_none()
         {
-            let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
-            let src = {
-                let e = emit_expr(cx, args[0]);
-                box_if_object_typed(cx, args[0], e)
-            };
-            return quote! { zeo_rt::eval_value(#src, #recv, #__bx)? };
+            let scope = emit_binding_value(cx, "(eval)", 0);
+            let mut arg_exprs = args.iter().map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            });
+            let src = arg_exprs.next().expect("at least one argument");
+            let rest: Vec<TokenStream> = arg_exprs
+                .chain(std::iter::repeat_with(|| quote! { zeo_rt::RubyValue::Nil }))
+                .take(3)
+                .collect();
+            return quote! { zeo_rt::eval_value_in_scope(#src, #scope, #(#rest),*)? };
         }
         // `public_send` on the IMPLICIT self still enforces visibility: real
         // Ruby checks the RESOLVED method entry's visibility with a

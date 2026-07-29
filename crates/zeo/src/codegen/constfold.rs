@@ -173,6 +173,8 @@ mod tests {
                 next_yields_value: false,
                 for_var_override: None,
                 captured_locals: Cow::Borrowed(&self.empty_captures),
+                binding_names: None,
+                in_eval_splice: false,
                 self_ident: self.self_ident.clone(),
                 in_real_proc: false,
                 self_is_dynamic: false,
