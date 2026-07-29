@@ -393,12 +393,14 @@ Divergences:
 - **`Certificate#subject`/`#issuer` answer a String** (OpenSSL's
   one-line DN), where CRuby answers an `X509::Name` whose `to_s` is that
   string.
-- **`post_connection_check` verifies presence, not the name again**:
-  hostname checking already happened inside the handshake (libssl's X509
-  verify param), so what remains is the no-certificate case.
 - Session resumption (`SSLSocket#session`), ALPN, client certificates
   and the verify/session callbacks are not implemented;
   `session_cache_mode` is carried but inert.
+
+`post_connection_check` is NOT a divergence: it runs the same RFC 6125
+identity check upstream's `verify_certificate_identity` does (SAN
+dNSName/iPAddress deciding when present, CN only in their absence,
+left-most-label wildcards), independent of the connection's verify mode.
 
 ## Satisfied faithfully (zeo-bundled gems)
 

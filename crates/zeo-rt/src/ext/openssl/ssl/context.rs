@@ -82,6 +82,18 @@ fn path_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
 ruby_class! {
     SSLContext = zeo_abi::OPENSSL_SSL_CONTEXT_CLASS < zeo_abi::OBJECT_CLASS;
 
+    // `SSL_SESS_CACHE_*`, as `session_cache_mode=` takes them. libssl owns
+    // the caching itself; these exist because callers OR them together
+    // (net/http asks for CLIENT | NO_INTERNAL_STORE before connecting).
+    const SESSION_CACHE_OFF = RubyValue::Int(0);
+    const SESSION_CACHE_CLIENT = RubyValue::Int(1);
+    const SESSION_CACHE_SERVER = RubyValue::Int(2);
+    const SESSION_CACHE_BOTH = RubyValue::Int(3);
+    const SESSION_CACHE_NO_AUTO_CLEAR = RubyValue::Int(128);
+    const SESSION_CACHE_NO_INTERNAL_LOOKUP = RubyValue::Int(256);
+    const SESSION_CACHE_NO_INTERNAL_STORE = RubyValue::Int(512);
+    const SESSION_CACHE_NO_INTERNAL = RubyValue::Int(768);
+
     // The optional argument is CRuby's protocol-version shorthand
     // (`SSLContext.new(:TLSv1_2)`), accepted and left to min/max_version.
     def self."new" arity -1 (_recv, args, _block) {

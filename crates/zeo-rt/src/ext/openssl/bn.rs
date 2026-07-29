@@ -432,12 +432,25 @@ ruby_class! {
         Ok(RubyValue::Bool(bn_of(recv).n.lock().is_negative()))
     }
 
-    def "==" | "eql?" (recv, args, _block) {
+    // `==` coerces an Integer right-hand side; `eql?` does NOT -- CRuby's
+    // ossl_bn_eql demands a real BN, so `BN.new(255).eql?(255)` is false
+    // where `== 255` is true.
+    def "==" (recv, args, _block) {
         arity!(args, 1);
         let Ok(b) = arg_bn(&args[0]) else {
             return Ok(RubyValue::Bool(false));
         };
         Ok(RubyValue::Bool(self_bn(recv) == b))
+    }
+    def "eql?" (recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Object(o) = &args[0] else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let Some(other) = o.as_any().downcast_ref::<RBn>() else {
+            return Ok(RubyValue::Bool(false));
+        };
+        Ok(RubyValue::Bool(self_bn(recv) == copy(&other.n.lock())))
     }
     def "<=>" | "cmp" (recv, args, _block) {
         arity!(args, 1);

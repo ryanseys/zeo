@@ -405,12 +405,15 @@ ruby_class! {
         arity!(args, 0);
         let c = cipher_of(recv);
         let mut st = c.st.lock();
-        let aead_decrypt = st.aead && st.dir == Some(false);
+        // Any AEAD final failure is a tag-verification failure, which is
+        // what CRuby's `ossl_cipher_final` reports for the whole AEAD
+        // family rather than only for the decrypt direction.
+        let aead = st.aead;
         let ctx = ready(&mut st)?;
         let mut out = Vec::new();
         match ctx.cipher_final_vec(&mut out) {
             Ok(_) => Ok(bin_str(out)),
-            Err(_) if aead_decrypt => Err(raise_error(
+            Err(_) if aead => Err(raise_error(
                 "OpenSSL::Cipher::AuthTagError",
                 "AEAD authentication tag verification failed".to_string(),
             )),

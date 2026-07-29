@@ -110,6 +110,14 @@ fn read_some(recv: &RubyValue, len: usize) -> Result<Vec<u8>, Signal> {
     Ok(buf)
 }
 
+/// Relay a call to the underlying socket -- upstream's `SocketForwarder`,
+/// which delegates the whole descriptor-level family to `to_io` because a
+/// TLS session has nothing of its own to say about any of it.
+fn forward(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let io = sock_of(recv).st.lock().io.clone();
+    crate::dispatch::send_value_in(0, &io, crate::Symbol::intern(name), args, None)
+}
+
 fn write_all(recv: &RubyValue, data: &[u8]) -> Result<(), Signal> {
     let mut st = sock_of(recv).st.lock();
     let stream = established(&mut st)?;
@@ -181,6 +189,65 @@ ruby_class! {
     def "io" | "to_io" (recv, args, _block) {
         arity!(args, 0);
         Ok(sock_of(recv).st.lock().io.clone())
+    }
+
+    // The SocketForwarder family: descriptor-level questions belong to the
+    // socket underneath, not to the TLS session.
+    def "closed?" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "closed?", args)
+    }
+    def "fileno" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "fileno", args)
+    }
+    def "addr" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "addr", args)
+    }
+    def "peeraddr" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "peeraddr", args)
+    }
+    def "local_address" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "local_address", args)
+    }
+    def "remote_address" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "remote_address", args)
+    }
+    def "setsockopt" (recv, args, _block) {
+        arity!(args, 3);
+        forward(recv, "setsockopt", args)
+    }
+    def "getsockopt" (recv, args, _block) {
+        arity!(args, 2);
+        forward(recv, "getsockopt", args)
+    }
+    def "fcntl" arity -1 (recv, args, _block) {
+        forward(recv, "fcntl", args)
+    }
+    def "close_on_exec=" (recv, args, _block) {
+        arity!(args, 1);
+        forward(recv, "close_on_exec=", args)
+    }
+    def "close_on_exec?" (recv, args, _block) {
+        arity!(args, 0);
+        forward(recv, "close_on_exec?", args)
+    }
+    def "do_not_reverse_lookup=" (recv, args, _block) {
+        arity!(args, 1);
+        forward(recv, "do_not_reverse_lookup=", args)
+    }
+    def "wait" arity -1 (recv, args, _block) {
+        forward(recv, "wait", args)
+    }
+    def "wait_readable" arity -1 (recv, args, _block) {
+        forward(recv, "wait_readable", args)
+    }
+    def "wait_writable" arity -1 (recv, args, _block) {
+        forward(recv, "wait_writable", args)
     }
     def "context" (recv, args, _block) {
         arity!(args, 0);
@@ -325,7 +392,9 @@ ruby_class! {
     def "cipher" (recv, args, _block) {
         arity!(args, 0);
         let mut st = sock_of(recv).st.lock();
-        let stream = established(&mut st)?;
+        let Some(stream) = st.stream.as_mut() else {
+            return Ok(RubyValue::Nil);
+        };
         let Some(c) = stream.ssl().current_cipher() else {
             return Ok(RubyValue::Nil);
         };
@@ -337,10 +406,15 @@ ruby_class! {
             RubyValue::Int(bits.algorithm as i64),
         ])))
     }
+    // Answers nil rather than raising when no session is up -- CRuby's
+    // `ossl_ssl_get_peer_cert` reports "no certificate" for both the
+    // never-connected and the anonymous-suite cases.
     def "peer_cert" (recv, args, _block) {
         arity!(args, 0);
         let mut st = sock_of(recv).st.lock();
-        let stream = established(&mut st)?;
+        let Some(stream) = st.stream.as_mut() else {
+            return Ok(RubyValue::Nil);
+        };
         Ok(match stream.ssl().peer_certificate() {
             Some(cert) => super::cert::new_cert(&cert),
             None => RubyValue::Nil,
@@ -352,17 +426,24 @@ ruby_class! {
         let stream = established(&mut st)?;
         Ok(RubyValue::Int(i64::from(stream.ssl().verify_result().as_raw())))
     }
-    // The check CRuby runs after the handshake. Verification itself already
-    // happened during it (libssl's X509 verify param carries the hostname),
-    // so what is left is the no-certificate case.
+    // RFC 6125 hostname verification, run AFTER the handshake and
+    // independent of it -- upstream's `post_connection_check` checks the
+    // identity itself rather than trusting the connection's verify mode,
+    // which is what makes it meaningful under VERIFY_NONE.
     def "post_connection_check" (recv, args, _block) {
         arity!(args, 1);
+        let hostname = convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
         let mut st = sock_of(recv).st.lock();
-        let stream = established(&mut st)?;
-        if stream.ssl().peer_certificate().is_none() {
+        let peer = st.stream.as_mut().and_then(|s| s.ssl().peer_certificate());
+        let Some(cert) = peer else {
             return Err(ssl_error(
                 "Peer verification enabled, but no certificate received.".to_string(),
             ));
+        };
+        if !super::cert::verify_certificate_identity(&cert, &hostname) {
+            return Err(ssl_error(format!(
+                "hostname \"{hostname}\" does not match the server certificate"
+            )));
         }
         Ok(RubyValue::Bool(true))
     }

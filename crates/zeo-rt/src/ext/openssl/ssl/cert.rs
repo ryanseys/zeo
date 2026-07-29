@@ -66,6 +66,96 @@ fn one_line(name: &openssl::x509::X509NameRef) -> String {
         .collect()
 }
 
+/// RFC 6125 §6.4.3 wildcard matching of ONE label, transcribed from
+/// upstream `ssl.rb`'s `verify_wildcard`: at most one `*`, never inside an
+/// A-label, and the literal parts must leave at least one character for the
+/// wildcard to stand in for.
+fn wildcard_label_matches(host_label: &str, san_label: &str) -> bool {
+    let parts: Vec<&str> = san_label.split('*').collect();
+    if parts.len() > 2 {
+        return false;
+    }
+    if parts.len() == 1 {
+        return san_label == host_label;
+    }
+    if host_label.starts_with("xn--") && san_label != "*" {
+        return false;
+    }
+    parts[0].len() + parts[1].len() < host_label.len()
+        && host_label.starts_with(parts[0])
+        && host_label.ends_with(parts[1])
+}
+
+/// One presented identifier against the reference hostname -- upstream's
+/// `verify_hostname`: ASCII only, case-insensitive, and a wildcard only in
+/// the left-most label of an equally-long name.
+fn hostname_matches(hostname: &str, san: &str) -> bool {
+    if !san.is_ascii() || !hostname.is_ascii() {
+        return false;
+    }
+    let san_lower = san.to_lowercase();
+    let host_lower = hostname.to_lowercase();
+    let san_parts: Vec<&str> = san_lower.split('.').collect();
+    if san_parts.len() < 2 {
+        return san == hostname;
+    }
+    let host_parts: Vec<&str> = host_lower.split('.').collect();
+    if san_parts.len() != host_parts.len() {
+        return false;
+    }
+    if !wildcard_label_matches(host_parts[0], san_parts[0]) {
+        return false;
+    }
+    san_parts[1..] == host_parts[1..]
+}
+
+/// `OpenSSL::SSL.verify_certificate_identity`: subjectAltName dNSName and
+/// iPAddress entries decide when present, and only their ABSENCE falls back
+/// to the subject's CN -- upstream's `should_verify_common_name` rule.
+pub(crate) fn verify_certificate_identity(cert: &openssl::x509::X509Ref, hostname: &str) -> bool {
+    let mut should_verify_common_name = true;
+    if let Some(names) = cert.subject_alt_names() {
+        for name in names {
+            if let Some(dns) = name.dnsname() {
+                should_verify_common_name = false;
+                if hostname_matches(hostname, dns) {
+                    return true;
+                }
+            } else if let Some(ip) = name.ipaddress() {
+                should_verify_common_name = false;
+                if hostname
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|parsed| ip_octets(&parsed) == ip)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    if should_verify_common_name {
+        for entry in cert.subject_name().entries() {
+            if entry.object().nid() != openssl::nid::Nid::COMMONNAME {
+                continue;
+            }
+            if let Ok(cn) = entry.data().to_string() {
+                if hostname_matches(hostname, &cn) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// An address in its network byte order (`IPAddr#hton`), which is what a
+/// certificate's iPAddress entry carries.
+fn ip_octets(addr: &std::net::IpAddr) -> Vec<u8> {
+    match addr {
+        std::net::IpAddr::V4(v4) => v4.octets().to_vec(),
+        std::net::IpAddr::V6(v6) => v6.octets().to_vec(),
+    }
+}
+
 pub(crate) fn new_cert(cert: &openssl::x509::X509Ref) -> RubyValue {
     RubyValue::Object(Arc::new(RCert {
         der: cert.to_der().unwrap_or_default(),
