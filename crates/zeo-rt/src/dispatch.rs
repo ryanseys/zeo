@@ -2958,21 +2958,28 @@ pub fn stamp_backtrace(exc: RubyValue) -> RubyValue {
 }
 
 /// Coerce a `raise <value>` operand to the exception value to raise:
-/// an Exception object raises itself, a String becomes a `RuntimeError` with
-/// that message, and anything else is CRuby's `TypeError: exception
-/// class/object expected` -- instead of panicking when the raise machinery
-/// later unwraps a non-Object. `Exception`'s id is fixed (`zeo-abi`), so
-/// codegen need not bake it in.
-pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
+/// an Exception object raises itself, an Exception CLASS raises a fresh
+/// instance of itself, a String becomes a `RuntimeError` with that message,
+/// and anything else is CRuby's `TypeError: exception class/object expected`
+/// -- instead of panicking when the raise machinery later unwraps a
+/// non-Object. `Exception`'s id is fixed (`zeo-abi`), so codegen need not
+/// bake it in.
+pub fn coerce_raise_arg(value: RubyValue) -> Result<RubyValue, Signal> {
     let build = |class_name: &str, msg: String| match REGISTRY.get() {
         Some(reg) => reg.construct_exception(class_name, msg),
         None => panic!("{class_name}: {msg}"),
     };
-    match &value {
+    Ok(match &value {
         RubyValue::Object(o) if is_a(o.class_id(), zeo_abi::EXCEPTION_CLASS) => value,
+        // A class reached through a VALUE -- a local, an element of a table of
+        // error classes -- rather than a literal name, which codegen builds
+        // directly. `#exception` runs any custom `initialize`.
+        RubyValue::Class(cid) if is_a(*cid, zeo_abi::EXCEPTION_CLASS) => {
+            send_value(&value, Symbol::intern("exception"), &[], None)?
+        }
         RubyValue::Str(s) => build("RuntimeError", s.lock().to_utf8_lossy().into_owned()),
         _ => build("TypeError", "exception class/object expected".to_string()),
-    }
+    })
 }
 
 /// `raise <class-or-exception>, message` with a RUNTIME-computed first operand

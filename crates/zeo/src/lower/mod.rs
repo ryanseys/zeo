@@ -1303,6 +1303,60 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(call) = node.as_call_node() {
         let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
 
+        /// Kernel's module functions that zeo answers with a COMPILE-TIME form
+        /// rather than a runtime method row, so `Kernel.<name>` has to be
+        /// recognized here to reach the same form. The list is
+        /// `Kernel.singleton_methods(false) - Module.instance_methods` (which
+        /// is what keeps Module's own `Kernel.name`/`Kernel.inspect` out),
+        /// narrowed to the ones with no row.
+        const KERNEL_FOLDED_FUNCTIONS: &[&str] = &[
+            "__callee__",
+            "__dir__",
+            "__method__",
+            "abort",
+            "at_exit",
+            "binding",
+            "block_given?",
+            "exec",
+            "exit",
+            "exit!",
+            "fork",
+            "gets",
+            "global_variables",
+            "iterator?",
+            "lambda",
+            "local_variables",
+            "printf",
+            "rand",
+            "readline",
+            "readlines",
+            "select",
+            "set_trace_func",
+            "srand",
+            "syscall",
+            "test",
+            "trace_var",
+            "untrace_var",
+        ];
+
+        // `Kernel.foo(...)` -- an explicit module receiver in front of one of
+        // Kernel's MODULE FUNCTIONS. Ruby defines each of them twice, as a
+        // private instance method and as a singleton method on the module, and
+        // both copies read the CALLER's frame: `Kernel.block_given?` and
+        // `Kernel.binding` ask about the enclosing method exactly as the bare
+        // spellings do. So the receiver carries no information, and dropping it
+        // here lets one lowering -- and one codegen form -- serve both
+        // spellings. Only the names zeo answers with a compile-time form are
+        // listed; the rest already reach Kernel's own runtime row through
+        // ordinary dispatch, which is the more faithful route anyway (there,
+        // a user `def puts` cannot shadow `Kernel.puts`).
+        let receiver = call.receiver().filter(|r| {
+            !(KERNEL_FOLDED_FUNCTIONS.contains(&name.as_str())
+                && r.as_constant_read_node().is_some_and(|c| {
+                    String::from_utf8_lossy(c.name().as_slice()) == "Kernel"
+                }))
+        });
+
         // `ClassName.new(args)` -- a distinct node; see hir.rs. The
         // concurrency builtins (`Fiber.new { }`, `Thread.new { }`,
         // `Mutex.new`, `Queue.new`) are deliberately NOT this shape:
@@ -1450,7 +1504,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // zeo has no runtime "define a method on any class from
         // arbitrary code" path, only the two forms zeo itself supports
         // plus the literal-and-desugared one.
-        if name == "define_method" && call.receiver().is_none() {
+        if name == "define_method" && receiver.is_none() {
             if let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
                 let arg_list: Vec<_> = args.arguments().iter().collect();
                 if arg_list.len() == 1 {
@@ -1540,8 +1594,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     arg_list.len(),
                     arg_list.first().and_then(|a| a.as_symbol_node()),
                 ) {
-                    let recv = call.receiver();
-                    let target = match &recv {
+                    let target = match &receiver {
                         None => Some(None),
                         Some(r) if r.as_self_node().is_some() => Some(None),
                         // A constant receiver reopens that named class -- but
@@ -1607,7 +1660,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `Kernel#loop` never yields anyway) falls through to the generic
         // `Call` case and is handled as an ordinary (currently unsupported)
         // implicit-self call.
-        if name == "loop" && call.receiver().is_none() {
+        if name == "loop" && receiver.is_none() {
             let no_args = call
                 .arguments()
                 .is_none_or(|a| a.arguments().iter().next().is_none());
@@ -1661,7 +1714,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // (`self.block_given?`) is the same query about the current method's
         // block, so it desugars identically. `iterator?` is CRuby's (deprecated)
         // alias for `block_given?` and folds the same way.
-        let bg_self_or_none = match call.receiver() {
+        let bg_self_or_none = match &receiver {
             None => true,
             Some(r) => r.as_self_node().is_some(),
         };
@@ -1684,13 +1737,44 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // every required file's statements share one `Program` and the
         // authorship is gone. That would be silently wrong for a `__dir__`
         // inside a required file, which is the main reason to write one.
-        if name == "__dir__" && call.receiver().is_none() {
+        if name == "__dir__" && receiver.is_none() {
             let no_args = call
                 .arguments()
                 .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args && call.block().is_none() {
                 let dir = current_dir_str()?;
                 return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(dir)])));
+            }
+        }
+
+        // `local_variables` -- the names in scope where the call is written.
+        // A Binding of this scope already carries exactly those, in exactly
+        // that order, so this desugars to `binding.local_variables` and
+        // inherits the whole Binding machinery, the analysis that promotes
+        // those locals to shared cells included.
+        if name == "local_variables" && receiver.is_none() && call.block().is_none() {
+            let no_args = call
+                .arguments()
+                .is_none_or(|a| a.arguments().iter().next().is_none());
+            if no_args {
+                let binding = hir.push(HirNode::Call {
+                    receiver: None,
+                    name: "binding".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                });
+                return Ok(hir.push(HirNode::Call {
+                    receiver: Some(binding),
+                    name: "local_variables".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
             }
         }
 
@@ -1702,7 +1786,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // receiver, arguments, or a forwarded `&block`) falls through to an
         // ordinary `Call`, a clean rejection at codegen if `lambda` itself
         // isn't otherwise defined (matching `loop`'s identical posture).
-        if name == "lambda" && call.receiver().is_none() {
+        if name == "lambda" && receiver.is_none() {
             let no_args = call
                 .arguments()
                 .is_none_or(|a| a.arguments().iter().next().is_none());
@@ -1735,7 +1819,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             call.arguments()
                 .is_some_and(|a| a.arguments().iter().any(|n| n.as_splat_node().is_some()))
         };
-        if (name == "raise" || name == "fail") && call.receiver().is_none() && !raise_has_splat() {
+        if (name == "raise" || name == "fail") && receiver.is_none() && !raise_has_splat() {
             let arg_list: Vec<_> = call
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
@@ -1804,7 +1888,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // if and when it executes. That is what makes the optional-dependency
         // idiom (`begin; require "x"; rescue LoadError`) behave at runtime
         // exactly as in CRuby, rather than a compile error.
-        if call.receiver().is_none()
+        if receiver.is_none()
             && matches!(name.as_str(), "require" | "require_relative" | "load")
         {
             // A non-top-level `require`/`require_relative` of a LITERAL feature
@@ -1861,7 +1945,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // errors on a dynamic path/symbol, exactly like a non-top-level
         // `require`), so a genuinely dynamic autoload is a clean rejection
         // rather than a silently-undefined constant.
-        if name == "autoload" && call.receiver().is_none() {
+        if name == "autoload" && receiver.is_none() {
             autoload_feature(&call)?;
             return Ok(hir.push(HirNode::NilLit));
         }
@@ -1872,8 +1956,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `.current`/`.root`/`.main`/`.enabled?` have no compile-time
         // meaning in this AOT model, and an unassigned/nested `.new` would
         // allocate a box nothing could ever reference.
-        if let Some(recv) = call.receiver() {
-            if constant_path_name(&recv).is_ok_and(|n| n == "Ruby::Box") {
+        if let Some(recv) = &receiver {
+            if constant_path_name(recv).is_ok_and(|n| n == "Ruby::Box") {
                 return Err(format!(
                     "`Ruby::Box.{name}` isn't supported here (zeo limitation) -- the one supported allocation shape is `box = Ruby::Box.new` as a top-level statement; `.current`/`.root`/`.main`/`.enabled?` have no compile-time meaning"
                 ).into());
@@ -1901,7 +1985,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             }
         }
 
-        if name == "eval" && call.receiver().is_none() {
+        if name == "eval" && receiver.is_none() {
             // A single string-LITERAL argument keeps the zero-cost AOT path:
             // the source is parsed and INLINED at compile time (`HirNode::Eval`),
             // needs no runtime parser, and still sees the surrounding scope's
@@ -1936,7 +2020,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             }
         }
 
-        let receiver = match call.receiver() {
+        let receiver = match receiver {
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
         };

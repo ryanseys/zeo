@@ -1979,27 +1979,22 @@ fn io_close_read(
 }
 
 /// `readlines([sep][, limit][, chomp:])` -- every remaining line as an Array.
+/// Drains through `gets`, so `$stdin` reads its own way (see `io_gets`)
+/// instead of demanding a real file.
 fn io_readlines(
     recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let opts = line_opts(args);
     let mut lines = Vec::new();
-    loop {
-        let bytes = with_file(recv, |f, path| {
-            read_line_bytes(f, &opts)
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "readlines", path))
-        })?;
-        if bytes.is_empty() {
-            break;
-        }
-        lines.push(line_string(bytes, &opts));
+    while let line @ (RubyValue::Str(_) | RubyValue::Object(_)) = io_gets(recv, args, None)? {
+        lines.push(line);
     }
     Ok(RubyValue::Array(crate::collections::array_new(lines)))
 }
 
-/// `each_line`/`each([sep][, limit][, chomp:])` -- yield each line; bumps lineno.
+/// `each_line`/`each([sep][, limit][, chomp:])` -- yield each line; bumps
+/// lineno. Drains through `gets` for the same reason `readlines` does.
 fn io_each_line(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -2008,17 +2003,8 @@ fn io_each_line(
     let Some(RubyValue::Proc(p)) = blk else {
         return Err(crate::dispatch::raise_no_block_yield());
     };
-    let opts = line_opts(args);
-    loop {
-        let bytes = with_file(recv, |f, path| {
-            read_line_bytes(f, &opts)
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "each_line", path))
-        })?;
-        if bytes.is_empty() {
-            break;
-        }
-        bump_lineno(recv);
-        p.call(&[line_string(bytes, &opts)])?;
+    while let line @ (RubyValue::Str(_) | RubyValue::Object(_)) = io_gets(recv, args, None)? {
+        p.call(&[line])?;
     }
     Ok(recv.clone())
 }

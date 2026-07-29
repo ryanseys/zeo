@@ -259,7 +259,7 @@ ruby_module! {
                 Some(e) => e,
                 None => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(
                     String::new(),
-                ))),
+                )))?,
             },
             [first, rest @ ..] => {
                 // At most the message reaches `exception`; `rest[1]` is the
@@ -287,7 +287,7 @@ ruby_module! {
                         }
                     }
                     RubyValue::Str(_) if rest.is_empty() => {
-                        crate::dispatch::coerce_raise_arg(first.clone())
+                        crate::dispatch::coerce_raise_arg(first.clone())?
                     }
                     _ => return Err(type_error!("exception class/object expected")),
                 }
@@ -713,6 +713,109 @@ ruby_module! {
         let rest = if args.is_empty() { &[] } else { &args[1..] };
         Ok(crate::builtins::enumerator::enumerator_for(recv, &meth, rest))
     }
+    // The line-input family. CRuby reads these from ARGF, which -- with no
+    // file arguments -- IS `$stdin`. zeo has no ARGF, so they forward to
+    // `$stdin` directly and answer identically for every script that is not
+    // a `while gets` filter over `ARGV`.
+    def "gets"(_recv, args, _block) {
+        stdin_send("gets", args)
+    }
+    def "readline"(_recv, args, _block) {
+        stdin_send("readline", args)
+    }
+    def "readlines"(_recv, args, _block) {
+        stdin_send("readlines", args)
+    }
+    // `select` and `exec` are the same calls as `IO.select` and
+    // `Process.exec`, which is exactly how CRuby defines them.
+    def "select"(_recv, args, _block) {
+        crate::dispatch::send_value(
+            &RubyValue::Class(zeo_abi::IO_CLASS),
+            Symbol::intern("select"),
+            args,
+            None,
+        )
+    }
+    def "exec"(_recv, args, _block) {
+        crate::dispatch::send_value(
+            &RubyValue::Class(zeo_abi::PROCESS_CLASS),
+            Symbol::intern("exec"),
+            args,
+            None,
+        )
+    }
+    // `test(?e, path)` -- the one-character file tests, each the `File`
+    // predicate of the same meaning. The two-file comparison commands
+    // (`?=`, `?<`, `?>`, `?-`) are not served here.
+    def "test"(_recv, args, _block) {
+        arity!(args, 2);
+        kernel_test(&args[0], &args[1])
+    }
+    // Every global with a value in THIS box, plus the specials, which read
+    // from the runtime rather than the store and so are never in it. CRuby
+    // reports its full predefined set in an unspecified order; zeo reports
+    // the ones it models, which is what an `include?` probe asks about.
+    def "global_variables"(_recv, args, _block) {
+        arity!(args, 0);
+        let mut names: Vec<String> = crate::globals::defined_globals();
+        names.sort();
+        Ok(RubyValue::Array(crate::array_new(
+            names.into_iter().map(|n| RubyValue::Symbol(Symbol::intern(n.as_str()))).collect(),
+        )))
+    }
+}
+
+/// `gets`/`readline`/`readlines` against `$stdin` -- see their rows.
+fn stdin_send(name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let stdin = crate::globals::global_get(0, "$stdin");
+    crate::dispatch::send_value(&stdin, Symbol::intern(name), args, None)
+}
+
+/// One `Kernel#test` command, as the `File` predicate that means the same
+/// thing. `?s` and the three time commands answer a value rather than a
+/// boolean, and `File` already returns exactly what CRuby's `test` does for
+/// each (`nil` for an empty file's size, a Time for the stamps).
+fn kernel_test(cmd: &RubyValue, path: &RubyValue) -> Result<RubyValue, Signal> {
+    let byte = match cmd {
+        RubyValue::Int(n) => u8::try_from(*n).ok(),
+        RubyValue::Str(s) => s.lock().bytes().first().copied(),
+        _ => None,
+    };
+    let file_method = match byte {
+        Some(b'e') => "exist?",
+        Some(b'f') => "file?",
+        Some(b'd') => "directory?",
+        Some(b'l') => "symlink?",
+        Some(b'p') => "pipe?",
+        Some(b'S') => "socket?",
+        Some(b'b') => "blockdev?",
+        Some(b'c') => "chardev?",
+        Some(b'r' | b'R') => "readable?",
+        Some(b'w' | b'W') => "writable?",
+        Some(b'x' | b'X') => "executable?",
+        Some(b'o' | b'O') => "owned?",
+        Some(b'g') => "setgid?",
+        Some(b'u') => "setuid?",
+        Some(b'k') => "sticky?",
+        Some(b's') => "size?",
+        Some(b'z') => "zero?",
+        Some(b'M') => "mtime",
+        Some(b'A') => "atime",
+        Some(b'C') => "ctime",
+        _ => {
+            let shown = match byte {
+                Some(b) => format!("?{}", b as char),
+                None => cmd.inspect_string(),
+            };
+            return Err(crate::builtins::arg_error!("unknown command {shown}"));
+        }
+    };
+    crate::dispatch::send_value(
+        &RubyValue::Class(zeo_abi::FILE_CLASS),
+        Symbol::intern(file_method),
+        std::slice::from_ref(path),
+        None,
+    )
 }
 
 /// Run the (user-overridable) `initialize_copy` hook on a freshly

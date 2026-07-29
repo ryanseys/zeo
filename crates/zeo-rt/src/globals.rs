@@ -147,6 +147,20 @@ fn special_get(special: Special) -> RubyValue {
     }
 }
 
+/// Every global name this box can answer: the ones with a stored value, plus
+/// the specials, which read from the runtime rather than the store and so are
+/// never in it. What `Kernel#global_variables` reports.
+pub fn defined_globals() -> Vec<String> {
+    const SPECIALS: &[&str] = &["$!", "$@", "$?", "$~", "$&", "$`", "$'", "$+"];
+    let mut names: Vec<String> = SPECIALS.iter().map(|s| (*s).to_string()).collect();
+    if let Some(m) = GLOBALS.lock().get(&0) {
+        names.extend(m.keys().map(|k| k.to_string()));
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// `nil` for a `$foo` never yet written IN THIS BOX -- matches real Ruby's
 /// own behavior for reading a global before any assignment ran (no
 /// `NameError`, unlike an unset constant -- see `constants::const_get`'s

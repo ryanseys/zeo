@@ -1247,6 +1247,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 }
             }
         }
+        // `block_given?` asks about the enclosing METHOD's block, which the
+        // analyze walk has already given a `__blk` parameter. Where no such
+        // binding exists -- the top level, a class body, or a block written
+        // in either -- there is no method to ask about, so the answer is the
+        // constant `false`.
+        HirNode::BlockGiven if !cx.has_blk_binding => {
+            quote! { zeo_rt::RubyValue::Bool(false) }
+        }
         HirNode::BlockGiven => quote! { zeo_rt::RubyValue::Bool(__blk.is_some()) },
         HirNode::Raise(args, cause) => emit_raise(cx, args, cause),
         HirNode::CaseIn {
@@ -1556,7 +1564,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
             if is_exc {
                 boxed
             } else {
-                quote! { zeo_rt::coerce_raise_arg(#boxed) }
+                quote! { zeo_rt::coerce_raise_arg(#boxed)? }
             }
         }
         // A Poly (or non-exception) operand is coerced at runtime: an
@@ -1565,7 +1573,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         // expected`.
         _ => {
             let expr = emit_expr(cx, node);
-            quote! { zeo_rt::coerce_raise_arg(#expr) }
+            quote! { zeo_rt::coerce_raise_arg(#expr)? }
         }
     }
 }

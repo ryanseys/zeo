@@ -1,0 +1,32 @@
+puts ok
+print ok
+"03.50"
+"a-b"
+42
+255
+1.5
+"9"
+[1, 2]
+0
+Integer
+true
+false
+5
+Binding
+Array
+"boom"
+[false, false, false]
+[true, true, true]
+[:named, :named, :named]
+[:apple, :banana]
+true
+true
+false
+false
+ArgumentError
+true
+true
+false
+"Proc"
+3
+nil

@@ -240,8 +240,8 @@ fn t_raise(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let exc = match args {
-        [] => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(String::new()))),
-        [one] => crate::dispatch::coerce_raise_arg(one.clone()),
+        [] => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(String::new())))?,
+        [one] => crate::dispatch::coerce_raise_arg(one.clone())?,
         [class, msg, ..] => {
             // `Class.exception(message)` -- the CRuby two-arg form.
             crate::dispatch::send_value(

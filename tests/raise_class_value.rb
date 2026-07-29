@@ -1,10 +1,10 @@
-# `raise` with the exception CLASS reached through a VALUE (a local or constant
-# read rather than a syntactically-literal class name) reports
-# `TypeError: exception class/object expected` instead of raising it.
-# `raise SomeError` was only recognized as raising SomeError when the class was
-# written as a literal constant. Reached through a variable or an array element
-# -- a table of error classes, a retry list -- the Class value fell through to
-# "exception class/object expected" and raised TypeError instead.
+# `raise` given the exception CLASS as a VALUE -- a local, an element of a
+# table of error classes, a retry list -- rather than as a syntactically
+# literal constant name. Codegen builds the literal form directly and hands
+# every other operand to the runtime coercion, which raises a fresh instance
+# of an Exception class through `#exception` (so a custom `initialize` runs),
+# raises an Exception object as itself, wraps a String in a `RuntimeError`,
+# and answers `TypeError: exception class/object expected` for anything else.
 module App
   class Failed < RuntimeError; end
   class Refused < App::Failed; end

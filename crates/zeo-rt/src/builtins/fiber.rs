@@ -139,7 +139,7 @@ fn resolve_raise_exc(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 .unwrap_or_default();
             Ok(exc_of(&name, msg))
         }
-        Some(v) => Ok(crate::dispatch::coerce_raise_arg(v.clone())),
+        Some(v) => crate::dispatch::coerce_raise_arg(v.clone()),
     }
 }
 
