@@ -89,6 +89,11 @@ pub struct RIo {
     /// `#autoclose?` -- whether closing this IO closes its fd. Defaults to
     /// true; a program may clear it (`autoclose = false`) to keep the fd open.
     autoclose: std::sync::atomic::AtomicBool,
+    /// `#sync` -- whether a write reaches the descriptor at once. Every write
+    /// here already does, so this only RECORDS what CRuby would report: true
+    /// for STDERR, a socket, a popen handle, and a pipe's write end; false for
+    /// a file, STDOUT, STDIN, and a pipe's read end.
+    sync: std::sync::atomic::AtomicBool,
     /// Bytes pushed back by `#ungetbyte`/`#ungetc`, read out (LIFO) before the
     /// stream itself. The next byte read drains this first.
     unget: parking_lot::Mutex<Vec<u8>>,
@@ -145,7 +150,9 @@ impl RIo {
     /// on, no pushed-back bytes, lineno 0) is established, so every constructor
     /// agrees.
     fn new(backend: IoBackend, path: Option<String>) -> RIo {
+        let sync = matches!(backend, IoBackend::Std(StdStream::Stderr));
         RIo {
+            sync: std::sync::atomic::AtomicBool::new(sync),
             backend: parking_lot::Mutex::new(backend),
             path,
             lineno: std::sync::atomic::AtomicI64::new(0),
@@ -164,6 +171,8 @@ impl RIo {
 pub(crate) fn socket_value(f: std::fs::File, class_id: ClassId) -> RubyValue {
     let mut io = RIo::new(IoBackend::Pipe(Some(f)), None);
     io.class_override = Some(class_id);
+    // A socket is unbuffered in CRuby, so it reports `sync` true.
+    io.sync = std::sync::atomic::AtomicBool::new(true);
     RubyValue::Object(Arc::new(io))
 }
 
@@ -223,6 +232,8 @@ pub(crate) fn set_fd_cloexec(fd: libc::c_int) {
 pub(crate) fn popen_value(f: std::fs::File, pid: i64) -> RubyValue {
     let io = RIo::new(IoBackend::Pipe(Some(f)), None);
     io.child_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+    // A popen handle is unbuffered, as CRuby's is.
+    io.sync.store(true, std::sync::atomic::Ordering::Relaxed);
     RubyValue::Object(Arc::new(io))
 }
 
@@ -2177,6 +2188,141 @@ fn io_readpartial(
     }
 }
 
+/// The positional args of a call that may carry a trailing options Hash
+/// (`exception: false`), so `arity!` counts only the real positionals.
+pub(crate) fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
+    match args.last() {
+        Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
+        _ => args,
+    }
+}
+
+/// The `exception:` keyword of the non-blocking family. True (the default)
+/// RAISES on a would-block or an EOF; false answers a `:wait_*` Symbol or nil
+/// instead.
+pub(crate) fn nonblock_raises(args: &[RubyValue]) -> bool {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return true;
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern("exception"));
+    !matches!(
+        crate::collections::hash_get(h, &key),
+        RubyValue::Bool(false)
+    )
+}
+
+/// What a non-blocking operation answers when it would block: the matching
+/// `IO::EAGAINWait*` exception, or the `:wait_readable`/`:wait_writable` Symbol
+/// under `exception: false`. The exception INCLUDES `IO::WaitReadable`/
+/// `IO::WaitWritable`, which is what a retry loop rescues.
+pub(crate) fn would_block(write: bool, raises: bool, ctx: &str) -> Result<RubyValue, Signal> {
+    let symbol = if write { "wait_writable" } else { "wait_readable" };
+    if !raises {
+        return Ok(RubyValue::Symbol(crate::Symbol::intern(symbol)));
+    }
+    let class = if write {
+        "IO::EAGAINWaitWritable"
+    } else {
+        "IO::EAGAINWaitReadable"
+    };
+    Err(crate::dispatch::raise_error(
+        class,
+        format!("Resource temporarily unavailable - {ctx} would block"),
+    ))
+}
+
+/// `read_nonblock(maxlen, outbuf = nil, exception: true)` -- one `read(2)` that
+/// never waits. The descriptor is marked `O_NONBLOCK` first and LEFT that way,
+/// as CRuby leaves it; every blocking row here already parks in `poll(2)` on
+/// `EAGAIN`, so an ordinary `#gets` on the same handle still blocks.
+fn io_read_nonblock(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let raises = nonblock_raises(args);
+    let positional = kw_strip(args);
+    crate::builtins::arity!(positional, 1..=2);
+    let max = convert::to_index(&positional[0])?.max(0) as usize;
+    let outbuf = match positional.get(1) {
+        None | Some(RubyValue::Nil) => None,
+        Some(v) => Some(convert::to_rstr(v)?),
+    };
+    set_fd_nonblock(raw_fd(recv)?, true)?;
+    let read = with_file(recv, |f, _path| {
+        let mut buf = vec![0u8; max];
+        loop {
+            match std::io::Read::read(f, &mut buf) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Ok(n) => {
+                    buf.truncate(n);
+                    return Ok(Ok(buf));
+                }
+                Err(e) => return Ok(Err(e)),
+            }
+        }
+    })?;
+    let bytes = match read {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            return would_block(false, raises, "read");
+        }
+        Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", "")),
+    };
+    if bytes.is_empty() && max > 0 {
+        // CRuby empties the buffer before reporting EOF, so a rescued end
+        // leaves no stale bytes from the previous read.
+        if let Some(buf) = &outbuf {
+            buf.lock().replace_utf8(String::new());
+        }
+        return if raises {
+            Err(eof_error!("end of file reached"))
+        } else {
+            Ok(RubyValue::Nil)
+        };
+    }
+    // TAG the bytes rather than decoding them: a byte count can land
+    // mid-character, so binary is the only honest answer (as `#read(n)`).
+    match outbuf {
+        Some(buf) => {
+            buf.lock().replace_bytes(bytes, crate::encoding::ASCII_8BIT);
+            Ok(positional[1].clone())
+        }
+        None => Ok(RubyValue::Str(crate::string_from_bytes(
+            bytes,
+            crate::encoding::ASCII_8BIT,
+        ))),
+    }
+}
+
+/// `write_nonblock(string, exception: true)` -- one `write(2)` that never
+/// waits, answering the count it managed. A partial write is the caller's to
+/// resume, which is the whole point of the method.
+fn io_write_nonblock(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let raises = nonblock_raises(args);
+    let positional = kw_strip(args);
+    crate::builtins::arity!(positional, 1);
+    let bytes = convert::to_rstr(&positional[0])?.lock().bytes().to_vec();
+    set_fd_nonblock(raw_fd(recv)?, true)?;
+    let wrote = with_file(recv, |f, _path| {
+        loop {
+            match std::io::Write::write(f, &bytes) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                other => return Ok(other),
+            }
+        }
+    })?;
+    match wrote {
+        Ok(n) => Ok(RubyValue::Int(n as i64)),
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => would_block(true, raises, "write"),
+        Err(e) => Err(crate::builtins::file::raise_errno(&e, "write", "")),
+    }
+}
+
 /// `sysseek(offset, whence = SEEK_SET)` -- seek, answering the new absolute
 /// position (unlike `seek`, which answers 0).
 fn io_sysseek(
@@ -2393,20 +2539,21 @@ fn io_sync(
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    // CRuby: only STDERR is sync by default; STDOUT/STDIN and files are not
-    // (oracle-verified). `sync=` can flip it, but nothing here relies on that.
-    Ok(RubyValue::Bool(matches!(
-        stream_of(recv),
-        Some(StdStream::Stderr)
-    )))
+    let on = as_rio(recv).is_some_and(|io| io.sync.load(std::sync::atomic::Ordering::Relaxed));
+    Ok(RubyValue::Bool(on))
 }
 
 fn io_sync_set(
-    _recv: &RubyValue,
+    recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    Ok(args.first().cloned().unwrap_or(RubyValue::Nil))
+    let v = args.first().cloned().unwrap_or(RubyValue::Nil);
+    if let Some(io) = as_rio(recv) {
+        io.sync
+            .store(v.truthy(), std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(v)
 }
 
 /// `Method#arity` twin of `lookup` -- this hand-rolled table declares no
@@ -2487,6 +2634,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "printf" => io_printf,
         "putc" => io_putc,
         "readpartial" | "sysread" => io_readpartial,
+        "read_nonblock" => io_read_nonblock,
+        "write_nonblock" => io_write_nonblock,
         "seek" => io_seek,
         "sysseek" => io_sysseek,
         "flock" => io_flock,
@@ -2604,6 +2753,8 @@ pub fn lookup_names() -> &'static [&'static str] {
         "putc",
         "readpartial",
         "sysread",
+        "read_nonblock",
+        "write_nonblock",
         "seek",
         "sysseek",
         "flock",
@@ -2675,6 +2826,10 @@ fn io_class_pipe(
     // SAFETY: `pipe(2)` just handed us these two fresh, owned fds.
     let r = pipe_value(unsafe { std::fs::File::from_raw_fd(fds[0]) });
     let w = pipe_value(unsafe { std::fs::File::from_raw_fd(fds[1]) });
+    // CRuby marks the WRITE end unbuffered, and only that end.
+    if let Some(io) = as_rio(&w) {
+        io.sync.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let pair = RubyValue::Array(crate::collections::array_new(vec![r.clone(), w.clone()]));
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(pair);

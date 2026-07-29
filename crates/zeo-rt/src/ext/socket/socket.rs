@@ -306,6 +306,49 @@ ruby_class! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![sock, peer])))
     }
+    // `#accept_nonblock(exception: true)` -- accept only a connection already
+    // pending, answering `[Socket, Addrinfo]` as `#accept` does.
+    def "accept_nonblock"(recv, args, _block) {
+        let raises = crate::builtins::io::nonblock_raises(args);
+        arity!(crate::builtins::io::kw_strip(args), 0);
+        let Some((nfd, storage, alen)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
+            return crate::builtins::io::would_block(false, raises, "accept(2)");
+        };
+        // SAFETY: `nfd` is a fresh, solely-owned descriptor.
+        let sock = unsafe { socket_from_raw_fd(nfd, SOCKET_CLASS) };
+        let peer = match raw_to_socketaddr(&storage).filter(|_| alen > 0) {
+            Some(a) => addrinfo::from_socketaddr(a, libc::SOCK_STREAM, libc::IPPROTO_TCP),
+            None => RubyValue::Nil,
+        };
+        Ok(RubyValue::Array(crate::array_new(vec![sock, peer])))
+    }
+    // `#connect_nonblock(sockaddr, exception: true)` -- start a connect and
+    // report it in flight rather than waiting for the handshake.
+    def "connect_nonblock"(recv, args, _block) {
+        let raises = crate::builtins::io::nonblock_raises(args);
+        let positional = crate::builtins::io::kw_strip(args);
+        arity!(positional, 1);
+        let fd = fd_of(recv)?;
+        let sa = sockaddr_bytes(&positional[0])?;
+        crate::builtins::io::set_fd_nonblock(fd, true)?;
+        // SAFETY: `sa` describes `sa.len()` initialized sockaddr bytes.
+        let rc = unsafe {
+            libc::connect(fd, sa.as_ptr() as *const libc::sockaddr, sa.len() as libc::socklen_t)
+        };
+        if rc == 0 {
+            return Ok(RubyValue::Int(0));
+        }
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINPROGRESS) {
+            return Err(errno_error("connect(2)"));
+        }
+        if !raises {
+            return Ok(RubyValue::Symbol(Symbol::intern("wait_writable")));
+        }
+        Err(raise_error(
+            "IO::EINPROGRESSWaitWritable",
+            "Operation now in progress - connect(2) would block".to_string(),
+        ))
+    }
     // `#recvfrom(maxlen, flags = 0)` -- `[mesg, sender_Addrinfo]`.
     def "recvfrom"(recv, args, _block) {
         arity!(args, 1..=2);

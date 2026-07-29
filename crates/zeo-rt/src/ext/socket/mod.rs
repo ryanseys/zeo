@@ -12,6 +12,7 @@
 //!     └ UNIXSocket      an AF_UNIX stream (unix_socket.rs)
 //!        └ UNIXServer   a listening AF_UNIX socket (unix_server.rs)
 //! Addrinfo              a resolved address value (addrinfo.rs)
+//! Socket::Option        one socket option's value (option.rs)
 //! ```
 //!
 //! One file per class, each a `ruby_class!`. A socket VALUE is an `RIo` over the
@@ -23,6 +24,7 @@
 pub(crate) mod addrinfo;
 pub(crate) mod basic_socket;
 pub(crate) mod ip_socket;
+pub(crate) mod option;
 // The generic `Socket` class file, named for its class -- the inner `socket`
 // matching the gem dir is intentional (one-file-per-class), not accidental.
 #[allow(clippy::module_inception)]
@@ -128,6 +130,33 @@ pub(crate) fn resolve_one(host: &str, port: u16) -> Result<SocketAddr, Signal> {
         .map_err(|e| raise_error("SocketError", format!("getaddrinfo: {e}")))?
         .next()
         .ok_or_else(|| raise_error("SocketError", "getaddrinfo: no address".to_string()))
+}
+
+/// One `accept(2)` that never waits: the accepted descriptor plus the peer
+/// address the kernel filled, or `None` when nothing is pending. The listening
+/// descriptor is marked `O_NONBLOCK` first and left that way, as CRuby leaves
+/// it. Shared by every `#accept_nonblock`.
+pub(crate) fn accept_nonblock_fd(
+    fd: std::os::fd::RawFd,
+) -> Result<Option<(std::os::fd::RawFd, libc::sockaddr_storage, libc::socklen_t)>, Signal> {
+    crate::builtins::io::set_fd_nonblock(fd, true)?;
+    // SAFETY: a zeroed sockaddr_storage is valid; `len` bounds what the kernel
+    // writes into it.
+    let (nfd, storage, len) = unsafe {
+        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        let nfd = libc::accept(fd, &mut storage as *mut _ as *mut libc::sockaddr, &mut len);
+        (nfd, storage, len)
+    };
+    if nfd >= 0 {
+        return Ok(Some((nfd, storage, len)));
+    }
+    // EWOULDBLOCK is EAGAIN on every platform zeo builds for, so one arm covers
+    // both spellings.
+    if std::io::Error::last_os_error().raw_os_error() == Some(libc::EAGAIN) {
+        return Ok(None);
+    }
+    Err(errno_error("accept(2)"))
 }
 
 pub(crate) fn map_io_err(e: &std::io::Error, ctx: &str) -> Signal {

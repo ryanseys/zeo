@@ -6,6 +6,7 @@ Socket
 "TCPServer"
 "TCPServer"
 "127.0.0.1"
+true
 NoMethodError
 "undefined method 'bogus_xyz' for class TCPServer"
 TCPServer

@@ -7,8 +7,7 @@
 //! `#getpeername` answer packed `sockaddr` Strings; `#local_address`/
 //! `#remote_address` the matching `Addrinfo`; `#setsockopt` sets an int option;
 //! `#send`/`#recv` move bytes; `#shutdown`/`#close_read`/`#close_write` half-
-//! close. `#getsockopt` needs the `Socket::Option` value class (out of scope) --
-//! a clean `NotImplementedError`.
+//! close; `#getsockopt` answers a `Socket::Option` (see `option.rs`).
 
 use std::os::fd::RawFd;
 
@@ -80,6 +79,21 @@ pub(crate) fn socktype_of(fd: RawFd) -> i32 {
     }
 }
 
+/// The address family of a socket fd, which tags the `Socket::Option` its
+/// `#getsockopt` answers. AF_UNSPEC when the kernel will not say.
+fn family_of(fd: RawFd) -> i32 {
+    // SAFETY: a zeroed sockaddr_storage is valid; `len` bounds the write.
+    unsafe {
+        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        if libc::getsockname(fd, &mut storage as *mut _ as *mut libc::sockaddr, &mut len) == 0 {
+            storage.ss_family as i32
+        } else {
+            libc::AF_UNSPEC
+        }
+    }
+}
+
 /// The protocol implied by a socktype, for an `Addrinfo` tag (kernels don't
 /// expose the protocol via a portable getsockopt).
 fn protocol_for(socktype: i32) -> i32 {
@@ -142,12 +156,20 @@ ruby_class! {
             None => Err(not_impl_error!("remote_address for this socket family is not supported")),
         }
     }
-    // `#setsockopt(level, optname, value)` -- set an int/bytes socket option.
+    // `#setsockopt(level, optname, value)`, or `#setsockopt(socket_option)` --
+    // set an int/bytes socket option.
     def "setsockopt"(recv, args, _block) {
-        arity!(args, 3);
+        arity!(args, 1..=3);
         let fd = fd_of(recv)?;
-        let (level, optname) = (int_arg(&args[0])?, int_arg(&args[1])?);
-        let val = optval_bytes(&args[2])?;
+        let (level, optname, val) = match super::option::parts(&args[0]) {
+            Some(parts) => parts,
+            None => {
+                arity!(args, 3);
+                let level = super::option::opt_int(&args[0], None)?;
+                let optname = super::option::opt_int(&args[1], Some(level))?;
+                (level, optname, optval_bytes(&args[2])?)
+            }
+        };
         // SAFETY: `val`'s pointer/len describe an initialized buffer.
         let rc = unsafe {
             libc::setsockopt(
@@ -163,10 +185,26 @@ ruby_class! {
         }
         Ok(RubyValue::Int(0))
     }
-    // `#getsockopt` answers a `Socket::Option` value object, which zeo does not
-    // model -- an honest NotImplementedError rather than a wrong int.
-    def "getsockopt"(_recv, _args, _block) {
-        Err(not_impl_error!("BasicSocket#getsockopt (Socket::Option) is not implemented"))
+    // `#getsockopt(level, optname)` -- the option's current value as a
+    // `Socket::Option`, tagged with the socket's own address family.
+    def "getsockopt"(recv, args, _block) {
+        arity!(args, 2);
+        let fd = fd_of(recv)?;
+        let level = super::option::opt_int(&args[0], None)?;
+        let optname = super::option::opt_int(&args[1], Some(level))?;
+        // 256 bytes holds every option the kernel answers here; `len` reports
+        // how many it actually wrote.
+        let mut buf = vec![0u8; 256];
+        let mut len = buf.len() as libc::socklen_t;
+        // SAFETY: `buf` is `len` writable bytes, which bounds the write.
+        let rc = unsafe {
+            libc::getsockopt(fd, level, optname, buf.as_mut_ptr() as *mut libc::c_void, &mut len)
+        };
+        if rc != 0 {
+            return Err(errno_error("getsockopt(2)"));
+        }
+        buf.truncate(len as usize);
+        Ok(super::option::from_raw(family_of(fd), level, optname, buf))
     }
     // `#send(mesg, flags = 0[, dest])` -- write bytes, answering the count.
     // A destination address (for unconnected datagram sockets) is out of scope.
@@ -202,6 +240,31 @@ ruby_class! {
             libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, maxlen, flags)
         });
         if n < 0 {
+            return Err(errno_error("recv(2)"));
+        }
+        buf.truncate(n as usize);
+        Ok(super::binary_string(buf))
+    }
+    // `#recv_nonblock(maxlen, flags = 0, exception: true)` -- read only what
+    // has already arrived; see `IO#read_nonblock`.
+    def "recv_nonblock"(recv, args, _block) {
+        let raises = crate::builtins::io::nonblock_raises(args);
+        let positional = crate::builtins::io::kw_strip(args);
+        arity!(positional, 1..=2);
+        let fd = fd_of(recv)?;
+        crate::builtins::io::set_fd_nonblock(fd, true)?;
+        let maxlen = int_arg(&positional[0])?.max(0) as usize;
+        let flags = match positional.get(1) {
+            None | Some(RubyValue::Nil) => 0,
+            Some(v) => int_arg(v)?,
+        };
+        let mut buf = vec![0u8; maxlen];
+        // SAFETY: `buf` is `maxlen` writable bytes.
+        let n = unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, maxlen, flags) };
+        if n < 0 {
+            if std::io::Error::last_os_error().raw_os_error() == Some(libc::EAGAIN) {
+                return crate::builtins::io::would_block(false, raises, "recvfrom(2)");
+            }
             return Err(errno_error("recv(2)"));
         }
         buf.truncate(n as usize);

@@ -1,10 +1,6 @@
-# `IPSocket.getaddress` is not implemented, so the resolver line answers
-# NoMethodError where ruby answers the resolved address. The socket class
-# constants either side of it already match.
 # The socket classes are constants once `require "socket"` runs, and a class
-# Spinel recognizes but has not implemented reports the missing METHOD rather
-# than a missing constant. (IPSocket.getaddress is one of the documented gaps;
-# see docs/limitations.md.)
+# the compiler recognizes but has not implemented reports the missing METHOD
+# rather than a missing constant.
 require "socket"
 p TCPServer
 p TCPSocket
@@ -14,7 +10,9 @@ p Socket
 p TCPServer.name
 p TCPServer.to_s
 
-r2 = (IPSocket.getaddress("localhost") rescue $!.class); p r2
+r2 = (IPSocket.getaddress("127.0.0.1") rescue $!.class); p r2
+# a NAME resolves too, but to whichever family this host prefers
+p ["127.0.0.1", "::1"].include?(IPSocket.getaddress("localhost"))
 r3 = (TCPServer.bogus_xyz rescue $!.class); p r3
 r6 = (TCPServer.bogus_xyz rescue $!.message); p r6
 

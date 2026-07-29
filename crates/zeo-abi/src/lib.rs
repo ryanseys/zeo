@@ -536,6 +536,10 @@ pub const OPENSSL_RANDOM_MODULE: ClassId = ClassId(140);
 /// constant inside `Binding#eval` resolves against.
 pub const BINDING_CLASS: ClassId = ClassId(141);
 
+/// `Socket::Option` -- one socket option's `(family, level, optname, data)`,
+/// which `BasicSocket#getsockopt` answers.
+pub const SOCKET_OPTION_CLASS: ClassId = ClassId(142);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1700,6 +1704,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: None,
+    },
+    BuiltinClass {
+        id: SOCKET_OPTION_CLASS,
+        name: "Socket::Option",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("socket"),
     },
 ];
 

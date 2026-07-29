@@ -57,6 +57,17 @@ ruby_class! {
         // SAFETY: `nfd` is a fresh, solely-owned descriptor.
         Ok(unsafe { socket_from_raw_fd(nfd, UNIX_SOCKET_CLASS) })
     }
+    // `#accept_nonblock(exception: true)` -- accept only a client already
+    // waiting; see `TCPServer#accept_nonblock`.
+    def "accept_nonblock"(recv, args, _block) {
+        let raises = crate::builtins::io::nonblock_raises(args);
+        arity!(crate::builtins::io::kw_strip(args), 0);
+        let Some((nfd, _, _)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
+            return crate::builtins::io::would_block(false, raises, "accept(2)");
+        };
+        // SAFETY: `nfd` is a fresh, solely-owned descriptor.
+        Ok(unsafe { socket_from_raw_fd(nfd, UNIX_SOCKET_CLASS) })
+    }
     // `#listen(backlog)` -- already listening; re-apply and answer 0.
     def "listen"(recv, args, _block) {
         arity!(args, 1);

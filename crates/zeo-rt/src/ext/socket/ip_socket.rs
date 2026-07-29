@@ -2,7 +2,8 @@
 //! IP-family sockets (`TCPSocket`, `TCPServer`, `UDPSocket`), reached through
 //! the ancestor walk. `#addr`/`#peeraddr` answer the `[family, port, host, ip]`
 //! array (host == ip, reverse DNS off); `#recvfrom` answers `[mesg, addr_array]`
-//! (unlike `Socket#recvfrom`, whose second element is an `Addrinfo`).
+//! (unlike `Socket#recvfrom`, whose second element is an `Addrinfo`). The class
+//! method `IPSocket.getaddress` resolves a host name without opening a socket.
 
 use std::os::fd::RawFd;
 
@@ -40,6 +41,16 @@ fn addr_array(
 
 ruby_class! {
     IPSocket = zeo_abi::IP_SOCKET_CLASS < zeo_abi::BASIC_SOCKET_CLASS;
+
+    // `IPSocket.getaddress(host)` -- the first address the resolver answers for
+    // `host`, as a String. A numeric host resolves to itself.
+    def self."getaddress"(_recv, args, _block) {
+        arity!(args, 1);
+        let host = crate::builtins::convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Str(crate::string_new(
+            super::resolve_one(&host, 0)?.ip().to_string(),
+        )))
+    }
 
     // `#addr` -- `[family, port, hostname, ip]` for the local address.
     def "addr"(recv, args, _block) {
