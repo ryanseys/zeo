@@ -1787,18 +1787,23 @@ fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId>
 /// fallback chain (this crate's own unit tests; identical for builtins by
 /// construction -- both derive from `zeo_abi::BUILTINS`).
 pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
+    // The OVERLAY wins when it has a chain: a class born at runtime
+    // (`Class.new`) has no frozen entry at all, and a runtime `include`/
+    // `prepend` into a COMPILE-TIME class splices a new chain there while
+    // the frozen one keeps the original -- reading frozen first would hide
+    // the mix-in from `ancestors`, `is_a?` and constant lookup. Gated on
+    // `is_live`, so a program that never mutates a hierarchy pays one
+    // relaxed load.
+    if crate::runtime_meta::is_live() {
+        if let Some(chain) = crate::runtime_meta::overlay_ancestors(id) {
+            return chain;
+        }
+    }
     // `REGISTRY` is a `static OnceLock`, so `get()` hands out `&'static`
     // borrows directly -- no lifetime gymnastics needed.
     if let Some(r) = REGISTRY.get() {
         let chain = r.ancestors_of(id);
         if !chain.is_empty() {
-            return chain;
-        }
-    }
-    // A class BORN AT RUNTIME (`Class.new`) has no frozen entry; its linearized
-    // chain lives (leaked to `&'static`) in the overlay.
-    if crate::runtime_meta::is_live() {
-        if let Some(chain) = crate::runtime_meta::overlay_ancestors(id) {
             return chain;
         }
     }

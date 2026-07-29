@@ -75,9 +75,22 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
             if let Some(v) = map.get(&anc.0).and_then(|m| m.get(name)) {
                 return Some(v.clone());
             }
+            if let Some(cid) = nested_class_of(anc, name) {
+                return Some(RubyValue::Class(cid));
+            }
         }
     }
     None
+}
+
+/// A class/module nested inside `owner` by unqualified `name`, as a constant
+/// -- `(OpenSSL, "SSL") -> OpenSSL::SSL`. A nested BUILTIN lives in the class
+/// registry rather than the constants table, so an ancestor walk that only
+/// consulted the table missed it: `include OpenSSL` then a bare `SSL` (which
+/// is how net/ftp reaches `OpenSSL::SSL`) found nothing.
+fn nested_class_of(owner: crate::ClassId, name: &str) -> Option<crate::ClassId> {
+    let owner_name = crate::dispatch::class_name(owner)?;
+    crate::dispatch::class_id_by_name(&format!("{owner_name}::{name}"))
 }
 
 /// Explicit-scope constant lookup (`Scope::NAME`): the scope class and its
