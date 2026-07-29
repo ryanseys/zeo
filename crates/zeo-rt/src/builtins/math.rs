@@ -94,6 +94,10 @@ ruby_module! {
     module_function def "acos"(_recv, args, _block) { checked(args, f64::acos, "acos") }
     module_function def "atan"(_recv, args, _block) { plain(args, f64::atan) }
     module_function def "exp"(_recv, args, _block) { plain(args, f64::exp) }
+    // `expm1`/`log1p` keep precision near zero, where `exp(x) - 1` and
+    // `log(1 + x)` lose it to cancellation.
+    module_function def "expm1"(_recv, args, _block) { plain(args, f64::exp_m1) }
+    module_function def "log1p"(_recv, args, _block) { checked(args, f64::ln_1p, "log1p") }
     module_function def "log2"(_recv, args, _block) { checked(args, f64::log2, "log2") }
     module_function def "log10"(_recv, args, _block) { checked(args, f64::log10, "log10") }
     // `log(x)` natural; `log(x, base)` arbitrary-base.

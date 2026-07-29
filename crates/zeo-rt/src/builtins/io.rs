@@ -44,6 +44,29 @@ impl IoBackend {
             IoBackend::Std(_) => {}
         }
     }
+
+    /// Give the descriptor up WITHOUT closing it -- what `autoclose = false`
+    /// promises, since the number belongs to whoever handed it over.
+    fn release_file(&mut self) {
+        use std::os::fd::IntoRawFd;
+        match self {
+            IoBackend::File(slot) | IoBackend::Pipe(slot) => {
+                if let Some(f) = slot.take() {
+                    // Deliberately unclosed: the descriptor outlives us.
+                    let _ = f.into_raw_fd();
+                }
+            }
+            IoBackend::Std(_) => {}
+        }
+    }
+}
+
+impl Drop for RIo {
+    fn drop(&mut self) {
+        if !self.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
+            self.backend.lock().release_file();
+        }
+    }
 }
 
 pub struct RIo {
@@ -572,7 +595,8 @@ fn io_fileno(
 ) -> Result<RubyValue, Signal> {
     use std::os::fd::AsRawFd;
     if let Some(io) = as_rio(recv) {
-        if let IoBackend::File(Some(f)) = &*io.backend.lock() {
+        // A pipe end and a socket carry a real descriptor too, not just a file.
+        if let IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) = &*io.backend.lock() {
             return Ok(RubyValue::Int(f.as_raw_fd() as i64));
         }
     }
@@ -642,7 +666,27 @@ fn io_wait_for(
     args: &[RubyValue],
     events: libc::c_short,
 ) -> Result<RubyValue, Signal> {
-    let timeout_ms = match args.first() {
+    let timeout_ms = wait_timeout_ms(args.first());
+    let mut pfd = libc::pollfd {
+        fd: raw_fd(recv)?,
+        events,
+        revents: 0,
+    };
+    unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+    Ok(if poll_ready(pfd.revents, events) {
+        recv.clone()
+    } else {
+        RubyValue::Nil
+    })
+}
+
+/// Whether one `poll(2)` result counts as ready for `events`. A hangup or an
+/// error makes a stream readable (at EOF) and writable (the write reports the
+/// error), but never PRIORITY-readable: only out-of-band data is that.
+/// A readiness timeout in seconds as milliseconds. Absent or nil blocks
+/// forever (`-1`); anything at or below zero polls and returns at once.
+fn wait_timeout_ms(timeout: Option<&RubyValue>) -> libc::c_int {
+    match timeout {
         None | Some(RubyValue::Nil) => -1,
         Some(v) => {
             let secs = crate::builtins::numeric::num_to_f64_unchecked(v);
@@ -652,14 +696,85 @@ fn io_wait_for(
                 (secs * 1000.0) as libc::c_int
             }
         }
+    }
+}
+
+fn poll_ready(revents: libc::c_short, events: libc::c_short) -> bool {
+    if revents & events != 0 {
+        return true;
+    }
+    events != libc::POLLPRI && revents & (libc::POLLHUP | libc::POLLERR) != 0
+}
+
+/// One `select(2)` answer: a ready flag per descriptor, per set, in the order
+/// the sets were given.
+type Readiness = (Vec<bool>, Vec<bool>, Vec<bool>);
+
+/// Which of `fds` are ready, one `select(2)` per set. `poll(2)` cannot answer
+/// this: on macOS it reports `POLLPRI` for any readable pipe, so an
+/// exception-set query there would claim ordinary bytes are out-of-band data.
+/// `select` is also what CRuby's own `IO.select` calls.
+///
+/// A descriptor at or past `FD_SETSIZE` cannot be named in an `fd_set` and is
+/// reported not-ready rather than corrupting the set.
+fn select_ready(
+    read: &[libc::c_int],
+    write: &[libc::c_int],
+    except: &[libc::c_int],
+    timeout_ms: libc::c_int,
+) -> Result<Readiness, Signal> {
+    const LIMIT: libc::c_int = libc::FD_SETSIZE as libc::c_int;
+    // SAFETY: `fd_set` is a plain bitmap; zeroed is the empty set, which is
+    // exactly what `FD_ZERO` writes.
+    let mut sets: [libc::fd_set; 3] = unsafe { std::mem::zeroed() };
+    let mut nfds = 0;
+    for (set, fds) in sets.iter_mut().zip([read, write, except]) {
+        for &fd in fds {
+            if (0..LIMIT).contains(&fd) {
+                unsafe { libc::FD_SET(fd, set) };
+                nfds = nfds.max(fd + 1);
+            }
+        }
+    }
+    let mut tv = libc::timeval {
+        tv_sec: (timeout_ms / 1000) as libc::time_t,
+        tv_usec: (timeout_ms % 1000 * 1000) as libc::suseconds_t,
     };
-    let mut pfd = libc::pollfd {
-        fd: raw_fd(recv)?,
-        events,
-        revents: 0,
+    let deadline = if timeout_ms < 0 {
+        std::ptr::null_mut()
+    } else {
+        &mut tv
     };
-    let ready = unsafe { libc::poll(&mut pfd, 1, timeout_ms) } > 0;
-    Ok(if ready { recv.clone() } else { RubyValue::Nil })
+    let n = unsafe {
+        libc::select(
+            nfds,
+            &mut sets[0],
+            &mut sets[1],
+            &mut sets[2],
+            deadline,
+        )
+    };
+    if n < 0 {
+        return Err(crate::builtins::file::raise_errno(
+            &std::io::Error::last_os_error(),
+            "select",
+            "",
+        ));
+    }
+    let mut out = Vec::new();
+    for (set, fds) in sets.iter().zip([read, write, except]) {
+        out.push(
+            fds.iter()
+                .map(|&fd| (0..LIMIT).contains(&fd) && unsafe { libc::FD_ISSET(fd, set) })
+                .collect::<Vec<bool>>(),
+        );
+    }
+    let mut it = out.into_iter();
+    Ok((
+        it.next().unwrap_or_default(),
+        it.next().unwrap_or_default(),
+        it.next().unwrap_or_default(),
+    ))
 }
 
 fn io_wait_readable(
@@ -678,6 +793,104 @@ fn io_wait_writable(
     io_wait_for(recv, args, libc::POLLOUT)
 }
 
+/// `wait_priority(timeout = nil)` -- out-of-band data only, which is why a
+/// pipe carrying ordinary bytes answers nil. Goes through `select(2)`, not
+/// `poll(2)`; see [`select_ready`].
+fn io_wait_priority(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let (_, _, e) = select_ready(&[], &[], &[raw_fd(recv)?], wait_timeout_ms(args.first()))?;
+    Ok(if e.first() == Some(&true) {
+        recv.clone()
+    } else {
+        RubyValue::Nil
+    })
+}
+
+/// `wait(timeout = nil, *modes)` -- the three `wait_*` methods behind one
+/// name. Each mode is a Symbol; several may be combined, and none means
+/// `:read`.
+fn io_wait(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let mut events: libc::c_short = 0;
+    for m in args.iter().skip(1) {
+        let RubyValue::Symbol(s) = m else {
+            return Err(arg_error!("unsupported mode: {}", m.inspect_string()));
+        };
+        events |= match s.name().as_str() {
+            "read" | "readable" => libc::POLLIN,
+            "write" | "writable" => libc::POLLOUT,
+            "priority" => libc::POLLPRI,
+            other => return Err(arg_error!("unsupported mode: {other}")),
+        };
+    }
+    if events == 0 {
+        events = libc::POLLIN;
+    }
+    io_wait_for(recv, &args[..args.len().min(1)], events)
+}
+
+/// `IO.select(read, write, except, timeout = nil)` -- which of the given
+/// handles are ready, as `[readable, writable, exceptional]`, or nil if the
+/// timeout expires first. One `poll(2)` over every listed descriptor; a handle
+/// may appear in more than one list and is polled once per appearance, so the
+/// answer keeps each list's own order.
+fn io_class_select(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0..=4);
+    let list = |i: usize| -> Result<Vec<RubyValue>, Signal> {
+        match args.get(i) {
+            None | Some(RubyValue::Nil) => Ok(Vec::new()),
+            Some(v) => Ok(crate::builtins::convert::to_rary(v)?.lock().to_vec()),
+        }
+    };
+    let sets = [
+        (list(0)?, libc::POLLIN),
+        (list(1)?, libc::POLLOUT),
+        (list(2)?, libc::POLLPRI),
+    ];
+    let timeout_ms = wait_timeout_ms(args.get(3));
+
+    if sets.iter().all(|(ios, _)| ios.is_empty()) {
+        // Nothing to watch: CRuby still honours the timeout, then answers nil.
+        if timeout_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(timeout_ms as u64));
+        }
+        return Ok(RubyValue::Nil);
+    }
+    let mut fds: [Vec<libc::c_int>; 3] = Default::default();
+    for (i, (ios, _)) in sets.iter().enumerate() {
+        for io in ios {
+            fds[i].push(raw_fd(io)?);
+        }
+    }
+    let (r, w, e) = select_ready(&fds[0], &fds[1], &fds[2], timeout_ms)?;
+    let mut any = false;
+    let mut out = Vec::new();
+    for ((ios, _), flags) in sets.iter().zip([r, w, e]) {
+        let ready: Vec<RubyValue> = ios
+            .iter()
+            .zip(flags)
+            .filter(|(_, ok)| *ok)
+            .map(|(io, _)| io.clone())
+            .collect();
+        any |= !ready.is_empty();
+        out.push(RubyValue::Array(crate::collections::array_new(ready)));
+    }
+    if !any {
+        return Ok(RubyValue::Nil);
+    }
+    Ok(RubyValue::Array(crate::collections::array_new(out)))
+}
+
 fn io_inspect(
     recv: &RubyValue,
     _args: &[RubyValue],
@@ -688,7 +901,21 @@ fn io_inspect(
         Some(StdStream::Stdout) => "#<IO:<STDOUT>>".to_string(),
         Some(StdStream::Stderr) => "#<IO:<STDERR>>".to_string(),
         None => match as_rio(recv) {
-            Some(io) => format!("#<File:{}>", io.path.as_deref().unwrap_or_default()),
+            // A handle names its path when it has one, its descriptor when it
+            // does not (a pipe end, a socket), and neither once it is closed.
+            Some(io) => {
+                let class = crate::builtins::class_name_of(recv);
+                let closed = matches!(
+                    &*io.backend.lock(),
+                    IoBackend::File(None) | IoBackend::Pipe(None)
+                );
+                match (io.path.as_deref(), closed) {
+                    (Some(p), false) => format!("#<{class}:{p}>"),
+                    (Some(p), true) => format!("#<{class}:{p} (closed)>"),
+                    (None, false) => format!("#<{class}:fd {}>", raw_fd(recv)?),
+                    (None, true) => format!("#<{class}:(closed)>"),
+                }
+            }
             None => "#<IO>".to_string(),
         },
     };
@@ -1004,12 +1231,15 @@ fn io_close(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     if let Some(io) = as_rio(recv) {
-        match &mut *io.backend.lock() {
-            IoBackend::File(slot) | IoBackend::Pipe(slot) => {
-                slot.take();
-            }
-            IoBackend::Std(_) => {}
+        // `autoclose = false` keeps the descriptor open for its owner; the
+        // handle still becomes closed either way.
+        let mut backend = io.backend.lock();
+        if io.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
+            backend.close_file();
+        } else {
+            backend.release_file();
         }
+        drop(backend);
         let pid = io.child_pid.swap(0, std::sync::atomic::Ordering::Relaxed);
         if pid != 0 {
             if let Ok(Some((reaped, raw))) =
@@ -1915,6 +2145,10 @@ fn io_readpartial(
     let RubyValue::Int(max) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
         return Err(arg_error!("length must be an Integer"));
     };
+    let outbuf = match args.get(1) {
+        None | Some(RubyValue::Nil) => None,
+        Some(v) => Some(crate::builtins::convert::to_rstr(v)?),
+    };
     let bytes = with_file(recv, |f, path| {
         let mut buf = vec![0u8; max.max(0) as usize];
         let got = blocking_read(f, &mut buf)
@@ -1923,11 +2157,24 @@ fn io_readpartial(
         Ok(buf)
     })?;
     if bytes.is_empty() && max > 0 {
+        // CRuby empties the buffer before raising, so a rescued EOF leaves no
+        // stale bytes from the previous read.
+        if let Some(buf) = &outbuf {
+            buf.lock().replace_utf8(String::new());
+        }
         return Err(eof_error!("end of file reached"));
     }
-    Ok(RubyValue::Str(crate::collections::string_new(
-        String::from_utf8_lossy(&bytes).into_owned(),
-    )))
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    // The second argument is an output BUFFER: CRuby fills it in place and
+    // returns that same object, so the caller may read the bytes back out of
+    // it or compare with `equal?`.
+    match outbuf {
+        Some(buf) => {
+            buf.lock().replace_utf8(text);
+            Ok(args[1].clone())
+        }
+        None => Ok(RubyValue::Str(crate::collections::string_new(text))),
+    }
 }
 
 /// `sysseek(offset, whence = SEEK_SET)` -- seek, answering the new absolute
@@ -2218,6 +2465,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "nonblock=" => io_nonblock_assign,
         "wait_readable" => io_wait_readable,
         "wait_writable" => io_wait_writable,
+        "wait_priority" => io_wait_priority,
+        "wait" => io_wait,
         "inspect" | "to_s" => io_inspect,
         "sync" => io_sync,
         "sync=" => io_sync_set,
@@ -2327,6 +2576,8 @@ pub fn lookup_names() -> &'static [&'static str] {
         "nonblock=",
         "wait_readable",
         "wait_writable",
+        "wait_priority",
+        "wait",
         "inspect",
         "to_s",
         "sync",
@@ -2604,8 +2855,35 @@ fn io_class_sysopen(
     Ok(RubyValue::Int(f.into_raw_fd() as i64))
 }
 
+/// `IO.try_convert(obj)`: `obj` if it is already an IO, its `to_io` if it
+/// defines one, else nil.
+fn io_class_try_convert(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    if as_rio(&args[0]).is_some() {
+        return Ok(args[0].clone());
+    }
+    let sym = crate::Symbol::intern("to_io");
+    if !crate::dispatch::responds_to_value(&args[0], sym, true) {
+        return Ok(RubyValue::Nil);
+    }
+    let answer = crate::dispatch::send_value(&args[0], sym, &[], None)?;
+    if answer.is_nil() || as_rio(&answer).is_some() {
+        return Ok(answer);
+    }
+    Err(crate::builtins::type_error!(
+        "can't convert {0} to IO ({0}#to_io gives {1})",
+        crate::builtins::convert_name_of(&args[0]),
+        crate::builtins::class_name_of(&answer)
+    ))
+}
+
 /// `IO.new(fd)` / `IO.open(fd)` -- wrap an existing descriptor. `IO.for_fd` is
-/// the same. The fd is adopted (closing the IO closes it).
+/// the same. The fd is adopted (closing the IO closes it) unless
+/// `autoclose: false` says otherwise.
 fn io_class_new(
     _recv: &RubyValue,
     args: &[RubyValue],
@@ -2614,8 +2892,23 @@ fn io_class_new(
     use std::os::fd::FromRawFd;
     crate::builtins::arity!(args, 1..=2);
     let fd = &convert::to_index(&args[0])?;
-    // SAFETY: the caller vouches the fd is a valid open descriptor to adopt.
+    // An fd that names no open descriptor is CRuby's `Errno::EBADF`, raised
+    // here rather than left to fail on the first read.
+    if unsafe { libc::fcntl(*fd as libc::c_int, libc::F_GETFD) } < 0 {
+        return Err(crate::dispatch::raise_error(
+            "Errno::EBADF",
+            "Bad file descriptor".to_string(),
+        ));
+    }
+    // SAFETY: the fd was just confirmed open, and the caller vouches it is
+    // theirs to adopt.
     let io = pipe_value(unsafe { std::fs::File::from_raw_fd(*fd as libc::c_int) });
+    if let Some(RubyValue::Hash(opts)) = args.get(1) {
+        let key = RubyValue::Symbol(crate::Symbol::intern("autoclose"));
+        if !crate::collections::hash_get(opts, &key).truthy() {
+            io_autoclose_set(&io, &[RubyValue::Bool(false)], None)?;
+        }
+    }
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(io);
     };
@@ -2631,6 +2924,8 @@ pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "console" => super::io_console::io_class_console,
         "copy_stream" => io_class_copy_stream,
         "sysopen" => io_class_sysopen,
+        "select" => io_class_select,
+        "try_convert" => io_class_try_convert,
         "new" | "open" | "for_fd" => io_class_new,
         // The whole-file family is identical to `File`'s -- reuse those rows so
         // the two class methods can never drift.

@@ -33,6 +33,10 @@ pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
             Some(libc::ENOTEMPTY) => ("Errno::ENOTEMPTY", "Directory not empty"),
             Some(libc::EXDEV) => ("Errno::EXDEV", "Invalid cross-device link"),
             Some(libc::EINVAL) => ("Errno::EINVAL", "Invalid argument"),
+            Some(libc::EBADF) => ("Errno::EBADF", "Bad file descriptor"),
+            Some(libc::EAGAIN) => ("Errno::EAGAIN", "Resource temporarily unavailable"),
+            Some(libc::ESPIPE) => ("Errno::ESPIPE", "Illegal seek"),
+            Some(libc::EPIPE) => ("Errno::EPIPE", "Broken pipe"),
             // An errno with no dedicated class: SystemCallError is its own
             // parent and CRuby's own fallback for unmapped codes.
             _ => ("SystemCallError", "Unknown error"),
@@ -834,16 +838,32 @@ ruby_class! {
             meta(&path_arg(&args[0], "zero?")?).is_some_and(|m| m.len() == 0),
         ))
     }
+    // The permission predicates come in two flavours: the plain ones ask the
+    // EFFECTIVE uid/gid, the `*_real?` ones the real one.
     def self."readable?" (_recv, args, _block) {
         arity!(args, 1);
-        // Existence is a decent proxy only for the common case; ask the OS.
         let p = path_arg(&args[0], "readable?")?;
-        Ok(RubyValue::Bool(access(&p, libc::R_OK)))
+        Ok(RubyValue::Bool(access_eff(&p, libc::R_OK)))
     }
     def self."writable?" (_recv, args, _block) {
         arity!(args, 1);
         let p = path_arg(&args[0], "writable?")?;
+        Ok(RubyValue::Bool(access_eff(&p, libc::W_OK)))
+    }
+    def self."readable_real?" (_recv, args, _block) {
+        arity!(args, 1);
+        let p = path_arg(&args[0], "readable_real?")?;
+        Ok(RubyValue::Bool(access(&p, libc::R_OK)))
+    }
+    def self."writable_real?" (_recv, args, _block) {
+        arity!(args, 1);
+        let p = path_arg(&args[0], "writable_real?")?;
         Ok(RubyValue::Bool(access(&p, libc::W_OK)))
+    }
+    def self."executable_real?" (_recv, args, _block) {
+        arity!(args, 1);
+        let p = path_arg(&args[0], "executable_real?")?;
+        Ok(RubyValue::Bool(access(&p, libc::X_OK)))
     }
     // File-type predicates (follow a final symlink, unlike `ftype`'s lstat).
     def self."pipe?" (_recv, args, _block) {
@@ -951,20 +971,36 @@ ruby_class! {
         std::fs::hard_link(&old, &new).map_err(|e| raise_errno(&e, "link", &new))?;
         Ok(RubyValue::Int(0))
     }
-    // `File.realpath(path [, dir])` -- the absolute, symlink-resolved path; every
-    // component (including the last) must exist. `realdirpath` is the same here.
-    def self."realpath" | "realdirpath" (_recv, args, _block) {
+    // `File.realpath(path [, dir])` -- the absolute, symlink-resolved path.
+    // Every component, the last one included, must exist.
+    def self."realpath" (_recv, args, _block) {
         arity!(args, 1..=2);
-        let raw = path_arg(&args[0], "realpath")?;
-        let joined = match args.get(1) {
-            Some(d) if !d.is_nil() => {
-                let base = path_arg(d, "realpath")?;
-                if raw.starts_with('/') { raw } else { format!("{base}/{raw}") }
-            }
-            _ => raw,
-        };
+        let joined = realpath_join(args, "realpath")?;
         let real = std::fs::canonicalize(&joined).map_err(|e| raise_errno(&e, "realpath", &joined))?;
         Ok(str_val(real.to_string_lossy().into_owned()))
+    }
+    // `File.realdirpath(path [, dir])` -- `realpath` where only the DIRECTORY
+    // part must exist. A resolvable path answers exactly what `realpath` does,
+    // symlinked last component included; otherwise the parent resolves and the
+    // basename rides along unresolved.
+    def self."realdirpath" (_recv, args, _block) {
+        arity!(args, 1..=2);
+        let joined = realpath_join(args, "realdirpath")?;
+        if let Ok(real) = std::fs::canonicalize(&joined) {
+            return Ok(str_val(real.to_string_lossy().into_owned()));
+        }
+        let path = std::path::Path::new(&joined);
+        let (Some(parent), Some(base)) = (path.parent(), path.file_name()) else {
+            return Err(raise_errno(
+                &std::io::Error::from(std::io::ErrorKind::NotFound),
+                "realdirpath",
+                &joined,
+            ));
+        };
+        let parent = if parent.as_os_str().is_empty() { std::path::Path::new(".") } else { parent };
+        let real = std::fs::canonicalize(parent)
+            .map_err(|e| raise_errno(&e, "realdirpath", &joined))?;
+        Ok(str_val(real.join(base).to_string_lossy().into_owned()))
     }
     // `File.symlink(target, link)` -- create a symbolic link; answers 0.
     def self."symlink" (_recv, args, _block) {
@@ -1078,7 +1114,7 @@ ruby_class! {
     def self."executable?" (_recv, args, _block) {
         arity!(args, 1);
         let p = path_arg(&args[0], "executable?")?;
-        Ok(RubyValue::Bool(access(&p, libc::X_OK)))
+        Ok(RubyValue::Bool(access_eff(&p, libc::X_OK)))
     }
     def self."delete" | "unlink" (_recv, args, _block) {
         // Variadic: deletes every path given, answers how many.
@@ -1190,6 +1226,24 @@ ruby_class! {
 
 /// `access(2)` -- the real permission question, rather than inferring from
 /// metadata (which would ignore ACLs and the effective uid).
+/// The `path [, dir]` argument pair `realpath`/`realdirpath` share, joined into
+/// one path. An absolute `path` ignores `dir`.
+fn realpath_join(args: &[RubyValue], who: &str) -> Result<String, Signal> {
+    let raw = path_arg(&args[0], who)?;
+    Ok(match args.get(1) {
+        Some(d) if !d.is_nil() => {
+            let base = path_arg(d, who)?;
+            if raw.starts_with('/') {
+                raw
+            } else {
+                format!("{base}/{raw}")
+            }
+        }
+        _ => raw,
+    })
+}
+
+/// `access(2)` against the REAL uid/gid -- what the `*_real?` predicates ask.
 fn access(path: &str, mode: libc::c_int) -> bool {
     let Ok(c) = std::ffi::CString::new(path) else {
         // An interior NUL can't name a file; CRuby raises ArgumentError, but
@@ -1198,6 +1252,17 @@ fn access(path: &str, mode: libc::c_int) -> bool {
     };
     // SAFETY: `c` is a valid NUL-terminated string for the call's duration.
     unsafe { libc::access(c.as_ptr(), mode) == 0 }
+}
+
+/// `faccessat(2)` with `AT_EACCESS` -- the EFFECTIVE uid/gid, which is what
+/// `readable?`/`writable?`/`executable?` ask and `access(2)` alone cannot
+/// answer. The two agree for any process that has not changed credentials.
+fn access_eff(path: &str, mode: libc::c_int) -> bool {
+    let Ok(c) = std::ffi::CString::new(path) else {
+        return false;
+    };
+    // SAFETY: `c` is a valid NUL-terminated string for the call's duration.
+    unsafe { libc::faccessat(libc::AT_FDCWD, c.as_ptr(), mode, libc::AT_EACCESS) == 0 }
 }
 
 #[cfg(test)]

@@ -279,13 +279,27 @@ fn glob(pattern: &str, dotmatch: bool) -> Vec<String> {
 /// `#read`/`#pos`/`#seek`/`#rewind` move over -- CRuby's own snapshot-at-open
 /// semantics.
 pub struct RDir {
-    path: String,
+    /// The directory this was opened from, as given. `None` for a `Dir.for_fd`
+    /// handle, which has only a descriptor -- exactly what `#path` reports.
+    path: Option<String>,
     /// Every entry, INCLUDING `.` and `..` (what `#read`/`#each` iterate).
     entries: Vec<String>,
     /// The read cursor into `entries`.
     pos: AtomicUsize,
     /// `false` after `#close`; every later operation raises IOError.
     open: AtomicBool,
+    /// The live descriptor `#fileno` answers, and which `Dir.for_fd`/`fchdir`
+    /// need. `-1` when there is none.
+    fd: std::sync::atomic::AtomicI32,
+}
+
+impl Drop for RDir {
+    fn drop(&mut self) {
+        let fd = self.fd.load(Ordering::Relaxed);
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+        }
+    }
 }
 
 impl RubyObject for RDir {
@@ -306,28 +320,77 @@ impl RubyObject for RDir {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
+        // The copy gets its own descriptor, so closing either leaves the other
+        // usable -- CRuby's `Dir#dup` reopens for the same reason.
+        let fd = match self.fd.load(Ordering::Relaxed) {
+            n if n >= 0 => unsafe { libc::dup(n) },
+            _ => -1,
+        };
         Arc::new(RDir {
             path: self.path.clone(),
             entries: self.entries.clone(),
             pos: AtomicUsize::new(self.pos.load(Ordering::Relaxed)),
             open: AtomicBool::new(self.open.load(Ordering::Relaxed)),
+            fd: std::sync::atomic::AtomicI32::new(fd),
         })
     }
+}
+
+/// A `Dir` handle value over an already-read listing.
+fn dir_value(path: Option<String>, mut entries: Vec<String>, fd: libc::c_int) -> RubyValue {
+    entries.push(".".to_string());
+    entries.push("..".to_string());
+    RubyValue::Object(Arc::new(RDir {
+        path,
+        entries,
+        pos: AtomicUsize::new(0),
+        open: AtomicBool::new(true),
+        fd: std::sync::atomic::AtomicI32::new(fd),
+    }))
 }
 
 /// Open `path` as a `Dir` handle value -- the shared body of `Dir.new`/`.open`.
 fn open_dir(path: &str) -> Result<RubyValue, Signal> {
     // `read_names` raises ENOENT for a missing path (the `dir_initialize`
     // syscall name CRuby reports).
-    let mut entries = read_names(path)?;
-    entries.push(".".to_string());
-    entries.push("..".to_string());
-    Ok(RubyValue::Object(Arc::new(RDir {
-        path: path.to_string(),
-        entries,
-        pos: AtomicUsize::new(0),
-        open: AtomicBool::new(true),
-    })))
+    let entries = read_names(path)?;
+    // A descriptor beside the snapshot, so `#fileno` and `Dir.for_fd` work.
+    let fd = std::ffi::CString::new(path)
+        .ok()
+        .map(|c| unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) })
+        .unwrap_or(-1);
+    Ok(dir_value(Some(path.to_string()), entries, fd))
+}
+
+/// The entry names behind an already-open descriptor. Reads through a DUP, so
+/// `closedir` frees only the copy and the caller's descriptor stays open.
+fn read_names_fd(fd: libc::c_int) -> Result<Vec<String>, Signal> {
+    let bad = || {
+        crate::dispatch::raise_error("Errno::EBADF", "Bad file descriptor".to_string())
+    };
+    let copy = unsafe { libc::dup(fd) };
+    if copy < 0 {
+        return Err(bad());
+    }
+    let handle = unsafe { libc::fdopendir(copy) };
+    if handle.is_null() {
+        unsafe { libc::close(copy) };
+        return Err(bad());
+    }
+    let mut names = Vec::new();
+    loop {
+        let entry = unsafe { libc::readdir(handle) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let name = name.to_string_lossy().into_owned();
+        if name != "." && name != ".." {
+            names.push(name);
+        }
+    }
+    unsafe { libc::closedir(handle) };
+    Ok(names)
 }
 
 fn recv_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
@@ -364,6 +427,32 @@ ruby_class! {
         };
         let out = p.call(std::slice::from_ref(&dir));
         let _ = dir_h_close(&dir, &[], None);
+        out
+    }
+    // `Dir.for_fd(fd)` -- a handle over an already-open directory descriptor.
+    // It lists through the descriptor, so it has no path and `#path` is nil.
+    def self."for_fd"(_recv, args, _block) {
+        arity!(args, 1);
+        let fd = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+        let entries = read_names_fd(fd)?;
+        Ok(dir_value(None, entries, fd))
+    }
+    // `Dir.fchdir(fd)` -- `chdir` to an open directory descriptor. The block
+    // form restores the previous directory afterwards, as `Dir.chdir` does.
+    def self."fchdir"(_recv, args, block) {
+        arity!(args, 1);
+        let fd = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+        let previous = std::env::current_dir().ok();
+        if unsafe { libc::fchdir(fd) } != 0 {
+            return Err(raise_errno(&std::io::Error::last_os_error(), "fchdir", ""));
+        }
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(RubyValue::Int(0));
+        };
+        let out = p.call(&[]);
+        if let Some(prev) = previous {
+            let _ = std::env::set_current_dir(prev);
+        }
         out
     }
     def self."pwd" | "getwd"(_recv, args, _block) {
@@ -618,7 +707,10 @@ ruby_class! {
     }
     def "path" | "to_path"(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_val(recv_dir(recv)?.path.clone()))
+        Ok(match &recv_dir(recv)?.path {
+            Some(p) => str_val(p.clone()),
+            None => RubyValue::Nil,
+        })
     }
     // `#pos`/`#tell` read the cursor; `#pos=`/`#seek` set it; `#rewind` zeroes it.
     def "pos" | "tell"(recv, args, _block) {
@@ -646,19 +738,24 @@ ruby_class! {
     }
     def "close" as dir_h_close (recv, args, _block) {
         arity!(args, 0);
-        recv_dir(recv)?.open.store(false, Ordering::Relaxed);
+        let d = recv_dir(recv)?;
+        d.open.store(false, Ordering::Relaxed);
+        let fd = d.fd.swap(-1, Ordering::Relaxed);
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+        }
         Ok(RubyValue::Nil)
     }
     def "fileno"(recv, args, _block) {
         arity!(args, 0);
-        // We hold a materialized snapshot, not a live fd; -1 is the honest
-        // answer (and nothing in the corpus reads it).
-        let _ = recv_dir(recv)?;
-        Ok(RubyValue::Int(-1))
+        Ok(RubyValue::Int(live_dir(recv)?.fd.load(Ordering::Relaxed) as i64))
     }
     def "inspect" | "to_s"(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_val(format!("#<Dir:{}>", recv_dir(recv)?.path)))
+        Ok(str_val(match &recv_dir(recv)?.path {
+            Some(p) => format!("#<Dir:{p}>"),
+            None => "#<Dir>".to_string(),
+        }))
     }
 }
 

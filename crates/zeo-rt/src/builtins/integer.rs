@@ -469,6 +469,14 @@ use crate::builtins::numeric::num_op_row;
 ruby_class! {
     Integer = zeo_abi::INTEGER_CLASS < zeo_abi::NUMERIC_CLASS;
 
+    // `Integer.try_convert(obj)`: `obj` if it is already an Integer, its
+    // `to_int` if it defines one, else nil. Never raises for a value that
+    // simply cannot convert, unlike `Integer(obj)`.
+    def self."try_convert" arity 1 (_recv, args, _block) {
+        arity!(args, 1);
+        Ok(crate::builtins::convert::try_convert_value(&args[0], "Integer", "to_int")?
+            .unwrap_or(RubyValue::Nil))
+    }
     // `Integer.sqrt(n)` -- the exact integer square root (floor of the real
     // square root, no floating-point rounding: correct for bignums too). A
     // negative argument is a `Math::DomainError`, like CRuby.
