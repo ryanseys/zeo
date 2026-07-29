@@ -90,11 +90,29 @@ name in the snippet back to the enclosing scope's local the same way
 (`Ctx::in_eval_splice`), so `x = 1; eval("x + 1")` needs no runtime parser at
 all and still answers `2`.
 
+`Proc#binding` follows from the same capture. A block literal's construction
+site emits a Binding of *its enclosing* scope — the one the block was written
+in, whose `self` and locals are what CRuby's answer holds; the block's own
+locals are not in it, because they do not exist until it runs. Only a program
+that can ask pays: `Hir::uses_proc_binding` looks for a receiver-ful `binding`
+call (or a `send(:binding)`) anywhere in the program, and only then does a scope
+containing a block literal get cells at all. A proc built without one — a
+runtime-internal `Symbol#to_proc`, or any proc in a program that never reflects
+that way — answers CRuby's `ArgumentError: Can't create Binding from C level
+Proc`.
+
+The reflective spelling works too: `send(:eval, src)` and `obj.send(:eval, src)`
+compile exactly like a direct `eval`, taking their locals from the caller's
+frame and their `self` from the receiver, and a literal `send(:eval, …)` also
+counts as an eval site for the VM-linking scan.
+
 **Bounds.** A `binding` inside an inline-spliced iterator block sees that
 block's own parameters only when the enclosing scope is already a binding scope
-(the spliced param is otherwise a plain per-iteration `let`); `Proc#binding`
-isn't implemented; and a `send(:eval, str)` still hides the eval site from
-`uses_runtime_eval`, so its binary may not link the VM at all.
+(the spliced param is otherwise a plain per-iteration `let`). `send` with a
+COMPUTED method name (`m = :eval; send(m, src)`) is invisible to every static
+analysis here: it neither links the VM nor gets a scope, and the honest failure
+mode is the runtime's own `NotImplementedError` or a `NameError` on the first
+caller local. So is `method(:eval).call(src)` — a `Method` carries no binding.
 
 ## Runtime metaprogramming without a parser
 

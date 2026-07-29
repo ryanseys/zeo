@@ -64,7 +64,8 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
         panic!("internal error: expected a Block node at block_id")
     };
-    emit_proc_or_lambda_value(cx, params, body, false, false)
+    let loc = crate::codegen::source_location(cx.compiler, block_id);
+    emit_proc_or_lambda_value(cx, params, body, false, false, loc)
 }
 /// `-> (x) { ... }` / `lambda { ... }` (`HirNode::Lambda`) -- see that
 /// variant's docs. Shares its ENTIRE construction with `emit_proc_value`
@@ -78,15 +79,21 @@ pub fn emit_lambda_value(
     params: &Params,
     body: &[NodeId],
     method_body: bool,
+    loc: Option<(String, u32)>,
 ) -> TokenStream {
-    emit_proc_or_lambda_value(cx, params, body, true, method_body)
+    emit_proc_or_lambda_value(cx, params, body, true, method_body, loc)
 }
+/// `loc` is the block/lambda LITERAL's own source location, which is what
+/// `Proc#binding`'s `source_location` reports (a body statement's line can sit
+/// further down for a multi-line `do ... end`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_proc_or_lambda_value(
     cx: &Ctx,
     params: &Params,
     body: &[NodeId],
     is_lambda: bool,
     method_body: bool,
+    proc_loc: Option<(String, u32)>,
 ) -> TokenStream {
     let block_caps =
         crate::codegen::captures::block_captures(cx.compiler, params, body, cx.current_class);
@@ -372,6 +379,26 @@ pub(crate) fn emit_proc_or_lambda_value(
     // Conservative: nested blocks/lambdas recurse, `def`/`class` bodies stop.
     let with_home =
         body_contains_return(&cx.compiler.hir, body).then(|| quote! { .with_home() });
+    // `Proc#binding` -- the scope this block is WRITTEN in, captured here at
+    // construction, in the enclosing context (`cx`, not `proc_cx`): CRuby's
+    // answer holds that scope's `self` and locals, never the block's own,
+    // which do not exist until the block runs. Only a program that can ask
+    // for it pays: `uses_proc_binding` is what promoted this scope's locals
+    // to cells in the first place, so a `None` `binding_names` here means
+    // nothing in the program reflects that way and `#binding` is left to
+    // raise CRuby's C-level-Proc `ArgumentError`.
+    //
+    // Built in the PRELUDE, not here: the closure below is `move`, so it has
+    // already consumed the cell handles by the time the builder chain runs.
+    let proc_binding = (cx.compiler.hir.uses_proc_binding() && cx.binding_names.is_some())
+        .then(|| {
+            let (file, line) = proc_loc.unwrap_or_else(|| ("(eval)".to_string(), 0));
+            let scope = crate::codegen::call::emit_binding_value(cx, &file, line);
+            quote! { let __proc_binding = #scope; }
+        });
+    let with_binding = proc_binding
+        .is_some()
+        .then(|| quote! { .with_binding(__proc_binding) });
     // Three shapes:
     // - `with_self_and_block` whenever the body must see a CALL-SITE block --
     //   a METHOD-BODY lambda (the runtime install rebinds the receiver per
@@ -441,7 +468,7 @@ pub(crate) fn emit_proc_or_lambda_value(
             // `Thread.new ...; Thread.pass; t.raise` idiom relies on.
             if __out.is_ok() { zeo_rt::check_ints()?; }
             __out
-        }, #default_arg #arity, #is_lambda)#with_home #with_params)
+        }, #default_arg #arity, #is_lambda)#with_home #with_binding #with_params)
     };
     // Braces exist to scope the capture-clone prelude; a capture-free proc
     // emits bare (a braced function argument draws rustc's
@@ -450,6 +477,7 @@ pub(crate) fn emit_proc_or_lambda_value(
         #(#capture_clones)*
         #blk_clone
         #self_default
+        #proc_binding
     };
     if prelude.is_empty() {
         proc_value

@@ -418,13 +418,26 @@ storage). The bounds:
   parameter is a plain per-iteration `let` with no cell to share, so it is
   ABSENT from `local_variables` rather than wrongly bound. Real (escaping)
   blocks and lambdas carry theirs unconditionally.
-- **`Proc#binding`** is not implemented — a compiled `Proc` is a Rust closure
-  with no separate environment object to hand back.
 - **`Binding#irb`**, `#implicit_parameter_get`/`_defined?`/`#implicit_parameters`
   are not implemented.
-- A `send(:eval, str)` hides the eval site from the compiler's
-  `uses_runtime_eval` scan, so that binary may not link the eval VM at all;
-  the failure mode is the runtime's own `NotImplementedError`.
+- **A `send` whose method name is COMPUTED** (`m = :eval; send(m, src)`) is
+  invisible to static analysis: that binary may not link the eval VM at all,
+  and the eval gets no scope. A LITERAL `send(:eval, src)` /
+  `obj.send(:eval, src)` is fully supported — same locals, same `self` rule as
+  CRuby's. `public_send(:eval, …)` is `NoMethodError` in CRuby because
+  `Kernel#eval` is private; zeo does not enforce that visibility, so it
+  evaluates instead (in a scope-less context, so a caller local is a
+  `NameError`).
+- **`method(:eval).call(src)`** does not see the caller's locals — a `Method`
+  carries no binding.
+
+`Proc#binding` IS implemented, and is not a substitution either: it answers a
+Binding of the scope the block was written in (that scope's `self` and locals,
+shared by reference), never the block's own locals. A proc with no Ruby scope
+behind it — `Symbol#to_proc` and the other runtime-internal ones — raises
+CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
+proc in a program the compiler never saw ask for a `Proc#binding` (the capture
+is pay-per-use; see `docs/EVAL_VM.md`).
 
 ## Satisfied faithfully (zeo-bundled gems)
 

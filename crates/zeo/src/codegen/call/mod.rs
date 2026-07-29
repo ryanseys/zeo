@@ -57,6 +57,23 @@ fn inline_block_binding_names(
     Some(std::rc::Rc::new(names))
 }
 
+/// The eval VM call every `Kernel#eval` site funnels through, given the
+/// already-emitted Binding of the calling scope and the call's
+/// `(src[, binding[, file[, line]]])` arguments. The absent trailing ones are
+/// `nil`, which is what tells the runtime to use `scope`.
+fn emit_eval_in_scope(cx: &Ctx, scope: TokenStream, args: &[NodeId]) -> TokenStream {
+    let mut arg_exprs = args.iter().map(|&a| {
+        let e = emit_expr(cx, a);
+        box_if_object_typed(cx, a, e)
+    });
+    let src = arg_exprs.next().expect("eval always has a source argument");
+    let rest: Vec<TokenStream> = arg_exprs
+        .chain(std::iter::repeat_with(|| quote! { zeo_rt::RubyValue::Nil }))
+        .take(3)
+        .collect();
+    quote! { zeo_rt::eval_value_in_scope(#src, #scope, #(#rest),*)? }
+}
+
 /// `Kernel#binding` -- this scope, as a value. `Ctx::binding_names` holds the
 /// names (in `local_variables` order), each of which
 /// `captures::binding_scope_names` already promoted to cell storage, so the
@@ -78,6 +95,18 @@ pub(crate) fn emit_binding(cx: &Ctx, id: NodeId) -> TokenStream {
 /// whose `source_location` CRuby reports as `["<main>", 0]`.
 pub(crate) fn emit_binding_value(cx: &Ctx, file: &str, line: u32) -> TokenStream {
     let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
+    emit_binding_with_self(cx, recv, file, line)
+}
+
+/// [`emit_binding_value`] with `self` supplied rather than taken from the
+/// context -- `obj.send(:eval, src)`, where CRuby reads the LOCALS from the
+/// caller's frame but binds `self` to the receiver.
+pub(crate) fn emit_binding_with_self(
+    cx: &Ctx,
+    recv: TokenStream,
+    file: &str,
+    line: u32,
+) -> TokenStream {
     let box_id = cx.box_id;
     // `u32::MAX`, not `0`: `ClassId(0)` is `Object`, a cref a top-level
     // binding must not claim (see `zeo_rt::binding_new`).
@@ -1079,6 +1108,29 @@ pub fn emit_call(
         .collect();
     let args = &args[..];
 
+    // `send(:eval, src, ...)` -- the reflective spelling, with a receiver or
+    // without. CRuby routes it to the same private `Kernel#eval`, which reads
+    // its LOCALS from the caller's frame either way and takes `self` from the
+    // receiver, so it lowers exactly like a direct `eval` but with the
+    // receiver supplying the Binding's `self`. Only `send`/`__send__`:
+    // `public_send(:eval, ...)` is `NoMethodError` in CRuby, `eval` being
+    // private, and is left on the ordinary dispatch path.
+    if super::captures::is_sent_eval(cx.compiler, name, args)
+        && kwargs.is_empty()
+        && block.is_none()
+        && block_arg.is_none()
+    {
+        let slf = match receiver {
+            Some(r) => {
+                let e = emit_expr(cx, r);
+                box_if_object_typed(cx, r, e)
+            }
+            None => boxed_implicit_self(cx).expect("every context has an implicit self"),
+        };
+        let scope = emit_binding_with_self(cx, slf, "(eval)", 0);
+        return emit_eval_in_scope(cx, scope, &args[1..]);
+    }
+
     // A bare name inside an AOT-spliced `eval("literal")` that IS one of the
     // enclosing scope's locals. prism parsed the snippet on its own, so it
     // could only hand the name over as a vcall; Ruby resolves it as the local,
@@ -1149,16 +1201,7 @@ pub fn emit_call(
             && block_arg.is_none()
         {
             let scope = emit_binding_value(cx, "(eval)", 0);
-            let mut arg_exprs = args.iter().map(|&a| {
-                let e = emit_expr(cx, a);
-                box_if_object_typed(cx, a, e)
-            });
-            let src = arg_exprs.next().expect("at least one argument");
-            let rest: Vec<TokenStream> = arg_exprs
-                .chain(std::iter::repeat_with(|| quote! { zeo_rt::RubyValue::Nil }))
-                .take(3)
-                .collect();
-            return quote! { zeo_rt::eval_value_in_scope(#src, #scope, #(#rest),*)? };
+            return emit_eval_in_scope(cx, scope, args);
         }
         // `public_send` on the IMPLICIT self still enforces visibility: real
         // Ruby checks the RESOLVED method entry's visibility with a

@@ -40,6 +40,17 @@ end
 w = Widget.new
 p w.describe("[@label, SIDES, self.class]")
 
+puts "-- reached reflectively, through send --"
+p send(:eval, "n * 3")
+p __send__(:eval, "n * 4")
+class Tallied
+  def initialize = @total = 6
+end
+t = Tallied.new
+p t.send(:eval, "self.class")
+p t.send(:eval, "@total")
+p t.send(:eval, "@total + n")
+
 puts "-- a local the source introduces is the eval's own --"
 p eval("introduced = 9; introduced * 2")
 p eval("defined?(introduced)")

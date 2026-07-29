@@ -80,6 +80,15 @@ pub struct ProcData {
     /// `None` for a runtime-internal proc or one built at the top level (a
     /// `return` from the latter is an unconditional `LocalJumpError`).
     home: Option<crate::signal::ProcHome>,
+    /// `Proc#binding` -- the DEFINING scope, captured at construction: the
+    /// `self` the block was written under and that scope's own local cells
+    /// (never the block's own locals, which do not exist until it runs --
+    /// oracle-verified). `None` for a runtime-internal proc, and for one
+    /// built by a program that never asks for it, since codegen only pays
+    /// for the capture when a `Proc#binding` call is somewhere in the
+    /// program (`Hir::uses_proc_binding`); `#binding` then answers CRuby's
+    /// C-level-Proc `ArgumentError`.
+    binding: Option<RubyValue>,
     /// `.frozen?` state -- Procs are freezable ordinary objects in Ruby
     /// (freezing one changes nothing observable beyond the flag: no mutating
     /// methods exist), and `dup`/`clone` follow the standard flag rule via
@@ -121,6 +130,7 @@ impl RProc {
             is_lambda: false,
             params: std::borrow::Cow::Borrowed(&[]),
             home: None,
+            binding: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -140,6 +150,7 @@ impl RProc {
             is_lambda,
             params: std::borrow::Cow::Borrowed(&[]),
             home: None,
+            binding: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -181,6 +192,7 @@ impl RProc {
             is_lambda,
             params: std::borrow::Cow::Borrowed(&[]),
             home: None,
+            binding: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -219,6 +231,20 @@ impl RProc {
             data.home = home;
         }
         self
+    }
+
+    /// Attach the defining scope as this Proc's `#binding` (see
+    /// `ProcData::binding`). Appended at construction like `with_home`.
+    pub fn with_binding(mut self, binding: RubyValue) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.binding = Some(binding);
+        }
+        self
+    }
+
+    /// The defining scope this Proc captured, if codegen supplied one.
+    pub fn binding(&self) -> Option<&RubyValue> {
+        self.0.binding.as_ref()
     }
 
     /// Resolve a non-lambda Proc's `Signal::Return` against its captured home:
@@ -352,6 +378,7 @@ impl RProc {
             is_lambda: self.0.is_lambda,
             params: self.0.params.clone(),
             home: self.0.home.clone(),
+            binding: self.0.binding.clone(),
             frozen: std::sync::atomic::AtomicBool::new(frozen),
         }))
     }

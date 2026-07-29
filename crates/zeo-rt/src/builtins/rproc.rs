@@ -74,6 +74,23 @@ ruby_class! {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
+    // `Proc#binding` -- the scope the block was WRITTEN in: its `self` and
+    // its locals, shared by reference (see `ProcData::binding`), never the
+    // block's own locals. A fresh Binding object over that same scope on
+    // every call, as CRuby's is (`pr.binding.equal?(pr.binding)` is false
+    // there, and the two still name one environment). A proc with no
+    // captured scope -- a runtime-internal one like `Symbol#to_proc`, or any
+    // proc in a program that never mentions `Proc#binding`, which is what
+    // lets codegen skip the capture -- is CRuby's C-level proc.
+    def "binding"(recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        let Some(b) = recv_proc(recv).binding() else {
+            return Err(crate::builtins::arg_error!(
+                "Can't create Binding from C level Proc"
+            ));
+        };
+        Ok(crate::builtins::binding::rebind(b))
+    }
     // Returns self, and does nothing else -- see `Module#ruby2_keywords`.
     def "ruby2_keywords"(recv, args, _block) {
         crate::builtins::arity!(args, 0);

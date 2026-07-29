@@ -665,7 +665,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             if *method_body {
                 body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
             }
-            super::call::emit_lambda_value(&body_cx, params, body, *method_body)
+            super::call::emit_lambda_value(
+                &body_cx,
+                params,
+                body,
+                *method_body,
+                super::source_location(cx.compiler, id),
+            )
         }
         HirNode::SymbolLit(s) => {
             let sym = super::pooled_sym(s);
@@ -1312,7 +1318,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // that class).
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
-            let proc = super::call::emit_proc_or_lambda_value(&body_cx, params, body, true, true);
+            let proc = super::call::emit_proc_or_lambda_value(
+                &body_cx,
+                params,
+                body,
+                true,
+                true,
+                super::source_location(cx.compiler, id),
+            );
             let name_sym = super::pooled_sym(name);
             if *is_class_method {
                 // `def self.x` always installs a singleton method on `self`.

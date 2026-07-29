@@ -102,6 +102,9 @@ pub fn magic_frozen_string_literal(source: &str) -> bool {
 #[derive(Default)]
 pub struct Hir {
     nodes: Vec<HirNode>,
+    /// [`Hir::uses_proc_binding`]'s memo -- computed on first ask, after
+    /// lowering has finished adding nodes.
+    proc_binding: std::sync::OnceLock<bool>,
     /// Per-node provenance, parallel to `nodes` -- see `Span`.
     spans: Vec<Span>,
     /// `Call` nodes that are VCALLS (prism's `is_variable_call`: a bare
@@ -434,10 +437,10 @@ impl Hir {
     /// A plain scan of the whole arena (every node, not a root traversal) so it
     /// also catches eval sites inside spliced `require`d files and method
     /// bodies. Over-approximation is safe: a false positive only links the
-    /// larger runtime; the honest failure mode of a miss (a reflective
-    /// `send(:eval, ...)`, which no static analysis can see) is the runtime's
-    /// own `NotImplementedError` naming `--features eval-vm`, not silent wrong
-    /// output.
+    /// larger runtime; the honest failure mode of a miss (a `send(name, src)`
+    /// whose method name is COMPUTED, which no static analysis can see) is the
+    /// runtime's own `NotImplementedError` naming `--features eval-vm`, not
+    /// silent wrong output.
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::Call { name, args, .. } => match name.as_str() {
@@ -446,9 +449,52 @@ impl Hir {
                 // call site can hold in anything.
                 "eval" => true,
                 "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
+                // A reflective `send(:eval, src)` is an eval site too, and a
+                // LITERAL method symbol is one static analysis can see.
+                "send" | "__send__" | "public_send" => args
+                    .first()
+                    .and_then(|a| self.sent_name(a.node_id()))
+                    .is_some_and(|n| {
+                        matches!(n, "eval" | "instance_eval" | "class_eval" | "module_eval")
+                    }),
                 _ => false,
             },
             _ => false,
+        })
+    }
+
+    /// The literal method name a `send`-family call names, if it is a symbol
+    /// or string literal -- `None` for a computed one.
+    pub fn sent_name(&self, first_arg: NodeId) -> Option<&str> {
+        match &self[first_arg] {
+            HirNode::SymbolLit(n) => Some(n),
+            HirNode::StringLit(parts) => match parts.as_slice() {
+                [StrPart::Lit(n)] => Some(n),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether the program can ask a `Proc` for its `#binding` -- any call
+    /// named `binding` WITH a receiver, or a `send(:binding)`. Codegen only
+    /// captures a block's defining scope when this holds, so a program that
+    /// never reflects on a Proc that way pays nothing (see
+    /// `codegen::captures::binding_scope_names`). Memoized: every method
+    /// scope asks, and the answer is a whole-program property.
+    pub fn uses_proc_binding(&self) -> bool {
+        *self.proc_binding.get_or_init(|| {
+            self.nodes.iter().any(|node| match node {
+                HirNode::Call {
+                    receiver, name, args, ..
+                } => {
+                    (name == "binding" && receiver.is_some() && args.is_empty())
+                        || (matches!(name.as_str(), "send" | "__send__" | "public_send")
+                            && args.len() == 1
+                            && self.sent_name(args[0].node_id()) == Some("binding"))
+                }
+                _ => false,
+            })
         })
     }
 }

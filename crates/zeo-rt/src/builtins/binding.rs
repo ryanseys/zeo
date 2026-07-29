@@ -221,6 +221,24 @@ pub(crate) fn binding_value(
     }))
 }
 
+/// A new Binding object over the SAME environment -- what `Proc#binding`
+/// answers, since CRuby hands back a distinct object each call while the two
+/// still name one scope. A non-Binding argument can't arise (the only caller
+/// passes what codegen stored) and is returned unchanged.
+pub(crate) fn rebind(v: &RubyValue) -> RubyValue {
+    let Some(b) = as_binding(v) else {
+        return v.clone();
+    };
+    binding_value(
+        b.self_val.clone(),
+        Arc::clone(&b.scope),
+        b.file.clone(),
+        b.line,
+        b.box_id,
+        b.cref,
+    )
+}
+
 pub(crate) fn as_binding(v: &RubyValue) -> Option<&RBinding> {
     match v {
         RubyValue::Object(o) => o.as_any().downcast_ref::<RBinding>(),

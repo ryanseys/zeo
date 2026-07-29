@@ -124,31 +124,44 @@ pub fn block_captures(
     caps
 }
 
-/// Whether anything in this scope needs the scope itself as a value: a bare,
-/// receiver-less, argument-less `binding` (the only form that names the
-/// CURRENT scope), or a receiver-less dynamic `eval`, which CRuby runs in the
-/// caller's own frame and zeo therefore compiles into a Binding of it.
+/// Whether anything in this scope needs the scope itself as a value:
+///
+/// - a bare, receiver-less, argument-less `binding` -- the only form that
+///   names the CURRENT scope;
+/// - a dynamic `eval`, receiver-less or reached through a literal
+///   `send(:eval, ...)`, which CRuby runs in the caller's own frame and zeo
+///   therefore compiles into a Binding of it;
+/// - any block or lambda literal, when the program can ask a `Proc` for its
+///   `#binding` ([`crate::hir::Hir::uses_proc_binding`]) -- what that answers
+///   is a Binding of the scope the block was WRITTEN in, which is this one.
+///
 /// Descends through blocks and lambdas (a `binding` taken inside one still
 /// exposes the enclosing scope's locals) but stops at a `def`/`class` body,
 /// which is a scope of its own.
 fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
+        HirNode::Block { .. } | HirNode::Lambda { .. }
+            if compiler.hir.uses_proc_binding() =>
+        {
+            return true;
+        }
         HirNode::Call {
-            receiver: None,
+            receiver,
             name,
             args,
             kwargs,
             block,
             block_arg,
             safe: _,
-        } if (name == "binding" && args.is_empty()
-            || name == "eval" && (1..=4).contains(&args.len()))
-            && kwargs.is_empty()
-            && block.is_none()
-            && block_arg.is_none() =>
-        {
-            return true;
+        } if kwargs.is_empty() && block.is_none() && block_arg.is_none() => {
+            let bare = receiver.is_none()
+                && (name == "binding" && args.is_empty()
+                    || name == "eval" && (1..=4).contains(&args.len()));
+            let ids: Vec<NodeId> = args.iter().map(|a| a.node_id()).collect();
+            if bare || is_sent_eval(compiler, name, &ids) {
+                return true;
+            }
         }
         _ => {}
     }
@@ -159,6 +172,16 @@ fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
         }
     });
     found
+}
+
+/// Whether this call is `send(:eval, src, ...)` -- the reflective spelling of
+/// `Kernel#eval`, which CRuby runs in the caller's frame exactly as the direct
+/// one. `public_send` is excluded because `Kernel#eval` is private, so CRuby
+/// raises `NoMethodError` there rather than evaluating anything.
+pub(super) fn is_sent_eval(compiler: &Compiler, name: &str, args: &[NodeId]) -> bool {
+    matches!(name, "send" | "__send__")
+        && (2..=5).contains(&args.len())
+        && compiler.hir.sent_name(args[0]) == Some("eval")
 }
 
 /// A scope that materializes a `Binding` has to hand out every one of its own
