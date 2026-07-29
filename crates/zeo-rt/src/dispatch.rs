@@ -3092,7 +3092,14 @@ pub fn define_in_default_definee(
     name: Symbol,
     body: RubyValue,
 ) -> Result<RubyValue, Signal> {
-    let installer = if matches!(recv, RubyValue::Class(_)) {
+    // A Class/Module self takes an INSTANCE method -- unless the `def` is
+    // running inside an `instance_eval`/`instance_exec`, whose definee is the
+    // singleton class. That is how `SingleForwardable` installs its
+    // delegators: it builds a `proc { def name(...) ... end }` and
+    // `instance_eval`s it against the module.
+    let installer = if matches!(recv, RubyValue::Class(_))
+        && !crate::runtime_meta::singleton_definee(recv)
+    {
         "define_method"
     } else {
         "define_singleton_method"

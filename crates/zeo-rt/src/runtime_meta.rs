@@ -295,11 +295,51 @@ pub(crate) fn with_body_frame<T>(
             module_function: false,
         })
     });
+    // A class body's definee is the class, even inside an enclosing
+    // `instance_eval` -- so suspend those frames for this body.
+    let outer = SINGLETON_DEFINEE.with(|s| std::mem::take(&mut *s.borrow_mut()));
     let out = f();
+    SINGLETON_DEFINEE.with(|s| *s.borrow_mut() = outer);
     BODY_FRAMES.with(|s| {
         s.borrow_mut().pop();
     });
     out
+}
+
+// The receivers of the `instance_eval`/`instance_exec` frames open on this
+// thread. Inside one, a `def` whose self IS that receiver installs on the
+// singleton class -- Ruby's rule, and what `SingleForwardable` relies on.
+// The receiver is recorded rather than a bare depth so that a `def` reached
+// through some OTHER object's method, from inside the block, still follows
+// the ordinary rule.
+std::thread_local!(static SINGLETON_DEFINEE: std::cell::RefCell<Vec<RubyValue>> =
+    const { std::cell::RefCell::new(Vec::new()) });
+
+/// Run `f` with `recv`'s singleton class as the default definee --
+/// `instance_eval`/`instance_exec`'s rule.
+pub(crate) fn with_singleton_definee<T>(
+    recv: &RubyValue,
+    f: impl FnOnce() -> Result<T, Signal>,
+) -> Result<T, Signal> {
+    SINGLETON_DEFINEE.with(|s| s.borrow_mut().push(recv.clone()));
+    let out = f();
+    SINGLETON_DEFINEE.with(|s| {
+        s.borrow_mut().pop();
+    });
+    out
+}
+
+/// Whether a `def` running with `recv` as its self installs on the singleton
+/// class -- true exactly inside an `instance_eval`/`instance_exec` of `recv`.
+pub(crate) fn singleton_definee(recv: &RubyValue) -> bool {
+    SINGLETON_DEFINEE.with(|s| {
+        s.borrow()
+            .last()
+            .is_some_and(|open| match (open, recv) {
+                (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
+                _ => crate::builtins::basic_object::value_identity(open, recv),
+            })
+    })
 }
 
 fn current_frame_for(id: ClassId) -> Option<BodyFrame> {

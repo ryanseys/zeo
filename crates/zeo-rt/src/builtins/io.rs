@@ -104,6 +104,11 @@ pub struct RIo {
     /// The child this IO is connected to, for an `IO.popen` handle (0 = none).
     /// `#pid` answers it, and `#close` reaps the child and sets `$?`.
     child_pid: std::sync::atomic::AtomicI64,
+    /// `#external_encoding`/`#internal_encoding` once `set_encoding` has been
+    /// told. Unset, a READABLE stream reports `Encoding.default_external` and
+    /// a write-only one reports nil -- CRuby's rule, and why this cannot just
+    /// default to the process encoding.
+    encodings: parking_lot::Mutex<(Option<crate::encoding::EncodingId>, Option<crate::encoding::EncodingId>)>,
 }
 
 impl RubyObject for RIo {
@@ -161,6 +166,7 @@ impl RIo {
             unget: parking_lot::Mutex::new(Vec::new()),
             class_override: None,
             child_pid: std::sync::atomic::AtomicI64::new(0),
+            encodings: parking_lot::Mutex::new((None, None)),
         }
     }
 }
@@ -1573,6 +1579,87 @@ fn io_binmode(
     Ok(recv.clone())
 }
 
+/// `#external_encoding` -- the encoding this stream's bytes are read as.
+/// Unset, a READABLE stream answers `Encoding.default_external`; a write-only
+/// one answers nil, since nothing is being decoded.
+fn io_external_encoding(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    let Some(io) = as_rio(recv) else {
+        return Ok(RubyValue::Nil);
+    };
+    if let Some(id) = io.encodings.lock().0 {
+        return Ok(crate::builtins::encoding::encoding_value(id));
+    }
+    let write_only = matches!(
+        stream_of(recv),
+        Some(StdStream::Stdout | StdStream::Stderr)
+    ) || fd_access_mode(recv) == Some(libc::O_WRONLY);
+    Ok(if write_only {
+        RubyValue::Nil
+    } else {
+        crate::builtins::encoding::encoding_value(crate::encoding::default_external())
+    })
+}
+
+/// `#internal_encoding` -- what reads are transcoded TO. nil unless asked for,
+/// which is the default for every stream.
+fn io_internal_encoding(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    Ok(match as_rio(recv).and_then(|io| io.encodings.lock().1) {
+        Some(id) => crate::builtins::encoding::encoding_value(id),
+        None => RubyValue::Nil,
+    })
+}
+
+/// `#set_encoding(ext[, int])` -- record the pair and answer the receiver. A
+/// single `"EXT:INT"` string names both. zeo's IO reads bytes and tags them,
+/// so this is what the tag comes from; no transcoding happens on the way in.
+fn io_set_encoding(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1..=2);
+    let Some(io) = as_rio(recv) else {
+        return Ok(recv.clone());
+    };
+    let parse = |v: &RubyValue| -> Result<Option<crate::encoding::EncodingId>, Signal> {
+        match v {
+            RubyValue::Nil => Ok(None),
+            other => Ok(Some(crate::builtins::encoding::arg_encoding(other)?)),
+        }
+    };
+    // The combined `"UTF-8:BINARY"` spelling, which only a String can carry.
+    if args.len() == 1 {
+        if let RubyValue::Str(sp) = &args[0] {
+            let spec = sp.lock().to_utf8_lossy().into_owned();
+            if let Some((ext, int)) = spec.split_once(':') {
+                let ext = crate::builtins::encoding::arg_encoding(
+                    &RubyValue::Str(crate::string_new(ext.to_string())))?;
+                let int = crate::builtins::encoding::arg_encoding(
+                    &RubyValue::Str(crate::string_new(int.to_string())))?;
+                *io.encodings.lock() = (Some(ext), Some(int));
+                return Ok(recv.clone());
+            }
+        }
+    }
+    let ext = parse(&args[0])?;
+    let int = match args.get(1) {
+        Some(v) => parse(v)?,
+        None => None,
+    };
+    *io.encodings.lock() = (ext, int);
+    Ok(recv.clone())
+}
+
 fn io_binmode_p(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -2646,6 +2733,9 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "closed?" => io_closed,
         "binmode" => io_binmode,
         "binmode?" => io_binmode_p,
+        "external_encoding" => io_external_encoding,
+        "internal_encoding" => io_internal_encoding,
+        "set_encoding" => io_set_encoding,
         "autoclose=" => io_autoclose_set,
         "autoclose?" => io_autoclose_p,
         "to_io" => io_to_io,
@@ -2768,6 +2858,9 @@ pub fn lookup_names() -> &'static [&'static str] {
         "closed?",
         "binmode",
         "binmode?",
+        "external_encoding",
+        "internal_encoding",
+        "set_encoding",
         "autoclose=",
         "autoclose?",
         "to_io",

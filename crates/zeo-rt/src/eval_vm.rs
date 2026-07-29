@@ -1335,7 +1335,11 @@ mod imp {
             self_val: self_val.clone(),
             scope: fresh_scope(),
             box_id,
-            definee: Definee::Class(block_definee(self_val)),
+            definee: if crate::runtime_meta::singleton_definee(self_val) {
+                Definee::Singleton(self_val.clone())
+            } else {
+                Definee::Class(block_definee(self_val))
+            },
             block: None,
             method_args: None,
             src: Arc::from(snippet),

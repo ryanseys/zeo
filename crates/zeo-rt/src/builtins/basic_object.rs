@@ -92,7 +92,7 @@ ruby_class! {
     // lenient (extra args dropped, missing ones nil), exactly as `yield` is.
     def "instance_exec" (recv, args, block) {
         let blk = block_proc(block, "instance_exec")?;
-        blk.call_with_self(recv, args)
+        crate::runtime_meta::with_singleton_definee(recv, || blk.call_with_self(recv, args))
     }
     // `instance_eval { ... }` -- the block form only. Real Ruby yields the
     // receiver to the block as well as rebinding self, which is what makes
@@ -112,7 +112,9 @@ ruby_class! {
             );
         }
         let blk = block_proc(block, "instance_eval")?;
-        blk.call_with_self(recv, std::slice::from_ref(recv))
+        crate::runtime_meta::with_singleton_definee(recv, || {
+            blk.call_with_self(recv, std::slice::from_ref(recv))
+        })
     }
 }
 

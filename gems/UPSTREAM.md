@@ -17,6 +17,7 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 | ostruct | 0.6.3 | ruby 4.0.5 default gem |
 | pp | 0.6.4 | ruby 4.0.5 default gem |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
+| reline | 0.6.3 | ruby 4.0.6 default gem |
 | shellwords | 0.2.2 | ruby 4.0.5 stdlib |
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
 | timeout | 0.6.1 | ruby 4.0.5 default gem |
@@ -48,6 +49,16 @@ zeo-authored (upstream's branches on RUBY_ENGINE and builds its `TYPE_*`
 constants with a `const_set` loop). The `Importer` DSL files
 (`import`/`struct`/`types`/`pack`/`value`/`cparser`) are not vendored --
 `Importer` builds methods with `module_eval` on computed strings.
+
+`reline/` carries one marked deviation, tagged `zeo:` in-file: `io.rb`
+requires `reline/io/ansi` at the top rather than inside `decide_io_gate`,
+since a whole-program AOT compile does not load a library that only a method
+body requires, and that gate is what every non-dumb terminal goes through.
+
+irb is deliberately NOT vendored: every version since 1.15 reads Ruby source
+through a Ruby-level Prism (`Prism.lex_compat`, a `Prism::Visitor` subclass),
+and zeo exposes no such API -- it embeds prism as a Rust crate, for its own
+front end. See `tests/gaps/issue_irb_missing.rb`.
 
 When bumping the oracle Ruby, re-vendor the first table from the new
 installation and update the versions here.
