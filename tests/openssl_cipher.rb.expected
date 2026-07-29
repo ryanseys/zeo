@@ -1,0 +1,45 @@
+-- metadata --
+OpenSSL::Cipher
+"AES-256-CBC"
+32
+16
+16
+false
+"AES-256-CBC"
+"ChaCha20-Poly1305"
+true
+true
+true
+false
+-- cbc round trip --
+"dd872cd9b22f5fa7870b7956830f7fd54ca58dc33e4a670c35a8d4283b614b61"
+#<Encoding:BINARY (ASCII-8BIT)>
+"secret message!!"
+-- ctr --
+"9d19f8e0ce7d836aca"
+-- gcm --
+"60d7955d07dc47ee167b0cf9a5b2"
+16
+"39d27b49f0fe0083133a2c2aa919ffd8"
+"authenticated!"
+[OpenSSL::Cipher::AuthTagError, "AEAD authentication tag verification failed"]
+-- chacha20-poly1305 --
+"5072c3b04c904c"
+"b5b0bf561a5de6d1a3b286aa1e794116"
+-- padding + errors --
+"2e87d243c361cf658497b59d01f0aa40"
+[OpenSSL::Cipher::CipherError, "cipher final failed: wrong final block length"]
+OpenSSL::Cipher::CipherError
+[ArgumentError, "key must be 32 bytes"]
+[OpenSSL::Cipher::CipherError, "cipher final failed: bad decrypt"]
+[OpenSSL::Cipher::CipherError, "key not set"]
+DES-EDE3-CBC: ok
+RC4: CipherError
+BF-CBC: CipherError
+aes-192-cbc: ok
+-- reset + random + keyivgen --
+true
+16
+16
+"hello"
+"433c20b132743669c4445b7a32c745da"

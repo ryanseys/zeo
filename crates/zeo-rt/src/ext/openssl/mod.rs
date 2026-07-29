@@ -27,6 +27,7 @@
 
 pub(crate) mod algo_class;
 pub(crate) mod bn;
+pub(crate) mod cipher;
 pub(crate) mod digest;
 pub(crate) mod hmac;
 pub(crate) mod kdf;
