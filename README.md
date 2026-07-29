@@ -155,7 +155,8 @@ is a fact that can only be stated, never inferred from a score.
   its promotion into the corpus.
 - **Substitutions are disclosed, never silent.** Where zeo backs a gem or C
   extension with its own implementation (`json`→serde_json, `psych`/`yaml`→
-  yaml-rust2, `zlib`→flate2, `digest`/`openssl`→RustCrypto, …), the compile
+  yaml-rust2, `zlib`→flate2, `digest`→RustCrypto, `openssl`→a vendored
+  OpenSSL 3, …), the compile
   warns once and writes a machine-readable `zeo-gems.json` ledger next to the
   artifact recording exactly which libraries diverged and why.
 - **Native-only gems fail loudly.** A gem whose real implementation is a C

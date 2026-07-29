@@ -34,7 +34,8 @@ program start, CRuby's timing), and `Kernel#raise` is a real dispatch row
 FFI corpus port findings (2026-07-21, from the spinel-intrinsic -> real
 ffi gem test port). Now RESOLVED: Proc -> C-function-pointer marshaling
 (`callback`) and `:varargs` both land over libffi (`ext-ffi`; see
-`lower/ffi.rs`), and `OpenSSL::Random` is registered in zeo-abi. STILL
+`lower/ffi.rs`), and `OpenSSL::Random` is a real module over the vendored
+OpenSSL (with the rest of the `openssl` surface). STILL
 OPEN: binary `Digest#digest` bytes get UTF-8-transcoded through
 pack/Base64/format (the CONCAT and OUTPUT legs are fixed --
 `StrBuf::push_buf` byte concat + raw-byte print family; the pack/Base64/

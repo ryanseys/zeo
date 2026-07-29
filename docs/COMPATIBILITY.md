@@ -59,7 +59,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 | `psych` / `yaml` | `yaml-rust2`-backed built-in | not libyaml; tag/anchor and error-position behaviour differ |
 | `zlib` | `flate2`-backed built-in | not the `zlib` C extension; four entry points it doesn't expose are declined — see below |
 | `digest` | RustCrypto-backed built-in | not the OpenSSL `digest` C extension |
-| `openssl` | built-in subset | `OpenSSL::Random` + secure compare only; `Cipher`/`PKey`/`SSL` absent |
+| `openssl` | vendored OpenSSL 3 via rust-openssl | the same EVP primitives CRuby binds; PKey generation, X509 issuance and `SSLServer` are declined — see below |
 | `strscan` | zeo `StringScanner` | a reimplementation, not the C extension |
 | `stringio` | zeo `StringIO` | a reimplementation |
 | `date` | zeo `Date`/`DateTime` | a reimplementation |
