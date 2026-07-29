@@ -2124,6 +2124,7 @@ mod tests {
             defining_class: None,
             class_self: None,
             current_method: None,
+        current_method_origin: None,
             local_types: std::borrow::Cow::Owned(std::collections::HashMap::new()),
             label_counter: &label_counter,
             loop_labels: None,

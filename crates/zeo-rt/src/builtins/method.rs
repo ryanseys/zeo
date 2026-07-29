@@ -359,8 +359,9 @@ ruby_class! {
     def "<<"(recv, args, _blk) {
         compose(recv, args, false)
     }
-    // `Method#==`/`#eql?` -- same defining method (name + owner) bound to an
-    // equal receiver.
+    // `Method#==`/`#eql?` -- same defining method (name + owner) bound to the
+    // SAME receiver. CRuby compares receivers by identity, not by `==`, so two
+    // Methods over two equal-but-distinct Strings are unequal.
     def "==" | "eql?" (recv, args, _blk) {
         let m = recv_method(recv);
         let RubyValue::Object(o) = &args[0] else {
@@ -369,28 +370,36 @@ ruby_class! {
         let Some(other) = o.as_any().downcast_ref::<RMethod>() else {
             return Ok(RubyValue::Bool(false));
         };
-        let same_method = m.name == other.name && m.owner() == other.owner();
-        if !same_method {
-            return Ok(RubyValue::Bool(false));
-        }
-        let recv_eq = crate::dispatch::send_value(
-            &m.recv,
-            Symbol::intern("=="),
-            std::slice::from_ref(&other.recv),
-            None,
-        )?;
-        Ok(RubyValue::Bool(recv_eq.truthy()))
+        Ok(RubyValue::Bool(
+            m.name == other.name
+                && m.owner() == other.owner()
+                && crate::builtins::basic_object::value_identity(&m.recv, &other.recv),
+        ))
     }
-    // `Method#hash` -- consistent with `#==`: keyed on name and owner (an equal
-    // receiver is required for `==`, but folding it in isn't needed for the
-    // equal-objects-hash-equal contract, so name+owner is enough).
+    // `Method#hash` -- consistent with `#==`: name, owner, and the receiver's
+    // IDENTITY, since two Methods over distinct receivers are never equal. The
+    // receiver folds in exactly the way `value_identity` COMPARES it -- an
+    // allocation address for a heap value, the value itself for an immediate
+    // -- so two Methods that are `==` can never hash apart.
     def "hash"(recv, _args, _blk) {
         use std::hash::{Hash, Hasher};
         let m = recv_method(recv);
         let mut h = std::collections::hash_map::DefaultHasher::new();
         m.name.hash(&mut h);
         m.owner().unwrap_or(m.home).hash(&mut h);
+        match crate::runtime_meta::value_identity(&m.recv) {
+            Some(addr) => addr.hash(&mut h),
+            None => crate::collections::hash_key(&m.recv).hash(&mut h),
+        }
         Ok(RubyValue::Int(h.finish() as i64))
+    }
+    // `Method#box` -- the namespace this method was defined in. zeo has no
+    // namespaces, so every method it can hand back belongs to none: nil, the
+    // same answer ruby gives for a method defined outside any.
+    def "box"(recv, args, _blk) {
+        arity!(args, 0);
+        let _ = recv;
+        Ok(RubyValue::Nil)
     }
     // `Method#curry` -- curries the equivalent Proc (`to_proc.curry`).
     def "curry"(recv, args, _blk) {

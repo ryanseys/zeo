@@ -1,6 +1,5 @@
-# `Forwardable#def_delegator` reaches `_delegator_method` with the accessor
-# argument already coerced to a String, so the `path` call inside
-# forwardable.rb raises NoMethodError. ruby passes the accessor through intact.
+# `Forwardable#def_delegator` builds each delegator by eval'ing a `def
+# name(...)`, so it needs the eval VM to accept and forward a `...` signature.
 require "forwardable"
 
 class Wrapped

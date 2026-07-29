@@ -72,9 +72,7 @@ module BigMath
   # and satisfies sin(x) = sign * sin(reduced_x)
   # If add_half_pi is true, adds pi/2 to x before reduction.
   # Precision of pi is adjusted to ensure reduced_x has the required precision.
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _sin_periodic_reduction(x, prec, add_half_pi: false) # :nodoc:
+  private_class_method def _sin_periodic_reduction(x, prec, add_half_pi: false) # :nodoc:
     return [1, x] if -Math::PI/2 <= x && x <= Math::PI/2 && !add_half_pi
 
     mod_prec = prec + BigDecimal::Internal::EXTRA_PREC
@@ -96,9 +94,7 @@ module BigMath
     end
   end
 
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _sin_binary_splitting(x, prec) # :nodoc:
+  private_class_method def _sin_binary_splitting(x, prec) # :nodoc:
     return x if x.zero?
     x2 = x.mult(x, prec)
     # Find k that satisfies x2**k / (2k+1)! < 10**(-prec)
@@ -111,9 +107,7 @@ module BigMath
     x.mult(1 + BigDecimal::Internal.taylor_sum_binary_splitting(x2, ds, prec), prec)
   end
 
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _sin_around_zero(x, prec) # :nodoc:
+  private_class_method def _sin_around_zero(x, prec) # :nodoc:
     # Divide x into several parts
     # sin(x.xxxxxxxx...) = sin(x.xx + 0.00xx + 0.0000xxxx + ...)
     # Calculate sin of each part and restore sin(0.xxxxxxxx...) using addition theorem.
@@ -659,9 +653,7 @@ module BigMath
   end
 
   # Calculates erf(x + a)
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _erf_taylor(x, a, erf_a, prec) # :nodoc:
+  private_class_method def _erf_taylor(x, a, erf_a, prec) # :nodoc:
     return erf_a if x.zero?
     # Let f(x+a) = erf(x+a)*exp((x+a)**2)*sqrt(pi)/2
     #            = c0 + c1*x + c2*x**2 + c3*x**3 + c4*x**4 + ...
@@ -692,9 +684,7 @@ module BigMath
     value > 1 ? BigDecimal(1) : value
   end
 
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _erfc_asymptotic(x, prec) # :nodoc:
+  private_class_method def _erfc_asymptotic(x, prec) # :nodoc:
     # Let f(x) = erfc(x)*sqrt(pi)*exp(x**2)/2
     # f(x) satisfies the following differential equation:
     # 2*x*f(x) = f'(x) + 1
@@ -807,9 +797,7 @@ module BigMath
   end
 
   # Returns sum part: sqrt(2*pi) and c[k]/(x+k) terms of Spouge's approximation
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _gamma_spouge_sum_part(x, prec) # :nodoc:
+  private_class_method def _gamma_spouge_sum_part(x, prec) # :nodoc:
     x -= 1
     # Spouge's approximation
     # x! = (x + a)**(x + 0.5) * exp(-x - a) * (sqrt(2 * pi)  + (1..a - 1).sum{|k| c[k] / (x + k) } + epsilon)
@@ -849,9 +837,7 @@ module BigMath
     [a, sum]
   end
 
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _gamma_positive_integer(x, prec) # :nodoc:
+  private_class_method def _gamma_positive_integer(x, prec) # :nodoc:
     return x if x == 1
     numbers = (1..x - 1).map {|i| BigDecimal(i) }
     while numbers.size > 1
@@ -861,9 +847,7 @@ module BigMath
   end
 
   # Returns sin(pi * x), for gamma reflection formula calculation
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _sinpix(x, pi, prec) # :nodoc:
+  private_class_method def _sinpix(x, pi, prec) # :nodoc:
     x = x % 2
     sign = x > 1 ? -1 : 1
     x %= 1

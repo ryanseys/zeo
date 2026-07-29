@@ -33,11 +33,9 @@ patches, from the ruby 4.0.5 nkf-0.3.0 gem, verbatim).
 
 `bigdecimal/` is a third origin: its whole `lib/` tree is vendored from the
 bigdecimal 4.1.2 gem (the version bundled with ruby 4.0.5) -- in 4.x that
-IS most of the gem (`power`, `sqrt`, `BigMath`, `to_d`) -- with two marked
-deviations, both tagged `zeo:` in-file: the JRuby loader branch is reduced
-to `require "bigdecimal.so"`, and `private_class_method def` helpers are
-plain defs until that compiler gap closes
-(`tests/gaps/issue_private_class_method_def.rb`).
+IS most of the gem (`power`, `sqrt`, `BigMath`, `to_d`) -- with one marked
+deviation, tagged `zeo:` in-file: the JRuby loader branch is reduced to
+`require "bigdecimal.so"`.
 
 `fiddle/` follows the same vendored pattern: `closure.rb`, `function.rb`
 and `version.rb` are verbatim from the ruby 4.0.5 fiddle-1.1.8 gem, and

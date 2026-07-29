@@ -1406,6 +1406,30 @@ fn lower_class_body_statement(
                 // Falls through to the generic `Call` lowering below --
                 // a dynamic/computed argument (e.g. `private(*names)`).
             }
+            // `private_class_method def x ... end` -- zeo does not model
+            // class-method visibility (its runtime rows are no-ops), but the
+            // `def` inside is a real definition. Unwrap it and lower the def on
+            // its own terms, so the running visibility default and
+            // `module_function` mode reach it exactly as a bare `def`.
+            if matches!(
+                name.as_str(),
+                "private_class_method" | "public_class_method"
+            ) {
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
+                    return lower_class_body_statement(
+                        result,
+                        hir,
+                        &arg_list[0],
+                        visibility,
+                        module_function,
+                        out,
+                    );
+                }
+            }
             // `module_function` -- recognized in the same two forms as
             // `private`/`public`/`protected`: (1) a bare call switches a mode
             // so every subsequent `def` in this body becomes a MODULE method

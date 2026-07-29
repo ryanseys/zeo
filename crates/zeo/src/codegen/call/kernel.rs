@@ -52,15 +52,22 @@ pub(super) fn emit_universal_implicit_form(
     }
     // `__method__`/`__callee__` -- the enclosing method's name as a Symbol,
     // `nil` at the top level (a compile-time constant here: codegen always
-    // knows which method body it's emitting). The two differ only under an
-    // alias (`__callee__` reports the called-as name); we don't track
-    // aliases, so they coincide.
+    // knows which method body it's emitting). The two differ under an alias:
+    // `__method__` is the name the body was DEFINED under, `__callee__` the
+    // name it was reached through.
     if (name == "__method__" || name == "__callee__")
         && args.is_empty()
         && kwargs.is_empty()
         && block.is_none()
     {
-        return Some(match &cx.current_method {
+        let called_as = cx.current_method.as_deref();
+        let defined_as = cx.current_method_origin.as_deref().or(called_as);
+        let which = if name == "__method__" {
+            defined_as
+        } else {
+            called_as
+        };
+        return Some(match which {
             Some(m) => {
                 let sym = super::super::pooled_sym(m);
                 quote! { zeo_rt::RubyValue::Symbol(#sym) }

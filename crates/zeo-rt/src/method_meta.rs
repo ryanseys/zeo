@@ -387,25 +387,51 @@ impl Inspect<'_> {
     }
 }
 
-/// The parenthesized signature: each parameter as Ruby spells it in a `def`,
-/// with an anonymous slot dropping its name. An entry with no name at all is
-/// a native method's placeholder (see [`anonymous_descriptor`]), which CRuby
-/// prints as a bare `_` or `*`.
+/// The parenthesized signature: each parameter as Ruby spells it in a `def`.
+/// An entry with NO name is a native method's placeholder (see
+/// [`anonymous_descriptor`]), which CRuby prints as a bare `_` or `*`.
+///
+/// An ANONYMOUS forwarding slot is named for its own sigil (`*`/`**`/`&`), and
+/// ruby renders those three specially -- oracle-verified over every
+/// combination: a signature that is nothing but the whole triple, or nothing
+/// but an anonymous block, is `(...)`; otherwise an anonymous block prints
+/// `...`, and an anonymous keyrest directly after an anonymous rest is left
+/// out entirely.
 fn render_params(params: &Descriptor) -> String {
+    fn is(e: &(ParamKind, Option<String>), kind: ParamKind, sigil: &str) -> bool {
+        e.0 == kind && e.1.as_deref() == Some(sigil)
+    }
+    let triple = params.len() == 3
+        && is(&params[0], ParamKind::Rest, "*")
+        && is(&params[1], ParamKind::KeyRest, "**")
+        && is(&params[2], ParamKind::Block, "&");
+    if triple || (params.len() == 1 && is(&params[0], ParamKind::Block, "&")) {
+        return "(...)".to_string();
+    }
     let one = |(kind, name): &(ParamKind, Option<String>)| match (kind, name.as_deref()) {
         (ParamKind::Req, None) => "_".to_string(),
         (ParamKind::Req, Some(n)) => n.to_string(),
         (ParamKind::Opt, n) => format!("{}=...", n.unwrap_or("_")),
+        (ParamKind::Rest, Some("*")) => "*".to_string(),
         (ParamKind::Rest, n) => format!("*{}", n.unwrap_or("")),
         (ParamKind::KeyReq, n) => format!("{}:", n.unwrap_or("_")),
         (ParamKind::Key, n) => format!("{}: ...", n.unwrap_or("_")),
+        (ParamKind::KeyRest, Some("**")) => "**".to_string(),
         (ParamKind::KeyRest, n) => format!("**{}", n.unwrap_or("")),
         (ParamKind::Block, n) => format!("&{}", n.unwrap_or("")),
     };
-    format!(
-        "({})",
-        params.iter().map(one).collect::<Vec<_>>().join(", ")
-    )
+    let mut out: Vec<String> = Vec::new();
+    for (i, e) in params.iter().enumerate() {
+        if is(e, ParamKind::KeyRest, "**") && i > 0 && is(&params[i - 1], ParamKind::Rest, "*") {
+            continue;
+        }
+        out.push(if is(e, ParamKind::Block, "&") {
+            "...".to_string()
+        } else {
+            one(e)
+        });
+    }
+    format!("({})", out.join(", "))
 }
 
 /// The signature to PRINT for `class`'s `name`: the compiler's descriptor when

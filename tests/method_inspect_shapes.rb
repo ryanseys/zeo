@@ -3,18 +3,22 @@
 # every assertion below strips it -- what is being pinned is the shape in
 # front of it.
 #
-# Four divergences this file deliberately steps around, all in the rendering
+# Three divergences this file deliberately steps around, all in the rendering
 # of methods zeo did not compile from Ruby source:
 #
 #   * CRuby reports a location for the parts of ITSELF written in Ruby
 #     (`#<Method: Integer#zero?() <internal:numeric>:288>`); zeo's are native,
-#     so they print unlocated.
-#   * zeo's `Integer#zero?` lives on `Numeric`, so it prints
-#     `Integer(Numeric)#zero?`.
-#   * A per-object singleton (`def obj.m(x)`) is a runtime-defined body here,
-#     carrying an arity but no parameter NAMES, so it prints `m()`.
+#     so they print unlocated. zeo's `Integer#zero?` also lives on `Numeric`,
+#     so it prints `Integer(Numeric)#zero?`. Both are declines: they describe
+#     CRuby's own source tree, which zeo does not have.
+#   * A per-object singleton (`def obj.m(x)`) is a runtime-defined body here
+#     and reports no signature at all -- a real gap, tracked at
+#     `tests/gaps/method_inspect_native.rb`.
 #   * A native method with no declared arity prints the variadic `(*)` where
 #     CRuby knows the real count.
+#
+# The anonymous forwarding slots (`*`/`**`/`&`/`...`) DO match, and are pinned
+# in `tests/method_inspect_forwarding.rb`.
 #
 # Everything below is a method zeo compiled, or a native one whose arity is
 # declared -- the surface an inspect implementation is actually responsible for.

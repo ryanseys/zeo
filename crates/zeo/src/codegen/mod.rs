@@ -54,6 +54,11 @@ struct Ctx<'a> {
     /// `self` is always the SAME concrete instance throughout.
     current_class: Option<ClassId>,
     current_method: Option<String>,
+    /// The name the current method was DEFINED under, when it reached
+    /// `current_method` through an `alias` (`Scope::alias_of`). `__method__`
+    /// answers this one and `__callee__` answers `current_method`, which is
+    /// the only place the two differ.
+    current_method_origin: Option<String>,
     /// Which class/module's HIR body the CURRENTLY-executing method
     /// actually came from -- equal to `current_class` for an ordinary
     /// own-body method, but set to the true source ancestor while emitting
@@ -572,10 +577,19 @@ fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
     for (o, _) in &params.optional {
         out.push(entry("Opt", Some(o)));
     }
-    match &params.rest {
-        Some(Some(n)) => out.push(entry("Rest", Some(n))),
-        Some(None) => out.push(entry("Rest", None)),
-        None => {}
+    // An ANONYMOUS rest/keyrest/block is named for its own sigil: ruby reports
+    // `def m(*)` -- and each of `def m(...)`'s three slots -- as `[:rest, :*]`.
+    // Only a C function reports a bare `[[:rest]]`, which is what
+    // `anonymous_descriptor` still synthesizes. A `__`-prefixed name IS
+    // anonymous: it is the internal one lowering gave a bare sigil.
+    fn sigil_entry(kind: &str, name: &Option<String>, sigil: &str) -> TokenStream {
+        match name {
+            Some(n) if !n.starts_with("__") => entry(kind, Some(n)),
+            _ => entry(kind, Some(sigil)),
+        }
+    }
+    if let Some(rest) = &params.rest {
+        out.push(sigil_entry("Rest", rest, "*"));
     }
     for p in &params.post {
         out.push(entry("Req", Some(p)));
@@ -586,15 +600,11 @@ fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
             KeywordParam::Optional(n, _) => out.push(entry("Key", Some(n))),
         }
     }
-    match &params.keyword_rest {
-        Some(Some(n)) => out.push(entry("KeyRest", Some(n))),
-        Some(None) => out.push(entry("KeyRest", None)),
-        None => {}
+    if let Some(kwrest) = &params.keyword_rest {
+        out.push(sigil_entry("KeyRest", kwrest, "**"));
     }
-    match &params.block {
-        Some(Some(n)) => out.push(entry("Block", Some(n))),
-        Some(None) => out.push(entry("Block", None)),
-        None => {}
+    if let Some(block) = &params.block {
+        out.push(sigil_entry("Block", block, "&"));
     }
     out
 }
@@ -1729,6 +1739,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // Top-level `self` is `main`, an ordinary Object -- not a class.
         class_self: None,
         current_method: None,
+        current_method_origin: None,
         local_types: binding_scope_local_types(
             main_binding.as_ref(),
             &main_captures.locals,
@@ -2047,6 +2058,7 @@ pub(crate) fn emit_class_body_site(
         // `def self.x; @x; end` reads.
         class_self: Some(cid),
         current_method: None,
+        current_method_origin: None,
         local_types: std::borrow::Cow::Borrowed(&no_locals),
         label_counter: &label_counter,
         loop_labels: None,
@@ -2212,6 +2224,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         // See `Ctx::class_self`'s docs.
         class_self: scope.class,
         current_method: Some(scope.name.clone()),
+        current_method_origin: scope.alias_of.clone(),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &no_captures.locals,
@@ -2440,6 +2453,7 @@ fn emit_builtin_method_fn(
         // storage.
         class_self: None,
         current_method: Some(scope.name.clone()),
+        current_method_origin: scope.alias_of.clone(),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,
@@ -2534,6 +2548,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             // An instance method -- see the matching note in `emit_method_fn`.
             class_self: None,
             current_method: Some(scope.name.clone()),
+        current_method_origin: scope.alias_of.clone(),
             local_types: binding_scope_local_types(
                 binding_names.as_ref(),
                 &method_captures.locals,

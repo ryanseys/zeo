@@ -1,5 +1,5 @@
-# `Method#box` is not implemented, so the program dies on line 3. ruby answers
-# nil for a method that belongs to no namespace box.
+# The Method/UnboundMethod reflection tail: `#box` (nil for a method in no
+# namespace), `#curry`, and `#clone`/`#dup` keeping the signature.
 def dbl(n) = n * 2
 def add(a, b) = a + b
 p(method(:dbl).box)

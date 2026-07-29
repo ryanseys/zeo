@@ -900,8 +900,16 @@ mod imp {
             return Ok(());
         };
 
+        // `def m(...)` -- prism models the forwarding parameter in the
+        // keyword_rest slot. It binds NO names: a `f(...)` call site reads the
+        // arguments back out of `env.method_args` and the block out of
+        // `env.block`, so this signature only has to accept everything.
+        let forwarding = params
+            .keyword_rest()
+            .is_some_and(|k| k.as_forwarding_parameter_node().is_some());
+
         let keywords: Vec<_> = params.keywords().iter().collect();
-        let has_kw = !keywords.is_empty() || params.keyword_rest().is_some();
+        let has_kw = !forwarding && (!keywords.is_empty() || params.keyword_rest().is_some());
         // With keyword params declared, a trailing Hash argument is the
         // keyword source (CRuby's implicit-hash-to-keywords rule).
         let (positional, kwargs): (&[RubyValue], Option<RubyValue>) = if has_kw {
@@ -919,7 +927,7 @@ mod imp {
         let opts: Vec<_> = params.optionals().iter().collect();
         let posts: Vec<_> = params.posts().iter().collect();
         let rest = params.rest();
-        let has_rest = rest.is_some();
+        let has_rest = rest.is_some() || forwarding;
         let (n_req, n_opt, n_post) = (reqs.len(), opts.len(), posts.len());
         let min = n_req + n_post;
 
@@ -979,7 +987,9 @@ mod imp {
             env.scope.set(&name, positional[mid_end + i].clone());
         }
 
-        bind_keywords(&keywords, params.keyword_rest().is_some(), &kwargs, env)?;
+        if !forwarding {
+            bind_keywords(&keywords, params.keyword_rest().is_some(), &kwargs, env)?;
+        }
 
         if let Some(bp) = params.block() {
             if let Some(name) = bp.name() {

@@ -325,9 +325,7 @@ module BigMath
     y.add(logx_approx, prec)
   end
 
-  # zeo: `private_class_method def` is a compiler gap (tests/gaps/issue_private_class_method_def.rb);
-  # the helper stays a plain module_function here (visibility-only deviation).
-  def _exp_binary_splitting(x, prec) # :nodoc:
+  private_class_method def _exp_binary_splitting(x, prec) # :nodoc:
     return BigDecimal(1) if x.zero?
     # Find k that satisfies x**k / k! < 10**(-prec)
     log10 = Math.log(10)
