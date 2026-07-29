@@ -608,7 +608,7 @@ ruby_class! {
         arity!(args, 1);
         let q = crate::builtins::numeric::num_div(recv, &args[0])
             .ok_or_else(|| type_error!("{} can't be coerced into Rational",
-                    crate::builtins::class_name_of(&args[0])))??;
+                    crate::builtins::coerce_operand_name(&args[0])))??;
         match q {
             RubyValue::Rational(r) => {
                 Ok(crate::builtins::integer::int_value(r.num.div_floor(&r.den)))

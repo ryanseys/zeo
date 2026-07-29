@@ -802,9 +802,12 @@ ruby_class! {
     def "fdiv" arity 1 (recv, args, _block) {
         arity!(args, 1);
         if !matches!(&args[0], RubyValue::Complex(_)) && !is_component(&args[0]) {
+            // Routed through the GENERIC numeric machinery in CRuby, so the
+            // operand reads in inspect form (`nil`), unlike `coerce`'s own
+            // class-named raise above -- oracle-verified both ways.
             return Err(type_error!(
                 "{} can't be coerced into Complex",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::coerce_operand_name(&args[0])
             ));
         }
         let c = recv_complex(recv);

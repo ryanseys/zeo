@@ -304,6 +304,24 @@ pub(crate) fn class_name_of(v: &RubyValue) -> String {
         .unwrap_or_else(|| format!("#<Class:{}>", v.class_id().0))
 }
 
+/// How a numeric-coercion TypeError names the offending operand -- CRuby's
+/// `coerce_failed` rule: special constants (nil/true/false, a fixnum
+/// Integer, a Symbol) and Floats read as their `inspect` form (`nil can't
+/// be coerced into Float`), every other value as its class name (`String
+/// can't be coerced into Float`). A Bignum is NOT a special constant, so
+/// it keeps the class-name form, matching zeo's `Int`/`BigInt` payload
+/// split exactly.
+pub(crate) fn coerce_operand_name(v: &RubyValue) -> String {
+    match v {
+        RubyValue::Nil
+        | RubyValue::Bool(_)
+        | RubyValue::Int(_)
+        | RubyValue::Float(_)
+        | RubyValue::Symbol(_) => v.inspect_string(),
+        _ => class_name_of(v),
+    }
+}
+
 /// CRuby's `rb_check_frozen` over any VALUE receiver: the standard
 /// `can't modify frozen <Class>: <inspect>` FrozenError (with the receiver
 /// detail attached, backing `FrozenError#receiver`), raised BEFORE the

@@ -10,11 +10,11 @@ use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
 /// CRuby's coercion TypeError shape (`1.0 + "x"` -> `String can't be
-/// coerced into Float`).
+/// coerced into Float`; `1.0 + nil` -> `nil can't be coerced into Float`).
 fn coerce_error(arg: &RubyValue) -> Signal {
     type_error!(
         "{} can't be coerced into Float",
-        crate::builtins::class_name_of(arg)
+        crate::builtins::coerce_operand_name(arg)
     )
 }
 

@@ -595,11 +595,12 @@ pub(crate) fn num_coerce_bin(
 }
 
 /// The coercion TypeError a generic Numeric row raises (named by the
-/// RECEIVER's class, CRuby's shape).
+/// RECEIVER's class, CRuby's shape; the ARGUMENT reads per
+/// `coerce_operand_name`'s special-constant rule).
 fn coercion_error(recv: &RubyValue, arg: &RubyValue) -> Signal {
     type_error!(
         "{} can't be coerced into {}",
-        crate::builtins::class_name_of(arg),
+        crate::builtins::coerce_operand_name(arg),
         crate::builtins::class_name_of(recv)
     )
 }

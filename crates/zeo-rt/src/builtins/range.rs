@@ -432,7 +432,7 @@ ruby_class! {
         // "String can't be coerced into Integer").
         let RubyValue::Int(by) = &args[0] else {
             return Err(type_error!("{} can't be coerced into Integer",
-                    crate::builtins::class_name_of(&args[0])));
+                    crate::builtins::coerce_operand_name(&args[0])));
         };
         if *by == 0 {
             return Err(arg_error!("step can't be 0"));
