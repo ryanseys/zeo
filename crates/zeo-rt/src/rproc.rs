@@ -389,7 +389,7 @@ pub fn block_auto_splat(args: Vec<RubyValue>) -> Result<Vec<RubyValue>, Signal> 
         return Ok(args);
     }
     match &args[0] {
-        RubyValue::Array(a) => Ok(a.lock().clone()),
+        RubyValue::Array(a) => Ok(a.lock().to_vec()),
         v => {
             let to_ary = crate::Symbol::intern("to_ary");
             // `rb_check_array_type`: a `to_ary` answering a non-Array is
@@ -397,7 +397,7 @@ pub fn block_auto_splat(args: Vec<RubyValue>) -> Result<Vec<RubyValue>, Signal> 
             // explicit conversion) -- the value binds as one argument.
             if crate::dispatch::responds_to(v.class_id(), to_ary, false) {
                 if let RubyValue::Array(a) = crate::dispatch::send_value(v, to_ary, &[], None)? {
-                    return Ok(a.lock().clone());
+                    return Ok(a.lock().to_vec());
                 }
             }
             Ok(args)

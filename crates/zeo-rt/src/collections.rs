@@ -63,7 +63,173 @@ impl<T> Freezable<T> {
     }
 }
 
-pub type RArray = Arc<Freezable<Vec<RubyValue>>>;
+/// `RArray`'s storage: a `Vec` plus a HEAD OFFSET, so `shift` is O(1) --
+/// CRuby's own beg-offset array design. `bm_so_lists` (a shift/push queue
+/// churn) spent 98% of its samples in `Vec::remove(0)`'s memmove before
+/// this.
+///
+/// The struct `Deref`s to the LIVE slice (`buf[beg..]`), so every read-only
+/// consumer -- `get`/`len`/`iter`/`last`/indexing/the slice sort family --
+/// compiles unchanged, and `DerefMut` covers in-place element writes. The
+/// O(1) ends (`push`/`pop`/`shift`) are inherent methods; every other
+/// STRUCTURAL `Vec` operation goes through [`ArrayStore::vec`], which first
+/// compacts the dead prefix away so indices mean what the caller thinks.
+/// A shifted-out slot is overwritten with `Nil` immediately (values drop
+/// eagerly; a `Nil` slot holds no heap), and the prefix itself is reclaimed
+/// when the store empties, when it exceeds half the buffer past a
+/// threshold (amortized O(1) -- each compaction pays for at least as many
+/// shifts), or on the next structural op.
+#[derive(Default)]
+pub struct ArrayStore {
+    beg: usize,
+    buf: Vec<RubyValue>,
+}
+
+impl ArrayStore {
+    /// The raw `Vec`, with the dead prefix compacted away first -- the
+    /// funnel every structural operation (insert/remove/drain/split_off/
+    /// retain/...) takes.
+    pub fn vec(&mut self) -> &mut Vec<RubyValue> {
+        if self.beg > 0 {
+            self.buf.drain(..self.beg);
+            self.beg = 0;
+        }
+        &mut self.buf
+    }
+
+    pub fn push(&mut self, v: RubyValue) {
+        self.buf.push(v);
+    }
+
+    pub fn pop(&mut self) -> Option<RubyValue> {
+        if self.buf.len() > self.beg {
+            self.buf.pop()
+        } else {
+            None
+        }
+    }
+
+    /// The O(1) head removal `shift` exists for.
+    pub fn shift(&mut self) -> Option<RubyValue> {
+        if self.buf.len() == self.beg {
+            return None;
+        }
+        let v = std::mem::replace(&mut self.buf[self.beg], RubyValue::Nil);
+        self.beg += 1;
+        if self.beg == self.buf.len() {
+            self.buf.clear();
+            self.beg = 0;
+        } else if self.beg >= 512 && self.beg * 2 >= self.buf.len() {
+            self.buf.drain(..self.beg);
+            self.beg = 0;
+        }
+        Some(v)
+    }
+
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.beg = 0;
+    }
+
+    /// Append-only, so the prefix can stay: `extend` never re-indexes.
+    pub fn extend<I: IntoIterator<Item = RubyValue>>(&mut self, items: I) {
+        self.buf.extend(items);
+    }
+
+    pub fn append(&mut self, other: &mut Vec<RubyValue>) {
+        self.buf.append(other);
+    }
+
+    pub fn insert(&mut self, index: usize, v: RubyValue) {
+        self.vec().insert(index, v);
+    }
+
+    pub fn remove(&mut self, index: usize) -> RubyValue {
+        self.vec().remove(index)
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        let beg = self.beg;
+        self.buf.truncate(beg + len);
+    }
+
+    pub fn split_off(&mut self, at: usize) -> Vec<RubyValue> {
+        let v = self.vec();
+        v.split_off(at)
+    }
+
+    pub fn retain<F: FnMut(&RubyValue) -> bool>(&mut self, f: F) {
+        self.vec().retain(f);
+    }
+
+    pub fn drain<R>(&mut self, range: R) -> std::vec::Drain<'_, RubyValue>
+    where
+        R: std::ops::RangeBounds<usize>,
+    {
+        self.vec().drain(range)
+    }
+
+    pub fn resize(&mut self, new_len: usize, v: RubyValue) {
+        self.vec().resize(new_len, v);
+    }
+
+    pub fn into_vec(mut self) -> Vec<RubyValue> {
+        if self.beg > 0 {
+            self.buf.drain(..self.beg);
+        }
+        self.buf
+    }
+}
+
+impl From<Vec<RubyValue>> for ArrayStore {
+    fn from(buf: Vec<RubyValue>) -> ArrayStore {
+        ArrayStore { beg: 0, buf }
+    }
+}
+
+impl FromIterator<RubyValue> for ArrayStore {
+    fn from_iter<I: IntoIterator<Item = RubyValue>>(iter: I) -> ArrayStore {
+        ArrayStore::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl IntoIterator for ArrayStore {
+    type Item = RubyValue;
+    type IntoIter = std::vec::IntoIter<RubyValue>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ArrayStore {
+    type Item = &'a RubyValue;
+    type IntoIter = std::slice::Iter<'a, RubyValue>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl Clone for ArrayStore {
+    fn clone(&self) -> ArrayStore {
+        ArrayStore::from(self.to_vec())
+    }
+}
+
+impl std::ops::Deref for ArrayStore {
+    type Target = [RubyValue];
+    fn deref(&self) -> &[RubyValue] {
+        &self.buf[self.beg..]
+    }
+}
+
+impl std::ops::DerefMut for ArrayStore {
+    fn deref_mut(&mut self) -> &mut [RubyValue] {
+        let beg = self.beg;
+        &mut self.buf[beg..]
+    }
+}
+
+pub type RArray = Arc<Freezable<ArrayStore>>;
 
 /// A structural, hashable projection of a `RubyValue` -- the actual
 /// `IndexMap` key (see `RHash` below), so `Hash#[]`/`#[]=` are real
@@ -397,7 +563,7 @@ pub type RHash = Arc<Freezable<RHashData>>;
 pub type RStr = Arc<Freezable<crate::encoding::StrBuf>>;
 
 pub fn array_new(elems: Vec<RubyValue>) -> RArray {
-    Arc::new(Freezable::new(elems))
+    Arc::new(Freezable::new(ArrayStore::from(elems)))
 }
 
 /// The pairs snapshot `Hash#each` iterates -- cloned under ONE lock

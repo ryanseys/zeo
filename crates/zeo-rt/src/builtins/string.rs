@@ -2556,7 +2556,7 @@ ruby_class! {
     def "%" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let format_args = match &args[0] {
-            RubyValue::Array(a) => a.lock().clone(),
+            RubyValue::Array(a) => a.lock().to_vec(),
             other => vec![other.clone()],
         };
         Ok(str_value(crate::builtins::format::sprintf(

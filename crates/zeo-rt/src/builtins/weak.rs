@@ -37,7 +37,7 @@ enum WeakTarget {
     Strong(RubyValue),
     Object(Weak<dyn RubyObject>),
     Str(Weak<Freezable<StrBuf>>),
-    Array(Weak<Freezable<Vec<RubyValue>>>),
+    Array(Weak<Freezable<crate::collections::ArrayStore>>),
     Hash(Weak<Freezable<RHashData>>),
 }
 

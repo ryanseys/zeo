@@ -1161,7 +1161,7 @@ mod imp {
         // block declares more than one parameter (Ruby's block-arg rule).
         let effective: Vec<RubyValue> = if reqs.len() > 1 && args.len() == 1 {
             match &args[0] {
-                RubyValue::Array(a) => a.lock().clone(),
+                RubyValue::Array(a) => a.lock().to_vec(),
                 other => vec![other.clone()],
             }
         } else {

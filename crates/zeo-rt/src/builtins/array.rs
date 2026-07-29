@@ -37,7 +37,7 @@ ruby_class! {
         // sole argument is an Array -- otherwise the arg is a size below.
         if args.len() == 1 {
             if let Some(RubyValue::Array(a)) = args.first() {
-                return Ok(RubyValue::Array(crate::array_new(a.lock().clone())));
+                return Ok(RubyValue::Array(crate::array_new(a.lock().to_vec())));
             }
         }
         let size = match args.first() {
@@ -231,7 +231,7 @@ ruby_class! {
     def "+" arity 1 (recv, args, _block) {
         arity!(args, 1);
         let other = &convert::to_rary(&args[0])?;
-        let mut out = recv_array!(recv).lock().clone();
+        let mut out = recv_array!(recv).lock().to_vec();
         out.extend(other.lock().iter().cloned());
         Ok(RubyValue::Array(crate::array_new(out)))
     }
@@ -384,16 +384,12 @@ ruby_class! {
         check_frozen(handle, recv)?;
         let mut guard = handle.lock();
         let Some(n) = count_arg(args)? else {
-            return Ok(if guard.is_empty() {
-                RubyValue::Nil
-            } else {
-                guard.remove(0)
-            });
+            return Ok(guard.shift().unwrap_or(RubyValue::Nil));
         };
         let n = n.min(guard.len());
         let rest = guard.split_off(n);
-        let taken = std::mem::replace(&mut *guard, rest);
-        Ok(RubyValue::Array(crate::array_new(taken)))
+        let taken = std::mem::replace(&mut *guard, rest.into());
+        Ok(RubyValue::Array(crate::array_new(taken.into_vec())))
     }
     def "unshift" | "prepend"(recv, args, _block) {
         let handle = recv_array!(recv);
@@ -467,7 +463,7 @@ ruby_class! {
         if out.len() == items.len() {
             return Ok(RubyValue::Nil); // no change -- CRuby's nil answer
         }
-        *h.lock() = out;
+        *h.lock() = out.into();
         Ok(recv.clone())
     }
     def "assoc" arity 1 (recv, args, _block) {
@@ -495,10 +491,10 @@ ruby_class! {
     def "product"(recv, args, block) {
         // Cartesian product of self with every argument array, CRuby's
         // element order (leftmost varies slowest).
-        let mut lists: Vec<Vec<RubyValue>> = vec![recv_array!(recv).lock().clone()];
+        let mut lists: Vec<Vec<RubyValue>> = vec![recv_array!(recv).lock().to_vec()];
         for a in args {
             let other = &convert::to_rary(a)?;
-            lists.push(other.lock().clone());
+            lists.push(other.lock().to_vec());
         }
         let mut out: Vec<RubyValue> = vec![RubyValue::Array(crate::array_new(Vec::new()))];
         let mut tuples: Vec<Vec<RubyValue>> = vec![Vec::new()];
@@ -600,7 +596,7 @@ ruby_class! {
     }
     def "reverse" arity 0 (recv, args, _block) {
         arity!(args, 0);
-        let mut out = recv_array!(recv).lock().clone();
+        let mut out = recv_array!(recv).lock().to_vec();
         out.reverse();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
@@ -835,7 +831,7 @@ ruby_class! {
         let others: Vec<Vec<RubyValue>> = args
             .iter()
             .map(|a| match convert::check_to_ary(a)? {
-                Some(RubyValue::Array(x)) => Ok(x.lock().clone()),
+                Some(RubyValue::Array(x)) => Ok(x.lock().to_vec()),
                 _ => take_items_via_each(a, base.len()),
             })
             .collect::<Result<_, _>>()?;
@@ -867,7 +863,7 @@ ruby_class! {
             None => 1,
             Some(_) => arg_int!(args, 0),
         };
-        let mut out = recv_array!(recv).lock().clone();
+        let mut out = recv_array!(recv).lock().to_vec();
         if !out.is_empty() {
             let n = out.len() as i64;
             let by = by.rem_euclid(n) as usize;
@@ -1022,28 +1018,28 @@ ruby_class! {
     // `sort` with rb_cmp or a comparator block; `sort!` in place.
     def "sort" arity 0 (recv, args, block) {
         arity!(args, 0);
-        let mut items = recv_array!(recv).lock().clone();
+        let mut items = recv_array!(recv).lock().to_vec();
         sort_items(&mut items, &block)?;
         Ok(RubyValue::Array(crate::array_new(items)))
     }
     def "sort!" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
-        let mut items = recv_array!(recv).lock().clone();
+        let mut items = recv_array!(recv).lock().to_vec();
         sort_items(&mut items, &block)?;
-        *recv_array!(recv).lock() = items;
+        *recv_array!(recv).lock() = items.into();
         Ok(recv.clone())
     }
     def "map!" arity 0 | "collect!" arity 0 (recv, args, block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
         let p = block_or_enum!(recv, "map!", args, block);
-        let items = recv_array!(recv).lock().clone();
+        let items = recv_array!(recv).lock().to_vec();
         let mut out = Vec::with_capacity(items.len());
         for e in items {
             out.push(p.call(&[e])?);
         }
-        *recv_array!(recv).lock() = out;
+        *recv_array!(recv).lock() = out.into();
         Ok(recv.clone())
     }
     // In-place filters: self when anything changed, nil otherwise (real
@@ -1104,11 +1100,11 @@ ruby_class! {
             items.swap(i, j);
         }
         items.truncate(take);
-        Ok(RubyValue::Array(crate::array_new(items)))
+        Ok(RubyValue::Array(crate::array_new(items.into_vec())))
     }
     def "shuffle"(recv, args, _block) {
         arity!(args, 0);
-        let mut items = recv_array!(recv).lock().clone();
+        let mut items = recv_array!(recv).lock().to_vec();
         // Fisher-Yates over the shared PRNG.
         for i in (1..items.len()).rev() {
             let j = (crate::builtins::kernel::prng_next() % (i as u64 + 1)) as usize;
@@ -1270,7 +1266,7 @@ ruby_class! {
         if kept.len() == before {
             return Ok(RubyValue::Nil);
         }
-        *handle.lock() = kept;
+        *handle.lock() = kept.into();
         Ok(recv.clone())
     }
     def "rotate!"(recv, args, _block) {
@@ -1377,7 +1373,7 @@ ruby_class! {
         {
             return Ok(RubyValue::Nil);
         }
-        *cell.lock() = after;
+        *cell.lock() = after.into();
         Ok(recv.clone())
     }
     def "sort_by!" arity 0 (recv, args, block) {
@@ -1405,7 +1401,7 @@ ruby_class! {
 /// `difference`) to its element vector through the `to_ary` protocol.
 fn set_op_args(args: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, crate::Signal> {
     args.iter()
-        .map(|a| Ok(convert::to_rary(a)?.lock().clone()))
+        .map(|a| Ok(convert::to_rary(a)?.lock().to_vec()))
         .collect()
 }
 
@@ -1484,12 +1480,7 @@ pub fn array_pop_checked(arr: &crate::collections::RArray) -> Result<RubyValue, 
 
 pub fn array_shift_checked(arr: &crate::collections::RArray) -> Result<RubyValue, crate::Signal> {
     check_frozen(arr, &RubyValue::Array(arr.clone()))?;
-    let mut guard = arr.lock();
-    Ok(if guard.is_empty() {
-        RubyValue::Nil
-    } else {
-        guard.remove(0)
-    })
+    Ok(arr.lock().shift().unwrap_or(RubyValue::Nil))
 }
 
 /// `Array#join`: each element's `to_s`, joined by `sep`, with nested arrays
@@ -1817,7 +1808,7 @@ fn array_splice(
         items.resize(start, RubyValue::Nil);
     }
     let end = (start + len as usize).min(items.len());
-    items.splice(start..end, elems);
+    items.vec().splice(start..end, elems);
     Ok(())
 }
 
@@ -1826,12 +1817,12 @@ fn array_splice(
 /// if it answers a non-Array, non-nil value); anything else as ONE element.
 fn splice_elems(value: &RubyValue) -> Result<Vec<RubyValue>, crate::Signal> {
     if let RubyValue::Array(a) = value {
-        return Ok(a.lock().clone());
+        return Ok(a.lock().to_vec());
     }
     let to_ary = crate::symbol::wk::to_ary();
     if crate::dispatch::responds_to(value.class_id(), to_ary, false) {
         match crate::dispatch::send_value(value, to_ary, &[], None)? {
-            RubyValue::Array(a) => return Ok(a.lock().clone()),
+            RubyValue::Array(a) => return Ok(a.lock().to_vec()),
             RubyValue::Nil => {}
             other => {
                 return Err(type_error!(
@@ -1933,7 +1924,7 @@ fn in_place_filter(
         }
     }
     let changed = out.len() != items.len();
-    *handle.lock() = out;
+    *handle.lock() = out.into();
     Ok(if changed {
         recv.clone()
     } else {

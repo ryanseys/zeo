@@ -1470,11 +1470,11 @@ ruby_module! {
         let mut others: Vec<Vec<RubyValue>> = Vec::with_capacity(args.len());
         for other in args {
             let arr = match other {
-                RubyValue::Array(a) => a.lock().clone(),
+                RubyValue::Array(a) => a.lock().to_vec(),
                 _ => {
                     let v = send_value(other, crate::Symbol::intern("to_a"), &[], None)?;
                     match v {
-                        RubyValue::Array(a) => a.lock().clone(),
+                        RubyValue::Array(a) => a.lock().to_vec(),
                         _ => Vec::new(),
                     }
                 }

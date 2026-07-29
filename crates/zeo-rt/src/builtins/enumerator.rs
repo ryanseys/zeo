@@ -325,7 +325,7 @@ fn product_lists(sources: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, Signal> {
         .iter()
         .map(
             |s| match send_value(s, Symbol::intern("to_a"), &[], None)? {
-                RubyValue::Array(a) => Ok(a.lock().clone()),
+                RubyValue::Array(a) => Ok(a.lock().to_vec()),
                 _ => Ok(Vec::new()),
             },
         )
@@ -432,7 +432,7 @@ fn get_next_values(e: &REnumerator) -> Result<Vec<RubyValue>, Signal> {
         // The shuttle's arity-preserving Array payload -- the normal case.
         CoroutineResult::Yield(RubyValue::Array(a)) => {
             ENUM_FIBERS.with(|f| f.borrow_mut().insert(id, coro));
-            let raw = a.lock().clone();
+            let raw = a.lock().to_vec();
             Ok(raw)
         }
         // A `Fiber.yield` from user code inside the iterated `each`

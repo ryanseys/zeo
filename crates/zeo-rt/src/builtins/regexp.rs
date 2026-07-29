@@ -71,7 +71,7 @@ ruby_class! {
     // flags via its `(?-mix:src)` form. Empty -> the never-matching `(?!)`.
     def self."union"(_recv, args, _block) {
         let items: Vec<RubyValue> = match args {
-            [RubyValue::Array(a)] => a.lock().clone(),
+            [RubyValue::Array(a)] => a.lock().to_vec(),
             _ => args.to_vec(),
         };
         let source = if items.is_empty() {

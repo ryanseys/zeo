@@ -630,7 +630,7 @@ pub fn runtime_set_visibility(
     // String) comes back verbatim, several names come back as an Array --
     // per CRuby's `Module#private` docs.
     let names: Vec<RubyValue> = match args {
-        [RubyValue::Array(a)] => a.lock().clone(),
+        [RubyValue::Array(a)] => a.lock().to_vec(),
         one_or_many => one_or_many.to_vec(),
     };
     let result = match args {

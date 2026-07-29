@@ -857,8 +857,8 @@ impl RubyValue {
                     return true;
                 }
                 seen.push(pair);
-                let av: Vec<RubyValue> = a.lock().clone();
-                let bv: Vec<RubyValue> = b.lock().clone();
+                let av: Vec<RubyValue> = a.lock().to_vec();
+                let bv: Vec<RubyValue> = b.lock().to_vec();
                 let eq = av.len() == bv.len()
                     && av
                         .iter()
@@ -1190,7 +1190,7 @@ impl RubyValue {
                 RubyValue::Str(fresh)
             }
             RubyValue::Array(a) => {
-                let fresh = crate::array_new(a.lock().clone());
+                let fresh = crate::array_new(a.lock().to_vec());
                 if keep_frozen {
                     fresh.set_frozen();
                 }

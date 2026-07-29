@@ -454,12 +454,12 @@ fn emit_array_binding(
 ) -> Option<TokenStream> {
     match scrutinee_ty {
         TyKind::Array => Some(quote! {
-            let #arr_ident: Vec<zeo_rt::RubyValue> = (#scrutinee).as_array_unchecked().lock().clone();
+            let #arr_ident: Vec<zeo_rt::RubyValue> = (#scrutinee).as_array_unchecked().lock().to_vec();
         }),
         TyKind::Object(cid) if cx.compiler.method_in_chain(cid, "deconstruct").is_some() => {
             Some(quote! {
                 let #arr_ident: Vec<zeo_rt::RubyValue> =
-                    (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().clone();
+                    (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().to_vec();
             })
         }
         // A Poly scrutinee that isn't a runtime Array dispatches
@@ -469,10 +469,10 @@ fn emit_array_binding(
             let dec = super::pooled_sym("deconstruct");
             Some(quote! {
                 let #arr_ident: Vec<zeo_rt::RubyValue> = match &(#scrutinee) {
-                    zeo_rt::RubyValue::Array(__arc) => __arc.lock().clone(),
+                    zeo_rt::RubyValue::Array(__arc) => __arc.lock().to_vec(),
                     __v if zeo_rt::responds_to(__v.class_id(), #dec, false) => {
                         zeo_rt::send_value(__v, #dec, &[], None)?
-                            .as_array_unchecked().lock().clone()
+                            .as_array_unchecked().lock().to_vec()
                     }
                     _ => break #label false,
                 };
