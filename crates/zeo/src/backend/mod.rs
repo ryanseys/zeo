@@ -109,6 +109,36 @@ fn lock_runtime_build() -> Option<std::fs::File> {
     None
 }
 
+/// The SHARED side of [`lock_runtime_build`]'s lock, held around a generated
+/// program's own `rustc` link: cargo replaces `libzeo_rt.dylib`/`.rlib`
+/// non-atomically, so a link overlapping a concurrent rebuild (nextest is a
+/// process per test; the first suite run after a `zeo-rt` source edit
+/// rebuilds lazily) intermittently saw `ld: errno=2` on the vanished
+/// artifact. Shared holders never contend with each other -- only with the
+/// exclusive rebuild.
+#[cfg(unix)]
+fn lock_runtime_shared() -> Option<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    let path = target_dir().join(".zeo-rt-build.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .ok()?;
+    while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH) } != 0 {
+        if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return None;
+        }
+    }
+    Some(file)
+}
+
+#[cfg(not(unix))]
+fn lock_runtime_shared() -> Option<std::fs::File> {
+    None
+}
+
 /// The workspace crates whose sources are inputs to the `zeo-rt` artifact --
 /// its own crate plus its workspace path-dependency closure. `ensure_runtime_built`
 /// stat-walks exactly these to decide whether a built runtime is stale, so this
@@ -756,6 +786,9 @@ pub fn build_binary(
         }
     }
     let t_rustc = std::time::Instant::now();
+    // Held (shared) across the link so the runtime artifact can't be
+    // replaced out from under `ld` -- see `lock_runtime_shared`.
+    let _runtime_read_lock = lock_runtime_shared();
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
     if !status.success() {
