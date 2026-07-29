@@ -1039,6 +1039,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
         }
     }
     mark_live();
+    fire_mixin_hook(module_val, "extended", recv)?;
     Ok(recv.clone())
 }
 
@@ -1100,9 +1101,34 @@ fn mix_in(
             ));
         };
         splice_module_into(*cid, *mid, placement);
+        let hook = if placement == Placement::Before {
+            "prepended"
+        } else {
+            "included"
+        };
+        fire_mixin_hook(module_val, hook, recv)?;
     }
     mark_live();
     Ok(recv.clone())
+}
+
+/// Ruby's mixin hook, run right after the ancestry edit: `M.included(target)`,
+/// `M.extended(target)`, `M.prepended(target)`. `Module`'s own default is a
+/// no-op, so nothing is dispatched unless the module really defines one.
+pub(crate) fn fire_mixin_hook(
+    module: &RubyValue,
+    hook: &str,
+    target: &RubyValue,
+) -> Result<(), Signal> {
+    let RubyValue::Class(mid) = module else {
+        return Ok(());
+    };
+    let sym = Symbol::intern(hook);
+    if crate::dispatch::class_method_owner(*mid, sym).is_none() {
+        return Ok(());
+    }
+    crate::dispatch::send_value(module, sym, std::slice::from_ref(target), None)?;
+    Ok(())
 }
 
 /// Splices `mid`'s ancestry into `cid`'s, at `cid`'s own position, skipping any

@@ -2022,9 +2022,10 @@ pub(crate) fn emit_class_body_site(
         let id = cid.0;
         quote! { zeo_rt::validate_class_aliases(zeo_rt::ClassId(#id))?; }
     });
+    let inherited_hook = emit_inherited_hook(compiler, site);
     let stmts = &site.stmts;
     if stmts.is_empty() {
-        return quote! { #alias_check };
+        return quote! { #alias_check #inherited_hook };
     }
     let label_counter = Cell::new(0u32);
     // A class body is an ordinary Ruby scope with ordinary locals, and an
@@ -2106,7 +2107,40 @@ pub(crate) fn emit_class_body_site(
         }
         None => quote! {},
     };
-    quote! { { #frame #body }?; #alias_check }
+    quote! { #inherited_hook { #frame #body }?; #alias_check }
+}
+
+/// `Class#inherited` -- Ruby runs `Super.inherited(C)` when the class is
+/// CREATED, so only the FIRST of a class's sites fires it; a reopen creates
+/// nothing. Emits nothing unless the superclass chain defines the hook
+/// (`Class`'s own default is a no-op) or the class has no superclass at all.
+fn emit_inherited_hook(compiler: &Compiler, site: &crate::compiler::ClassBodySite) -> TokenStream {
+    let nil = quote! {};
+    let cid = site.class;
+    let first = compiler
+        .class_body_sites
+        .iter()
+        .find(|s| s.class == cid)
+        .is_some_and(|s| std::ptr::eq(s, site));
+    if !first {
+        return nil;
+    }
+    let Some(parent) = compiler.class(cid).parent else {
+        return nil;
+    };
+    if compiler.class_method_in_chain(parent, "inherited").is_none() {
+        return nil;
+    }
+    let (p, c) = (parent.0, cid.0);
+    let sym = pooled_sym("inherited");
+    quote! {
+        zeo_rt::send_value(
+            &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#p)),
+            #sym,
+            &[zeo_rt::RubyValue::Class(zeo_rt::ClassId(#c))],
+            None,
+        )?;
+    }
 }
 
 /// The `ClassDef` markers whose sites execute INLINE, in document order:

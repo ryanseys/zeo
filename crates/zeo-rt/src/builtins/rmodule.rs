@@ -117,6 +117,21 @@ ruby_class! {
         let n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
         Ok(RubyValue::Str(crate::string_new(n)))
     }
+    // The mixin hooks' DEFAULTS. Ruby fires each one on every mixin whether
+    // or not the module defines it, so these exist to be the no-op that
+    // answers -- and, more to the point, to be what a `def self.included`
+    // that ends in `super` reaches.
+    def "included" | "extended" | "prepended" (_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Nil)
+    }
+    // `Class#inherited`'s default, for the same reason. It lives on Module
+    // rather than Class because that is where zeo's class-method `super`
+    // chain looks, and no module is ever inherited from.
+    def "inherited" (_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Nil)
+    }
     // `Class#superclass` -- the first non-module entry after self in the
     // linearized ancestors (prepends/includes are modules, so this lands on
     // the real parent class); `nil` at the root (`BasicObject`).

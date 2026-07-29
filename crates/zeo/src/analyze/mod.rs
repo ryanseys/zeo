@@ -1941,11 +1941,16 @@ fn register_class(
                     Some(stmt),
                 )?;
             }
+            // The ancestry edit itself is compile-time; the node ALSO stays on
+            // the site so codegen can fire the module's `included`/`extended`/
+            // `prepended` hook at the mixin's own document position. Ruby runs
+            // the hook after the edit, which is automatic here.
             HirNode::Include(m) => {
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
-                        compiler.classes[class_id.0 as usize].includes.push(target)
+                        compiler.classes[class_id.0 as usize].includes.push(target);
+                        compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
                 }
@@ -1953,7 +1958,10 @@ fn register_class(
             HirNode::Extend(m) => {
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
-                    Some(target) => compiler.classes[class_id.0 as usize].extends.push(target),
+                    Some(target) => {
+                        compiler.classes[class_id.0 as usize].extends.push(target);
+                        compiler.class_body_sites[site_idx].stmts.push(stmt);
+                    }
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
                 }
             }
@@ -1997,7 +2005,8 @@ fn register_class(
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
-                        compiler.classes[class_id.0 as usize].prepends.push(target)
+                        compiler.classes[class_id.0 as usize].prepends.push(target);
+                        compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
                 }

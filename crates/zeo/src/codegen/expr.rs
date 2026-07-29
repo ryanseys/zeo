@@ -1326,6 +1326,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // that class).
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+            // The body IS this method's body, however it is installed, so
+            // `__method__`/`__callee__` name it rather than reporting whatever
+            // encloses the `def` -- `nil` at the top level, which is what a
+            // `def` written inside a block used to answer.
+            body_cx.current_method = Some(name.clone());
+            body_cx.current_method_origin = None;
             let proc = super::call::emit_proc_or_lambda_value(
                 &body_cx,
                 params,
@@ -1372,11 +1378,22 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 }
             }
         }
+        // A mixin's ANCESTRY edit happened at compile time; what is left to do
+        // where it was written is to run the module's hook -- `M.included(C)`,
+        // `M.extended(C)`, `M.prepended(C)` -- which is how the
+        // extend-on-include idiom (ActiveSupport::Concern and every DSL after
+        // it) gives the base its class-side methods. Module's own default hook
+        // is a no-op, so nothing is emitted unless the module defines one.
+        HirNode::Include(m) | HirNode::Extend(m) | HirNode::Prepend(m) => {
+            let hook = match &cx.compiler.hir[id] {
+                HirNode::Include(_) => "included",
+                HirNode::Extend(_) => "extended",
+                _ => "prepended",
+            };
+            emit_mixin_hook(cx, m, hook)
+        }
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
-        | HirNode::Include(_)
-        | HirNode::Extend(_)
-        | HirNode::Prepend(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -1485,6 +1502,31 @@ pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCau
 /// boxing a statically-known-`Object`-typed expression into
 /// `RubyValue::Object` the same way `emit_safe_call` already does for its
 /// own uniform-representation needs.
+/// The hook Ruby runs after a mixin's ancestry edit: `M.included(C)`,
+/// `M.extended(C)`, `M.prepended(C)`. Module's own default is a no-op, so
+/// nothing is emitted unless the module defines the hook. The call goes
+/// through dynamic dispatch: the hook is reached by NAME, and its body
+/// commonly edits `C` at runtime (`base.extend(self)`).
+fn emit_mixin_hook(cx: &Ctx, module: &str, hook: &str) -> TokenStream {
+    let nil = quote! { zeo_rt::RubyValue::Nil };
+    let (Some(mid), Some(target)) = (cx.resolve_class(module), cx.defining_class) else {
+        return nil;
+    };
+    if cx.compiler.class_method_in_chain(mid, hook).is_none() {
+        return nil;
+    }
+    let (m, t) = (mid.0, target.0);
+    let sym = super::pooled_sym(hook);
+    quote! {
+        zeo_rt::send_value(
+            &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#m)),
+            #sym,
+            &[zeo_rt::RubyValue::Class(zeo_rt::ClassId(#t))],
+            None,
+        )?
+    }
+}
+
 fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> TokenStream {
     // A literal class reference -- bare (`raise NotFound`) or qualified
     // (`raise Store::Errors::NotFound`) -- when the path

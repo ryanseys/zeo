@@ -1,0 +1,21 @@
+body starts
+included Host
+extended Host
+body ends
+"instance"
+"instance"
+extended Extender
+"instance"
+prepended Prepender
+"instance"
+"quiet"
+true
+[:own]
+inherited ChildA
+inherited ChildB
+child b body
+child b reopened
+inherited GrandChild
+"counted"
+"counted"
+[:included, :extended]
