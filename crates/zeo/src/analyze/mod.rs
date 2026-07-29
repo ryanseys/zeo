@@ -1278,6 +1278,12 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         // `Errno::ENOTTY` -- every `io/console` method on a stream that isn't
         // a terminal (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(63)).
         ("Errno::ENOTTY", "SystemCallError"),
+        // The connect/read failures a network client distinguishes; net/http
+        // names all four in rescue clauses (exc_id(64..67)).
+        ("Errno::ETIMEDOUT", "SystemCallError"),
+        ("Errno::ECONNRESET", "SystemCallError"),
+        ("Errno::ECONNABORTED", "SystemCallError"),
+        ("Errno::EHOSTUNREACH", "SystemCallError"),
     ] {
         register_class(
             compiler,

@@ -2203,6 +2203,32 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         superclass: Some(exc_id(31)),
         is_module: false,
     },
+    // The connect/read failures a network client distinguishes -- net/http
+    // names all four in its rescue clauses.
+    ExceptionClass {
+        id: exc_id(64),
+        name: "Errno::ETIMEDOUT",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(65),
+        name: "Errno::ECONNRESET",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(66),
+        name: "Errno::ECONNABORTED",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(67),
+        name: "Errno::EHOSTUNREACH",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every
