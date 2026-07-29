@@ -215,11 +215,15 @@ pub struct ClassInfo {
     /// `Object` (index 0, handled by its own pre-existing `idx != 0` checks)
     /// and for every ordinary user-defined class/module.
     pub is_builtin: bool,
-    /// `Some(root builtin id)` for a PER-BOX builtin-reopen OVERLAY: this
-    /// ClassInfo carries a box's patches on the root builtin --
-    /// its methods emit as value methods registered under `(root id,
-    /// box_id)`, while instances keep the ROOT's ClassId (`box::String ==
-    /// String`). `None` for every ordinary class, including root builtins.
+    /// `Some(other id)` when this ClassInfo is a NAME rather than a class of
+    /// its own: `resolve_class` answers the other id, and codegen registers
+    /// nothing for it. Two cases use this. A per-box builtin-reopen OVERLAY
+    /// carries a box's patches on the root builtin -- its methods emit as
+    /// value methods registered under `(root id, box_id)`, while instances
+    /// keep the ROOT's ClassId (`box::String == String`). A core constant
+    /// ALIAS is a second spelling of one class (`Errno::EWOULDBLOCK` IS
+    /// `Errno::EAGAIN`), which is what makes rescuing by either name catch the
+    /// other. `None` for every ordinary class, including root builtins.
     pub builtin_overlay: Option<ClassId>,
     /// `Some(feature)` for a require-gated builtin (`Base64`, gated by
     /// `"base64"`) -- mirrored from `zeo_abi::BuiltinClass::feature`. Its

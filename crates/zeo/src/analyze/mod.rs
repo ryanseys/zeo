@@ -1284,6 +1284,9 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("Errno::ECONNRESET", "SystemCallError"),
         ("Errno::ECONNABORTED", "SystemCallError"),
         ("Errno::EHOSTUNREACH", "SystemCallError"),
+        // A connect(2) still in flight, then the non-blocking readiness
+        // family built on it (exc_id(68..74)).
+        ("Errno::EINPROGRESS", "SystemCallError"),
     ] {
         register_class(
             compiler,
@@ -1295,6 +1298,69 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
             0,
             None,
         )?;
+    }
+    // `IO::WaitReadable`/`WaitWritable` -- marker MODULES, so a would-block
+    // errno can be rescued by protocol. Registered before the classes that
+    // mix them in, and the `include` is pushed directly: `register_class`
+    // reads includes out of a class BODY, and these have none.
+    for name in ["IO::WaitReadable", "IO::WaitWritable"] {
+        register_class(compiler, name.to_string(), None, true, &[], &[], 0, None)?;
+    }
+    for (name, superclass, marker) in [
+        ("IO::EAGAINWaitReadable", "Errno::EAGAIN", "IO::WaitReadable"),
+        ("IO::EAGAINWaitWritable", "Errno::EAGAIN", "IO::WaitWritable"),
+        (
+            "IO::EINPROGRESSWaitReadable",
+            "Errno::EINPROGRESS",
+            "IO::WaitReadable",
+        ),
+        (
+            "IO::EINPROGRESSWaitWritable",
+            "Errno::EINPROGRESS",
+            "IO::WaitWritable",
+        ),
+    ] {
+        register_class(
+            compiler,
+            name.to_string(),
+            Some(superclass.to_string()),
+            false,
+            &[],
+            &[],
+            0,
+            None,
+        )?;
+        let (Some(cls), Some(module)) = (
+            compiler.resolve_class(name, &[], 0),
+            compiler.resolve_class(marker, &[], 0),
+        ) else {
+            return Err(format!("{name} or {marker} went missing right after registration"));
+        };
+        compiler.classes[cls.0 as usize].includes.push(module);
+    }
+    // The EWOULDBLOCK spellings. On every platform zeo targets EWOULDBLOCK and
+    // EAGAIN are ONE errno, so CRuby gives them one class under two names --
+    // which is why `rescue Errno::EWOULDBLOCK` catches an EAGAIN. Registered as
+    // aliases (`builtin_overlay`), so each name resolves to the class it
+    // duplicates and nothing extra reaches the runtime. These take no
+    // `zeo-abi::EXCEPTION_CLASSES` id, so they come after every pinned row.
+    for (alias, target) in [
+        ("Errno::EWOULDBLOCK", "Errno::EAGAIN"),
+        ("IO::EWOULDBLOCKWaitReadable", "IO::EAGAINWaitReadable"),
+        ("IO::EWOULDBLOCKWaitWritable", "IO::EAGAINWaitWritable"),
+    ] {
+        let Some(target) = compiler.resolve_class(target, &[], 0) else {
+            return Err(format!("{target} went missing right after registration"));
+        };
+        register_class(compiler, alias.to_string(), None, false, &[], &[], 0, None)?;
+        let Some(cls) = compiler.class_in_scope(
+            compiler.class(target).lexical_parent,
+            crate::constpath::ConstPath::parse(alias).base(),
+            0,
+        ) else {
+            return Err(format!("{alias} went missing right after registration"));
+        };
+        compiler.classes[cls.0 as usize].builtin_overlay = Some(target);
     }
     for c in &mut compiler.classes[before..] {
         c.is_bootstrap = true;

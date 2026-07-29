@@ -2241,13 +2241,69 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         superclass: Some(exc_id(31)),
         is_module: false,
     },
+    // A connect(2) still in flight, and the non-blocking readiness markers
+    // built on it. `IO::WaitReadable`/`WaitWritable` are MODULES mixed into
+    // the errno subclasses below, so `rescue IO::WaitReadable` catches a
+    // would-block by protocol rather than by errno.
+    ExceptionClass {
+        id: exc_id(68),
+        name: "Errno::EINPROGRESS",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(69),
+        name: "IO::WaitReadable",
+        superclass: None,
+        is_module: true,
+    },
+    ExceptionClass {
+        id: exc_id(70),
+        name: "IO::WaitWritable",
+        superclass: None,
+        is_module: true,
+    },
+    ExceptionClass {
+        id: exc_id(71),
+        name: "IO::EAGAINWaitReadable",
+        superclass: Some(exc_id(41)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(72),
+        name: "IO::EAGAINWaitWritable",
+        superclass: Some(exc_id(41)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(73),
+        name: "IO::EINPROGRESSWaitReadable",
+        superclass: Some(exc_id(68)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(74),
+        name: "IO::EINPROGRESSWaitWritable",
+        superclass: Some(exc_id(68)),
+        is_module: false,
+    },
+];
+
+/// The exception rows that INCLUDE a module. Only the non-blocking readiness
+/// classes do, so a side table beats an `includes` field every other row would
+/// have to spell as empty.
+const EXCEPTION_INCLUDES: &[(ClassId, &[ClassId])] = &[
+    (exc_id(71), &[exc_id(69)]),
+    (exc_id(72), &[exc_id(70)]),
+    (exc_id(73), &[exc_id(69)]),
+    (exc_id(74), &[exc_id(70)]),
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every
 /// [`BUILTINS`] row, and every [`EXCEPTION_CLASSES`] row. The single source both
 /// the compiler's seeding (`Compiler::new`) and the runtime's registry
-/// (`ClassRegistry::with_core`) derive the hierarchy from. Exceptions carry a
-/// superclass but never `include` a module, so their `includes` is empty.
+/// (`ClassRegistry::with_core`) derive the hierarchy from. Almost no exception
+/// includes a module; the few that do are in [`EXCEPTION_INCLUDES`].
 fn core_class_edges(id: ClassId) -> (Option<ClassId>, &'static [ClassId]) {
     if id == OBJECT_CLASS {
         return (Some(OBJECT_SUPERCLASS), OBJECT_INCLUDES);
@@ -2256,7 +2312,11 @@ fn core_class_edges(id: ClassId) -> (Option<ClassId>, &'static [ClassId]) {
         return (b.superclass, b.includes);
     }
     if let Some(e) = EXCEPTION_CLASSES.iter().find(|e| e.id == id) {
-        return (e.superclass, &[]);
+        let includes = EXCEPTION_INCLUDES
+            .iter()
+            .find(|(c, _)| *c == id)
+            .map_or(&[][..], |(_, m)| *m);
+        return (e.superclass, includes);
     }
     (None, &[])
 }
