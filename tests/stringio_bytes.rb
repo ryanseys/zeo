@@ -19,11 +19,6 @@ rescue EOFError => e
   p [e.class, e.message]
 end
 
-p StringIO.new("xyz").each_byte.to_a
-collected = []
-StringIO.new("hi").each_byte { |b| collected << b }
-p collected
-
 # A multi-byte character reads one byte at a time here, where `getc` answers
 # the whole character.
 utf8 = StringIO.new("é")

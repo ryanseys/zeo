@@ -346,26 +346,6 @@ ruby_class! {
         s.pos += 1;
         Ok(RubyValue::Int(i64::from(b)))
     }
-    // `each_byte` -- every remaining byte, or an Enumerator with no block.
-    def "each_byte" (recv, args, block) {
-        arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = block else {
-            return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_byte", &[]));
-        };
-        loop {
-            let byte = {
-                let mut s = io_of(recv).state.lock();
-                if s.pos >= s.bytes.len() {
-                    break;
-                }
-                let b = s.bytes[s.pos];
-                s.pos += 1;
-                b
-            };
-            p.call(&[RubyValue::Int(i64::from(byte))])?;
-        }
-        Ok(recv.clone())
-    }
     // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
     def "readline" (recv, args, _block) {
         arity!(args, 0..=1);
