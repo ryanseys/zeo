@@ -1,1 +1,15 @@
+[:before, NoMethodError]
+:not_visible
 "HI!"
+999
+6
+[2, 4]
+"OK!"
+"Z!"
+true
+"HI!"
+Refinement
+false
+"DYN!"
+"Q!"
+Module
