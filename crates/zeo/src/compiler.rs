@@ -288,6 +288,38 @@ pub struct Scope {
     /// registered (`analyze`), propagated onto inherited copies by
     /// `mro::materialize_methods`. `false` for every ordinary user method.
     pub native_default: bool,
+    /// `Some` when the whole body is one ivar access and nothing else, so
+    /// every caller can replace the call with the access -- see
+    /// [`AccessorShape`]. Computed from the body's SHAPE, not from having
+    /// been written by `attr_reader`, so a hand-written `def x; @x; end`
+    /// (which is what `bm_rbtree` and `bm_inline` contain) devirtualizes
+    /// too, and so the property survives `mro::materialize_methods` copying
+    /// the body onto a descendant.
+    pub accessor: Option<AccessorShape>,
+}
+
+/// A method whose entire body is one instance-variable access.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct AccessorShape {
+    /// WITHOUT its `@` -- exactly the `ClassInfo::ivars` spelling, which is
+    /// what `codegen::ident::safe_ident` turns into the struct's field.
+    pub ivar: String,
+    pub kind: AccessorKind,
+    /// Synthesized by `attr_reader`/`attr_writer`/`attr_accessor`/`attr`
+    /// rather than written as a `def` (`Hir::attr_generated`). CRuby compiles
+    /// those to iseq-less methods that fire no `:call`/`:return` `TracePoint`
+    /// event, so devirtualizing one is unobservable even while tracing --
+    /// where doing the same to a hand-written `def x; @x; end` would swallow
+    /// two events CRuby really does produce.
+    pub attr_generated: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AccessorKind {
+    /// No parameters, body is exactly `@name`.
+    Reader,
+    /// One required parameter, body is exactly `@name = that_param`.
+    Writer,
 }
 
 impl Scope {
@@ -399,6 +431,10 @@ pub struct Compiler {
     /// guard to fall back through.
     pub times_literal_suppressed: bool,
     pub range_each_literal_suppressed: bool,
+    /// Memo for [`Hir::uses_call_tracing`] -- a whole-arena scan every Path-1
+    /// call site would otherwise repeat. Per-`Compiler`, so it cannot go stale
+    /// across the many programs one test process compiles.
+    traces_calls: std::cell::OnceCell<bool>,
 }
 
 /// See [`Compiler::inline_iter_sites`].
@@ -539,6 +575,7 @@ impl Compiler {
             inline_iter_sites: HashMap::new(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
+            traces_calls: std::cell::OnceCell::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -1024,6 +1061,34 @@ impl Compiler {
 
     pub fn scope(&self, id: ScopeId) -> &Scope {
         &self.scopes[id.0 as usize]
+    }
+
+    /// See [`Hir::uses_call_tracing`](crate::hir::Hir::uses_call_tracing).
+    pub fn traces_calls(&self) -> bool {
+        *self
+            .traces_calls
+            .get_or_init(|| self.hir.uses_call_tracing())
+    }
+
+    /// `scope`'s [`AccessorShape`] when reaching the field DIRECTLY, in place
+    /// of calling it, would be indistinguishable -- the shared precondition of
+    /// the dynamic entry (`codegen::params::emit_accessor_trampoline`) and the
+    /// static call site (`codegen::call`'s Path 1).
+    ///
+    /// `owner` is the class whose generated struct will be indexed, which is
+    /// not always `scope.class`: a Path-1 site resolves the METHOD through the
+    /// receiver's ancestry, and the field it must read belongs to the
+    /// receiver's own struct.
+    pub fn accessor_shape<'s>(
+        &self,
+        owner: ClassId,
+        scope: &'s Scope,
+    ) -> Option<&'s AccessorShape> {
+        scope.accessor.as_ref().filter(|a| {
+            (a.attr_generated || !self.traces_calls())
+                && !scope.needs_block_param()
+                && self.class(owner).ivars.iter().any(|iv| *iv == a.ivar)
+        })
     }
 
     pub fn class(&self, id: ClassId) -> &ClassInfo {

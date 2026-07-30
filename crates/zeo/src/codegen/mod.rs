@@ -2758,11 +2758,28 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
             || captures::body_contains_begin(compiler, &scope.body);
         let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
-        let frame = scope_frame_guard(compiler, scope, false);
+        // An `attr_*` accessor gets NO frame, because CRuby's does not either:
+        // it compiles them iseq-less, so they appear in no backtrace -- a
+        // `FrozenError` from `attr_writer` reports only the CALLER's line, and
+        // an arity error likewise (oracle-verified both ways against a
+        // hand-written `def x=(v); @x = v; end`, which does get its frame).
+        // A hand-written accessor keeps its frame whenever anything could
+        // observe one: a reader's body cannot raise and calls nothing, so only
+        // `TracePoint` could tell, but a writer's frozen guard raises and its
+        // backtrace must name it.
+        let frameless = compiler.accessor_shape(cid, scope).is_some_and(|a| {
+            a.attr_generated || a.kind == crate::compiler::AccessorKind::Reader
+        });
+        // Dropping `check_ints` with it cannot make a program uninterruptible:
+        // an accessor body is a leaf, and every loop and every block already
+        // checks on each iteration (`codegen::loops`, `codegen::call::procs`).
+        let preamble = (!frameless).then(|| {
+            let frame = scope_frame_guard(compiler, scope, false);
+            quote! { #frame zeo_rt::check_ints()?; }
+        });
         quote! {
             def #method_ident(self: std::sync::Arc<Self> #sig_params) {
-                #frame
-                zeo_rt::check_ints()?;
+                #preamble
                 #body_tokens
             }
         }
@@ -2770,13 +2787,17 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
 
     let dispatch_entries = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
-        let tramp = params::emit_dynamic_trampoline(
-            &name_ident,
-            &scope.name,
-            &scope.params,
-            scope.needs_block_param(),
-            &scope_frame_guard(compiler, scope, false),
-        );
+        let frame = scope_frame_guard(compiler, scope, false);
+        let tramp = match compiler.accessor_shape(cid, scope) {
+            Some(shape) => params::emit_accessor_trampoline(&name_ident, shape, &frame),
+            None => params::emit_dynamic_trampoline(
+                &name_ident,
+                &scope.name,
+                &scope.params,
+                scope.needs_block_param(),
+                &frame,
+            ),
+        };
         // The dispatch KEY is the method's real Ruby name (`"tag="`), a
         // plain string literal -- NOT `safe_ident(&scope.name)` (the
         // escaped Rust identifier, `tag_set`): `ruby_class!`'s `dispatch`

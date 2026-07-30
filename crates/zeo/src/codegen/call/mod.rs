@@ -3294,6 +3294,19 @@ fn dispatch(
                     return err;
                 }
             }
+            if let Some(inlined) = emit_inline_accessor(cx, cid, scope, recv_expr, args, kwargs, block, block_arg)
+            {
+                return inlined;
+            }
+            // An `attr_*` accessor is iseq-less in CRuby and appears in no
+            // backtrace, so a wrong-arity call to one -- the only thing that
+            // reaches this line for an accessor -- must report the caller's
+            // frame alone (oracle-verified against a hand-written `def x=(v)`,
+            // which does get its own).
+            let frame = match cx.compiler.accessor_shape(cid, scope) {
+                Some(a) if a.attr_generated => quote! {},
+                _ => crate::codegen::scope_frame_guard(cx.compiler, scope, false),
+            };
             return super::params::emit_call_args(
                 cx,
                 recv_expr,
@@ -3304,7 +3317,7 @@ fn dispatch(
                 block,
                 block_arg,
                 scope.needs_block_param(),
-                crate::codegen::scope_frame_guard(cx.compiler, scope, false),
+                frame,
             );
         }
     }
@@ -3617,5 +3630,87 @@ fn dispatch(
             &[#(#arg_exprs,)* #(#kw_hash,)*],
             #block_value,
         ))?
+    }
+}
+
+/// A Path-1 call to an accessor, replaced by the field access itself: no
+/// call, no frame, no `check_ints`, no wide `Result` through memory.
+///
+/// `recv_expr` at a Path-1 site with a statically-known `Object` receiver is
+/// already the unboxed `Arc<Concrete>` the generated struct lives behind
+/// (that is what makes `emit_call_args`' `(#recv).#method(..)` typecheck), and
+/// `Compiler::accessor_shape` has established the field exists on `cid`'s own
+/// struct -- so `(#recv).#field` is valid for exactly the same reason.
+///
+/// `None` -- keep the ordinary call -- for anything the field access could not
+/// reproduce: a block or block-pass, call-site keywords, or an argument count
+/// the accessor does not take (which must still raise `ArgumentError` at
+/// runtime, so it falls through to the arity machinery).
+///
+/// Runtime redefinition is not a hazard here because it is not one at any
+/// Path-1 site: zeo already binds these statically, and a
+/// `define_method`-after-the-fact does not displace them (tracked as
+/// `tests/gaps/issue_runtime_redefine_accessor.rb`). Inlining preserves that
+/// exactly; it does not widen it.
+#[allow(clippy::too_many_arguments)] // mirrors `emit_call_args`' own parameter list
+fn emit_inline_accessor(
+    cx: &Ctx,
+    cid: crate::compiler::ClassId,
+    scope: &crate::compiler::Scope,
+    recv_expr: &TokenStream,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Option<TokenStream> {
+    use crate::compiler::AccessorKind;
+    if !kwargs.is_empty() || block.is_some() || block_arg.is_some() {
+        return None;
+    }
+    let shape = cx.compiler.accessor_shape(cid, scope)?;
+    let field = crate::codegen::ident::safe_ident(&shape.ivar);
+    match (shape.kind, args) {
+        // The `{ let __g = ...; __g.clone() }` shape, not a bare
+        // `.lock().clone()`: Rust keeps an UNNAMED guard alive to the end of
+        // the enclosing STATEMENT, so `p.x + p.x` -- two inlined reads of one
+        // non-reentrant `Mutex` in one statement -- would hang. Same reasoning,
+        // same fix, as the `IvarRead` arm in `codegen::expr`.
+        //
+        // `&#recv_expr`, not `#recv_expr`: a receiver expression is often a
+        // temporary (`Clone::clone(&x)`), and borrowing it in a `let` extends
+        // it to the end of THIS block, where taking the field off the
+        // temporary directly drops it at the end of the `let` statement.
+        (AccessorKind::Reader, []) => Some(quote! {
+            {
+                let __r = &#recv_expr;
+                let __g = __r.#field.lock();
+                __g.clone().unwrap_or(zeo_rt::RubyValue::Nil)
+            }
+        }),
+        (AccessorKind::Writer, [arg]) => {
+            let class_ident = crate::codegen::ident::class_ident(cx.compiler, cid);
+            let v = super::expr::emit_expr(cx, *arg);
+            // Boxed for the same reason `emit_expr`'s own `IvarWrite` arm boxes:
+            // the slot is `RubyValue`, but an Object-typed RHS emits a bare
+            // `Arc<Concrete>`.
+            let v = super::expr::box_if_object_typed(cx, *arg, v);
+            // Receiver bound before the argument, and the argument before the
+            // lock: Ruby evaluates left to right, and a `#v` that reads this
+            // same ivar would otherwise `lock()` under the write guard.
+            Some(quote! {
+                {
+                    let __r = &#recv_expr;
+                    let __v: zeo_rt::RubyValue = #v;
+                    if zeo_rt::RubyObject::is_frozen(&**__r) {
+                        Err::<(), zeo_rt::Signal>(zeo_rt::ivar_frozen_error(
+                            #class_ident::new_handle(Clone::clone(__r)),
+                        ))?;
+                    }
+                    *__r.#field.lock() = Some(__v.clone());
+                    __v
+                }
+            })
+        }
+        _ => None,
     }
 }

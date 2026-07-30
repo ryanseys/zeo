@@ -11,7 +11,7 @@
 mod locals;
 pub(crate) mod mro;
 
-use crate::compiler::{ClassId, Compiler, OBJECT_CLASS, Scope};
+use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::hir::{
     ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility,
 };
@@ -2464,6 +2464,7 @@ fn register_method(
     // carries the birth name, and materializing this method onto a descendant
     // reuses the same node, so the alias stays an alias all the way down.
     let alias_of = def_node.and_then(|n| compiler.hir.alias_origin(n).map(str::to_string));
+    let accessor = accessor_shape(&compiler.hir, def_node, &params, &body);
     Ok(compiler.push_scope(Scope {
         name,
         class: Some(owner),
@@ -2478,7 +2479,61 @@ fn register_method(
         // Ordinary methods are never native defaults; the bootstrap-marking
         // pass and `mro` set this true for the pristine exception bodies.
         native_default: false,
+        accessor,
     }))
+}
+
+/// The `AccessorShape` of a method whose entire body is one ivar access, or
+/// `None` for everything else.
+///
+/// Matched on the HIR SHAPE, so `attr_reader :x` and a hand-written
+/// `def x; @x; end` are indistinguishable here -- which is the point, since
+/// the benchmarks that pay the most for a virtual accessor call
+/// (`bm_rbtree`, `bm_inline`, `bm_linked_list`) write the second form. It
+/// also means the property is preserved by `mro::materialize_methods`, which
+/// copies the same body nodes onto every descendant.
+///
+/// Deliberately strict: a block parameter, a default, a splat, a keyword, or
+/// any second statement all disqualify. An accessor's whole value is that the
+/// call has NOTHING else in it, so a near-miss is worth nothing and only
+/// widens what the devirtualized paths must reproduce.
+fn accessor_shape(
+    hir: &Hir,
+    def_node: Option<NodeId>,
+    params: &Params,
+    body: &[NodeId],
+) -> Option<AccessorShape> {
+    let [only] = body else { return None };
+    let plain = params.optional.is_empty()
+        && params.rest.is_none()
+        && params.post.is_empty()
+        && params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+        && params.block.is_none()
+        && params.destructures.is_empty();
+    if !plain {
+        return None;
+    }
+    let (ivar, kind) = match &hir[*only] {
+        HirNode::IvarRead(name) if params.required.is_empty() => (name, AccessorKind::Reader),
+        // `@x = v` EVALUATES to `v`, and so does the Ruby call -- a writer
+        // method's return value is its argument, not the assignment's
+        // receiver -- so replacing the call with the write loses nothing.
+        HirNode::IvarWrite(name, value) => match (&params.required[..], &hir[*value]) {
+            ([p], HirNode::LocalRead(v)) if p == v => (name, AccessorKind::Writer),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(AccessorShape {
+        ivar: ivar.clone(),
+        kind,
+        // An `alias` CLONES the `DefMethod` into a fresh node, so an alias of
+        // an `attr_reader` reads as hand-written here. That is the safe
+        // direction (it only keeps today's call shape while tracing) and it
+        // matches CRuby, which gives the alias its own method entry.
+        attr_generated: def_node.is_some_and(|n| hir.attr_generated.contains(&n)),
+    })
 }
 
 /// Scans a method's own control flow (NOT descending into a nested `Block`'s

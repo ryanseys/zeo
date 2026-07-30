@@ -1746,20 +1746,22 @@ fn lower_class_body_statement(
                             // for attr_writer/attr_accessor.
                             if name != "attr_writer" {
                                 let read = hir.push(HirNode::IvarRead(ivar.clone()));
-                                out.push(hir.push(HirNode::DefMethod {
+                                let getter = hir.push(HirNode::DefMethod {
                                     name: ivar.clone(),
                                     params: Params::default(),
                                     body: vec![read],
                                     is_class_method: false,
                                     visibility: *visibility,
                                     is_def: true,
-                                }));
+                                });
+                                hir.attr_generated.insert(getter);
+                                out.push(getter);
                             }
                             if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
                                 let param = "value".to_string();
                                 let read_param = hir.push(HirNode::LocalRead(param.clone()));
                                 let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
-                                out.push(hir.push(HirNode::DefMethod {
+                                let setter = hir.push(HirNode::DefMethod {
                                     name: format!("{ivar}="),
                                     params: Params {
                                         required: vec![param],
@@ -1769,7 +1771,9 @@ fn lower_class_body_statement(
                                     is_class_method: false,
                                     visibility: *visibility,
                                     is_def: true,
-                                }));
+                                });
+                                hir.attr_generated.insert(setter);
+                                out.push(setter);
                             }
                         }
                         hir.pop_span();

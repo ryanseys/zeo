@@ -122,6 +122,16 @@ pub struct Hir {
     /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
     /// under -- see [`record_alias_origin`](Self::record_alias_origin).
     alias_origins: std::collections::HashMap<NodeId, String>,
+    /// `DefMethod` nodes `attr_reader`/`attr_writer`/`attr_accessor`/`attr`
+    /// SYNTHESIZED, as opposed to a `def` the source really wrote.
+    ///
+    /// The two are the same shape, and codegen deliberately treats them the
+    /// same everywhere but one place: CRuby compiles an `attr_*` accessor to
+    /// an iseq-less method, which fires no `:call`/`:return` `TracePoint`
+    /// event, where a hand-written `def x; @x; end` is an ordinary method and
+    /// does. So a synthesized accessor may devirtualize even under tracing --
+    /// see `codegen::emit_class`.
+    pub attr_generated: std::collections::HashSet<NodeId>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.
@@ -487,6 +497,42 @@ impl Hir {
                     }),
                 _ => false,
             },
+            _ => false,
+        })
+    }
+
+    /// Whether the program can observe a `:call`/`:return` event -- it names
+    /// `TracePoint` or calls `set_trace_func` anywhere.
+    ///
+    /// Those two events are the only thing a devirtualized accessor stops
+    /// producing (`codegen::params::emit_accessor_trampoline` reaches the
+    /// field with no frame and no callee at all), so codegen keeps the
+    /// ordinary call shape for a program that could watch for them -- the
+    /// same "the instrumentation is ABSENT, not branched on" model
+    /// `codegen::coverage_active` uses.
+    ///
+    /// A plain scan of the whole arena, matching `uses_runtime_eval`: it must
+    /// see spliced `require`d files and method bodies too. Over-approximation
+    /// is the safe direction (a program that merely mentions the constant
+    /// just keeps today's accessors), and the honest miss -- reaching
+    /// `TracePoint` through a computed name -- costs a `:call` event on
+    /// one-line accessors, not wrong output.
+    pub fn uses_call_tracing(&self) -> bool {
+        self.nodes.iter().any(|node| match node {
+            // `TracePoint.new` lowers to `New`, not a `Call` on a `ClassRef` --
+            // the receiver never survives as its own node, so matching only
+            // constant reads would miss the single commonest spelling.
+            HirNode::New { class_name: n, .. }
+            | HirNode::ClassRef(n)
+            | HirNode::QualifiedConstRead(_, n)
+            | HirNode::ConstReadOrNil(_, n) => n == "TracePoint",
+            HirNode::Call { name, args, .. } => {
+                name == "set_trace_func"
+                    || args
+                        .first()
+                        .and_then(|a| self.sent_name(a.node_id()))
+                        .is_some_and(|n| n == "set_trace_func")
+            }
             _ => false,
         })
     }

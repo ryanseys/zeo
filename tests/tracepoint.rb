@@ -138,3 +138,30 @@ tt = TracePoint.trace(:call) { }
 p [tt.class, tt.enabled?]
 tt.disable
 p tt.enabled?
+
+# -- accessors still fire :call/:return --
+# A method whose whole body is one ivar access is normally devirtualized: the
+# dispatch table reaches the field with no callee and no frame, so it produces
+# no :call and no :return. THIS file names `TracePoint`, which is exactly what
+# turns that off (`Hir::uses_call_tracing`), so the events below are the proof
+# the gate holds. Appended last on purpose -- every line number above is part
+# of the expectation.
+class Tune
+  attr_accessor :beat
+
+  def initialize
+    @beat = 1
+  end
+end
+
+ev5 = []
+t7 = TracePoint.new(:call, :return) do |t|
+  ev5 << [t.event, t.method_id, t.defined_class.to_s] if mine?(t)
+end
+song = Tune.new
+t7.enable
+song.beat
+song.beat = 4
+t7.disable
+ev5.each { |e| p e }
+p song.beat

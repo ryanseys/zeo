@@ -24,6 +24,7 @@ use quote::{format_ident, quote};
 use super::Ctx;
 use super::expr::{box_if_object_typed, emit_expr};
 use super::ident::safe_ident;
+use crate::compiler::{AccessorKind, AccessorShape};
 use crate::hir::{HirNode, KeywordParam, KwArg, NodeId, Params};
 use proc_macro2::TokenStream;
 
@@ -870,6 +871,38 @@ fn tramp_frame_arg(callee_frame: &TokenStream) -> Option<TokenStream> {
     }
     let stmt: TokenStream = tts.into_iter().collect();
     Some(quote! { , #stmt })
+}
+
+/// The Path 2 entry for a method whose whole body is one ivar access: the
+/// field, reached directly, instead of a downcast-and-call into the generated
+/// inherent method. See `zeo_tramp!`'s `rd`/`wr` heads for what that saves and
+/// why the runtime half is the half that matters.
+///
+/// A HAND-WRITTEN accessor still threads `callee_frame` through, so an arity
+/// error and a frozen-receiver raise stay attributed to its `def` line exactly
+/// as before; only the SUCCEEDING call loses its frame, which nothing but
+/// `TracePoint` can see (`Hir::uses_call_tracing` gates that).
+///
+/// An `attr_*`-synthesized one drops the frame outright, matching CRuby: its
+/// accessors are iseq-less and appear in no backtrace at all, so today's
+/// `bt.rb:2:in 'T#a='` line above the caller is a divergence this removes.
+pub fn emit_accessor_trampoline(
+    class_ident: &proc_macro2::Ident,
+    shape: &AccessorShape,
+    callee_frame: &TokenStream,
+) -> TokenStream {
+    let field = safe_ident(&shape.ivar);
+    let head = format_ident!(
+        "{}",
+        match shape.kind {
+            AccessorKind::Reader => "rd",
+            AccessorKind::Writer => "wr",
+        }
+    );
+    let frame_arg = (!shape.attr_generated)
+        .then(|| tramp_frame_arg(callee_frame))
+        .flatten();
+    quote! { zeo_rt::zeo_tramp!(#head #class_ident, #field #frame_arg) }
 }
 
 pub fn emit_dynamic_trampoline(

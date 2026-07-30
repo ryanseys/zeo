@@ -38,3 +38,4 @@ false
 [[:b, :hum], [:a, :hum]]
 [TracePoint, true]
 false
+4
