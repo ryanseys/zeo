@@ -21,6 +21,12 @@ ruby_class! {
         arity!(args, 1);
         Ok(RubyValue::Bool(!args[0].truthy()))
     }
+    // Declared here rather than left to Kernel's row for the same reason
+    // `NilClass#inspect` is: the OWNER is observable, and pp reads it.
+    def "to_s" arity 0 | "inspect" (_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(crate::string_new("true".to_string())))
+    }
 }
 
 #[cfg(test)]

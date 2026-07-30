@@ -1,6 +1,6 @@
 //! `NilClass` -- nil's boolean algebra (`nil` is falsy) and its conversion
-//! family (`nil` is the zero of every tower). `to_s`/`inspect` resolve through
-//! Kernel's rows (nil renders ""/"nil"). CRuby's home for this is object.c.
+//! family (`nil` is the zero of every tower). CRuby's home for this is
+//! object.c.
 
 use crate::RubyValue;
 use crate::builtins::arity;
@@ -45,6 +45,18 @@ ruby_class! {
     def "to_c" arity 0 (_recv, args, _block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(RubyValue::Int(0), RubyValue::Int(0))
+    }
+    // Renderings Kernel's own rows already produce -- but declared HERE, where
+    // CRuby declares them, because a caller can ask WHERE a method comes from:
+    // pp's fallback reads `obj.method(:inspect).owner != Kernel` to decide
+    // whether an object has its own rendering, and answered `Kernel` for nil.
+    def "to_s" arity 0 (_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(crate::string_new(String::new())))
+    }
+    def "inspect" arity 0 (_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(crate::string_new("nil".to_string())))
     }
     // `nil =~ anything` is always nil (nil matches no pattern).
     def "=~" arity 1 (_recv, args, _block) {
