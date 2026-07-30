@@ -366,6 +366,58 @@ const TARGET_RUBY_VERSION: &str = "4.0.6";
 /// definitions surface in the require graph.
 const ALWAYS_DEFINED_CONSTS: &[&str] = &["Ractor"];
 
+/// A class/module-body `if`/`unless` guard zeo can decide at COMPILE time --
+/// [`static_bool`]'s literals, plus the two probes that gate definitions all
+/// over the gem graph: `defined?(C)` for a constant the runtime always provides,
+/// and `RUBY_VERSION <cmp> "x"` against the one version zeo targets.
+///
+/// Deciding it matters more than it saves: a `def` in each branch of a guard
+/// that stays dynamic leaves TWO definitions of one name in the body, and the
+/// later one simply wins -- so `if RUBY_VERSION >= "3.4."` picked the pre-3.4
+/// method. This is the same three-valued evaluation
+/// [`eval_static_class_self_guard`] does for a `class << self` body, over prism
+/// nodes rather than HIR because the class-body path folds before lowering.
+fn static_guard(node: &Node<'_>) -> Option<bool> {
+    if let Some(b) = static_bool(node) {
+        return Some(b);
+    }
+    if let Some(paren) = node.as_parentheses_node() {
+        let stmts = paren.body()?.as_statements_node()?;
+        let body: Vec<_> = stmts.body().iter().collect();
+        if let [only] = body.as_slice() {
+            return static_guard(only);
+        }
+    }
+    if let Some(defined) = node.as_defined_node() {
+        let name = defined.value().as_constant_read_node()?.name();
+        let name = String::from_utf8_lossy(name.as_slice());
+        return Some(ALWAYS_DEFINED_CONSTS.contains(&name.as_ref()));
+    }
+    let call = node.as_call_node()?;
+    let recv = call.receiver()?;
+    if String::from_utf8_lossy(recv.as_constant_read_node()?.name().as_slice()) != "RUBY_VERSION" {
+        return None;
+    }
+    let args: Vec<_> = call.arguments()?.arguments().iter().collect();
+    let [only] = args.as_slice() else {
+        return None;
+    };
+    let rhs = only.as_string_node()?.unescaped().to_vec();
+    let rhs = String::from_utf8(rhs).ok()?;
+    let ord = TARGET_RUBY_VERSION.cmp(rhs.as_str());
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let op = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+    Some(match op.as_str() {
+        ">=" => ord != Less,
+        ">" => ord == Greater,
+        "<" => ord == Less,
+        "<=" => ord != Greater,
+        "==" => ord == Equal,
+        "!=" => ord != Equal,
+        _ => return None,
+    })
+}
+
 /// Three-valued static evaluation of a `class << self` conditional-def guard,
 /// enough for the platform/version probes that gate class-method definitions in
 /// the stdlib/gem graph: literal `true`/`false`/`nil`, `defined?(C)` for a
@@ -1262,7 +1314,7 @@ fn lower_class_body_statement(
     // lowering (they're class-body-only keywords). A dynamic predicate falls
     // through to the generic value-`if` path unchanged.
     if let Some(if_node) = node.as_if_node() {
-        if let Some(cond) = static_bool(&if_node.predicate()) {
+        if let Some(cond) = static_guard(&if_node.predicate()) {
             let chosen = if cond {
                 if_node.statements().map(|s| s.as_node())
             } else {
@@ -1279,7 +1331,7 @@ fn lower_class_body_statement(
         }
     }
     if let Some(unless_node) = node.as_unless_node() {
-        if let Some(cond) = static_bool(&unless_node.predicate()) {
+        if let Some(cond) = static_guard(&unless_node.predicate()) {
             let chosen = if !cond {
                 unless_node.statements().map(|s| s.as_node())
             } else {
