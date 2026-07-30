@@ -910,13 +910,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // builds via the shared `KwArg` emitter and `emit_proc_param_bindings`
         // binds a block's keyword params from.
         //
-        // Divergence: a runtime-empty `**{}` still contributes a trailing `{}`
-        // here (`yield(1, **{})` -> `[1, {}]`), where real Ruby drops it -- the
-        // call path suppresses that via `emit_splat_call`'s non-empty guard,
-        // but yield's trailing-`HashLit` shape has none. Rare, and strictly
-        // better than the previous flat rejection of `yield **h`.
+        // The fold is recorded, because a hash that arrived as KEYWORDS is
+        // dropped when it turns out empty at runtime while one the source wrote
+        // is not -- see `Hir::kwargs_hash_nodes`.
         if !kwargs.is_empty() {
-            args.push(ArrayElem::Single(hir.push(HirNode::HashLit(kwargs))));
+            let hash = hir.push(HirNode::HashLit(kwargs));
+            hir.kwargs_hash_nodes.insert(hash);
+            args.push(ArrayElem::Single(hash));
         }
         return Ok(hir.push(HirNode::Yield(args)));
     }

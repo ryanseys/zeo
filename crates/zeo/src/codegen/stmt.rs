@@ -277,7 +277,7 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             } else {
                 e
             }
-        } else if is_pure_statement(&cx.compiler.hir[stmt]) {
+        } else if is_pure_statement(cx, &cx.compiler.hir[stmt]) {
             // A statement-position expression with no effect (a bare local
             // read, a literal, `self`) emits nothing: the old
             // `Clone::clone(&x);` statements did real refcount work and drew
@@ -292,7 +292,16 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
 /// Statement-position shapes Ruby evaluates purely for their (absent) side
 /// effects -- safe to emit nothing for. Deliberately minimal: anything with
 /// interpolation, a call, or a fallible read stays emitted.
-fn is_pure_statement(node: &HirNode) -> bool {
+fn is_pure_statement(cx: &Ctx, node: &HirNode) -> bool {
+    // `include M` compiles to `M.included(self)` -- and to NOTHING when the
+    // module defines no such hook, which is almost always. See
+    // `expr::mixin_hook_runs`.
+    if matches!(
+        node,
+        HirNode::Include(_) | HirNode::Extend(_) | HirNode::Prepend(_)
+    ) {
+        return !super::expr::mixin_hook_runs(cx, node);
+    }
     matches!(
         node,
         HirNode::IntegerLit(_)

@@ -1216,9 +1216,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                     None => return Err(zeo_rt::raise_no_block_yield()),
                 }
             };
+            // A trailing hash the `yield` spelled as KEYWORDS (`yield(v, **h)`)
+            // is dropped when `h` turns out empty, so its length is a runtime
+            // question and the fixed-slice form below cannot carry it.
+            let kw_tail = args.last().and_then(|a| match a {
+                ArrayElem::Single(n) if cx.compiler.hir.kwargs_hash_nodes.contains(n) => Some(*n),
+                _ => None,
+            });
             // No splat: the arguments are a fixed-length list, so they go
             // straight into a borrowed slice literal with no Vec allocated.
-            if !args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+            if kw_tail.is_none() && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let arg_exprs = args.iter().map(|a| {
                     let ArrayElem::Single(n) = a else {
                         unreachable!("just checked for splats")
@@ -1231,7 +1238,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // the argument vector the same way `call::emit_splat_call` does.
             // The block then binds from it through its ordinary parameter
             // machinery (auto-splat, rest, nil-padding all included).
-            let pushes = args.iter().map(|a| match a {
+            let fixed = &args[..args.len() - usize::from(kw_tail.is_some())];
+            let pushes = fixed.iter().map(|a| match a {
                 ArrayElem::Single(n) => {
                     let e = box_if_object_typed(cx, *n, emit_expr(cx, *n));
                     quote! { __args.push(#e); }
@@ -1241,10 +1249,23 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                     quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
                 }
             });
+            // The same rule `emit_splat_call` applies on the call side: a `**h`
+            // that is empty AT RUNTIME contributes nothing, so the block sees
+            // one fewer argument rather than a stray `{}`.
+            let kw_push = kw_tail.map(|n| {
+                let e = emit_expr(cx, n);
+                quote! {
+                    let __kw = #e;
+                    if !__kw.as_hash_unchecked().lock().is_empty() {
+                        __args.push(__kw);
+                    }
+                }
+            });
             quote! {
                 {
                     let mut __args: Vec<zeo_rt::RubyValue> = Vec::new();
                     #(#pushes)*
+                    #kw_push
                     (#invoke).call(&__args)?
                 }
             }
@@ -1510,6 +1531,27 @@ pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCau
 /// nothing is emitted unless the module defines the hook. The call goes
 /// through dynamic dispatch: the hook is reached by NAME, and its body
 /// commonly edits `C` at runtime (`base.extend(self)`).
+/// `(module, receiving class)` when `include M`/`extend M`/`prepend M` here
+/// really has a hook to call, `None` when it has none -- which is the common
+/// case, since `Module`'s own `included`/`extended`/`prepended` is a no-op.
+///
+/// Asked by the statement emitter as well: with no hook the mixin emits no code
+/// at all, and a statement that produced a bare `RubyValue::Nil` instead drew a
+/// "path statement drops value" warning out of every program that mixes in a
+/// module.
+pub(super) fn mixin_hook_runs(cx: &Ctx, node: &HirNode) -> bool {
+    let (module, hook) = match node {
+        HirNode::Include(m) => (m, "included"),
+        HirNode::Extend(m) => (m, "extended"),
+        HirNode::Prepend(m) => (m, "prepended"),
+        _ => return false,
+    };
+    cx.defining_class.is_some()
+        && cx
+            .resolve_class(module)
+            .is_some_and(|mid| cx.compiler.class_method_in_chain(mid, hook).is_some())
+}
+
 fn emit_mixin_hook(cx: &Ctx, module: &str, hook: &str) -> TokenStream {
     let nil = quote! { zeo_rt::RubyValue::Nil };
     let (Some(mid), Some(target)) = (cx.resolve_class(module), cx.defining_class) else {

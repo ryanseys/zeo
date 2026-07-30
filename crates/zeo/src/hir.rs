@@ -112,6 +112,13 @@ pub struct Hir {
     /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
     /// codegen routes these through `send_value_vcall_in`.
     pub vcall_nodes: std::collections::HashSet<NodeId>,
+    /// `HashLit` nodes that are a `yield`'s KEYWORD arguments folded into one
+    /// trailing hash, rather than a hash the source really wrote. The two are
+    /// the same shape but not the same value: `yield(1, **h)` with an empty `h`
+    /// passes only `1`, where `yield(1, {})` passes the hash. A side table
+    /// rather than a field on `Yield`, so the variant -- and the dozen walkers
+    /// that match it -- keep their shape.
+    pub kwargs_hash_nodes: std::collections::HashSet<NodeId>,
     /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
     /// under -- see [`record_alias_origin`](Self::record_alias_origin).
     alias_origins: std::collections::HashMap<NodeId, String>,
