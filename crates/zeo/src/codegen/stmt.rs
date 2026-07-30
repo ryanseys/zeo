@@ -161,7 +161,7 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             .class_body_sites
             .iter()
             .find(|s| s.def_node == Some(stmt))
-            .map(|s| crate::codegen::emit_class_body_site(cx.compiler, s))
+            .map(|s| crate::codegen::emit_class_body_site(cx.compiler, s, &cx.captured_locals))
             .unwrap_or_else(|| {
                 // Name the definition + source location: this fires deep in a
                 // require graph (a `class`/`module` inside a `begin` or an

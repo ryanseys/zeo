@@ -1065,7 +1065,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     && !s.stmts.is_empty()
                     && !s.def_node.is_some_and(|n| inline_markers.contains(&n))
             })
-            .map(|s| emit_class_body_site(compiler, s))
+            // Hoisted, not inline: these run at the head of `run_main`,
+            // ahead of every top-level statement, so no enclosing local
+            // exists for them to read.
+            .map(|s| emit_class_body_site(compiler, s, &HashSet::new()))
     };
     let mut user_class_bodies: Vec<TokenStream> = Vec::new();
     let mut builtin_class_bodies: Vec<TokenStream> = Vec::new();
@@ -2087,6 +2090,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 pub(crate) fn emit_class_body_site(
     compiler: &Compiler,
     site: &crate::compiler::ClassBodySite,
+    enclosing_captured: &HashSet<String>,
 ) -> TokenStream {
     let cid = site.class;
     // `alias_method`'s source is checked as THIS body runs -- CRuby's timing,
@@ -2118,6 +2122,21 @@ pub(crate) fn emit_class_body_site(
         &mut captures,
         false,
     );
+    // A site emitted INLINE at its document position sits inside the
+    // enclosing scope's own Rust block, so a name that scope keeps in a cell
+    // is a cell here too. A guarded reopen is the shape that reaches for one
+    // -- pp.rb's `class Set ... end if set_pp` carries the top-level `set_pp`
+    // in as its guard. The class body's OWN locals still win: a class body is
+    // a fresh Ruby scope, and its names shadow rather than share.
+    if !enclosing_captured.is_empty() {
+        let mut own = Vec::new();
+        for &n in stmts {
+            hoisting::collect_locals(compiler, n, &mut own);
+        }
+        captures
+            .locals
+            .extend(enclosing_captured.iter().filter(|n| !own.contains(n)).cloned());
+    }
     let no_locals = HashMap::new();
     let cx = Ctx {
         compiler,
