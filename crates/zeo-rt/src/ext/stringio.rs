@@ -321,6 +321,51 @@ ruby_class! {
         s.pos += len;
         Ok(bytes_to_str(&ch, s.enc))
     }
+    // `getbyte` -- one BYTE as an Integer, `nil` at end. Byte-wise, not
+    // character-wise like `getc`: prism's deserializer reads its buffer this
+    // way, and a multi-byte encoding must not make it skip.
+    def "getbyte" (recv, args, _block) {
+        arity!(args, 0);
+        let mut s = io_of(recv).state.lock();
+        if s.pos >= s.bytes.len() {
+            return Ok(RubyValue::Nil);
+        }
+        let b = s.bytes[s.pos];
+        s.pos += 1;
+        Ok(RubyValue::Int(i64::from(b)))
+    }
+    // `readbyte` -- `getbyte`, but raising `EOFError` at end rather than
+    // answering nil (the same pairing `getc`/`readchar` have).
+    def "readbyte" (recv, args, _block) {
+        arity!(args, 0);
+        let mut s = io_of(recv).state.lock();
+        if s.pos >= s.bytes.len() {
+            return Err(eof_error!("end of file reached"));
+        }
+        let b = s.bytes[s.pos];
+        s.pos += 1;
+        Ok(RubyValue::Int(i64::from(b)))
+    }
+    // `each_byte` -- every remaining byte, or an Enumerator with no block.
+    def "each_byte" (recv, args, block) {
+        arity!(args, 0);
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_byte", &[]));
+        };
+        loop {
+            let byte = {
+                let mut s = io_of(recv).state.lock();
+                if s.pos >= s.bytes.len() {
+                    break;
+                }
+                let b = s.bytes[s.pos];
+                s.pos += 1;
+                b
+            };
+            p.call(&[RubyValue::Int(i64::from(byte))])?;
+        }
+        Ok(recv.clone())
+    }
     // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
     def "readline" (recv, args, _block) {
         arity!(args, 0..=1);
