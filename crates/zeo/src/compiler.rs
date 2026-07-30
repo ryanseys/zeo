@@ -807,6 +807,34 @@ impl Compiler {
         self.refinements.iter().any(|r| r.holder == cid)
     }
 
+    /// The class `holder` refines, or `None` when `holder` is an ordinary
+    /// module.
+    pub(crate) fn refinement_target(&self, holder: ClassId) -> Option<ClassId> {
+        self.refinements
+            .iter()
+            .find(|r| r.holder == holder)
+            .map(|r| r.target)
+    }
+
+    /// Every `(target, holder)` written by the SAME module as `holder`'s own
+    /// `refine` block, itself included -- what a bare name inside that block
+    /// can reach. Empty when `holder` is an ordinary module.
+    pub(crate) fn refinements_beside(&self, holder: ClassId) -> Vec<(ClassId, ClassId)> {
+        let Some(module) = self
+            .refinements
+            .iter()
+            .find(|r| r.holder == holder)
+            .map(|r| r.module)
+        else {
+            return Vec::new();
+        };
+        self.refinements
+            .iter()
+            .filter(|r| r.module == module)
+            .map(|r| (r.target, r.holder))
+            .collect()
+    }
+
     /// Whether `holder` defines `name` as an instance method of its own --
     /// the question that decides whether a call site routes through the
     /// refinement at all.

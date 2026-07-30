@@ -86,3 +86,27 @@ end
 using N
 p [1, 2, 3].second
 p "still".shout
+
+# `super` in a refined method reaches what the refinement overrode, and an
+# operator refines like any other name.
+class Widget
+  def label = "plain"
+end
+module P
+  refine Widget do
+    def label = "refined " + super
+  end
+  refine Integer do
+    def +(other) = 999
+  end
+  # A refinement is active inside its own block, so a sibling refined method
+  # is reachable by bare name.
+  refine String do
+    def bang = self + "!"
+    def twice = bang + bang
+  end
+end
+using P
+p Widget.new.label
+p 1 + 2
+p "a".twice

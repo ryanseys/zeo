@@ -483,6 +483,31 @@ is tracked as one (`tests/gaps/`), not a queued job.
   source through a **Ruby-level Prism** API zeo does not expose. That one is a
   gap, not a decline.)
 
+## Refinements
+
+`Module#refine` and `Kernel#using` work, with real Ruby's lexical rule: a
+`using` covers everything written after it, to the end of the enclosing body
+(the end of the file at the top level). A `def` written after the `using` sees
+the refinement; one written above it does not. `send`, `public_send`,
+`respond_to?` and `Object#method` all honour it, `Module#instance_methods`
+does not, and a refined `Method#owner` reports a `Refinement` — see
+`tests/refinements.rb`, which is oracle-blessed line by line.
+
+Three narrowings:
+
+* The target must be a **literal constant**. `refine Object.const_get(:String)`
+  falls through to an ordinary call, which raises.
+* `using` must name a **literal constant** module, for the same reason.
+* `Module#refinements`, `Module#used_modules` and `Refinement#refined_class`
+  are not implemented — the refinement objects exist, but nothing enumerates
+  them.
+
+A refined call site gives up its static dispatch: whether the refinement
+applies depends on the receiver's runtime class, so the call routes through one
+runtime entry point that tries the refined bodies and then falls back to an
+ordinary send. That cost is paid only where a `using` and a refined name
+actually meet.
+
 ## Required only from a method body
 
 A plain `require` that **only a method body** reaches is not compiled in.

@@ -1453,6 +1453,16 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             continue;
         }
         let defined_on = scope.defining_class;
+        // A `super` in a REFINED method resumes in the refined class's own
+        // chain -- CRuby puts the refinement just ahead of the target, so
+        // `super` reaches what the refinement overrode. The holder sits on
+        // no receiver's ancestry, so the includer scan below finds nothing
+        // for it.
+        if let Some(target) = compiler.refinement_target(defined_on) {
+            for &d in &compiler.class(target).ancestors {
+                super_pairs.insert((d, scope.name.as_str()));
+            }
+        }
         for class in &compiler.classes {
             if class.is_module || !class.ancestors.contains(&defined_on) {
                 continue;

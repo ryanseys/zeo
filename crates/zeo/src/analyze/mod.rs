@@ -1989,6 +1989,18 @@ fn register_class(
                         target,
                         holder,
                     });
+                    // A refinement is active inside its OWN block, so an
+                    // explicit-receiver call there sees the module's whole
+                    // set. (A bare name reaches the same set through
+                    // `Compiler::refinements_beside`, which needs no span.)
+                    if let Some(span) = compiler.hir.span(stmt).and_then(|s| s.known()) {
+                        compiler.activations.push(crate::compiler::Activation {
+                            module: class_id,
+                            file: span.file,
+                            start: span.start,
+                            end: span.end,
+                        });
+                    }
                 }
             }
             // `using M` inside a class/module body scopes to THAT body, so

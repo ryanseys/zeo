@@ -1209,6 +1209,43 @@ pub fn emit_call(
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
+        // A bare name inside a `refine` block. Real Ruby activates a
+        // refinement inside its own block, and `self` there is an instance
+        // of the refined class -- so a sibling refined method is reachable
+        // by name, while the holder itself is on nobody's ancestry and the
+        // ordinary implicit-self walk would never find it.
+        if let Some(holder) = cx.defining_class {
+            let candidates: Vec<_> = cx
+                .compiler
+                .refinements_beside(holder)
+                .into_iter()
+                .filter(|&(_, h)| cx.compiler.refinement_defines(h, name))
+                .collect();
+            if !candidates.is_empty() {
+                let recv =
+                    boxed_implicit_self(cx).expect("every context has an implicit self");
+                let mut arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)))
+                    .collect();
+                arg_exprs.extend(emit_kwargs_trailing_hash(cx, kwargs));
+                let blk = emit_block_option(cx, block, block_arg);
+                let name_sym = super::pooled_sym(name);
+                let pairs = candidates.iter().map(|&(target, holder)| {
+                    let (target, holder) = (target.0, holder.0);
+                    quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+                });
+                return wrap_dynamic_result(
+                    block.is_some() || block_arg.is_some(),
+                    quote! {
+                        zeo_rt::refined_send_in(
+                            #__bx, &#recv, #name_sym, &[#(#arg_exprs),*], #blk,
+                            &[#(#pairs),*],
+                        )
+                    },
+                );
+            }
+        }
         // Receiver-less `eval(src[, binding[, file[, line]]])`: route straight
         // to the runtime eval VM, carrying THIS scope -- CRuby evaluates a bare
         // `eval` (or one given a `nil` binding) in the caller's own frame, so
