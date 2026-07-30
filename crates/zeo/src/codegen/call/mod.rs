@@ -1582,16 +1582,16 @@ pub fn emit_call(
             && block.is_none()
             && block_arg.is_none()
         {
-            if let Some(cid) = cx.current_class {
-                let slf = &cx.self_ident;
-                // A reopened builtin's (or `Object`'s) `self` is already a
-                // boxed `RubyValue`.
-                let boxed = if cx.compiler.value_backed(cid) {
-                    quote! { Clone::clone(&#slf) }
-                } else {
-                    let class_ident = super::ident::class_ident(cx.compiler, cid);
-                    quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#slf))) }
-                };
+            if cx.current_class.is_some() {
+                // `boxed_implicit_self` rather than a local box: it checks
+                // `self_is_dynamic` FIRST, which is what a method emitted
+                // into an `__own_` bridge container needs -- there `self`
+                // arrives as a `RubyValue` parameter even though
+                // `current_class` names an ordinary struct-backed class, and
+                // boxing it again is a type error. prism's `Pattern#scan`
+                // (`return to_enum(:scan, root) unless block_given?`) is one
+                // of forty-odd such methods irb pulls in.
+                let boxed = boxed_implicit_self(cx).expect("a method context has an implicit self");
                 let arg_exprs: Vec<TokenStream> = args
                     .iter()
                     .map(|&a| {
