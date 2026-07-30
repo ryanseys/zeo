@@ -1632,6 +1632,27 @@ fn register_class(
     box_id: u32,
     def_node: Option<NodeId>,
 ) -> Result<(), String> {
+    // A superclass naming a constant NOTHING in the program defines (irb's
+    // `class CallTracer < ::CallTracer`, whose `require "tracer"` already
+    // raised `LoadError`): real Ruby evaluates that expression when the
+    // definition RUNS, raises `NameError` there, and never brings the class
+    // into being. So rewrite the whole definition to the bare constant READ
+    // -- `defer_unresolved_directive`'s treatment of an unresolvable
+    // `include` -- and register nothing. No struct is laid out for a class no
+    // instance can reach, which is the objection `resolve_module_target`
+    // records against deferring a superclass; a name the program DOES assign
+    // still errors loudly there, for the reason given in the same place.
+    if let (Some(s), Some(def_node)) = (&superclass, def_node) {
+        let known = compiler.resolve_class(s, cref, box_id).is_some()
+            || resolve_or_create_lexical(compiler, s, cref, box_id).is_some()
+            || compiler
+                .assigned_const_names
+                .contains(crate::constpath::ConstPath::parse(s).base());
+        if !known {
+            defer_unresolved_directive(compiler, def_node, s);
+            return Ok(());
+        }
+    }
     let path = crate::constpath::ConstPath::parse(&name);
     let (lexical_parent, leaf, qualified_def) = match path.scope() {
         // `A::B` / `::A::B` -- defined INSIDE a named scope, which must
