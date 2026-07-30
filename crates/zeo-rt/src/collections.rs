@@ -574,6 +574,18 @@ pub fn hash_pairs_snapshot(h: &RHash) -> Vec<(RubyValue, RubyValue)> {
     h.lock().values().cloned().collect()
 }
 
+/// `hash_pairs_snapshot`'s twin for arrays: the elements cloned under ONE
+/// lock acquisition, so whatever walks them afterwards runs lock-free.
+///
+/// Use this wherever the walk can re-enter the receiver -- a user `inspect`
+/// that reads the array it is being printed from, or an element that IS the
+/// receiver. The payload `Mutex` is not reentrant, so holding the guard
+/// across such a call hangs the process with no output and no error (the
+/// same failure mode fb30c7be fixed for `s + s`).
+pub fn array_snapshot(a: &RArray) -> Vec<RubyValue> {
+    a.lock().iter().cloned().collect()
+}
+
 /// Ruby's own `Array#[]`: negative indices count from the end, and an
 /// out-of-range index returns `nil` rather than raising/panicking.
 pub fn array_get(arr: &RArray, index: i64) -> RubyValue {

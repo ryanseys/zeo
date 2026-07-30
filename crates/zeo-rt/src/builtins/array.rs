@@ -468,10 +468,14 @@ ruby_class! {
     }
     def "assoc" arity 1 (recv, args, _block) {
         arity!(args, 1);
-        for e in recv_array!(recv).lock().iter() {
-            if let RubyValue::Array(inner) = e {
+        // Snapshot before locking any element: an element can BE the receiver
+        // (`a = [1]; a << a`), and taking `inner`'s guard while the receiver's
+        // is still held deadlocks a non-reentrant Mutex. `product` below has
+        // taken this shape all along.
+        for e in crate::collections::array_snapshot(recv_array!(recv)) {
+            if let RubyValue::Array(inner) = &e {
                 if inner.lock().first().is_some_and(|k| k.rb_eq(&args[0])) {
-                    return Ok(e.clone());
+                    return Ok(e);
                 }
             }
         }
@@ -479,10 +483,10 @@ ruby_class! {
     }
     def "rassoc" arity 1 (recv, args, _block) {
         arity!(args, 1);
-        for e in recv_array!(recv).lock().iter() {
-            if let RubyValue::Array(inner) = e {
+        for e in crate::collections::array_snapshot(recv_array!(recv)) {
+            if let RubyValue::Array(inner) = &e {
                 if inner.lock().get(1).is_some_and(|v| v.rb_eq(&args[0])) {
-                    return Ok(e.clone());
+                    return Ok(e);
                 }
             }
         }

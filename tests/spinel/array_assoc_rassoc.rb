@@ -22,3 +22,20 @@ p [[:a, :b], [:c, :d]].rassoc(:b)
 # A nil key must not match an empty / too-short pair or a non-array element.
 p [[], [1], (1..2)].assoc(nil)
 p [[], [1], (1..2)].rassoc(nil)
+
+# An element that IS the receiver. Both methods lock each sub-array to read
+# its first / second slot, so walking the receiver under its own guard makes
+# that a self-lock -- which hangs forever rather than raising. Snapshotting
+# the receiver first is what keeps these terminating.
+selfref = [1]
+selfref << selfref
+p selfref.assoc(1)
+p selfref.rassoc(1)
+p selfref.assoc(nil)
+
+# The same shape one level down: the pair being probed contains the outer
+# array, so the probe's own element read re-enters it.
+outer = [[9, nil]]
+outer[0][1] = outer
+p outer.assoc(9)
+p outer.rassoc(outer)

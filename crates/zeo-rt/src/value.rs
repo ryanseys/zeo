@@ -286,9 +286,13 @@ impl RubyValue {
                 if seen.contains(&ptr) {
                     return Ok("[...]".to_string());
                 }
+                // Snapshot first: `seen` guards a container that contains
+                // ITSELF, but not an element whose `inspect` reaches back into
+                // this array. Holding the payload guard across that dispatch
+                // deadlocks a non-reentrant Mutex.
+                let items = crate::collections::array_snapshot(a);
                 seen.push(ptr);
-                let body = a
-                    .lock()
+                let body = items
                     .iter()
                     .map(|e| e.inspect_with(seen))
                     .collect::<Result<Vec<_>, _>>();
@@ -306,12 +310,13 @@ impl RubyValue {
                 if seen.contains(&ptr) {
                     return Ok("{...}".to_string());
                 }
+                // Snapshot for the same reason as the Array arm above.
+                let pairs = crate::collections::hash_pairs_snapshot(h);
                 seen.push(ptr);
                 // `Hash#to_s` IS `#inspect`, so keys and values render in
                 // their inspect form (`{a: "x"}`, not `{a: x}`) here too.
-                let body = h
-                    .lock()
-                    .values()
+                let body = pairs
+                    .iter()
                     .map(|(k, v)| {
                         Ok(match k {
                             RubyValue::Symbol(s) => format!(
@@ -453,9 +458,10 @@ impl RubyValue {
                 if seen.contains(&ptr) {
                     return Ok("[...]".to_string());
                 }
+                // Snapshot before recursing -- see the `display_with` twin.
+                let items = crate::collections::array_snapshot(a);
                 seen.push(ptr);
-                let body = a
-                    .lock()
+                let body = items
                     .iter()
                     .map(|e| e.inspect_with(seen))
                     .collect::<Result<Vec<_>, _>>();
@@ -469,10 +475,10 @@ impl RubyValue {
                 if seen.contains(&ptr) {
                     return Ok("{...}".to_string());
                 }
+                let pairs = crate::collections::hash_pairs_snapshot(h);
                 seen.push(ptr);
-                let body = h
-                    .lock()
-                    .values()
+                let body = pairs
+                    .iter()
                     .map(|(k, v)| {
                         Ok(match k {
                             RubyValue::Symbol(s) => format!(
