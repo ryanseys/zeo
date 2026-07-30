@@ -2020,6 +2020,16 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                         zeo_rt::report_uncaught(&__exc);
                         std::process::exit(1);
                     }
+                    // `return` written at the top level ENDS the program,
+                    // silently and successfully -- CRuby's rule. It reaches
+                    // here only from a position that raises the signal rather
+                    // than returning literally (inside a `rescue`/`ensure`
+                    // clause, say); the plain statement form folds earlier.
+                    // A `return` at the top level of a REQUIRED file ends the
+                    // whole program rather than just that file's load, since
+                    // zeo splices the file into its requirer -- see
+                    // `docs/COMPATIBILITY.md`.
+                    zeo_rt::Signal::Return(_) => {}
                     __other => {
                         eprintln!("uncaught signal escaped the top level: {:?}", __other);
                         std::process::exit(1);
