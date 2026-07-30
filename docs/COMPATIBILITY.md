@@ -542,7 +542,31 @@ require "erb"            # now compiled in; the one inside `render` answers fals
 ```
 
 A `require_relative` is exempt from all of this. It names a file of the same
-program rather than a library boundary, so it is loaded wherever it is written.
+program rather than a library boundary, so it is always loaded. One inside a
+method body lands at the **end** of the file that writes it: the method cannot
+run before its own file has finished loading, and the target routinely reopens
+a class that file is still building. irb's `context.rb` requires
+`ext/eval_history.rb` from inside `eval_history=`, and that file pushes onto a
+`NOPRINTING_IVARS` assigned further down `context.rb`.
+
+## Where a nested `require` lands
+
+A require the file's load reaches but that is not a top-level statement — one
+under a conditional, in a `begin`, in a class body, in a block — is spliced at
+the position of the **statement that holds it**:
+
+```ruby
+require_relative "../minitest"          # first
+require_relative "spec"                 # second
+require_relative "hell" if ENV["MT_HELL"]   # third, here -- not at the top
+```
+
+The guard itself is not evaluated at compile time (only the platform-detection
+idioms `RUBY_ENGINE == "jruby"` and friends are), so a require in a branch that
+never runs is still compiled in and still executes. That is usually invisible —
+every extension links statically — but not always: `minitest/hell.rb` calls
+`parallelize_me!` and warns about a missing optional gem, neither of which
+CRuby does when `MT_HELL` is unset.
 
 A file loaded this way runs its top level at program START, not on the call, so
 a lazily-required file that only means to *warn and bail* on a missing optional
@@ -578,6 +602,21 @@ requirer; zeo splices required files into their requirer, so the `return`
 reaches the top level of the whole program and ends it. Exit status stays 0 and
 `at_exit` handlers still run, both matching a top-level `return` in the main
 script.
+
+## `extend` on a class, at runtime
+
+`Klass.extend M` written as a runtime call — as opposed to `extend M` in the
+class body — installs each of `M`'s methods as a class method of `Klass`. The
+body runs with `self` bound to the class, so an implicit-self class-method call
+and an `@ivar` write both land where Ruby says: `@x` is the class's own
+class-level slot, the same one a `def self.x` reads. The singleton gem depends
+on exactly this (`klass.extend SingletonClassMethods`, then
+`klass.instance_eval { set_mutex(Thread::Mutex.new) }`).
+
+What does **not** follow is the ancestry: zeo installs the methods rather than
+splicing `M` into the class's singleton chain, so `Klass.singleton_class.
+include?(M)` answers false where real Ruby answers true. Dispatch,
+`respond_to?`, and the method's own behaviour are unaffected.
 
 ## Compiling against an installed gem store
 
