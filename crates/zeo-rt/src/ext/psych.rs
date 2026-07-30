@@ -24,7 +24,121 @@ use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
 use zeo_macros::ruby_module;
-use yaml_rust2::{Yaml, YamlLoader};
+use yaml_rust2::Yaml;
+
+/// Load every document, from the PARSER's event stream rather than
+/// `YamlLoader`'s node tree. A node tree cannot answer the question psych's
+/// scalar scanner asks first -- was this scalar QUOTED? -- and that is the whole
+/// difference between the Symbol `:x` and the String `":x"`.
+fn load_documents(text: &str) -> Result<Vec<RubyValue>, Signal> {
+    let mut sink = Documents::default();
+    yaml_rust2::parser::Parser::new_from_str(text)
+        .load(&mut sink, true)
+        .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
+    Ok(sink.docs)
+}
+
+/// [`load_documents`]'s event sink: one stack of half-built containers, plus the
+/// finished documents. A mapping's pending KEY lives on its own frame, so a
+/// nested collection can be a key without disturbing the walk.
+#[derive(Default)]
+struct Documents {
+    docs: Vec<RubyValue>,
+    stack: Vec<Container>,
+}
+
+enum Container {
+    Seq(Vec<RubyValue>),
+    Map(Vec<(RubyValue, RubyValue)>, Option<RubyValue>),
+}
+
+impl Documents {
+    /// A finished value: into the open container, or -- with none open -- it IS
+    /// the document.
+    fn accept(&mut self, v: RubyValue) {
+        match self.stack.last_mut() {
+            Some(Container::Seq(items)) => items.push(v),
+            Some(Container::Map(pairs, pending)) => match pending.take() {
+                Some(k) => pairs.push((k, v)),
+                None => *pending = Some(v),
+            },
+            None => self.docs.push(v),
+        }
+    }
+}
+
+impl yaml_rust2::parser::EventReceiver for Documents {
+    fn on_event(&mut self, ev: yaml_rust2::Event) {
+        use yaml_rust2::Event;
+        match ev {
+            Event::Scalar(value, style, ..) => {
+                let v = scalar_to_ruby(&value, style);
+                self.accept(v);
+            }
+            Event::SequenceStart(..) => self.stack.push(Container::Seq(Vec::new())),
+            Event::MappingStart(..) => self.stack.push(Container::Map(Vec::new(), None)),
+            Event::SequenceEnd | Event::MappingEnd => {
+                let v = match self.stack.pop() {
+                    Some(Container::Seq(items)) => RubyValue::Array(array_new(items)),
+                    Some(Container::Map(pairs, _)) => RubyValue::Hash(hash_new(pairs)),
+                    None => return,
+                };
+                self.accept(v);
+            }
+            // Anchors/aliases are not resolved -- see the module docs.
+            Event::Alias(_) => self.accept(RubyValue::Nil),
+            _ => {}
+        }
+    }
+}
+
+/// One scalar as Ruby. A QUOTED or block scalar is always a String; only a PLAIN
+/// one is scanned, and only a plain one can be the `:name` spelling of a Symbol
+/// -- psych's rule, which is what makes a dumped Hash's symbol keys survive the
+/// round trip. Everything else keeps yaml-rust2's own plain-scalar typing.
+fn scalar_to_ruby(value: &str, style: yaml_rust2::scanner::TScalarStyle) -> RubyValue {
+    if style != yaml_rust2::scanner::TScalarStyle::Plain {
+        return RubyValue::Str(string_new(value.to_string()));
+    }
+    if let Some(name) = value.strip_prefix(':').filter(|n| !n.is_empty()) {
+        // `:"a b"` -- psych spells a symbol needing quotes this way, and strips
+        // them back off here.
+        let name = name
+            .strip_prefix('"')
+            .and_then(|n| n.strip_suffix('"'))
+            .unwrap_or(name);
+        return RubyValue::Symbol(crate::Symbol::intern(name));
+    }
+    if let Some(v) = underscored_number(value) {
+        return v;
+    }
+    yaml_to_ruby(&Yaml::from_str(value))
+}
+
+/// `1_000` / `1_000.5` -- psych reads YAML 1.1, where a digit group may carry
+/// `_` separators; yaml-rust2 reads 1.2, where it may not. A separator has to
+/// sit BETWEEN digits, so a leading, trailing, or doubled one leaves the scalar
+/// a plain String, exactly as ruby leaves it.
+fn underscored_number(value: &str) -> Option<RubyValue> {
+    let digits = value.strip_prefix(['+', '-']).unwrap_or(value);
+    if !digits.contains('_') {
+        return None;
+    }
+    let mut chars = digits.chars().peekable();
+    let mut prev_digit = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '0'..='9' => prev_digit = true,
+            '.' if prev_digit && chars.peek().is_some() => prev_digit = false,
+            '_' if prev_digit && chars.peek().is_some_and(|n| n.is_ascii_digit()) => {
+                prev_digit = false
+            }
+            _ => return None,
+        }
+    }
+    let stripped: String = value.chars().filter(|&c| c != '_').collect();
+    Some(yaml_to_ruby(&Yaml::from_str(&stripped)))
+}
 
 fn yaml_to_ruby(y: &Yaml) -> RubyValue {
     match y {
@@ -243,9 +357,8 @@ ruby_module! {
     def self."load" arity -2 | "unsafe_load" arity -2 | "safe_load" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2); // (yaml[, opts]) -- opts ignored
         let text = load_text(&args[0])?;
-        let docs = YamlLoader::load_from_str(&text)
-            .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
-        Ok(docs.first().map(yaml_to_ruby).unwrap_or(RubyValue::Nil))
+        let docs = load_documents(&text)?;
+        Ok(docs.into_iter().next().unwrap_or(RubyValue::Nil))
     }
     def self."dump" arity -2 (_recv, args, _block) {
         arity!(args, 1..=2); // (obj[, io/opts]) -- only the compact string form
@@ -260,24 +373,22 @@ ruby_module! {
             "Errno::ENOENT",
             format!("No such file or directory - {path} ({e})"),
         ))?;
-        let docs = YamlLoader::load_from_str(&text)
-            .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
-        Ok(docs.first().map(yaml_to_ruby).unwrap_or(RubyValue::Nil))
+        let docs = load_documents(&text)?;
+        Ok(docs.into_iter().next().unwrap_or(RubyValue::Nil))
     }
     // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
     // one to a block (then the receiver's nil, matching CRuby's block form).
     def self."load_stream" arity -2 (_recv, args, block) {
         arity!(args, 1..=2);
         let text = load_text(&args[0])?;
-        let docs = YamlLoader::load_from_str(&text)
-            .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
+        let docs = load_documents(&text)?;
         if let Some(RubyValue::Proc(p)) = &block {
             for doc in &docs {
-                p.call(std::slice::from_ref(&yaml_to_ruby(doc)))?;
+                p.call(std::slice::from_ref(doc))?;
             }
             return Ok(RubyValue::Nil);
         }
-        Ok(RubyValue::Array(crate::array_new(docs.iter().map(yaml_to_ruby).collect())))
+        Ok(RubyValue::Array(crate::array_new(docs)))
     }
 
     // The `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) isn't
