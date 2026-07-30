@@ -1661,6 +1661,38 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // which every top-level `def` materializes onto).
             push_method_meta_row(compiler, ClassId(target), scope, false);
         }
+        // A `def self.x` on a REOPENED builtin -- or one written in a `class <<
+        // Time` body -- needs the same dynamic-dispatch row a user class gets
+        // (see the `class_methods` loop in the user-class block above). Without
+        // it the method answers only a call codegen resolved statically, so
+        // `Time.rfc2822(s)` worked while the `self.rfc2822(s)` inside time.rb's
+        // own `httpdate` did not, and `Time.respond_to?(:rfc2822)` said false.
+        let own_cm: Vec<&String> = class
+            .class_methods
+            .iter()
+            .map(|&sid| {
+                let scope = compiler.scope(sid);
+                let mod_ident = ident::class_ident(compiler, ClassId(id));
+                let method_ident = ident::class_method_ident(&scope.name);
+                let fn_path = quote! { #mod_ident::#method_ident };
+                let tramp = params::emit_value_trampoline(
+                    &fn_path,
+                    &scope.name,
+                    &scope.params,
+                    scope.needs_block_param(),
+                    params::RecvMode::Drop,
+                    &scope_frame_guard(compiler, scope, true),
+                );
+                push_cm_row(id, &scope.name, tramp);
+                push_method_meta_row(compiler, ClassId(id), scope, true);
+                &scope.name
+            })
+            .collect();
+        if !own_cm.is_empty() {
+            registrations.push(quote! {
+                __registry.mark_own_class_method_rows(zeo_rt::ClassId(#id), &[#(#own_cm),*]);
+            });
+        }
         builtin_class_bodies.extend(hoisted_sites_for(ClassId(id)));
         // Always-on builtins with their DEFAULT ancestors are registered
         // once by `zeo_rt::register_builtins` -- so emit a base register
