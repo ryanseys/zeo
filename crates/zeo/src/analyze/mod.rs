@@ -905,7 +905,14 @@ fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// survives inside an ordinary undecided `if` unchanged).
 fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
     body.iter().any(|&s| match &compiler.hir[s] {
-        HirNode::ClassDef { .. }
+        // A `def` counts for exactly the reason every other definition here
+        // does. Left out, an `if RUBY_ENGINE == "ruby"` whose branches hold
+        // only methods never folded: BOTH branches registered, and the one
+        // written last silently won -- so a compat gate picked the branch
+        // for the engine zeo is not (prism's deserializer has two
+        // `def load_node`s exactly this way).
+        HirNode::DefMethod { .. }
+        | HirNode::ClassDef { .. }
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
