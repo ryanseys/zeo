@@ -60,6 +60,21 @@ pub fn const_get_master(name: &str) -> Option<RubyValue> {
     const_get(0, name)
 }
 
+/// `owner`'s OWN binding for `name`, with no ancestor walk -- what
+/// `const_get(name, false)`/`const_defined?(name, false)` ask for. A nested
+/// class is a constant of its namespace too, and lives in the class registry
+/// rather than this table, so it is checked alongside.
+pub fn const_get_own(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    if let Some(v) = CONSTANTS
+        .lock()
+        .get(&owner_class_id)
+        .and_then(|m| m.get(name))
+    {
+        return Some(v.clone());
+    }
+    nested_class_of(crate::ClassId(owner_class_id), name).map(RubyValue::Class)
+}
+
 pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     let map = CONSTANTS.lock();
     if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
@@ -89,6 +104,11 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 /// consulted the table missed it: `include OpenSSL` then a bare `SSL` (which
 /// is how net/ftp reaches `OpenSSL::SSL`) found nothing.
 fn nested_class_of(owner: crate::ClassId, name: &str) -> Option<crate::ClassId> {
+    // A TOP-LEVEL class is a constant of `Object` under its bare name -- there
+    // is no `Object::` prefix on it in the registry.
+    if owner.0 == 0 {
+        return crate::dispatch::class_id_by_name(name);
+    }
     let owner_name = crate::dispatch::class_name(owner)?;
     crate::dispatch::class_id_by_name(&format!("{owner_name}::{name}"))
 }

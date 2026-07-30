@@ -76,12 +76,18 @@ fn const_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
 /// `cid`'s own constant table first, then its ancestry when `inherit`. Shared
 /// by `const_get` and `const_defined?` so the two can't disagree.
 fn const_lookup(cid: crate::ClassId, name: &str, inherit: bool) -> Option<RubyValue> {
+    // `const_get` walks the ancestry itself, so the non-inheriting form has to
+    // ask for the OWN binding explicitly -- otherwise every class answers for
+    // every top-level constant, `Object` being an ancestor of them all.
+    if !inherit {
+        return crate::constants::const_get_own(cid.0, name);
+    }
     crate::constants::const_get(cid.0, name).or_else(|| {
-        inherit.then(|| {
-            crate::dispatch::ancestors_of_value(cid)
-                .iter()
-                .find_map(|anc| crate::constants::const_get(anc.0, name))
-        })?
+        // A MODULE's ancestry does not pass through `Object`, but the
+        // inheriting form consults it anyway -- CRuby's rule, and the only way
+        // a module sees a top-level constant.
+        let is_module = cid.0 != 0 && crate::dispatch::class_is_module(cid).unwrap_or(false);
+        is_module.then(|| crate::constants::const_get_own(0, name))?
     })
 }
 
@@ -231,9 +237,16 @@ ruby_class! {
     }
     def "const_get" (recv, args, _block) {
         arity!(args, 1..=2);
+        let cid = recv_cid(recv);
         let name = const_name_arg(&args[0])?;
-        const_lookup(recv_cid(recv), &name, inherit_flag(&args[1..]))
-            .ok_or_else(|| name_error!("uninitialized constant {name}"))
+        const_lookup(cid, &name, inherit_flag(&args[1..])).ok_or_else(|| {
+            // Qualified by the RECEIVER, which is what tells a miss on
+            // `Foo.const_get(:X)` apart from one on a bare `X`.
+            match crate::dispatch::class_name(cid) {
+                Some(owner) if cid.0 != 0 => name_error!("uninitialized constant {owner}::{name}"),
+                _ => name_error!("uninitialized constant {name}"),
+            }
+        })
     }
     def "const_defined?" (recv, args, _block) {
         arity!(args, 1..=2);

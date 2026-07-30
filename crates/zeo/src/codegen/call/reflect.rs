@@ -110,7 +110,14 @@ pub(super) fn try_const_reflection(
         let seeded = cx.compiler.class(target).is_builtin
             && cx.compiler.class(target).const_owners.contains_key(&cname);
         let defined = as_class.is_some() || seeded || value_const_defined_in(cx, target, &cname);
-        return Some(quote! { zeo_rt::RubyValue::Bool(#defined) });
+        // Only a PROVEN yes folds. A no here means "no class body writes this
+        // name", which is not the same as "no such constant": a top-level
+        // assignment is no class body's statement, and a `const_set` can add one
+        // at any time. Both are the runtime row's to answer.
+        if !defined {
+            return None;
+        }
+        return Some(quote! { zeo_rt::RubyValue::Bool(true) });
     }
     // const_get: a class-name constant answers the Class value directly; a
     // value constant reads through the runtime store (which also holds the
