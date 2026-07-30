@@ -844,6 +844,23 @@ fn self_class_overrides(
     })
 }
 
+/// A block or lambda written INSIDE an escaping block makes that block's
+/// scope a `Proc#binding` scope -- [`scope_calls_binding`] answers true for
+/// exactly this shape -- and the nested Proc's construction reads the
+/// enclosing `self` for that binding, in the enclosing block's own prelude,
+/// which sits inside its `move` closure. So the receiver must arrive as the
+/// closure's self PARAMETER: captured by move, an `Fn` closure cannot consume
+/// it, and the enclosing method loses it outright.
+fn nested_proc_binding_needs_self(
+    compiler: &crate::compiler::Compiler,
+    in_escaping: bool,
+    caps: &mut Captures,
+) {
+    if in_escaping && compiler.hir.uses_proc_binding() {
+        caps.self_captured = true;
+    }
+}
+
 fn is_kernel_free_fn(name: &str) -> bool {
     matches!(
         name,
@@ -940,6 +957,7 @@ fn walk(
             body,
             method_body: _,
         } => {
+            nested_proc_binding_needs_self(compiler, in_escaping, caps);
             let next_exclusions: HashSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for &n in body {
@@ -1140,6 +1158,7 @@ fn walk(
             // Proc -- same treatment as `super { ... }` below.
             if let Some(b) = block {
                 if let HirNode::Block { params, body } = &compiler.hir[*b] {
+                    nested_proc_binding_needs_self(compiler, in_escaping, caps);
                     let next_exclusions: HashSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
                     for &n in body {
@@ -1281,6 +1300,7 @@ fn walk(
                 // at the Proc-construction site instead
                 // (`emit_proc_or_lambda_value`), where it can be detected
                 // precisely rather than banning all nesting wholesale.
+                nested_proc_binding_needs_self(compiler, in_escaping, caps);
                 let next_exclusions: HashSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
                 let next_in_escaping = in_escaping || !is_inline;
