@@ -1355,12 +1355,25 @@ fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc> {
     if let Some(f) = crate::builtins::class_table(mid).and_then(|t| t(&sname)) {
         return Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
     }
+    // A compiled user module ALSO emits a value bridge per method, which takes
+    // `self` as a plain `RubyValue` -- so a Class receiver passes straight
+    // through and `self` really is the class. That is what makes an
+    // implicit-self CLASS-method call resolve (the singleton gem's
+    // `@singleton__instance__ ||= new`, where an object receiver would look
+    // for an instance method `new` and find none) and what routes `@x` to the
+    // class's own store. Preferred over the `&RObj` body below.
+    if let Some(f) = crate::dispatch::value_method(mid, 0, name) {
+        return Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
+    }
     // A USER module method is a compiled `&RObj` body: it needs an object
-    // receiver. When invoked with a Class `self` (the module value itself),
-    // run it against a fresh blank instance of that class. Self-contained
-    // methods work; a method that reaches a Class-level sibling or ivar is a
-    // documented limitation (zeo represents modules as class values, not
-    // objects, so there is no module instance to bind).
+    // receiver. When invoked with a Class `self`, run it against a
+    // `ClassSurrogate` -- an `RObj` shell whose ivars ARE the class's own
+    // class-level store, so `@x = 1` in the module's body lands where
+    // `Klass.instance_variable_get(:@x)` and a `def self.x` reading `@x` both
+    // look. (A blank throwaway instance stood here, and swallowed every such
+    // write: the singleton gem's `klass.extend SingletonClassMethods` then
+    // `klass.instance_eval { set_mutex(Thread::Mutex.new) }` left the mutex
+    // nil, and `Singleton#instance` raised on it.)
     // An INCLUDED module's method counts: `module_function :greet` after
     // `include Greeting` promotes the mixed-in body, and `extend self` reaches
     // the same way. Own definitions win, so the ancestry walk is only the
@@ -1370,7 +1383,7 @@ fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc> {
         move |self_val, args, block| match self_val {
             RubyValue::Object(o) => m.call(o, args, block),
             RubyValue::Class(cid) => {
-                let surrogate: crate::dispatch::RObj = Arc::new(DynObject::new(*cid));
+                let surrogate: crate::dispatch::RObj = Arc::new(ClassSurrogate { class_id: *cid });
                 m.call(&surrogate, args, block)
             }
             other => Err(type_error!(
@@ -1547,6 +1560,81 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
 /// and run the optional body block with `self` bound to it. The result composes
 /// with `obj.extend`/`include`: its `define_method`-installed methods are
 /// retrievable by id from the overlay.
+/// `SomeModule.dup`/`.clone` -- a real, independent copy: a fresh runtime
+/// module id carrying its own snapshot of the original's OWN instance
+/// methods. Handing the original's handle back instead is silently
+/// destructive, because the copy is made in order to be EDITED. delegate.rb
+/// opens with `kernel = ::Kernel.dup` and then undefines
+/// `to_s`/`inspect`/`!~`/`===`/`<=>`/`hash` on it -- which, sharing one id,
+/// stripped them from the real `Kernel` and from every object in the program.
+///
+/// Only the method table is copied. Constants and class-level ivars stay with
+/// the original, and the copy is anonymous until a constant names it.
+pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    let leaked: &'static [ClassId] = Box::leak(vec![new_id].into_boxed_slice());
+    // Own names only (`inherit: false`), private included: delegate.rb's
+    // second pass walks `private_instance_methods` on the copy.
+    // Visibility comes from the same per-filter name queries
+    // `private_instance_methods` and friends answer with, so the copy reports
+    // exactly what the original does. Every name is marked, including the
+    // public ones: an unmarked overlay entry reads as public anyway, but a
+    // mark is what survives a later `private :m` lookup on the copy alone.
+    let mut methods = crate::FMap::default();
+    let mut methods_vis = crate::FMap::default();
+    let record = |name: Symbol, vis, methods: &mut crate::FMap<_, _>, vism: &mut crate::FMap<_, _>| {
+        if let Some(m) = module_own_method_impl(mid, name) {
+            methods.insert(name, m);
+            vism.insert(name, vis);
+        }
+    };
+    for (filter, vis) in [
+        (
+            crate::dispatch::VisFilter::Public,
+            crate::dispatch::MethodVisibility::Public,
+        ),
+        (
+            crate::dispatch::VisFilter::Protected,
+            crate::dispatch::MethodVisibility::Protected,
+        ),
+        (
+            crate::dispatch::VisFilter::Private,
+            crate::dispatch::MethodVisibility::Private,
+        ),
+    ] {
+        for name in crate::dispatch::instance_method_names(mid, filter, false) {
+            record(name, vis, &mut methods, &mut methods_vis);
+        }
+    }
+    // A builtin module's rows are not in the name queries above (`Kernel`'s
+    // table is the whole of it), and they are public unless the runtime says
+    // otherwise.
+    for n in crate::builtins::class_table_names(mid) {
+        let sym = Symbol::intern(n);
+        if !methods.contains_key(&sym) {
+            let vis = crate::dispatch::instance_method_visibility(mid, sym)
+                .unwrap_or(crate::dispatch::MethodVisibility::Public);
+            record(sym, vis, &mut methods, &mut methods_vis);
+        }
+    }
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                is_module: true,
+                ancestors: leaked,
+                methods,
+                methods_vis,
+                ..Default::default()
+            },
+        );
+    }
+    mark_live();
+    Ok(RubyValue::Class(new_id))
+}
+
 pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
     let new_id = ClassId(id_num);
@@ -1974,6 +2062,68 @@ pub(crate) fn blank_instance(id: ClassId) -> RubyValue {
 /// are name-keyed (a runtime class has no compile-time-materialized field
 /// list), plus a stored `class_id` (unlike `Object`'s hardcoded `0`) and a
 /// per-object frozen flag.
+/// An `RObj` shell standing in for a CLASS as the receiver of an `extend`ed
+/// user module's compiled method (see `extended_class_method`). It owns no
+/// storage of its own: every ivar operation reads and writes the class's own
+/// class-level store, so `@x` means the same slot inside the module's body as
+/// it does in a `def self.x` or an `instance_variable_get` on the class.
+struct ClassSurrogate {
+    class_id: ClassId,
+}
+
+impl RubyObject for ClassSurrogate {
+    fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
+    }
+    fn is_frozen(&self) -> bool {
+        crate::dispatch::class_frozen(self.class_id)
+    }
+    // A class freezes through `Module#freeze`, which the registry records --
+    // there is nothing for this shell to mark.
+    fn set_frozen(&self) {}
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        crate::civars::class_ivar_names(self.class_id.0)
+            .iter()
+            .map(|n| crate::civars::class_ivar_get(self.class_id.0, n))
+            .collect()
+    }
+    fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
+        crate::civars::class_ivar_names(self.class_id.0)
+            .iter()
+            .map(|n| {
+                (
+                    format!("@{n}"),
+                    crate::civars::class_ivar_get(self.class_id.0, n),
+                )
+            })
+            .collect()
+    }
+    fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
+        Some(crate::civars::class_ivar_get(self.class_id.0, name))
+    }
+    fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
+        crate::civars::class_ivar_set(self.class_id.0, name, v).is_ok()
+    }
+    fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
+        // `civars` has no remove; answering the current value and clearing it
+        // to nil is the closest this store offers.
+        let old = crate::civars::class_ivar_get(self.class_id.0, name);
+        crate::civars::class_ivar_set(self.class_id.0, name, RubyValue::Nil).ok()?;
+        Some(old)
+    }
+    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+        Arc::new(ClassSurrogate {
+            class_id: self.class_id,
+        })
+    }
+}
+
 struct DynObject {
     class_id: ClassId,
     frozen: AtomicBool,
