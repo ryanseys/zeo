@@ -31,7 +31,11 @@
 //! - `ruby.tsv` -- the real `ruby` interpreter's time per benchmark
 //!   (`name\tsecs`), recorded only when `--ruby` is passed (the oracle
 //!   doesn't change between zeo runs, so it isn't re-timed every time);
-//!   every report reuses the stored numbers for its `vs ruby` column.
+//!   every report reuses the stored numbers for its `vs ruby` column. The
+//!   interpreter is the `mise.toml`-pinned one, resolved exactly as the
+//!   golden harness resolves it -- a bare `ruby` off `PATH` is whatever
+//!   version the shell happens to offer, and timing a different ruby than
+//!   the one the goldens came from makes the comparison a fiction.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -147,7 +151,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 write_history(&history_path, &history);
                 // `--ruby` re-times the oracle; otherwise reuse ruby.tsv.
                 if time_ruby {
-                    match time_ruby_once(&rb, runs) {
+                    match time_ruby_once(root, &rb, runs) {
                         Ok(rsecs) => {
                             ruby_times.retain(|(n, _)| *n != name);
                             ruby_times.push((name.clone(), rsecs));
@@ -377,10 +381,11 @@ fn now_ts() -> u64 {
 /// output verified against `.expected` on the first run (an oracle mismatch
 /// means the snapshot is stale -- fail loudly), best-of-`runs` under the
 /// same repeat budget.
-fn time_ruby_once(rb: &Path, runs: usize) -> Result<f64, String> {
+fn time_ruby_once(root: &Path, rb: &Path, runs: usize) -> Result<f64, String> {
     let expected_path = PathBuf::from(format!("{}.expected", rb.display()));
     let expected = std::fs::read(&expected_path)
         .map_err(|e| format!("reading {}: {e}", expected_path.display()))?;
+    let ruby = resolve_ruby(root);
     let mut spent = 0.0f64;
     let mut best: Option<f64> = None;
     for i in 0..runs {
@@ -388,14 +393,19 @@ fn time_ruby_once(rb: &Path, runs: usize) -> Result<f64, String> {
             break;
         }
         let started = Instant::now();
-        let run = Command::new("ruby")
+        let run = Command::new(&ruby)
             .arg(rb)
             .output()
-            .map_err(|e| format!("invoking ruby: {e}"))?;
+            .map_err(|e| format!("invoking {}: {e}", ruby.display()))?;
         let secs = started.elapsed().as_secs_f64();
         spent += secs;
         if !run.status.success() {
-            return Err(format!("ruby exited {:?}", run.status.code()));
+            return Err(format!(
+                "{} exited {:?}: {}",
+                ruby.display(),
+                run.status.code(),
+                String::from_utf8_lossy(&run.stderr).trim()
+            ));
         }
         if i == 0 && run.stdout != expected {
             return Err("ruby output mismatch vs .expected (stale snapshot?)".to_string());
@@ -403,6 +413,26 @@ fn time_ruby_once(rb: &Path, runs: usize) -> Result<f64, String> {
         best = Some(best.map_or(secs, |b: f64| b.min(secs)));
     }
     Ok(best.expect("runs >= 1"))
+}
+
+/// The `mise.toml`-pinned ruby (falls back to bare `ruby`) -- the same
+/// resolution `crates/zeo/tests/support/golden.rs` uses to record goldens, so
+/// `ruby.tsv` times the interpreter zeo's goldens are diffed against.
+fn resolve_ruby(root: &Path) -> PathBuf {
+    let out = Command::new("mise")
+        .arg("which")
+        .arg("ruby")
+        .current_dir(root)
+        .output();
+    if let Ok(out) = out {
+        if out.status.success() {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            if !path.is_empty() {
+                return PathBuf::from(path);
+            }
+        }
+    }
+    PathBuf::from("ruby")
 }
 
 /// `name\tseconds` rows; `#`-prefixed lines are comments. Missing file =
