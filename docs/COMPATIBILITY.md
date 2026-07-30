@@ -462,6 +462,27 @@ at the FFI path (see `docs/EXTENSIONS.md`), zeo's intended escape hatch.
 Examples that trigger the named error today: `sqlite3`, `nokogiri`, `pg`,
 `mysql2`, `bcrypt`, `nio4r`, `grpc`, `msgpack`, and similar.
 
+## Declined (a CRuby internal, not a missing binding)
+
+Two stdlib extensions expose CRuby's own machinery rather than a library, so
+there is nothing for zeo to bind — reproducing them means rebuilding the
+machinery. `require` raises `LoadError`, which is a divergence from ruby and
+is tracked as one (`tests/gaps/`), not a queued job.
+
+- **`continuation`** (`Kernel#callcc`) captures and restores the machine
+  stack. zeo compiles to native Rust and has no stack-copying runtime. An
+  escape-only `callcc` — enough for an upward jump out of a nested call — is
+  reachable, and deliberately not shipped: it would answer the common case
+  and silently break re-entry, which is worse than a `LoadError` a caller can
+  rescue. CRuby itself prints *"callcc is obsolete; use Fiber instead"* when
+  the extension loads, and zeo ships `Fiber`.
+- **`ripper`** exposes the reduction event stream of CRuby's `parse.y`. zeo's
+  front end embeds prism, a different parser with a different event model, so
+  a binding has nothing to bind to; matching ripper means re-implementing
+  CRuby's grammar actions. (`irb` is absent for a separate reason — it reads
+  source through a **Ruby-level Prism** API zeo does not expose. That one is a
+  gap, not a decline.)
+
 ## Required only from a method body
 
 A plain `require` that **only a method body** reaches is not compiled in.
