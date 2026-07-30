@@ -12,6 +12,8 @@
 //! (a documented partial: the calendar half is complete, sub-day fields are
 //! not modelled here).
 
+mod parse;
+
 use crate::builtins::{arg_error, arity, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
@@ -325,21 +327,23 @@ ruby_class! {
     }
     def self."today" (recv, args, _block) {
         arity!(args, 0);
-        // Current UTC calendar day (a documented divergence from CRuby's LOCAL
-        // date near midnight in non-UTC zones); untestable deterministically.
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let days = secs.div_euclid(86_400);
-        Ok(RubyValue::Object(RDate::new(2_440_588 + days, class_of(recv))))
+        Ok(RubyValue::Object(RDate::new(today_jdn(), class_of(recv))))
     }
     def self."parse" (recv, args, _block) {
-        arity!(args, 1..=2);
+        arity!(args, 1..=3);
         let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let text = s.lock().to_utf8_lossy().into_owned();
         let (y, m, d) = parse_date(&text)?;
         Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
+    }
+    // The heuristic scanner itself, which `Date.parse` and the `time` gem's
+    // `Time.parse` both read their fields out of. See `parse.rs`.
+    def self."_parse" (_recv, args, _block) {
+        arity!(args, 1..=2);
+        let s = &crate::builtins::convert::to_rstr(&args[0])?;
+        let text = s.lock().to_utf8_lossy().into_owned();
+        let comp = args.get(1).is_none_or(RubyValue::truthy);
+        Ok(RubyValue::Hash(crate::collections::hash_new(parse::date_parse(&text, comp))))
     }
     def self."valid_date?" | "valid_civil?" (_recv, args, _block) {
         arity!(args, 3..=4);
@@ -394,21 +398,52 @@ fn class_of(recv: &RubyValue) -> ClassId {
     }
 }
 
-/// A minimal `Date.parse`: ISO `YYYY-MM-DD` (or `/`-separated), the forms the
-/// conformance corpus exercises. An unrecognised string is CRuby's ArgumentError.
+/// The calendar date `Date.parse` builds out of [`parse::date_parse`]'s fields.
+///
+/// A component ABOVE the most significant one the string gave comes from today,
+/// and one below it takes its minimum -- CRuby's completion rule, and the reason
+/// `Date.parse("Aug 31")` lands in the current year while `Date.parse("Aug
+/// 2000")` lands on the first of the month. A string with no date in it at all,
+/// or one whose fields name no real day, is an ArgumentError. (CRuby raises
+/// `Date::Error` there, a subclass of it that zeo does not model.)
 fn parse_date(text: &str) -> Result<(i64, i64, i64), Signal> {
-    let cleaned = text.trim();
-    let parts: Vec<&str> = cleaned.split(['-', '/']).collect();
-    if parts.len() == 3 {
-        if let (Ok(y), Ok(m), Ok(d)) = (
-            parts[0].parse::<i64>(),
-            parts[1].parse::<i64>(),
-            parts[2].parse::<i64>(),
-        ) {
-            return Ok((y, m, d));
-        }
+    let pairs = parse::date_parse(text, true);
+    let field = |key: &str| parse::field(&pairs, key);
+    // The ISO WEEK date names a different calendar, and an ordinal date counts
+    // days rather than naming a month; both convert to a JDN directly.
+    if let (Some(cwyear), Some(cweek)) = (field("cwyear"), field("cweek")) {
+        let jan4 = civil_to_jdn(cwyear, 1, 4);
+        // JDN 0 is a Monday, so a JDN divisible by 7 is one too -- and week 1 is
+        // the week holding January 4th.
+        let monday = jan4 - jan4.rem_euclid(7);
+        return Ok(jdn_to_civil(
+            monday + (cweek - 1) * 7 + field("cwday").unwrap_or(1) - 1,
+        ));
     }
-    Err(arg_error!("invalid date: {text:?}"))
+    if let (Some(y), Some(yday)) = (field("year"), field("yday")) {
+        return Ok(jdn_to_civil(civil_to_jdn(y, 1, 1) + yday - 1));
+    }
+    let (this_year, this_month, _) = jdn_to_civil(today_jdn());
+    let (y, m, d) = match (field("year"), field("mon"), field("mday")) {
+        (Some(y), mon, mday) => (y, mon.unwrap_or(1), mday.unwrap_or(1)),
+        (None, Some(mon), mday) => (this_year, mon, mday.unwrap_or(1)),
+        (None, None, Some(mday)) => (this_year, this_month, mday),
+        (None, None, None) => return Err(arg_error!("invalid date")),
+    };
+    if jdn_to_civil(civil_to_jdn(y, m, d)) != (y, m, d) {
+        return Err(arg_error!("invalid date"));
+    }
+    Ok((y, m, d))
+}
+
+/// The current UTC calendar day, as a JDN (a documented divergence from CRuby's
+/// LOCAL date near midnight in a non-UTC zone); untestable deterministically.
+fn today_jdn() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    2_440_588 + secs.div_euclid(86_400)
 }
 
 #[cfg(test)]
