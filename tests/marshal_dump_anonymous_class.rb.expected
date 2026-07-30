@@ -1,0 +1,12 @@
+[TypeError, "can't dump anonymous class #<Class:ADDR>"]
+[TypeError, "can't dump anonymous class #<Class:ADDR>"]
+[TypeError, "can't dump anonymous class #<Class:ADDR>"]
+[TypeError, "can't dump anonymous module #<Module:ADDR>"]
+[TypeError, "can't dump anonymous class #<Class:ADDR>"]
+[TypeError, "singleton class can't be dumped"]
+[1, 2]
+7
+"Point"
+[1, "two", :three, {a: 1}]
+[TypeError, "can't dump anonymous class #<Class:ADDR>"]
+[TypeError, "can't dump anonymous class #<Class:ADDR>"]

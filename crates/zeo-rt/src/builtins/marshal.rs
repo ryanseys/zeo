@@ -201,7 +201,7 @@ impl Writer {
                 self.register_link(cid.0 as usize);
                 let is_mod = class_is_module(*cid).unwrap_or(false);
                 self.out.push(if is_mod { b'm' } else { b'c' });
-                let name = class_name(*cid).unwrap_or_default();
+                let name = nameable(*cid)?;
                 self.write_bytes(name.as_bytes());
             }
             RubyValue::Rational(r) => {
@@ -232,7 +232,7 @@ impl Writer {
     /// subclass -> `C`, else a plain `o` with inline ivars.
     fn write_object(&mut self, v: &RubyValue, o: &RObj) -> Result<(), Signal> {
         let cid = o.class_id();
-        let name = class_name(cid).unwrap_or_default();
+        let name = nameable(cid)?;
 
         if responds_to(cid, Symbol::intern("marshal_dump"), true) {
             if self.check_link(ptr_of(v)) {
@@ -964,6 +964,28 @@ fn enc_from_ivar(name: &str, val: &RubyValue) -> Option<EncodingId> {
 }
 
 /// The identity of a linkable ref value, as its Arc data-pointer address.
+/// A class's name for the stream, or a TypeError. A dump names the class so
+/// `Marshal.load` can find it again -- which an ANONYMOUS class (an unassigned
+/// `Class.new`/`Struct.new`, a singleton class) has no way to be, so CRuby
+/// refuses to write one rather than emit a reference nothing can resolve.
+fn nameable(cid: crate::ClassId) -> Result<String, Signal> {
+    if let Some(name) = crate::dispatch::class_real_name(cid) {
+        return Ok(name);
+    }
+    let rendered = class_name(cid).unwrap_or_default();
+    // A SINGLETON class gets its own wording, and no rendering at all -- CRuby
+    // has nothing to name it by either.
+    if rendered.starts_with("#<Class:") && !rendered.starts_with("#<Class:0x") {
+        return Err(type_error!("singleton class can't be dumped"));
+    }
+    let kind = if class_is_module(cid).unwrap_or(false) {
+        "module"
+    } else {
+        "class"
+    };
+    Err(type_error!("can't dump anonymous {kind} {rendered}"))
+}
+
 fn ptr_of(v: &RubyValue) -> usize {
     match v {
         RubyValue::Str(s) => Arc::as_ptr(s) as *const () as usize,
