@@ -292,6 +292,13 @@ per-library reason.
 | tracepoint | *(core — no require)* | `ext-tracepoint` | in-tree |
 | zlib | `zlib` | `ext-zlib` | `flate2` (pure-Rust miniz_oxide) |
 
+Four ship a deliberate **subset** of their upstream surface and raise
+`NoMethodError` at the edges rather than pretending: `openssl` (no PKey
+generation, X509 issuance, PKCS#7, ASN1 or `SSLServer`), `nkf` (a conversion
+option subset), `coverage` (lines, not branches or methods) and `TracePoint`
+(no `b_call`/`c_call` family, no `#binding`). `docs/EXTENSIONS.md` gives the
+per-extension detail.
+
 `io/wait`, `io/console`, `objspace` and `ARGF` are always-on `IO`/`ObjectSpace`
 rows rather than gated modules, so their `require` is ceremony; `rbconfig`
 resolves through a synthetic shim.
