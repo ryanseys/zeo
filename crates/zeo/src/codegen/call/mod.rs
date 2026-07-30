@@ -61,6 +61,33 @@ fn inline_block_binding_names(
 /// already-emitted Binding of the calling scope and the call's
 /// `(src[, binding[, file[, line]]])` arguments. The absent trailing ones are
 /// `nil`, which is what tells the runtime to use `scope`.
+/// Whether the class this body was WRITTEN in defines `name` itself, which
+/// makes a Kernel function of that name shadowed: real Ruby resolves the
+/// method, never the Kernel one.
+///
+/// The sibling branches apply that rule directly whenever they can see a
+/// concrete receiver. Inside a BLOCK they cannot -- yet the block's self is
+/// still the enclosing method's -- so `[x].map { |v| pp(v) }` written in a
+/// class with its own `pp` folded to `Kernel#pp` and PRINTED instead of calling
+/// the method. Declining the fold leaves the call to the dynamic tail, which
+/// resolves it exactly as an explicit `self.pp(v)` would. `class_self` rules out
+/// a class method's body, where `self` is the class and an instance method of
+/// the same name does not apply. Both the RECEIVER's class and the one the body
+/// was written in are asked: a module's own `methods` list is emptied once
+/// materialization has copied it into the including class, so only the receiver
+/// still knows, while a reopened builtin keeps its methods where it wrote them.
+fn kernel_name_shadowed(cx: &Ctx, name: &str) -> bool {
+    cx.class_self.is_none()
+        && [cx.current_class, cx.defining_class]
+            .into_iter()
+            .flatten()
+            // NOT `Object`: a Kernel function's own Ruby-level definition
+            // materializes there (`Kernel#pp` is pp.rb's), so every top-level
+            // call would decline a fold that is already the right answer.
+            .filter(|&owner| owner != crate::compiler::OBJECT_CLASS)
+            .any(|owner| cx.compiler.method_in_chain(owner, name).is_some())
+}
+
 fn emit_eval_in_scope(cx: &Ctx, scope: TokenStream, args: &[NodeId]) -> TokenStream {
     let mut arg_exprs = args.iter().map(|&a| {
         let e = emit_expr(cx, a);
@@ -1292,10 +1319,12 @@ pub fn emit_call(
                 // top-level) method body are Kernel calls, not methods of
                 // the receiver, and the dynamic fallback below would miss
                 // them at runtime.
-                if let Some(tokens) =
-                    kernel::emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
-                {
-                    return tokens;
+                if !kernel_name_shadowed(cx, name) {
+                    if let Some(tokens) = kernel::emit_universal_implicit_form(
+                        cx, name, args, kwargs, block, block_arg,
+                    ) {
+                        return tokens;
+                    }
                 }
                 let arg_exprs = args.iter().map(|&a| {
                     let e = emit_expr(cx, a);
@@ -1488,10 +1517,14 @@ pub fn emit_call(
         // Integer` wins, real Ruby's rule). Capitalized-name
         // conversion calls WITH arguments parse as ordinary CallNodes, so
         // there's no ClassRef ambiguity.
-        if let Some(tokens) =
-            kernel::emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
-        {
-            return tokens;
+        // ...unless the enclosing class defines the name itself -- see
+        // [`kernel_name_shadowed`].
+        if !kernel_name_shadowed(cx, name) {
+            if let Some(tokens) =
+                kernel::emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
+            {
+                return tokens;
+            }
         }
         // `catch(:tag) { ... }` -- the one Kernel function that takes its
         // block as a first-class value.
