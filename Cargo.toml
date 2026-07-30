@@ -122,7 +122,7 @@ all = "warn"
 [profile.dev.package.zeo-rt]
 debug = "line-tables-only"
 
-# All third-party dependencies (regex, ruby-prism, num-bigint, may, ...): build them
+# All third-party dependencies (regex, ruby-prism, num-bigint, ...): build them
 # optimized ONCE (they change rarely) and drop full debug info. Shrinks the linked
 # runtime and speeds its execution; one-time rebuild cost, no effect on incremental
 # rebuilds of the workspace crates themselves.
@@ -133,9 +133,9 @@ debug = "line-tables-only"
 # The runtime a SHIPPED binary links (`zeo foo.rb -o app` builds zeo-rt in
 # release and statically links it -- see build.rs's Profile). Optimized and stripped
 # so user binaries are small and fast, instead of embedding the ~10MB unoptimized
-# debug runtime. All behavior-preserving: NOT panic="abort" (the `may` coroutine
-# scheduler, catch_break/fiber unwinding, and deliberate divide-by-zero panics as a
-# control path all require panic=unwind).
+# debug runtime. All behavior-preserving: NOT panic="abort" (catch_break, fiber
+# unwinding through corosensei, and deliberate divide-by-zero panics as a control
+# path all require panic=unwind).
 #
 # NO `lto`: with profile LTO on, cargo builds the release rlibs as bitcode-only
 # objects (deferring codegen to the final cargo link), but generated programs

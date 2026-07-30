@@ -18,10 +18,9 @@
 //! generated code is ONE relaxed load of that global (no TLS of any kind),
 //! and only a nonzero value takes the slow path.
 //!
-//! Nothing calls this module yet -- it lands inert ahead of the
-//! `check_ints` emission and the OS-thread execution mode, so its
-//! contracts are pinned by the unit tests below before any generated code
-//! depends on them.
+//! `without_gvl` wraps every blocking primitive in the runtime (IO reads and
+//! writes, `accept`, `Process.wait`, sleep), and `process_gvl` is what arms
+//! them; the unit tests below pin the handoff contracts those depend on.
 
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
