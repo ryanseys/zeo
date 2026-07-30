@@ -2446,6 +2446,14 @@ pub fn class_name(id: ClassId) -> Option<String> {
     None
 }
 
+/// The name `Module#name` reports: `None` unless the class is really reachable
+/// by a CONSTANT PATH. [`class_name`] always answers something printable, so an
+/// anonymous or singleton class gets a `#<Class:...>` rendering there -- which
+/// is exactly what tells the two apart, since no constant path begins with `#`.
+pub fn class_real_name(id: ClassId) -> Option<String> {
+    class_name(id).filter(|n| !n.starts_with('#'))
+}
+
 /// The ids of classes/modules an explicit `Foo.freeze` has frozen -- a
 /// side registry keyed by class id (NOT a pointer-keyed table: ids are
 /// minted once and never reused, so there is no ABA hazard), covering both

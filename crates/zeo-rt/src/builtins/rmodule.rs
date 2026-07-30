@@ -111,7 +111,18 @@ fn syms_to_array(names: Vec<crate::Symbol>) -> RubyValue {
 ruby_class! {
     Module = zeo_abi::MODULE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "name" | "to_s" | "inspect" (recv, args, _block) {
+    // `#name` answers only for a class REACHABLE by a constant path.
+    // `Class.new`, `Module.new`, an unassigned `Struct.new`, and every
+    // singleton class are nameless, so they answer nil -- while `#to_s`
+    // still renders each of them, which is the whole distinction.
+    def "name" (recv, args, _block) {
+        arity!(args, 0);
+        Ok(match crate::dispatch::class_real_name(recv_cid(recv)) {
+            Some(n) => RubyValue::Str(crate::string_new(n)),
+            None => RubyValue::Nil,
+        })
+    }
+    def "to_s" | "inspect" (recv, args, _block) {
         arity!(args, 0);
         let cid = recv_cid(recv);
         let n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
