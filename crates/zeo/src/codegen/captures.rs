@@ -211,7 +211,18 @@ pub fn binding_scope_names(
     if !promote && !body.iter().any(|&n| scope_splices_eval(compiler, n)) {
         return None;
     }
-    let mut names = params.bound_names();
+    // A parenthesized destructuring param's internal slot (`__destr_<i>`) is
+    // zeo's own bookkeeping, not a Ruby local: CRuby's `local_variables`
+    // reports only the names the destructure BINDS, which `bound_names`
+    // already lists beside it. Leaving the slot in also promoted it to a
+    // cell, and the destructure that reads it runs in the prologue -- ahead
+    // of the promotion -- so the read found a plain value where the cell was
+    // promised.
+    let mut names: Vec<String> = params
+        .bound_names()
+        .into_iter()
+        .filter(|n| !n.starts_with("__destr"))
+        .collect();
     let mut assigned = Vec::new();
     for &n in body {
         super::hoisting::collect_locals(compiler, n, &mut assigned);
