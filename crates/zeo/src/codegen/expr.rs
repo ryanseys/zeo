@@ -801,7 +801,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let v = box_for_local_storage(cx, name, *value, v);
             let write = super::hoisting::emit_local_write(cx, name, quote! { __v });
             let read = super::hoisting::emit_local_read(cx, name);
-            quote! { { let __v: zeo_rt::RubyValue = #v; #write #read } }
+            // `__v` is deliberately UNANNOTATED: `box_for_local_storage`
+            // leaves a `Shadowed` local's RHS as the bare `Arc<Concrete>` its
+            // slot holds, so naming `RubyValue` here contradicted the very
+            // value being stored.
+            quote! { { let __v = #v; #write #read } }
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
@@ -1824,14 +1828,20 @@ pub(super) fn box_for_tail_return(cx: &Ctx, id: NodeId, value: TokenStream) -> T
 }
 
 /// Boxes a tail `LocalWrite`'s write-then-read value (see `emit_expr`'s
-/// `LocalWrite` arm) to `RubyValue`. Unlike `box_if_object_typed`, this keys
-/// on the TARGET LOCAL's own storage, not the write's RHS type: a `nil | Foo`
-/// union local stores as a plain `RubyValue` slot (`LocalStorage::Hoisted`)
-/// even when THIS write's RHS is a concrete `Foo` -- so its read-back is
-/// already a `RubyValue` and must NOT be re-boxed. Only a `Shadowed`
-/// (`TyKind::Object`) local reads back as an unboxed `Arc<Concrete>` needing
-/// the `RubyValue::Object` wrap.
+/// `LocalWrite` arm) to `RubyValue`. Only a `Shadowed` local reads back as an
+/// unboxed `Arc<Concrete>` needing the `RubyValue::Object` wrap; `Hoisted`
+/// and `Captured` slots both hold a real `RubyValue` already.
+///
+/// The STORAGE decides, not the type. A local can be typed `Object` and still
+/// stored boxed -- assigned `Foo.new` on every path (so nothing widens it to
+/// `Poly`) but read from inside a block, which makes it `Captured`. irb's
+/// `ext/loader.rb` writes exactly that (`ws = WorkSpace.new(...)` in both
+/// arms of an `if`, then `irb.suspend_workspace(ws) do ... end`), and keying
+/// on the type alone boxed a `RubyValue` a second time.
 pub(super) fn box_tail_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
+    if super::hoisting::local_storage(cx, name) != super::hoisting::LocalStorage::Shadowed {
+        return value;
+    }
     match cx.local_types.get(name) {
         Some(TyKind::Object(cid)) => {
             let class_ident = super::ident::class_ident(cx.compiler, *cid);

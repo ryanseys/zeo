@@ -29,7 +29,48 @@ pub fn infer_locals(
     for &stmt in body {
         track_node(compiler, defining, box_id, &mut locals, stmt);
     }
+    widen_nested_writes(compiler, body, &mut locals);
     locals
+}
+
+/// Widens to `Poly` every `Object`-typed local this scope assigns somewhere
+/// OTHER than one of its own top-level statements.
+///
+/// `TyKind::Object` is what makes a local `LocalStorage::Shadowed`, whose
+/// whole point is that the binding comes from a natural Rust `let` at the
+/// assignment itself rather than from a hoisted declaration. That only works
+/// when the `let` lands in the same Rust block as the reads. Write it inside
+/// an `if` arm -- `if c; ws = W.new; else; ws = W.new; end; ws.show`, fifteen
+/// lines of ordinary Ruby -- and the `let` is scoped to the arm, so every
+/// read after the `if` names a binding that does not exist there (E0425).
+/// Widening puts the local back on hoisted `RubyValue` storage, which is
+/// declared once at the top of the scope and therefore always in scope. The
+/// cost is dynamic dispatch on reads, the same trade `Params::bound_names`
+/// takes for a rebound parameter.
+fn widen_nested_writes(compiler: &Compiler, body: &[NodeId], locals: &mut HashMap<String, TyKind>) {
+    let mut nested = HashSet::new();
+    for &stmt in body {
+        // A top-level `x = <expr>` binds `x` right here; anything `<expr>`
+        // itself assigns is nested all the same. `x` joins them when its
+        // value expression assigns at all, because a chained `a = (b =
+        // W.new)` reads its value back THROUGH `b` -- so once `b` widens to
+        // a boxed slot, so does what `a` receives.
+        match &compiler.hir[stmt] {
+            HirNode::LocalWrite(name, value) => {
+                let inner = assigned_in(compiler, *value);
+                if !inner.is_empty() {
+                    nested.insert(name.clone());
+                    nested.extend(inner);
+                }
+            }
+            _ => nested.extend(assigned_in(compiler, stmt)),
+        }
+    }
+    for name in nested {
+        if matches!(locals.get(&name), Some(TyKind::Object(_))) {
+            locals.insert(name, TyKind::Poly);
+        }
+    }
 }
 
 /// Additionally walks one more root (a parameter's default-value expression,

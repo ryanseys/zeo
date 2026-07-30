@@ -247,7 +247,9 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
                 let v = emit_expr(cx, *value);
                 let v = super::expr::box_for_local_storage(cx, name, *value, v);
                 let write = super::hoisting::emit_local_write(cx, name, quote! { __v });
-                return quote! { { let __v: zeo_rt::RubyValue = #v; #write } };
+                // Unannotated: `box_for_local_storage` leaves a `Shadowed`
+                // local's RHS as the bare `Arc<Concrete>` its slot holds.
+                return quote! { { let __v = #v; #write } };
             }
         }
         let e = emit_expr(cx, stmt);
