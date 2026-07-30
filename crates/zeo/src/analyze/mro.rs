@@ -887,6 +887,19 @@ fn collect_ownership_names(
                 consts.push(name);
             }
         }
+        // `Foo.new` names a constant just as a bare `Foo` does. Left out, a
+        // class reached ONLY through `.new` -- `Fast = ::StringIO` in a
+        // module body, then `Fast.new` from a class nested in it -- never
+        // got an ownership entry, so codegen's runtime fallback read it off
+        // the referencing class instead of the lexical parent that holds it
+        // and raised `NameError`. Adding a bare `Fast` read anywhere in the
+        // same class hid the bug, which is what made it look like a
+        // resolution problem rather than a missing collector arm.
+        HirNode::New { class_name, .. } => {
+            if compiler.resolve_class(class_name, cref, 0).is_none() {
+                consts.push(class_name);
+            }
+        }
         HirNode::ConstWrite {
             scope: None, name, ..
         } => consts.push(name),
