@@ -1,10 +1,11 @@
-# zeo — an ahead-of-time Ruby compiler
+# zeo: an ahead-of-time Ruby compiler
 
-zeo compiles a whole Ruby program to a **single native executable**. It parses
-with [Prism] (CRuby's own parser), runs whole-program analysis over a typed IR,
-emits Rust, and links a precompiled runtime. There is no interpreter startup, no
-JIT warmup, and no Ruby installation needed on the machine that runs the binary —
-you ship one file.
+zeo compiles a full Ruby program into **one native executable**. It reads the
+source with [Prism], which is CRuby's own parser. It then analyzes the full
+program, writes Rust, and links a runtime that is already compiled.
+
+The result starts immediately. It does not start an interpreter, and it does
+not warm up a JIT. The machine that runs the binary does not need Ruby.
 
 ```console
 $ cat hello.rb
@@ -14,225 +15,240 @@ $ ./hello
 12
 ```
 
-zeo's compatibility contract is **oracle-verified behavior, with every
-divergence documented** — approximation is fine, silent wrongness is not. The
-north star: `zeo` compiles **rubygems and bundler out of the box**.
+zeo has one compatibility rule: **compare each behaviour with real Ruby, and
+write down each difference**. zeo permits an approximation. zeo does not permit
+a wrong answer that nobody wrote down. The goal is to compile **rubygems and
+bundler** without changes.
 
 [Prism]: https://github.com/ruby/prism
 
-## How it works
+## How zeo works
 
 ```
 foo.rb ──prism──▶ HIR arena ──analyze──▶ typed classes/MRO ──codegen──▶ Rust ──rustc──▶ foo
-                  (whole program:            (compile-time             (quote! +        (links the
-                   requires spliced           method tables,            prettyplease)    precompiled
-                   at compile time)           type inference)                            zeo-rt runtime)
+                  (full program:            (compile-time             (quote! +        (links the
+                   requires spliced          method tables,            prettyplease)    precompiled
+                   at compile time)          type inference)                            zeo-rt runtime)
 ```
 
-- **Whole-program.** `require`/`require_relative` are resolved at *compile
-  time* — the entire program, including bundled pure-Ruby gems under `gems/`, is
-  one compilation unit. The front end never defers a file to runtime.
-- **Two dispatch paths.** Calls the compiler can resolve statically compile to
-  direct Rust calls. Everything else routes through the runtime's real
-  `Symbol`-keyed method registry — which also serves `send`, `define_method`,
-  `method_missing`, singletons, and runtime-minted classes (`Class.new`).
-- **A real runtime** (`zeo-rt`). A CRuby-faithful numeric tower
-  (Integer/Bignum/Rational/Complex), strings as bytes + an encoding
-  interpretation, Fibers on real stack-switching coroutines, **truly parallel
-  threads** (real OS threads, no GVL by default), and exceptions as `Result`
-  propagation. `#![forbid(unsafe_code)]` outside the FFI/syscall shims.
+- **zeo compiles the full program at one time.** It resolves `require` and
+  `require_relative` at compile time. The full program is one compilation unit.
+  This includes the gems in `gems/`. The front end never defers a file to run
+  time.
+- **There are two dispatch paths.** If the compiler can resolve a call, that
+  call becomes a direct Rust call. All other calls go through the runtime
+  method registry, which uses `Symbol` keys. The same registry serves `send`,
+  `define_method`, `method_missing`, singletons, and classes that the program
+  makes at run time with `Class.new`.
+- **The runtime is complete** (`zeo-rt`). It includes a numeric tower that
+  agrees with CRuby (`Integer`, `Bignum`, `Rational`, `Complex`). A string is a
+  sequence of bytes plus an encoding. A `Fiber` uses a real coroutine that
+  changes the stack. A `Thread` is a real OS thread, and threads run in
+  parallel. An exception propagates as a Rust `Result`. The crate has
+  `#![forbid(unsafe_code)]` outside of the FFI and syscall layers.
 
-The compiler and the runtime **deliberately never link each other**. They agree
-only through `zeo-abi` — a numeric `ClassId` for every built-in class, baked
-into the generated code as a literal and interpreted by the runtime's dispatch.
+The compiler and the runtime **never link to each other**. They agree only
+through `zeo-abi`. That crate gives a numeric `ClassId` to each built-in class.
+The compiler writes the number into the generated code, and the runtime
+dispatch reads it.
 
 ## Quick start
 
-zeo is built from source; there is no `gem install zeo`. Build the compiler
-once, then compile Ruby programs with it.
+You must build zeo from source. There is no `gem install zeo`. Build the
+compiler one time, then compile your Ruby programs with it.
 
 ```console
-# Build the compiler (produces target/release/zeo)
+# Build the compiler. This writes target/release/zeo.
 $ cargo build --release -p zeo
 
-# Compile a file to a native binary, then run it.
-# NOTE: `zeo foo.rb` COMPILES but does not run — you run the binary yourself.
-$ target/release/zeo hello.rb        # writes ./hello (input path, extension stripped)
+# Compile a file to a native binary, then run the binary.
+$ target/release/zeo hello.rb        # writes ./hello (the input path, without the extension)
 $ ./hello
 
-# Choose the output path
+# Select a different output path.
 $ target/release/zeo hello.rb -o build/hello
 
-# Evaluate inline — like `ruby -e`. This one DOES compile *and* run,
-# forwarding stdout/stderr and the program's own exit status.
+# Compile and run a program from the command line, as `ruby -e` does.
 $ target/release/zeo -e 'puts "hello, world"'
 
-# Inspect the generated Rust without building anything
+# Show the generated Rust. This does not build a binary.
 $ target/release/zeo hello.rb -S
 ```
 
-The one newcomer gotcha: **plain `zeo foo.rb` compiles but does not execute**
-the result — only `-e` auto-runs. There are no subcommands (no `zeo run`); the
-CLI is shaped after `ruby`'s own (`zeo <file>` / `zeo -e <code>`).
+**Caution:** `zeo foo.rb` compiles the program, but it does not run the
+program. You must run the binary yourself. Only `-e` compiles and runs. There
+are no subcommands, and there is no `zeo run`. The command line agrees with
+Ruby's: `zeo <file>` or `zeo -e <code>`.
 
-## Command-line reference
+## Command-line options
 
 ```
 usage: zeo (<input.rb> | -e <code>) [options]
 ```
 
-| Argument / flag | Meaning |
+| Option | Function |
 |---|---|
-| `<input.rb>` | Compile the file to a native binary (default output: input path with its extension stripped). |
-| `-e <code>` | Compile **and run** an inline program immediately, forwarding stdout/stderr and exit status. Repeatable (snippets joined with newlines). With `-o`, writes the binary instead of running it. |
-| `-o <output>` | Where to write the compiled binary. |
-| `-S` | Print the generated Rust source and exit (no build). |
-| `-I <dir>` | Add a `require` search root, like ruby's `-I`. Repeatable; attached form `-I<dir>` also works. |
-| `--packages <dir>` | An extra gem directory, searched before the default project-local/bundled ones. Repeatable. |
-| `--gem-path <dir>` | The external gem store to resolve against. **Requires `--lockfile`.** |
-| `--lockfile <path>` | The `Gemfile.lock` resolving `--gem-path` versions. Must be given together with `--gem-path`. |
-| `--no-report` | Suppress the `zeo-gems.json` disclosure record (written by default next to an artifact). |
-| `--nowarn <slug>` | Suppress a disclosure-warning category. Repeatable; `--nowarn=<slug>` also accepted. |
-| `--log-level <level>` | Log the compiler's internals to stderr: `off\|error\|warn\|info\|debug\|trace`. `--log-level=<level>` also accepted; overrides `ZEO_LOG`/`RUST_LOG`. |
-| `-h`, `--help` | Show help and exit. |
+| `<input.rb>` | Compiles the file to a native binary. The default output path is the input path without its extension. |
+| `-e <code>` | Compiles the given code and runs it immediately. Sends stdout, stderr and the exit status to the caller. You can give this option more than one time; zeo joins the parts with newlines. With `-o`, zeo writes a binary and does not run it. |
+| `-o <output>` | Sets the path of the compiled binary. |
+| `-S` | Prints the generated Rust source, then stops. Does not build. |
+| `-I <dir>` | Adds a directory to the `require` search path, as Ruby's `-I` does. You can give this option more than one time. The form `-I<dir>` is also correct. |
+| `--packages <dir>` | Adds a gem directory. zeo searches it before the project and bundled directories. You can give this option more than one time. |
+| `--gem-path <dir>` | Sets the external gem store. **You must also give `--lockfile`.** |
+| `--lockfile <path>` | Gives the `Gemfile.lock` that selects the versions in `--gem-path`. You must give it together with `--gem-path`. |
+| `--no-report` | Stops zeo from writing the `zeo-gems.json` record. zeo writes this record with each artifact by default. |
+| `--nowarn <slug>` | Stops one category of disclosure warning. You can give this option more than one time. The form `--nowarn=<slug>` is also correct. |
+| `--log-level <level>` | Writes compiler diagnostics to stderr. The levels are `off`, `error`, `warn`, `info`, `debug` and `trace`. The form `--log-level=<level>` is also correct. This option has priority over `ZEO_LOG` and `RUST_LOG`. |
+| `-h`, `--help` | Shows the help text, then stops. |
 
 Environment variables:
 
-| Variable | Effect |
+| Variable | Function |
 |---|---|
-| `ZEO_LOG` / `RUST_LOG` | A `tracing` `EnvFilter` directive for finer control than `--log-level`, e.g. `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. With none of these set, no subscriber is installed and compiles stay silent. |
-| `ZEO_RUNTIME_PROFILE` | `debug` or `release` — override the linked runtime's profile (default: `debug` for `-e`, `release` for file/`-o` compiles). |
-| `ZEO_GVL` | `ZEO_GVL=1` opts a *run* into CRuby-style serialized thread scheduling (a FIFO global lock with 100ms timer preemption) instead of the default truly-parallel OS threads. |
-| `ZEO_BLESS` | `ZEO_BLESS=1` re-records golden test output from the real `ruby` oracle (development only). |
+| `ZEO_LOG`, `RUST_LOG` | Give a `tracing` `EnvFilter` directive. This gives more control than `--log-level`. Example: `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. If you set none of these variables, zeo installs no subscriber and writes no diagnostics. |
+| `ZEO_RUNTIME_PROFILE` | Selects the profile of the linked runtime: `debug` or `release`. The default is `debug` for `-e`, and `release` for a file or `-o` compile. |
+| `ZEO_GVL` | If you set `ZEO_GVL=1`, the threads in that run use CRuby's schedule. This is a FIFO global lock with a 100 ms timer. The default is parallel OS threads. |
+| `ZEO_BLESS` | If you set `ZEO_BLESS=1`, the test suites record their expected output again from real Ruby. Use this only during development. |
 
 ## Ruby features
 
-zeo aims at real programs, not a toy subset. What it runs today:
+zeo is for real programs, not for a small part of the language. These features
+work today:
 
-- **Numeric tower** — `Integer`/`Bignum` (auto-promoting, arbitrary precision),
-  `Float`, `Rational`, `Complex`, with CRuby-exact coercion and error shapes.
-- **Strings & encodings** — strings are bytes plus an encoding interpretation;
-  the engine carries 24 encodings (UTF-8, the Windows-125x/ISO-8859 family,
-  Shift_JIS/EUC-JP/GBK/Big5 via WHATWG tables). Divergences are catalogued.
-- **Core collections** — `Array`, `Hash`, `Range`, `Symbol`, `Struct`, with
-  `Enumerable` and `Comparable` as real MRO ancestors driving your `each`/`<=>`.
-- **Blocks, procs & yields** — known-shape blocks inline (`3.times` becomes a
-  native loop); escaping blocks become a real closure runtime type.
-- **Classes & metaprogramming** — inheritance, modules, `include`/`extend`,
-  `super`, and genuine open-world dynamic dispatch: `send`, `define_method`,
-  `method_missing`, per-object singletons (`def obj.foo`, `class << obj`), and
-  `Class.new(Super) { … }` all run through a real runtime method registry.
-- **Exceptions** — `raise`/`rescue`/`ensure`/`retry`, propagated as Rust
-  `Result` under the hood. Error **messages** are part of the behavior and are
-  matched to CRuby's exact wording.
-- **Concurrency** — `Thread` on real 8 MiB OS threads, **truly parallel by
-  default** (no GVL; killable/raisable busy loops, interruptible `sleep`);
-  `Fiber` on real stack-switching coroutines (`corosensei`); `Ractor` with a
-  frozen-or-copy boundary; `Mutex`/`Queue`.
-- **Regexp** — backed by real engines (`regex`/`fancy-regex`, with Oniguruma
-  vendored for the Onigmo-compatible paths).
-- **`eval`** — a literal `eval("…")` is parsed and spliced at compile time
-  today. A *dynamic* (runtime-computed) `eval` needs the embedded interpreter
-  described in [`docs/EVAL_VM.md`](docs/EVAL_VM.md), gated behind the runtime's
-  `eval-vm` feature and linked only into programs that can reach it.
+- **The numeric tower.** `Integer` and `Bignum` have unlimited precision, and
+  `Integer` becomes `Bignum` when necessary. `Float`, `Rational` and `Complex`
+  are also available. Coercion and error messages agree with CRuby.
+- **Strings and encodings.** A string is a sequence of bytes plus an encoding.
+  The engine has 24 encodings. These include UTF-8, the Windows-125x and
+  ISO-8859 families, and Shift_JIS, EUC-JP, GBK and Big5 through the WHATWG
+  tables. `docs/COMPATIBILITY.md` lists the differences.
+- **Core collections.** `Array`, `Hash`, `Range`, `Symbol` and `Struct` are
+  available. `Enumerable` and `Comparable` are real ancestors in the method
+  resolution order, and they use your `each` and `<=>`.
+- **Blocks, procs and yields.** If the compiler knows the shape of a block, it
+  puts the block inline. For example, `3.times` becomes a native loop. A block
+  that leaves its scope becomes a real closure object.
+- **Classes and metaprogramming.** Inheritance, modules, `include`, `extend`
+  and `super` work. Dynamic dispatch is complete: `send`, `define_method`,
+  `method_missing`, singletons for one object (`def obj.foo` and
+  `class << obj`), and `Class.new(Super) { … }` all use the runtime method
+  registry.
+- **Exceptions.** `raise`, `rescue`, `ensure` and `retry` work. Internally, an
+  exception propagates as a Rust `Result`. The message text is part of the
+  behaviour, and it agrees with CRuby word for word.
+- **Concurrency.** A `Thread` is a real OS thread with an 8 MiB stack, and
+  threads run in parallel by default. There is no GVL. You can kill a busy
+  loop, raise in it, and interrupt a `sleep`. A `Fiber` uses a real coroutine
+  that changes the stack (`corosensei`). A `Ractor` has a boundary that freezes
+  or copies. `Mutex` and `Queue` are available.
+- **Regexp.** Real engines do the work: `regex` and `fancy-regex`. zeo also
+  includes Oniguruma for the paths that need Onigmo behaviour.
+- **`eval`.** zeo parses a literal `eval("…")` and puts it into the program at
+  compile time. A dynamic `eval`, whose text the program computes at run time,
+  needs the interpreter in [`docs/EVAL_VM.md`](docs/EVAL_VM.md). The `eval-vm`
+  feature controls that interpreter, and zeo links it only into a program that
+  can get to it.
 
-This is experimental and moving fast — some corners are still in flight. The
-honest source of truth for "what actually matches `ruby`" is the conformance
-corpus (below), not this list.
+zeo is experimental, and some parts are not complete. This list is a summary.
+The conformance corpus below is the correct source for what agrees with Ruby.
 
-## Compatibility, honestly
+## Compatibility
 
-zeo targets **CRuby 4.0.6** (the version is single-sourced in `zeo-abi` so the
-compiler's version-gate folding and the runtime's `RUBY_VERSION` can never
-disagree). Compatibility is expressed as **prose, not a percentage** — a green
-corpus run is the record, and a claim like "zeo's `json` is not the `json` gem"
-is a fact that can only be stated, never inferred from a score.
+zeo targets **CRuby 4.0.6**. The version has one source, `zeo-abi`. Therefore
+the compiler's version tests and the runtime's `RUBY_VERSION` always agree.
 
-- **The conformance suite** (`tests/spinel/`) compiles ~2,509 golden-output
-  programs and diffs stdout *and* stderr against real `ruby` as `cargo nextest`
-  cases. Known-not-yet-matching programs are tracked as XFAIL gaps in
-  `tests/gaps/` — a gap that starts matching `ruby` *fails* the suite, forcing
-  its promotion into the corpus.
-- **Substitutions are disclosed, never silent.** Where zeo backs a gem or C
-  extension with its own implementation (`json`→serde_json, `psych`/`yaml`→
-  yaml-rust2, `zlib`→flate2, `digest`→RustCrypto, `openssl`→a vendored
-  OpenSSL 3, …), the compile
-  warns once and writes a machine-readable `zeo-gems.json` ledger next to the
-  artifact recording exactly which libraries diverged and why.
-- **Native-only gems fail loudly.** A gem whose real implementation is a C
-  extension zeo has no built-in for (`sqlite3`, `nokogiri`, `pg`, …) fails with
-  an error that *names the gem* and points at the FFI escape hatch, rather than
-  looking like an unsupported language feature.
+zeo gives compatibility as text, not as a percentage. A green corpus run is the
+record. A statement such as "zeo's `json` is not the `json` gem" is a fact. You
+cannot calculate it from a score.
 
-The full catalogue of substitutions and known divergences is
-[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); the extension model is
-[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md); what is still owed is
+- **The conformance suite** in `tests/spinel/` compiles approximately 2,509
+  programs. It compares stdout and stderr with real Ruby, byte for byte, as
+  `cargo nextest` cases. `tests/gaps/` holds the programs that do not agree
+  yet. Each of these must fail. If one starts to agree with Ruby, the suite
+  fails, and you must move that program into the corpus.
+- **zeo declares each substitution.** For some libraries, zeo supplies its own
+  code: `json` uses serde_json, `psych` and `yaml` use yaml-rust2, `zlib` uses
+  flate2, `digest` uses RustCrypto, and `openssl` uses a vendored OpenSSL 3.
+  The compile writes one warning. It also writes a `zeo-gems.json` record with
+  the artifact. That record tells you which libraries are different, and why.
+- **A gem with a C extension fails clearly.** If zeo has no built-in for the
+  extension, the error gives the name of the gem, such as `sqlite3`, `nokogiri`
+  or `pg`. The error also points to the FFI path. It does not look like an
+  unknown language feature.
+
+For the full list of substitutions and differences, read
+[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md). For the extension model, read
+[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md). For the remaining work, read
 [`docs/TODO.md`](docs/TODO.md).
 
 ## Bundled gems
 
-51 gems ship under `gems/` and resolve without a `Gemfile` — `require "csv"`
-in a program zeo compiles finds the copy in this repo. **Origin** says where
-the Ruby source came from:
+zeo includes 51 gems in `gems/`. They resolve without a `Gemfile`. If a program
+that zeo compiles has `require "csv"`, zeo uses the copy in this repository.
 
-- **git-pinned** — fetched by `cargo xtask gem` at a `rev` recorded in
-  `gems.toml`, the reproducible pin.
-- **upstream** — file-copied verbatim from a Ruby installation's default and
-  bundled gems (4.0.5 for most, 4.0.6 for irb, minitest and reline).
-- **upstream +zeo** — the same, with each deviation marked `zeo:` at its site.
-- **zeo Ruby half** — the `.rb` is zeo's; the native half is a Rust extension
-  under `crates/zeo-rt/src/ext/` (the split CRuby makes between `rubylibdir`
-  and `archdir`).
+The **Origin** column tells you where the Ruby source comes from:
 
-**Verified by** names a golden under `tests/` that compiles the gem and diffs
-its output against real ruby 4.0.6, byte for byte. A `—` means no golden
-asserts this gem's behaviour on its own — several are exercised only as another
-gem's dependency. See `gems/UPSTREAM.md` for full provenance and licensing.
+- **git-pinned** — `cargo xtask gem` gets the gem from its own repository. The
+  `rev` in `gems.toml` gives the exact commit.
+- **upstream** — a copy of a default or bundled gem from a Ruby installation,
+  with no changes. Most come from Ruby 4.0.5. irb, minitest and reline come
+  from Ruby 4.0.6.
+- **upstream +zeo** — the same, but with changes. Each change has a `zeo:` mark
+  at its location.
+- **zeo Ruby half** — zeo wrote the `.rb` files. A Rust extension in
+  `crates/zeo-rt/src/ext/` supplies the native part. CRuby makes the same
+  division between `rubylibdir` and `archdir`.
 
-| gem | version | origin | verified by | divergences |
+The **Test** column gives a test in `tests/`. That test compiles the gem and
+compares its output with real Ruby 4.0.6, byte for byte. A dash means that no
+test measures this gem alone. Some gems run only as a dependency of another
+gem. For the full source information and the licences, read
+`gems/UPSTREAM.md`.
+
+| Gem | Version | Origin | Test | Differences |
 |---|---|---|---|---|
 | abbrev | 0.1.2 | git-pinned | `issue_abbrev_missing.rb` | — |
 | benchmark | 0.4.1 | git-pinned | `issue_benchmark_missing.rb` | — |
-| bigdecimal | 4.1.2 | upstream +zeo | `bigdecimal.rb` | native slice reimplemented ([compat](docs/COMPATIBILITY.md)) |
-| bundler | 4.0.16 | git-pinned | `gem_bundler.rb` | golden enters at `bundler/version` ([todo](docs/TODO.md)) |
+| bigdecimal | 4.1.2 | upstream +zeo | `bigdecimal.rb` | zeo supplies the native part ([compat](docs/COMPATIBILITY.md)) |
+| bundler | 4.0.16 | git-pinned | `gem_bundler.rb` | the test starts at `bundler/version` ([todo](docs/TODO.md)) |
 | csv | 3.3.6 | git-pinned | `gem_csv.rb` | — |
 | delegate | 0.6.1 | upstream | `issue_require_delegate_crashes.rb` | — |
 | drb | 2.2.3 | git-pinned | `gem_drb.rb` | — |
 | English | 0.8.1 | upstream | `english_special_globals.rb` | — |
 | erb | 6.0.6 | git-pinned | `erb_module_function.rb` | — |
-| ffi | 1.17.4 | zeo Ruby half | `ffi_struct.rb` | native half over `libffi` |
-| fiddle | 1.1.8 | upstream +zeo | `fiddle.rb` | `Importer` DSL not vendored ([compat](docs/COMPATIBILITY.md)) |
+| ffi | 1.17.4 | zeo Ruby half | `ffi_struct.rb` | the native part uses `libffi` |
+| fiddle | 1.1.8 | upstream +zeo | `fiddle.rb` | no `Importer` DSL ([compat](docs/COMPATIBILITY.md)) |
 | fileutils | 1.8.0 | git-pinned | `fileutils.rb` | — |
 | find | 0.2.0 | git-pinned | `issue_find_missing.rb` | — |
 | forwardable | 1.4.0 | upstream | `issue_3300_forwardable.rb` | — |
 | ipaddr | 1.2.9 | git-pinned | — | — |
-| irb | 1.18.0 | upstream | — | compiles; stops at an anonymous runtime refinement ([gap](tests/gaps/issue_runtime_refinement_module.rb)) |
-| json | 2.18.0 | zeo Ruby half | `json_to_json.rb` | `serde_json`, not the json gem ([compat](docs/COMPATIBILITY.md)) |
+| irb | 1.18.0 | upstream | — | compiles, but stops at a refinement module that the program makes at run time ([gap](tests/gaps/issue_runtime_refinement_module.rb)) |
+| json | 2.18.0 | zeo Ruby half | `json_to_json.rb` | uses serde_json, not the json gem ([compat](docs/COMPATIBILITY.md)) |
 | logger | 1.7.0 | git-pinned | `issue_logger_missing.rb` | — |
-| minitest | 6.0.6 | upstream | `gem_minitest.rb` | whole-program compile takes `autorun`'s `MT_HELL` branch, which prints a NOTE to stderr |
-| monitor | 0.1.0 | zeo Ruby half | `gem_two_halves.rb` | `Monitor` + `MonitorMixin` only |
+| minitest | 6.0.6 | upstream | `gem_minitest.rb` | a full-program compile includes the `MT_HELL` branch of `autorun`, which writes a note to stderr |
+| monitor | 0.1.0 | zeo Ruby half | `gem_two_halves.rb` | `Monitor` and `MonitorMixin` only |
 | net-ftp | 0.3.9 | git-pinned | `issue_net_ftp_missing.rb` | — |
 | net-http | 0.9.1 | git-pinned | `gem_net_http.rb` | — |
 | net-protocol | 0.2.2 | git-pinned | — | — |
 | net-smtp | 0.5.1 | git-pinned | `gem_net_smtp.rb` | — |
-| nkf | 0.3.0 | zeo Ruby half | `nkf.rb` | option subset; `guess` reimplemented ([compat](docs/COMPATIBILITY.md)) |
+| nkf | 0.3.0 | zeo Ruby half | `nkf.rb` | some options only; `guess` uses a different method ([compat](docs/COMPATIBILITY.md)) |
 | observer | 0.1.2 | git-pinned | `gem_observer.rb` | — |
 | open3 | 0.2.1 | git-pinned | `open3_capture.rb` | — |
-| openssl | 4.0.2 | zeo Ruby half | `openssl_cipher.rb` + 6 more | PKey generation, X509 issuance, `SSLServer` declined ([compat](docs/COMPATIBILITY.md)) |
-| optparse | 0.8.1 | zeo Ruby half | `optparse_subset.rb` | the common `OptionParser` surface |
+| openssl | 4.0.2 | zeo Ruby half | `openssl_cipher.rb` and 6 more | no PKey generation, no X509 issue, no `SSLServer` ([compat](docs/COMPATIBILITY.md)) |
+| optparse | 0.8.1 | zeo Ruby half | `optparse_subset.rb` | the common `OptionParser` methods |
 | ostruct | 0.6.3 | upstream | `issue_3331_poly_to_sym_arm.rb` | — |
 | pp | 0.6.4 | upstream | `pp_pretty_print.rb` | — |
 | prettyprint | 0.2.0 | upstream | — | — |
-| prism | 1.9.0 | upstream +zeo | `gem_prism.rb` | `translation/` and `ffi.rb` not vendored |
-| psych | 5.4.0 | zeo Ruby half | `psych_load_file_and_stream.rb` | `yaml-rust2`, not libyaml ([compat](docs/COMPATIBILITY.md)) |
+| prism | 1.9.0 | upstream +zeo | `gem_prism.rb` | no `translation/` and no `ffi.rb` |
+| psych | 5.4.0 | zeo Ruby half | `psych_load_file_and_stream.rb` | uses yaml-rust2, not libyaml ([compat](docs/COMPATIBILITY.md)) |
 | pty | 0.5.9 | zeo Ruby half | `pty_spawn.rb` | — |
 | racc | 1.8.1 | git-pinned | `issue_racc_parser_missing.rb` | — |
-| reline | 0.6.3 | upstream +zeo | `reline_line_editor.rb` | one `zeo:` deviation in `io.rb` |
+| reline | 0.6.3 | upstream +zeo | `reline_line_editor.rb` | one `zeo:` change in `io.rb` |
 | resolv | 0.7.1 | git-pinned | `issue_resolv_missing.rb` | — |
-| rubygems | 4.0.16 | git-pinned | `gem_rubygems.rb` | golden enters below the umbrella require ([todo](docs/TODO.md)) |
+| rubygems | 4.0.16 | git-pinned | `gem_rubygems.rb` | the test starts below the top-level require ([todo](docs/TODO.md)) |
 | shellwords | 0.2.2 | upstream | `shellwords.rb` | — |
 | singleton | 0.3.0 | upstream | — | `singleton_class.include?` ([gap](tests/gaps/issue_singleton_class_include_after_extend.rb)) |
-| strscan | 3.1.6 | zeo Ruby half | `strscan_capture_surface.rb` | a reimplementation ([compat](docs/COMPATIBILITY.md)) |
+| strscan | 3.1.6 | zeo Ruby half | `strscan_capture_surface.rb` | zeo supplies its own code ([compat](docs/COMPATIBILITY.md)) |
 | syslog | 0.4.0 | zeo Ruby half | `syslog.rb` | — |
 | tempfile | 0.3.1 | git-pinned | `issue_require_tempfile_codegen_path_attr.rb` | — |
 | time | 0.4.1 | git-pinned | `time_parse.rb` | — |
@@ -241,138 +257,166 @@ gem's dependency. See `gems/UPSTREAM.md` for full provenance and licensing.
 | tsort | 0.2.0 | upstream | — | — |
 | un | 0.3.0 | git-pinned | `issue_un_missing.rb` | — |
 | uri | 1.1.1 | git-pinned | `uri_parse_and_build.rb` | — |
-| zlib | 3.2.3 | zeo Ruby half | `zlib_classes.rb` | `flate2`; four entry points declined ([compat](docs/COMPATIBILITY.md)) |
+| zlib | 3.2.3 | zeo Ruby half | `zlib_classes.rb` | uses flate2; 4 functions are not available ([compat](docs/COMPATIBILITY.md)) |
 
-A gem outside this set resolves from an external store with `--gem-path` +
-`--lockfile`. A gem whose real implementation is a C extension zeo has no
-built-in for fails with a message that names it: `is_known_native_gem`
-(`crates/zeo/src/parse/loader.rs`) lists 14 such names — `sqlite3`,
-`nokogiri`, `pg`, `mysql2`, `bcrypt`, `nio4r`, `puma`, `grpc`, `protobuf`,
-`oj`, `msgpack`, `eventmachine`, `sass`, `rmagick`. It is deliberately not
-exhaustive; anything else gets CRuby's plain `cannot load such file`. `ffi` is
-excluded on purpose — zeo provides it.
+To use a gem that is not in this list, give `--gem-path` and `--lockfile`.
+
+If a gem needs a C extension that zeo has no built-in for, the `require` fails
+and the error gives the name of the gem. The function `is_known_native_gem` in
+`crates/zeo/src/parse/loader.rs` holds 14 such names: `sqlite3`, `nokogiri`,
+`pg`, `mysql2`, `bcrypt`, `nio4r`, `puma`, `grpc`, `protobuf`, `oj`, `msgpack`,
+`eventmachine`, `sass` and `rmagick`. The list is not complete, and this is
+correct. For all other names, zeo gives CRuby's usual message, `cannot load
+such file`. The list does not include `ffi`, because zeo supplies `ffi`.
 
 ## Standard-library extensions
 
-A gem's *native* half — CRuby's `ext/` model — is a Rust module under
-`crates/zeo-rt/src/ext/`, written in the same `ruby_class!` DSL as the core
-classes. Each sits behind **two** independent gates: a Ruby `require` gate (its
-constant stays invisible until the `require` fires) and a cargo `ext-<name>`
-feature (`default = ext-all`, so the common build has them all).
+The native part of a gem is a Rust module in `crates/zeo-rt/src/ext/`. CRuby
+uses the same `ext/` model. Each module uses the `ruby_class!` DSL, which is
+also used for the core classes.
 
-Every method here is real and oracle-matched — there are no `todo!()`
-scaffolds. Where the backing library differs from CRuby's, the compile warns
-once and records it in `zeo-gems.json`; `docs/COMPATIBILITY.md` carries the
-per-library reason.
+Two independent gates control each extension:
 
-| extension | `require` | cargo feature | backed by |
+1. **A Ruby `require` gate.** The constant of the extension stays invisible
+    until the program executes its `require`.
+2. **A cargo feature**, `ext-<name>`. The default feature set is `ext-all`, so
+    a usual build includes all of the extensions.
+
+Each method in these modules is complete, and zeo compares it with real Ruby.
+No method is an empty `todo!()`. If the library behind a module is different
+from CRuby's, the compile writes one warning and records it in
+`zeo-gems.json`. `docs/COMPATIBILITY.md` gives the reason for each library.
+
+| Extension | `require` | Cargo feature | Uses |
 |---|---|---|---|
-| base64 | `base64` | `ext-base64` | in-tree |
+| base64 | `base64` | `ext-base64` | zeo code |
 | bigdecimal | `bigdecimal` | `ext-bigdecimal` | `num-bigint` |
-| cgi | `cgi/escape`, `cgi`, `cgi/util` | `ext-cgi` | in-tree (escape/unescape only) |
-| coverage | `coverage` | `ext-coverage` | in-tree (line coverage only) |
-| date | `date` | `ext-date` | in-tree |
+| cgi | `cgi/escape`, `cgi`, `cgi/util` | `ext-cgi` | zeo code; escape and unescape only |
+| coverage | `coverage` | `ext-coverage` | zeo code; line coverage only |
+| date | `date` | `ext-date` | zeo code |
 | digest | `digest`, `digest/*` | `ext-digest` | RustCrypto (`md-5`, `sha1`, `sha2`) |
 | etc | `etc` | `ext-etc` | `libc` |
 | fcntl | `fcntl` | `ext-fcntl` | `libc` |
-| ffi | `ffi` | `ext-ffi` | `libffi` (vendored) |
+| ffi | `ffi` | `ext-ffi` | `libffi`, included in this repository |
 | json | `json` | `ext-json` | `serde_json` |
-| monitor | `monitor` | `ext-monitor` | zeo's own thread primitives |
-| nkf | `nkf`, `kconv` | `ext-nkf` | zeo's encoding engine |
-| openssl | `openssl` | `ext-openssl` | vendored OpenSSL 3 via rust-openssl |
-| pathname | `pathname` | `ext-pathname` | in-tree |
-| prism | `prism` | `ext-prism` (+ `eval-vm`) | `ruby-prism` |
+| monitor | `monitor` | `ext-monitor` | zeo thread primitives |
+| nkf | `nkf`, `kconv` | `ext-nkf` | the zeo encoding engine |
+| openssl | `openssl` | `ext-openssl` | OpenSSL 3 through rust-openssl, included in this repository |
+| pathname | `pathname` | `ext-pathname` | zeo code |
+| prism | `prism` | `ext-prism` (with `eval-vm`) | `ruby-prism` |
 | psych | `psych`, `yaml` | `ext-psych` | `yaml-rust2` |
-| pty | `pty` | `ext-pty` | `libc` (`openpty(3)`) |
+| pty | `pty` | `ext-pty` | `libc`, function `openpty(3)` |
 | readline | `readline` | `ext-readline` | `rustyline` |
 | socket | `socket` | `ext-socket` | `libc` |
-| stringio | `stringio` | `ext-stringio` | in-tree |
-| strscan | `strscan` | `ext-strscan` | zeo's Regexp engine |
-| syslog | `syslog`, `syslog/logger` | `ext-syslog` | `libc` (`syslog(3)`) |
-| tracepoint | *(core — no require)* | `ext-tracepoint` | in-tree |
-| zlib | `zlib` | `ext-zlib` | `flate2` (pure-Rust miniz_oxide) |
+| stringio | `stringio` | `ext-stringio` | zeo code |
+| strscan | `strscan` | `ext-strscan` | the zeo Regexp engine |
+| syslog | `syslog`, `syslog/logger` | `ext-syslog` | `libc`, function `syslog(3)` |
+| tracepoint | none; part of the core | `ext-tracepoint` | zeo code |
+| zlib | `zlib` | `ext-zlib` | `flate2` |
 
-Four ship a deliberate **subset** of their upstream surface and raise
-`NoMethodError` at the edges rather than pretending: `openssl` (no PKey
-generation, X509 issuance, PKCS#7, ASN1 or `SSLServer`), `nkf` (a conversion
-option subset), `coverage` (lines, not branches or methods) and `TracePoint`
-(no `b_call`/`c_call` family, no `#binding`). `docs/EXTENSIONS.md` gives the
-per-extension detail.
+Four extensions give only a part of the methods that CRuby gives. At the limit,
+they raise `NoMethodError`. They do not give a wrong answer.
 
-`io/wait`, `io/console`, `objspace` and `ARGF` are always-on `IO`/`ObjectSpace`
-rows rather than gated modules, so their `require` is ceremony; `rbconfig`
-resolves through a synthetic shim.
+- `openssl` — no PKey generation, no X509 issue, no PKCS#7, no ASN1, no
+  `SSLServer`.
+- `nkf` — some conversion options only.
+- `coverage` — lines only, not branches and not methods.
+- `TracePoint` — no `b_call` or `c_call` events, and no `#binding`.
+
+`docs/EXTENSIONS.md` gives the details for each extension.
+
+Four other libraries need no module. `io/wait`, `io/console`, `objspace` and
+`ARGF` are always present as methods on `IO` and `ObjectSpace`. Their `require`
+does nothing. `rbconfig` resolves through a file that zeo generates.
 
 ## Benchmarks
 
-58 golden-output programs under `bench/`, compiled the way a user would compile
-them (`zeo -o`: release runtime, static link), output-checked byte-for-byte
-before any timing, then timed best-of-3 against CRuby 4.0.6 in the same run.
+The `bench/` directory holds 58 Ruby programs, and each one has its correct
+output. `cargo xtask bench` compiles each program with `zeo -o`, which links
+the release runtime and makes a static binary. This is the same configuration
+that a user gets.
 
-**Two aggregates, because either alone would mislead:**
+Before it measures a program, the tool compares the output of that program with
+the correct output, byte for byte. To measure a program that gives a wrong
+answer has no value. The tool then measures the time three times and keeps the
+smallest value. It measures CRuby 4.0.6 in the same run.
 
-| | geomean |
+zeo gives two different results, and one result alone can cause an error:
+
+| Programs | Geometric mean |
 |---|---|
-| all 58 benchmarks | **1.29× faster than CRuby** |
-| the 37 where CRuby takes ≥ 0.10 s | **0.86×** — about 16% *slower* |
+| all 58 programs | **1.29 times faster than CRuby** |
+| the 37 programs where CRuby needs 0.10 s or more | **0.86 times: approximately 16% slower** |
 
-The difference between them is process startup. 13 benchmarks finish inside
-50 ms of CRuby time, where a native binary starts instantly and the interpreter
-pays ~35 ms of boot. Shipping a binary is a genuine advantage, but it is not a
-claim about generated code — and on compute-bound work zeo currently trails
-CRuby by a little. 32 of 58 are faster, 26 slower.
+The difference between the two results is the start time. For 13 programs,
+CRuby needs less than 50 ms. A native binary starts immediately, but the
+interpreter needs approximately 35 ms to start. This is a real advantage of a
+binary, but it does not tell you about the quality of the generated code. For
+programs that calculate, zeo is a little slower than CRuby. zeo is faster for
+32 programs, and slower for 26 programs.
 
-Best: `pidigits` 9.5×, `sinatra_mini` 9.3×, `micro_lisp` and `bigint_fib`
-9.0×, `jekyll_lite` 7.6× (all startup-dominated); `range_each` 3.0×,
-`so_mandelbrot` 3.1× and `nested_loop` 2.2× on real work. Worst:
-`io_wordcount` 0.20×, `structaset` 0.30×, `structaref` 0.34×, `template`
-0.43×. The Struct and string paths are named levers in
-[`docs/TODO.md`](docs/TODO.md); `io_wordcount` is not yet root-caused.
+The largest advantages are `pidigits` (9.5), `sinatra_mini` (9.3),
+`micro_lisp` and `bigint_fib` (9.0), and `jekyll_lite` (7.6). The start time
+controls all of these. For programs that calculate, the largest advantages are
+`so_mandelbrot` (3.1), `range_each` (3.0) and `nested_loop` (2.2).
 
-Full per-benchmark table, method and caveats: [`bench/README.md`](bench/README.md).
+The largest disadvantages are `io_wordcount` (0.20), `structaset` (0.30),
+`structaref` (0.34) and `template` (0.43). [`docs/TODO.md`](docs/TODO.md) gives
+planned work for the `Struct` and string paths. Nobody has found the cause of
+the `io_wordcount` result yet.
 
-## Architecture — the workspace
+[`bench/README.md`](bench/README.md) gives the full table, the method and the
+limits of these measurements.
 
-zeo is a Cargo workspace (edition 2024, MSRV 1.87) of six crates:
+## The workspace
+
+zeo is a Cargo workspace with six crates. It uses edition 2024, and the minimum
+Rust version is 1.87.
 
 ```
 crates/
-  zeo         the compiler + CLI  — parse ▸ lower ▸ analyze ▸ codegen ▸ backend
-  zeo-rt      the runtime linked into every compiled program (the largest crate)
-  zeo-abi     zero-dependency leaf: the ClassId numbering both sides share
-  zeo-dsl     the shared `syn` grammar for the ruby_class!/ruby_module! DSL
-  zeo-macros  the proc-macro that expands that DSL into runtime code
-  xtask       dev automation (bench, gem, gem-compat, stdlib-status)
+  zeo         the compiler and the CLI: parse ▸ lower ▸ analyze ▸ codegen ▸ backend
+  zeo-rt      the runtime that links into each compiled program (the largest crate)
+  zeo-abi     a leaf crate with no dependencies: the ClassId numbers that both sides use
+  zeo-dsl     the shared `syn` grammar for the ruby_class! and ruby_module! DSL
+  zeo-macros  the macro that expands that DSL into runtime code
+  xtask       development tools (bench, gem, gem-compat, stdlib-status)
 ```
 
-- **`zeo`** — the driver. Its front end (`parse/`, `lower/`, `hir.rs`) resolves
-  requires and lowers the Prism tree into a typed HIR arena; `analyze/` does
-  whole-program ancestor linearization (`mro.rs`) and single-pass local type
-  inference (`locals.rs`); `codegen/` emits Rust as a `proc_macro2` TokenStream
-  (re-parsed with `syn`, formatted by `prettyplease`); `backend/` shells out to
-  `rustc` against the prebuilt runtime, with a content-addressed build cache.
-  It is a real library, not just a `main.rs` (see the API section).
-- **`zeo-rt`** — the runtime. Every value is one `enum RubyValue`; collections
-  are `Arc<Freezable<…>>` (so freezing and structural sharing are cheap) and
-  user objects are an erased `Arc<dyn RubyObject>`. Memory is `Arc`
-  reference-counting with **no tracing collector** — cycles genuinely leak, a
-  documented and accepted trade. One Rust module per Ruby core class lives under
-  `builtins/`; method tables are collected at link time via `linkme` into a
-  distributed slice indexed by `ClassId`, replacing hand-written match arms.
-- **`zeo-abi`** — the zero-dependency leaf. It fixes the numeric `ClassId` of
-  every built-in, the `BUILTINS` table (each class's CRuby-exact superclass and
-  includes, oracle-verified), `RUNTIME_CLASS_ID_BASE` for runtime-minted
-  classes, and `RUBY_VERSION`. This is the *only* hard ABI the compiler and
-  runtime share.
-- **`zeo-dsl`** / **`zeo-macros`** — the class-authoring DSL (below).
-- **`xtask`** — `cargo xtask <cmd>`: `bench` (the golden-output performance
-  suite), `gem` (manage the vendored gems in `gems.toml`), `gem-compat` (measure
-  how much of a gem store compiles), `stdlib-status`.
+- **`zeo`** is the driver. The front end (`parse/`, `lower/`, `hir.rs`)
+  resolves the requires and lowers the Prism tree into a typed HIR arena. Then
+  `analyze/` calculates the ancestors of each class (`mro.rs`) and the type of
+  each local variable in one pass (`locals.rs`). Then `codegen/` writes Rust as
+  a `proc_macro2` TokenStream, reads it again with `syn`, and formats it with
+  `prettyplease`. Last, `backend/` calls `rustc` against the runtime, and uses
+  a build cache with content addresses. This crate is a library, not only a
+  `main.rs`. Read the API section below.
+- **`zeo-rt`** is the runtime. Each value is one `enum RubyValue`. A collection
+  is an `Arc<Freezable<…>>`, which makes `freeze` and structural sharing cheap.
+  A user object is an `Arc<dyn RubyObject>`. Memory management uses `Arc`
+  reference counts, and there is **no tracing collector**. Therefore a cycle of
+  references leaks its memory. This is a known limit, and zeo accepts it. Each
+  Ruby core class has one Rust module in `builtins/`. The `linkme` crate
+  collects the method tables at link time into one slice, and the `ClassId` is
+  the index.
+- **`zeo-abi`** is a leaf crate with no dependencies. It sets the numeric
+  `ClassId` of each built-in class. It holds the `BUILTINS` table, which gives
+  the superclass and the included modules of each class. Real Ruby supplies
+  these values. It also holds `RUNTIME_CLASS_ID_BASE`, for classes that a
+  program makes at run time, and `RUBY_VERSION`. This is the only ABI that the
+  compiler and the runtime share.
+- **`zeo-dsl`** and **`zeo-macros`** hold the DSL for the core classes. Read
+  the next section.
+- **`xtask`** holds the development commands. Use `cargo xtask <cmd>`. The
+  commands are `bench` for the performance suite, `gem` to manage the gems in
+  `gems.toml`, `gem-compat` to measure how much of a gem store compiles, and
+  `stdlib-status`.
 
 ### The `ruby_class!` DSL
 
-Core classes are written once, in a Ruby-like grammar whose method bodies stay
-real Rust. Here is a slice of `String` (from `crates/zeo-rt/src/builtins/string.rs`):
+You write each core class one time, in a grammar that looks like Ruby. The
+method bodies stay in Rust. This example comes from
+`crates/zeo-rt/src/builtins/string.rs`:
 
 ```rust
 ruby_class! {
@@ -390,48 +434,55 @@ ruby_class! {
 }
 ```
 
-That single grammar (parsed by `zeo-dsl`) feeds **two** consumers so they can
-never drift: `zeo-macros` expands it into the runtime's method fns, `ClassId`-
-keyed lookup tables, constant installers, and `linkme` registration; and `zeo`'s
-`build.rs` re-parses the *same* invocations to project `CLASS_SURFACE` — the
-names the compiler folds `respond_to?`/`is_a?`/const lookups against (headers
-only; method bodies are opaque to it). Standard-library C extensions live under
-`crates/zeo-rt/src/ext/` behind the same DSL and a two-gate model (a Ruby
-`require` gate plus a `cargo` `ext-<name>` feature); see
-[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
+The crate `zeo-dsl` reads this grammar. Two consumers then use it, so the two
+cannot disagree:
 
-## Public API (embedding the compiler)
+- `zeo-macros` expands it into the runtime method functions, the lookup tables
+  with `ClassId` keys, the constant installers, and the `linkme` registration.
+- The `build.rs` of `zeo` reads the same text again and builds `CLASS_SURFACE`.
+  These are the names that the compiler uses to resolve `respond_to?`, `is_a?`
+  and constant lookups. The compiler sees the headers only. The method bodies
+  are not visible to it.
 
-`crates/zeo/src/lib.rs` is a real library — the CLI and the in-process test
-harness both call it directly. To embed the compiler in Rust:
+The standard-library extensions in `crates/zeo-rt/src/ext/` use the same DSL
+and the two gates above. Read [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
+
+## Public API
+
+The file `crates/zeo/src/lib.rs` is a library. The CLI and the test harness
+both call it directly. To use the compiler from Rust:
 
 ```rust
 use zeo::{compile_to_rust, compile_to_rust_with, CompileOptions};
 
-// Simple: Ruby source in, formatted Rust source out.
+// The simple form: Ruby source goes in, formatted Rust source comes out.
 let rust: String = compile_to_rust("puts 1 + 1").unwrap();
 
-// Full control: load roots, gem store, disclosure report, warning suppression.
+// The full form: load roots, gem store, disclosure report, warning control.
 let opts = CompileOptions::default();
 let out = compile_to_rust_with("puts 1 + 1", &opts).unwrap();
-// out.rust_source        — the generated Rust text
-// out.needs_eval_vm      — whether the program can reach the runtime eval VM
+// out.rust_source     the generated Rust text
+// out.needs_eval_vm   true if the program can get to the runtime eval VM
 
-// Compile the generated Rust to a native binary against the prebuilt runtime.
+// Compile the generated Rust into a native binary against the runtime.
 zeo::backend::build_binary(/* … */);
 ```
 
-The public surface includes `CompileOptions`, `CompileOutput`, `CompileError`,
-and the pipeline modules (`parse`, `lower`, `analyze`, `codegen`, `backend`,
-`compiler`, `hir`, `types`, `diagnostics`, `gem_report`). Note this embeds the
-**compiler**; `zeo-rt` is the link target of generated programs, not a "call
-Ruby from Rust" host API.
+The public API has `CompileOptions`, `CompileOutput` and `CompileError`. It
+also has the pipeline modules: `parse`, `lower`, `analyze`, `codegen`,
+`backend`, `compiler`, `hir`, `types`, `diagnostics` and `gem_report`.
 
-## Building from source
+**Note:** this API gives you the **compiler**. The crate `zeo-rt` is the link
+target of a compiled program. It is not an API to call Ruby from Rust.
 
-Requirements: **Rust ≥ 1.87** (edition 2024; see `rust-version`), a **C
-compiler** (for the vendored Prism and Oniguruma), and — only for re-blessing
-goldens from the oracle — a real **Ruby 4.0.6** matching `mise.toml`.
+## Build from source
+
+You need these items:
+
+- **Rust 1.87 or later**, because zeo uses edition 2024. Read `rust-version`.
+- **A C compiler**, for Prism and Oniguruma.
+- **Ruby 4.0.6**, but only to record the expected test output again. The file
+  `mise.toml` gives this version.
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
@@ -439,89 +490,96 @@ $ cargo build --release -p zeo
 $ target/release/zeo yourprogram.rb -o yourprogram
 ```
 
-The runtime (`zeo-rt`) is built automatically the first time you compile a
-program, at most once per (profile, runtime variant, linkage). You can prebuild
-it explicitly with `cargo build --release -p zeo-rt` (add `--features eval-vm`
-for programs that use dynamic `eval`).
+zeo builds the runtime `zeo-rt` automatically, the first time that you compile
+a program. It builds each combination of profile, runtime variant and linkage
+one time only. To build the runtime yourself, use
+`cargo build --release -p zeo-rt`. Add `--features eval-vm` for programs that
+use a dynamic `eval`.
 
-`mise.toml` pins the development toolchain (`ruby = "4.0.6"`, `rust = "1.97.1"`).
+The file `mise.toml` sets the development tools: `ruby = "4.0.6"` and
+`rust = "1.97.1"`.
 
-## Testing & conformance
+## Tests and conformance
 
-The golden-file suites live under `tests/` and run as
-[`datatest-stable`](https://crates.io/crates/datatest-stable) `cargo test`/
-nextest targets — one case per `.rb` file:
+The test suites are in `tests/`. They run as
+[`datatest-stable`](https://crates.io/crates/datatest-stable) targets under
+`cargo test` or `cargo nextest`, with one case for each `.rb` file.
 
 ```console
-$ cargo nextest run --workspace                   # unit + e2e + all golden suites
-$ cargo nextest run -p zeo --test spinel          # the full ruby-oracle corpus
+$ cargo nextest run --workspace                   # unit, e2e and all test suites
+$ cargo nextest run -p zeo --test spinel          # the full Ruby corpus
 $ cargo nextest run -p zeo --test examples --test gaps
-$ ZEO_BLESS=1 cargo test -p zeo --test spinel     # re-record goldens from ruby
-$ cargo run -p xtask -- bench                      # golden-output benchmarks
+$ ZEO_BLESS=1 cargo test -p zeo --test spinel     # record the expected output again
+$ cargo run -p xtask -- bench                     # the performance suite
 ```
 
-- **`spinel`** — the conformance corpus (~2,509 programs), each diffed
-  byte-for-byte against real `ruby`.
-- **`examples`** — zeo-authored example programs with committed golden output.
-- **`gaps`** — the XFAIL tracker: still-diverging programs, each with a header
-  naming its cause. A gap that starts matching `ruby` fails the suite (an
-  XPASS), forcing its promotion via `scripts/promote-gap.sh`.
+- **`spinel`** is the conformance corpus, with approximately 2,509 programs.
+  The suite compares each one with real Ruby, byte for byte.
+- **`examples`** holds the programs that zeo authors wrote, with their correct
+  output.
+- **`gaps`** holds the programs that do not agree with Ruby yet. The comment at
+  the top of each file gives the cause. Each of these tests must fail. If one
+  starts to agree with Ruby, the suite fails, and you must move the file with
+  `scripts/promote-gap.sh`.
 
-`ZEO_BLESS=1` is the single golden writer — it records expected output from the
-real `ruby` oracle (run with `--disable-error_highlight --disable-did_you_mean`)
-instead of asserting. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the house
-rule (oracle-verified, divergence-documented) and the full workflow.
+`ZEO_BLESS=1` is the only way to write the expected output. It runs real Ruby
+with `--disable-error_highlight` and `--disable-did_you_mean`, and it records
+the result instead of comparing it. [`CONTRIBUTING.md`](CONTRIBUTING.md) gives
+the full procedure.
 
 ## Project layout
 
 ```
-crates/    the six workspace crates (above)
+crates/    the six crates of the workspace (above)
 docs/      COMPATIBILITY, EXTENSIONS, EVAL_VM, TODO
-tests/     golden-file suites — examples, the spinel corpus, the gaps tracker
-gems/      51 vendored gems (git-pinned ones managed via gems.toml)
-bench/     the benchmark suite (`cargo xtask bench`) — see bench/README.md
-vendor/    vendored rubygems + shims
-tools/     Ruby helper scripts (arity annotation, method coverage)
-scripts/   corpus import, gap promotion, ruby-vs-zeo diffing
+tests/     the test suites: examples, the spinel corpus, the gaps tracker
+gems/      51 gems (gems.toml controls the git-pinned ones)
+bench/     the performance suite (`cargo xtask bench`); read bench/README.md
+vendor/    rubygems and the generated files
+tools/     Ruby helper scripts (arity marks, method coverage)
+scripts/   corpus import, gap promotion, Ruby-against-zeo comparison
 ```
 
-## Status & limitations
+## Limits
 
-Experimental and moving fast. Known limitations, stated plainly:
+zeo is experimental. These are the known limits:
 
-- **No tracing GC** — `Arc` reference counting means reference cycles leak
-  (documented, accepted; `GC.start` opportunistically runs finalizers).
-- **Four extensions ship a deliberate subset** — `coverage` (line coverage
-  only), `nkf`, `openssl` (no PKey generation, X509 issuance or `SSLServer`)
-  and `TracePoint`. They raise `NoMethodError` at the edges rather than
-  pretending; `docs/COMPATIBILITY.md` says what each leaves out. Nothing in
-  `ext/` is a `todo!()` scaffold.
-- **CRuby is still ahead on compute-bound code** — about 16% by geomean over
-  the benchmarks that run longer than 100 ms. See [Benchmarks](#benchmarks).
-- **Dynamic `eval` and `Ruby::Box` isolation are in flight** — see `docs/`.
-- **Native C-extension gems are unsupported** — the intended escape hatch is
-  the real `ffi` gem API, compiled ahead of time (see `docs/EXTENSIONS.md`).
+- **There is no tracing garbage collector.** Memory management uses `Arc`
+  reference counts, so a cycle of references leaks its memory. This is a known
+  limit, and zeo accepts it. `GC.start` runs the finalizers that it can.
+- **Four extensions give only a part of their methods.** These are `coverage`,
+  `nkf`, `openssl` and `TracePoint`. Read the extension section above.
+- **CRuby is faster for programs that calculate**, by approximately 16%. Read
+  the benchmark section above.
+- **A dynamic `eval` and `Ruby::Box` isolation are not complete.** Read
+  `docs/`.
+- **zeo cannot use a gem with a C extension.** Use the `ffi` gem API instead.
+  zeo compiles it ahead of time. Read `docs/EXTENSIONS.md`.
 
-Everything still owed is in [`docs/TODO.md`](docs/TODO.md); every known
-divergence from `ruby` is an executable XFAIL in
-[`tests/gaps/`](tests/gaps).
+[`docs/TODO.md`](docs/TODO.md) gives the remaining work. Each known difference
+from Ruby is a test in [`tests/gaps/`](tests/gaps) that must fail.
 
-## Contributing
+## How to contribute
 
-Issues and contributions welcome. The one rule is zeo's house style —
-*approximation is fine, silent wrongness is not*: new behavior is verified
-against real `ruby`, and every intentional divergence gets a comment at the code
-site (and, if user-visible, a row in `docs/COMPATIBILITY.md`). See
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Issues and contributions are welcome. zeo has one rule: **zeo permits an
+approximation, but zeo does not permit a wrong answer that nobody wrote
+down**. Therefore:
+
+1. Compare each new behaviour with real Ruby.
+2. Write a comment at the code location for each difference that you accept.
+3. If a user can see the difference, add a row to `docs/COMPATIBILITY.md`.
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
-Dual-licensed under either of [MIT](LICENSE-MIT) or
-[Apache License 2.0](LICENSE-APACHE), at your option. Unless you explicitly
-state otherwise, any contribution intentionally submitted for inclusion in
-zeo by you, as defined in the Apache-2.0 license, shall be dual licensed as
-above, without any additional terms or conditions.
+You can use zeo under the [MIT](LICENSE-MIT) license or the
+[Apache 2.0](LICENSE-APACHE) license. Select the license that you prefer.
 
-Vendored components keep their own (compatible) licenses — see
-`gems/UPSTREAM.md`, `tests/spinel/UPSTREAM.md`, and
-`bench/UPSTREAM.md` for provenance.
+If you contribute to zeo, and you do not give different terms, your
+contribution has these same two licenses. The Apache 2.0 license gives the
+definition of a contribution.
+
+The components from other projects keep their own licenses, which agree with
+these. For the source of each one, read `gems/UPSTREAM.md`,
+`tests/spinel/UPSTREAM.md` and `bench/UPSTREAM.md`.
