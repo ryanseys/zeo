@@ -85,6 +85,86 @@ pub fn global_alias(box_id: u32, new_name: &str, old_name: &str) {
         .insert(Box::from(new_name), target.into_boxed_str());
 }
 
+/// `trace_var`'s hooks: global name -> the commands to run whenever RUBY code
+/// assigns it, NEWEST FIRST (the order CRuby fires them in). Keyed by the
+/// spelling the program traced, before alias resolution, because that is the
+/// name `untrace_var` names too.
+static TRACERS: LazyLock<Mutex<FMap<Box<str>, Vec<RubyValue>>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
+
+// The globals whose hooks are running right now. A hook that assigns the
+// variable it watches -- `trace_var(:$g) { $g = clamp($g) }` -- must not
+// re-enter itself, which is the one thing this has to prevent.
+std::thread_local! {
+    static FIRING: std::cell::RefCell<Vec<Box<str>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `trace_var(name, command)` -- adds a hook. The newest runs first.
+pub fn trace_var(name: &str, command: RubyValue) {
+    TRACERS
+        .lock()
+        .entry(Box::from(name))
+        .or_default()
+        .insert(0, command);
+}
+
+/// Whether `name` carries any hook, which is what makes `untrace_var` on a
+/// never-assigned global legal.
+pub fn is_traced(name: &str) -> bool {
+    TRACERS.lock().get(name).is_some_and(|v| !v.is_empty())
+}
+
+/// `untrace_var(name)` / `untrace_var(name, command)` -- drops every hook, or
+/// just the one, and answers what it dropped.
+pub fn untrace_var(name: &str, command: Option<&RubyValue>) -> Vec<RubyValue> {
+    let mut tracers = TRACERS.lock();
+    let Some(hooks) = tracers.get_mut(name) else {
+        return Vec::new();
+    };
+    let Some(command) = command else {
+        return std::mem::take(hooks);
+    };
+    // Identity, not `==`: two Procs with the same body are different commands,
+    // and a Proc is what a command almost always is.
+    let same = |h: &RubyValue| match (h, command) {
+        (RubyValue::Proc(a), RubyValue::Proc(b)) => a.ptr_eq(b),
+        (a, b) => {
+            let id = crate::runtime_meta::value_identity(b);
+            id.is_some() && crate::runtime_meta::value_identity(a) == id
+        }
+    };
+    let (dropped, kept) = std::mem::take(hooks).into_iter().partition(same);
+    *hooks = kept;
+    dropped
+}
+
+/// Runs `name`'s hooks over the newly assigned `value`. A hook's own assignment
+/// to the same variable is stored but fires nothing, so a clamping hook
+/// terminates.
+fn fire_tracers(name: &str, value: &RubyValue) -> Result<(), crate::Signal> {
+    let hooks = match TRACERS.lock().get(name) {
+        Some(hooks) if !hooks.is_empty() => hooks.clone(),
+        _ => return Ok(()),
+    };
+    if FIRING.with(|f| f.borrow().iter().any(|n| &**n == name)) {
+        return Ok(());
+    }
+    FIRING.with(|f| f.borrow_mut().push(Box::from(name)));
+    let result = hooks.iter().try_for_each(|hook| {
+        crate::dispatch::send_value(
+            hook,
+            crate::Symbol::intern("call"),
+            std::slice::from_ref(value),
+            None,
+        )
+        .map(|_| ())
+    });
+    FIRING.with(|f| {
+        f.borrow_mut().pop();
+    });
+    result
+}
+
 /// A global whose value lives somewhere other than the `$foo` table: the
 /// exception being handled, the last child's status, the last match and the
 /// pieces derived from it.
@@ -211,8 +291,9 @@ pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), cr
     match special_of(&target) {
         None => {
             arm_if_stdio(&target);
-            store(box_id, target, value);
-            Ok(())
+            store(box_id, target, value.clone());
+            // AFTER the store: a hook reads the variable it watches.
+            fire_tracers(name, &value)
         }
         Some(Special::MatchData) => {
             crate::set_last_match(match value {

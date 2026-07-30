@@ -751,6 +751,33 @@ ruby_module! {
         arity!(args, 2);
         kernel_test(&args[0], &args[1])
     }
+    // `trace_var(:$g) { |v| }` / `trace_var(:$g, command)` -- run something on
+    // every assignment RUBY makes to a global. The runtime's own seeding is not
+    // an assignment and fires nothing.
+    def "trace_var"(_recv, args, block) {
+        arity!(args, 1..=2);
+        let name = global_name_arg(&args[0])?;
+        let command = match (args.get(1), block) {
+            (Some(c), _) if !matches!(c, RubyValue::Nil) => c.clone(),
+            (_, Some(b)) => b,
+            // CRuby reaches this through `Proc.new`, and reports it that way.
+            _ => return Err(arg_error!("tried to create Proc object without a block")),
+        };
+        crate::globals::trace_var(&name, command);
+        Ok(RubyValue::Nil)
+    }
+    // `untrace_var(:$g)` drops every hook, `untrace_var(:$g, command)` just the
+    // one, and both answer what they dropped. A name that was never assigned
+    // AND never traced is a NameError.
+    def "untrace_var"(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let name = global_name_arg(&args[0])?;
+        if !crate::globals::is_traced(&name) && !crate::globals::global_defined(0, &name) {
+            return Err(crate::builtins::name_error!("undefined global variable {name}"));
+        }
+        let dropped = crate::globals::untrace_var(&name, args.get(1));
+        Ok(RubyValue::Array(crate::array_new(dropped)))
+    }
     // Every global with a value in THIS box, plus the specials, which read
     // from the runtime rather than the store and so are never in it. CRuby
     // reports its full predefined set in an unspecified order; zeo reports
@@ -762,6 +789,20 @@ ruby_module! {
         Ok(RubyValue::Array(crate::array_new(
             names.into_iter().map(|n| RubyValue::Symbol(Symbol::intern(n.as_str()))).collect(),
         )))
+    }
+}
+
+/// A global's name as `trace_var`/`untrace_var` take it: a Symbol or a String,
+/// used verbatim. CRuby validates nothing here -- `trace_var(:notaglobal)` is
+/// accepted and simply never fires.
+fn global_name_arg(v: &RubyValue) -> Result<String, Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(s.name().as_str().to_string()),
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            crate::dispatch::describe_receiver(other)
+        )),
     }
 }
 
