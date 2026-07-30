@@ -521,6 +521,11 @@ struct ClassEntry {
     /// approximation).
     name: String,
     is_module: bool,
+    /// A `refine Target do ... end` holder: a module in every respect except
+    /// that its own `.class` answers `Refinement`, which is how a refined
+    /// `Method#owner` identifies itself. Marked after registration, since
+    /// only the compiler knows which modules a `refine` block minted.
+    is_refinement: bool,
     /// The full, already-linearized MRO (this class first, then prepends/
     /// includes/superclass in resolution order) -- computed at COMPILE time
     /// by `zeo::analyze::mro::compute_ancestors` and baked in as a
@@ -710,6 +715,7 @@ impl ClassRegistry {
             ClassEntry {
                 name: name.to_string(),
                 is_module,
+                is_refinement: false,
                 ancestors,
                 methods: FMap::default(),
                 own_impls: FMap::default(),
@@ -858,6 +864,14 @@ impl ClassRegistry {
     pub fn mark_own_rows(&mut self, id: ClassId, names: &[&str]) {
         if let Some(e) = self.entries.get_mut(&id.0) {
             e.own_methods.extend(names.iter().map(|n| Symbol::intern(n)));
+        }
+    }
+
+    /// Records that `id` is a `refine` holder -- see
+    /// [`ClassEntry::is_refinement`].
+    pub fn mark_refinement(&mut self, id: ClassId) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.is_refinement = true;
         }
     }
 
@@ -2623,8 +2637,20 @@ pub fn nested_class_names(id: ClassId) -> Vec<String> {
         // DIRECTLY nested only: `Zlib::GzipFile::Error` belongs to
         // `Zlib::GzipFile`'s list, not to `Zlib`'s.
         .filter(|rest| !rest.contains("::"))
+        // A `#` marks a name the source could never have written -- a
+        // `refine` holder -- which is therefore no constant of anyone's.
+        .filter(|rest| !rest.contains('#'))
         .map(str::to_string)
         .collect()
+}
+
+/// Whether `id` is a `refine` holder, whose `.class` is `Refinement`
+/// rather than `Module`.
+pub fn class_is_refinement(id: ClassId) -> bool {
+    REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&id.0))
+        .is_some_and(|e| e.is_refinement)
 }
 
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs
@@ -3394,23 +3420,29 @@ pub fn send_value_in(
     send_value_in_reason(box_id, recv, name, args, block, MissingReason::NoEntry)
 }
 
-/// The holder whose refined `name` answers for `recv`, or `None` to fall
-/// through to ordinary dispatch. `candidates` is `(refined class, holder)`
-/// in most-recently-activated-first order, decided at compile time from the
-/// `using` scopes covering the call site; the only runtime question left is
-/// whether the receiver is actually of the refined class.
+/// The holder module whose refined `name` answers for `recv`, or `None` to
+/// fall through to ordinary dispatch. `candidates` is `(refined class,
+/// holder)` in most-recently-activated-first order, decided at compile time
+/// from the `using` scopes covering the call site; the only runtime
+/// question left is whether the receiver is actually of the refined class.
+pub fn refinement_home(
+    recv: &RubyValue,
+    name: Symbol,
+    candidates: &[(ClassId, ClassId)],
+) -> Option<ClassId> {
+    let cls = recv.class_id();
+    candidates.iter().find_map(|&(target, holder)| {
+        (is_a(cls, target) && value_method(holder, 0, name).is_some()).then_some(holder)
+    })
+}
+
 fn refinement_for(
     recv: &RubyValue,
     name: Symbol,
     candidates: &[(ClassId, ClassId)],
 ) -> Option<ValueMethodFn> {
-    let cls = recv.class_id();
-    candidates
-        .iter()
-        .find_map(|&(target, holder)| {
-            is_a(cls, target).then(|| value_method(holder, 0, name))
-        })
-        .flatten()
+    let holder = refinement_home(recv, name, candidates)?;
+    value_method(holder, 0, name)
 }
 
 /// A call site the active refinements may answer. The refined body wins
@@ -3428,6 +3460,60 @@ pub fn refined_send_in(
     match refinement_for(recv, name, candidates) {
         Some(f) => f(recv, args, block),
         None => send_value_in(box_id, recv, name, args, block),
+    }
+}
+
+/// `recv.send(name, ...)` / `recv.public_send(...)` at a site some `using`
+/// covers. `name` is a runtime value here, so the whole active set rides
+/// along and the match happens at the call.
+pub fn refined_send_dynamic(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    candidates: &[(ClassId, ClassId)],
+    public: bool,
+) -> Result<RubyValue, Signal> {
+    if let Some(f) = refinement_for(recv, name, candidates) {
+        return f(recv, args, block);
+    }
+    if public {
+        send_value_public_in(box_id, recv, name, args, block)
+    } else {
+        send_value_in(box_id, recv, name, args, block)
+    }
+}
+
+/// `recv.respond_to?(name)` at a site some `using` covers -- a refined name
+/// answers `true` even though it appears in no `instance_methods` list.
+pub fn refined_responds_to(
+    recv: &RubyValue,
+    name: Symbol,
+    include_all: bool,
+    candidates: &[(ClassId, ClassId)],
+) -> Result<bool, Signal> {
+    if refinement_home(recv, name, candidates).is_some() {
+        return Ok(true);
+    }
+    responds_to_or_missing(recv, name, include_all)
+}
+
+/// `recv.method(name)` at a site some `using` covers. A refined name binds
+/// to the HOLDER, which is what makes `#owner` answer a `Refinement`.
+pub fn refined_method(
+    recv: &RubyValue,
+    name: Symbol,
+    candidates: &[(ClassId, ClassId)],
+) -> Result<RubyValue, Signal> {
+    match refinement_home(recv, name, candidates) {
+        Some(holder) => Ok(crate::builtins::method::method_value(
+            recv.clone(),
+            name,
+            holder,
+            crate::MethodKind::Instance,
+        )),
+        None => crate::builtins::method::method_new(recv, &RubyValue::Symbol(name)),
     }
 }
 

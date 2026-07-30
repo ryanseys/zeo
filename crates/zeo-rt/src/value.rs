@@ -568,7 +568,9 @@ impl RubyValue {
             // ancestor chain). Outside a generated program (no registry --
             // this crate's own unit tests) the class case is assumed.
             RubyValue::Class(cid) => {
-                if crate::dispatch::class_is_module(*cid).unwrap_or(false) {
+                if crate::dispatch::class_is_refinement(*cid) {
+                    zeo_abi::REFINEMENT_CLASS
+                } else if crate::dispatch::class_is_module(*cid).unwrap_or(false) {
                     MODULE_CLASS
                 } else {
                     CLASS_CLASS

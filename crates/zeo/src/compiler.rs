@@ -801,6 +801,12 @@ impl Compiler {
         out
     }
 
+    /// Whether `cid` is the hidden module a `refine` block put its methods
+    /// in.
+    pub(crate) fn is_refinement_holder(&self, cid: ClassId) -> bool {
+        self.refinements.iter().any(|r| r.holder == cid)
+    }
+
     /// Whether `holder` defines `name` as an instance method of its own --
     /// the question that decides whether a call site routes through the
     /// refinement at all.

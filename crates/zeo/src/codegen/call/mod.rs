@@ -1945,9 +1945,16 @@ fn emit_refined_call(
     block_arg: Option<NodeId>,
     recv_expr: &TokenStream,
 ) -> Option<TokenStream> {
-    let candidates: Vec<_> = cx
-        .compiler
-        .refinements_active_at(recv_id)
+    let active = cx.compiler.refinements_active_at(recv_id);
+    if active.is_empty() {
+        return None;
+    }
+    if let Some(tokens) =
+        emit_refined_reflection(cx, recv_id, name, args, kwargs, block, recv_expr, &active)
+    {
+        return Some(tokens);
+    }
+    let candidates: Vec<_> = active
         .into_iter()
         .filter(|&(_, holder)| cx.compiler.refinement_defines(holder, name))
         .collect();
@@ -1980,6 +1987,79 @@ fn emit_refined_call(
             )
         },
     ))
+}
+
+/// The three shapes that name a method at RUNTIME -- `send`, `respond_to?`
+/// and `method`. Real Ruby honours a refinement through every one of them
+/// (only `Module#instance_methods` stays blind to it), so at a site any
+/// `using` covers they hand the WHOLE active set to the runtime: which
+/// name is being asked about is not a compile-time fact here.
+fn emit_refined_reflection(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+    recv_expr: &TokenStream,
+    active: &[(crate::compiler::ClassId, crate::compiler::ClassId)],
+) -> Option<TokenStream> {
+    if !kwargs.is_empty() || args.is_empty() {
+        return None;
+    }
+    // Only Kernel's own `send`/`method`/`respond_to?` reinterprets its
+    // first argument as a method name. A receiver whose class shadows one
+    // of them -- or whose class isn't statically known, so the question
+    // belongs to the runtime -- keeps its ordinary path.
+    if resolve_send(cx, recv_id, name) != SendTarget::Kernel {
+        return None;
+    }
+    let __bx = cx.box_id;
+    let recv = box_if_object_typed(cx, recv_id, recv_expr.clone());
+    let name_expr = emit_symbol_expr(cx, args[0]);
+    let pairs: Vec<_> = active
+        .iter()
+        .map(|&(target, holder)| {
+            let (target, holder) = (target.0, holder.0);
+            quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+        })
+        .collect();
+    match name {
+        "send" | "__send__" | "public_send" => {
+            let rest = args[1..]
+                .iter()
+                .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)));
+            let blk = emit_block_option(cx, block, None);
+            let public = name == "public_send";
+            Some(wrap_dynamic_result(
+                block.is_some(),
+                quote! {
+                    zeo_rt::refined_send_dynamic(
+                        #__bx, &#recv, #name_expr, &[#(#rest),*], #blk,
+                        &[#(#pairs),*], #public,
+                    )
+                },
+            ))
+        }
+        "respond_to?" if args.len() <= 2 && block.is_none() => {
+            let include_all = match args.get(1) {
+                Some(&a) => {
+                    let e = emit_expr(cx, a);
+                    quote! { (#e).truthy() }
+                }
+                None => quote! { false },
+            };
+            Some(quote! {
+                zeo_rt::RubyValue::Bool(zeo_rt::refined_responds_to(
+                    &#recv, #name_expr, #include_all, &[#(#pairs),*],
+                )?)
+            })
+        }
+        "method" if args.len() == 1 && block.is_none() => Some(quote! {
+            zeo_rt::refined_method(&#recv, #name_expr, &[#(#pairs),*])?
+        }),
+        _ => None,
+    }
 }
 
 /// The actual dispatch decision (see the module's "Two dispatch paths"

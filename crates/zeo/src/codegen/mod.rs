@@ -1229,6 +1229,14 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // name out of this class's table. See `ClassEntry::undefined_methods`.
         // Sorted: a HashSet has no stable order, and generated source should
         // not vary between compiles of the same program.
+        // A `refine` holder is a module in every respect but one: its own
+        // `.class` is `Refinement`, which is what a refined `Method#owner`
+        // reports.
+        if compiler.is_refinement_holder(ClassId(id)) {
+            registrations.push(quote! {
+                __registry.mark_refinement(zeo_rt::ClassId(#id));
+            });
+        }
         let mut undefined: Vec<&String> = compiler.class(ClassId(id)).undefined.iter().collect();
         undefined.sort();
         for key in undefined {

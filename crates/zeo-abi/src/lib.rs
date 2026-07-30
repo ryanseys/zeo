@@ -543,6 +543,13 @@ pub const OPENSSL_BUFFERING_MODULE: ClassId = ClassId(143);
 /// `SSLSocket` passes down to the socket underneath.
 pub const OPENSSL_SOCKET_FORWARDER_MODULE: ClassId = ClassId(144);
 
+/// `Refinement` -- what `M.refinements` holds and what a refined method's
+/// `Method#owner` reports. A `Module` subclass with no instances of its
+/// own here: the compiler mints one hidden module per `refine` block and
+/// MARKS it, which is what makes `owner.class` answer `Refinement` while
+/// `Module` still answers for every ordinary module.
+pub const REFINEMENT_CLASS: ClassId = ClassId(145);
+
 /// `Socket::Option` -- one socket option's `(family, level, optname, data)`,
 /// which `BasicSocket#getsockopt` answers.
 pub const SOCKET_OPTION_CLASS: ClassId = ClassId(142);
@@ -1737,6 +1744,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: REFINEMENT_CLASS,
+        name: "Refinement",
+        is_module: false,
+        superclass: Some(MODULE_CLASS),
+        includes: &[],
+        feature: None,
     },
 ];
 
