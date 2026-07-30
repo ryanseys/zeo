@@ -138,7 +138,7 @@ pub use runtime_meta::{
     iter_inline_ok, name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
     runtime_define_singleton_method, send_super_dynamic,
 };
-pub use signal::{Signal, catch_break, home_pop, home_push};
+pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
 pub use builtins::array::{array_pop_checked, array_push_checked, array_shift_checked};
 pub use builtins::enumerable::SumAcc;
 pub use pools::{LitPool, SymPool};

@@ -83,8 +83,62 @@ pub fn home_pop() {
     HOME_STACK.with(|s| {
         if let Some(home) = s.borrow_mut().pop() {
             home.store(false, Ordering::Relaxed);
+            // A `Signal::Return` aimed at this activation can no longer be
+            // absorbed by anyone, so the mark must not outlive it and mislead
+            // the next unwind.
+            RETURN_TARGET.with(|t| {
+                let mut t = t.borrow_mut();
+                if t.as_ref().is_some_and(|h| Arc::ptr_eq(h, &home)) {
+                    *t = None;
+                }
+            });
         }
     });
+}
+
+// Which method activation the `Signal::Return` currently unwinding is aimed at.
+// A `Signal` is a value with nowhere to carry that, and only one return can be
+// in flight per coroutine at a time, so one slot is the whole record. `None`
+// means "unmarked" -- read as "the nearest catcher", which is what every
+// `Signal::Return` this runtime did not raise itself has always meant.
+std::thread_local!(static RETURN_TARGET: RefCell<Option<ProcHome>> = const { RefCell::new(None) });
+
+/// A `return` from a non-lambda `Proc`, aimed at the activation the Proc
+/// captured -- which may be several frames below the one it is unwinding
+/// through.
+///
+/// Marks only an UNMARKED return, which is what tells the proc that raised it
+/// apart from every proc it then unwinds through: the innermost one always gets
+/// here first, and a relay must leave the real target alone. A return raised
+/// anywhere else stays unmarked and so belongs, as it always has, to the
+/// nearest catcher.
+pub(crate) fn signal_return_to(home: &ProcHome, value: RubyValue) -> Signal {
+    RETURN_TARGET.with(|t| {
+        let mut t = t.borrow_mut();
+        if t.is_none() {
+            *t = Some(home.clone());
+        }
+    });
+    Signal::Return(value)
+}
+
+/// Whether the in-flight `Signal::Return` belongs to the activation on top of
+/// the home stack -- asked by a method's catch BEFORE its `home_pop`. An
+/// unmarked return belongs to the nearest catcher, which is the behaviour every
+/// caller had before the mark existed.
+pub fn return_targets_here() -> bool {
+    RETURN_TARGET.with(|t| {
+        let mine = match t.borrow().as_ref() {
+            None => true,
+            Some(target) => {
+                HOME_STACK.with(|s| s.borrow().last().is_some_and(|h| Arc::ptr_eq(h, target)))
+            }
+        };
+        if mine {
+            *t.borrow_mut() = None;
+        }
+        mine
+    })
 }
 
 /// The innermost live home, captured by a `Proc` at construction so its

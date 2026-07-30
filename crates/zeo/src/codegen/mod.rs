@@ -391,9 +391,14 @@ fn wrap_method_return(needs_return_catch: bool, inner: TokenStream) -> TokenStre
         quote! {
             zeo_rt::home_push();
             let __ret = (|| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> { #inner })();
+            // Asked BEFORE the pop, while this activation is still the top of
+            // the home stack: a `Signal::Return` aimed somewhere else is only
+            // passing through and must not be folded into this method's value.
+            let __mine = matches!(__ret, Err(zeo_rt::Signal::Return(_)))
+                && zeo_rt::return_targets_here();
             zeo_rt::home_pop();
             __ret.or_else(|__e| match __e {
-                zeo_rt::Signal::Return(__v) => Ok(__v),
+                zeo_rt::Signal::Return(__v) if __mine => Ok(__v),
                 __e => Err(__e),
             })
         }

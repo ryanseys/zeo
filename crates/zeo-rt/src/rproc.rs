@@ -270,7 +270,12 @@ impl RProc {
                         ],
                     ))
                 }
-                _ => Err(Signal::Return(v)),
+                // A live home: a genuine non-local return, marked so the
+                // activation it is aimed at takes it and any method it unwinds
+                // through leaves it alone. A `None` home means this proc is
+                // only relaying somebody else's, whose mark must stand.
+                Some(home) => Err(crate::signal::signal_return_to(home, v)),
+                None => Err(Signal::Return(v)),
             },
             other => other,
         }

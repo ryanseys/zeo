@@ -546,6 +546,24 @@ pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
     body.iter().any(|&n| node_contains_begin(compiler, n))
 }
 
+/// Whether the subtree at `id` contains a literal `return`, stopping at a
+/// LAMBDA boundary (a `return` there belongs to the lambda). What decides
+/// whether a `begin` really needs the per-method catch: the closure boundary
+/// only traps a `Signal::Return` this method's own `return` raised, and a
+/// method with none can only intercept one meant for somebody else.
+fn contains_return(compiler: &Compiler, id: NodeId) -> bool {
+    match &compiler.hir[id] {
+        HirNode::Return(_) => return true,
+        HirNode::Lambda { .. } | HirNode::Ffi(_) => return false,
+        _ => {}
+    }
+    let mut found = false;
+    compiler.hir[id].for_each_child(&mut |c| {
+        found = found || contains_return(compiler, c);
+    });
+    found
+}
+
 fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         // An FFI wrapper body contains no `begin`.
@@ -555,7 +573,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             rescues: _,
             else_body: _,
             ensure_body: _,
-        } => true,
+        } => contains_return(compiler, id),
         // Same reasoning as `node_contains_escaping_block`'s `Lambda` arm --
         // a lambda's own body is a fully self-contained closure boundary,
         // so a `begin`/`rescue` lexically inside one never requires the
