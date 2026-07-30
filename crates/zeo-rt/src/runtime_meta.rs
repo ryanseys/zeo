@@ -409,6 +409,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     if let Some(owner) = owner {
         return runtime_define_singleton_method(&owner, name, body);
     }
+    crate::method_meta::record_runtime_params(id, crate::MethodKind::Instance, name, &body);
     let m = dynamic_from_proc(id, name, body);
     let frame = current_frame_for(id);
     {
@@ -943,6 +944,12 @@ pub fn runtime_define_singleton_method(
             if crate::dispatch::class_frozen(*cid) {
                 return Err(crate::dispatch::frozen_class_error(*cid));
             }
+            crate::method_meta::record_runtime_params(
+                *cid,
+                crate::MethodKind::Singleton,
+                name,
+                &body,
+            );
             {
                 let mut w = maps().classes.write().unwrap();
                 w.entry(cid.0)
@@ -958,6 +965,7 @@ pub fn runtime_define_singleton_method(
             // object refuses new singleton methods.
             crate::builtins::check_frozen(recv)?;
             let key = obj_identity(o);
+            crate::method_meta::record_singleton_params(key, name, &body);
             let m = dynamic_from_proc(SINGLETON_DEFINING, name, body);
             {
                 let mut w = maps().singletons.write().unwrap();
@@ -979,6 +987,7 @@ pub fn runtime_define_singleton_method(
             if !matches!(other, RubyValue::Nil | RubyValue::Bool(_)) {
                 crate::builtins::check_frozen(recv)?;
             }
+            crate::method_meta::record_singleton_params(key, name, &body);
             {
                 let mut w = maps().value_singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, body);

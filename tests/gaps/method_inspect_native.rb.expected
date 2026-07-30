@@ -1,5 +1,0 @@
--2
-"#<Method: OBJ.only(x, y=...)>"
-[[:req, :x], [:opt, :y]]
--2
-[[:req, :a], [:opt, :b], [:rest, :r]]

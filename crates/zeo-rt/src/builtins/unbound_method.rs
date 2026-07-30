@@ -117,12 +117,12 @@ ruby_class! {
     def "arity"(recv, _a, _b) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Int(
-            crate::method_meta::arity(um.home, um.kind, um.name).unwrap_or(-1),
+            crate::method_meta::arity(None, um.home, um.kind, um.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv, _a, _b) {
         let um = recv_unbound(recv);
-        Ok(crate::method_meta::parameters(um.home, um.kind, um.name)
+        Ok(crate::method_meta::parameters(None, um.home, um.kind, um.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     def "bind"(recv, args, _b) {
@@ -195,7 +195,7 @@ ruby_class! {
                 separator: if um.kind == MethodKind::Singleton { '.' } else { '#' },
                 name: um.name,
                 original: crate::method_meta::alias_origin(um.home, um.kind, um.name),
-                params: crate::method_meta::printable_params(um.home, um.kind, um.name),
+                params: crate::method_meta::printable_params(None, um.home, um.kind, um.name),
                 source: crate::method_meta::source_of(um.home, um.kind, um.name),
             }
             .render(),

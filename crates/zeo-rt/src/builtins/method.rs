@@ -275,7 +275,7 @@ ruby_class! {
     def "to_proc" as m_to_proc (recv, _args, _blk) {
         let m = recv_method(recv);
         let (target, name) = (m.recv.clone(), m.name);
-        let arity = crate::method_meta::arity(m.home, m.kind, m.name).unwrap_or(-1) as i32;
+        let arity = crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
         Ok(RubyValue::Proc(crate::RProc::with_meta(
             move |args: &[RubyValue]| crate::dispatch::send_value(&target, name, args, None),
             arity,
@@ -287,14 +287,14 @@ ruby_class! {
         // A user `def` has a baked descriptor; a builtin has none, so `-1`
         // (var-args) stays the honest catch-all there.
         Ok(RubyValue::Int(
-            crate::method_meta::arity(m.home, m.kind, m.name).unwrap_or(-1),
+            crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1),
         ))
     }
     def "parameters"(recv, _args, _blk) {
         let m = recv_method(recv);
         // Builtins have no baked signature -- CRuby reports them as a lone rest;
         // mirror that so `#parameters` is always an Array.
-        Ok(crate::method_meta::parameters(m.home, m.kind, m.name)
+        Ok(crate::method_meta::parameters(Some(&m.recv), m.home, m.kind, m.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
     // CRuby unbinds to the OWNER, not to the class the method was reached
@@ -445,7 +445,7 @@ ruby_class! {
                 separator,
                 name: m.name,
                 original,
-                params: crate::method_meta::printable_params(m.home, m.kind, m.name),
+                params: crate::method_meta::printable_params(Some(&m.recv), m.home, m.kind, m.name),
                 source: crate::method_meta::source_of(m.home, m.kind, m.name),
             }
             .render(),

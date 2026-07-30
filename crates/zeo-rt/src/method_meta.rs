@@ -31,6 +31,22 @@ pub enum ParamKind {
 }
 
 impl ParamKind {
+    /// The inverse of [`ParamKind::tag`] -- how a `Proc`'s own parameter
+    /// metadata spells the same kinds, which is the form a RUNTIME-defined
+    /// body's signature arrives in.
+    fn from_tag(tag: &str) -> Option<ParamKind> {
+        Some(match tag {
+            "req" => ParamKind::Req,
+            "opt" => ParamKind::Opt,
+            "rest" => ParamKind::Rest,
+            "keyreq" => ParamKind::KeyReq,
+            "key" => ParamKind::Key,
+            "keyrest" => ParamKind::KeyRest,
+            "block" => ParamKind::Block,
+            _ => return None,
+        })
+    }
+
     fn tag(self) -> &'static str {
         match self {
             ParamKind::Req => "req",
@@ -226,6 +242,55 @@ pub fn register_meta_rows(rows: &'static [MetaRow]) {
 static META: LazyLock<RwLock<FMap<MethodKey, Arc<MethodMeta>>>> =
     LazyLock::new(|| RwLock::new(FMap::default()));
 
+/// The signature of a body installed on ONE OBJECT -- `def obj.m(x, y = 1)`,
+/// `obj.define_singleton_method`, `def SOME_ARRAY.pick` -- keyed by the same
+/// heap identity the method itself is stored under. It cannot go in [`META`]:
+/// that table is keyed by class, and a per-object singleton would then claim to
+/// describe every instance of the object's class.
+static SINGLETON_PARAMS: LazyLock<RwLock<FMap<usize, FMap<Symbol, Descriptor>>>> =
+    LazyLock::new(|| RwLock::new(FMap::default()));
+
+/// A `Proc`'s parameter metadata as a method [`Descriptor`]. Codegen records a
+/// proc's kinds in Ruby's canonical (lambda) spelling, which is the spelling a
+/// method reports, so the two need no translation beyond the tag.
+pub(crate) fn descriptor_from_proc(body: &crate::RProc) -> Descriptor {
+    body.parameters()
+        .iter()
+        .filter_map(|p| Some((ParamKind::from_tag(p.kind)?, p.name.map(str::to_string))))
+        .collect()
+}
+
+/// Record what a runtime `def obj.name` / `define_singleton_method` installed on
+/// the object with heap identity `key`. See [`SINGLETON_PARAMS`].
+pub(crate) fn record_singleton_params(key: usize, name: Symbol, body: &crate::RProc) {
+    SINGLETON_PARAMS
+        .write()
+        .entry(key)
+        .or_default()
+        .insert(name, descriptor_from_proc(body));
+}
+
+/// Record what a runtime `define_method` / `class_eval`-`def` installed on
+/// `class`. Keyed like any compiled `def`, so every reader reaches it already.
+pub(crate) fn record_runtime_params(class: ClassId, kind: MethodKind, name: Symbol, body: &crate::RProc) {
+    let key = MethodKey { class: class.0, kind, name };
+    let meta = MethodMeta {
+        key,
+        params: descriptor_from_proc(body),
+        source: None,
+        original_name: None,
+    };
+    META.write().insert(key, Arc::new(meta));
+}
+
+/// The signature a per-object singleton on `recv` carries, if the runtime
+/// installed one there. Asked BEFORE the class-keyed tables, because a
+/// `def obj.m` shadows whatever the object's class says about `m`.
+fn singleton_descriptor(recv: &RubyValue, name: Symbol) -> Option<Descriptor> {
+    let key = crate::runtime_meta::value_identity(recv)?;
+    SINGLETON_PARAMS.read().get(&key)?.get(&name).cloned()
+}
+
 /// The row for `name` as resolved on `class`, walking the ancestry so an
 /// inherited method resolves against the ancestor that defined it (matching
 /// dispatch). `None` when the compiler registered nothing -- a builtin, a
@@ -237,10 +302,21 @@ pub fn lookup(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Arc<Meth
         .find_map(|&anc| map.get(&MethodKey { class: anc.0, kind, name }).cloned())
 }
 
-/// The parameter descriptor for `name` on `class`. Struct/Data member
-/// accessors are dispatched dynamically with no registration of their own, so
-/// their shape is derived from the struct meta instead.
-fn descriptor_of(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Descriptor> {
+/// The parameter descriptor for `name` on `class`, as reached through `recv`
+/// (`None` for an UnboundMethod, which has no receiver). A per-object singleton
+/// is asked for first, since `def obj.m` shadows whatever the object's class
+/// says about `m`. Struct/Data member accessors are dispatched dynamically with
+/// no registration of their own, so their shape is derived from the struct meta
+/// instead.
+fn descriptor_of(
+    recv: Option<&RubyValue>,
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> Option<Descriptor> {
+    if let Some(d) = recv.and_then(|r| singleton_descriptor(r, name)) {
+        return Some(d);
+    }
     if let Some(meta) = lookup(class, kind, name) {
         return Some(meta.params.clone());
     }
@@ -253,8 +329,13 @@ fn descriptor_of(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Descr
 /// positional, a rest, or a keyword-rest; optional keywords alone do NOT flip
 /// the sign). `None` for a method with no registered descriptor (a builtin),
 /// letting the caller fall back to its `-1` catch-all.
-pub fn arity(class: ClassId, kind: MethodKind, name: Symbol) -> Option<i64> {
-    if let Some(d) = descriptor_of(class, kind, name) {
+pub fn arity(
+    recv: Option<&RubyValue>,
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> Option<i64> {
+    if let Some(d) = descriptor_of(recv, class, kind, name) {
         return Some(arity_of(&d));
     }
     builtin_arity(class, kind, name)
@@ -308,8 +389,13 @@ pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
 /// so its shape is synthesized from its declared arity the way CRuby reports a
 /// C function: `n >= 0` mandatory anonymous slots, or `-n-1` of them followed
 /// by a rest.
-pub fn parameters(class: ClassId, kind: MethodKind, name: Symbol) -> Option<RubyValue> {
-    let d = descriptor_of(class, kind, name)
+pub fn parameters(
+    recv: Option<&RubyValue>,
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> Option<RubyValue> {
+    let d = descriptor_of(recv, class, kind, name)
         .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))?;
     let pairs = d
         .into_iter()
@@ -436,8 +522,13 @@ fn render_params(params: &Descriptor) -> String {
 
 /// The signature to PRINT for `class`'s `name`: the compiler's descriptor when
 /// there is one, else the placeholders derived from a native method's arity.
-pub(crate) fn printable_params(class: ClassId, kind: MethodKind, name: Symbol) -> Descriptor {
-    descriptor_of(class, kind, name)
+pub(crate) fn printable_params(
+    recv: Option<&RubyValue>,
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> Descriptor {
+    descriptor_of(recv, class, kind, name)
         .or_else(|| builtin_arity(class, kind, name).map(anonymous_descriptor))
         .unwrap_or_default()
 }
