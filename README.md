@@ -177,17 +177,17 @@ the Ruby source came from:
 
 - **git-pinned** — fetched by `cargo xtask gem` at a `rev` recorded in
   `gems.toml`, the reproducible pin.
-- **upstream** — file-copied verbatim from ruby 4.0.6's default and bundled
-  gems.
-- **upstream +zeo** — the same, with deviations marked `zeo:` at each site.
+- **upstream** — file-copied verbatim from a Ruby installation's default and
+  bundled gems (4.0.5 for most, 4.0.6 for irb, minitest and reline).
+- **upstream +zeo** — the same, with each deviation marked `zeo:` at its site.
 - **zeo Ruby half** — the `.rb` is zeo's; the native half is a Rust extension
   under `crates/zeo-rt/src/ext/` (the split CRuby makes between `rubylibdir`
   and `archdir`).
 
-**Verified by** names a golden test that compiles the gem and diffs its output
-against real ruby 4.0.6, byte for byte. A `—` means no golden asserts this
-gem's behaviour on its own — several are exercised only as another gem's
-dependency. See `gems/UPSTREAM.md` for full provenance and licensing.
+**Verified by** names a golden under `tests/` that compiles the gem and diffs
+its output against real ruby 4.0.6, byte for byte. A `—` means no golden
+asserts this gem's behaviour on its own — several are exercised only as another
+gem's dependency. See `gems/UPSTREAM.md` for full provenance and licensing.
 
 | gem | version | origin | verified by | divergences |
 |---|---|---|---|---|
@@ -209,7 +209,7 @@ dependency. See `gems/UPSTREAM.md` for full provenance and licensing.
 | irb | 1.18.0 | upstream | — | compiles; stops at an anonymous runtime refinement ([gap](tests/gaps/issue_runtime_refinement_module.rb)) |
 | json | 2.18.0 | zeo Ruby half | `json_to_json.rb` | `serde_json`, not the json gem ([compat](docs/COMPATIBILITY.md)) |
 | logger | 1.7.0 | git-pinned | `issue_logger_missing.rb` | — |
-| minitest | 6.0.6 | upstream | `gem_minitest.rb` | `autorun` compiles in the `MT_HELL` branch |
+| minitest | 6.0.6 | upstream | `gem_minitest.rb` | whole-program compile takes `autorun`'s `MT_HELL` branch, which prints a NOTE to stderr |
 | monitor | 0.1.0 | zeo Ruby half | `gem_two_halves.rb` | `Monitor` + `MonitorMixin` only |
 | net-ftp | 0.3.9 | git-pinned | `issue_net_ftp_missing.rb` | — |
 | net-http | 0.9.1 | git-pinned | `gem_net_http.rb` | — |
@@ -277,7 +277,7 @@ per-library reason.
 | fcntl | `fcntl` | `ext-fcntl` | `libc` |
 | ffi | `ffi` | `ext-ffi` | `libffi` (vendored) |
 | json | `json` | `ext-json` | `serde_json` |
-| monitor | `monitor` | `ext-monitor` | `parking_lot` |
+| monitor | `monitor` | `ext-monitor` | zeo's own thread primitives |
 | nkf | `nkf`, `kconv` | `ext-nkf` | zeo's encoding engine |
 | openssl | `openssl` | `ext-openssl` | vendored OpenSSL 3 via rust-openssl |
 | pathname | `pathname` | `ext-pathname` | in-tree |
@@ -315,8 +315,8 @@ pays ~35 ms of boot. Shipping a binary is a genuine advantage, but it is not a
 claim about generated code — and on compute-bound work zeo currently trails
 CRuby by a little. 32 of 58 are faster, 26 slower.
 
-Best: `pidigits` 9.5×, `micro_lisp` and `bigint_fib` 9.0×, `sinatra_mini`
-9.3×, `jekyll_lite` 7.6× (all startup-dominated); `range_each` 3.0×,
+Best: `pidigits` 9.5×, `sinatra_mini` 9.3×, `micro_lisp` and `bigint_fib`
+9.0×, `jekyll_lite` 7.6× (all startup-dominated); `range_each` 3.0×,
 `so_mandelbrot` 3.1× and `nested_loop` 2.2× on real work. Worst:
 `io_wordcount` 0.20×, `structaset` 0.30×, `structaref` 0.34×, `template`
 0.43×. The Struct and string paths are named levers in

@@ -137,10 +137,16 @@ compensating notes from `tests/e2e/gems_vendored.rs`.
 
 ## Performance
 
-The four-session overhaul is complete; its cumulative result (bench geomean
-≈ −60% against the pre-overhaul baseline, most benchmarks now beating CRuby) is
-banked in `bench/baseline.tsv` and `bench/compile-baseline.tsv`. See
-[`bench/README.md`](../bench/README.md) for the current standing.
+The four-session overhaul is complete; its cumulative result — bench geomean
+≈ −60% against zeo's own pre-overhaul baseline — is banked in
+`bench/baseline.tsv` and `bench/compile-baseline.tsv`.
+
+Measured against CRuby 4.0.6 rather than against zeo's past, the standing is
+more sober: **1.29× faster over all 58 benchmarks, but 0.86× — about 16%
+slower — over the 37 where CRuby takes more than 100 ms.** The difference is
+process startup on 13 sub-50 ms benchmarks. 32 of 58 are faster, 26 slower.
+Levers 1 and 2 below are aimed squarely at that compute-bound deficit. Full
+table and method: [`bench/README.md`](../bench/README.md).
 
 Six levers, ordered by expected value. Evidence cites the banked baselines;
 anything not yet root-caused says so.
