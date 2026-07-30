@@ -1,0 +1,8 @@
+before
+caught uninitialized constant Registry::Undefined
+after
+[:top, :guarded, :after_if, :in_case, :after_case, :nested, :after_nested]
+[0, 1]
+"Registry"
+true
+Object

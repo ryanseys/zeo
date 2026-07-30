@@ -2217,7 +2217,13 @@ fn inline_class_markers(
                 }
             }
             crate::hir::HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
-            _ => {}
+            // Every other statement container -- a `begin`, an `if`, a `case`,
+            // a loop, a block. A class written inside one runs where it is
+            // written, which for a block means each time the block runs. Only
+            // a `def`'s body is a separate function that waits to be called,
+            // so that is where the walk stops.
+            crate::hir::HirNode::DefMethod { .. } => {}
+            other => other.for_each_child(&mut |c| work.push(c)),
         }
     }
     seen
