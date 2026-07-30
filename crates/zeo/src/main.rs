@@ -311,9 +311,9 @@ fn run() -> Result<(), MainError> {
     let linkage = Linkage::Static;
 
     // Which runtime variant this program's binary links: the lean, parser-free
-    // default, or the prism-backed `eval-vm` one iff the compiler saw a runtime
-    // eval site. The single mapping point for both build paths below.
-    let runtime = Runtime::for_eval(compiled.needs_eval_vm);
+    // default, or the prism-linked `eval-vm` one iff the program reaches prism
+    // at runtime. The single mapping point for both build paths below.
+    let runtime = Runtime::for_prism(compiled.needs_prism_runtime);
 
     // `-e` without `-o`: compile to a throwaway binary, run it, and exit with
     // ITS status (stdout/stderr stream straight through) -- the

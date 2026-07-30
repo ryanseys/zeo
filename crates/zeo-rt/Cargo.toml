@@ -153,8 +153,15 @@ ext-all = [
     "ext-bigdecimal",
     "ext-coverage",
     "ext-tracepoint",
+    "ext-prism",
 ]
 ext-base64 = []
+# The prism gem's native half. Deliberately NOT `["dep:ruby-prism"]`: that
+# would drag the C library into the LEAN runtime through `ext-all`, and
+# "lean" means parser-free. The module is compiled only where the library
+# already is -- the `eval-vm` variant -- and `Hir::uses_runtime_eval` puts
+# a program that requires the gem on that variant.
+ext-prism = []
 ext-coverage = []
 ext-tracepoint = []
 ext-etc = []

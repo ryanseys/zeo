@@ -318,7 +318,7 @@ fn compile_and_run(
         std::process::id(),
         std::thread::current().id()
     ));
-    let runtime = zeo::backend::Runtime::for_eval(compiled.needs_eval_vm);
+    let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
     // Golden binaries are throwaway: link the runtime DYNAMICALLY (shared dylib,
     // ~100KB each) to keep the bin-cache small. See `run_ruby_packages`.
     let linkage = zeo::backend::Linkage::Dynamic;

@@ -83,12 +83,12 @@ pub struct CompileOptions {
 #[derive(Debug)]
 pub struct CompileOutput {
     pub rust_source: String,
-    /// Whether this program can reach the runtime eval VM (see
-    /// `Hir::uses_runtime_eval`). Selects which `backend::Runtime` variant the
-    /// binary links: `true` -> the prism-backed `eval-vm` runtime, `false` ->
-    /// the lean, parser-free default. The build step maps it via
-    /// `backend::Runtime::for_eval`.
-    pub needs_eval_vm: bool,
+    /// Whether this program needs prism at RUNTIME -- a runtime eval site,
+    /// or `require "prism"` (see `Hir::needs_prism_runtime`). Selects which
+    /// `backend::Runtime` variant the binary links: `true` -> the
+    /// prism-linked `eval-vm` runtime, `false` -> the lean, parser-free
+    /// default. The build step maps it via `backend::Runtime::for_prism`.
+    pub needs_prism_runtime: bool,
 }
 
 /// The full parse -> analyze -> codegen pipeline: Ruby source in, formatted
@@ -159,7 +159,7 @@ fn compile_on_this_thread(
     // Computed from the arena BEFORE `analyze` consumes it: a whole-program
     // fact (does any eval site survive lowering?), so it belongs here rather
     // than downstream where the arena is already owned by `Analyzed`.
-    let needs_eval_vm = hir.uses_runtime_eval();
+    let needs_prism_runtime = hir.needs_prism_runtime();
     let t_analyze_start = std::time::Instant::now();
     let analyzed = analyze::analyze(hir, root)?;
     let t_analyze = t_analyze_start.elapsed();
@@ -181,6 +181,6 @@ fn compile_on_this_thread(
     }
     Ok(CompileOutput {
         rust_source,
-        needs_eval_vm,
+        needs_prism_runtime,
     })
 }

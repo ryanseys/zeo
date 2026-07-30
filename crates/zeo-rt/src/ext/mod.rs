@@ -85,6 +85,10 @@ pub(crate) mod json;
 pub(crate) mod monitor;
 #[cfg(feature = "ext-nkf")]
 pub(crate) mod nkf;
+// Both features: the module calls the prism C library, which only the
+// `eval-vm` variant links. See `ext-prism` in Cargo.toml.
+#[cfg(all(feature = "ext-prism", feature = "eval-vm"))]
+pub(crate) mod prism;
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
 #[cfg(feature = "ext-pathname")]

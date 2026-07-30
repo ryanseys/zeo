@@ -55,10 +55,18 @@ requires `reline/io/ansi` at the top rather than inside `decide_io_gate`,
 since a whole-program AOT compile does not load a library that only a method
 body requires, and that gate is what every non-dumb terminal goes through.
 
-irb is deliberately NOT vendored: every version since 1.15 reads Ruby source
-through a Ruby-level Prism (`Prism.lex_compat`, a `Prism::Visitor` subclass),
-and zeo exposes no such API -- it embeds prism as a Rust crate, for its own
-front end. See `tests/gaps/issue_irb_missing.rb`.
+`prism/` is vendored from the prism 1.9.0 gem bundled with ruby 4.0.6 -- the
+whole Ruby half, which is where the node classes, the visitors and the
+deserializer live. Upstream picks between two backends over one C library (a
+C extension on CRuby, FFI everywhere else); both reduce to a handful of
+`pm_serialize_*` calls returning a buffer that `Prism::Serialize` decodes in
+Ruby. zeo takes a third branch of the same shape: `lib/prism/zeo.rb` is
+zeo-authored, adapted from upstream's `ffi.rb` with its option packing kept
+verbatim, and calls the built-in `Prism::Zeo` module (`ext-prism` in zeo-rt)
+over the SAME prism zeo's own front end parses with. Two removals, marked in
+`lib/prism.rb`: `lib/prism/translation/` (the `parser`- and `ripper`-gem
+adapters, which subclass third-party gems zeo does not ship) and
+`lib/prism/ffi.rb` (its backend, replaced).
 
 When bumping the oracle Ruby, re-vendor the first table from the new
 installation and update the versions here.

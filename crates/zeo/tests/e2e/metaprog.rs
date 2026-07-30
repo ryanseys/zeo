@@ -214,17 +214,18 @@ fn eval_of_a_non_literal_argument_runs_in_the_vm() {
     assert_eq!(result.stdout, "42\n");
 }
 
-/// The `needs_eval_vm` verdict drives `backend::Runtime` selection: `true` links
-/// the prism-backed runtime, `false` keeps the binary lean. This asserts the
-/// decision itself (not just that programs run), because a false negative would
-/// ship a lean binary whose `eval` is a `NotImplementedError` stub, and a false
-/// positive needlessly drags prism into an eval-free binary.
+/// The `needs_prism_runtime` verdict drives `backend::Runtime` selection:
+/// `true` links the prism-backed runtime, `false` keeps the binary lean. This
+/// asserts the decision itself (not just that programs run), because a false
+/// negative would ship a lean binary whose `eval` is a `NotImplementedError`
+/// stub -- or, for `require "prism"`, one that does not LINK -- and a false
+/// positive needlessly drags prism into a binary that never reaches it.
 #[test]
-fn needs_eval_vm_selects_the_runtime_variant() {
+fn needs_prism_runtime_selects_the_runtime_variant() {
     let needs = |src: &str| {
         zeo::compile_to_rust_with(src, &Default::default())
             .expect("compiles")
-            .needs_eval_vm
+            .needs_prism_runtime
     };
 
     // No eval anywhere -> lean.

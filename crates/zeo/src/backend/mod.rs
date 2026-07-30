@@ -582,13 +582,15 @@ impl GenOpt {
 /// parser-free, no `ruby-prism`, so the vast majority of programs (which never
 /// reach a runtime `eval`) ship a small binary. `Eval` adds the `eval-vm`
 /// feature -- and with it prism, a C library pulled in via bindgen/cc -- for the
-/// programs `zeo` detects can reach the runtime eval VM
-/// (`CompileOutput::needs_eval_vm`). The two are built into SEPARATE target dirs
+/// programs `zeo` detects need prism at runtime: a runtime eval site, or a
+/// `require "prism"` (`CompileOutput::needs_prism_runtime`). It keeps the
+/// CARGO FEATURE's name, which is what it turns on; what has widened is the
+/// set of reasons to want it. The two are built into SEPARATE target dirs
 /// (see `variant_target_dir`) precisely because cargo cannot hold both feature
 /// sets in one `target/<profile>/` at once.
 ///
 /// Passed explicitly, like `Profile`: only the caller that compiled
-/// the program knows whether it reached an eval site.
+/// the program knows whether it reaches prism.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Runtime {
     Lean,
@@ -596,10 +598,13 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    /// Map the compiler's `needs_eval_vm` verdict to a variant. The single
-    /// place the boolean becomes a runtime choice, so every caller agrees.
-    pub fn for_eval(needs_eval_vm: bool) -> Self {
-        if needs_eval_vm {
+    /// Map the compiler's `needs_prism_runtime` verdict to a variant. The
+    /// single place the boolean becomes a runtime choice, so every caller
+    /// agrees. The variant keeps the CARGO FEATURE's name (`eval-vm`), which
+    /// is what it actually turns on; what has widened is the set of reasons
+    /// a program needs it.
+    pub fn for_prism(needs_prism: bool) -> Self {
+        if needs_prism {
             Runtime::Eval
         } else {
             Runtime::Lean

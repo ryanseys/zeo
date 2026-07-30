@@ -437,9 +437,21 @@ impl Hir {
         format!("{prefix}{}", self.nodes.len())
     }
 
-    /// Whether this program can reach the RUNTIME eval VM -- the signal
-    /// `backend::Runtime` uses to decide whether the final binary must link the
-    /// prism-backed `eval-vm` runtime variant, or can stay lean (parser-free).
+    /// Whether the final binary must link the PRISM-BACKED runtime variant,
+    /// or can stay lean (parser-free) -- what `backend::Runtime` decides
+    /// from.
+    ///
+    /// Two things reach prism, and they are separate questions. The runtime
+    /// eval VM is one ([`Hir::uses_runtime_eval`]). The other is `require
+    /// "prism"`, whose `ext-prism` module calls the same C library's
+    /// serialize entry points: the lean variant does not link it, so such a
+    /// program would otherwise fail at LINK time, where no message can
+    /// explain itself.
+    pub fn needs_prism_runtime(&self) -> bool {
+        self.activated_features.contains("prism") || self.uses_runtime_eval()
+    }
+
+    /// Whether this program can reach the RUNTIME eval VM.
     ///
     /// Only two builtins funnel into `zeo_rt::eval_value`/`eval_string` (the
     /// sole prism users): `Kernel#eval` and string-form `instance_eval`. A
