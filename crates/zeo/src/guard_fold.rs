@@ -211,6 +211,11 @@ fn static_string(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeI
         HirNode::StringLit(_) => string_lit(compiler, node),
         HirNode::ClassRef(name) => match name.as_str() {
             "RUBY_VERSION" | "RUBY_ENGINE_VERSION" => Some(zeo_abi::RUBY_VERSION.to_string()),
+            // `if RUBY_ENGINE == "truffleruby"` is the other compat gate a
+            // gem writes around a whole `class`/`def`, and it decides the
+            // same way the runtime seeds it (see `bootstrap`'s `ENGINE`:
+            // zeo reports MRI's identity, so a gem takes its CRuby path).
+            "RUBY_ENGINE" => Some("ruby".to_string()),
             _ if name.contains("::") => const_string(compiler, cref, box_id, name),
             _ => const_init(compiler, cref, box_id, None, name)
                 .and_then(|(_, v)| string_lit(compiler, v)),
