@@ -3,7 +3,10 @@
 //! ```text
 //! OpenSSL::SSL                 the verify/version/option constants (here)
 //!  ├ ::SSLContext              configuration                  (context.rs)
-//!  └ ::SSLSocket               a session over a connected IO    (socket.rs)
+//!  ├ ::SSLSocket               a session over a connected IO    (socket.rs)
+//!  └ ::SocketForwarder    what the socket underneath answers
+//!                                                  (socket_forwarder.rs)
+//! OpenSSL::Buffering           the buffered IO surface       (buffering.rs)
 //! OpenSSL::X509                the verify-result codes           (x509.rs)
 //!  ├ ::Store                   the CA trust store               (store.rs)
 //!  └ ::Certificate             a peer certificate                (cert.rs)
@@ -20,16 +23,18 @@
 //! `to_io.wait_readable`) and closing follows Ruby's `sync_close` rule
 //! instead of Rust's drop order.
 //!
-//! The buffered reader surface CRuby mixes in from `OpenSSL::Buffering` is
-//! implemented natively on `SSLSocket`. Two consequences, both documented:
-//! `Buffering` is not a separate module in the ancestry, and
-//! `read_nonblock`/`write_nonblock` read and write a BLOCKING descriptor
-//! (they never answer `:wait_readable`), so a caller's socket timeout does
-//! not interrupt them.
+//! `SSLSocket` supplies only the three unbuffered primitives -- `sysread`,
+//! `syswrite`, `sysclose` -- and mixes in `Buffering` for everything above
+//! them, which is how CRuby divides the same work. One documented
+//! consequence remains: `read_nonblock`/`write_nonblock` read and write a
+//! BLOCKING descriptor (they never answer `:wait_readable`), so a caller's
+//! socket timeout does not interrupt them.
 
+pub(crate) mod buffering;
 pub(crate) mod cert;
 pub(crate) mod context;
 pub(crate) mod socket;
+pub(crate) mod socket_forwarder;
 pub(crate) mod store;
 pub(crate) mod x509;
 
@@ -138,6 +143,11 @@ pub(crate) struct SockState {
 pub(crate) struct RSslSocket {
     pub(crate) st: Mutex<SockState>,
     pub(crate) frozen: AtomicBool,
+    /// Ruby-visible ivars, by name without the `@`. A hand-written native
+    /// object has none by default, which left `OpenSSL::Buffering` no place
+    /// to keep the pushback `ungetc` needs and no place for a subclass to
+    /// keep its own state.
+    pub(crate) ivars: Mutex<Vec<(String, RubyValue)>>,
 }
 
 fn version_of(raw: i64) -> Option<SslVersion> {

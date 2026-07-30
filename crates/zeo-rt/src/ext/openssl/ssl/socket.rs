@@ -33,8 +33,49 @@ impl RubyObject for RSslSocket {
         self.frozen.store(true, Ordering::Relaxed)
     }
     fn ivar_values(&self) -> Vec<RubyValue> {
+        self.ivar_pairs().into_iter().map(|(_, v)| v).collect()
+    }
+    // `@context` then `@io` -- CRuby's own order, and they read through to the
+    // native state rather than the map. Everything after is what `Buffering`
+    // or a subclass stored.
+    fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
         let st = self.st.lock();
-        vec![st.io.clone(), st.ctx.clone()]
+        let mut pairs = vec![
+            ("@context".to_string(), st.ctx.clone()),
+            ("@io".to_string(), st.io.clone()),
+        ];
+        pairs.extend(
+            self.ivars
+                .lock()
+                .iter()
+                .map(|(k, v)| (format!("@{k}"), v.clone())),
+        );
+        pairs
+    }
+    fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
+        match name {
+            "io" => Some(self.st.lock().io.clone()),
+            "context" => Some(self.st.lock().ctx.clone()),
+            _ => self
+                .ivars
+                .lock()
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone()),
+        }
+    }
+    fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
+        let mut ivars = self.ivars.lock();
+        match ivars.iter_mut().find(|(k, _)| k == name) {
+            Some(slot) => slot.1 = v,
+            None => ivars.push((name.to_string(), v)),
+        }
+        true
+    }
+    fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
+        let mut ivars = self.ivars.lock();
+        let at = ivars.iter().position(|(k, _)| k == name)?;
+        Some(ivars.remove(at).1)
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         // A live TLS session cannot be duplicated (CRuby's cannot either):
@@ -50,6 +91,7 @@ impl RubyObject for RSslSocket {
                 stream: None,
             }),
             frozen: AtomicBool::new(false),
+            ivars: Mutex::new(Vec::new()),
         })
     }
 }
@@ -113,11 +155,6 @@ fn read_some(recv: &RubyValue, len: usize) -> Result<Vec<u8>, Signal> {
 /// Relay a call to the underlying socket -- upstream's `SocketForwarder`,
 /// which delegates the whole descriptor-level family to `to_io` because a
 /// TLS session has nothing of its own to say about any of it.
-fn forward(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    let io = sock_of(recv).st.lock().io.clone();
-    crate::dispatch::send_value_in(0, &io, crate::Symbol::intern(name), args, None)
-}
-
 fn write_all(recv: &RubyValue, data: &[u8]) -> Result<(), Signal> {
     let mut st = sock_of(recv).st.lock();
     let stream = established(&mut st)?;
@@ -148,6 +185,13 @@ ruby_class! {
                 stream: None,
             }),
             frozen: AtomicBool::new(false),
+            // The three slots `Buffering#initialize` seeds, so a fresh socket
+            // reports CRuby's own `instance_variables`.
+            ivars: Mutex::new(vec![
+                ("eof".to_string(), RubyValue::Bool(false)),
+                ("rbuffer".to_string(), bin_str(Vec::new())),
+                ("sync".to_string(), RubyValue::Bool(true)),
+            ]),
         })))
     }
 
@@ -191,79 +235,15 @@ ruby_class! {
         Ok(sock_of(recv).st.lock().io.clone())
     }
 
-    // The SocketForwarder family: descriptor-level questions belong to the
-    // socket underneath, not to the TLS session.
-    def "closed?" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "closed?", args)
-    }
-    def "fileno" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "fileno", args)
-    }
-    def "addr" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "addr", args)
-    }
-    def "peeraddr" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "peeraddr", args)
-    }
-    def "local_address" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "local_address", args)
-    }
-    def "remote_address" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "remote_address", args)
-    }
-    def "setsockopt" (recv, args, _block) {
-        arity!(args, 3);
-        forward(recv, "setsockopt", args)
-    }
-    def "getsockopt" (recv, args, _block) {
-        arity!(args, 2);
-        forward(recv, "getsockopt", args)
-    }
-    def "fcntl" arity -1 (recv, args, _block) {
-        forward(recv, "fcntl", args)
-    }
-    def "close_on_exec=" (recv, args, _block) {
-        arity!(args, 1);
-        forward(recv, "close_on_exec=", args)
-    }
-    def "close_on_exec?" (recv, args, _block) {
-        arity!(args, 0);
-        forward(recv, "close_on_exec?", args)
-    }
-    def "do_not_reverse_lookup=" (recv, args, _block) {
-        arity!(args, 1);
-        forward(recv, "do_not_reverse_lookup=", args)
-    }
-    def "wait" arity -1 (recv, args, _block) {
-        forward(recv, "wait", args)
-    }
-    def "wait_readable" arity -1 (recv, args, _block) {
-        forward(recv, "wait_readable", args)
-    }
-    def "wait_writable" arity -1 (recv, args, _block) {
-        forward(recv, "wait_writable", args)
-    }
     def "context" (recv, args, _block) {
         arity!(args, 0);
         Ok(sock_of(recv).st.lock().ctx.clone())
     }
-    // Writes go straight to the session, so sync is always true.
-    def "sync" (_recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Bool(true))
-    }
-    def "sync=" (_recv, args, _block) {
-        arity!(args, 1);
-        Ok(args[0].clone())
-    }
 
-    def "write" | "syswrite" | "write_nonblock" | "print" (recv, args, _block) {
+    // The three unbuffered primitives `OpenSSL::Buffering` is written
+    // against. Everything above them -- read/gets/puts/each_line/... -- lives
+    // in that module, where CRuby puts it.
+    def "syswrite" arity -1 (recv, args, _block) {
         let mut total = 0i64;
         for arg in args {
             // A trailing kwargs hash is `exception: false`, not data.
@@ -276,69 +256,9 @@ ruby_class! {
         }
         Ok(RubyValue::Int(total))
     }
-    def "<<" (recv, args, _block) {
-        arity!(args, 1);
-        let data = str_bytes(&args[0])?;
-        write_all(recv, &data)?;
-        Ok(recv.clone())
-    }
-    def "puts" (recv, args, _block) {
-        let mut out = Vec::new();
-        if args.is_empty() {
-            out.push(b'\n');
-        }
-        for arg in args {
-            let mut data = str_bytes(arg)?;
-            if !data.ends_with(b"\n") {
-                data.push(b'\n');
-            }
-            out.extend_from_slice(&data);
-        }
-        write_all(recv, &out)?;
-        Ok(RubyValue::Nil)
-    }
-    def "flush" (recv, args, _block) {
-        arity!(args, 0);
-        Ok(recv.clone())
-    }
-
-    // `read(len = nil)` -- to end of session without a length, exactly
-    // `len` bytes (short at the end) with one, `nil` at the end for a
-    // positive length.
-    def "read" arity -1 (recv, args, _block) {
-        arity!(args, 0..=2);
-        let len = match args.first() {
-            None | Some(RubyValue::Nil) => None,
-            Some(v) => Some(convert::to_index(v)? as usize),
-        };
-        let mut out = Vec::new();
-        match len {
-            None => loop {
-                // One SSL_read answers at most one record, so drain.
-                let chunk = read_some(recv, 16384)?;
-                if chunk.is_empty() {
-                    break;
-                }
-                out.extend_from_slice(&chunk);
-            },
-            Some(want) => {
-                while out.len() < want {
-                    let chunk = read_some(recv, want - out.len())?;
-                    if chunk.is_empty() {
-                        break;
-                    }
-                    out.extend_from_slice(&chunk);
-                }
-                if out.is_empty() && want > 0 {
-                    return Ok(RubyValue::Nil);
-                }
-            }
-        }
-        Ok(bin_str(out))
-    }
     // One record's worth, blocking until something arrives; EOFError at the
     // end of the session, as CRuby's sysread does.
-    def "sysread" | "readpartial" | "read_nonblock" arity -1 (recv, args, _block) {
+    def "sysread" arity -1 (recv, args, _block) {
         arity!(args, 0..=3);
         let len = match args.first() {
             None | Some(RubyValue::Nil) => 16384,
@@ -349,36 +269,6 @@ ruby_class! {
             return Err(raise_error("EOFError", "end of file reached".to_string()));
         }
         Ok(bin_str(chunk))
-    }
-    // One line, up to and including the separator.
-    def "gets" arity -1 (recv, args, _block) {
-        arity!(args, 0..=2);
-        let sep = match args.first() {
-            None => b'\n',
-            Some(RubyValue::Nil) => b'\n',
-            Some(v) => *str_bytes(v)?.last().unwrap_or(&b'\n'),
-        };
-        let mut out = Vec::new();
-        loop {
-            let byte = read_some(recv, 1)?;
-            if byte.is_empty() {
-                break;
-            }
-            out.push(byte[0]);
-            if byte[0] == sep {
-                break;
-            }
-        }
-        if out.is_empty() {
-            return Ok(RubyValue::Nil);
-        }
-        Ok(bin_str(out))
-    }
-    // The session is closed, not the peer's stream end -- see the module
-    // doc; a caller that needs true EOF reads until `read` answers empty.
-    def "eof?" | "eof" (recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Bool(sock_of(recv).st.lock().stream.is_none()))
     }
 
     // TLS session facts.
@@ -454,8 +344,8 @@ ruby_class! {
     }
 
     // Shut the session down; the underlying IO closes only under
-    // `sync_close`, CRuby's rule.
-    def "close" | "sysclose" (recv, args, _block) {
+    // `sync_close`, CRuby's rule. `Buffering#close` flushes and calls this.
+    def "sysclose" (recv, args, _block) {
         arity!(args, 0);
         let (io, sync_close) = {
             let mut st = sock_of(recv).st.lock();

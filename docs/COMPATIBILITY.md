@@ -384,9 +384,6 @@ Divergences:
   context's `ca_file` or, failing that, the first existing system CA
   bundle (the probe list from upstream's own `openssl.rb`, since a
   vendored library's compiled-in cert path belongs to the build machine).
-- **`OpenSSL::Buffering` is not a module in the ancestry**: the buffered
-  IO surface (`read`/`gets`/`puts`/`readpartial`/…) is implemented
-  directly on `SSLSocket`.
 - **`read_nonblock`/`write_nonblock`/`connect_nonblock` block.** They
   drive a blocking descriptor and never answer `:wait_readable`, so a
   caller's own socket timeout does not interrupt them.

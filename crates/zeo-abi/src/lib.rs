@@ -536,6 +536,13 @@ pub const OPENSSL_RANDOM_MODULE: ClassId = ClassId(140);
 /// constant inside `Binding#eval` resolves against.
 pub const BINDING_CLASS: ClassId = ClassId(141);
 
+/// `OpenSSL::Buffering` -- the buffered IO surface CRuby mixes into
+/// `SSLSocket` over its `sysread`/`syswrite`/`sysclose`.
+pub const OPENSSL_BUFFERING_MODULE: ClassId = ClassId(143);
+/// `OpenSSL::SSL::SocketForwarder` -- the descriptor-level questions
+/// `SSLSocket` passes down to the socket underneath.
+pub const OPENSSL_SOCKET_FORWARDER_MODULE: ClassId = ClassId(144);
+
 /// `Socket::Option` -- one socket option's `(family, level, optname, data)`,
 /// which `BasicSocket#getsockopt` answers.
 pub const SOCKET_OPTION_CLASS: ClassId = ClassId(142);
@@ -1654,7 +1661,9 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "OpenSSL::SSL::SSLSocket",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
-        includes: &[],
+        // Upstream's ssl.rb writes `include Buffering` then `include
+        // SocketForwarder`, which puts SocketForwarder FIRST in `ancestors`.
+        includes: &[OPENSSL_BUFFERING_MODULE, OPENSSL_SOCKET_FORWARDER_MODULE],
         feature: Some("openssl"),
     },
     BuiltinClass {
@@ -1712,6 +1721,22 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: OPENSSL_BUFFERING_MODULE,
+        name: "OpenSSL::Buffering",
+        is_module: true,
+        superclass: None,
+        includes: &[ENUMERABLE_CLASS],
+        feature: Some("openssl"),
+    },
+    BuiltinClass {
+        id: OPENSSL_SOCKET_FORWARDER_MODULE,
+        name: "OpenSSL::SSL::SocketForwarder",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("openssl"),
     },
 ];
 
