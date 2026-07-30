@@ -1,5 +1,0 @@
-[R, StandardError, Exception]
-R
-"hi"
-true
-[:rescued, "boom"]

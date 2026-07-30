@@ -1486,12 +1486,17 @@ pub fn runtime_class_new(
     // `class Tag < String` registers. Read off `leaked` rather than through
     // `value_root_of`, which resolves the ancestry via an overlay this entry
     // isn't in yet.
+    // An EXCEPTION subclass needs the native `RubyException` allocator for the
+    // same reason: every `Exception` method it inherits reads that payload, so a
+    // name-keyed `DynObject` would satisfy `is_a?` and then fail on `#message`.
     let constructor = if leaked
         .iter()
         .copied()
         .any(crate::builtins::value_subclass::is_payload_root)
     {
         crate::builtins::value_subclass::value_subclass_construct
+    } else if leaked.contains(&zeo_abi::EXCEPTION_CLASS) {
+        crate::builtins::exception::exception_construct
     } else {
         dyn_object_construct
     };
@@ -1632,6 +1637,15 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
         }
     }
     None
+}
+
+/// [`walk_runtime_class`] for callers outside this module: the instance method a
+/// RUNTIME class id answers `name` with. The frozen registry cannot resolve one
+/// of these ids at all -- it holds no entry, so not even the ancestor walk finds
+/// the chain -- which is why a caller that starts from a class rather than a
+/// receiver has to ask here as well.
+pub(crate) fn runtime_class_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    walk_runtime_class(id, name)
 }
 
 /// A class-level method (`def self.x` / `define_singleton_method` on a class)

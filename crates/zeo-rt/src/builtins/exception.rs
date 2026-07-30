@@ -1048,7 +1048,7 @@ fn stop_result(
 /// The one `ConstructorFn` behind every exception class: allocate a
 /// `RubyException` tagged with the class the `Class#new`/factory call named, and
 /// run `initialize` through the ordinary trampoline.
-fn exception_construct(
+pub(crate) fn exception_construct(
     class: ClassId,
     args: &[RubyValue],
     block: Option<RubyValue>,

@@ -2613,6 +2613,19 @@ pub fn run_initialize(
         f.call(recv, args, block)?;
         return Ok(());
     }
+    // A RUNTIME class id (`Class.new(StandardError)`) is in no registry entry at
+    // all, so the walk above cannot even reach its ancestors. Its chain lives in
+    // the overlay, which is where a caller holding a bare class -- rather than a
+    // receiver `send_in` could resolve from -- has to ask.
+    if crate::runtime_meta::is_live() {
+        if let Some(f) = crate::runtime_meta::runtime_class_method(
+            class,
+            crate::symbol::wk::initialize(),
+        ) {
+            f.call(recv, args, block)?;
+            return Ok(());
+        }
+    }
     // No user `initialize` at all, so the inherited `Object#initialize`
     // takes no arguments. A RAISE, not a panic (plan G1): real Ruby resolves
     // arity at runtime and the error is rescuable -- `rescue ArgumentError`
