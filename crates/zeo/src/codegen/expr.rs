@@ -1920,39 +1920,28 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     }
     // The `.freeze` guard -- checked at the top of every ivar
     // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.
-    // The message interpolates the receiver's real `#<Class:0xaddr @ivar=...>`
-    // inspect (`default_object_repr`), built ONLY on the raise path (the
-    // `Clone::clone(&#slf)` is a cheap `Arc` bump, never taken on a normal write).
     // `RubyObject::is_frozen` is UFCS-qualified: generated programs never
     // `use` the trait by name. The one atomic load this adds to every ivar
     // write (including inside `initialize`, where it's always false) is
-    // negligible.
+    // negligible; the message is built by `ivar_frozen_error`, out of line, so
+    // the write site carries a branch and a call rather than the ~380 bytes of
+    // `format!`/`inspect`/`construct_by_class_id` this used to inline at every
+    // one of them.
+    //
+    // Boxed via the concrete `new_handle` (not a bare
+    // `RubyValue::Object(Clone::clone(..))`): the expected `Arc<dyn
+    // RubyObject>` would drive UFCS-clone inference BACKWARDS into the generic
+    // and defeat the unsize coercion; `new_handle`'s concrete `Arc<Self>`
+    // parameter anchors it. The `Arc` bump only happens on the raise path.
     let current = cx
         .current_class
         .expect("ivar write outside a class context");
-    let class_name = cx.compiler.class(current).name.clone();
-    let prefix = format!("can't modify frozen {class_name}: ");
-    // Boxed via the concrete `new_handle` (not a bare
-    // `RubyValue::Object(Clone::clone(..))`): the constructor's expected
-    // `Arc<dyn RubyObject>` would drive UFCS-clone inference BACKWARDS into
-    // the generic and defeat the unsize coercion; `new_handle`'s concrete
-    // `Arc<Self>` parameter anchors it.
     let class_ident = super::ident::class_ident(cx.compiler, current);
-    let frozen_error = emit_boxed_new(
-        cx,
-        "FrozenError",
-        vec![quote! {
-            zeo_rt::RubyValue::Str(zeo_rt::string_new(format!(
-                "{}{}",
-                #prefix,
-                zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#slf)))
-                    .inspect_string()
-            )))
-        }],
-    );
     quote! {
         if zeo_rt::RubyObject::is_frozen(&*#slf) {
-            return Err(zeo_rt::Signal::Raise(#frozen_error));
+            return Err(zeo_rt::ivar_frozen_error(
+                #class_ident::new_handle(Clone::clone(&#slf)),
+            ));
         }
         // `Some(..)`: writing is exactly what makes the ivar DEFINED, and the
         // slot's `Option` is how that fact is stored (`ruby_class!`).

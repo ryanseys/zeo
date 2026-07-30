@@ -431,6 +431,36 @@ pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Arc<T>> {
     recv.clone().as_any_rc().downcast::<T>().ok()
 }
 
+/// `downcast_robj` without the refcount traffic: a BORROW of the concrete
+/// struct, for a trampoline that only reads or writes a field and never hands
+/// the receiver to anything that could outlive the call. The owned form costs
+/// an `Arc` clone plus its matching drop -- 4.08 ns measured, which is most of
+/// an accessor call -- so an accessor trampoline (`zeo_tramp!`'s `rd`/`wr`
+/// heads) takes this one instead.
+#[inline]
+pub fn downcast_robj_ref<T: RubyObject>(recv: &RObj) -> Option<&T> {
+    recv.as_any().downcast_ref::<T>()
+}
+
+/// The frozen-receiver raise every ivar WRITE guards itself with, as one
+/// out-of-line call instead of the ~380 bytes of `format!` +
+/// `construct_by_class_id` codegen used to inline at each of the 1,802 ivar
+/// writes a program like prism emits. `#[cold]` so the caller's guard stays a
+/// predictable never-taken branch around a single relaxed atomic load, and by
+/// VALUE so the `Arc` bump the handle needs happens only on the raise path.
+///
+/// It also corrects the inlined form, which built its message from the
+/// compiler's `ClassInfo::name` and carried no `receiver`: CRuby reports the
+/// FULLY QUALIFIED name (`can't modify frozen M::Inner:`, not `Inner:`) and
+/// answers `FrozenError#receiver`, both of which the runtime knows and a
+/// literal baked at each write site did not.
+#[cold]
+#[inline(never)]
+pub fn ivar_frozen_error(recv: RObj) -> Signal {
+    crate::builtins::check_frozen(&RubyValue::Object(recv))
+        .expect_err("only called once the receiver is known frozen")
+}
+
 /// Every generated method/trampoline returns `Result<RubyValue, Signal>`, not
 /// a bare `RubyValue` -- see `Signal`'s docs for why this is fixed from the
 /// start rather than retrofitted once `break`/`raise`/non-local `return`
