@@ -434,6 +434,14 @@ ruby_module! {
         arity!(args, 0);
         Ok(match recv {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?,
+            // A MODULE gets a real copy -- the whole point of duping one is to
+            // edit it without touching the original (see
+            // `runtime_module_dup`). A CLASS keeps the documented
+            // handle-passthrough: copying one means copying its instances'
+            // layout, which this AOT model has no way to mint.
+            RubyValue::Class(cid) if crate::dispatch::class_is_module(*cid).unwrap_or(false) => {
+                crate::runtime_meta::runtime_module_dup(*cid)?
+            }
             _ => recv.dup_value(false)?,
         })
     }

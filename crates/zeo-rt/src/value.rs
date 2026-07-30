@@ -1176,11 +1176,20 @@ impl RubyValue {
             | RubyValue::Complex(_)
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
-            | RubyValue::Range(..)
-            // Real `Class#dup` mints an anonymous class copy -- impossible
-            // in this AOT model; the handle is returned instead (documented
-            // divergence).
-            | RubyValue::Class(_) => self.clone(),
+            | RubyValue::Range(..) => self.clone(),
+            // A MODULE really is copied: the reason to dup one is to edit the
+            // copy, and sharing the original's id makes every such edit hit
+            // the original (delegate.rb's `::Kernel.dup` then undefines
+            // `inspect`/`to_s`/... off the real Kernel). Real `Class#dup`
+            // mints an anonymous class copy, which this AOT model cannot --
+            // the handle is returned instead (documented divergence).
+            RubyValue::Class(cid) => {
+                if crate::dispatch::class_is_module(*cid).unwrap_or(false) {
+                    crate::runtime_meta::runtime_module_dup(*cid)?
+                } else {
+                    self.clone()
+                }
+            }
             RubyValue::Proc(p) => RubyValue::Proc(p.dup_data(keep_frozen)),
             RubyValue::Regexp(re) => RubyValue::Regexp(re.dup_data(keep_frozen)),
             RubyValue::MatchData(m) => RubyValue::MatchData(m.dup_data(keep_frozen)),

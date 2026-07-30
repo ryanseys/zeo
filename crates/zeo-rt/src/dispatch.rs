@@ -1907,6 +1907,12 @@ fn is_hidden_builtin_private(name: &str) -> bool {
             | "fail"
             | "method_missing"
             | "respond_to_missing?"
+            // Module's mix-in primitives: `include`/`Object#extend` call
+            // them, an override policing how a module is mixed in reaches
+            // them through `super`, but they are not part of a module's
+            // public surface.
+            | "append_features"
+            | "extend_object"
     )
 }
 
@@ -2044,11 +2050,15 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         if let Some(vis) = reg.own_method_visibility(*anc, name) {
             return Some(vis);
         }
-        // A builtin-table method is public.
-        if crate::builtins::class_table_names(*anc).contains(&name_str.as_str())
-            && !is_hidden_builtin_private(&name_str)
-        {
-            return Some(MethodVisibility::Public);
+        // A builtin-table method is public unless it is one CRuby hides.
+        // Answering `Private` rather than falling through matters: the name
+        // IS defined, so `private_method_defined?` must say so, and the walk
+        // must not keep looking for a public copy farther up.
+        if crate::builtins::class_table_names(*anc).contains(&name_str.as_str()) {
+            return Some(match is_hidden_builtin_private(&name_str) {
+                true => MethodVisibility::Private,
+                false => MethodVisibility::Public,
+            });
         }
     }
     None

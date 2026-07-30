@@ -535,6 +535,23 @@ ruby_class! {
     def "prepend" (recv, args, _block) {
         crate::runtime_meta::runtime_prepend(recv, args)
     }
+    // The PRIMITIVES `include`/`Object#extend` are defined in terms of, private
+    // on Module and overridable -- which is the whole point: a module that
+    // wants to police how it is mixed in overrides one of these and calls
+    // `super`. The singleton gem does both, defining `append_features` to
+    // reject inclusion into a module and undefining `extend_object` so that
+    // `obj.extend(Singleton)` cannot work at all -- and `undef_method` needs
+    // the name to EXIST before it can take it away.
+    def "append_features" (recv, args, _block) {
+        arity!(args, 1..=1);
+        crate::runtime_meta::runtime_include(&args[0], &[recv.clone()])?;
+        Ok(recv.clone())
+    }
+    def "extend_object" (recv, args, _block) {
+        arity!(args, 1..=1);
+        crate::runtime_meta::runtime_extend(&args[0], recv)?;
+        Ok(args[0].clone())
+    }
     // The literal class-body forms of these four expand to real `def`s at
     // compile time; these rows serve `Class.new { }` and `class_eval { }`.
     def "attr_reader" (recv, args, _block) {
