@@ -1,8 +1,10 @@
 //! Expected-to-fail conformance cases (`tests/gaps/`): Ruby programs zeo does
 //! NOT yet match `ruby` on, checked in and tracked as XFAIL. Each runs through
 //! the shared golden helper in `Mode::Xfail` -- a still-diverging gap PASSES; a
-//! gap that starts matching ruby FAILS with a "promote" message (move its `.rb`
-//! + sidecars into `tests/spinel/`).
+//! gap that starts matching ruby FAILS with a "promote" message. Promote with
+//! `scripts/promote-gap.sh`, which moves its `.rb` + sidecars into `tests/`,
+//! the zeo-authored suite -- NOT `tests/spinel/`, which mirrors the vendored
+//! spinel corpus.
 //!
 //! `ZEO_BLESS=1 cargo test --test gaps` re-records each gap's golden from ruby.
 

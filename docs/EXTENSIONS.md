@@ -61,7 +61,10 @@ live builtin, so `memsize_of`/`reachable_objects_from`/`count_symbols` answer
 without the require (`crates/zeo-rt/src/builtins/objspace.rs`; what it declines
 and why is in [`docs/COMPATIBILITY.md`](COMPATIBILITY.md)). `ARGF` is a live
 builtin (`zeo_abi::ARGF_CLASS`), and `rbconfig` resolves through a synthetic
-shim (see `docs/todo/bundler-northstar.md`).
+shim (`crates/zeo/src/parse/shims/rbconfig.rb`, spliced by
+`parse/loader.rs::splice_synthetic_shim`). The shim's first-pass limitation is
+a static arm64-macOS platform and paths, not values derived from the build
+target.
 
 ## Deferred (catalogued, no module yet)
 
@@ -159,8 +162,11 @@ See the checklist at the top of `crates/zeo-rt/src/ext/mod.rs`. In brief:
 2. **Module** — `crates/zeo-rt/src/ext/<name>.rs` declaring its class with the
    `ruby_class!` (instances) or `ruby_module!` (module functions) DSL. Mirror
    `base64.rs` (module) or `stringio.rs` (class with instances).
-3. **Dispatch arms** — cfg-gated arms in `builtins/mod.rs`'s `class_method_table`
-   / `class_table` / `class_table_names`.
+3. **Nothing.** `ruby_class!`/`ruby_module!` self-register through `linkme` into
+   `BUILTIN_TABLES`, and `class_table` consults `registered_table(id)` first, so
+   no hand-written dispatch arm is needed. The exception is id-ALIASING (one
+   table answering for several ids), which still wants an explicit arm in
+   `builtins/mod.rs`.
 4. **Cargo feature** — `ext-<name>` in `zeo-rt/Cargo.toml`, added to
    `ext-all` (with `dep:` entries if it needs an optional crate).
 5. **Module declaration** — cfg-gated `pub(crate) mod <name>;` in `ext/mod.rs`.

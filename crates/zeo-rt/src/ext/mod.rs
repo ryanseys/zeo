@@ -33,12 +33,10 @@
 //!
 //! # Implementation status
 //!
-//! Some extensions are fully implemented (real, oracle-matched methods); others
-//! are **scaffolded** -- a couple of core methods, with the rest `todo!()` as a
-//! compile-visible, greppable marker of exactly what's left. Scaffolding still
-//! lets `require "<feature>"` succeed and the constant resolve, so downstream
-//! code compiles past the `require`. See `docs/EXTENSIONS.md` for the per-
-//! extension roadmap and status.
+//! Every method here is real and oracle-matched -- no `todo!()` scaffolds. A
+//! few extensions ship a deliberate SUBSET of their upstream surface and raise
+//! `NoMethodError` at the edges rather than pretending; `docs/EXTENSIONS.md`
+//! names which, and what each leaves out.
 //!
 //! # Adding an extension (checklist)
 //!
