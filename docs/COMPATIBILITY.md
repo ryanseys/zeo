@@ -544,6 +544,41 @@ require "erb"            # now compiled in; the one inside `render` answers fals
 A `require_relative` is exempt from all of this. It names a file of the same
 program rather than a library boundary, so it is loaded wherever it is written.
 
+A file loaded this way runs its top level at program START, not on the call, so
+a lazily-required file that only means to *warn and bail* on a missing optional
+dependency does both at startup instead. `irb/ext/tracer.rb` is one; see
+`gems/UPSTREAM.md` for how it is vendored.
+
+## A class written in a `class << self` body
+
+```ruby
+module Color
+  class << self
+    class Visitor; end        # belongs to Color's SINGLETON class
+    def paint = Visitor.new   # ...which is what makes this bare name resolve
+  end
+end
+```
+
+Real Ruby puts `Visitor` on `Color.singleton_class`: the singleton methods
+beside it see it by bare name, `Color.constants` is empty, and `Color::Visitor`
+raises `NameError`. Zeo hands the definition to the enclosing module instead.
+The bare-name lookup -- the only reason such a class is ever written there --
+works; the divergence is that `Color::Visitor` also answers, and `Visitor`
+shows up in `Color.constants`.
+
+`tests/singleton_body_class_and_self_path.rb` pins the behaviour, with the
+oracle's answers recorded beside zeo's.
+
+## A top-level `return` inside a required file
+
+`return` at the top level ends the program. In a file the main script
+`require`s, real Ruby ends only THAT file's load and carries on in the
+requirer; zeo splices required files into their requirer, so the `return`
+reaches the top level of the whole program and ends it. Exit status stays 0 and
+`at_exit` handlers still run, both matching a top-level `return` in the main
+script.
+
 ## Compiling against an installed gem store
 
 `zeo app.rb --gem-path "$(gem env gemdir)" --lockfile Gemfile.lock` resolves

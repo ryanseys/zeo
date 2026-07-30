@@ -729,16 +729,17 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 body: vec![inner],
             }));
         }
-        // A DYNAMIC scope (`self.class::Reason`, `@rbconfig::CONFIG`): the path's
-        // parent isn't a constant path/read, so there's no static owner to
-        // resolve. Evaluate the scope as a value and read the constant off it at
+        // A DYNAMIC scope (`self.class::Reason`, `@rbconfig::CONFIG`): no
+        // segment of the path's parent names a static owner, so ask whether
+        // the WHOLE parent spells a constant path rather than just its outer
+        // node -- `self::Readline::HISTORY` (irb's input-method.rb) has a
+        // parent that is itself a path, and only its root is dynamic.
+        // Evaluate the scope as a value and read the constant off it at
         // runtime via `Module#const_get` (which walks the scope's ancestry --
         // matching `::`'s lookup for a class/module scope). optparse's
         // `self.class::Reason`.
         if let Some(parent) = cp.parent() {
-            let dynamic_scope = parent.as_constant_path_node().is_none()
-                && parent.as_constant_read_node().is_none();
-            if dynamic_scope {
+            if constant_path_name(&parent).is_err() {
                 let name = cp.name().ok_or(
                     "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
                 )?;

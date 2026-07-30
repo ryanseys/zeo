@@ -283,6 +283,14 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // cross-body/inherited source reaches here as an `AliasMethod`.
             HirNode::AliasMethod { .. } => Item::ClassAlias,
             HirNode::ConstWrite { .. } => Item::Passthrough,
+            // A `class`/`module` written here belongs to the SINGLETON class
+            // (`IRB::Color`'s `class << self; class ColorizeVisitor <
+            // Prism::Visitor`). zeo hands it to the enclosing class instead,
+            // which gets the property that matters -- the singleton methods
+            // beside it reach it by bare name -- at the cost of also
+            // answering `Color::ColorizeVisitor`, where real Ruby raises.
+            // See `docs/COMPATIBILITY.md`.
+            HirNode::ClassDef { .. } => Item::Passthrough,
             // A `@@x` inside `class << self` belongs to the ENCLOSING class,
             // not the singleton: cvar lookup walks past singleton crefs (see
             // `Hir::cvar_is_toplevel`), so passing the node through to the
