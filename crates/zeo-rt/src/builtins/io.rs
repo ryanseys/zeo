@@ -304,6 +304,10 @@ pub fn seed_stdio() {
     crate::globals::seed_global(0, "$stdout", stdout_value());
     crate::globals::seed_global(0, "$stderr", stderr_value());
     crate::globals::seed_global(0, "$stdin", stdin_value());
+    // `$>` is not a copy of `$stdout` but the SAME slot: assigning either
+    // redirects both (oracle-verified in both directions). `PP.pp` defaults its
+    // output to it, which is how a nil `$>` reached prettyprint as a receiver.
+    crate::globals::global_alias(0, "$>", "$stdout");
 }
 
 /// The value `$stdout` currently holds in box 0 (nil -- never assigned --
