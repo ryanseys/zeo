@@ -601,7 +601,7 @@ ruby_module! {
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let mut names = Vec::new();
         if let RubyValue::Class(cid) = recv {
-            names.extend(crate::dispatch::class_method_names(*cid));
+            names.extend(crate::dispatch::public_class_method_names(*cid));
         }
         // `Object#methods` returns public AND protected names.
         names.extend(crate::dispatch::instance_method_names(
@@ -639,7 +639,7 @@ ruby_module! {
         // A class's singleton methods are its class methods; any other
         // receiver's are the ones installed on it BY IDENTITY at runtime.
         let names = match recv {
-            RubyValue::Class(cid) => crate::dispatch::class_method_names(*cid),
+            RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid),
             _ => crate::runtime_meta::singleton_method_names(recv),
         };
         Ok(syms_to_array(names))

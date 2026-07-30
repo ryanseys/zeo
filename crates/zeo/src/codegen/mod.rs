@@ -1185,6 +1185,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             };
             push_vis_row(id, name, verb);
         }
+        // The CLASS-method half (verb 3/4): `private_class_method`, either on a
+        // `def self.x` in this body or naming one this class inherits.
+        for &sid in &compiler.class(ClassId(id)).class_methods {
+            if compiler.scope(sid).visibility == crate::hir::Visibility::Private {
+                push_vis_row(id, &compiler.scope(sid).name, 3);
+            }
+        }
+        for (name, vis) in &compiler.class(ClassId(id)).class_visibility_overrides {
+            let verb = if *vis == crate::hir::Visibility::Private { 3 } else { 4 };
+            push_vis_row(id, name, verb);
+        }
         // Each method DEFINED DIRECTLY on this class (not materialized from an
         // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
         // can report own methods only -- the materialized `methods` list above

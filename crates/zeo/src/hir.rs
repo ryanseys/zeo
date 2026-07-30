@@ -1997,6 +1997,15 @@ pub enum HirNode {
         name: String,
         visibility: Visibility,
     },
+    /// `private_class_method :m` / `public_class_method :m` naming a class
+    /// method NOT defined earlier in the same body -- one inherited from the
+    /// superclass, or `new` itself. The same-body case is retagged in place at
+    /// lowering time; this variant defers the rest, exactly as
+    /// [`HirNode::MethodVisibility`] does for the instance half.
+    ClassMethodVisibility {
+        name: String,
+        visibility: Visibility,
+    },
     /// `module_function :name` where `name` is INHERITED rather than defined
     /// in this body -- `erb/util.rb`'s `include ERB::Escape; module_function
     /// :html_escape`. A name the body does define is retagged in place at
@@ -2083,6 +2092,7 @@ impl HirNode {
             | HirNode::Undef(_)
             | HirNode::AliasMethod { .. }
             | HirNode::MethodVisibility { .. }
+            | HirNode::ClassMethodVisibility { .. }
             | HirNode::ModuleFunction(_) => true,
 
             // `ClassDef` and `DefMethod` are class-body shapes too, but both
@@ -2417,6 +2427,10 @@ impl HirNode {
                 is_class_method: _,
             }
             | HirNode::MethodVisibility {
+                name: _,
+                visibility: _,
+            }
+            | HirNode::ClassMethodVisibility {
                 name: _,
                 visibility: _,
             }

@@ -52,6 +52,33 @@ pub(super) fn enforce_visibility(
     }
     None
 }
+/// The class-method counterpart, for an explicit `Target.name` receiver. Ruby
+/// has no protected class method, so `private_class_method` is the whole rule,
+/// and -- as with the instance half -- a literal `self` receiver is allowed.
+/// The error names the receiver as a "class" or a "module", not as an instance.
+pub(super) fn enforce_class_method_visibility(
+    cx: &Ctx,
+    recv_id: NodeId,
+    target: crate::compiler::ClassId,
+    method_name: &str,
+) -> Option<TokenStream> {
+    if !cx.compiler.class_method_is_private(target, method_name) {
+        return None;
+    }
+    if matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
+        return None;
+    }
+    let info = cx.compiler.class(target);
+    let kind = if info.is_module { "module" } else { "class" };
+    let msg = format!(
+        "private method '{method_name}' called for {kind} {}",
+        cx.compiler.fq_name(target)
+    );
+    Some(quote! {
+        return Err(zeo_rt::raise_error("NoMethodError", #msg.to_string()))
+    })
+}
+
 /// A visibility violation is RUNTIME behavior in Ruby, not a syntax error:
 /// `obj.priv_method` raises `NoMethodError` when it actually runs, so an
 /// unreachable bad call stays silent and a `rescue NoMethodError` around a

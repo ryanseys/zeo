@@ -500,6 +500,10 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
             name: _,
             visibility: _,
         }
+        | HirNode::ClassMethodVisibility {
+            name: _,
+            visibility: _,
+        }
         | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(_, _)
         | HirNode::QualifiedConstRead(_, _)
@@ -757,6 +761,10 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             is_class_method: _,
         }
         | HirNode::MethodVisibility {
+            name: _,
+            visibility: _,
+        }
+        | HirNode::ClassMethodVisibility {
             name: _,
             visibility: _,
         }
@@ -1318,6 +1326,10 @@ fn walk(
             is_class_method: _,
         }
         | HirNode::MethodVisibility {
+            name: _,
+            visibility: _,
+        }
+        | HirNode::ClassMethodVisibility {
             name: _,
             visibility: _,
         }

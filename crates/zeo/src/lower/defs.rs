@@ -1406,28 +1406,60 @@ fn lower_class_body_statement(
                 // Falls through to the generic `Call` lowering below --
                 // a dynamic/computed argument (e.g. `private(*names)`).
             }
-            // `private_class_method def x ... end` -- zeo does not model
-            // class-method visibility (its runtime rows are no-ops), but the
-            // `def` inside is a real definition. Unwrap it and lower the def on
-            // its own terms, so the running visibility default and
-            // `module_function` mode reach it exactly as a bare `def`.
+            // `private_class_method :a, :b` / `private_class_method def self.x`
+            // and their `public_` counterpart -- the class-method half of
+            // `private`/`public` above, and lowered the same two ways: the
+            // wrapped `def` is lowered on its own terms (so the running
+            // visibility default and `module_function` mode reach it exactly as
+            // a bare `def` does) and then retagged, while a name with no local
+            // `def` becomes a deferred override. Unlike `private`, there is no
+            // argument-less mode: Ruby has no running class-method default.
             if matches!(
                 name.as_str(),
                 "private_class_method" | "public_class_method"
             ) {
+                let new_vis = if name == "private_class_method" {
+                    Visibility::Private
+                } else {
+                    Visibility::Public
+                };
                 let arg_list: Vec<_> = call
                     .arguments()
                     .map(|a| a.arguments().iter().collect())
                     .unwrap_or_default();
                 if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
-                    return lower_class_body_statement(
+                    let before = out.len();
+                    lower_class_body_statement(
                         result,
                         hir,
                         &arg_list[0],
                         visibility,
                         module_function,
                         out,
-                    );
+                    )?;
+                    for &id in &out[before..] {
+                        hir.set_method_visibility(id, new_vis);
+                    }
+                    return Ok(());
+                }
+                if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                    for n in &arg_list {
+                        let target = String::from_utf8_lossy(
+                            n.as_symbol_node().expect("checked above").unescaped(),
+                        )
+                        .into_owned();
+                        let local = out.iter().find(|&&id| {
+                            matches!(&hir[id], HirNode::DefMethod { name: existing, is_class_method: true, .. } if *existing == target)
+                        });
+                        match local {
+                            Some(&id) => hir.set_method_visibility(id, new_vis),
+                            None => out.push(hir.push(HirNode::ClassMethodVisibility {
+                                name: target,
+                                visibility: new_vis,
+                            })),
+                        }
+                    }
+                    return Ok(());
                 }
             }
             // `module_function` -- recognized in the same two forms as

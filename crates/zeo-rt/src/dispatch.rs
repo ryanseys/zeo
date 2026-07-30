@@ -578,6 +578,12 @@ struct ClassEntry {
     /// answer "is THIS class's `name` protected"). Consumed by the
     /// `protected_*` reflection and the `*_method_defined?` family.
     protected_methods: FSet<Symbol>,
+    /// The names in `class_methods` this class marks PRIVATE
+    /// (`private_class_method :x`, `private_class_method def self.x`). Ruby
+    /// has no protected class method and no running class-method default, so
+    /// one set is the whole model. Kept apart from `private_methods` because
+    /// `Foo.bar` and `Foo#bar` are different methods that share a name.
+    private_class_methods: FSet<Symbol>,
     /// Names this class's body `undef`'d. Mirrors CRuby, where `undef`
     /// inserts an "undefined" method entry that TERMINATES the lookup
     /// rather than deleting anything -- so an inherited name stops
@@ -710,6 +716,7 @@ impl ClassRegistry {
                 value_methods: FMap::default(),
                 private_methods: FSet::default(),
                 protected_methods: FSet::default(),
+                private_class_methods: FSet::default(),
                 undefined_methods: FSet::default(),
                 aliases: FMap::default(),
                 class_methods: FMap::default(),
@@ -880,17 +887,35 @@ impl ClassRegistry {
     }
 
     /// The `mark_private`/`mark_protected`/`mark_public` batch form
-    /// (`__VIS_ROWS`; verb 0/1/2 respectively). Rows apply IN ORDER: a later
-    /// `public :m` promotion must clear an earlier private/protected stamp,
-    /// and vice versa.
+    /// (`__VIS_ROWS`; verb 0/1/2 respectively), plus the CLASS-method pair
+    /// (`private_class_method`/`public_class_method`, verb 3/4). Rows apply IN
+    /// ORDER: a later `public :m` promotion must clear an earlier
+    /// private/protected stamp, and vice versa.
     pub fn mark_visibility_rows(&mut self, rows: &[(u32, &str, u8)]) {
         for &(id, name, verb) in rows {
             let sym = Symbol::intern(name);
             match verb {
                 0 => self.mark_private(ClassId(id), sym),
                 1 => self.mark_protected(ClassId(id), sym),
+                3 => self.mark_class_method_private(ClassId(id), sym),
+                4 => self.mark_class_method_public(ClassId(id), sym),
                 _ => self.mark_public(ClassId(id), sym),
             }
+        }
+    }
+
+    /// Records `name` as a PRIVATE class method of `id` -- what
+    /// `private_class_method` marks. See `ClassEntry::private_class_methods`.
+    pub fn mark_class_method_private(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.private_class_methods.insert(name);
+        }
+    }
+
+    /// `public_class_method`'s half: clears the mark above.
+    pub fn mark_class_method_public(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.private_class_methods.remove(&name);
         }
     }
 
@@ -1487,7 +1512,9 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     // Mirrors the class-receiver dispatch order in `send_value_in`.
     if let RubyValue::Class(cid) = recv {
         if class_receiver_responds(*cid, name) {
-            return true;
+            // A `private_class_method` one is invisible to the default
+            // `respond_to?`, the same rule the instance walk below applies.
+            return include_all || !class_method_is_private(*cid, name);
         }
     }
     responds_to(recv.class_id(), name, include_all)
@@ -1881,6 +1908,22 @@ fn is_hidden_builtin_private(name: &str) -> bool {
 /// CRuby's exactly -- reflection callers assert membership, not equality. A
 /// user class's own list (`inherit=false`) is exact.
 pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -> Vec<Symbol> {
+    // A singleton class's instance methods are its owner's CLASS methods --
+    // see `instance_method_visibility`, which resolves their visibility the
+    // same way.
+    if crate::runtime_meta::is_live() {
+        if let Some(owner) = crate::runtime_meta::singleton_class_owner(class) {
+            return class_method_names(owner)
+                .into_iter()
+                .filter(|&n| {
+                    filter.matches(match class_method_is_private(owner, n) {
+                        true => MethodVisibility::Private,
+                        false => MethodVisibility::Public,
+                    })
+                })
+                .collect();
+        }
+    }
     let chain: Vec<ClassId> = if inherit {
         ancestors_of_value(class).to_vec()
     } else {
@@ -1947,6 +1990,20 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
 /// method. Backs `private_method_defined?`/`public_method_defined?`/
 /// `protected_method_defined?`.
 pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<MethodVisibility> {
+    // `Foo.singleton_class`'s instance methods ARE `Foo`'s class methods, so
+    // its visibility is theirs -- the table `def self.x` and
+    // `private_class_method` actually write to.
+    if crate::runtime_meta::is_live() {
+        if let Some(owner) = crate::runtime_meta::singleton_class_owner(class) {
+            if !class_receiver_responds(owner, name) {
+                return None;
+            }
+            return Some(match class_method_is_private(owner, name) {
+                true => MethodVisibility::Private,
+                false => MethodVisibility::Public,
+            });
+        }
+    }
     let reg = REGISTRY.get()?;
     let name_str = name.name();
     for anc in ancestors_of_value(class) {
@@ -1983,6 +2040,34 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
     None
 }
 
+/// Whether class method `name` on `class` is PRIVATE -- what
+/// `private_class_method` marked, found on the nearest ancestor that says
+/// anything about the name (so `public_class_method` in a subclass promotes it
+/// back). `false` for a name no ancestor marks, which is every ordinary
+/// `def self.x`.
+pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
+    for anc in ancestors_of_value(class) {
+        if crate::runtime_meta::is_live() {
+            if let Some(private) = crate::runtime_meta::overlay_class_method_private(*anc, name) {
+                return private;
+            }
+        }
+        if REGISTRY
+            .get()
+            .and_then(|r| r.entries.get(&anc.0))
+            .is_some_and(|e| e.private_class_methods.contains(&name))
+        {
+            return true;
+        }
+        // A definition here with no mark is public, and stops the walk: an
+        // ancestor's `private_class_method` must not reach past an override.
+        if class_defines_own_class_method(*anc, name) {
+            return false;
+        }
+    }
+    false
+}
+
 /// The CLASS-method (`def self.x` + builtin class-method) names of `class`,
 /// deduped -- backs `SomeClass.singleton_methods` and the class-method half
 /// of `SomeClass.methods`.
@@ -2012,6 +2097,16 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
         }
     }
     out
+}
+
+/// [`class_method_names`] without the ones `private_class_method` marked --
+/// what `singleton_methods` and the class-method half of `methods` report,
+/// both of which list public names only.
+pub fn public_class_method_names(class: ClassId) -> Vec<Symbol> {
+    class_method_names(class)
+        .into_iter()
+        .filter(|&n| !class_method_is_private(class, n))
+        .collect()
 }
 
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
@@ -3266,6 +3361,18 @@ pub fn send_value_public_in(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    // A CLASS receiver's class methods have their own visibility table -- the
+    // instance walk below reads Class/Module's, which says nothing about them.
+    if let RubyValue::Class(cid) = recv {
+        if class_method_is_private(*cid, name) {
+            return Err(raise_method_missing(
+                recv,
+                &name.to_string(),
+                args,
+                MissingReason::Private,
+            ));
+        }
+    }
     let reason = match instance_method_visibility(recv.class_id(), name) {
         Some(MethodVisibility::Private) => Some(MissingReason::Private),
         Some(MethodVisibility::Protected) => Some(MissingReason::Protected),

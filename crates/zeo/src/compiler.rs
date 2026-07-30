@@ -139,6 +139,10 @@ pub struct ClassInfo {
     /// Applied by codegen after materialization stamps each method with its
     /// defining class's visibility. See `HirNode::MethodVisibility`.
     pub visibility_overrides: Vec<(String, crate::hir::Visibility)>,
+    /// The class-method half of `visibility_overrides`: `(name, visibility)`
+    /// from a `private_class_method`/`public_class_method` naming a method this
+    /// body does not itself define. See [`crate::hir::HirNode::ClassMethodVisibility`].
+    pub class_visibility_overrides: Vec<(String, crate::hir::Visibility)>,
     /// `true` for `module Name ... end`: never instantiated (no `Name.new`,
     /// no generated Rust struct/`impl RubyObject`/`ClassRegistry` entry --
     /// see `codegen::mod::emit_class`'s docs), used only as a source for
@@ -460,6 +464,7 @@ impl Compiler {
                 pending_module_functions: Vec::new(),
                 builtin_aliases: Vec::new(),
                 visibility_overrides: Vec::new(),
+                class_visibility_overrides: Vec::new(),
                 is_module: false,
                 ivars: Vec::new(),
                 own_methods: Vec::new(),
@@ -844,6 +849,7 @@ impl Compiler {
             pending_module_functions: Vec::new(),
             builtin_aliases: Vec::new(),
             visibility_overrides: Vec::new(),
+            class_visibility_overrides: Vec::new(),
             is_module,
             ivars: Vec::new(),
             own_methods: Vec::new(),
@@ -1055,6 +1061,36 @@ impl Compiler {
                 .find(|(new, _)| new == name)
                 .map(|(_, old)| old.as_str())
         })
+    }
+
+    /// Same idea as `method_in_chain`, over `class_methods` instead of
+    /// `methods` -- used for `ClassName.foo(...)` call sites (see
+    /// `HirNode::ClassRef`'s docs).
+    /// Whether `private_class_method` marked class method `name` on `class` --
+    /// on the resolved definition, or on the nearest ancestor that re-declared
+    /// it without one (`private_class_method :new`, where no body defines
+    /// `new` at all). The compile-time half of the runtime's own
+    /// `class_method_is_private`.
+    pub fn class_method_is_private(&self, class: ClassId, name: &str) -> bool {
+        for &anc in std::iter::once(&class).chain(&self.classes[class.0 as usize].ancestors) {
+            let info = &self.classes[anc.0 as usize];
+            if let Some((_, vis)) = info
+                .class_visibility_overrides
+                .iter()
+                .rev()
+                .find(|(n, _)| n == name)
+            {
+                return *vis == crate::hir::Visibility::Private;
+            }
+            if let Some(&sid) = info
+                .own_class_methods
+                .iter()
+                .find(|&&s| self.scopes[s.0 as usize].name == name)
+            {
+                return self.scopes[sid.0 as usize].visibility == crate::hir::Visibility::Private;
+            }
+        }
+        false
     }
 
     /// Same idea as `method_in_chain`, over `class_methods` instead of

@@ -65,6 +65,11 @@ struct OverlayEntry {
     /// separately from `methods` because a mark can target a FROZEN-registry
     /// or builtin method the overlay never carries a body for.
     methods_vis: FMap<Symbol, crate::dispatch::MethodVisibility>,
+    /// The class-method half: which of this class's CLASS methods a runtime
+    /// `private_class_method`/`public_class_method` marked. `true` is private,
+    /// `false` a `public_class_method` promotion -- both recorded, because
+    /// either has to beat whatever the frozen registry baked in.
+    class_methods_vis: FMap<Symbol, bool>,
     /// Class/singleton-on-class methods (`def self.x`, `define_singleton_method`
     /// on a `Class` value): self = the `RubyValue::Class`, which the RObj-shaped
     /// `MethodImpl` can't carry -- so these are the raw `RProc`, invoked via
@@ -91,6 +96,7 @@ impl Default for OverlayEntry {
             ancestors: &[],
             methods: FMap::default(),
             methods_vis: FMap::default(),
+            class_methods_vis: FMap::default(),
             class_methods: FMap::default(),
             constructor: None,
             undefs: FSet::default(),
@@ -722,6 +728,45 @@ pub(crate) fn overlay_method_visibility(
         .unwrap()
         .get(&id.0)
         .and_then(|e| e.methods_vis.get(&name).copied())
+}
+
+/// The CLASS a singleton-class id belongs to (`Foo.singleton_class` -> `Foo`),
+/// or `None` for an ordinary id or an object's singleton. What lets the
+/// singleton class's instance-method reflection answer from the owner's
+/// CLASS-method tables, which is where `def self.x` really lives.
+pub fn singleton_class_owner(id: ClassId) -> Option<ClassId> {
+    match maps().singleton_owner.read().unwrap().get(&id.0) {
+        Some(RubyValue::Class(cid)) => Some(*cid),
+        _ => None,
+    }
+}
+
+/// Whether a runtime `private_class_method`/`public_class_method` marked class
+/// method `name` on `id`, and which way. `None` when neither was called for it.
+pub(crate) fn overlay_class_method_private(id: ClassId, name: Symbol) -> Option<bool> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .and_then(|e| e.class_methods_vis.get(&name).copied())
+}
+
+/// `private_class_method :x` / `public_class_method :x` at runtime -- see
+/// [`overlay_class_method_private`].
+pub fn runtime_class_method_visibility(
+    id: ClassId,
+    args: &[RubyValue],
+    private: bool,
+) -> Result<(), Signal> {
+    let mut w = maps().classes.write().unwrap();
+    let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+    for a in args {
+        e.class_methods_vis.insert(coerce_method_name(Some(a))?, private);
+    }
+    drop(w);
+    mark_live();
+    Ok(())
 }
 
 /// The `MethodImpl` that instance method `name` resolves to for instances of

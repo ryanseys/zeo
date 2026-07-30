@@ -469,6 +469,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_) => None,
     };
     match classification {
@@ -943,7 +944,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             args,
             kwargs,
             block,
-        } => super::call::emit_new(cx, class_name, args, kwargs, *block),
+        } => super::call::emit_private_new_error(cx, class_name)
+            .unwrap_or_else(|| super::call::emit_new(cx, class_name, args, kwargs, *block)),
         HirNode::SuperCall {
             args,
             kwargs,
@@ -1397,6 +1399,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_) => {
             let loc = crate::codegen::source_location(cx.compiler, id);
             crate::codegen::unsupported(format!(

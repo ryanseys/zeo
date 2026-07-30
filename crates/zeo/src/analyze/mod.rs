@@ -906,6 +906,7 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_) => true,
         HirNode::If {
             then_body,
@@ -2001,6 +2002,12 @@ fn register_class(
                     .visibility_overrides
                     .push((name.clone(), *visibility));
             }
+            // The class-method half. See `HirNode::ClassMethodVisibility`.
+            HirNode::ClassMethodVisibility { name, visibility } => {
+                compiler.classes[class_id.0 as usize]
+                    .class_visibility_overrides
+                    .push((name.clone(), *visibility));
+            }
             HirNode::Prepend(m) => {
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
@@ -2626,6 +2633,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
@@ -2898,6 +2906,7 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
+        | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)

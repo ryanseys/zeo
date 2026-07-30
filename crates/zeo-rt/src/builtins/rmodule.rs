@@ -581,13 +581,15 @@ ruby_class! {
     def "module_function" (recv, args, _block) {
         crate::runtime_meta::runtime_module_function(recv_cid(recv), args)
     }
-    // `private_class_method`/`public_class_method` at RUNTIME: zeo does not
-    // track class-method visibility in the overlay, so this is a best-effort
-    // no-op returning the receiver -- the named class method stays callable (a
-    // documented over-permissiveness; bundler only invokes PUBLIC commands, and
-    // fileutils' `private_module_function` relies on the `module_function`
-    // promotion above, not on the privatization).
-    def "private_class_method" | "public_class_method" (recv, _args, _block) {
+    // `private_class_method`/`public_class_method` at RUNTIME. The literal
+    // form resolves at compile time in `lower/defs.rs`; this marks the
+    // overlay, which outranks whatever the frozen registry baked in.
+    def "private_class_method" (recv, args, _block) {
+        crate::runtime_meta::runtime_class_method_visibility(recv_cid(recv), args, true)?;
+        Ok(recv.clone())
+    }
+    def "public_class_method" (recv, args, _block) {
+        crate::runtime_meta::runtime_class_method_visibility(recv_cid(recv), args, false)?;
         Ok(recv.clone())
     }
     // `Module#class_eval`/`module_eval` -- run the block with `self` rebound

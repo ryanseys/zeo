@@ -12,6 +12,25 @@ use crate::codegen::ident::safe_ident;
 use crate::hir::{KwArg, NodeId};
 use proc_macro2::TokenStream;
 
+/// `private_class_method :new` -- the constructor is a class method like any
+/// other. A `Target.new` lowers to [`crate::hir::HirNode::New`] rather than a
+/// call, so it never reaches the call path's own check; a BARE `new` inside one
+/// of the class's own class methods is an implicit-self send and stays allowed,
+/// which is why this is not inside [`emit_new`].
+pub fn emit_private_new_error(cx: &Ctx, class_name: &str) -> Option<TokenStream> {
+    let cid = cx.resolve_class(class_name)?;
+    if !cx.compiler.class_method_is_private(cid, "new") {
+        return None;
+    }
+    let msg = format!(
+        "private method 'new' called for class {}",
+        cx.compiler.fq_name(cid)
+    );
+    Some(quote! {
+        return Err(zeo_rt::raise_error("NoMethodError", #msg.to_string()))
+    })
+}
+
 pub fn emit_new(
     cx: &Ctx,
     class_name: &str,

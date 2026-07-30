@@ -129,7 +129,7 @@ pub(crate) fn emit_binding_with_self(
 // by sibling `codegen` modules keeps resolving after this file split --
 // each name still lives at its original address as far as any caller
 // outside this module tree is concerned.
-pub use new::{emit_new, emit_new_with_arg_tokens};
+pub use new::{emit_new, emit_new_with_arg_tokens, emit_private_new_error};
 pub use procs::emit_lambda_value;
 pub(crate) use procs::emit_proc_or_lambda_value;
 pub use super_calls::emit_super;
@@ -1817,6 +1817,13 @@ pub fn emit_call(
             // in `send_value`'s Class arm, and a genuinely unknown method is a
             // real runtime NoMethodError ("for class Widget") -- real Ruby's
             // behavior.
+            // Checked BEFORE the resolution below, because
+            // `private_class_method :new` marks a name no body defines.
+            if let Some(err) =
+                visibility::enforce_class_method_visibility(cx, recv_id, target, name)
+            {
+                return err;
+            }
             let is_static = cx.compiler.class_method_in_chain(target, name).is_some();
             if is_static {
                 if safe {
@@ -1848,6 +1855,11 @@ pub fn emit_call(
             return quote! { { let _ = #recv_expr; #folded } };
         }
         if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
+            if let Some(err) =
+                visibility::enforce_class_method_visibility(cx, recv_id, target, name)
+            {
+                return err;
+            }
             if name == "new"
                 && !cx.compiler.class(target).is_module
                 && !cx.compiler.class(target).is_builtin
