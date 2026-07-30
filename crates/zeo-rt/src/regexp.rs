@@ -451,9 +451,12 @@ fn ascii_class_body(c: char) -> Option<(&'static str, bool)> {
         'W' => Some(("0-9A-Za-z_", true)),
         'd' => Some(("0-9", false)),
         'D' => Some(("0-9", true)),
-        // Ruby's `\s` has included \v since 2.0.
-        's' => Some((" \\t\\r\\n\\x0b\\x0c", false)),
-        'S' => Some((" \\t\\r\\n\\x0b\\x0c", true)),
+        // Ruby's `\s` has included \v since 2.0. The space is spelled `\x20`
+        // rather than written literally because the `regex` crate's EXTENDED
+        // mode strips whitespace inside a character class too -- so a literal
+        // one here would leave `/\s/x` unable to match a space.
+        's' => Some(("\\x20\\t\\r\\n\\x0b\\x0c", false)),
+        'S' => Some(("\\x20\\t\\r\\n\\x0b\\x0c", true)),
         'h' => Some(("0-9A-Fa-f", false)),
         'H' => Some(("0-9A-Fa-f", true)),
         _ => None,
