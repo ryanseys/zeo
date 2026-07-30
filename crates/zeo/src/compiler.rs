@@ -369,6 +369,16 @@ pub struct Compiler {
     /// and per ancestor by `codegen::constfold` -- is a set lookup instead of
     /// a rescan of the class body.
     pub(crate) direct_const_defs: Option<Vec<FSet<String>>>,
+    /// Where each node sits in the program's EXECUTION order, for the nodes
+    /// whose position is a static fact -- a top-level statement, a class-body
+    /// statement, and anything nested in a container inside one. A `def`'s
+    /// body is deliberately absent: it runs whenever the method is called,
+    /// which is not a position. See [`Compiler::doc_position`].
+    pub(crate) doc_order: HashMap<crate::hir::NodeId, u32>,
+    /// The earliest document position at which `(owner, name)` becomes a
+    /// defined constant -- a `class`/`module` marker, or a statement-level
+    /// `NAME = ...`. Read with [`Compiler::const_defined_before`].
+    pub(crate) const_def_order: HashMap<(ClassId, String), u32>,
     /// Block call sites whose receiver's STATIC type admits a native inline
     /// loop (`analyze::mark_inline_iter_sites`), keyed by the BLOCK node.
     /// Soundness lives in the emitted match GUARD (a mistyped receiver takes
@@ -491,6 +501,8 @@ impl Compiler {
             frozen_crefs: None,
             frozen_fq_names: None,
             direct_const_defs: None,
+            doc_order: HashMap::new(),
+            const_def_order: HashMap::new(),
             inline_iter_sites: HashMap::new(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
@@ -753,6 +765,29 @@ impl Compiler {
             })
             .collect();
         self.direct_const_defs = Some(defs);
+    }
+
+    /// Where `node` runs in the program, or `None` when that is not a static
+    /// fact -- inside a `def` body, which runs at call time. See
+    /// [`Compiler::doc_order`].
+    pub(crate) fn doc_position(&self, node: crate::hir::NodeId) -> Option<u32> {
+        self.doc_order.get(&node).copied()
+    }
+
+    /// Whether `owner::name` is already defined by the time a statically
+    /// positioned `at` runs. `None` means "no static answer" -- either the
+    /// query has no position, or nothing recorded a position for the
+    /// definition (a `const_set`, a name only an ancestor supplies), in which
+    /// case the caller keeps whatever whole-program answer it had.
+    pub(crate) fn const_defined_before(
+        &self,
+        owner: ClassId,
+        name: &str,
+        at: crate::hir::NodeId,
+    ) -> Option<bool> {
+        let at = self.doc_position(at)?;
+        let defined = *self.const_def_order.get(&(owner, name.to_string()))?;
+        Some(defined < at)
     }
 
     /// `cref_of` as a borrowed slice, alloc-free -- valid only after

@@ -64,11 +64,14 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
         // constant that doesn't name a class. Resolved through the lexical
         // chain and then `Object`, which is where a top-level one lands.
         HirNode::ClassRef(name) => {
+            let mut scopes = cx.cref_chain().to_vec();
+            scopes.push(OBJECT_CLASS);
+            if defined_only_later(cx, id, &scopes, name) {
+                return Some(false);
+            }
             if cx.resolve_class(name).is_some() {
                 return Some(true);
             }
-            let mut scopes = cx.cref_chain().to_vec();
-            scopes.push(OBJECT_CLASS);
             Some(
                 scopes
                     .iter()
@@ -80,12 +83,37 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             let Some(scope_id) = cx.resolve_class(scope) else {
                 return Some(false);
             };
+            if defined_only_later(cx, id, &[scope_id], name) {
+                return Some(false);
+            }
             let known = class_const_in(cx, scope_id, name).is_some()
                 || value_const_defined_in(cx, scope_id, name);
             known.then_some(true)
         }
         _ => None,
     }
+}
+
+/// Whether every definition of `name` the document-order walk could position
+/// runs LATER than the reference at `at`. That is the shape a whole-program
+/// view gets wrong: a compat shim guarding on a constant its own file defines
+/// further down reads "constant" here and nil under ruby, because ruby only
+/// knows a constant once its `class` statement or assignment has executed.
+///
+/// Conservative in both directions, which is what keeps it a pure narrowing:
+/// a reference with no position (it sits in a `def` body, which runs at call
+/// time, or in a block), or a name with no positioned definition at all, keeps
+/// whatever whole-program answer the caller already had.
+fn defined_only_later(cx: &Ctx, at: NodeId, scopes: &[ClassId], name: &str) -> bool {
+    let mut later = false;
+    for &s in scopes {
+        match cx.compiler.const_defined_before(s, name, at) {
+            Some(true) => return false,
+            Some(false) => later = true,
+            None => {}
+        }
+    }
+    later
 }
 
 /// Compile-time truthiness of an `if`/`unless`/ternary condition, when it can

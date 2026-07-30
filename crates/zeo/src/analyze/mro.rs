@@ -66,6 +66,8 @@ fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
 /// class-variable ownership. Call once, after `analyze::analyze`'s
 /// top-level registration loop has processed every `ClassDef`.
 pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
+    record_top_level_consts(compiler, main_statements);
+    index_document_order(compiler, main_statements);
     compiler.freeze_identity_caches();
     let all_ids: Vec<ClassId> = (0..compiler.classes.len() as u32).map(ClassId).collect();
 
@@ -637,6 +639,134 @@ fn owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> ClassId {
 /// here (a narrow, documented approximation; a bare assignment inside a
 /// METHOD body is a Ruby SyntaxError -- "dynamic constant assignment" --
 /// so class bodies are genuinely the only place to look).
+/// A top-level `NAME = ...` belongs to `Object`, exactly as one written in a
+/// `class Object` reopen does -- but it arrives in the main statement stream
+/// rather than any class body, so nothing claimed it and `defined?(NAME)`
+/// answered nil even after the assignment had run. Statement-level only, the
+/// same rule a class body's own list follows: `NAME = 1 if cond` stays
+/// unclaimed rather than naming an owner it may never get. `class_body_stmts`
+/// is analysis-only (execution is per-site), so this adds no second run.
+fn record_top_level_consts(compiler: &mut Compiler, main_statements: &[NodeId]) {
+    let mut claims: Vec<(ClassId, NodeId)> = Vec::new();
+    let mut frames: Vec<(ClassId, Vec<NodeId>)> = vec![(OBJECT_CLASS, main_statements.to_vec())];
+    while let Some((owner, stmts)) = frames.pop() {
+        for s in stmts {
+            match &compiler.hir[s] {
+                HirNode::ConstWrite { scope: None, .. } => claims.push((owner, s)),
+                // A `Ruby::Box`'s top level is its own scope, with a surrogate
+                // standing in for `Object`.
+                HirNode::BoxScope { box_id, body } => {
+                    let inner = compiler
+                        .box_surrogates
+                        .get(box_id)
+                        .copied()
+                        .unwrap_or(OBJECT_CLASS);
+                    frames.push((inner, body.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    for (owner, stmt) in claims {
+        compiler.classes[owner.0 as usize]
+            .class_body_stmts
+            .push(stmt);
+    }
+}
+
+/// Numbers the program's statements in EXECUTION order and records where each
+/// constant first becomes defined, so `defined?` can tell a definition that
+/// has already run from one written further down the file.
+///
+/// The walk stops at a `def`, a lambda and a block body: those run when they
+/// are CALLED, which is not a position this walk can name. Leaving them
+/// unnumbered is what keeps the whole thing a NARROWING -- a query with no
+/// position, or a constant with no recorded definition position, falls back to
+/// the whole-program answer that was there before.
+fn index_document_order(compiler: &mut Compiler, main_statements: &[NodeId]) {
+    let sites: std::collections::HashMap<NodeId, usize> = compiler
+        .class_body_sites
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.def_node.map(|n| (n, i)))
+        .collect();
+    let mut next = 0u32;
+    index_stmts(compiler, OBJECT_CLASS, main_statements, &sites, &mut next);
+}
+
+fn index_stmts(
+    compiler: &mut Compiler,
+    owner: ClassId,
+    stmts: &[NodeId],
+    sites: &std::collections::HashMap<NodeId, usize>,
+    next: &mut u32,
+) {
+    for &s in stmts {
+        index_node(compiler, owner, s, sites, next);
+    }
+}
+
+fn index_node(
+    compiler: &mut Compiler,
+    owner: ClassId,
+    node: NodeId,
+    sites: &std::collections::HashMap<NodeId, usize>,
+    next: &mut u32,
+) {
+    let pos = *next;
+    *next += 1;
+    compiler.doc_order.insert(node, pos);
+    match &compiler.hir[node] {
+        HirNode::DefMethod { .. } | HirNode::Lambda { .. } | HirNode::Block { .. } => {}
+        HirNode::ClassDef { .. } => {
+            // The class object exists before its body runs, so the marker's own
+            // position is where the constant starts answering.
+            let Some(&site) = sites.get(&node) else {
+                return;
+            };
+            let class = compiler.class_body_sites[site].class;
+            let ci = compiler.class(class);
+            let short = ci.name.rsplit("::").next().unwrap_or(&ci.name).to_string();
+            let const_owner = ci.lexical_parent.unwrap_or(OBJECT_CLASS);
+            compiler
+                .const_def_order
+                .entry((const_owner, short))
+                .or_insert(pos);
+            let body = compiler.class_body_sites[site].stmts.clone();
+            index_stmts(compiler, class, &body, sites, next);
+        }
+        HirNode::ConstWrite {
+            scope: None,
+            name,
+            value,
+        } => {
+            // The name starts answering only once the VALUE has been computed,
+            // which is what makes `X = defined?(X)` nil.
+            let (name, value) = (name.clone(), *value);
+            index_node(compiler, owner, value, sites, next);
+            let after = *next;
+            *next += 1;
+            compiler.const_def_order.entry((owner, name)).or_insert(after);
+        }
+        // A box's top level is its own scope; everything else is an ordinary
+        // statement container whose children run right here.
+        HirNode::BoxScope { box_id, body } => {
+            let (box_id, body) = (*box_id, body.clone());
+            let inner = compiler
+                .box_surrogates
+                .get(&box_id)
+                .copied()
+                .unwrap_or(OBJECT_CLASS);
+            index_stmts(compiler, inner, &body, sites, next);
+        }
+        _ => {
+            let mut kids = Vec::new();
+            compiler.hir[node].for_each_child(&mut |c| kids.push(c));
+            index_stmts(compiler, owner, &kids, sites, next);
+        }
+    }
+}
+
 pub(crate) fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
     if let Some(defs) = &compiler.direct_const_defs {
         return defs
