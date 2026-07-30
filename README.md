@@ -148,7 +148,7 @@ disagree). Compatibility is expressed as **prose, not a percentage** — a green
 corpus run is the record, and a claim like "zeo's `json` is not the `json` gem"
 is a fact that can only be stated, never inferred from a score.
 
-- **The conformance suite** (`tests/spinel/`) compiles ~2,368 golden-output
+- **The conformance suite** (`tests/spinel/`) compiles ~2,509 golden-output
   programs and diffs stdout *and* stderr against real `ruby` as `cargo nextest`
   cases. Known-not-yet-matching programs are tracked as XFAIL gaps in
   `tests/gaps/` — a gap that starts matching `ruby` *fails* the suite, forcing
@@ -166,7 +166,163 @@ is a fact that can only be stated, never inferred from a score.
 
 The full catalogue of substitutions and known divergences is
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); the extension model is
-[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
+[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md); what is still owed is
+[`docs/TODO.md`](docs/TODO.md).
+
+## Bundled gems
+
+51 gems ship under `gems/` and resolve without a `Gemfile` — `require "csv"`
+in a program zeo compiles finds the copy in this repo. **Origin** says where
+the Ruby source came from:
+
+- **git-pinned** — fetched by `cargo xtask gem` at a `rev` recorded in
+  `gems.toml`, the reproducible pin.
+- **upstream** — file-copied verbatim from ruby 4.0.6's default and bundled
+  gems.
+- **upstream +zeo** — the same, with deviations marked `zeo:` at each site.
+- **zeo Ruby half** — the `.rb` is zeo's; the native half is a Rust extension
+  under `crates/zeo-rt/src/ext/` (the split CRuby makes between `rubylibdir`
+  and `archdir`).
+
+**Verified by** names a golden test that compiles the gem and diffs its output
+against real ruby 4.0.6, byte for byte. A `—` means no golden asserts this
+gem's behaviour on its own — several are exercised only as another gem's
+dependency. See `gems/UPSTREAM.md` for full provenance and licensing.
+
+| gem | version | origin | verified by | divergences |
+|---|---|---|---|---|
+| abbrev | 0.1.2 | git-pinned | `issue_abbrev_missing.rb` | — |
+| benchmark | 0.4.1 | git-pinned | `issue_benchmark_missing.rb` | — |
+| bigdecimal | 4.1.2 | upstream +zeo | `bigdecimal.rb` | native slice reimplemented ([compat](docs/COMPATIBILITY.md)) |
+| bundler | 4.0.16 | git-pinned | `gem_bundler.rb` | golden enters at `bundler/version` ([todo](docs/TODO.md)) |
+| csv | 3.3.6 | git-pinned | `gem_csv.rb` | — |
+| delegate | 0.6.1 | upstream | `issue_require_delegate_crashes.rb` | — |
+| drb | 2.2.3 | git-pinned | `gem_drb.rb` | — |
+| English | 0.8.1 | upstream | `english_special_globals.rb` | — |
+| erb | 6.0.6 | git-pinned | `erb_module_function.rb` | — |
+| ffi | 1.17.4 | zeo Ruby half | `ffi_struct.rb` | native half over `libffi` |
+| fiddle | 1.1.8 | upstream +zeo | `fiddle.rb` | `Importer` DSL not vendored ([compat](docs/COMPATIBILITY.md)) |
+| fileutils | 1.8.0 | git-pinned | `fileutils.rb` | — |
+| find | 0.2.0 | git-pinned | `issue_find_missing.rb` | — |
+| forwardable | 1.4.0 | upstream | `issue_3300_forwardable.rb` | — |
+| ipaddr | 1.2.9 | git-pinned | — | — |
+| irb | 1.18.0 | upstream | — | compiles; stops at an anonymous runtime refinement ([gap](tests/gaps/issue_runtime_refinement_module.rb)) |
+| json | 2.18.0 | zeo Ruby half | `json_to_json.rb` | `serde_json`, not the json gem ([compat](docs/COMPATIBILITY.md)) |
+| logger | 1.7.0 | git-pinned | `issue_logger_missing.rb` | — |
+| minitest | 6.0.6 | upstream | `gem_minitest.rb` | `autorun` compiles in the `MT_HELL` branch |
+| monitor | 0.1.0 | zeo Ruby half | `gem_two_halves.rb` | `Monitor` + `MonitorMixin` only |
+| net-ftp | 0.3.9 | git-pinned | `issue_net_ftp_missing.rb` | — |
+| net-http | 0.9.1 | git-pinned | `gem_net_http.rb` | — |
+| net-protocol | 0.2.2 | git-pinned | — | — |
+| net-smtp | 0.5.1 | git-pinned | `gem_net_smtp.rb` | — |
+| nkf | 0.3.0 | zeo Ruby half | `nkf.rb` | option subset; `guess` reimplemented ([compat](docs/COMPATIBILITY.md)) |
+| observer | 0.1.2 | git-pinned | `gem_observer.rb` | — |
+| open3 | 0.2.1 | git-pinned | `open3_capture.rb` | — |
+| openssl | 4.0.2 | zeo Ruby half | `openssl_cipher.rb` + 6 more | PKey generation, X509 issuance, `SSLServer` declined ([compat](docs/COMPATIBILITY.md)) |
+| optparse | 0.8.1 | zeo Ruby half | `optparse_subset.rb` | the common `OptionParser` surface |
+| ostruct | 0.6.3 | upstream | `issue_3331_poly_to_sym_arm.rb` | — |
+| pp | 0.6.4 | upstream | `pp_pretty_print.rb` | — |
+| prettyprint | 0.2.0 | upstream | — | — |
+| prism | 1.9.0 | upstream +zeo | `gem_prism.rb` | `translation/` and `ffi.rb` not vendored |
+| psych | 5.4.0 | zeo Ruby half | `psych_load_file_and_stream.rb` | `yaml-rust2`, not libyaml ([compat](docs/COMPATIBILITY.md)) |
+| pty | 0.5.9 | zeo Ruby half | `pty_spawn.rb` | — |
+| racc | 1.8.1 | git-pinned | `issue_racc_parser_missing.rb` | — |
+| reline | 0.6.3 | upstream +zeo | `reline_line_editor.rb` | one `zeo:` deviation in `io.rb` |
+| resolv | 0.7.1 | git-pinned | `issue_resolv_missing.rb` | — |
+| rubygems | 4.0.16 | git-pinned | `gem_rubygems.rb` | golden enters below the umbrella require ([todo](docs/TODO.md)) |
+| shellwords | 0.2.2 | upstream | `shellwords.rb` | — |
+| singleton | 0.3.0 | upstream | — | `singleton_class.include?` ([gap](tests/gaps/issue_singleton_class_include_after_extend.rb)) |
+| strscan | 3.1.6 | zeo Ruby half | `strscan_capture_surface.rb` | a reimplementation ([compat](docs/COMPATIBILITY.md)) |
+| syslog | 0.4.0 | zeo Ruby half | `syslog.rb` | — |
+| tempfile | 0.3.1 | git-pinned | `issue_require_tempfile_codegen_path_attr.rb` | — |
+| time | 0.4.1 | git-pinned | `time_parse.rb` | — |
+| timeout | 0.6.1 | upstream | — | — |
+| tmpdir | 0.3.1 | git-pinned | `io_encoding.rb` | — |
+| tsort | 0.2.0 | upstream | — | — |
+| un | 0.3.0 | git-pinned | `issue_un_missing.rb` | — |
+| uri | 1.1.1 | git-pinned | `uri_parse_and_build.rb` | — |
+| zlib | 3.2.3 | zeo Ruby half | `zlib_classes.rb` | `flate2`; four entry points declined ([compat](docs/COMPATIBILITY.md)) |
+
+A gem outside this set resolves from an external store with `--gem-path` +
+`--lockfile`. A gem whose real implementation is a C extension zeo has no
+built-in for fails with a message that names it: `is_known_native_gem`
+(`crates/zeo/src/parse/loader.rs`) lists 14 such names — `sqlite3`,
+`nokogiri`, `pg`, `mysql2`, `bcrypt`, `nio4r`, `puma`, `grpc`, `protobuf`,
+`oj`, `msgpack`, `eventmachine`, `sass`, `rmagick`. It is deliberately not
+exhaustive; anything else gets CRuby's plain `cannot load such file`. `ffi` is
+excluded on purpose — zeo provides it.
+
+## Standard-library extensions
+
+A gem's *native* half — CRuby's `ext/` model — is a Rust module under
+`crates/zeo-rt/src/ext/`, written in the same `ruby_class!` DSL as the core
+classes. Each sits behind **two** independent gates: a Ruby `require` gate (its
+constant stays invisible until the `require` fires) and a cargo `ext-<name>`
+feature (`default = ext-all`, so the common build has them all).
+
+Every method here is real and oracle-matched — there are no `todo!()`
+scaffolds. Where the backing library differs from CRuby's, the compile warns
+once and records it in `zeo-gems.json`; `docs/COMPATIBILITY.md` carries the
+per-library reason.
+
+| extension | `require` | cargo feature | backed by |
+|---|---|---|---|
+| base64 | `base64` | `ext-base64` | in-tree |
+| bigdecimal | `bigdecimal` | `ext-bigdecimal` | `num-bigint` |
+| cgi | `cgi/escape`, `cgi`, `cgi/util` | `ext-cgi` | in-tree (escape/unescape only) |
+| coverage | `coverage` | `ext-coverage` | in-tree (line coverage only) |
+| date | `date` | `ext-date` | in-tree |
+| digest | `digest`, `digest/*` | `ext-digest` | RustCrypto (`md-5`, `sha1`, `sha2`) |
+| etc | `etc` | `ext-etc` | `libc` |
+| fcntl | `fcntl` | `ext-fcntl` | `libc` |
+| ffi | `ffi` | `ext-ffi` | `libffi` (vendored) |
+| json | `json` | `ext-json` | `serde_json` |
+| monitor | `monitor` | `ext-monitor` | `parking_lot` |
+| nkf | `nkf`, `kconv` | `ext-nkf` | zeo's encoding engine |
+| openssl | `openssl` | `ext-openssl` | vendored OpenSSL 3 via rust-openssl |
+| pathname | `pathname` | `ext-pathname` | in-tree |
+| prism | `prism` | `ext-prism` (+ `eval-vm`) | `ruby-prism` |
+| psych | `psych`, `yaml` | `ext-psych` | `yaml-rust2` |
+| pty | `pty` | `ext-pty` | `libc` (`openpty(3)`) |
+| readline | `readline` | `ext-readline` | `rustyline` |
+| socket | `socket` | `ext-socket` | `libc` |
+| stringio | `stringio` | `ext-stringio` | in-tree |
+| strscan | `strscan` | `ext-strscan` | zeo's Regexp engine |
+| syslog | `syslog`, `syslog/logger` | `ext-syslog` | `libc` (`syslog(3)`) |
+| tracepoint | *(core — no require)* | `ext-tracepoint` | in-tree |
+| zlib | `zlib` | `ext-zlib` | `flate2` (pure-Rust miniz_oxide) |
+
+`io/wait`, `io/console`, `objspace` and `ARGF` are always-on `IO`/`ObjectSpace`
+rows rather than gated modules, so their `require` is ceremony; `rbconfig`
+resolves through a synthetic shim.
+
+## Benchmarks
+
+58 golden-output programs under `bench/`, compiled the way a user would compile
+them (`zeo -o`: release runtime, static link), output-checked byte-for-byte
+before any timing, then timed best-of-3 against CRuby 4.0.6 in the same run.
+
+**Two aggregates, because either alone would mislead:**
+
+| | geomean |
+|---|---|
+| all 58 benchmarks | **1.29× faster than CRuby** |
+| the 37 where CRuby takes ≥ 0.10 s | **0.86×** — about 16% *slower* |
+
+The difference between them is process startup. 13 benchmarks finish inside
+50 ms of CRuby time, where a native binary starts instantly and the interpreter
+pays ~35 ms of boot. Shipping a binary is a genuine advantage, but it is not a
+claim about generated code — and on compute-bound work zeo currently trails
+CRuby by a little. 32 of 58 are faster, 26 slower.
+
+Best: `pidigits` 9.5×, `micro_lisp` and `bigint_fib` 9.0×, `sinatra_mini`
+9.3×, `jekyll_lite` 7.6× (all startup-dominated); `range_each` 3.0×,
+`so_mandelbrot` 3.1× and `nested_loop` 2.2× on real work. Worst:
+`io_wordcount` 0.20×, `structaset` 0.30×, `structaref` 0.34×, `template`
+0.43×. The Struct and string paths are named levers in
+[`docs/TODO.md`](docs/TODO.md); `io_wordcount` is not yet root-caused.
+
+Full per-benchmark table, method and caveats: [`bench/README.md`](bench/README.md).
 
 ## Architecture — the workspace
 
@@ -297,11 +453,12 @@ $ ZEO_BLESS=1 cargo test -p zeo --test spinel     # re-record goldens from ruby
 $ cargo run -p xtask -- bench                      # golden-output benchmarks
 ```
 
-- **`spinel`** — the conformance corpus (~2,368 programs), each diffed
+- **`spinel`** — the conformance corpus (~2,509 programs), each diffed
   byte-for-byte against real `ruby`.
 - **`examples`** — zeo-authored example programs with committed golden output.
-- **`gaps`** — the XFAIL tracker: still-diverging programs. A gap that starts
-  matching `ruby` fails the suite (an XPASS), forcing promotion into `spinel`.
+- **`gaps`** — the XFAIL tracker: still-diverging programs, each with a header
+  naming its cause. A gap that starts matching `ruby` fails the suite (an
+  XPASS), forcing its promotion via `scripts/promote-gap.sh`.
 
 `ZEO_BLESS=1` is the single golden writer — it records expected output from the
 real `ruby` oracle (run with `--disable-error_highlight --disable-did_you_mean`)
@@ -312,10 +469,10 @@ rule (oracle-verified, divergence-documented) and the full workflow.
 
 ```
 crates/    the six workspace crates (above)
-docs/      design & compatibility docs (COMPATIBILITY, EXTENSIONS, EVAL_VM, …)
+docs/      COMPATIBILITY, EXTENSIONS, EVAL_VM, TODO
 tests/     golden-file suites — examples, the spinel corpus, the gaps tracker
-gems/      22 vendored pure-Ruby stdlib gems (managed via gems.toml)
-bench/     golden-output benchmark programs (run by `cargo xtask bench`)
+gems/      51 vendored gems (git-pinned ones managed via gems.toml)
+bench/     the benchmark suite (`cargo xtask bench`) — see bench/README.md
 vendor/    vendored rubygems + shims
 tools/     Ruby helper scripts (arity annotation, method coverage)
 scripts/   corpus import, gap promotion, ruby-vs-zeo diffing
@@ -327,14 +484,20 @@ Experimental and moving fast. Known limitations, stated plainly:
 
 - **No tracing GC** — `Arc` reference counting means reference cycles leak
   (documented, accepted; `GC.start` opportunistically runs finalizers).
-- **Some extensions are scaffolded** — a few `ext/` modules resolve their
-  constant and let `require` succeed but `todo!()` on unbuilt methods
-  (greppable: `rg 'todo!' crates/zeo-rt/src/ext`).
+- **Four extensions ship a deliberate subset** — `coverage` (line coverage
+  only), `nkf`, `openssl` (no PKey generation, X509 issuance or `SSLServer`)
+  and `TracePoint`. They raise `NoMethodError` at the edges rather than
+  pretending; `docs/COMPATIBILITY.md` says what each leaves out. Nothing in
+  `ext/` is a `todo!()` scaffold.
+- **CRuby is still ahead on compute-bound code** — about 16% by geomean over
+  the benchmarks that run longer than 100 ms. See [Benchmarks](#benchmarks).
 - **Dynamic `eval` and `Ruby::Box` isolation are in flight** — see `docs/`.
 - **Native C-extension gems are unsupported** — the intended escape hatch is
   the real `ffi` gem API, compiled ahead of time (see `docs/EXTENSIONS.md`).
 
-The larger structural pieces in flight are tracked under `docs/`.
+Everything still owed is in [`docs/TODO.md`](docs/TODO.md); every known
+divergence from `ruby` is an executable XFAIL in
+[`tests/gaps/`](tests/gaps).
 
 ## Contributing
 

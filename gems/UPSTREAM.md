@@ -2,7 +2,17 @@
 
 Every directory here is a pure-Ruby gem zeo compiles in when a program
 `require`s it (resolved by `parse/loader.rs`; recorded `by: bundled-gem` in
-each compile's `zeo-gems.json`). Two origins:
+each compile's `zeo-gems.json`). Three origins -- git-sourced, vendored from
+the oracle's installation, and zeo-authored:
+
+**Git-sourced.** 24 gems are fetched from their own upstream repository by
+`cargo run -p xtask -- gem`, pinned in `gems.toml` by `github`, release `tag`
+and a full commit `rev` (the reproducible pin; `bundler` also carries a
+`subdir`). Their versions live in each gem's own gemspec, their licenses in
+each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,
+`drb`, `erb`, `fileutils`, `find`, `ipaddr`, `logger`, `net-ftp`, `net-http`,
+`net-protocol`, `net-smtp`, `observer`, `open3`, `racc`, `resolv`, `rubygems`,
+`tempfile`, `time`, `tmpdir`, `un`, `uri`.
 
 **Faithful vendored copies** of the default/bundled gems shipping with the
 oracle Ruby (4.0.5) -- copied verbatim from its installation, versions below,
@@ -14,6 +24,8 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 | delegate | 0.6.1 | ruby 4.0.5 stdlib |
 | english (`English`) | 0.8.1 | ruby 4.0.5 stdlib |
 | forwardable | 1.4.0 | ruby 4.0.5 stdlib |
+| irb | 1.18.0 | ruby 4.0.6 bundled gem |
+| minitest | 6.0.6 | ruby 4.0.6 bundled gem |
 | ostruct | 0.6.3 | ruby 4.0.5 default gem |
 | pp | 0.6.4 | ruby 4.0.5 default gem |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
@@ -23,9 +35,14 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 | timeout | 0.6.1 | ruby 4.0.5 default gem |
 | tsort | 0.2.0 | ruby 4.0.5 default gem |
 
+`irb/` carries one removal: `lib/irb/ext/tracer.rb` is reduced to a
+comment-only file. It hangs off the `tracer` gem, which ruby 4.0.6 does not
+ship and zeo does not vendor.
+
 **zeo-authored Ruby halves** of libraries whose native half lives in
-`zeo-rt` (`json`, `monitor`, `optparse`, `psych`, `strscan`, `zlib`, `pty`,
-`syslog`, `nkf`, `ffi`) -- these are intended to match upstream behaviour;
+`zeo-rt` (`json`, `monitor`, `openssl`, `optparse`, `psych`, `strscan`,
+`zlib`, `pty`, `syslog`, `nkf`, `ffi`) -- these are intended to match
+upstream behaviour;
 divergences are documented in `docs/COMPATIBILITY.md`. Two files inside them
 are faithful vendored copies rather than zeo-authored:
 `syslog/lib/syslog/logger.rb` (`Syslog::Logger`, from the ruby 4.0.5
