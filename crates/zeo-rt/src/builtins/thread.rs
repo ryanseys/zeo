@@ -129,6 +129,25 @@ fn t_set_report_on_exception(
     Ok(args[0].clone())
 }
 
+fn t_abort_on_exception(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(thread::thread_abort_on_exception(
+        &recv.as_thread_unchecked(),
+    )))
+}
+
+fn t_set_abort_on_exception(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    thread::thread_set_abort_on_exception(&recv.as_thread_unchecked(), args[0].truthy());
+    Ok(args[0].clone())
+}
+
 fn t_aref(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -286,6 +305,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "group" => t_group,
         "report_on_exception" => t_report_on_exception,
         "report_on_exception=" => t_set_report_on_exception,
+        "abort_on_exception" => t_abort_on_exception,
+        "abort_on_exception=" => t_set_abort_on_exception,
         "[]" => t_aref,
         "[]=" => t_aset,
         "key?" => t_key_p,
@@ -316,6 +337,10 @@ pub fn lookup_names() -> &'static [&'static str] {
         "group",
         "report_on_exception",
         "report_on_exception=",
+        "abort_on_exception",
+        "abort_on_exception=",
+        "abort_on_exception",
+        "abort_on_exception=",
         "[]",
         "[]=",
         "key?",
@@ -379,6 +404,23 @@ fn c_set_report_on_exception(
     Ok(args[0].clone())
 }
 
+fn c_abort_on_exception(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(thread::abort_on_exception_default()))
+}
+
+fn c_set_abort_on_exception(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    thread::set_abort_on_exception_default(args[0].truthy());
+    Ok(args[0].clone())
+}
+
 /// `Thread.handle_interrupt(hash) { ... }` -- CRuby defers/unmasks async
 /// interrupt (`Thread#raise`/`#kill`) delivery inside the block per the
 /// `ExceptionClass => :immediate/:on_blocking/:never` mask. Async interrupts
@@ -410,6 +452,8 @@ pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "handle_interrupt" => c_handle_interrupt,
         "report_on_exception" => c_report_on_exception,
         "report_on_exception=" => c_set_report_on_exception,
+        "abort_on_exception" => c_abort_on_exception,
+        "abort_on_exception=" => c_set_abort_on_exception,
         _ => return None,
     })
 }

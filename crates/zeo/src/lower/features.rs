@@ -61,7 +61,10 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // gates behind this require) and `fiber` (Fiber) name always-on builtins
     // here, so those requires are pure no-ops -- their classes resolve
     // unconditionally. CRuby answers `false` for `require "fiber"` too, Fiber
-    // being core there as well.
+    // being core there as well. `thread` is the same story one step further
+    // on: CRuby folded it into core long ago and keeps the name only so old
+    // code still loads, answering `false` for the require -- which is what
+    // zeo does now too (minitest/parallel.rb opens with it).
     matches!(
         feature,
         "tmpdir"
@@ -73,5 +76,6 @@ pub fn is_builtin_feature(feature: &str) -> bool {
             | "weakref"
             | "objspace"
             | "fiber"
+            | "thread"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }

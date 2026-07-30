@@ -76,6 +76,10 @@ pub struct ThreadData {
     name: PlMutex<Option<String>>,
     /// `Thread#report_on_exception` -- CRuby defaults this to true.
     report_on_exception: AtomicBool,
+    /// `Thread#abort_on_exception` -- CRuby defaults this to false. Set, an
+    /// uncaught exception in this thread takes the whole process down instead
+    /// of dying quietly with the thread (minitest's parallel workers set it).
+    abort_on_exception: AtomicBool,
     /// `Thread#[]`/`#[]=` storage. CRuby scopes this per-FIBER; with no
     /// separate fiber identity here it is per-thread, a documented narrowing
     /// that the common one-fiber-per-thread programs can't observe.
@@ -120,12 +124,26 @@ pub fn set_report_on_exception_default(on: bool) {
     REPORT_ON_EXCEPTION.store(on, Ordering::Relaxed);
 }
 
+/// `Thread.abort_on_exception` -- the process-wide default each new thread
+/// copies at spawn. False, as in CRuby: a thread that dies of an uncaught
+/// exception normally takes only itself down.
+static ABORT_ON_EXCEPTION: AtomicBool = AtomicBool::new(false);
+
+pub fn abort_on_exception_default() -> bool {
+    ABORT_ON_EXCEPTION.load(Ordering::Relaxed)
+}
+
+pub fn set_abort_on_exception_default(on: bool) {
+    ABORT_ON_EXCEPTION.store(on, Ordering::Relaxed);
+}
+
 impl ThreadData {
     fn build(state: Option<ThreadState>, is_main: bool, origin: Option<String>) -> RThread {
         Arc::new(ThreadData {
             state: PlMutex::new(state),
             name: PlMutex::new(None),
             report_on_exception: AtomicBool::new(report_on_exception_default()),
+            abort_on_exception: AtomicBool::new(abort_on_exception_default()),
             locals: PlMutex::new(HashMap::new()),
             tvars: PlMutex::new(HashMap::new()),
             is_main,
@@ -396,14 +414,27 @@ pub fn thread_inspect(t: &RThread, status: &str) -> String {
 /// or not anyone later joins: a `#join` re-raise and this report are separate
 /// mechanisms, and a program can see both.
 fn report_terminated(t: &RThread, exc: &RubyValue) {
-    if !t.report_on_exception.load(Ordering::Relaxed) {
-        return;
+    if t.report_on_exception.load(Ordering::Relaxed) {
+        let preamble = format!(
+            "{} terminated with exception (report_on_exception is true):",
+            thread_inspect(t, "run")
+        );
+        crate::builtins::exception::report_exception(exc, Some(&preamble));
     }
-    let preamble = format!(
-        "{} terminated with exception (report_on_exception is true):",
-        thread_inspect(t, "run")
-    );
-    crate::builtins::exception::report_exception(exc, Some(&preamble));
+    // `abort_on_exception` is the separate, louder flag: CRuby carries the
+    // exception into the MAIN thread, which then dies of it. There is no main
+    // thread to re-raise into from here, so the effect is produced directly --
+    // the ordinary uncaught report, `at_exit` handlers, exit 1 -- which is
+    // what the main thread's own death would have printed and returned.
+    if t.abort_on_exception.load(Ordering::Relaxed)
+        || (ABORT_ON_EXCEPTION.load(Ordering::Relaxed) && !t.is_main)
+    {
+        if !t.report_on_exception.load(Ordering::Relaxed) {
+            crate::builtins::exception::report_exception(exc, None);
+        }
+        crate::run_at_exit();
+        std::process::exit(1);
+    }
 }
 
 pub fn thread_origin(t: &RThread) -> Option<String> {
@@ -416,6 +447,14 @@ pub fn thread_report_on_exception(t: &RThread) -> bool {
 
 pub fn thread_set_report_on_exception(t: &RThread, v: bool) {
     t.report_on_exception.store(v, Ordering::Relaxed);
+}
+
+pub fn thread_abort_on_exception(t: &RThread) -> bool {
+    t.abort_on_exception.load(Ordering::Relaxed)
+}
+
+pub fn thread_set_abort_on_exception(t: &RThread, v: bool) {
+    t.abort_on_exception.store(v, Ordering::Relaxed);
 }
 
 /// `Thread#[]` -- a fiber-local value, or nil.
