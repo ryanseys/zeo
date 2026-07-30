@@ -1,16 +1,6 @@
 require_relative "test"
 
-# zeo: upstream defines `infect_an_assertion` as an instance method of
-# `Module`, which zeo cannot reopen -- `Module` and `Class` are the two
-# builtins with no per-value dispatch to hang a reopened method on. Every one
-# of its 34 call sites is a bare call inside `module Minitest::Expectations`,
-# so attaching it to THAT module's singleton puts it in exactly the same place
-# for exactly those callers, with the body unchanged (`self` is the
-# Expectations module either way). What is lost is the ability of code outside
-# minitest to call `SomeModule.infect_an_assertion`.
-module Minitest
-  module Expectations # :nodoc:
-    class << self
+class Module # :nodoc:
   def infect_an_assertion meth, new_name, dont_flip = false # :nodoc:
     block = dont_flip == :block
     dont_flip = false if block
@@ -33,8 +23,6 @@ module Minitest
       end
       #{kw_extra}
     EOM
-  end
-    end
   end
 end
 

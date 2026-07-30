@@ -1739,12 +1739,13 @@ fn register_class(
             // module (`Enumerable`/`Comparable`/`Kernel`/`Math`) now accepts a
             // reopen: its added methods register as value methods on the
             // module id, found by the MRO walk for every includer.
-            if ci.is_module == is_module && (cid == CLASS_CLASS || cid == MODULE_CLASS) {
-                return Err(format!(
-                    "reopening the built-in {} `{name}` isn't supported yet (zeo limitation)",
-                    if ci.is_module { "module" } else { "class" }
-                ));
-            }
+            // `Class`/`Module` reopen like any other builtin: the added
+            // methods register as VALUE methods on their id, and a
+            // `RubyValue::Class` receiver's own ancestry runs
+            // `Class -> Module -> Object`, so the MRO walk finds them for
+            // every class and module in the program. minitest defines
+            // `Module#infect_an_assertion` this way.
+            let _ = (CLASS_CLASS, MODULE_CLASS);
             // A reopen may RESTATE the builtin's superclass (`class String <
             // Object`); CRuby accepts a matching clause and raises `superclass
             // mismatch` on a wrong one. Mirrors the user-class reopen guard.
@@ -3287,19 +3288,24 @@ mod builtin_reopen_tests {
     }
 
     #[test]
-    fn only_class_and_module_stay_rejected() {
-        // `Object` is NOT in this list: reopening it is top-level `def`
-        // by another name. Builtin MODULES (Comparable/Enumerable) are
-        // reopenable; only `Class`/`Module` themselves -- which have no
-        // per-value dispatch to hang a method on -- stay rejected.
-        for src in [
-            "class Class\n  def probe\n    1\n  end\nend\n",
-            "class Module\n  def probe\n    1\n  end\nend\n",
+    fn class_and_module_reopen_like_any_other_builtin() {
+        // These two were the last builtins excluded, on the reasoning that a
+        // `RubyValue::Class` receiver has no per-value dispatch to hang a
+        // method on. It has: a class value's own ancestry runs `Class ->
+        // Module -> Object`, which is the chain the MRO walk already takes.
+        for (src, cid) in [
+            ("class Class\n  def probe\n    1\n  end\nend\n", crate::compiler::CLASS_CLASS),
+            ("class Module\n  def probe\n    1\n  end\nend\n", crate::compiler::MODULE_CLASS),
         ] {
-            assert!(
-                analyze_err(src).contains("isn't supported yet (zeo limitation)"),
-                "expected rejection for: {src}"
-            );
+            let a = analyze_src(src);
+            let probes = a
+                .compiler
+                .class(cid)
+                .methods
+                .iter()
+                .filter(|&&sid| a.compiler.scope(sid).name == "probe")
+                .count();
+            assert_eq!(probes, 1, "expected one `probe` for: {src}");
         }
     }
 
