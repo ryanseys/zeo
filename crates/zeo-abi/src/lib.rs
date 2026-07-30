@@ -77,6 +77,30 @@ pub fn is_ext_feature(name: &str) -> bool {
     BUILTINS.iter().any(|b| b.feature == Some(name))
 }
 
+/// Why a stdlib feature zeo DECLINES is missing -- appended to its
+/// `LoadError` so a caller can tell a settled decision from a typo or an
+/// unfinished feature. `None` for everything else, which keeps CRuby's bare
+/// `cannot load such file -- <name>`.
+///
+/// Lives here because BOTH sides raise it and they never link each other: the
+/// compiler's loader when it rejects the require outright, and the runtime's
+/// `Kernel#require` when an unresolvable one was deferred. One source, so the
+/// two wordings cannot drift.
+///
+/// See "Declined (a CRuby internal, not a missing binding)" in
+/// `docs/COMPATIBILITY.md`.
+pub fn declined_feature_reason(name: &str) -> Option<&'static str> {
+    match name {
+        "ripper" => Some(
+            "declined. ripper exposes the reduction event stream of CRuby's parse.y, \
+             and zeo's front end embeds prism -- a different parser with a different \
+             event model, so there is nothing to bind. Use `require \"prism\"` for a \
+             Ruby-level syntax tree. See docs/COMPATIBILITY.md.",
+        ),
+        _ => None,
+    }
+}
+
 /// `ClassId(0)`, always present: the root every class ultimately chains up
 /// to (via `BasicObject`). Not part of [`BUILTINS`] --
 /// both sides construct/register `Object` specially (the compiler seeds it

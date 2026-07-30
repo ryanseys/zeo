@@ -149,8 +149,13 @@ are all oracle-matched against the C extension (`tests/fiddle.rb`); the
 
 ## Out of scope (VM internals / tooling)
 
-`rubyvm`, `continuation`, `ripper` (we have ruby-prism),
-`win32`, `-test-`. `require`ing one is the normal `cannot load such file`.
+`rubyvm`, `continuation`, `ripper`, `win32`, `-test-`. `require`ing one raises
+the normal `cannot load such file` — except where zeo has a decision to state,
+in which case the message carries it (`zeo_abi::declined_feature_reason`).
+`ripper` is the case today: it points at `require "prism"`, the same parser
+zeo's own front end runs, which answers with a syntax tree rather than
+parse.y's reduction stream. See "Declined" in
+[`docs/COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Adding an extension
 

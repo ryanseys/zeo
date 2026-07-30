@@ -91,10 +91,14 @@ ruby_module! {
         // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
         // `require_relative` only, against the calling file's directory -- a
         // compiled binary has no such directory, so the argument stands.
-        let sig = crate::dispatch::raise_error(
-            "LoadError",
-            format!("cannot load such file -- {path}"),
-        );
+        // A feature zeo DECLINES says so; everything else keeps CRuby's bare
+        // wording. Shared with the compiler's loader through the ABI, the only
+        // thing the two sides agree on.
+        let msg = match zeo_abi::declined_feature_reason(&path) {
+            Some(reason) => format!("cannot load such file -- {path}: {reason}"),
+            None => format!("cannot load such file -- {path}"),
+        };
+        let sig = crate::dispatch::raise_error("LoadError", msg);
         if let crate::signal::Signal::Raise(exc) = &sig {
             crate::builtins::exception::set_load_error_path(exc, &path);
         }

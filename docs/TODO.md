@@ -22,8 +22,12 @@ the cause. Current contents:
 | `issue_subclass_runtime_extend.rb` | a subclass does not inherit runtime-extended class methods |
 | `issue_module_private_instance_methods.rb` | a bare `private` in a module body does not take |
 | `issue_singleton_class_include_after_extend.rb` | `singleton_class.include?(M)` false after a runtime `extend` |
-| `issue_ripper_missing.rb` | **declined** — ripper needs parse.y's reduction events |
 | `issue_continuation_missing.rb` | **declined** — `callcc` needs a restorable machine stack |
+
+`ripper` is declined too, but is no longer here: `require "prism"` is a real
+answer rather than an absence, so the `LoadError` now says so and an e2e test
+asserts it (`ripper_is_declined_and_the_load_error_says_so`). A golden could
+not: goldens are diffed against the oracle, and ruby loads ripper.
 
 ## Correctness
 

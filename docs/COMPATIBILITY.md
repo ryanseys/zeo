@@ -466,8 +466,12 @@ Examples that trigger the named error today: `sqlite3`, `nokogiri`, `pg`,
 
 Two stdlib extensions expose CRuby's own machinery rather than a library, so
 there is nothing for zeo to bind — reproducing them means rebuilding the
-machinery. `require` raises `LoadError`, which is a divergence from ruby and
-is tracked as one (`tests/gaps/`), not a queued job.
+machinery. `require` raises `LoadError`, which is a divergence from ruby, but a
+settled one rather than a queued job.
+
+The `LoadError` **names the decision** where zeo has one to state
+(`loader.rs::declined_reason`), so a caller can tell a decline from a typo or
+an unfinished feature.
 
 - **`continuation`** (`Kernel#callcc`) captures and restores the machine
   stack. zeo compiles to native Rust and has no stack-copying runtime. An
@@ -475,13 +479,17 @@ is tracked as one (`tests/gaps/`), not a queued job.
   reachable, and deliberately not shipped: it would answer the common case
   and silently break re-entry, which is worse than a `LoadError` a caller can
   rescue. CRuby itself prints *"callcc is obsolete; use Fiber instead"* when
-  the extension loads, and zeo ships `Fiber`.
+  the extension loads, and zeo ships `Fiber`. Tracked as a divergence in
+  `tests/gaps/issue_continuation_missing.rb`, since ruby does load it.
 - **`ripper`** exposes the reduction event stream of CRuby's `parse.y`. zeo's
   front end embeds prism, a different parser with a different event model, so
   a binding has nothing to bind to; matching ripper means re-implementing
-  CRuby's grammar actions. (`irb` is absent for a separate reason — it reads
-  source through a **Ruby-level Prism** API zeo does not expose. That one is a
-  gap, not a decline.)
+  CRuby's grammar actions. **`require "prism"` is the answer instead** — the
+  real gem's Ruby half over the same prism zeo itself parses with, which gives
+  a syntax tree rather than a reduction stream. The decline is asserted by
+  `ripper_is_declined_and_the_load_error_says_so`
+  (`crates/zeo/tests/e2e/gems_require.rs`) rather than by a golden: a golden is
+  diffed against the oracle, and ruby loads ripper, so the two can never agree.
 
 ## Refinements
 

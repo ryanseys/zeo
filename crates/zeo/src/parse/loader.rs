@@ -1367,6 +1367,9 @@ fn cannot_load(name: &str) -> String {
              path is the intended escape hatch."
         );
     }
+    if let Some(reason) = zeo_abi::declined_feature_reason(name) {
+        return format!("cannot load such file -- {name}: {reason}");
+    }
     format!("cannot load such file -- {name}")
 }
 

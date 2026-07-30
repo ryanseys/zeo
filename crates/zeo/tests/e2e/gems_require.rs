@@ -385,6 +385,58 @@ fn shellwords_class_method_aliases_run_from_the_vendored_gem() {
 }
 
 #[test]
+fn ripper_is_declined_and_the_load_error_says_so() {
+    // A DECLINE, not a gap: ripper exposes the reduction event stream of
+    // CRuby's `parse.y`, and zeo's front end embeds prism -- a different parser
+    // with a different event model -- so there is nothing for a binding to bind
+    // to. Matching ripper means re-implementing CRuby's grammar actions.
+    //
+    // Asserted here rather than as a golden because a golden is diffed against
+    // the ruby oracle, and ruby loads ripper happily: the two can never agree,
+    // so there is no passing golden to write. This is the shape the gaps README
+    // means by "a divergence zeo has decided not to reproduce belongs in a
+    // passing test that documents it".
+    //
+    // The message must NAME the decision. A bare `cannot load such file --
+    // ripper` reads like a typo or an unfinished feature, and sends the caller
+    // looking for a version of zeo that has it.
+    let result = run_ruby("require \"ripper\"\np defined?(Ripper)\n");
+    assert!(
+        !result.status.success(),
+        "expected `require \"ripper\"` to raise; stdout: {}",
+        result.stdout
+    );
+    assert!(
+        result.stderr.contains("cannot load such file -- ripper")
+            && result.stderr.contains("declined")
+            && result.stderr.contains("prism")
+            && result.stderr.contains("LoadError"),
+        "the decline must explain itself: {}",
+        result.stderr
+    );
+
+    // It is a plain LoadError, so the optional-dependency idiom still works --
+    // a caller that can do without ripper is not broken by the decline.
+    let rescued = run_ruby(
+        r#"
+        begin
+          require "ripper"
+          puts "loaded"
+        rescue LoadError
+          puts "no ripper"
+        end
+        "#,
+    );
+    assert!(rescued.status.success(), "stderr: {}", rescued.stderr);
+    assert_eq!(rescued.stdout, "no ripper\n");
+
+    // The alternative the message points at is real and already covered:
+    // `tests/gem_prism.rb` compiles `require "prism"` and diffs it against the
+    // oracle. Not re-asserted here -- it pulls the gem and the eval-vm runtime,
+    // which cost this test ~100s for no coverage the golden lacks.
+}
+
+#[test]
 fn requires_that_cannot_be_resolved_at_compile_time() {
     // A NON-LITERAL require target can't be resolved at compile time, so it
     // lowers to a runtime `Kernel#require` raising LoadError (matching CRuby),
