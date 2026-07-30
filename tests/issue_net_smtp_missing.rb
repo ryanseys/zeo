@@ -1,4 +1,3 @@
-# net/smtp is a pure-Ruby default gem (no C extension) that isn't vendored
-# under gems/ -- `require "net/smtp"` raises LoadError.
+# `require "net/smtp"` -- the vendored gem loads and defines `Net::SMTP`.
 require "net/smtp"
 p defined?(Net::SMTP)

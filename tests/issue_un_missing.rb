@@ -1,5 +1,4 @@
-# un is a pure-Ruby bundled utility library (small command-line file-utility
-# scripts usable via `ruby -run`, no C extension) that isn't vendored under
-# gems/ -- `require "un"` raises LoadError.
+# `require "un"` -- the vendored gem loads. un is the small set of
+# file-utility entry points `ruby -run` calls, so loading it IS the surface.
 require "un"
 p true

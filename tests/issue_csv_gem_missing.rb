@@ -1,4 +1,4 @@
-# The csv stdlib gem isn't vendored at all -- `require "csv"` raises
-# LoadError instead of loading CSV.parse/CSV.generate support.
+# `require "csv"` -- the vendored gem loads, which brings `CSV.parse` and
+# `CSV.generate` with it.
 require "csv"
 puts "loaded"

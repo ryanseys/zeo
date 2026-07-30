@@ -1,4 +1,4 @@
-# benchmark is a pure-Ruby default gem (no C extension) that isn't vendored
-# under gems/ -- `require "benchmark"` raises LoadError.
+# `require "benchmark"` -- the vendored gem loads and `Benchmark.measure`
+# answers.
 require "benchmark"
 p Benchmark.respond_to?(:measure)
