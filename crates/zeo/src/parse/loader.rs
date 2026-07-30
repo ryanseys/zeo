@@ -514,6 +514,34 @@ impl Loader {
                 continue;
             }
             let id = lower_node(result, hir, &n)?;
+            // A require this statement CONTAINS rather than IS, and that
+            // LOADING the file runs -- a conditional (`require_relative
+            // "hell" if ENV["MT_HELL"]`), a `begin`, a class body, a block.
+            // Spliced at the position of the statement holding it, so the
+            // file loads in the order it is written. (These used to splice at
+            // the HEAD of the file, ahead of every top-level require:
+            // minitest/autorun.rb's third line then loaded before its first,
+            // and hell.rb's `class Minitest::Test` reopen became that class's
+            // earliest body -- firing `Runnable.inherited` before
+            // `Runnable`'s own body had a registry to add to.) A method-body
+            // require is `lazy` instead, and lands at the end of the file.
+            //
+            // AFTER `lower_node`, which folds each require CALL to its load
+            // result: splicing first would mark the feature loaded and turn a
+            // first `require "digest"` from true into false.
+            let mut nested = RequireCollector::default();
+            {
+                use ruby_prism::Visit as _;
+                nested.visit(&n);
+            }
+            for call in &nested.calls {
+                let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                if let Some(spliced) = self.lower_require_statement(
+                    hir, result, call, &cname, dir, file_idx, current_box,
+                )? {
+                    combined.extend(spliced);
+                }
+            }
             combined.push(id);
             own.push(id);
         }
@@ -565,32 +593,21 @@ impl Loader {
             }
         }
 
-        // Non-top-level `require`/`require_relative` that loading this file
-        // still runs: a conditional, a `begin`, a class body, a block. Splice
-        // each resolvable literal target here, as `autoload` does; the CALL
-        // folds to a bool no-op in `lower_call_general`. An unresolvable plain
-        // `require` is not hoisted -- its CALL becomes a runtime
-        // `Kernel#require`. The shared `required` table dedups, so a target
-        // already loaded at top level splices once. A require in a never-taken
-        // branch still loads: benign, since every extension links statically.
-        let mut hoisted = Vec::new();
-        for call in &requires.calls {
+        // The method-body `require_relative`s, plus any require the statement
+        // loop could not reach (one written inside an autoload/glob target).
+        // The shared `required` table dedups, so everything already spliced
+        // above is a no-op here and only the stragglers land.
+        let mut trailing = Vec::new();
+        for call in requires.lazy.iter().chain(&requires.calls) {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
             if let Some(spliced) =
                 self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?
             {
-                hoisted.extend(spliced);
+                trailing.extend(spliced);
             }
         }
-        // The hoisted targets run BEFORE this file's own statements, so a method
-        // that `require`s-and-uses one of them works even when it is called
-        // during this same file's top-level load (top-level requires the file
-        // itself makes are already inside `combined`, spliced by the loop
-        // above). Narrow over-approximation: a hoisted target that depends on a
-        // SAME-FILE top-level require would see it unloaded -- unheard of in
-        // practice (nested requires name self-contained lazy deps).
-        hoisted.append(&mut combined);
-        Ok(hoisted)
+        combined.append(&mut trailing);
+        Ok(combined)
     }
 
     /// One recognized require/require_relative/load statement: validate the
@@ -1430,9 +1447,18 @@ fn literal_feature(
 /// eager-spliced.
 #[derive(Default)]
 struct RequireCollector<'a> {
-    /// Requires to splice: everything outside a method body, plus every
-    /// `require_relative`.
+    /// Requires to splice where they are written: everything LOADING the
+    /// file runs -- top level, a conditional, a `begin`, a class body, a
+    /// block.
     calls: Vec<ruby_prism::CallNode<'a>>,
+    /// A `require_relative` inside a method BODY. Spliced (it names a file of
+    /// this same program, which must stay loaded), but at the END of the
+    /// file: the method cannot run before the file that defines it has
+    /// finished loading, and the target routinely reopens a class this file
+    /// is still building -- irb's `ext/eval_history.rb` pushes onto a
+    /// `NOPRINTING_IVARS` that `context.rb` assigns below the `def` that
+    /// requires it.
+    lazy: Vec<ruby_prism::CallNode<'a>>,
     /// A plain `require` only a method BODY reaches. These are not spliced, but
     /// their names are still wanted (see `Hir::deferred_requires`).
     deferred: Vec<ruby_prism::CallNode<'a>>,
@@ -1446,8 +1472,10 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             if call.receiver().is_none()
                 && matches!(call.name().as_slice(), b"require" | b"require_relative")
             {
-                if self.defs == 0 || call.name().as_slice() == b"require_relative" {
+                if self.defs == 0 {
                     self.calls.push(call);
+                } else if call.name().as_slice() == b"require_relative" {
+                    self.lazy.push(call);
                 } else {
                     self.deferred.push(call);
                 }
