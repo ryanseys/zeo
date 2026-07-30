@@ -88,10 +88,17 @@ ruby_module! {
         if feature_already_loaded(&path) {
             return Ok(RubyValue::Bool(false));
         }
-        Err(crate::dispatch::raise_error(
+        // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
+        // `require_relative` only, against the calling file's directory -- a
+        // compiled binary has no such directory, so the argument stands.
+        let sig = crate::dispatch::raise_error(
             "LoadError",
             format!("cannot load such file -- {path}"),
-        ))
+        );
+        if let crate::signal::Signal::Raise(exc) = &sig {
+            crate::builtins::exception::set_load_error_path(exc, &path);
+        }
+        Err(sig)
     }
     def "pp"(_recv, args, _block) {
         kernel_pp(args)

@@ -22,9 +22,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use zeo_abi::{
     ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, FROZEN_ERROR_CLASS, INTERRUPT_CLASS,
-    KEY_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS,
-    SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS, SYSTEM_EXIT_CLASS, UNCAUGHT_THROW_ERROR_CLASS,
-    declared_ancestors,
+    KEY_ERROR_CLASS, LOAD_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS,
+    NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS, SYSTEM_EXIT_CLASS,
+    UNCAUGHT_THROW_ERROR_CLASS, declared_ancestors,
 };
 
 use crate::builtins::{arg_error, type_error};
@@ -608,6 +608,22 @@ fn exc_receiver(
     }
 }
 
+/// `LoadError#path` -- the feature that would not load, `nil` if unset (what
+/// CRuby answers for a hand-built `LoadError.new("m")`, rather than the error
+/// an unset `#key` raises). Backed by a REAL `@path` ivar, not a hidden detail
+/// slot: CRuby lists it in `instance_variables`.
+fn exc_path(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(recv.ivar_get_named("path").unwrap_or(RubyValue::Nil))
+}
+
+/// Stamp `@path` on a `LoadError` at raise time. A no-op for a non-native
+/// exception value, so a raise site can call it unconditionally.
+pub fn set_load_error_path(exc_value: &RubyValue, path: &str) {
+    if let RubyValue::Object(o) = exc_value {
+        o.ivar_set_named("path", RubyValue::Str(crate::string_new(path.to_string())));
+    }
+}
+
 /// `KeyError#key` -- the key that was not found. `ArgumentError` when unset
 /// (`KeyError.new("m").key`), CRuby's behavior.
 fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
@@ -1130,6 +1146,7 @@ pub fn register_exception_subclass(
     let is_interrupt = ancestors.contains(&INTERRUPT_CLASS);
     let is_local_jump = ancestors.contains(&LOCAL_JUMP_ERROR_CLASS);
     let is_frozen_error = ancestors.contains(&FROZEN_ERROR_CLASS);
+    let is_load_error = ancestors.contains(&LOAD_ERROR_CLASS);
     let is_system_exit = ancestors.contains(&SYSTEM_EXIT_CLASS);
     registry.register(
         id,
@@ -1174,6 +1191,9 @@ pub fn register_exception_subclass(
     }
     if is_frozen_error {
         registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
+    }
+    if is_load_error {
+        registry.define_method_own(id, Symbol::intern("path"), exc_path);
     }
     if is_local_jump {
         registry.define_method_own(id, Symbol::intern("reason"), exc_reason);

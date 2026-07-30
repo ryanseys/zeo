@@ -1779,6 +1779,9 @@ pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
 /// `FrozenError` -- exposes `#receiver` (the frozen object).
 pub const FROZEN_ERROR_CLASS: ClassId = exc_id(23);
 
+/// `LoadError` -- exposes `#path` (the feature that would not load).
+pub const LOAD_ERROR_CLASS: ClassId = exc_id(3);
+
 /// `SystemExit` -- carries an exit status via `#status`/`#success?`.
 pub const SYSTEM_EXIT_CLASS: ClassId = exc_id(48);
 
