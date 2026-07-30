@@ -1645,6 +1645,19 @@ pub enum HirNode {
     /// the class itself in the linearized `ancestors` list, so its methods
     /// take precedence over the class's own (reachable via `super`).
     Prepend(String),
+    /// `refine Target do ... end` in a module body. The block's `def`s lower
+    /// into a HOLDER module (a `ClassDef` pushed immediately before this
+    /// marker, named `#refinement:Target` so it claims no Ruby constant);
+    /// this node names the class those methods refine. Deliberately not an
+    /// `Include`: a refinement edits no ancestry at all -- it is consulted
+    /// only at the call sites a `using` scope covers.
+    Refine { target: String, holder: String },
+    /// `using M` -- activates every refinement `M` holds for the code
+    /// lexically AFTER this point, to the end of the enclosing body (the
+    /// rest of the file at the top level). The position comes from this
+    /// node's own span, so a `def` written after it is covered while one
+    /// written above it is not, which is exactly real Ruby's rule.
+    Using(String),
     /// `while cond ... end` / `until cond ... end` (+ modifier forms
     /// `stmt while cond` / `stmt until cond`) -- `until` folds in here as
     /// `negate: true`, exactly like `unless` folds into `If` by swapping
@@ -2096,6 +2109,7 @@ impl HirNode {
             HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
+            | HirNode::Refine { .. }
             | HirNode::Undef(_)
             | HirNode::AliasMethod { .. }
             | HirNode::MethodVisibility { .. }
@@ -2169,6 +2183,10 @@ impl HirNode {
             | HirNode::AliasGlobal(..)
             | HirNode::LastMatchRef(_)
             | HirNode::Seq(_)
+            // `using` stands on its own at the top level far more often than
+            // in a class body, and it edits nothing about the class -- it is
+            // an ordinary statement whose only effect is compile-time.
+            | HirNode::Using(_)
             | HirNode::FlipFlop { .. } => false,
         }
     }
@@ -2426,6 +2444,11 @@ impl HirNode {
             | HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
+            | HirNode::Refine {
+                target: _,
+                holder: _,
+            }
+            | HirNode::Using(_)
             | HirNode::Undef(_)
             | HirNode::AliasGlobal(_, _)
             | HirNode::AliasMethod {

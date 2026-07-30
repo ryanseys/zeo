@@ -3394,6 +3394,43 @@ pub fn send_value_in(
     send_value_in_reason(box_id, recv, name, args, block, MissingReason::NoEntry)
 }
 
+/// The holder whose refined `name` answers for `recv`, or `None` to fall
+/// through to ordinary dispatch. `candidates` is `(refined class, holder)`
+/// in most-recently-activated-first order, decided at compile time from the
+/// `using` scopes covering the call site; the only runtime question left is
+/// whether the receiver is actually of the refined class.
+fn refinement_for(
+    recv: &RubyValue,
+    name: Symbol,
+    candidates: &[(ClassId, ClassId)],
+) -> Option<ValueMethodFn> {
+    let cls = recv.class_id();
+    candidates
+        .iter()
+        .find_map(|&(target, holder)| {
+            is_a(cls, target).then(|| value_method(holder, 0, name))
+        })
+        .flatten()
+}
+
+/// A call site the active refinements may answer. The refined body wins
+/// outright when the receiver is of the refined class; otherwise this is an
+/// ordinary send, which is what keeps an unrefined receiver -- and a name
+/// no refinement defines for THIS receiver -- on its normal path.
+pub fn refined_send_in(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    candidates: &[(ClassId, ClassId)],
+) -> Result<RubyValue, Signal> {
+    match refinement_for(recv, name, candidates) {
+        Some(f) => f(recv, args, block),
+        None => send_value_in(box_id, recv, name, args, block),
+    }
+}
+
 /// A bareword VCALL (`foo` -- implicit self, no args, no parens, could have
 /// been a local): a miss raises `NameError`, not `NoMethodError`, per Ruby.
 /// Everything else (method_missing, alias re-dispatch) is identical to a

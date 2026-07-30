@@ -466,6 +466,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -1415,8 +1417,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             };
             emit_mixin_hook(cx, m, hook)
         }
+        // `using M` is spent entirely at compile time: the activation it
+        // records already decided which call sites route through the
+        // refinement, so nothing is left to run where it was written.
+        HirNode::Using(_) => quote! { zeo_rt::RubyValue::Nil },
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
+        | HirNode::Refine { .. }
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }

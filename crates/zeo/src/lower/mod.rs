@@ -1303,6 +1303,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(call) = node.as_call_node() {
         let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
 
+        // `using M` -- the top-level spelling, where it activates for the
+        // rest of the file. The class-body spelling is recognized by
+        // `defs::lower_class_body_statement`, which reaches the same helper.
+        if let Some(id) = defs::lower_using(hir, node, &name, &call)? {
+            return Ok(id);
+        }
+
         /// Kernel's module functions that zeo answers with a COMPILE-TIME form
         /// rather than a runtime method row, so `Kernel.<name>` has to be
         /// recognized here to reach the same form. The list is

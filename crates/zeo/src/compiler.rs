@@ -379,6 +379,12 @@ pub struct Compiler {
     /// defined constant -- a `class`/`module` marker, or a statement-level
     /// `NAME = ...`. Read with [`Compiler::const_defined_before`].
     pub(crate) const_def_order: HashMap<(ClassId, String), u32>,
+    /// Every `refine Target do ... end` the program wrote, in registration
+    /// order. See [`Refinement`].
+    pub(crate) refinements: Vec<Refinement>,
+    /// Every `using M`, as the LEXICAL byte range it covers. See
+    /// [`Activation`] and [`Compiler::refinements_active_at`].
+    pub(crate) activations: Vec<Activation>,
     /// Block call sites whose receiver's STATIC type admits a native inline
     /// loop (`analyze::mark_inline_iter_sites`), keyed by the BLOCK node.
     /// Soundness lives in the emitted match GUARD (a mistyped receiver takes
@@ -446,6 +452,31 @@ fn verify_class_index() -> bool {
     *V.get_or_init(|| std::env::var_os("ZEO_VERIFY_CLASS_INDEX").is_some())
 }
 
+/// One `refine Target do ... end`. The refined methods are ordinary
+/// instance methods of `holder`, a module the source cannot name; nothing
+/// is ever registered ON `target`, which is what keeps the refinement out
+/// of `Target.instance_methods` and out of an unrefined call's answer.
+pub(crate) struct Refinement {
+    /// The module whose body wrote the `refine` -- what a `using` names.
+    pub module: ClassId,
+    /// The class being refined.
+    pub target: ClassId,
+    /// The hidden module holding the refined methods.
+    pub holder: ClassId,
+}
+
+/// One `using M`, as the byte range of source it covers: from the `using`
+/// itself to the end of the enclosing body (the end of the file at the top
+/// level). Real Ruby scopes a refinement lexically, so a byte range IS the
+/// rule -- a `def` written after the `using` is covered because its body
+/// sits inside the range, and one written above it is not.
+pub(crate) struct Activation {
+    pub module: ClassId,
+    pub file: crate::hir::FileId,
+    pub start: u32,
+    pub end: u32,
+}
+
 /// See [`Compiler::class_body_sites`].
 pub struct ClassBodySite {
     pub def_node: Option<crate::hir::NodeId>,
@@ -503,6 +534,8 @@ impl Compiler {
             direct_const_defs: None,
             doc_order: HashMap::new(),
             const_def_order: HashMap::new(),
+            refinements: Vec::new(),
+            activations: Vec::new(),
             inline_iter_sites: HashMap::new(),
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
@@ -734,6 +767,48 @@ impl Compiler {
 
     pub fn box_surrogate(&self, box_id: u32) -> Option<ClassId> {
         self.box_surrogates.get(&box_id).copied()
+    }
+
+    /// The `(target, holder)` pairs a call site at `node` must consult
+    /// before ordinary dispatch, MOST RECENTLY activated first -- real
+    /// Ruby's own precedence when two `using`s refine the same class.
+    ///
+    /// Empty for the overwhelming majority of programs, which write no
+    /// `using` at all; empty too for a node with no source position (a
+    /// synthesized desugaring), where there is no lexical question to ask.
+    pub(crate) fn refinements_active_at(
+        &self,
+        node: crate::hir::NodeId,
+    ) -> Vec<(ClassId, ClassId)> {
+        if self.activations.is_empty() {
+            return Vec::new();
+        }
+        let Some(span) = self.hir.span(node).and_then(|s| s.known()) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for a in self.activations.iter().rev() {
+            if a.file != span.file || span.start < a.start || span.start >= a.end {
+                continue;
+            }
+            out.extend(
+                self.refinements
+                    .iter()
+                    .filter(|r| r.module == a.module)
+                    .map(|r| (r.target, r.holder)),
+            );
+        }
+        out
+    }
+
+    /// Whether `holder` defines `name` as an instance method of its own --
+    /// the question that decides whether a call site routes through the
+    /// refinement at all.
+    pub(crate) fn refinement_defines(&self, holder: ClassId, name: &str) -> bool {
+        self.class(holder)
+            .own_methods
+            .iter()
+            .any(|&sid| self.scope(sid).name == name)
     }
 
     /// Precomputes `cref_of`/`fq_name` for every class -- see

@@ -2395,7 +2395,15 @@ fn emit_user_module_bridges(compiler: &Compiler) -> Vec<TokenStream> {
         }
         let cid = ClassId(idx as u32);
         let id = idx as u32;
-        let flat = class.name.replace("::", "_");
+        // The name only spells the container for a human reader, so anything
+        // that isn't a Rust ident character becomes `_` -- a refinement
+        // holder (`#refinement:String`) is deliberately unspellable as a
+        // Ruby constant and would otherwise not be an ident at all.
+        let flat: String = class
+            .name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
         let container = format_ident!("__um_{}_{}", idx, flat);
         let fns = class
             .own_methods

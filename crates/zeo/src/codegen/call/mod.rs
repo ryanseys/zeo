@@ -1920,6 +1920,68 @@ pub fn emit_call(
         cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr, false,
     )
 }
+/// A call routed through the refinements active at it, or `None` -- the
+/// answer for every site no `using` covers, and for every name the covering
+/// refinements do not define, which is all but a handful of sites in the
+/// rare program that refines at all.
+///
+/// A refined site gives up its static dispatch: whether the refinement
+/// applies depends on the receiver's RUNTIME class, so the whole call goes
+/// through one runtime entry point that tries the refined bodies and then
+/// falls back to an ordinary send. That is a real cost, paid only where a
+/// `using` and a refined name actually meet.
+///
+/// The lexical question is asked of the RECEIVER's span. A `using` cannot
+/// be written between a receiver and the method name it carries, so the two
+/// always sit on the same side of every activation.
+#[allow(clippy::too_many_arguments)]
+fn emit_refined_call(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+    recv_expr: &TokenStream,
+) -> Option<TokenStream> {
+    let candidates: Vec<_> = cx
+        .compiler
+        .refinements_active_at(recv_id)
+        .into_iter()
+        .filter(|&(_, holder)| cx.compiler.refinement_defines(holder, name))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let __bx = cx.box_id;
+    let recv = box_if_object_typed(cx, recv_id, recv_expr.clone());
+    let mut arg_exprs: Vec<_> = args
+        .iter()
+        .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)))
+        .collect();
+    arg_exprs.extend(emit_kwargs_trailing_hash(cx, kwargs));
+    let blk = emit_block_option(cx, block, block_arg);
+    let name_sym = super::pooled_sym(name);
+    let pairs = candidates.iter().map(|&(target, holder)| {
+        let (target, holder) = (target.0, holder.0);
+        quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+    });
+    Some(wrap_dynamic_result(
+        block.is_some() || block_arg.is_some(),
+        quote! {
+            zeo_rt::refined_send_in(
+                #__bx,
+                &#recv,
+                #name_sym,
+                &[#(#arg_exprs),*],
+                #blk,
+                &[#(#pairs),*],
+            )
+        },
+    ))
+}
+
 /// The actual dispatch decision (see the module's "Two dispatch paths"
 /// docs), given an already-computed `recv_expr` for the receiver's runtime
 /// value -- factored out of `emit_call` so `&.`'s nil-guard can wrap this
@@ -1945,6 +2007,17 @@ fn dispatch(
     bypass_visibility: bool,
 ) -> TokenStream {
     let __bx = cx.box_id;
+
+    // A REFINED name at a site some `using` covers. Checked before every
+    // fast path below, since a refinement may well override one of them
+    // (`String#size` is both a refinable name and an inlined length read),
+    // and before the blank-slate guard, which asks a question about the
+    // target class the refinement deliberately never touched.
+    if let Some(tokens) = emit_refined_call(
+        cx, recv_id, name, args, kwargs, block, block_arg, recv_expr,
+    ) {
+        return tokens;
+    }
 
     // BLANK SLATE (a `BasicObject` subclass): the Object/Kernel surface does
     // not exist on this receiver, so `class`/`inspect`/`respond_to?`/`dup`

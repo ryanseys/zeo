@@ -1182,6 +1182,45 @@ fn runtime_nested_class(
 /// opens no cref of its own -- a `class << obj` / `class << self` (CRuby walks
 /// past a singleton cref) and a runtime class body, which is an ordinary block.
 /// See `Hir::in_class_body`.
+/// The holder module a `refine Target do ... end` puts its methods in.
+/// Deliberately unspellable as a Ruby constant, so the holder claims no
+/// name inside the refining module -- `M.constants` stays what the source
+/// wrote -- and it is the same name CRuby prints for `M.refinements.first`.
+/// A qualified target flattens (`Foo::Bar` -> `Foo.Bar`) so the name reads
+/// as one leaf rather than a nested path.
+pub(crate) fn refinement_holder_name(target: &str) -> String {
+    format!("#refinement:{}", target.replace("::", "."))
+}
+
+/// `using M` in any position: `Some(node)` once the shape matched -- no
+/// receiver, one bare constant argument. Anything else answers `None` and
+/// falls through to an ordinary call, which is a clean rejection later if
+/// nothing else defines `using`.
+pub(crate) fn lower_using(
+    hir: &mut Hir,
+    node: &Node<'_>,
+    name: &str,
+    call: &ruby_prism::CallNode<'_>,
+) -> PResult<Option<NodeId>> {
+    if name != "using" || call.receiver().is_some() {
+        return Ok(None);
+    }
+    let arg_list: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    let [arg] = arg_list.as_slice() else {
+        return Ok(None);
+    };
+    let Ok(module) = constant_path_name(arg) else {
+        return Ok(None);
+    };
+    hir.push_span(crate::lower::span_of(hir, node));
+    let id = hir.push(HirNode::Using(module));
+    hir.pop_span();
+    Ok(Some(id))
+}
+
 pub(crate) fn lower_class_body(
     result: &ParseResult,
     hir: &mut Hir,
@@ -1641,6 +1680,39 @@ fn lower_class_body_statement(
                         }
                     }
                 }
+            }
+            // `refine Target do ... end` -- the block's `def`s become an
+            // ordinary class body on a HOLDER module named for the target,
+            // and a `Refine` marker records which class they refine. The
+            // holder is a real `ClassDef` so every existing mechanism
+            // (method registration, materialization, the module bridge that
+            // emits a module's own methods as `RubyValue`-self functions)
+            // carries it with no new machinery. Its name is unwritable as a
+            // constant, so it claims no name inside the enclosing module.
+            if name == "refine" {
+                if let (Some(args), Some(block)) = (call.arguments(), call.block()) {
+                    let arg_list: Vec<_> = args.arguments().iter().collect();
+                    if let (1, Some(block)) = (arg_list.len(), block.as_block_node()) {
+                        let target = constant_path_name(&arg_list[0])?;
+                        let holder = refinement_holder_name(&target);
+                        let body =
+                            lower_class_body(result, hir, block.body(), None, Some(&holder))?;
+                        hir.push_span(crate::lower::span_of(hir, node));
+                        out.push(hir.push(HirNode::ClassDef {
+                            name: holder.clone(),
+                            superclass: None,
+                            body,
+                            is_module: true,
+                        }));
+                        out.push(hir.push(HirNode::Refine { target, holder }));
+                        hir.pop_span();
+                        return Ok(());
+                    }
+                }
+            }
+            if let Some(node) = lower_using(hir, node, &name, &call)? {
+                out.push(node);
+                return Ok(());
             }
             if matches!(
                 name.as_str(),

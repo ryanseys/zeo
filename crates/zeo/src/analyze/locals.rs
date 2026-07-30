@@ -431,6 +431,8 @@ fn track_node(
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

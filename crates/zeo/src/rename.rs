@@ -446,6 +446,11 @@ impl Walker {
             | HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
+            | HirNode::Refine {
+                target: _,
+                holder: _,
+            }
+            | HirNode::Using(_)
             | HirNode::Redo
             | HirNode::Retry
             | HirNode::BlockGiven

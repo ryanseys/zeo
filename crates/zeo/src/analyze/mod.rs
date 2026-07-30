@@ -461,6 +461,12 @@ fn process_top_stmt(
                 main_statements.push(stmt);
             }
         }
+    } else if let HirNode::Using(m) = &compiler.hir[stmt] {
+        // A TOP-LEVEL `using M` covers the rest of the FILE -- which is
+        // `u32::MAX` here, since the range is only ever compared against
+        // spans from that same file.
+        let m = m.clone();
+        record_activation(compiler, stmt, &m, &[], 0, u32::MAX);
     } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
         // Top-level `undef m` -- Object's reopen, exactly like the
         // `include` above and like the class-body arm in `walk_class_body`.
@@ -903,6 +909,8 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -1966,6 +1974,32 @@ fn register_class(
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
                 }
             }
+            // `refine Target do ... end`. The holder module registered just
+            // above (the `ClassDef` this marker follows) already owns the
+            // methods; all that is left is to record what they refine. The
+            // marker never joins the site's statements: a refinement runs
+            // nothing where it was written.
+            HirNode::Refine { target, holder } => {
+                let (target, holder) = (target.clone(), holder.clone());
+                let target = compiler.resolve_class(&target, &child_cref, box_id);
+                let holder = compiler.class_in_scope(Some(class_id), &holder, box_id);
+                if let (Some(target), Some(holder)) = (target, holder) {
+                    compiler.refinements.push(crate::compiler::Refinement {
+                        module: class_id,
+                        target,
+                        holder,
+                    });
+                }
+            }
+            // `using M` inside a class/module body scopes to THAT body, so
+            // the activation ends where the enclosing definition does.
+            HirNode::Using(m) => {
+                let m = m.clone();
+                let end = def_node
+                    .and_then(|n| compiler.hir.span(n))
+                    .map_or(u32::MAX, |s| s.end);
+                record_activation(compiler, stmt, &m, &child_cref, box_id, end);
+            }
             // `undef foo, bar` -- recorded here, honored by
             // `mro::materialize_methods`. See `HirNode::Undef`.
             HirNode::Undef(names) => {
@@ -2262,6 +2296,32 @@ fn resolve_module_target(
 /// mixin is lost by not emitting the send itself.
 fn defer_unresolved_directive(compiler: &mut Compiler, stmt: NodeId, name: &str) {
     compiler.hir[stmt] = HirNode::ClassRef(name.to_string());
+}
+
+/// Files the lexical range a `using M` covers -- from the statement's own
+/// span to `end`. A module that resolves nowhere records nothing: with no
+/// refinements to activate there is nothing for a call site to consult, and
+/// the unresolved name is already whatever error the program deserves.
+fn record_activation(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    module: &str,
+    cref: &[ClassId],
+    box_id: u32,
+    end: u32,
+) {
+    let (Some(module), Some(span)) = (
+        compiler.resolve_class(module, cref, box_id),
+        compiler.hir.span(stmt).and_then(|s| s.known()),
+    ) else {
+        return;
+    };
+    compiler.activations.push(crate::compiler::Activation {
+        module,
+        file: span.file,
+        start: span.start,
+        end,
+    });
 }
 
 /// [`defer_unresolved_directive`] for a directive inside a `class`/`module`
@@ -2641,6 +2701,8 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -2914,6 +2976,8 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Refine { .. }
+        | HirNode::Using(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
