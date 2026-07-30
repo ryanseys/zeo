@@ -1,0 +1,11 @@
+after <<:   v1
+["v0", "vx", "v1", "v2"]
+in each:    v0
+in each:    vx
+in each:    v1
+in each:    v2
+"vm"
+"vc"
+"v0,vx,v1,v2,vc"
+5
+reporter:   b=2
