@@ -211,6 +211,39 @@ pub fn emit_super(
     emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg)
 }
 
+/// The ancestor whose SINGLETON-chain slot holds `defining_class`: the class
+/// itself when a `def self.x` defines the method, or the class that `extend`s
+/// (or singleton-prepends) it when a module does. `None` when the receiver's
+/// ancestry holds no such slot.
+///
+/// This is what a runtime class-method `super` must resume from. The chain
+/// puts an extended module directly after the class extending it (see
+/// [`extended_singleton_super`]), so resuming after that class is exactly
+/// right: the class's own `def self.x` sits BEFORE the module and is
+/// correctly skipped.
+fn singleton_chain_host(
+    cx: &Ctx,
+    receiver_class: crate::compiler::ClassId,
+    defining_class: Option<crate::compiler::ClassId>,
+) -> Option<crate::compiler::ClassId> {
+    let defining_class = defining_class?;
+    cx.compiler
+        .class(receiver_class)
+        .ancestors
+        .iter()
+        .enumerate()
+        .find(|&(i, &anc)| {
+            let info = cx.compiler.class(anc);
+            if i > 0 && info.is_module {
+                return false;
+            }
+            anc == defining_class
+                || info.extends.contains(&defining_class)
+                || info.class_method_prepends.contains(&defining_class)
+        })
+        .map(|(_, &anc)| anc)
+}
+
 /// `super` resolution for a method that reached the receiver as a CLASS
 /// method via `extend M`: walks the receiver's SINGLETON-class chain as the
 /// compiler knows it -- for each non-module ancestor (`include`d modules
@@ -323,7 +356,18 @@ fn emit_runtime_super(
     // class-method channel, which walks the receiver class's singleton
     // chain as the runtime knows it.
     if cx.current_class.is_none() {
-        let recv_id = cx.class_self.expect("`super` outside a method").0;
+        let recv_class = cx.class_self.expect("`super` outside a method");
+        let recv_id = recv_class.0;
+        // The runtime resumes after `defining_class`'s position in the
+        // receiver's ANCESTRY -- and an `extend`ed module is not in it, so a
+        // module's own id restarted the walk at the top. That re-entered the
+        // copy of this very method that `materialize_class_methods` put on
+        // the extending class: `class Sub < Base` where `Base extend D`
+        // answered `D#name`'s `super` with Base's copy of `D#name`, one
+        // level down, forever. Name the ancestor whose singleton-chain slot
+        // holds the module instead, which IS in the ancestry.
+        let def_id = singleton_chain_host(cx, recv_class, cx.defining_class)
+            .map_or(def_id, |host| host.0);
         return quote! {
             {
                 let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
