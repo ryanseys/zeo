@@ -475,6 +475,15 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
+    // An attr defined on a SINGLETON class is a singleton attr on its owner,
+    // reading that owner's own ivars -- not an instance method of a shared
+    // class. `runtime_define_method` redirects the same way, and for the same
+    // reason. minitest's `cattr_accessor` is written exactly this way:
+    // `(class << self; self; end).attr_accessor name`.
+    let owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
+    if let Some(owner) = owner {
+        return singleton_attr(&owner, args, kind);
+    }
     let mut defined = Vec::new();
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
@@ -506,6 +515,63 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
                 Ok(v.clone())
             }));
             install_attr(id, setter_name, setter);
+            defined.push(RubyValue::Symbol(setter_name));
+        }
+    }
+    mark_live();
+    Ok(RubyValue::Array(crate::array_new(defined)))
+}
+
+/// [`runtime_attr`] for a singleton class: each accessor becomes a SINGLETON
+/// method on the owner, over the owner's own ivars (`ivar_get_dyn` reaches a
+/// class's ivar table and an object's alike). The bodies are `RProc`s rather
+/// than the `MethodImpl::Dynamic` the instance-method path builds, because a
+/// class-method receiver is a `RubyValue::Class` and has no `RObj` to bind.
+fn singleton_attr(
+    owner: &RubyValue,
+    args: &[RubyValue],
+    kind: AttrKind,
+) -> Result<RubyValue, Signal> {
+    let mut defined = Vec::new();
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        if kind != AttrKind::Writer {
+            let key: Arc<str> = Arc::from(name.name().as_str());
+            let getter = RProc::with_self(
+                move |slf: &RubyValue, args: &[RubyValue]| {
+                    if !args.is_empty() {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 0)",
+                            args.len()
+                        ));
+                    }
+                    Ok(crate::dispatch::ivar_get_dyn(slf, &key))
+                },
+                owner.clone(),
+                0,
+                true,
+            );
+            runtime_define_singleton_method(owner, name, getter)?;
+            defined.push(RubyValue::Symbol(name));
+        }
+        if kind != AttrKind::Reader {
+            let key: Arc<str> = Arc::from(name.name().as_str());
+            let setter_name = Symbol::intern(&format!("{}=", name.name()));
+            let setter = RProc::with_self(
+                move |slf: &RubyValue, args: &[RubyValue]| {
+                    let [v] = args else {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 1)",
+                            args.len()
+                        ));
+                    };
+                    crate::dispatch::ivar_set_dyn(slf, &key, v.clone())
+                },
+                owner.clone(),
+                1,
+                true,
+            );
+            runtime_define_singleton_method(owner, setter_name, setter)?;
             defined.push(RubyValue::Symbol(setter_name));
         }
     }
