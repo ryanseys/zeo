@@ -2204,8 +2204,30 @@ fn emit_inherited_hook(compiler: &Compiler, site: &crate::compiler::ClassBodySit
     let Some(parent) = compiler.class(cid).parent else {
         return nil;
     };
-    if compiler.class_method_in_chain(parent, "inherited").is_none() {
+    let Some((_, hook)) = compiler.class_method_in_chain(parent, "inherited") else {
         return nil;
+    };
+    // A hook INSTALLED after this subclass was defined never saw it. minitest
+    // reopens `Runnable` at the very end of its main file purely to add
+    // `inherited`, so that the `Test`/`Result` subclasses defined above stay
+    // out of the runnables registry -- fire it for them and `Result`, which
+    // implements no `runnable_methods`, joins the run and raises.
+    //
+    // Compared by SPAN, and only within one file: `doc_order` numbers
+    // class-body statements, and a `def` is not one of those (it is hoisted
+    // into the class's method table). Two positions in different files are
+    // left alone -- a spliced `require` puts another file's statements in the
+    // middle of this one, so raw offsets do not order across files -- as is
+    // anything span-less. All of those keep firing, the whole-program answer
+    // this had before.
+    let where_ = |n: Option<crate::hir::NodeId>| {
+        n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known())
+    };
+    let (installed, defined) = (where_(compiler.scope(hook).def_node), where_(site.def_node));
+    if let (Some(installed), Some(defined)) = (installed, defined) {
+        if installed.file == defined.file && installed.start > defined.start {
+            return nil;
+        }
     }
     let (p, c) = (parent.0, cid.0);
     let sym = pooled_sym("inherited");
