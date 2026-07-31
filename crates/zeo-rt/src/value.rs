@@ -1014,10 +1014,21 @@ impl RubyValue {
             return ord;
         }
         match (self, other) {
+            // RAW BYTES, matching CRuby and matching `rb_eq` above. Comparing
+            // `to_utf8_lossy` text collapsed every undecodable byte to U+FFFD,
+            // so `"\xC3" <=> "\xC4"` answered 0 while `==` answered false.
+            // Address-ordered locking behind a ptr-eq short-circuit, because
+            // `sort` compares a pair from both directions.
             (RubyValue::Str(a), RubyValue::Str(b)) => {
-                let a = a.lock().to_utf8_lossy().into_owned();
-                let b = b.lock().to_utf8_lossy().into_owned();
-                Some(a.cmp(&b) as i64)
+                if std::sync::Arc::ptr_eq(a, b) {
+                    return Some(0);
+                }
+                let forward = std::sync::Arc::as_ptr(a) < std::sync::Arc::as_ptr(b);
+                let (x, y) = if forward { (a, b) } else { (b, a) };
+                let gx = x.lock();
+                let gy = y.lock();
+                let ord = gx.bytes().cmp(gy.bytes()) as i64;
+                Some(if forward { ord } else { -ord })
             }
             // Symbols order by their names, CRuby's `Symbol#<=>` -- what makes
             // `%i[b a].sort` and `{b: 1, a: 2}.sort` (which orders `[:key, v]`

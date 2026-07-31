@@ -340,6 +340,28 @@ fn char_codepoint(buf: &StrBuf, r: std::ops::Range<usize>) -> i64 {
     seq.iter().fold(0i64, |acc, b| (acc << 8) | *b as i64)
 }
 
+/// `<=>` over the RAW BYTES, which is what CRuby compares.
+///
+/// Comparing `to_utf8_lossy` renderings collapsed every undecodable byte to
+/// U+FFFD, so `"\xC3" <=> "\xC4"` answered 0 while `==` -- which has always
+/// compared bytes -- answered false. `sort`, `min`, `max` and `Comparable`
+/// all read this.
+///
+/// Locks in address order behind a pointer-equality short-circuit, the same
+/// way `rb_eq`'s String arm does: `sort` calls this on the same pair from
+/// both directions, and the receiver may BE the argument.
+fn str_byte_cmp(a: &crate::collections::RStr, b: &crate::collections::RStr) -> i64 {
+    if std::sync::Arc::ptr_eq(a, b) {
+        return 0;
+    }
+    let forward = std::sync::Arc::as_ptr(a) < std::sync::Arc::as_ptr(b);
+    let (x, y) = if forward { (a, b) } else { (b, a) };
+    let gx = x.lock();
+    let gy = y.lock();
+    let ord = gx.bytes().cmp(gy.bytes()) as i64;
+    if forward { ord } else { -ord }
+}
+
 use crate::encoding::StrBuf;
 
 /// `String#dump` (CRuby `rb_str_dump`): a re-parseable double-quoted literal.
@@ -1728,12 +1750,7 @@ ruby_class! {
         let RubyValue::Str(other) = &args[0] else {
             return Ok(RubyValue::Nil);
         };
-        let ord = {
-            let a = recv_str!(recv).lock();
-            let b = other.lock();
-            a.to_utf8_lossy().cmp(&b.to_utf8_lossy())
-        };
-        Ok(RubyValue::Int(ord as i64))
+        Ok(RubyValue::Int(str_byte_cmp(recv_str!(recv), &other)))
     }
     def "==" arity 1 | "eql?" arity 1 (recv, args, _block) {
         arity!(args, 1);
