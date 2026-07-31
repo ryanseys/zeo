@@ -15,8 +15,7 @@ $ ./hello
 12
 ```
 
-zeo compares each behaviour with real Ruby, and it writes down each difference
-that it finds. If zeo does something differently, you can read about it. The
+zeo compares each behaviour with real Ruby, and writes down each difference. The
 goal is to compile **rubygems and bundler** without changes.
 
 [Prism]: https://github.com/ruby/prism
@@ -541,7 +540,7 @@ scripts/   corpus import, gap promotion, Ruby-against-zeo comparison
 
 ## Limits
 
-zeo is experimental, and we tell you the known limits before you find them:
+zeo is experimental. Here are the known limits:
 
 - **There is no tracing garbage collector.** Memory management uses `Arc`
   reference counts, so a cycle of references leaks its memory. This is a known
