@@ -1,0 +1,13 @@
+false
+upcase: ArgumentError
+downcase: ArgumentError
+capitalize: ArgumentError
+swapcase: ArgumentError
+squeeze: ArgumentError
+strip: Encoding::CompatibilityError
+rstrip: Encoding::CompatibilityError
+codepoints: ArgumentError
+count: ArgumentError
+scan: ArgumentError
+split: ArgumentError
+to_sym: EncodingError

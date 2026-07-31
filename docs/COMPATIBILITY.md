@@ -30,6 +30,17 @@ NO Unicode mapping -- are exact. Known divergences:
   encoding TO them, and reading FROM them requires one (no BOM is an
   invalid sequence) -- both CRuby-observed; the difference is only that
   error messages name the BE row (`UTF-16BE`) where CRuby says `UTF-16`.
+- **A string whose bytes are invalid in its own encoding does not raise.**
+  Ruby refuses most operations on such a string (`ArgumentError`, "invalid
+  byte sequence"; `Encoding::CompatibilityError` for the strip family); zeo
+  renders the bad bytes as U+FFFD and answers. Derived strings otherwise keep
+  the receiver's encoding correctly. Executable record:
+  [`tests/gaps/issue_string_ops_on_broken_encoding.rb`](../tests/gaps/issue_string_ops_on_broken_encoding.rb).
+- **Symbols do not carry an encoding.** `str.to_sym.to_s` answers UTF-8
+  whatever `str` was, and two strings with the same bytes in different
+  encodings intern to the SAME symbol where ruby keeps them distinct. The
+  interner keys on `&'static str` and stores nothing else. Executable record:
+  [`tests/gaps/issue_symbol_loses_encoding.rb`](../tests/gaps/issue_symbol_loses_encoding.rb).
 - **String literals with raw high `\xNN` escapes** are not yet
   byte-faithful through the compiler's lowering (see
   [`docs/ROADMAP.md`](ROADMAP.md)); runtime-constructed bytes (`chr`, IO reads,

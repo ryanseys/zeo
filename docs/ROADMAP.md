@@ -41,23 +41,50 @@ not: goldens are diffed against the oracle, and ruby loads ripper.
 
 ## Correctness
 
-### The lossy-UTF-8 ratchet is over its limit
+### The lossy-UTF-8 audit
 
-`.github/workflows/ci.yml` caps `to_utf8_lossy` sites in `zeo-rt` at **211**;
-there are now **277**. The extensions landed since the limit was set (openssl,
-zlib, socket, ffi) brought their own display paths in with them. The check
-fails as written, and its comment forbids raising the limit.
+`StrBuf::to_utf8_lossy` renders a string's bytes for display. It is neither
+injective (an undecodable byte becomes U+FFFD, so distinct bytes collapse) nor
+length-preserving (a Latin-1 `é` renders as two UTF-8 bytes), so any SEMANTIC
+use of it — comparing, slicing, matching, or building a result — answers
+wrongly for a non-UTF-8 receiver.
 
-Decide one of: convert enough sites to clear 211, or re-baseline the limit at
-today's count with the reason recorded. Do not quietly raise it — the whole
-value of a ratchet is that it cannot be.
+**Measured against ruby 4.0.6** with a 269-operation probe (46 String
+operations × 6 encodings: UTF-8, ISO-8859-1, ASCII-8BIT, broken UTF-8, KOI8-R,
+EUC-JP): **105 divergences, now 27.** UTF-8 receivers never diverged, which is
+why the corpus did not catch this.
 
-The audit itself is unchanged: each site needs one judgment. A DISPLAY path
-(`to_s`-ish rendering, error text) keeps the lossy call; a SEMANTIC path
-(comparison, slicing, matching, formatting over the bytes) must go
-byte/encoding-aware through the StrBuf char layer, which is correct for every
-encoding kind. Highest-value files first: `string.rs` (index/slice/sub/gsub),
-`format.rs`, `pack.rs`, `regexp.rs` haystacks, `io.rs` line reading.
+What is fixed: results now carry the receiver's encoding through the
+strip/pad/chop/tr/delete/squeeze family (`str_value_like`), through
+`sub`/`gsub`/`split`/`scan` (`reencode_strs` at each exit), and through
+`MatchData` (which remembers the encoding its haystack was decoded from).
+`chars`/`each_char` slice `char_ranges` instead of decoding; `codepoints`
+answers the receiver's own code point; `<=>` compares raw bytes.
+`tests/string_encoding_preserved.rb` pins all of it.
+
+The 27 that remain are two classes, both recorded as executable gaps:
+
+- **23 — no validity gate.** Ruby REFUSES most operations on a string whose
+  bytes are invalid in its own encoding; zeo substitutes U+FFFD and answers.
+  Needs a `coderange != Broken` check raising `ArgumentError` /
+  `Encoding::CompatibilityError`, not an encoding change.
+  [`tests/gaps/issue_string_ops_on_broken_encoding.rb`](../tests/gaps/issue_string_ops_on_broken_encoding.rb)
+- **4 — symbols carry no encoding.**
+  [`tests/gaps/issue_symbol_loses_encoding.rb`](../tests/gaps/issue_symbol_loses_encoding.rb)
+
+**The site count is not the progress metric.** It went 277 → 279 across this
+work while divergences fell 105 → 27: the fixes re-encode RESULTS, and several
+still read through `to_utf8_lossy` to get there. Two further problems with the
+count as written — it includes comments, test asserts and the definition
+itself, and it misses `chars()`/`char_vec()`, which are implemented on
+`to_utf8_lossy` and are equally lossy, so a site can lower it with no semantic
+gain. Driving the count down means moving `sub`/`split`/`scan` onto
+`char_ranges` splicing so the decode disappears rather than being re-encoded.
+
+The per-site judgment is unchanged: a DISPLAY path (`to_s`-ish rendering, error
+text) keeps the lossy call; a SEMANTIC path must go byte/encoding-aware through
+the StrBuf layer. Remaining files by value: `format.rs`, `pack.rs`, `regexp.rs`
+haystacks, `io.rs` line reading.
 
 ### Raw `\xNN` string literals are not byte-faithful
 
