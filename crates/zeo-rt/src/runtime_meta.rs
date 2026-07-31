@@ -125,6 +125,17 @@ struct OverlayMaps {
     /// `RObj` to bind: the body stays an `RProc` and runs with the value itself
     /// as `self`. See `value_identity`.
     value_singletons: RwLock<FMap<usize, FMap<Symbol, RProc>>>,
+    /// A strong reference to every value that has ever received a singleton
+    /// method, keyed by the same identity the tables above use.
+    ///
+    /// Identity here IS a heap address, so it is only unique while the object
+    /// lives. Without this, a value that received a singleton and then died let
+    /// the allocator hand its address to an unrelated later object, which
+    /// silently inherited the dead one's methods -- `def s.shout` on a string
+    /// built in a loop made every later same-sized string answer `shout`.
+    /// Holding the owner makes the address un-reusable, which is the only
+    /// thing that makes the key sound.
+    pinned: RwLock<FMap<usize, RubyValue>>,
     /// `obj.singleton_class`'s cache: object identity -> the runtime class id
     /// minted for its singleton class (so a second call answers the same id,
     /// matching Ruby's identity).
@@ -145,6 +156,7 @@ fn maps() -> &'static OverlayMaps {
         classes: RwLock::new(FMap::default()),
         singletons: RwLock::new(FMap::default()),
         value_singletons: RwLock::new(FMap::default()),
+        pinned: RwLock::new(FMap::default()),
         singleton_classes: RwLock::new(FMap::default()),
         singleton_owner: RwLock::new(FMap::default()),
         next_id: AtomicU32::new(RUNTIME_CLASS_ID_BASE),
@@ -290,6 +302,25 @@ pub(crate) fn value_identity(v: &RubyValue) -> Option<usize> {
         _ => return None,
     };
     Some(addr as usize)
+}
+
+/// [`value_identity`], plus a strong reference held for as long as the process
+/// runs. Every site that DEFINES a singleton goes through this; the lookup
+/// sites do not, since a live receiver is already keeping its own address.
+///
+/// `nil`/`true`/`false` are skipped: their keys are fixed constants, not
+/// addresses, so nothing can collide with them.
+pub(crate) fn pin_identity(v: &RubyValue) -> Option<usize> {
+    let key = value_identity(v)?;
+    if !matches!(v, RubyValue::Nil | RubyValue::Bool(_)) {
+        maps()
+            .pinned
+            .write()
+            .unwrap()
+            .entry(key)
+            .or_insert_with(|| v.clone());
+    }
+    Some(key)
 }
 
 /// Every method installed directly on `recv` -- `Object#singleton_methods` for
@@ -1173,7 +1204,8 @@ pub fn runtime_define_singleton_method(
             // CRuby's rb_check_frozen on the singleton's attachee: a frozen
             // object refuses new singleton methods.
             crate::builtins::check_frozen(recv)?;
-            let key = obj_identity(o);
+            let key = pin_identity(&RubyValue::Object(o.clone()))
+                .expect("an Object always has an identity");
             crate::method_meta::record_singleton_params(key, name, &body);
             let m = dynamic_from_proc(SINGLETON_DEFINING, name, body);
             {
@@ -1188,7 +1220,7 @@ pub fn runtime_define_singleton_method(
             // Any other heap value (`def SOME_ARRAY.[](i)`) -- see
             // `value_identity`. The body stays an `RProc`, called with the value
             // itself as `self`, because a bare Array has no `RObj` to bind.
-            let Some(key) = value_identity(other) else {
+            let Some(key) = pin_identity(other) else {
                 return Err(type_error!("can't define singleton"));
             };
             // `nil`/`true`/`false` report as frozen but still accept a
@@ -1237,7 +1269,8 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             // CRuby's rb_check_frozen: a frozen object refuses `extend` (its
             // singleton table is what would change).
             crate::builtins::check_frozen(recv)?;
-            let key = obj_identity(o);
+            let key = pin_identity(&RubyValue::Object(o.clone()))
+                .expect("an Object always has an identity");
             let mut w = maps().singletons.write().unwrap();
             let table = w.entry(key).or_default();
             for name in names {
@@ -1279,7 +1312,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             // and reports it with the same wording `define_singleton_method`
             // does -- not a per-kind message (oracle-verified). `nil`/`true`/
             // `false` DO accept one, and take no frozen check.
-            let Some(key) = value_identity(other) else {
+            let Some(key) = pin_identity(other) else {
                 return Err(type_error!("can't define singleton"));
             };
             if !matches!(other, RubyValue::Nil | RubyValue::Bool(_)) {
