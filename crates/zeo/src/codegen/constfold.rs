@@ -207,6 +207,7 @@ mod tests {
                 self_ident: self.self_ident.clone(),
                 in_real_proc: false,
                 self_is_dynamic: false,
+                self_slots: false,
                 runtime_super_params: None,
                 block_depth: 0,
                 has_blk_binding: false,

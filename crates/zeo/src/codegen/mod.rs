@@ -205,6 +205,16 @@ struct Ctx<'a> {
     /// are not `Proc`s, can't be handed to `instance_exec`, and keep the
     /// static field fast path.
     self_is_dynamic: bool,
+    /// Whether a dynamic `self` is nonetheless known to be an instance of a
+    /// class that lays `current_class`'s ivars out at the SAME slots -- true
+    /// only for a body `codegen::share` emits once for a whole hierarchy.
+    ///
+    /// Without it a dynamic self reaches ivars by name, a linear scan of the
+    /// class's name list. With it the emitted index is the same compile-time
+    /// constant the class's own body would have used, because
+    /// `analyze::mro` lays slots out parent-first and `share` shares nothing
+    /// whose members disagree on the number.
+    self_slots: bool,
     /// `Some` exactly while emitting the body of a RUNTIME-defined method -- a
     /// `def`/`define_method` installed inside a `Class.new`/`Struct.new`/
     /// `Data.define` block, whose class is minted at runtime and so has no
@@ -371,6 +381,10 @@ impl<'a> Ctx<'a> {
             // A captured self arrives as `&RubyValue` (the closure's own
             // first parameter) -- see the field's docs.
             self_is_dynamic: needs_self_capture || self.self_is_dynamic,
+            // `instance_exec` can run this very body under a different
+            // receiver, so no slot layout is known here even when the
+            // enclosing shared body had one.
+            self_slots: false,
             captured_locals: shadow(self.captured_locals.clone()),
             local_types,
             block_depth: self.block_depth + 1,
@@ -1830,6 +1844,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        self_slots: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: false,
@@ -2173,6 +2188,7 @@ pub(crate) fn emit_class_body_site(
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        self_slots: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: false,
@@ -2404,6 +2420,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        self_slots: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -2607,7 +2624,9 @@ fn emit_builtin_method_fn(
     sid: crate::compiler::ScopeId,
 ) -> TokenStream {
     let method_ident = safe_ident(&compiler.scope(sid).name);
-    emit_value_self_method_fn(compiler, cid, sid, &method_ident)
+    // A reopened builtin has no generated struct, so its ivars are name-keyed
+    // with nowhere for a slot index to point.
+    emit_value_self_method_fn(compiler, cid, sid, &method_ident, false)
 }
 
 /// `emit_builtin_method_fn` with the function's own name supplied, since a
@@ -2619,6 +2638,7 @@ fn emit_value_self_method_fn(
     cid: ClassId,
     sid: crate::compiler::ScopeId,
     method_ident: &proc_macro2::Ident,
+    self_slots: bool,
 ) -> TokenStream {
     let scope = compiler.scope(sid);
     let needs_block = scope.needs_block_param();
@@ -2659,6 +2679,7 @@ fn emit_value_self_method_fn(
         // TOP-LEVEL `def`s live) the receiver is the `main` object, whose
         // ivars are name-keyed with storage in `dispatch::Object`.
         self_is_dynamic: true,
+        self_slots,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -2744,6 +2765,7 @@ pub(crate) fn emit_instance_method_body(
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        self_slots: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,

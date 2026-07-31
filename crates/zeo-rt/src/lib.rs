@@ -93,7 +93,8 @@ pub use dispatch::{
     downcast_robj, downcast_robj_ref, ivar_frozen_error,
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
     rescue_matches_any,
-    ivar_defined, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, make_name_error,
+    ivar_defined, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
+    ivar_slot_set_dyn, main_object, make_name_error,
     arity_error, method_name_symbol, raise_error, raise_error_details, raise_method_missing,
     raise_no_block_yield, raise_stop_iteration, raise_with_cause, responds_to,
     refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
@@ -398,6 +399,16 @@ macro_rules! ruby_class {
             // rather than the approximation the old always-present slot forced.
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 self.__ivars.remove_named(Self::__IVAR_NAMES, name)
+            }
+            // By-SLOT ivar access, for a body shared across a hierarchy: the
+            // receiver is a `RubyValue` there, but the index is still a
+            // compile-time constant. See the trait method's docs.
+            fn ivar_slot_get(&self, slot: usize) -> $crate::RubyValue {
+                if slot < Self::__IVAR_NAMES.len() { self.__ivars.get(slot) }
+                else { $crate::RubyValue::Nil }
+            }
+            fn ivar_slot_set(&self, slot: usize, value: $crate::RubyValue) {
+                if slot < Self::__IVAR_NAMES.len() { self.__ivars.set(slot, value); }
             }
             fn take_linked_ivars(&self, out: &mut Vec<$crate::RubyValue>) {
                 self.__ivars.take_linked(out);

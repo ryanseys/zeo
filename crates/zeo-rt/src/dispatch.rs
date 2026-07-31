@@ -111,6 +111,25 @@ pub trait RubyObject: Any + Send + Sync {
         None
     }
 
+    /// Read one ivar BY SLOT, the index it occupies in this class's
+    /// [`crate::IvarCell`].
+    ///
+    /// A body SHARED by a base class and its descendants (`codegen::share`)
+    /// has a `RubyValue` receiver, so it cannot name a concrete struct to
+    /// index -- but the slot number is still a compile-time constant, because
+    /// `analyze::mro` lays every class's slots out parent-first. This pair is
+    /// what lets such a body keep indexing instead of falling back to the
+    /// name scan. Out-of-range answers `nil` rather than panicking, matching
+    /// the named accessors' totality.
+    fn ivar_slot_get(&self, _slot: usize) -> RubyValue {
+        RubyValue::Nil
+    }
+
+    /// Write one ivar BY SLOT -- `ivar_slot_get`'s counterpart. The caller has
+    /// already checked frozenness, exactly as the by-name path's own guard
+    /// does at its call site.
+    fn ivar_slot_set(&self, _slot: usize, _value: RubyValue) {}
+
     /// Move every ivar holding another OBJECT into `out`, leaving `nil` behind.
     ///
     /// Only [`crate::IvarCell`]'s release path calls this, and only on an
@@ -402,6 +421,40 @@ pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
         // where the block captures `self` as a plain `RubyValue::Class`.
         RubyValue::Class(cid) => crate::civars::class_ivar_get(cid.0, name),
         _ => RubyValue::Nil,
+    }
+}
+
+/// Read `@name` from a receiver whose class is one of a known set that all
+/// place `@name` at `slot` -- the shared-body form of `ivar_get_dyn`.
+///
+/// `codegen::share` proves the index agrees across the set before it emits
+/// this, and every such receiver is a generated object. `name` serves the
+/// arms that reach neither (a rebound `self`), which is exactly what
+/// `ivar_get_dyn` already answers.
+#[inline]
+pub fn ivar_slot_get_dyn(recv: &RubyValue, slot: usize, name: &str) -> RubyValue {
+    match recv {
+        RubyValue::Object(o) => o.ivar_slot_get(slot),
+        other => ivar_get_dyn(other, name),
+    }
+}
+
+/// `ivar_slot_get_dyn`'s counterpart, carrying the same frozen check
+/// `ivar_set_dyn` does.
+#[inline]
+pub fn ivar_slot_set_dyn(
+    recv: &RubyValue,
+    slot: usize,
+    name: &str,
+    v: RubyValue,
+) -> Result<RubyValue, Signal> {
+    match recv {
+        RubyValue::Object(o) => {
+            crate::builtins::check_frozen(recv)?;
+            o.ivar_slot_set(slot, v.clone());
+            Ok(v)
+        }
+        other => ivar_set_dyn(other, name, v),
     }
 }
 

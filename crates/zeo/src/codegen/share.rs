@@ -83,7 +83,7 @@ impl SharedBodies {
             let mut rendered: Vec<(ClassId, String)> = Vec::with_capacity(group.members.len());
             let mut bodies = Vec::with_capacity(group.members.len());
             for &(cid, sid) in &group.members {
-                let body = super::emit_value_self_method_fn(compiler, cid, sid, &fn_ident);
+                let body = super::emit_value_self_method_fn(compiler, cid, sid, &fn_ident, true);
                 rendered.push((cid, body.to_string()));
                 bodies.push(body);
             }
@@ -160,17 +160,10 @@ fn shareable(compiler: &Compiler, group: &crate::analyze::share::Group) -> bool 
     {
         return false;
     }
-    // A `RubyValue` receiver reaches instance variables BY NAME, which is a
-    // linear scan where the class's own body indexes a slot. Deferred until
-    // slot-indexed access exists on a dynamic receiver.
-    let mut ivars = Vec::new();
-    for &n in &scope.body {
-        crate::analyze::collect_ivars(&compiler.hir, n, &mut ivars);
-    }
-    for id in scope.params.default_ids() {
-        crate::analyze::collect_ivars(&compiler.hir, id, &mut ivars);
-    }
-    ivars.is_empty()
+    // An ivar-touching body needs no rule of its own: it emits its slot INDEX,
+    // so a group whose members disagree about where a name lives disagrees on
+    // the tokens and never shares.
+    true
 }
 
 /// A short window of `a` around the first token where it parts from `b`.

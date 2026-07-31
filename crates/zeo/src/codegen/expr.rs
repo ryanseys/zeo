@@ -834,7 +834,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // RubyValue`) but already a `&RubyValue` inside a Proc
                 // closure. Borrowing covers the first and deref-coerces
                 // `&&RubyValue` back to `&RubyValue` for the second.
-                return quote! { zeo_rt::ivar_get_dyn(&#slf, #key) };
+                return match dyn_ivar_slot(cx, name) {
+                    Some(slot) => quote! { zeo_rt::ivar_slot_get_dyn(&#slf, #slot, #key) },
+                    None => quote! { zeo_rt::ivar_get_dyn(&#slf, #key) },
+                };
             }
             // `self` is a CLASS object (a class-method body, or a class body
             // itself): `@x` is that class object's own ivar, which lives in
@@ -1927,7 +1930,10 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     if cx.self_is_dynamic {
         let key = ident.to_string();
         // Borrowed for the same reason as `IvarRead`'s arm above.
-        return quote! { zeo_rt::ivar_set_dyn(&#slf, #key, #value)?; };
+        return match dyn_ivar_slot(cx, name) {
+            Some(slot) => quote! { zeo_rt::ivar_slot_set_dyn(&#slf, #slot, #key, #value)?; },
+            None => quote! { zeo_rt::ivar_set_dyn(&#slf, #key, #value)?; },
+        };
     }
     // `self` is a CLASS object -- see the matching arm in `IvarRead`. The
     // frozen-class guard lives inside `class_ivar_set` itself (a frozen
@@ -1982,6 +1988,16 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
         }
         #store
     }
+}
+
+/// The slot a DYNAMIC self's ivar occupies, for the one context where a
+/// `RubyValue` receiver still has a known layout: a body `codegen::share`
+/// emits once for a whole hierarchy, whose members all place the name at the
+/// same index. `None` everywhere else, which keeps the by-name path.
+fn dyn_ivar_slot(cx: &Ctx, name: &str) -> Option<usize> {
+    cx.self_slots
+        .then(|| ivar_slot(cx, cx.current_class?, name))
+        .flatten()
 }
 
 /// Which slot of the receiver's `IvarCell` one ivar occupies -- its position in
