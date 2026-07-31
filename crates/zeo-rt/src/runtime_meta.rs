@@ -164,9 +164,95 @@ pub fn is_live() -> bool {
 /// method anywhere (a reopen or a per-object singleton would win the lookup)
 /// and not inside a box (a box may carry its own override). The same rule the
 /// flat dispatch maps apply, asked once per loop entry.
+///
+/// The `_for` form asks the narrow question -- could anything have overridden
+/// the iterator on THIS receiver's class? -- which is the condition the
+/// paragraph above actually describes. `iter_inline_ok` is the whole-process
+/// approximation of it, still used where the receiver class is not a
+/// compile-time constant. One `Struct.new` measured **+55% on fused-iterator
+/// work** through the wide form (0.53s -> 0.81s), and it is on the load path
+/// of every rubygems and bundler program.
 #[inline(always)]
 pub fn iter_inline_ok(box_id: u32) -> bool {
     box_id == 0 && !is_live()
+}
+
+#[inline(always)]
+pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
+    box_id == 0
+        && !ANY_SINGLETONS.load(Ordering::Acquire)
+        && !ANCESTRY_MUTATED.load(Ordering::Acquire)
+        && !class_maybe_patched(recv)
+}
+
+// ---------------------------------------------------------------------------
+// The narrowed latch
+// ---------------------------------------------------------------------------
+//
+// `OVERLAY_LIVE` answers "has ANYTHING been defined at runtime", which is a
+// far stronger fact than any single dispatch decision needs. The flags below
+// split it by WHAT changed, so one `Struct.new` -- which only mints a class id
+// nothing else can reach -- stops deoptimizing the whole process. `is_live()`
+// keeps its exact old meaning, and every setter still calls `mark_live`, so a
+// site is narrowed only by being rewritten to ask one of these instead.
+//
+// **INV-1 (downward closure).** If a runtime operation can change what `send`
+// on an instance of `C` resolves a name to, then `C` is in `PATCHED`.
+// Resolution reads `C`'s entry and each `A` in `ancestors(C)`, so touching `A`
+// must mark every `C` below it -- that is what `patch_class` computes --
+// PROVIDED `ancestors(C)` is itself fixed, which is exactly what
+// `ANCESTRY_MUTATED` guards.
+//
+// **INV-2 (identity resolution).** Per-object singletons are keyed by heap
+// address; no class-id set can express them, so `ANY_SINGLETONS` is a global
+// boolean deliberately.
+//
+// **INV-3 (fresh ids).** A runtime-minted id (>= `RUNTIME_CLASS_ID_BASE`) has
+// no frozen registry entry at all, so it needs no flag to be found -- it reads
+// as patched by construction, and nothing else is affected by its existence.
+
+/// Frozen class ids whose method resolution may now differ from the registry,
+/// downward-closed over ancestry. Behind `PATCHED_ANY` so the common answer
+/// costs one relaxed load and no lock.
+static PATCHED_ANY: AtomicBool = AtomicBool::new(false);
+static PATCHED: OnceLock<RwLock<FSet<u32>>> = OnceLock::new();
+
+/// A per-object or per-value singleton exists somewhere. See INV-2.
+static ANY_SINGLETONS: AtomicBool = AtomicBool::new(false);
+
+/// A frozen class's ancestry was spliced at runtime, so INV-1's precondition
+/// no longer holds for anyone.
+static ANCESTRY_MUTATED: AtomicBool = AtomicBool::new(false);
+
+#[inline(always)]
+pub fn class_maybe_patched(id: ClassId) -> bool {
+    if id.0 >= RUNTIME_CLASS_ID_BASE {
+        return true;
+    }
+    PATCHED_ANY.load(Ordering::Acquire)
+        && PATCHED
+            .get()
+            .is_some_and(|p| p.read().unwrap().contains(&id.0))
+}
+
+/// Mark `id` and everything that inherits from it. O(#classes), and only ever
+/// reached from a runtime definition -- never from a loop.
+fn patch_class(id: ClassId) {
+    let set = PATCHED.get_or_init(|| RwLock::new(FSet::default()));
+    {
+        let mut w = set.write().unwrap();
+        w.insert(id.0);
+        w.extend(crate::dispatch::classes_with_ancestor(id));
+    }
+    PATCHED_ANY.store(true, Ordering::Release);
+}
+
+fn mark_singletons() {
+    ANY_SINGLETONS.store(true, Ordering::Release);
+}
+
+fn mark_ancestry_mutated() {
+    ANCESTRY_MUTATED.store(true, Ordering::Release);
 }
 
 fn mark_live() {
@@ -452,6 +538,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
             e.class_methods.insert(name, wrapper);
         }
     }
+    patch_class(id);
     mark_live();
     Ok(RubyValue::Symbol(name))
 }
@@ -518,6 +605,7 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
             defined.push(RubyValue::Symbol(setter_name));
         }
     }
+    patch_class(id);
     mark_live();
     Ok(RubyValue::Array(crate::array_new(defined)))
 }
@@ -608,6 +696,7 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
         e.undefs.insert(name);
         e.methods.remove(&name);
     }
+    patch_class(id);
     mark_live();
     Ok(RubyValue::Class(id))
 }
@@ -633,6 +722,7 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
             ));
         }
     }
+    patch_class(id);
     mark_live();
     Ok(RubyValue::Class(id))
 }
@@ -708,6 +798,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         }
     }
     meta.register();
+    patch_class(id);
     mark_live();
     Ok(RubyValue::Symbol(new))
 }
@@ -777,6 +868,7 @@ pub fn runtime_set_visibility(
             e.methods_vis.insert(sym, vis);
         }
     }
+    patch_class(id);
     mark_live();
     Ok(result)
 }
@@ -831,6 +923,7 @@ pub fn runtime_class_method_visibility(
         e.class_methods_vis.insert(coerce_method_name(Some(a))?, private);
     }
     drop(w);
+    patch_class(id);
     mark_live();
     Ok(())
 }
@@ -909,6 +1002,7 @@ pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyVa
                 .insert(sym, crate::dispatch::MethodVisibility::Private);
         }
     }
+    patch_class(id);
     mark_live();
     Ok(match syms.as_slice() {
         [one] => RubyValue::Symbol(*one),
@@ -958,6 +1052,7 @@ pub fn runtime_define_method_from_method(
         e.methods.insert(name, m);
         e.methods_vis.remove(&name);
     }
+    patch_class(id);
     mark_live();
     Ok(RubyValue::Symbol(name))
 }
@@ -1014,6 +1109,7 @@ pub fn runtime_define_singleton_from_method(
                 .or_insert_with(OverlayEntry::delta)
                 .class_methods
                 .insert(name, wrapped);
+            mark_singletons();
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
@@ -1027,6 +1123,7 @@ pub fn runtime_define_singleton_from_method(
                 .entry(key)
                 .or_default()
                 .insert(name, m);
+            mark_singletons();
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
@@ -1068,6 +1165,7 @@ pub fn runtime_define_singleton_method(
                     .class_methods
                     .insert(name, body);
             }
+            mark_singletons();
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
@@ -1082,6 +1180,7 @@ pub fn runtime_define_singleton_method(
                 let mut w = maps().singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, m);
             }
+            mark_singletons();
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
@@ -1103,6 +1202,7 @@ pub fn runtime_define_singleton_method(
                 let mut w = maps().value_singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, body);
             }
+            mark_singletons();
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
@@ -1198,6 +1298,8 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             }
         }
     }
+    mark_singletons();
+    mark_ancestry_mutated();
     mark_live();
     fire_mixin_hook(module_val, "extended", recv)?;
     Ok(recv.clone())
@@ -1268,6 +1370,8 @@ fn mix_in(
         };
         fire_mixin_hook(module_val, hook, recv)?;
     }
+    mark_ancestry_mutated();
+    patch_class(*cid);
     mark_live();
     Ok(recv.clone())
 }
@@ -1551,6 +1655,7 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
             .unwrap()
             .insert(id_num, owner);
     }
+    mark_singletons();
     mark_live();
     Ok(RubyValue::Class(new_id))
 }
@@ -2297,5 +2402,59 @@ mod tests {
         let RubyValue::Object(o) = inst else { panic!() };
         let m = resolve_dynamic(&o, cid, Symbol::intern("x")).unwrap();
         assert_eq!(int_of(m.call(&o, &[], None).unwrap()), 5);
+    }
+
+    // -- the narrowed latch (see the flags' own docs for INV-1..3) --------
+    //
+    // Each of these runs in its own process under nextest, so the global
+    // flags start clean; they are asserted false first regardless, since a
+    // shared-process runner would make a stale flag look like a pass.
+
+    #[test]
+    fn minting_a_native_class_patches_nothing_frozen() {
+        let probe = ClassId(3);
+        assert!(!class_maybe_patched(probe));
+        let minted = intern_native_class(ClassId(2), FMap::default(), dyn_object_construct);
+        // The wide latch gives up -- which is the whole cost this phase is
+        // about, since `Struct.new` and `Data.define` land here.
+        assert!(is_live());
+        assert!(!iter_inline_ok(0));
+        // The narrow one does not: a fresh id has no frozen registry entry, so
+        // nothing that resolves against `probe` can have changed (INV-3).
+        assert!(!class_maybe_patched(probe));
+        assert!(iter_inline_ok_for(0, probe));
+        // The minted class itself always reads as patched -- it can only be
+        // found through the overlay.
+        assert!(class_maybe_patched(minted));
+    }
+
+    #[test]
+    fn defining_a_method_patches_only_that_class() {
+        let touched = ClassId(7);
+        let other = ClassId(8);
+        runtime_define_method(touched, Symbol::intern("q"), nullary(1)).unwrap();
+        assert!(class_maybe_patched(touched));
+        assert!(!iter_inline_ok_for(0, touched));
+        assert!(!class_maybe_patched(other));
+        assert!(iter_inline_ok_for(0, other));
+    }
+
+    #[test]
+    fn a_singleton_anywhere_stops_fusion_for_every_class() {
+        // Identity-keyed, so no class-id set can express it (INV-2).
+        let a: RObj = Arc::new(DynObject::new(ClassId(0)));
+        assert!(iter_inline_ok_for(0, ClassId(3)));
+        runtime_define_singleton_method(
+            &RubyValue::Object(a.clone()),
+            Symbol::intern("m"),
+            nullary(1),
+        )
+        .unwrap();
+        assert!(!iter_inline_ok_for(0, ClassId(3)));
+    }
+
+    #[test]
+    fn a_box_never_fuses_however_narrow_the_latch() {
+        assert!(!iter_inline_ok_for(1, ClassId(3)));
     }
 }

@@ -794,7 +794,7 @@ fn emit_typed_iter_inline(
             let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
-                    zeo_rt::RubyValue::Int(__iter_a) if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    zeo_rt::RubyValue::Int(__iter_a) if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::INTEGER_CLASS) => #splice,
                     __iter_other => #fallback,
                 }
             }
@@ -820,7 +820,7 @@ fn emit_typed_iter_inline(
             quote! {
                 match (#recv, #limit) {
                     (zeo_rt::RubyValue::Int(__iter_a), zeo_rt::RubyValue::Int(__iter_b))
-                        if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                        if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::INTEGER_CLASS) => #splice,
                     (__iter_other, __iter_lim) => #fallback,
                 }
             }
@@ -846,7 +846,7 @@ fn emit_typed_iter_inline(
                         zeo_rt::RubyValue::Int(__iter_a),
                         zeo_rt::RubyValue::Int(__iter_b),
                         zeo_rt::RubyValue::Int(__iter_s),
-                    ) if __iter_s != 0 && zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    ) if __iter_s != 0 && zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::INTEGER_CLASS) => #splice,
                     (__iter_other, __iter_lim, __iter_stp) => #fallback,
                 }
             }
@@ -872,7 +872,7 @@ fn emit_typed_iter_inline(
             quote! {
                 match #recv {
                     zeo_rt::RubyValue::Range(Some(__iter_bs), Some(__iter_be), __iter_x)
-                        if zeo_rt::iter_inline_ok(#__bx)
+                        if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::RANGE_CLASS)
                             && matches!(__iter_bs.as_ref(), zeo_rt::RubyValue::Int(_))
                             && matches!(__iter_be.as_ref(), zeo_rt::RubyValue::Int(_)) =>
                     {
@@ -901,7 +901,7 @@ fn emit_typed_iter_inline(
             let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
-                    zeo_rt::RubyValue::Array(__iter_arr) if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    zeo_rt::RubyValue::Array(__iter_arr) if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::ARRAY_CLASS) => #splice,
                     __iter_other => #fallback,
                 }
             }
@@ -911,7 +911,7 @@ fn emit_typed_iter_inline(
             let fallback = fallback(quote! { &[] });
             quote! {
                 match #recv {
-                    zeo_rt::RubyValue::Hash(__iter_h) if zeo_rt::iter_inline_ok(#__bx) => #splice,
+                    zeo_rt::RubyValue::Hash(__iter_h) if zeo_rt::iter_inline_ok_for(#__bx, zeo_rt::HASH_CLASS) => #splice,
                     __iter_other => #fallback,
                 }
             }

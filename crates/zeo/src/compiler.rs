@@ -1087,7 +1087,7 @@ impl Compiler {
         scope.accessor.as_ref().filter(|a| {
             (a.attr_generated || !self.traces_calls())
                 && !scope.needs_block_param()
-                && self.class(owner).ivars.iter().any(|iv| *iv == a.ivar)
+                && self.class(owner).ivars.contains(&a.ivar)
         })
     }
 

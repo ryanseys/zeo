@@ -1325,6 +1325,25 @@ impl ClassRegistry {
     }
 }
 
+/// Every registered class that has `id` in its ancestry, `id` itself excluded
+/// -- the descendants a change to `id` can be seen through. One scan of the
+/// registry, called only from `runtime_meta::patch_class` on a real runtime
+/// definition, never from a loop.
+///
+/// Reads the FROZEN ancestry deliberately: a class whose chain was spliced at
+/// runtime is covered by `ANCESTRY_MUTATED` instead, which is a stronger
+/// statement than anything this could enumerate.
+pub(crate) fn classes_with_ancestor(id: ClassId) -> Vec<u32> {
+    let Some(reg) = REGISTRY.get() else {
+        return Vec::new();
+    };
+    reg.entries
+        .iter()
+        .filter(|(_, e)| e.ancestors.contains(&id))
+        .map(|(&cid, _)| cid)
+        .collect()
+}
+
 /// `recv_class.is_a?(target)` -- a real ancestry check against the SAME
 /// linearized `ancestors` list `super`/reflection uses at compile time (see
 /// `analyze::mro::compute_ancestors`'s docs), not zeo's own two-tier
