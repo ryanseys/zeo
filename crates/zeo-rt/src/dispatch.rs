@@ -3671,7 +3671,10 @@ fn send_value_in_reason(
         }
     }
     note_dispatch(name);
-    let n = name.name_str();
+    // `name_str` takes the interner's global mutex, and the flat one-probe
+    // path below -- almost every send in almost every program -- resolves on
+    // the `Symbol` alone. So the text is fetched only where a by-NAME builtin
+    // table is actually consulted, never up front.
     // CLASS/MODULE-level methods (`File.read`, `Time.now`, `Math.sqrt`):
     // this runtime has no singleton-method tables, so a class value gets its
     // own table probed ahead of the walk. The walk itself describes INSTANCE
@@ -3701,7 +3704,7 @@ fn send_value_in_reason(
             return f(recv, args, block);
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid) {
-            if let Some(f) = lookup(n) {
+            if let Some(f) = lookup(name.name_str()) {
                 return f(recv, args, block);
             }
         }
@@ -3711,7 +3714,7 @@ fn send_value_in_reason(
         // ancestry -- Class/Module -- not the struct's). Gated on the receiver
         // actually being a struct class, so no other class is affected.
         if crate::builtins::rstruct::is_struct_class(*cid) {
-            if let Some(f) = crate::builtins::rstruct::class_lookup(n) {
+            if let Some(f) = crate::builtins::rstruct::class_lookup(name.name_str()) {
                 return f(recv, args, block);
             }
         }
@@ -3737,6 +3740,7 @@ fn send_value_in_reason(
             }
             // A genuine flat miss: fall through to the alias tail below.
         } else {
+            let n = name.name_str();
             for &anc in ancestors_of_value(cid) {
                 if let Some(f) = value_method(anc, box_id, name) {
                     return f(recv, args, block);
@@ -3752,6 +3756,7 @@ fn send_value_in_reason(
         // `Math`'s module functions reach here too when `Math` is mixed in
         // (`include Math` -> a private `sqrt(x)`), as an ordinary `class_table`
         // hit on its registered instance table -- no special arm needed.
+        let n = name.name_str();
         for &anc in ancestors_of_value(cid) {
             if let Some(f) = value_method(anc, box_id, name) {
                 return f(recv, args, block);
@@ -3854,7 +3859,10 @@ fn send_in_reason(
     // Enumerable/Comparable module tables all resolve as real ancestor
     // methods, so `method_missing` fires only AFTER them -- real Ruby finds
     // a real (module) method first, always.
-    let n = name.name_str();
+    //
+    // The method's TEXT is fetched only where a by-name builtin table or the
+    // value-subclass rewrap needs it: `name_str` takes the interner's global
+    // mutex, and the flat one-probe hit below resolves on the `Symbol` alone.
     // Value-subclass payload bridge (D3): `class Stack < Array` carries a
     // `RubyValue::Array` payload; at its payload root the inherited builtin
     // method runs against that value, not the boxed object. `None` for every
@@ -3878,7 +3886,10 @@ fn send_in_reason(
                 if let Some(ref p) = payload {
                     let result = (hit.f)(p, args, block)?;
                     return Ok(crate::builtins::value_subclass::rewrap_self_return(
-                        result, p, recv, n,
+                        result,
+                        p,
+                        recv,
+                        name.name_str(),
                     ));
                 }
             }
@@ -3887,6 +3898,7 @@ fn send_in_reason(
         // A genuine flat miss: straight to the alias tail below.
         Some(None) => {}
         None => {
+            let n = name.name_str();
             for &anc in ancestors_of_value(id) {
                 if let Some(f) = value_method(anc, box_id, name) {
                     return f(&boxed, args, block);
