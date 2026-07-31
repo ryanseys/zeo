@@ -265,6 +265,81 @@ fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
+/// Rebuild a DERIVED string in the receiver's encoding.
+///
+/// The strip/pad/split/sub family computes over `to_utf8_lossy` text; handing
+/// that text to `str_value` tags the answer UTF-8 and re-encodes every
+/// non-ASCII character, so `"caf\xE9".force_encoding("ISO-8859-1").strip`
+/// answered UTF-8 with `é` as two bytes where CRuby keeps ISO-8859-1 and one.
+/// Mapping each character back through the receiver's own table restores both
+/// the tag and the bytes.
+///
+/// `Binary` inverts `to_utf8_lossy`'s `b as char` arm directly: `encode_scalar`
+/// refuses a non-ASCII scalar for a binary target, which is right for a
+/// TRANSCODE (there is no such byte to convert into) and wrong here, where the
+/// character came from this very buffer's own bytes.
+///
+/// A character the receiver's encoding cannot represent keeps today's UTF-8
+/// answer rather than inventing a byte -- that only happens when the text did
+/// not come from `src` to begin with.
+fn str_value_like(src: &StrBuf, text: &str) -> RubyValue {
+    let enc = src.encoding();
+    if enc == crate::encoding::UTF_8 {
+        return str_value(text.to_string());
+    }
+    if text.is_ascii() {
+        return RubyValue::Str(crate::string_from_bytes(text.as_bytes().to_vec(), enc));
+    }
+    let binary = matches!(enc.kind(), crate::encoding::EncKind::Binary);
+    let mut bytes = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        let one = if binary {
+            ((c as u32) < 0x100).then(|| vec![c as u32 as u8])
+        } else {
+            crate::encoding::encode_scalar(enc, c)
+        };
+        match one {
+            Some(b) => bytes.extend_from_slice(&b),
+            None => return str_value(text.to_string()),
+        }
+    }
+    RubyValue::Str(crate::string_from_bytes(bytes, enc))
+}
+
+/// Each character as its own String, in the receiver's encoding.
+///
+/// Goes through `char_ranges` rather than `chars()`, which decodes through
+/// `to_utf8_lossy` and so hands back UTF-8 characters -- `"caf\xE9"` in
+/// ISO-8859-1 yielded a UTF-8 `é` of two bytes instead of the one byte the
+/// receiver holds. Slicing the raw bytes keeps every character exactly as it
+/// is stored, including one that does not decode.
+fn char_values(s: &crate::collections::RStr) -> Vec<RubyValue> {
+    let buf = s.lock();
+    let bytes = buf.bytes();
+    let enc = buf.encoding();
+    buf.char_ranges()
+        .into_iter()
+        .map(|r| RubyValue::Str(crate::string_from_bytes(bytes[r].to_vec(), enc)))
+        .collect()
+}
+
+/// A character's code point AS THE RECEIVER'S ENCODING NUMBERS IT -- the raw
+/// encoded bytes read big-endian, which is what CRuby's `String#codepoints`
+/// and `#ord` answer for a non-Unicode encoding: KOI8-R `\xC1` is 193, not
+/// U+0430's 1072, and EUC-JP `\xA4\xA2` is 42146, not U+3042's 12354. For
+/// UTF-8 the two agree, so the Unicode scalar is used there.
+fn char_codepoint(buf: &StrBuf, r: std::ops::Range<usize>) -> i64 {
+    let seq = &buf.bytes()[r];
+    if buf.encoding() == crate::encoding::UTF_8 {
+        if let Ok(s) = std::str::from_utf8(seq)
+            && let Some(c) = s.chars().next()
+        {
+            return c as i64;
+        }
+    }
+    seq.iter().fold(0i64, |acc, b| (acc << 8) | *b as i64)
+}
+
 use crate::encoding::StrBuf;
 
 /// `String#dump` (CRuby `rb_str_dump`): a re-parseable double-quoted literal.
@@ -1685,29 +1760,33 @@ ruby_class! {
     }
     def "strip"(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_matches(is_rb_strip).to_string()))
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_matches(is_rb_strip)))
     }
     def "lstrip"(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_start_matches(is_rb_strip).to_string()))
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_start_matches(is_rb_strip)))
     }
     def "rstrip"(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_end_matches(is_rb_strip).to_string()))
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_end_matches(is_rb_strip)))
     }
     def "chars" arity 0 (recv, args, block) {
         arity!(args, 0);
-        let chars: Vec<String> = recv_str!(recv).lock().chars().map(|c| c.to_string()).collect();
+        let chars = char_values(recv_str!(recv));
         // With a block, `chars` behaves like `each_char`: yield each, return self.
         if let Some(RubyValue::Proc(p)) = &block {
             for c in chars {
-                p.call(&[str_value(c)])?;
+                p.call(&[c])?;
             }
             return Ok(recv.clone());
         }
-        Ok(RubyValue::Array(crate::array_new(
-            chars.into_iter().map(str_value).collect(),
-        )))
+        Ok(RubyValue::Array(crate::array_new(chars)))
     }
     // `lines` keeps each separator (`["a\n", "b\n", "c"]`).
     // `lines(sep = "\n", chomp: false)` -- split into lines, keeping the
@@ -1728,9 +1807,8 @@ ruby_class! {
     def "each_char" arity 0 (recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_char", args, block);
-        let cs: Vec<char> = recv_str!(recv).lock().chars().collect();
-        for c in cs {
-            p.call(&[str_value(c.to_string())])?;
+        for c in char_values(recv_str!(recv)) {
+            p.call(&[c])?;
         }
         Ok(recv.clone())
     }
@@ -1891,14 +1969,16 @@ ruby_class! {
     }
     def "chop" arity 0 (recv, args, _block) {
         arity!(args, 0);
-        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        let text = buf.to_utf8_lossy().into_owned();
         let mut cs: Vec<char> = text.chars().collect();
         if text.ends_with("\r\n") {
             cs.truncate(cs.len() - 2);
         } else {
             cs.pop();
         }
-        Ok(str_value(cs.into_iter().collect()))
+        Ok(str_value_like(&buf, &cs.into_iter().collect::<String>()))
     }
     def "reverse" arity 0 (recv, args, _block) {
         arity!(args, 0);
@@ -2000,7 +2080,11 @@ ruby_class! {
     // block/enumerator form over the same values).
     def "codepoints" arity 0 (recv, args, block) {
         arity!(args, 0);
-        let cps: Vec<i64> = recv_str!(recv).lock().to_utf8_lossy().chars().map(|c| c as i64).collect();
+        let cps: Vec<i64> = {
+            let s = recv_str!(recv);
+            let buf = s.lock();
+            buf.char_ranges().into_iter().map(|r| char_codepoint(&buf, r)).collect()
+        };
         // With a block, `codepoints` behaves like `each_codepoint`.
         if let Some(RubyValue::Proc(p)) = &block {
             for c in cps {
@@ -2352,8 +2436,9 @@ ruby_class! {
         arity!(args, 2);
         let (from, from_neg) = tr_charset(&arg_str!(args, 0).lock().to_utf8_lossy());
         let to = expand_charset(&arg_str!(args, 1).lock().to_utf8_lossy());
-        let out = recv_str!(recv)
-            .lock()
+        let recv_handle = recv_str!(recv);
+        let recv_buf = recv_handle.lock();
+        let out: String = recv_buf
             .chars()
             // A negated `from` (`tr("^a", "x")`) maps every char OUTSIDE the set
             // to the last `to` char. Otherwise a char repeated in `from` takes
@@ -2380,7 +2465,7 @@ ruby_class! {
                 }
             })
             .collect();
-        Ok(str_value(out))
+        Ok(str_value_like(&recv_buf, &out))
     }
     // `tr_s(from, to)` -- like `tr`, but each RUN of a translated character
     // collapses to one (`"hello".tr_s("l","r") == "hero"`). Delegating to
@@ -2402,12 +2487,13 @@ ruby_class! {
     // which may itself be negated with a leading `^` or use `a-z` ranges.
     def "delete"(recv, args, _block) {
         let sets = charset_specs(args)?;
-        let out = recv_str!(recv)
-            .lock()
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        let out: String = buf
             .chars()
             .filter(|c| !in_all_charsets(*c, &sets))
             .collect();
-        Ok(str_value(out))
+        Ok(str_value_like(&buf, &out))
     }
     def "squeeze"(recv, args, _block) {
         // CRuby accepts MULTIPLE charset args: only chars in the INTERSECTION
@@ -2420,7 +2506,9 @@ ruby_class! {
         };
         let mut out = String::new();
         let mut prev: Option<char> = None;
-        for c in recv_str!(recv).lock().chars() {
+        let s = recv_str!(recv);
+        let buf = s.lock();
+        for c in buf.chars() {
             let squeezable = sets.is_empty() || in_all_charsets(c, &sets);
             if prev == Some(c) && squeezable {
                 continue;
@@ -2428,7 +2516,7 @@ ruby_class! {
             out.push(c);
             prev = Some(c);
         }
-        Ok(str_value(out))
+        Ok(str_value_like(&buf, &out))
     }
     def "count"(recv, args, _block) {
         // A no-arg `count` raises ArgumentError; CRuby attributes it to the
@@ -3281,7 +3369,10 @@ fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Sig
             format!("{}{text}{}", fill_n(left), fill_n(total - left))
         }
     };
-    Ok(RubyValue::Str(crate::string_new(out)))
+    match recv {
+        RubyValue::Str(s) => Ok(str_value_like(&s.lock(), &out)),
+        _ => unreachable!("String table row dispatched on a non-String receiver"),
+    }
 }
 
 /// The `encoding:` keyword shared by `String.new` -- reads it from the
