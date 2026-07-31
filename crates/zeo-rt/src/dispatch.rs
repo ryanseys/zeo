@@ -111,6 +111,23 @@ pub trait RubyObject: Any + Send + Sync {
         None
     }
 
+    /// A `Struct`/`Data` MEMBER by position, in declaration order.
+    ///
+    /// Members are real slots on the generated struct but are NOT instance
+    /// variables: CRuby answers `nil` to `S.new(1).instance_variable_get(:@x)`
+    /// and `[]` to `instance_variables`. Every by-name path above is therefore
+    /// blind to them, and the native protocol (`to_a`, `[]`, `==`, `each`,
+    /// `dig`, `Marshal`) reaches them here instead, by the index it already
+    /// knows. `None`/`false` for an out-of-range index and for every ordinary
+    /// class, which declares no members.
+    fn hidden_ivar_get(&self, _i: usize) -> Option<RubyValue> {
+        None
+    }
+
+    fn hidden_ivar_set(&self, _i: usize, _v: RubyValue) -> bool {
+        false
+    }
+
     /// Read one ivar BY SLOT, the index it occupies in this class's
     /// [`crate::IvarCell`].
     ///
@@ -2244,6 +2261,16 @@ pub fn public_class_method_names(class: ClassId) -> Vec<Symbol> {
         .collect()
 }
 
+/// A fresh, uninitialized instance of `id` through its registered allocator,
+/// or `None` for a class that registered none (a module, a builtin, or a class
+/// minted at runtime). Does NOT run `initialize`.
+pub(crate) fn allocate_instance_of(id: ClassId) -> Option<RObj> {
+    match REGISTRY.get()?.allocate_instance(id) {
+        Some(RubyValue::Object(o)) => Some(o),
+        _ => None,
+    }
+}
+
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
 /// `None` for modules, builtins without allocators, or a missing registry.
 pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
@@ -2833,6 +2860,24 @@ pub(crate) fn call_user_method(
     // define the method itself".
     if let Some(f) = crate::builtins::class_table(id).and_then(|lookup| lookup(name)) {
         return Some(f(&RubyValue::Object(recv.clone()), args, None));
+    }
+    // A COMPILED `Struct`/`Data` inherits its whole protocol from
+    // `Struct`/`Data`'s own table, which the walk above cannot see: those rows
+    // are value methods, not registry `methods`. `S.new(1) == S.new(1)`
+    // reaches `Struct#==` only here, because `rb_eq` asks this function and
+    // nothing else.
+    //
+    // Exactly those two tables, never a general ancestor walk: probing
+    // `String`'s on a `class Tag < String` recurses until the stack dies.
+    if crate::builtins::rstruct::meta_of(id).is_some() {
+        for root in [zeo_abi::STRUCT_CLASS, zeo_abi::DATA_CLASS] {
+            if !ancestors_contain(id, root) {
+                continue;
+            }
+            if let Some(f) = crate::builtins::class_table(root).and_then(|lookup| lookup(name)) {
+                return Some(f(&RubyValue::Object(recv.clone()), args, None));
+            }
+        }
     }
     None
 }

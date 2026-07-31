@@ -2006,7 +2006,30 @@ fn dyn_ivar_slot(cx: &Ctx, name: &str) -> Option<usize> {
 /// code must still reach through the cell's by-NAME entry so it lands in the
 /// same storage `instance_variable_get` sees.
 pub(super) fn ivar_slot(cx: &Ctx, class: ClassId, name: &str) -> Option<usize> {
-    cx.compiler.class(class).ivars.iter().position(|iv| iv == name)
+    slot_of(cx.compiler, class, name)
+}
+
+/// [`ivar_slot`] without a `Ctx`, for the trampoline emitter.
+///
+/// The declared ivars occupy the leading slots and a compiled `Struct`'s
+/// MEMBERS follow them, matching how `ruby_class!` lays the cell out -- which
+/// is what keeps a member out of every by-name path while costing it nothing
+/// to reach.
+pub(super) fn slot_of(
+    compiler: &crate::compiler::Compiler,
+    class: ClassId,
+    name: &str,
+) -> Option<usize> {
+    let info = compiler.class(class);
+    info.ivars
+        .iter()
+        .position(|iv| iv == name)
+        .or_else(|| {
+            info.hidden_ivars
+                .iter()
+                .position(|iv| iv == name)
+                .map(|i| info.ivars.len() + i)
+        })
 }
 
 /// A cvar WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s docs

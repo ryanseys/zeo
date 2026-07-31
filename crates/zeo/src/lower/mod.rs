@@ -645,12 +645,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
     if let Some(cw) = node.as_constant_write_node() {
         let name = String::from_utf8_lossy(cw.name().as_slice()).into_owned();
-        // `Name = Struct.new(:a, :b)` / `Name = Data.define(...)` is an ordinary
-        // constant write whose value is a runtime `Struct.new`/`Data.define`
-        // call (Batch E): the call MINTS a real class at runtime
-        // (`rstruct::struct_new`), the write binds it to the constant, and
-        // `const_set` names the freshly anonymous class (`RUBY`'s "assigning an
-        // anonymous class to a constant names it"). No compile-time synthesis.
+        // `Name = Struct.new(:a, :b)` with a literal member list compiles to a
+        // REAL class, so a member is a struct field an accessor reaches
+        // directly instead of an overlay slot reached through a dynamic send.
+        if let Some(members) = defs::as_compiled_struct(&cw.value()) {
+            return defs::synthesize_struct_class(hir, &name, &members);
+        }
+        // Everything else stays the RUNTIME path: the `Struct.new`/`Data.define`
+        // call MINTS a class (`rstruct::struct_new`), the write binds it to the
+        // constant, and `const_set` names the freshly anonymous class (Ruby's
+        // "assigning an anonymous class to a constant names it").
         let value = lower_node(result, hir, &cw.value())?;
         return Ok(hir.push(HirNode::ConstWrite {
             scope: None,

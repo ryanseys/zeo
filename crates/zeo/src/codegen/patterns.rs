@@ -462,6 +462,23 @@ fn emit_array_binding(
                     (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().to_vec();
             })
         }
+        // A COMPILED `Struct` gets its whole protocol -- `deconstruct`
+        // included -- from `Struct`'s own shared table, which is registered at
+        // runtime and so invisible to `method_in_chain`. Dispatching keeps it
+        // correct; the "provably never matches" conclusion below would be
+        // wrong for exactly this class.
+        TyKind::Object(cid) if cx.compiler.is_compiled_struct(cid) => {
+            let dec = super::pooled_sym("deconstruct");
+            // Boxed through `new_handle`: an `Object`-typed scrutinee is an
+            // unboxed `Arc<Concrete>` here, and `send_value` takes a value.
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
+            Some(quote! {
+                let #arr_ident: Vec<zeo_rt::RubyValue> = zeo_rt::send_value(
+                    &zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#scrutinee))),
+                    #dec, &[], None,
+                )?.as_array_unchecked().lock().to_vec();
+            })
+        }
         // A Poly scrutinee that isn't a runtime Array dispatches
         // `#deconstruct` (real Ruby's array-pattern protocol) when it responds
         // to it; anything else simply doesn't match (no raise).
@@ -506,6 +523,17 @@ fn emit_hash_binding(
             Some(quote! {
                 let #h_ident: zeo_rt::RHash =
                     (#scrutinee.clone()).deconstruct_keys(zeo_rt::RubyValue::Nil)?.as_hash_unchecked();
+            })
+        }
+        // See `emit_array_binding`'s matching arm.
+        TyKind::Object(cid) if cx.compiler.is_compiled_struct(cid) => {
+            let dk = super::pooled_sym("deconstruct_keys");
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
+            Some(quote! {
+                let #h_ident: zeo_rt::RHash = zeo_rt::send_value(
+                    &zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#scrutinee))),
+                    #dk, &[zeo_rt::RubyValue::Nil], None,
+                )?.as_hash_unchecked();
             })
         }
         // A MatchData scrutinee (`"s".match(/re/)` is statically typed

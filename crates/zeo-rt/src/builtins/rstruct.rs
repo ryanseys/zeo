@@ -74,6 +74,29 @@ fn put_meta(id: ClassId, meta: StructMeta) {
     STRUCT_META.write().unwrap().insert(id.0, Arc::new(meta));
 }
 
+/// Register a class whose members zeo read off a LITERAL `Struct.new(:a, :b)`
+/// and compiled to a real generated class, rather than one minted at runtime.
+/// Called once per such class from generated `main()`.
+///
+/// Nothing else changes: the class inherits `STRUCT_CLASS`/`DATA_CLASS`'s
+/// `class_table`, and every row in there reaches members BY INDEX
+/// ([`slots_of`]/[`slot_get`]/[`slot_set`]), which both representations answer.
+pub fn register_compiled_struct(
+    id: ClassId,
+    members: &[&str],
+    is_data: bool,
+    keyword_init: Option<bool>,
+) {
+    put_meta(
+        id,
+        StructMeta {
+            members: members.iter().map(|m| Symbol::intern(m)).collect(),
+            is_data,
+            keyword_init,
+        },
+    );
+}
+
 /// The struct/data metadata for `class_id` -- its own, or the nearest struct
 /// ancestor's (so `class Foo < PointStruct` inherits `Point`'s members).
 pub fn meta_of(class_id: ClassId) -> Option<Arc<StructMeta>> {
@@ -133,10 +156,9 @@ pub fn accessor_params(
 /// when the universal is otherwise served by a codegen fast path that never
 /// reaches the accessor.
 pub fn member_value_named(recv: &RObj, name: &str) -> Option<RubyValue> {
-    let inst = recv.as_any().downcast_ref::<StructInstance>()?;
-    let meta = meta_of(inst.class_id)?;
+    let meta = meta_of(recv.class_id())?;
     let i = meta.index_of(Symbol::intern(name))?;
-    Some(inst.slots.lock()[i].clone())
+    Some(slot_get(&RubyValue::Object(recv.clone()), i))
 }
 
 // ---------------------------------------------------------------------------
@@ -216,25 +238,62 @@ impl RubyObject for StructInstance {
     }
 }
 
-/// Downcast a struct-table receiver -- the `class_table` keying guarantees it.
-pub(crate) fn recv_struct(recv: &RubyValue) -> &StructInstance {
+/// The receiver's class id, whichever representation backs it.
+pub(crate) fn recv_class_id(recv: &RubyValue) -> ClassId {
     match recv {
-        RubyValue::Object(o) => o
-            .as_any()
-            .downcast_ref::<StructInstance>()
-            .expect("struct table row on a non-struct receiver"),
+        RubyValue::Object(o) => o.class_id(),
         _ => unreachable!("struct table row on a non-object receiver"),
     }
 }
 
+/// Every member, in declaration order, SNAPSHOT -- so nothing downstream runs
+/// while a slot lock is held.
+///
+/// Two representations answer here, and every row in this module works on both
+/// because it only ever asks for members BY INDEX, which is the one thing they
+/// have in common. A runtime `Struct.new` mints an overlay class whose
+/// instances are [`StructInstance`], an ordered slot vector. One zeo could read
+/// off a literal member list is an ordinary generated class whose members are
+/// HIDDEN slots on its own Rust struct (`ruby_class!`'s `hidden` block),
+/// reached through `RubyObject::hidden_ivar_get`.
 pub(crate) fn slots_of(recv: &RubyValue) -> Vec<RubyValue> {
-    recv_struct(recv).slots.lock().clone()
+    let RubyValue::Object(o) = recv else {
+        unreachable!("struct table row on a non-object receiver")
+    };
+    if let Some(inst) = o.as_any().downcast_ref::<StructInstance>() {
+        return inst.slots.lock().clone();
+    }
+    let n = meta_of(o.class_id()).map_or(0, |m| m.members.len());
+    (0..n)
+        .map(|i| o.hidden_ivar_get(i).unwrap_or(RubyValue::Nil))
+        .collect()
+}
+
+/// One member by index -- [`slots_of`] when more than one is wanted.
+pub(crate) fn slot_get(recv: &RubyValue, i: usize) -> RubyValue {
+    let RubyValue::Object(o) = recv else {
+        unreachable!("struct table row on a non-object receiver")
+    };
+    if let Some(inst) = o.as_any().downcast_ref::<StructInstance>() {
+        return inst.slots.lock()[i].clone();
+    }
+    o.hidden_ivar_get(i).unwrap_or(RubyValue::Nil)
+}
+
+pub(crate) fn slot_set(recv: &RubyValue, i: usize, v: RubyValue) {
+    let RubyValue::Object(o) = recv else {
+        unreachable!("struct table row on a non-object receiver")
+    };
+    if let Some(inst) = o.as_any().downcast_ref::<StructInstance>() {
+        inst.slots.lock()[i] = v;
+        return;
+    }
+    o.hidden_ivar_set(i, v);
 }
 
 /// The member-symbol array shared by `Struct#members`/`Data#members`.
 pub(crate) fn build_members(recv: &RubyValue) -> Result<RubyValue, Signal> {
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     Ok(RubyValue::Array(array_new(
         meta.members.iter().map(|m| RubyValue::Symbol(*m)).collect(),
     )))
@@ -248,8 +307,7 @@ pub(crate) fn build_members(recv: &RubyValue) -> Result<RubyValue, Signal> {
 /// the shared core of `[]`/`[]=`/`dig`. `IndexError`/`NameError` on a miss,
 /// matching CRuby.
 fn member_index(recv: &RubyValue, key: &RubyValue) -> Result<usize, Signal> {
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     let n = meta.members.len();
     match key {
         RubyValue::Symbol(s) => meta
@@ -282,9 +340,8 @@ fn inspect_slot(v: &RubyValue) -> Result<String, Signal> {
 }
 
 fn build_to_h(recv: &RubyValue) -> RubyValue {
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
-    let slots = inst.slots.lock();
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
+    let slots = slots_of(recv);
     let pairs: Vec<(RubyValue, RubyValue)> = meta
         .members
         .iter()
@@ -301,9 +358,8 @@ pub(crate) fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(build_to_h(recv));
     };
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
-    let slots = inst.slots.lock().clone();
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
+    let slots = slots_of(recv);
     let mut pairs = Vec::with_capacity(meta.members.len());
     for (m, v) in meta.members.iter().zip(slots.iter()) {
         let ret = p.call(&[RubyValue::Symbol(*m), v.clone()])?;
@@ -326,9 +382,8 @@ pub(crate) fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<
 }
 
 pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
-    let slots = inst.slots.lock().clone();
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
+    let slots = slots_of(recv);
     let mut parts = Vec::with_capacity(meta.members.len());
     for (m, v) in meta.members.iter().zip(slots.iter()) {
         let label = crate::builtins::symbol::struct_member_label(&m.name());
@@ -339,7 +394,7 @@ pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     // shows it (`#<struct Point x=1>`), matching CRuby. An unnamed runtime
     // class reports a `#<Class:0x..>` placeholder from `class_name` -- treat
     // that as anonymous.
-    let named = match class_name(inst.class_id) {
+    let named = match class_name(recv_class_id(recv)) {
         Some(n) if !n.is_empty() && !n.starts_with("#<Class:") => format!("{n} "),
         _ => String::new(),
     };
@@ -350,23 +405,18 @@ pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
 }
 
 pub(crate) fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
-    let me = recv_struct(recv);
     let RubyValue::Object(o) = other else {
         return false;
     };
-    let Some(them) = o.as_any().downcast_ref::<StructInstance>() else {
-        return false;
-    };
-    if me.class_id != them.class_id {
+    if meta_of(o.class_id()).is_none() || recv_class_id(recv) != o.class_id() {
         return false;
     }
-    // Clone each slot vec (releasing its lock at the end of the statement)
-    // rather than hold both guards at once: `s == s` aliases the SAME
-    // `StructInstance`, so locking `them.slots` while `me.slots` is still
-    // held would deadlock (parking_lot's Mutex is not reentrant). Comparing
+    // Each side snapshot separately rather than both guards held at once:
+    // `s == s` aliases the SAME instance, so locking the second while the
+    // first is still held would deadlock a non-reentrant `Mutex`. Comparing
     // the cloned values keeps a NaN member making `s == s` false, as CRuby.
-    let a = me.slots.lock().clone();
-    let b = them.slots.lock().clone();
+    let a = slots_of(recv);
+    let b = slots_of(other);
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.rb_eq(y))
 }
 
@@ -374,8 +424,7 @@ pub(crate) fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<Rub
     if matches!(keys, RubyValue::Nil) {
         return Ok(build_to_h(recv));
     }
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     let RubyValue::Array(arr) = keys else {
         return Ok(RubyValue::Hash(hash_new(Vec::new())));
     };
@@ -383,7 +432,7 @@ pub(crate) fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<Rub
     if keys.len() > meta.members.len() {
         return Ok(RubyValue::Hash(hash_new(Vec::new())));
     }
-    let slots = inst.slots.lock();
+    let slots = slots_of(recv);
     let mut out: Vec<(RubyValue, RubyValue)> = Vec::new();
     for k in keys {
         match &k {
@@ -436,8 +485,7 @@ ruby_class! {
     def "each_pair"(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_pair", args, block);
-        let inst = recv_struct(recv);
-        let meta = meta_of(inst.class_id).expect("struct instance has meta");
+        let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         let slots = slots_of(recv);
         for (m, v) in meta.members.iter().zip(slots.iter()) {
             p.call(&[RubyValue::Symbol(*m), v.clone()])?;
@@ -447,16 +495,15 @@ ruby_class! {
     def "[]"(recv, args, _block) {
         arity!(args, 1);
         let i = member_index(recv, &args[0])?;
-        Ok(recv_struct(recv).slots.lock()[i].clone())
+        Ok(slot_get(recv, i))
     }
     def "[]="(recv, args, _block) {
         arity!(args, 2);
-        let inst = recv_struct(recv);
-        if inst.is_frozen() {
+        if recv.is_frozen() {
             return Err(frozen_error(recv));
         }
         let i = member_index(recv, &args[0])?;
-        inst.slots.lock()[i] = args[1].clone();
+        slot_set(recv, i, args[1].clone());
         Ok(args[1].clone())
     }
     def "values_at"(recv, args, block) {
@@ -469,7 +516,7 @@ ruby_class! {
         }
         let value = {
             let i = member_index(recv, &args[0])?;
-            recv_struct(recv).slots.lock()[i].clone()
+            slot_get(recv, i)
         };
         if args.len() == 1 || matches!(value, RubyValue::Nil) {
             return Ok(value);
@@ -477,8 +524,7 @@ ruby_class! {
         send_value(&value, Symbol::intern("dig"), &args[1..], None)
     }
     def "size" | "length" (recv, _args, _block) {
-        let inst = recv_struct(recv);
-        let meta = meta_of(inst.class_id).expect("struct instance has meta");
+        let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         Ok(RubyValue::Int(meta.members.len() as i64))
     }
     def "=="(recv, args, _block) {
@@ -515,8 +561,7 @@ fn frozen_error(recv: &RubyValue) -> Signal {
 /// bind constructor args to slots. Positional (nil-filling for a plain Struct,
 /// exact-arity for keyword_init/Data) or by keyword (a trailing Hash).
 pub(crate) fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(), Signal> {
-    let inst = recv_struct(recv);
-    let meta = meta_of(inst.class_id).expect("struct instance has meta");
+    let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     let n = meta.members.len();
 
     // Keyword construction: a plain Struct only when declared `keyword_init:`;
@@ -531,15 +576,18 @@ pub(crate) fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) 
     };
 
     if let Some(h) = kw_hash {
-        let mut slots = inst.slots.lock();
         let mut seen = vec![false; n];
-        for (k, v) in h.lock().values() {
+        // Pairs snapshot before any slot is written: holding the hash's own
+        // lock across a write that could reach back into it is the hazard the
+        // rest of this module already avoids the same way.
+        let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
+        for (k, v) in pairs {
             let RubyValue::Symbol(s) = k else {
                 return Err(arg_error!("keyword must be a symbol"));
             };
-            match meta.index_of(*s) {
+            match meta.index_of(s) {
                 Some(i) => {
-                    slots[i] = v.clone();
+                    slot_set(recv, i, v.clone());
                     seen[i] = true;
                 }
                 None => {
@@ -621,9 +669,8 @@ pub(crate) fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) 
         };
         return Err(arg_error!("missing {word}: {}", missing.join(", ")));
     }
-    let mut slots = inst.slots.lock();
     for (i, a) in args.iter().enumerate() {
-        slots[i] = a.clone();
+        slot_set(recv, i, a.clone());
     }
     Ok(())
 }
@@ -639,7 +686,14 @@ pub fn struct_construct(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let meta = meta_of(class_id).expect("struct construct on a class with no meta");
-    let handle = StructInstance::new_robj(class_id, vec![RubyValue::Nil; meta.members.len()]);
+    // A COMPILED struct is an ordinary generated class: allocate through its
+    // own registered allocator, so the instance is the Rust struct its
+    // accessors and its `initialize` were compiled against. Building a
+    // `StructInstance` for it instead compiles fine and then reads every
+    // member as nil.
+    let handle = crate::dispatch::allocate_instance_of(class_id).unwrap_or_else(|| {
+        StructInstance::new_robj(class_id, vec![RubyValue::Nil; meta.members.len()])
+    });
     // Dispatch `initialize` so a user override (and its `super`) resolve
     // normally; the default member-setter lives in the class_table.
     send_in(0, &handle, Symbol::intern("initialize"), args, block)?;

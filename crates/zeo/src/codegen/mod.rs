@@ -1181,6 +1181,20 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             quote! { #ident::__register(&mut __registry); }
         };
         registrations.push(register);
+        // A COMPILED `Struct`: its member list, so `Struct`'s one shared
+        // protocol (`to_a`, `[]`, `==`, `each`, `dig`, `inspect`, `Marshal`)
+        // finds it by MRO and reaches the members by index, exactly as it does
+        // for a runtime-minted one. Only the accessors differ, in being fields
+        // rather than overlay closures.
+        let members = &compiler.class(ClassId(idx as u32)).hidden_ivars;
+        if !members.is_empty() {
+            let id = idx as u32;
+            registrations.push(quote! {
+                zeo_rt::register_compiled_struct(
+                    zeo_rt::ClassId(#id), &[#(#members),*], false, None,
+                );
+            });
+        }
         // Each PRIVATE method materialized onto this class -- its own
         // `private def x`, plus every top-level `def` (a private method of
         // Object, which materialization copies onto every class) -- is
@@ -2841,6 +2855,11 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
     let id = cid.0;
     let ancestor_ids = ci.ancestors.iter().map(|a| a.0);
     let ivar_idents = ci.ivars.iter().map(|iv| safe_ident(iv));
+    // `hidden_ivars` names `Struct` MEMBERS -- real slots that are not Ruby
+    // instance variables (see `ruby_class!`'s `hidden` block). `mro` already
+    // made the two lists disjoint, so the macro never has to subtract one from
+    // the other, and member order is `Struct.new`'s argument order.
+    let hidden_idents = ci.hidden_ivars.iter().map(|iv| safe_ident(iv));
 
     let methods = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
@@ -2871,11 +2890,8 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
         let frame = scope_frame_guard(compiler, scope, false);
         let tramp = match compiler.accessor_shape(cid, scope) {
             Some(shape) => {
-                let slot = ci
-                    .ivars
-                    .iter()
-                    .position(|iv| *iv == shape.ivar)
-                    .expect("`accessor_shape` only matches a declared ivar");
+                let slot = expr::slot_of(compiler, cid, &shape.ivar)
+                    .expect("`accessor_shape` only matches a declared slot");
                 params::emit_accessor_trampoline(&name_ident, shape, slot, &frame)
             }
             None => params::emit_dynamic_trampoline(
@@ -2904,6 +2920,7 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
                 name: #fq_name;
                 ancestors: [ #(#ancestor_ids),* ];
                 ivars { #(#ivar_idents),* }
+                hidden { #(#hidden_idents),* }
                 #(#methods)*
                 dispatch { #(#dispatch_entries),* }
             }

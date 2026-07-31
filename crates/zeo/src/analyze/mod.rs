@@ -1931,6 +1931,15 @@ fn register_class(
     // correctly contributes a cut chain.
     let child_cref = compiler.cref_of(Some(class_id));
 
+    // A class `lower::defs::synthesize_struct_class` built from a
+    // `NAME = Struct.new(:a, :b)`: its `@a`/`@b` are MEMBERS, not instance
+    // variables. Recorded here; `mro::materialize` fills `ivars` later from
+    // the method bodies and subtracts these, so the two lists reach codegen
+    // already disjoint.
+    if let Some(members) = def_node.and_then(|n| compiler.hir.struct_members.get(&n)) {
+        compiler.classes[class_id.0 as usize].hidden_ivars = members.clone();
+    }
+
     // This definition site's own record -- see `Compiler::class_body_sites`.
     let site_idx = compiler.class_body_sites.len();
     compiler

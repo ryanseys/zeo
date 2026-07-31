@@ -132,6 +132,12 @@ pub struct Hir {
     /// does. So a synthesized accessor may devirtualize even under tracing --
     /// see `codegen::emit_class`.
     pub attr_generated: std::collections::HashSet<NodeId>,
+    /// `ClassDef` nodes `lower::defs::synthesize_struct_class` built from a
+    /// `NAME = Struct.new(:a, :b)`, mapped to their MEMBER list in declaration
+    /// order. `analyze` copies it onto `ClassInfo::hidden_ivars`, which is what
+    /// makes those slots invisible to `instance_variables` while `Struct`'s own
+    /// shared protocol still reaches them by index.
+    pub struct_members: std::collections::HashMap<NodeId, Vec<String>>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.

@@ -581,6 +581,114 @@ pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
     })
 }
 
+/// The member list of a `Struct.new(:a, :b)` zeo can compile to a REAL class,
+/// or `None` to leave it on the runtime path.
+///
+/// Deliberately narrow, and everything it rejects keeps today's complete
+/// `rstruct::struct_new` fallback. A compiled struct is an ordinary generated
+/// class whose members are hidden slots, so an accessor reaches a field
+/// instead of a dynamic send into an overlay closure. What it will not take:
+///
+/// - `Data.define` (readers only, frozen on construct, `#with`),
+/// - `keyword_init:` or any other keyword, and any block body,
+/// - a computed or non-symbol member,
+/// - a member whose name is not a plain lowercase identifier
+///   (`Struct.new(:verbose?)`), or that is a Ruby KEYWORD (`Struct.new(:class)`,
+///   which is legal and even shadows `Kernel#class`) -- the synthesized source
+///   below spells members as parameter names and `@name` ivars, and neither
+///   can be either of those.
+///
+/// `ZEO_STRUCT=runtime` turns the whole thing off.
+/// Legal `Struct` member names that cannot be spelled as a Rust-side parameter
+/// or `def` name in the synthesized source. `Struct.new(:class)` is real code
+/// -- it even shadows `Kernel#class`, which `issue_2975.rb` pins.
+const RUBY_KEYWORDS: &[&str] = &[
+    "alias", "and", "begin", "break", "case", "class", "def", "defined", "do", "else", "elsif",
+    "end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not", "or", "redo",
+    "rescue", "retry", "return", "self", "super", "then", "true", "undef", "unless", "until",
+    "when", "while", "yield",
+];
+
+pub(crate) fn as_compiled_struct(value: &Node<'_>) -> Option<Vec<String>> {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("ZEO_STRUCT").is_ok_and(|v| v == "runtime")) {
+        return None;
+    }
+    let call = value.as_call_node()?;
+    if String::from_utf8_lossy(call.name().as_slice()) != "new" || call.block().is_some() {
+        return None;
+    }
+    let recv = call.receiver()?;
+    if String::from_utf8_lossy(recv.as_constant_read_node()?.name().as_slice()) != "Struct" {
+        return None;
+    }
+    let mut members = Vec::new();
+    for arg in call.arguments()?.arguments().iter() {
+        let name = String::from_utf8_lossy(arg.as_symbol_node()?.unescaped()).into_owned();
+        let mut chars = name.chars();
+        let plain = chars
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !plain || RUBY_KEYWORDS.contains(&name.as_str()) || members.contains(&name) {
+            return None;
+        }
+        members.push(name);
+    }
+    (!members.is_empty()).then_some(members)
+}
+
+/// `NAME = Struct.new(:a, :b)` as an ordinary `class NAME < Struct` with an
+/// accessor per member -- so the member is a field, and Phase 3's accessor
+/// devirtualization applies to reading it.
+///
+/// The class body is SOURCE handed to `parse_and_lower_into`, the same route
+/// `synthesize_ffi_struct` takes, rather than hand-built HIR: the accessors,
+/// the constructor and its nil-filling defaults are exactly what an ordinary
+/// `attr_accessor` and `def initialize` already lower to, and going through
+/// the parser is what keeps them that way.
+///
+/// The `@member` slots are recorded as HIDDEN, which is what makes
+/// `instance_variables` answer `[]` and `instance_variable_get(:@a)` answer
+/// `nil`, as CRuby does. Everything else in the protocol -- `to_a`, `[]`, `==`,
+/// `each`, `dig`, `inspect`, `Marshal` -- comes from `Struct`'s own shared
+/// table, reached by MRO, and works unchanged because it asks for members by
+/// INDEX.
+pub(crate) fn synthesize_struct_class(
+    hir: &mut Hir,
+    name: &str,
+    members: &[String],
+) -> PResult<NodeId> {
+    let accessors = members
+        .iter()
+        .map(|m| format!(":{m}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // Every parameter defaults to nil: `Struct.new(:a, :b).new(1)` fills the
+    // rest with nil rather than raising, and `.new()` is legal too.
+    let params = members
+        .iter()
+        .map(|m| format!("{m} = nil"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let assigns = members
+        .iter()
+        .map(|m| format!("    @{m} = {m}\n"))
+        .collect::<String>();
+    let src = format!(
+        "class {name} < Struct\n  attr_accessor {accessors}\n  \
+         def initialize({params})\n{assigns}  end\nend\n"
+    );
+    let nodes = parse_and_lower_into(hir, &src)?;
+    let [class_def] = nodes[..] else {
+        return Err(crate::lower_error::LowerError::syntax(
+            "a synthesized struct class must lower to exactly one ClassDef",
+        ));
+    };
+    hir.struct_members.insert(class_def, members.to_vec());
+    Ok(class_def)
+}
+
 /// Whether `value` is a `Data.define(...)` / `Struct.new(...)` / `Class.new(...)`
 /// call -- an expression that produces a class object at runtime.
 fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {

@@ -69,6 +69,7 @@ pub use builtins::kernel::{
     kernel_string, kernel_throw, kernel_warn, system_exit_status,
 };
 pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
+pub use builtins::rstruct::register_compiled_struct;
 pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use builtins::warning::emit_parse_warnings;
 pub use builtins::weak::run_finalizers;
@@ -259,6 +260,7 @@ macro_rules! ruby_class {
             name: $rname:literal;
             ancestors: [ $($anc:expr_2021),* $(,)? ];
             ivars { $($ivar:ident),* $(,)? }
+            hidden { $($hidden:ident),* $(,)? }
             $( def $method:ident ( $slf:tt : std::sync::Arc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
             dispatch { $( $dname:literal => $tramp:expr_2021 ),* $(,)? }
         }
@@ -281,7 +283,15 @@ macro_rules! ruby_class {
             /// [`IvarCell`](crate::IvarCell): the slot INDEX is what generated
             /// code uses, and `__IVAR_NAMES` is what the by-name reflection
             /// paths resolve against.
-            pub __ivars: $crate::IvarCell<{ <[()]>::len(&[$($crate::ivar_unit!($ivar)),*]) }>,
+            /// The declared ivars come first, then the HIDDEN slots -- a
+            /// `Struct`/`Data` member, which is real storage that is not an
+            /// instance variable. Keeping them in the same cell means a member
+            /// costs a member exactly what an ivar costs, and keeping them
+            /// AFTER means every by-name path, which walks `__IVAR_NAMES`,
+            /// stops before reaching one.
+            pub __ivars: $crate::IvarCell<{
+                <[()]>::len(&[$($crate::ivar_unit!($ivar),)* $($crate::ivar_unit!($hidden),)*])
+            }>,
         }
 
         impl $name {
@@ -294,6 +304,15 @@ macro_rules! ruby_class {
             /// a receiver whose class codegen could not know -- consult it;
             /// generated reads and writes carry the index.
             pub const __IVAR_NAMES: &'static [&'static str] = &[$(stringify!($ivar)),*];
+
+            /// Where the hidden slots start -- the count of real ivars. A
+            /// `Struct` member's own index is relative to this.
+            pub const __HIDDEN_BASE: usize = Self::__IVAR_NAMES.len();
+
+            /// How many `Struct`/`Data` members this class declares; `0` for
+            /// every ordinary class.
+            pub const __HIDDEN_COUNT: usize =
+                <[()]>::len(&[$($crate::ivar_unit!($hidden)),*]);
 
             /// Accepts an already-`Arc`-wrapped value (never `Self` by
             /// value): generated code stores every `New`-constructed object
@@ -372,7 +391,7 @@ macro_rules! ruby_class {
             // Only ASSIGNED ivars, here and in `ivar_pairs`: a declared slot
             // nothing ever wrote does not exist as far as Ruby is concerned.
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
-                self.__ivars.values()
+                self.__ivars.values(Self::__HIDDEN_BASE)
             }
             // Field-declaration order, `@`-prefixed to match Ruby's ivar
             // names -- the field idents ARE the names minus the `@` (see
@@ -401,15 +420,35 @@ macro_rules! ruby_class {
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 self.__ivars.remove_named(Self::__IVAR_NAMES, name)
             }
+            // A `Struct`/`Data` MEMBER by position -- see the trait method's
+            // docs. Offset past the real ivars, which is what keeps a member
+            // out of every by-name path while costing it nothing to reach.
+            fn hidden_ivar_get(&self, i: usize) -> Option<$crate::RubyValue> {
+                (i < Self::__HIDDEN_COUNT).then(|| self.__ivars.get(Self::__HIDDEN_BASE + i))
+            }
+            fn hidden_ivar_set(&self, i: usize, v: $crate::RubyValue) -> bool {
+                let ok = i < Self::__HIDDEN_COUNT;
+                if ok { self.__ivars.set(Self::__HIDDEN_BASE + i, v); }
+                ok
+            }
             // By-SLOT ivar access, for a body shared across a hierarchy: the
             // receiver is a `RubyValue` there, but the index is still a
             // compile-time constant. See the trait method's docs.
+            // Bounded by the WHOLE cell, not just the named region: a shared
+            // body's slot index spans the hidden slots too, because a compiled
+            // `Struct` and a subclass of it agree on where a member lives even
+            // though one calls it a member and the other an ivar.
             fn ivar_slot_get(&self, slot: usize) -> $crate::RubyValue {
-                if slot < Self::__IVAR_NAMES.len() { self.__ivars.get(slot) }
-                else { $crate::RubyValue::Nil }
+                if slot < Self::__HIDDEN_BASE + Self::__HIDDEN_COUNT {
+                    self.__ivars.get(slot)
+                } else {
+                    $crate::RubyValue::Nil
+                }
             }
             fn ivar_slot_set(&self, slot: usize, value: $crate::RubyValue) {
-                if slot < Self::__IVAR_NAMES.len() { self.__ivars.set(slot, value); }
+                if slot < Self::__HIDDEN_BASE + Self::__HIDDEN_COUNT {
+                    self.__ivars.set(slot, value);
+                }
             }
             fn take_linked_ivars(&self, out: &mut Vec<$crate::RubyValue>) {
                 self.__ivars.take_linked(out);
@@ -491,6 +530,7 @@ mod tests {
             name: "Point";
             ancestors: [9100, 0, 25, 24]; // [Point, Object, Kernel, BasicObject]
             ivars { x }
+            hidden { }
             def initialize(self: std::sync::Arc<Self>, x: RubyValue) { self.__ivars.set(0, x); Ok(RubyValue::Nil) }
             def x(self: std::sync::Arc<Self>) { Ok(self.__ivars.get(0)) }
             dispatch {
@@ -518,6 +558,7 @@ mod tests {
             name: "Greeter";
             ancestors: [9101, 0, 25, 24];
             ivars { }
+            hidden { }
             def hello(self: std::sync::Arc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
             def method_missing(self: std::sync::Arc<Self>, name: RubyValue) {
                 Ok(RubyValue::Str(string_new(format!("no such method: {}", name.to_display_string()))))
@@ -547,6 +588,7 @@ mod tests {
             name: "Temp";
             ancestors: [9102, 22, 0, 25, 24]; // [Temp, Comparable, Object, Kernel, BasicObject]
             ivars { deg }
+            hidden { }
             def cmp(self: std::sync::Arc<Self>, other: RubyValue) {
                 let mine = self.__ivars.get(0);
                 let theirs = match &other {

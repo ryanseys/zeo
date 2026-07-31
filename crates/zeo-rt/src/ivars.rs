@@ -446,9 +446,14 @@ impl<const N: usize> IvarCell<N> {
     }
 
     /// The assigned values alone, in the same order [`Self::pairs`] uses.
-    pub fn values(&self) -> Vec<RubyValue> {
+    ///
+    /// `declared` is how many leading slots are real instance variables;
+    /// anything past it is a `Struct`/`Data` member, which Ruby does not count
+    /// as one. [`Self::pairs`] gets the same bound for free from the length of
+    /// the name list it walks.
+    pub fn values(&self, declared: usize) -> Vec<RubyValue> {
         let inner = self.held();
-        let mut out: Vec<(Seq, RubyValue)> = (0..N)
+        let mut out: Vec<(Seq, RubyValue)> = (0..declared)
             .filter(|i| inner.seq[*i] != 0)
             .map(|i| (inner.seq[i], inner.vals[i].clone()))
             .collect();
@@ -626,7 +631,7 @@ mod tests {
         let cell = IvarCell::<3>::new();
         cell.set(2, RubyValue::Int(3));
         cell.set(0, RubyValue::Int(1));
-        let vals: Vec<Option<i64>> = cell.values().iter().map(int).collect();
+        let vals: Vec<Option<i64>> = cell.values(3).iter().map(int).collect();
         assert_eq!(vals, vec![Some(3), Some(1)]);
     }
 }

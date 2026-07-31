@@ -154,6 +154,17 @@ pub struct ClassInfo {
     /// `own_methods` (see that module's docs for why this needs no separate
     /// parent-first merge pass the way zeo's C struct layout does).
     pub ivars: Vec<String>,
+    /// `Struct`/`Data` MEMBERS -- real slots on the generated struct that are
+    /// NOT instance variables -- in `Struct.new`'s own argument order, which is
+    /// `members`' order and so `to_a`'s and `[]`'s index order.
+    ///
+    /// A member costs exactly what an ivar costs to reach, but CRuby answers
+    /// `nil` to `S.new(1).instance_variable_get(:@x)` and `[]` to
+    /// `instance_variables` (pinned by `tests/spinel/data_struct_ivar_get_nil.rb`),
+    /// so it is absent from every by-NAME path. `ruby_class!`'s `hidden` block
+    /// is what enforces that. DISJOINT from `ivars`, which `mro::materialize`
+    /// guarantees. Empty for every class that is not a compiled `Struct`.
+    pub hidden_ivars: Vec<String>,
     /// Instance methods LITERALLY written in this class/module's own body
     /// (`def name`, not `def self.name`) -- the source `materialize` reads
     /// from, and what `super`-resolution searches (see `analyze::mro`'s
@@ -544,6 +555,7 @@ impl Compiler {
                 class_visibility_overrides: Vec::new(),
                 is_module: false,
                 ivars: Vec::new(),
+                hidden_ivars: Vec::new(),
                 own_methods: Vec::new(),
                 methods: Vec::new(),
                 explicit_superclass: false,
@@ -1033,6 +1045,7 @@ impl Compiler {
             class_visibility_overrides: Vec::new(),
             is_module,
             ivars: Vec::new(),
+            hidden_ivars: Vec::new(),
             own_methods: Vec::new(),
             methods: Vec::new(),
             explicit_superclass: false,
@@ -1063,6 +1076,15 @@ impl Compiler {
         &self.scopes[id.0 as usize]
     }
 
+    /// Whether `cid` is a `Struct` zeo compiled to a real class -- so its
+    /// protocol (`deconstruct`, `==`, `to_a`, ...) comes from `Struct`'s own
+    /// runtime table and is invisible to [`method_in_chain`](Self::method_in_chain).
+    /// A site that concludes "this class cannot have that method" must ask this
+    /// first.
+    pub fn is_compiled_struct(&self, cid: ClassId) -> bool {
+        !self.class(cid).hidden_ivars.is_empty()
+    }
+
     /// See [`Hir::uses_call_tracing`](crate::hir::Hir::uses_call_tracing).
     pub fn traces_calls(&self) -> bool {
         *self
@@ -1087,7 +1109,10 @@ impl Compiler {
         scope.accessor.as_ref().filter(|a| {
             (a.attr_generated || !self.traces_calls())
                 && !scope.needs_block_param()
-                && self.class(owner).ivars.contains(&a.ivar)
+                // A `Struct` MEMBER devirtualizes exactly like an ivar: it is a
+                // real slot, just one `instance_variables` does not report.
+                && (self.class(owner).ivars.contains(&a.ivar)
+                    || self.class(owner).hidden_ivars.contains(&a.ivar))
         })
     }
 

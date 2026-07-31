@@ -395,6 +395,33 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         }
     }
 
+    // A compiled `Struct`'s MEMBERS are collected here like any other `@x`
+    // (its synthesized `initialize` assigns them), but they are not instance
+    // variables. Subtracting them once, here, is what lets every consumer --
+    // `ivar_slot`, `__IVAR_NAMES`, `emit_class` -- read the two lists as
+    // disjoint without re-deriving the split.
+    //
+    // A SUBCLASS of a compiled struct inherits the member list the same way it
+    // inherits the methods that reach it: `class Point3 < Point` gets Point's
+    // `x`/`y` as members, not as ordinary ivars, or `to_a` on a `Point3` would
+    // read nothing and `instance_variables` would report two names CRuby does
+    // not. Nearest ancestor wins, and only a class with none of its own asks.
+    if compiler.class(class_id).hidden_ivars.is_empty() {
+        if let Some(inherited) = ancestors
+            .iter()
+            .skip(1)
+            .map(|&a| &compiler.class(a).hidden_ivars)
+            .find(|h| !h.is_empty())
+            .cloned()
+        {
+            compiler.classes[class_id.0 as usize].hidden_ivars = inherited;
+        }
+    }
+    let hidden = compiler.class(class_id).hidden_ivars.clone();
+    if !hidden.is_empty() {
+        ivars.retain(|iv| !hidden.contains(iv));
+    }
+
     // A reopened BUILTIN class has no generated struct, so
     // there is nowhere for an `@ivar` to live -- a clean rejection here
     // (which also catches ivars arriving via an `include`d module) beats a
