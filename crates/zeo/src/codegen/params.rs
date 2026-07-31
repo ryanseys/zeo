@@ -39,6 +39,13 @@ pub fn emit_signature_params(params: &Params, needs_block: bool) -> TokenStream 
     quote! { #(, #items)* }
 }
 
+/// The arguments a forwarding wrapper passes on: exactly the names
+/// `emit_signature_params` declared, comma-PREFIXED to follow a receiver.
+pub fn emit_forward_args(params: &Params, needs_block: bool) -> TokenStream {
+    let items = signature_param_idents(params, needs_block);
+    quote! { #(, #items)* }
+}
+
 /// `emit_signature_params` for a RECEIVERLESS free function (a class
 /// method/module function) -- the same items, comma-SEPARATED rather than
 /// comma-prefixed (nothing precedes them in the signature).
@@ -48,32 +55,53 @@ pub fn emit_signature_params_free(params: &Params, needs_block: bool) -> TokenSt
 }
 
 fn signature_param_items(params: &Params, needs_block: bool) -> Vec<TokenStream> {
+    signature_param_pairs(params, needs_block)
+        .into_iter()
+        .map(|(ident, ty)| quote! { #ident: #ty })
+        .collect()
+}
+
+/// The parameter NAMES `signature_param_items` puts in the signature, in the
+/// same order -- what a forwarding wrapper hands straight through.
+fn signature_param_idents(params: &Params, needs_block: bool) -> Vec<proc_macro2::Ident> {
+    signature_param_pairs(params, needs_block)
+        .into_iter()
+        .map(|(ident, _)| ident)
+        .collect()
+}
+
+/// The one place the signature's order and spelling are decided, so a name
+/// list and a typed list can never drift apart.
+fn signature_param_pairs(
+    params: &Params,
+    needs_block: bool,
+) -> Vec<(proc_macro2::Ident, TokenStream)> {
     let mut items = Vec::new();
     for name in &params.required {
         let ident = safe_ident(name);
-        items.push(quote! { #ident: zeo_rt::RubyValue });
+        items.push((ident, quote! { zeo_rt::RubyValue }));
     }
     for (name, _) in &params.optional {
         let ident = safe_ident(name);
-        items.push(quote! { #ident: Option<zeo_rt::RubyValue> });
+        items.push((ident, quote! { Option<zeo_rt::RubyValue> }));
     }
     if let Some(Some(name)) = &params.rest {
         let ident = safe_ident(name);
-        items.push(quote! { #ident: Vec<zeo_rt::RubyValue> });
+        items.push((ident, quote! { Vec<zeo_rt::RubyValue> }));
     }
     for name in &params.post {
         let ident = safe_ident(name);
-        items.push(quote! { #ident: zeo_rt::RubyValue });
+        items.push((ident, quote! { zeo_rt::RubyValue }));
     }
     for kw in &params.keywords {
         match kw {
             KeywordParam::Required(name) => {
                 let ident = safe_ident(name);
-                items.push(quote! { #ident: zeo_rt::RubyValue });
+                items.push((ident, quote! { zeo_rt::RubyValue }));
             }
             KeywordParam::Optional(name, _) => {
                 let ident = safe_ident(name);
-                items.push(quote! { #ident: Option<zeo_rt::RubyValue> });
+                items.push((ident, quote! { Option<zeo_rt::RubyValue> }));
             }
         }
     }
@@ -81,10 +109,10 @@ fn signature_param_items(params: &Params, needs_block: bool) -> Vec<TokenStream>
         let ident = safe_ident(name);
         // `(RubyValue, RubyValue)`, not `(Symbol, RubyValue)`: a `**kwrest` hash
         // can hold non-symbol keys (`method HELP_MAPPINGS => :help`).
-        items.push(quote! { #ident: Vec<(zeo_rt::RubyValue, zeo_rt::RubyValue)> });
+        items.push((ident, quote! { Vec<(zeo_rt::RubyValue, zeo_rt::RubyValue)> }));
     }
     if needs_block {
-        items.push(quote! { __blk: Option<zeo_rt::RubyValue> });
+        items.push((format_ident!("__blk"), quote! { Option<zeo_rt::RubyValue> }));
     }
     items
 }

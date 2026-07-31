@@ -10,6 +10,7 @@
 
 mod locals;
 pub(crate) mod mro;
+pub(crate) mod share;
 
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::hir::{

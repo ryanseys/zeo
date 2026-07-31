@@ -25,6 +25,7 @@ mod ident;
 mod loops;
 mod params;
 mod patterns;
+mod share;
 mod stmt;
 
 use quote::{format_ident, quote};
@@ -995,12 +996,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // `ClassRegistry::with_core` (see `main` below). The compiler still keeps
     // their HIR for name resolution, `super` inlining, and materializing user
     // subclasses -- it just doesn't EMIT them into every program.
+    // One body per `def`, not one per class that inherited it -- see
+    // `codegen::share`. Planned BEFORE the classes are emitted, because a class
+    // whose method is shared emits a forwarding line in place of the body.
+    let shared = share::SharedBodies::plan(compiler);
+    let shared_container = shared.container().cloned();
     let classes = compiler
         .classes
         .iter()
         .enumerate()
         .filter(|&(idx, _)| compiler.has_generated_struct(ClassId(idx as u32)))
-        .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)))
+        .map(|(idx, _)| emit_class(compiler, &shared, ClassId(idx as u32)))
         // Eager: the coverage collector (fed by every body emission) is
         // drained before the final `quote!` would consume a lazy iterator.
         .collect::<Vec<_>>();
@@ -1929,6 +1935,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #[global_allocator]
         static __ALLOC: zeo_rt::MiMalloc = zeo_rt::MiMalloc;
 
+        #shared_container
         #(#classes)*
         #(#class_method_containers)*
         #(#builtin_reopens)*
@@ -2599,8 +2606,21 @@ fn emit_builtin_method_fn(
     cid: ClassId,
     sid: crate::compiler::ScopeId,
 ) -> TokenStream {
+    let method_ident = safe_ident(&compiler.scope(sid).name);
+    emit_value_self_method_fn(compiler, cid, sid, &method_ident)
+}
+
+/// `emit_builtin_method_fn` with the function's own name supplied, since a
+/// SHARED body (`codegen::share`) is emitted under a group name rather than the
+/// method's. The receiver is a `RubyValue` either way, which is what makes one
+/// body servable by classes with different concrete structs.
+fn emit_value_self_method_fn(
+    compiler: &Compiler,
+    cid: ClassId,
+    sid: crate::compiler::ScopeId,
+    method_ident: &proc_macro2::Ident,
+) -> TokenStream {
     let scope = compiler.scope(sid);
-    let method_ident = safe_ident(&scope.name);
     let needs_block = scope.needs_block_param();
     let sig_params = params::emit_signature_params(&scope.params, needs_block);
     let label_counter = Cell::new(0u32);
@@ -2670,7 +2690,112 @@ fn emit_builtin_method_fn(
     }
 }
 
-fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
+/// One instance method's emitted interior, split at the point where the
+/// wrapper differs: `emit_class` puts it inside a `ruby_class!` `def` with a
+/// `self: Arc<Self>` receiver, while a shared body puts the same tokens inside
+/// a free function. Everything above the receiver -- captures, `Ctx`, prologue,
+/// hoisting, the return catch, the frame -- is identical either way, which is
+/// exactly the property `analyze::share` has to prove.
+pub(crate) struct InstanceMethodBody {
+    /// The frame guard and `check_ints`, absent for an accessor.
+    pub preamble: Option<TokenStream>,
+    pub body: TokenStream,
+}
+
+/// Emit `sid`'s body as it looks when `cid` is the receiver's class.
+pub(crate) fn emit_instance_method_body(
+    compiler: &Compiler,
+    cid: ClassId,
+    sid: crate::compiler::ScopeId,
+) -> InstanceMethodBody {
+    let scope = compiler.scope(sid);
+    let needs_block = scope.needs_block_param();
+    let method_label_counter = Cell::new(0u32);
+    let mut method_captures =
+        captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+    let binding_names = captures::binding_scope_names(
+        compiler,
+        &scope.body,
+        &scope.params,
+        &mut method_captures,
+        false,
+    );
+    let method_cx = Ctx {
+        compiler,
+        box_id: compiler.class(scope.defining_class).box_id,
+        current_class: Some(cid),
+        defining_class: Some(scope.defining_class),
+        // An instance method -- see the matching note in `emit_method_fn`.
+        class_self: None,
+        current_method: Some(scope.name.clone()),
+        current_method_origin: scope.alias_of.clone(),
+        local_types: binding_scope_local_types(
+            binding_names.as_ref(),
+            &method_captures.locals,
+            &scope.local_types,
+        ),
+        label_counter: &method_label_counter,
+        loop_labels: None,
+        next_yields_value: false,
+        for_var_override: None,
+        captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
+        binding_names,
+        in_eval_splice: false,
+        self_ident: format_ident!("self"),
+        in_real_proc: false,
+        self_is_dynamic: false,
+        runtime_super_params: None,
+        block_depth: 0,
+        has_blk_binding: needs_block,
+    };
+    let prologue = params::emit_prologue(&method_cx, &scope.params, &scope.body);
+    let body = hoisting::emit_hoisted_body_with_extra_roots(
+        &method_cx,
+        &scope.body,
+        &scope.params.default_ids(),
+        &scope.params.bound_names(),
+        true,
+    );
+    // The `Signal::Return` catch is needed ONLY when this method's OWN
+    // body lexically contains a `return` INSIDE an escaping block OR a
+    // `begin`/`rescue` construct -- confirmed the hard way NOT to be "wrap
+    // every method unconditionally", nor even "any escaping block": a pure
+    // relay (e.g. one that just does `yield` to whatever block it's handed,
+    // even while holding its own return-less escaping block) must NOT catch
+    // `Signal::Return` in transit, or it would incorrectly intercept a
+    // `return` meant for a DIFFERENT method -- wherever the block it's
+    // currently invoking was actually written -- turning "return from the
+    // caller" into "this method returns normally instead". See
+    // `codegen::captures::body_contains_escaping_return`'s docs, and
+    // `codegen::exceptions`'s module docs for why `begin`/`rescue` ALSO
+    // needs this (it introduces its own closure boundary a literal
+    // `return` can't cross either).
+    let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
+        || captures::body_contains_begin(compiler, &scope.body);
+    let body = wrap_method_return(needs_return_catch, quote! { #prologue #body });
+    // An `attr_*` accessor gets NO frame, because CRuby's does not either:
+    // it compiles them iseq-less, so they appear in no backtrace -- a
+    // `FrozenError` from `attr_writer` reports only the CALLER's line, and
+    // an arity error likewise (oracle-verified both ways against a
+    // hand-written `def x=(v); @x = v; end`, which does get its frame).
+    // A hand-written accessor keeps its frame whenever anything could
+    // observe one: a reader's body cannot raise and calls nothing, so only
+    // `TracePoint` could tell, but a writer's frozen guard raises and its
+    // backtrace must name it.
+    let frameless = compiler
+        .accessor_shape(cid, scope)
+        .is_some_and(|a| a.attr_generated || a.kind == crate::compiler::AccessorKind::Reader);
+    // Dropping `check_ints` with it cannot make a program uninterruptible:
+    // an accessor body is a leaf, and every loop and every block already
+    // checks on each iteration (`codegen::loops`, `codegen::call::procs`).
+    let preamble = (!frameless).then(|| {
+        let frame = scope_frame_guard(compiler, scope, false);
+        quote! { #frame zeo_rt::check_ints()?; }
+    });
+    InstanceMethodBody { preamble, body }
+}
+
+fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
     // The registry's Ruby-visible name: fully qualified, so
@@ -2695,96 +2820,25 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let method_ident = safe_ident(&scope.name);
         let needs_block = scope.needs_block_param();
         let sig_params = params::emit_signature_params(&scope.params, needs_block);
-        let method_label_counter = Cell::new(0u32);
-        let mut method_captures =
-            captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
-        let binding_names = captures::binding_scope_names(
-            compiler,
-            &scope.body,
-            &scope.params,
-            &mut method_captures,
-            false,
-        );
-        let method_cx = Ctx {
-            compiler,
-            box_id: compiler.class(scope.defining_class).box_id,
-            current_class: Some(cid),
-            defining_class: Some(scope.defining_class),
-            // An instance method -- see the matching note in `emit_method_fn`.
-            class_self: None,
-            current_method: Some(scope.name.clone()),
-        current_method_origin: scope.alias_of.clone(),
-            local_types: binding_scope_local_types(
-                binding_names.as_ref(),
-                &method_captures.locals,
-                &scope.local_types,
-            ),
-            label_counter: &method_label_counter,
-            loop_labels: None,
-            next_yields_value: false,
-            for_var_override: None,
-            captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
-            binding_names,
-            in_eval_splice: false,
-            self_ident: format_ident!("self"),
-            in_real_proc: false,
-            self_is_dynamic: false,
-            runtime_super_params: None,
-            block_depth: 0,
-            has_blk_binding: needs_block,
-        };
-        let prologue = params::emit_prologue(&method_cx, &scope.params, &scope.body);
-        let body = hoisting::emit_hoisted_body_with_extra_roots(
-            &method_cx,
-            &scope.body,
-            &scope.params.default_ids(),
-            &scope.params.bound_names(),
-            true,
-        );
-        // The `Signal::Return` catch is needed ONLY when this method's OWN
-        // body lexically contains a `return` INSIDE an escaping block OR a
-        // `begin`/`rescue` construct -- confirmed the hard way NOT to be "wrap
-        // every method unconditionally", nor even "any escaping block": a pure
-        // relay (e.g. one that just does `yield` to whatever block it's handed,
-        // even while holding its own return-less escaping block) must NOT catch
-        // `Signal::Return` in transit, or it would incorrectly intercept a
-        // `return` meant for a DIFFERENT method -- wherever the block it's
-        // currently invoking was actually written -- turning "return from the
-        // caller" into "this method returns normally instead". See
-        // `codegen::captures::body_contains_escaping_return`'s docs, and
-        // `codegen::exceptions`'s module docs for why `begin`/`rescue` ALSO
-        // needs this (it introduces its own closure boundary a literal
-        // `return` can't cross either).
-        let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
-            || captures::body_contains_begin(compiler, &scope.body);
-        let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
-        // An `attr_*` accessor gets NO frame, because CRuby's does not either:
-        // it compiles them iseq-less, so they appear in no backtrace -- a
-        // `FrozenError` from `attr_writer` reports only the CALLER's line, and
-        // an arity error likewise (oracle-verified both ways against a
-        // hand-written `def x=(v); @x = v; end`, which does get its frame).
-        // A hand-written accessor keeps its frame whenever anything could
-        // observe one: a reader's body cannot raise and calls nothing, so only
-        // `TracePoint` could tell, but a writer's frozen guard raises and its
-        // backtrace must name it.
-        let frameless = compiler.accessor_shape(cid, scope).is_some_and(|a| {
-            a.attr_generated || a.kind == crate::compiler::AccessorKind::Reader
-        });
-        // Dropping `check_ints` with it cannot make a program uninterruptible:
-        // an accessor body is a leaf, and every loop and every block already
-        // checks on each iteration (`codegen::loops`, `codegen::call::procs`).
-        let preamble = (!frameless).then(|| {
-            let frame = scope_frame_guard(compiler, scope, false);
-            quote! { #frame zeo_rt::check_ints()?; }
-        });
+        // A shared body already carries this method's frame and `check_ints`,
+        // so the forwarding line adds neither. Consuming `self` rather than
+        // cloning it makes `new_handle` a pure unsize coercion.
+        if let Some(shared_fn) = shared.call(sid) {
+            let fwd = params::emit_forward_args(&scope.params, needs_block);
+            return quote! {
+                def #method_ident(self: std::sync::Arc<Self> #sig_params) {
+                    __sh::#shared_fn(zeo_rt::RubyValue::Object(Self::new_handle(self)) #fwd)
+                }
+            };
+        }
+        let InstanceMethodBody { preamble, body } = emit_instance_method_body(compiler, cid, sid);
         quote! {
             def #method_ident(self: std::sync::Arc<Self> #sig_params) {
                 #preamble
-                #body_tokens
+                #body
             }
         }
     });
-
     let dispatch_entries = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
         let frame = scope_frame_guard(compiler, scope, false);
