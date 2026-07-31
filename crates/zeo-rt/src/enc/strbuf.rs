@@ -194,9 +194,29 @@ impl StrBuf {
         }
     }
 
+    /// Whether a character index IS a byte index here, so indexing and slicing
+    /// need no boundary scan at all: true for every single-byte encoding, and
+    /// for the multibyte ones whenever the content is 7-bit.
+    ///
+    /// `char_ranges` walks the WHOLE string, so a loop doing `s[i]` over
+    /// `s.length` was quadratic -- `bm_template` spent a quarter of its time
+    /// there. The coderange this consults is computed once and cached.
+    fn byte_per_char(&self) -> bool {
+        match self.enc.kind() {
+            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => true,
+            EncKind::Utf8 | EncKind::MultiByte(_) => self.ascii_only(),
+            EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => false,
+        }
+    }
+
     /// The `i`-th character (negative counts from the end) as its OWN
     /// same-encoding string, or `None` when out of range.
     pub fn char_at(&self, i: i64) -> Option<StrBuf> {
+        if self.byte_per_char() {
+            let idx = if i < 0 { i + self.bytes.len() as i64 } else { i };
+            let byte = *self.bytes.get(usize::try_from(idx).ok()?)?;
+            return Some(StrBuf::from_bytes(vec![byte], self.enc));
+        }
         let ranges = self.char_ranges();
         let idx = if i < 0 { i + ranges.len() as i64 } else { i };
         let r = ranges.get(usize::try_from(idx).ok()?)?.clone();
@@ -207,6 +227,16 @@ impl StrBuf {
     /// counts from the end), same encoding -- `None` when `start` is out of
     /// range. Clamps `len` to the end.
     pub fn char_substr(&self, start: i64, len: i64) -> Option<StrBuf> {
+        if self.byte_per_char() {
+            let n = self.bytes.len() as i64;
+            let start = if start < 0 { start + n } else { start };
+            if start < 0 || start > n || len < 0 {
+                return None;
+            }
+            let end = start.saturating_add(len).min(n);
+            let bytes = self.bytes[start as usize..end as usize].to_vec();
+            return Some(StrBuf::from_bytes(bytes, self.enc));
+        }
         let ranges = self.char_ranges();
         let n = ranges.len() as i64;
         let start = if start < 0 { start + n } else { start };
