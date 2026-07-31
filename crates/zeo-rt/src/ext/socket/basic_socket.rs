@@ -127,17 +127,17 @@ ruby_class! {
     BasicSocket = zeo_abi::BASIC_SOCKET_CLASS < zeo_abi::IO_CLASS;
 
     // `#getsockname` -- the packed local `sockaddr` bytes.
-    def "getsockname"(recv, args, _block) {
+    def "getsockname"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(super::binary_string(name_bytes(fd_of(recv)?, "getsockname(2)", libc::getsockname)?))
     }
     // `#getpeername` -- the packed peer `sockaddr` bytes.
-    def "getpeername"(recv, args, _block) {
+    def "getpeername"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(super::binary_string(name_bytes(fd_of(recv)?, "getpeername(2)", libc::getpeername)?))
     }
     // `#local_address` -- an `Addrinfo` for the bound (local) address.
-    def "local_address"(recv, args, _block) {
+    def "local_address"(recv, *args, &_block) {
         arity!(args, 0);
         let fd = fd_of(recv)?;
         let st = socktype_of(fd);
@@ -147,7 +147,7 @@ ruby_class! {
         }
     }
     // `#remote_address` -- an `Addrinfo` for the connected peer.
-    def "remote_address"(recv, args, _block) {
+    def "remote_address"(recv, *args, &_block) {
         arity!(args, 0);
         let fd = fd_of(recv)?;
         let st = socktype_of(fd);
@@ -158,7 +158,7 @@ ruby_class! {
     }
     // `#setsockopt(level, optname, value)`, or `#setsockopt(socket_option)` --
     // set an int/bytes socket option.
-    def "setsockopt"(recv, args, _block) {
+    def "setsockopt"(recv, *args, &_block) {
         arity!(args, 1..=3);
         let fd = fd_of(recv)?;
         let (level, optname, val) = match super::option::parts(&args[0]) {
@@ -187,7 +187,7 @@ ruby_class! {
     }
     // `#getsockopt(level, optname)` -- the option's current value as a
     // `Socket::Option`, tagged with the socket's own address family.
-    def "getsockopt"(recv, args, _block) {
+    def "getsockopt"(recv, *args, &_block) {
         arity!(args, 2);
         let fd = fd_of(recv)?;
         let level = super::option::opt_int(&args[0], None)?;
@@ -208,7 +208,7 @@ ruby_class! {
     }
     // `#send(mesg, flags = 0[, dest])` -- write bytes, answering the count.
     // A destination address (for unconnected datagram sockets) is out of scope.
-    def "send"(recv, args, _block) {
+    def "send"(recv, *args, &_block) {
         arity!(args, 1..=3);
         let fd = fd_of(recv)?;
         let data = crate::builtins::convert::to_rstr(&args[0])?.lock().bytes().to_vec();
@@ -226,7 +226,7 @@ ruby_class! {
         Ok(RubyValue::Int(n as i64))
     }
     // `#recv(maxlen, flags = 0)` -- read up to `maxlen` bytes (ASCII-8BIT).
-    def "recv"(recv, args, _block) {
+    def "recv"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let fd = fd_of(recv)?;
         let maxlen = int_arg(&args[0])?.max(0) as usize;
@@ -247,7 +247,7 @@ ruby_class! {
     }
     // `#recv_nonblock(maxlen, flags = 0, exception: true)` -- read only what
     // has already arrived; see `IO#read_nonblock`.
-    def "recv_nonblock"(recv, args, _block) {
+    def "recv_nonblock"(recv, *args, &_block) {
         let raises = crate::builtins::io::nonblock_raises(args);
         let positional = crate::builtins::io::kw_strip(args);
         arity!(positional, 1..=2);
@@ -271,7 +271,7 @@ ruby_class! {
         Ok(super::binary_string(buf))
     }
     // `#shutdown(how = SHUT_RDWR)` -- disable further sends and/or receives.
-    def "shutdown"(recv, args, _block) {
+    def "shutdown"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let fd = fd_of(recv)?;
         let how = match args.first() {
@@ -285,14 +285,14 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#close_read` -- shut down the receive half (SHUT_RD).
-    def "close_read"(recv, args, _block) {
+    def "close_read"(recv, *args, &_block) {
         arity!(args, 0);
         // SAFETY: a plain syscall on an owned fd.
         unsafe { libc::shutdown(fd_of(recv)?, libc::SHUT_RD) };
         Ok(RubyValue::Nil)
     }
     // `#close_write` -- shut down the send half (SHUT_WR).
-    def "close_write"(recv, args, _block) {
+    def "close_write"(recv, *args, &_block) {
         arity!(args, 0);
         // SAFETY: a plain syscall on an owned fd.
         unsafe { libc::shutdown(fd_of(recv)?, libc::SHUT_WR) };
@@ -300,11 +300,11 @@ ruby_class! {
     }
     // Reverse DNS is never performed here, so this is effectively always true;
     // the setter is accepted and ignored.
-    def "do_not_reverse_lookup"(_recv, args, _block) {
+    def "do_not_reverse_lookup"(_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(true))
     }
-    def "do_not_reverse_lookup="(_recv, args, _block) {
+    def "do_not_reverse_lookup="(_recv, *args, &_block) {
         arity!(args, 1);
         Ok(args[0].clone())
     }

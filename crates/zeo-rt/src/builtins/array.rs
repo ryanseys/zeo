@@ -25,11 +25,11 @@ ruby_class! {
     // if it defines one (which must yield an Array or nil), else nil. Unlike
     // `Array(obj)` it never wraps or raises for a non-convertible value.
     // Answers the object it was handed, so a `class L < Array` stays an `L`.
-    def self."try_convert" arity 1 (_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(convert::try_convert_value(&args[0], "Array", "to_ary")?.unwrap_or(RubyValue::Nil))
     }
-    def self."new"(_recv, args, block) {
+    def self."new"(_recv, *args, &block) {
         arity!(args, 0..=2);
         // `Array.new(other_array)` is the COPY form (CRuby `rb_ary_initialize`):
         // a shallow copy of the given array, ignoring any block. Only when the
@@ -58,7 +58,7 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(vec![fill; size])))
     }
 
-    def "[]" | "slice"(recv, args, _block) {
+    def "[]" | "slice"(recv, *args, &_block) {
         arity!(args, 1..=2);
         // NO up-front whole-Vec snapshot: a plain `arr[i]` in a loop must be
         // O(1), not O(n) (bm_huffman spent 250s cloning arrays here). The
@@ -119,7 +119,7 @@ ruby_class! {
             }
         }
     }
-    def "[]="(recv, args, _block) {
+    def "[]="(recv, *args, &_block) {
         arity!(args, 2..=3);
         // The frozen check comes FIRST -- before length/index validation --
         // matching CRuby's `rb_ary_modify_check` at the top of the mutator
@@ -171,7 +171,7 @@ ruby_class! {
             None => Err(index_error!("index {i} too small for array; minimum: -{}", crate::array_len(recv_array!(recv)))),
         }
     }
-    def "<<" arity 1 | "push" | "append"(recv, args, _block) {
+    def "<<" arity 1 | "push" | "append"(recv, *args, &_block) {
         // `push` is variadic (0+ args) in real Ruby; `<<` is arity 1, but
         // the parser only ever emits it with one argument, so one row
         // serves both.
@@ -182,19 +182,19 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "length" arity 0 | "size" arity 0 (recv, args, _block) {
+    def "length" arity 0 | "size" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(crate::array_len(recv_array!(recv))))
     }
-    def "include?" arity 1 | "member?" arity 1 (recv, args, _block) {
+    def "include?" arity 1 | "member?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(crate::array_include(recv_array!(recv), &args[0])))
     }
-    def "empty?" arity 0 (recv, args, _block) {
+    def "empty?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(crate::array_len(recv_array!(recv)) == 0))
     }
-    def "first"(recv, args, _block) {
+    def "first"(recv, *args, &_block) {
         // `first(n)` is Enumerable's n-form (next ancestor in the chain
         // implements it) -- only the 0-arg head accessor lives here. A negative
         // count is caught here so it carries Array's own message ("negative
@@ -214,7 +214,7 @@ ruby_class! {
     // `last`/`last(n)` mirror `pop`'s dual return: bare answers ONE element
     // (nil when empty), `last(n)` an ARRAY of up to the last n, in original
     // order (`n` past the length takes what's there; `n == 0` is `[]`).
-    def "last"(recv, args, _block) {
+    def "last"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let items = recv_array!(recv).lock();
         let Some(n) = count_arg(args)? else {
@@ -223,18 +223,18 @@ ruby_class! {
         let at = items.len().saturating_sub(n);
         Ok(RubyValue::Array(crate::array_new(items[at..].to_vec())))
     }
-    def "to_a" arity 0 (recv, args, _block) {
+    def "to_a" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "+" arity 1 (recv, args, _block) {
+    def "+" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let other = &convert::to_rary(&args[0])?;
         let mut out = recv_array!(recv).lock().to_vec();
         out.extend(other.lock().iter().cloned());
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "-" arity 1 (recv, args, _block) {
+    def "-" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let other = &convert::to_rary(&args[0])?;
         let exclude = other.lock().clone();
@@ -248,7 +248,7 @@ ruby_class! {
     }
     // `arr * n` repeats; `arr * "sep"` joins (real Ruby's dual form --
     // CRuby probes `to_str` first, then falls through to the count).
-    def "*" arity 1 (recv, args, _block) {
+    def "*" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         if let Some(sep) = convert::check_to_str(&args[0])? {
             return join(recv, &[sep], None);
@@ -264,7 +264,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "&" arity 1 (recv, args, _block) {
+    def "&" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let other = &convert::to_rary(&args[0])?;
         let keep = other.lock().clone();
@@ -279,7 +279,7 @@ ruby_class! {
     // Variadic siblings of `&`/`-`: `intersection` keeps self's elements
     // present in EVERY argument (uniq'd); `difference` keeps self's elements
     // absent from ALL arguments (duplicates preserved, like `-`).
-    def "intersection"(recv, args, _block) {
+    def "intersection"(recv, *args, &_block) {
         let others = set_op_args(args)?;
         let mut out: Vec<RubyValue> = Vec::new();
         for e in recv_array!(recv).lock().iter() {
@@ -290,7 +290,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "difference"(recv, args, _block) {
+    def "difference"(recv, *args, &_block) {
         let others = set_op_args(args)?;
         let out: Vec<RubyValue> = recv_array!(recv)
             .lock()
@@ -303,16 +303,16 @@ ruby_class! {
     // `|` is the BINARY operator (`a | b`); `union` is its variadic sibling
     // (`a.union(b, c, ...)`, zero args = a uniq'd copy of self). Both drop
     // later duplicates, keeping first-occurrence order.
-    def "|" arity 1 (recv, args, _block) {
+    def "|" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let others = set_op_args(args)?;
         Ok(RubyValue::Array(crate::array_new(union_of(recv_array!(recv), &others))))
     }
-    def "union"(recv, args, _block) {
+    def "union"(recv, *args, &_block) {
         let others = set_op_args(args)?;
         Ok(RubyValue::Array(crate::array_new(union_of(recv_array!(recv), &others))))
     }
-    def "<=>" arity 1 (recv, args, _block) {
+    def "<=>" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Array(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -337,13 +337,13 @@ ruby_class! {
         }
         Ok(RubyValue::Int((a.len() as i64 - b.len() as i64).signum()))
     }
-    def "==" arity 1 (recv, args, _block) {
+    def "==" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
     // `Array#eql?` -- like `==` but per element with `eql?` (class-strict:
     // `1.eql?(1.0)` is false, unlike `==`).
-    def "eql?" arity 1 (recv, args, _block) {
+    def "eql?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Array(other) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -365,7 +365,7 @@ ruby_class! {
     // answer an ARRAY of up to n -- a different return type, not just a
     // different count, which is why the no-arg case can't just be `pop(1)`.
     // `n` past the length takes what's there; `n == 0` is `[]`.
-    def "pop"(recv, args, _block) {
+    def "pop"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
@@ -377,7 +377,7 @@ ruby_class! {
         let taken: Vec<RubyValue> = guard.split_off(at);
         Ok(RubyValue::Array(crate::array_new(taken)))
     }
-    def "shift"(recv, args, _block) {
+    def "shift"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
@@ -390,7 +390,7 @@ ruby_class! {
         let taken = std::mem::replace(&mut *guard, rest.into());
         Ok(RubyValue::Array(crate::array_new(taken.into_vec())))
     }
-    def "unshift" | "prepend"(recv, args, _block) {
+    def "unshift" | "prepend"(recv, *args, &_block) {
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let mut guard = handle.lock();
@@ -400,7 +400,7 @@ ruby_class! {
         drop(guard);
         Ok(recv.clone())
     }
-    def "concat"(recv, args, _block) {
+    def "concat"(recv, *args, &_block) {
         check_frozen(recv_array!(recv), recv)?;
         // Snapshot every source BEFORE appending: an argument may alias the
         // receiver (`a.concat(a, a)`), and CRuby copies all sources up front,
@@ -415,7 +415,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `flatten` / `flatten(depth)`.
-    def "flatten"(recv, args, _block) {
+    def "flatten"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let depth = match args.first() {
             None | Some(RubyValue::Nil) => -1,
@@ -437,7 +437,7 @@ ruby_class! {
         go(&items, depth, &mut out);
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "compact" arity 0 (recv, args, _block) {
+    def "compact" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let out = recv_array!(recv)
             .lock()
@@ -447,13 +447,13 @@ ruby_class! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "uniq" arity 0 (recv, args, block) {
+    def "uniq" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
         let out = uniq_dedup(&items, block.as_ref())?;
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "uniq!" arity 0 (recv, args, block) {
+    def "uniq!" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let h = recv_array!(recv);
         check_frozen(h, recv)?;
@@ -465,7 +465,7 @@ ruby_class! {
         *h.lock() = out.into();
         Ok(recv.clone())
     }
-    def "assoc" arity 1 (recv, args, _block) {
+    def "assoc" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         // Snapshot before locking any element: an element can BE the receiver
         // (`a = [1]; a << a`), and taking `inner`'s guard while the receiver's
@@ -480,7 +480,7 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "rassoc" arity 1 (recv, args, _block) {
+    def "rassoc" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         for e in crate::collections::array_snapshot(recv_array!(recv)) {
             if let RubyValue::Array(inner) = &e {
@@ -491,7 +491,7 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "product"(recv, args, block) {
+    def "product"(recv, *args, &block) {
         // Cartesian product of self with every argument array, CRuby's
         // element order (leftmost varies slowest).
         let mut lists: Vec<Vec<RubyValue>> = vec![recv_array!(recv).lock().to_vec()];
@@ -524,7 +524,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "transpose" arity 0 (recv, args, _block) {
+    def "transpose" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let rows = recv_array!(recv).lock().clone();
         if rows.is_empty() {
@@ -547,7 +547,7 @@ ruby_class! {
             cols.into_iter().map(|c| RubyValue::Array(crate::array_new(c))).collect(),
         )))
     }
-    def "slice!"(recv, args, _block) {
+    def "slice!"(recv, *args, &_block) {
         // `slice!(i)` / `slice!(i, len)` / `slice!(start..end)` -- remove and
         // return the removed span.
         let h = recv_array!(recv);
@@ -597,19 +597,19 @@ ruby_class! {
             n => Err(arg_error!("wrong number of arguments (given {n}, expected 1..2)")),
         }
     }
-    def "reverse" arity 0 (recv, args, _block) {
+    def "reverse" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let mut out = recv_array!(recv).lock().to_vec();
         out.reverse();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "reverse!" arity 0 (recv, args, _block) {
+    def "reverse!" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
         recv_array!(recv).lock().reverse();
         Ok(recv.clone())
     }
-    def "join" as join (recv, args, _block) {
+    def "join" as join (recv, *args, &_block) {
         arity!(args, 0..=1);
         // BYTE concatenation under the encoding-compatibility rule, the same
         // way `String#+` does it -- never through the lossy display text,
@@ -624,7 +624,7 @@ ruby_class! {
         join_into(&mut out, &elems, sep.as_ref())?;
         Ok(RubyValue::Str(crate::collections::string_wrap(out)))
     }
-    def "index" | "find_index"(recv, args, block) {
+    def "index" | "find_index"(recv, *args, &block) {
         // Live per-element probes: neither the block nor `rb_eq` (a user
         // `==`) ever runs under the receiver's lock.
         let arr = recv_array!(recv);
@@ -662,7 +662,7 @@ ruby_class! {
     }
     // `rindex(obj)` matches by `==` from the right; `rindex { |e| }` finds
     // the last element the block answers truthy for.
-    def "rindex"(recv, args, block) {
+    def "rindex"(recv, *args, &block) {
         // Right-to-left with per-element lock round-trips (an index the
         // block/`rb_eq` shrank away just skips); neither re-entrant call
         // ever runs under the receiver's lock.
@@ -694,7 +694,7 @@ ruby_class! {
     }
     // `rfind` is `find` scanning from the right -- the last element the block
     // accepts (nil if none); a blockless call answers an Enumerator.
-    def "rfind"(recv, args, block) {
+    def "rfind"(recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "rfind", args, block);
         let items = recv_array!(recv).lock().clone();
@@ -705,7 +705,7 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "dig"(recv, args, _block) {
+    def "dig"(recv, *args, &_block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
@@ -718,7 +718,7 @@ ruby_class! {
         // raises TypeError rather than being indexed via some unrelated `[]`.
         crate::dispatch::obj_dig(cur, &args[1..])
     }
-    def "fetch"(recv, args, block) {
+    def "fetch"(recv, *args, &block) {
         arity!(args, 1..=2);
         let i = arg_int!(args, 0);
         let items = recv_array!(recv).lock().clone();
@@ -737,7 +737,7 @@ ruby_class! {
     }
     // `fetch_values(*indices)` -- each index fetched strictly (an out-of-range
     // index raises IndexError, or is passed to the block if one is given).
-    def "fetch_values"(recv, args, block) {
+    def "fetch_values"(recv, *args, &block) {
         let items = recv_array!(recv).lock().clone();
         let n = items.len() as i64;
         let mut out = Vec::with_capacity(args.len());
@@ -754,7 +754,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "delete" arity 1 (recv, args, block) {
+    def "delete" arity 1 (recv, *args, &block) {
         arity!(args, 1);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
@@ -792,7 +792,7 @@ ruby_class! {
             _ => Ok(RubyValue::Nil),
         }
     }
-    def "delete_at" arity 1 (recv, args, _block) {
+    def "delete_at" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         check_frozen(recv_array!(recv), recv)?;
         let i = arg_int!(args, 0);
@@ -806,7 +806,7 @@ ruby_class! {
             RubyValue::Nil
         })
     }
-    def "insert"(recv, args, _block) {
+    def "insert"(recv, *args, &_block) {
         if args.len() < 2 {
             return Err(arg_error!("wrong number of arguments (given {}, expected 2+)", args.len()));
         }
@@ -831,7 +831,7 @@ ruby_class! {
         drop(guard);
         Ok(recv.clone())
     }
-    def "zip"(recv, args, block) {
+    def "zip"(recv, *args, &block) {
         let base = recv_array!(recv).lock().clone();
         // CRuby's `take_items`: each source through `rb_check_array_type`
         // (`to_ary` ducks accepted); a non-convertible source falls back to
@@ -866,7 +866,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "rotate"(recv, args, _block) {
+    def "rotate"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let by = match args.first() {
             None => 1,
@@ -890,7 +890,7 @@ ruby_class! {
     // for indices 3..9) -- oracle-verified. So the range is expanded to its
     // indices and each looked up exactly as a bare Int index would be,
     // rather than being clamped to the array like `arr[3..9]` slicing is.
-    def "values_at"(recv, args, _block) {
+    def "values_at"(recv, *args, &_block) {
         let items = recv_array!(recv).lock().clone();
         let n = items.len() as i64;
         let at = |i: i64| {
@@ -931,7 +931,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "at" arity 1 (recv, args, _block) {
+    def "at" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let i = arg_int!(args, 0);
         Ok(crate::array_get(recv_array!(recv), i))
@@ -943,7 +943,7 @@ ruby_class! {
     // span runs to the current end (so a `start` past the end is a no-op);
     // with `length`, `start + length` may extend past the end, back-filling
     // any gap with nil.
-    def "fill"(recv, args, block) {
+    def "fill"(recv, *args, &block) {
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let cur_len = handle.lock().len() as i64;
@@ -1010,13 +1010,13 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "clear" arity 0 (recv, args, _block) {
+    def "clear" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
         recv_array!(recv).lock().clear();
         Ok(recv.clone())
     }
-    def "replace" arity 1 (recv, args, _block) {
+    def "replace" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         check_frozen(recv_array!(recv), recv)?;
         let other = &convert::to_rary(&args[0])?;
@@ -1025,13 +1025,13 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `sort` with rb_cmp or a comparator block; `sort!` in place.
-    def "sort" arity 0 (recv, args, block) {
+    def "sort" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let mut items = recv_array!(recv).lock().to_vec();
         sort_items(&mut items, &block)?;
         Ok(RubyValue::Array(crate::array_new(items)))
     }
-    def "sort!" arity 0 (recv, args, block) {
+    def "sort!" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
         let mut items = recv_array!(recv).lock().to_vec();
@@ -1039,7 +1039,7 @@ ruby_class! {
         *recv_array!(recv).lock() = items.into();
         Ok(recv.clone())
     }
-    def "map!" arity 0 | "collect!" arity 0 (recv, args, block) {
+    def "map!" arity 0 | "collect!" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
         let p = block_or_enum!(recv, "map!", args, block);
@@ -1053,17 +1053,17 @@ ruby_class! {
     }
     // In-place filters: self when anything changed, nil otherwise (real
     // Ruby's contract).
-    def "select!" arity 0 | "filter!" arity 0 (recv, args, block) {
+    def "select!" arity 0 | "filter!" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         in_place_filter(recv, "select!", block, true)
     }
-    def "reject!" arity 0 (recv, args, block) {
+    def "reject!" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         in_place_filter(recv, "reject!", block, false)
     }
     // keep_if/delete_if return SELF (not self-or-nil), so their blockless
     // Enumerator must short-circuit before the self return.
-    def "keep_if" arity 0 (recv, args, block) {
+    def "keep_if" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         if !matches!(block, Some(RubyValue::Proc(_))) {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "keep_if", args));
@@ -1071,7 +1071,7 @@ ruby_class! {
         in_place_filter(recv, "keep_if", block, true)?;
         Ok(recv.clone())
     }
-    def "delete_if" arity 0 (recv, args, block) {
+    def "delete_if" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         if !matches!(block, Some(RubyValue::Proc(_))) {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "delete_if", args));
@@ -1082,7 +1082,7 @@ ruby_class! {
     // `sample` answers ONE random element (nil when empty); `sample(n)` an
     // ARRAY of up to n DISTINCT elements (a partial Fisher-Yates shuffle).
     // Shares Kernel#rand's generator, which `srand` reseeds.
-    def "sample"(recv, args, _block) {
+    def "sample"(recv, *args, &_block) {
         // A trailing `random:` keyword supplies the RNG (a Random-like object
         // responding to `rand`); without it the shared PRNG is used.
         let (args, random) = take_random_kwarg(args);
@@ -1139,7 +1139,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "shuffle"(recv, args, _block) {
+    def "shuffle"(recv, *args, &_block) {
         let (args, random) = take_random_kwarg(args);
         arity!(args, 0);
         let mut items = recv_array!(recv).lock().to_vec();
@@ -1152,7 +1152,7 @@ ruby_class! {
     }
     // `pack`: serialize the elements per a template into a byte string (see
     // `builtins::pack`). ASCII-8BIT unless the template is all `U` (UTF-8).
-    def "pack" arity -2(recv, args, _block) {
+    def "pack" arity -2(recv, *args, &_block) {
         arity!(args, 1);
         let t = crate::builtins::arg_str!(args, 0);
         let template = t.lock().to_utf8_lossy().into_owned();
@@ -1166,7 +1166,7 @@ ruby_class! {
     // With a block, each element is MAPPED to its pair first -- an Array
     // yields one value per element, so the block sees the element itself
     // (`[[1, 2]].to_h { |pair| }` gets `[1, 2]`; `{ |a, b| }` auto-splats).
-    def "to_h" arity 0 (recv, args, block) {
+    def "to_h" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
         let pairs = crate::builtins::enumerable::to_h_pairs(
@@ -1175,7 +1175,7 @@ ruby_class! {
         )?;
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
-    def "each" arity 0 (recv, args, block) {
+    def "each" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         // Live view, one lock round-trip per element: appending from inside
@@ -1198,7 +1198,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "each_index" arity 0 (recv, args, block) {
+    def "each_index" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_index", args, block);
         let n = recv_array!(recv).lock().len();
@@ -1217,7 +1217,7 @@ ruby_class! {
     //   [1,2,3].combination(0) => [[]]   -- ONE empty tuple, not none
     //   [1,2,3].combination(4) => []
     //   [1,2].permutation      => the FULL-length permutations (no arg)
-    def "combination" arity 1 (recv, args, block) {
+    def "combination" arity 1 (recv, *args, &block) {
         arity!(args, 1);
         let n = arg_int!(args, 0);
         let p = block_or_enum!(recv, "combination", args, block);
@@ -1227,7 +1227,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "permutation"(recv, args, block) {
+    def "permutation"(recv, *args, &block) {
         arity!(args, 0..=1);
         let items = recv_array!(recv).lock().clone();
         // No argument means the receiver's own length -- read BEFORE
@@ -1247,7 +1247,7 @@ ruby_class! {
     // (order matters, repeats allowed); `repeated_combination` is the
     // non-decreasing multisets. Both take a required length and yield tuples
     // (or return an Enumerator without a block).
-    def "repeated_permutation" arity 1 (recv, args, block) {
+    def "repeated_permutation" arity 1 (recv, *args, &block) {
         arity!(args, 1);
         let n = arg_int!(args, 0);
         let p = block_or_enum!(recv, "repeated_permutation", args, block);
@@ -1257,7 +1257,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "repeated_combination" arity 1 (recv, args, block) {
+    def "repeated_combination" arity 1 (recv, *args, &block) {
         arity!(args, 1);
         let n = arg_int!(args, 0);
         let p = block_or_enum!(recv, "repeated_combination", args, block);
@@ -1269,7 +1269,7 @@ ruby_class! {
     }
     // `intersect?(other)` -- do the two arrays share any element? (uses the
     // same `rb_eq` membership as `&`/`intersection`, no result array built).
-    def "intersect?" arity 1 (recv, args, _block) {
+    def "intersect?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let other = &convert::to_rary(&args[0])?;
         let mine = recv_array!(recv).lock().clone();
@@ -1281,7 +1281,7 @@ ruby_class! {
     // `chain(*others)` -- an `Enumerator::Chain` over self followed by each
     // argument in turn. The sources are held, not flattened, so each is
     // iterated with its own `each` when the chain is driven.
-    def "chain"(recv, args, _block) {
+    def "chain"(recv, *args, &_block) {
         let mut sources = Vec::with_capacity(args.len() + 1);
         sources.push(recv.clone());
         sources.extend(args.iter().cloned());
@@ -1290,7 +1290,7 @@ ruby_class! {
     // `compact!` drops nils in place, answering `nil` when there were none
     // (CRuby's destructive-form convention); `rotate!` rotates in place and
     // always answers the receiver.
-    def "compact!" arity 0 (recv, args, _block) {
+    def "compact!" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
@@ -1307,7 +1307,7 @@ ruby_class! {
         *handle.lock() = kept.into();
         Ok(recv.clone())
     }
-    def "rotate!"(recv, args, _block) {
+    def "rotate!"(recv, *args, &_block) {
         arity!(args, 0..=1);
         check_frozen(recv_array!(recv), recv)?;
         let n = match args.first() {
@@ -1326,13 +1326,13 @@ ruby_class! {
     }
     // Pattern-matching / implicit-conversion hooks: an Array deconstructs to
     // and converts as itself.
-    def "deconstruct" arity 0 | "to_ary" arity 0 (recv, args, _block) {
+    def "deconstruct" arity 0 | "to_ary" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
     // In-place Fisher-Yates shuffle (mirrors `shuffle` but writes back and
     // answers the receiver).
-    def "shuffle!"(recv, args, _block) {
+    def "shuffle!"(recv, *args, &_block) {
         let (args, random) = take_random_kwarg(args);
         arity!(args, 0);
         let handle = recv_array!(recv);
@@ -1349,7 +1349,7 @@ ruby_class! {
     // repeats FOREVER (so it only terminates via `break`) -- that infinite
     // form is why this can't just materialize the repeated array.
     // `cycle(0)`/`cycle(-1)` yield nothing at all.
-    def "cycle"(recv, args, block) {
+    def "cycle"(recv, *args, &block) {
         arity!(args, 0..=1);
         let count = match args.first() {
             None | Some(RubyValue::Nil) => None,
@@ -1378,7 +1378,7 @@ ruby_class! {
     // CRuby also has a find-any mode (the block answering an Integer);
     // that's a documented gap -- a numeric block result raises rather than
     // silently treating it as truthy and answering the wrong element.
-    def "bsearch" arity 0 (recv, args, block) {
+    def "bsearch" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
         Ok(match bsearch_find(&items, block)? {
@@ -1386,7 +1386,7 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "bsearch_index" arity 0 (recv, args, block) {
+    def "bsearch_index" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
         Ok(match bsearch_find(&items, block)? {
@@ -1397,7 +1397,7 @@ ruby_class! {
     // `flatten!`/`sort_by!`: the bang forms mutate in place. `flatten!`
     // answers nil when NOTHING changed (Ruby's convention for the
     // destructive forms); `sort_by!` always answers the receiver.
-    def "flatten!"(recv, args, _block) {
+    def "flatten!"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let depth = match args.first() {
             None | Some(RubyValue::Nil) => -1,
@@ -1415,7 +1415,7 @@ ruby_class! {
         *cell.lock() = after.into();
         Ok(recv.clone())
     }
-    def "sort_by!" arity 0 (recv, args, block) {
+    def "sort_by!" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         check_frozen(recv_array!(recv), recv)?;
         let p = block_or_enum!(recv, "sort_by!", args, block);

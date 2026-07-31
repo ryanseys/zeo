@@ -41,6 +41,15 @@ pub mod builtins {
 
     #[linkme::distributed_slice]
     pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
+
+    /// Mirrors the runtime helper the macro emits a call to for any def whose
+    /// parameter list is not wide open. The real one raises `ArgumentError`.
+    pub fn check_arity(given: usize, min: usize, max: Option<usize>) -> Result<(), Signal> {
+        if given < min || max.is_some_and(|hi| given > hi) {
+            return Err(Signal);
+        }
+        Ok(())
+    }
 }
 
 pub mod constants {
@@ -64,14 +73,17 @@ mod comparable {
 
         const SENTINEL = RubyValue::Int(7);
 
-        def "<" arity 1 (recv, _args, _block) {
+        // The parameter list is the whole arity declaration: one required
+        // argument means the guard demands exactly one and `Method#arity`
+        // reports 1.
+        def "<" (recv, _other) {
             let _ = recv;
             Ok(RubyValue::Int(-1))
         }
-        def "between?" arity 2 (_recv, _args, _block) {
+        def "between?" (_recv, _lo, _hi) {
             Ok(RubyValue::Nil)
         }
-        def self."probe"(_recv, _args, _block) {
+        def self."probe"(_recv) {
             Ok(RubyValue::Int(99))
         }
 
@@ -79,16 +91,24 @@ mod comparable {
 
         // A `def ... as X` binds a callable Rust fn name, so a sibling body can
         // call it DIRECTLY (not through the table). `clamp` calls `cmp_impl`.
-        def "cmp" as cmp_impl (_recv, _args, _block) {
+        def "cmp" as cmp_impl (_recv, *_args, &_block) {
             Ok(RubyValue::Int(5))
         }
-        def "clamp" (recv, args, block) {
+        def "clamp" (recv, *args, &block) {
             cmp_impl(recv, args, block)
         }
 
+        // An optional parameter widens the accepted range, so the reported
+        // arity goes negative: min 0, max 1 is -1.
+        def "opt" (_recv, which = RubyValue::Int(8)) {
+            Ok(*which)
+        }
+        // `*rest` after a required parameter is "one or more" -- min 1, no max.
+        def "splat" (_recv, _head, *rest) { Ok(RubyValue::Int(rest.len() as i64)) }
+
         // A `module_function` is emitted into BOTH the instance and class
         // tables (like `Math.sqrt` / `include Math; sqrt`).
-        module_function def "mf" (_recv, _args, _block) {
+        module_function def "mf" (_recv) {
             Ok(RubyValue::Int(77))
         }
 
@@ -97,18 +117,18 @@ mod comparable {
         // `any()` always false -- so `cfg_in` is present and `cfg_out` is not,
         // regardless of target.
         #[cfg(all())]
-        def "cfg_in" arity 0 (_recv, _args, _block) {
+        def "cfg_in" (_recv) {
             Ok(RubyValue::Int(1))
         }
         #[cfg(any())]
-        def "cfg_out" (_recv, _args, _block) {
+        def "cfg_out" (_recv) {
             Ok(RubyValue::Int(2))
         }
 
         // A nested class sharing the same file: its own id, its own `lookup`
         // table (in a private submodule, so no collision with the outer one).
         class Nested = crate::NESTED_CLASS < crate::OBJECT_CLASS {
-            def "ping"(_recv, _args, _block) {
+            def "ping"(_recv) {
                 Ok(RubyValue::Int(42))
             }
         }
@@ -152,11 +172,11 @@ fn a_module_function_lands_in_both_the_instance_and_class_tables() {
 fn instance_lookup_arity_and_names() {
     // Operator + `?` names resolve through the generated instance table.
     let lt = comparable::lookup("<").expect("`<` is defined");
-    assert_eq!(lt(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(-1));
+    assert_eq!(lt(&RubyValue::Nil, &[RubyValue::Nil], None).unwrap(), RubyValue::Int(-1));
     assert!(comparable::lookup("between?").is_some());
     assert!(comparable::lookup("nope").is_none());
 
-    // Per-name arity, defaulting handled elsewhere.
+    // Arity comes from the parameter list, with no number written anywhere.
     assert_eq!(comparable::lookup_arity("<"), Some(1));
     assert_eq!(comparable::lookup_arity("between?"), Some(2));
     assert_eq!(comparable::lookup_arity("nope"), None);
@@ -166,6 +186,43 @@ fn instance_lookup_arity_and_names() {
     assert!(names.contains(&"<"));
     assert!(names.contains(&"between?"));
     assert!(names.contains(&"lteq"));
+}
+
+/// The parameter list is one declaration serving two purposes: the guard the
+/// body runs behind, and the number `Method#arity` reports. Both are checked
+/// here so they cannot be changed apart.
+#[test]
+fn the_parameter_list_drives_both_the_guard_and_the_reported_arity() {
+    let lt = comparable::lookup("<").expect("`<` is defined");
+    assert!(lt(&RubyValue::Nil, &[], None).is_err(), "one required, given none");
+    assert!(lt(&RubyValue::Nil, &[RubyValue::Nil; 2], None).is_err(), "given two");
+    assert!(lt(&RubyValue::Nil, &[RubyValue::Nil], None).is_ok());
+
+    // An optional parameter: accepts 0 or 1, and the default is only reached
+    // when the argument is absent.
+    let opt = comparable::lookup("opt").expect("`opt` is defined");
+    assert_eq!(opt(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(8));
+    assert_eq!(
+        opt(&RubyValue::Nil, &[RubyValue::Int(3)], None).unwrap(),
+        RubyValue::Int(3)
+    );
+    assert!(opt(&RubyValue::Nil, &[RubyValue::Nil; 2], None).is_err());
+    assert_eq!(comparable::lookup_arity("opt"), Some(-1), "min 0, max 1");
+
+    // `*rest` after a required parameter: one or more, unbounded above.
+    let splat = comparable::lookup("splat").expect("`splat` is defined");
+    assert!(splat(&RubyValue::Nil, &[], None).is_err(), "needs at least one");
+    assert_eq!(
+        splat(&RubyValue::Nil, &[RubyValue::Nil; 4], None).unwrap(),
+        RubyValue::Int(3),
+        "the head is bound separately, so three land in the rest"
+    );
+    assert_eq!(comparable::lookup_arity("splat"), Some(-2), "min 1, unbounded");
+
+    // A wide-open list keeps accepting anything -- no guard is emitted at all.
+    let clamp = comparable::lookup("clamp").expect("`clamp` is defined");
+    assert!(clamp(&RubyValue::Nil, &[RubyValue::Nil; 9], None).is_ok());
+    assert_eq!(comparable::lookup_arity("clamp"), Some(-1));
 }
 
 #[test]
@@ -190,7 +247,7 @@ fn late_alias_shares_impl_and_arity() {
     // `lteq` aliases `<`: same behavior, same arity, distinct name.
     let lteq = comparable::lookup("lteq").expect("alias registered");
     assert_eq!(
-        lteq(&RubyValue::Nil, &[], None).unwrap(),
+        lteq(&RubyValue::Nil, &[RubyValue::Nil], None).unwrap(),
         RubyValue::Int(-1)
     );
     assert_eq!(comparable::lookup_arity("lteq"), Some(1));

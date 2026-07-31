@@ -16,14 +16,14 @@ ruby_class! {
     GzipWriter = zeo_abi::ZLIB_GZIP_WRITER_CLASS < zeo_abi::ZLIB_GZIP_FILE_CLASS;
 
     // `GzipWriter.new(io, level = nil, strategy = nil)`.
-    def self."new" arity -1 (_recv, args, _block) {
+    def self."new" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=3);
         Ok(writer(args[0].clone(), super::level_of(args.get(1)), false))
     }
 
     // `GzipWriter.open(path, level = nil) { |gz| … }` -- opens the file
     // itself, so `#close` closes it, and closes it even if the block raises.
-    def self."open" arity -1 (_recv, args, block) {
+    def self."open" arity -1 (_recv, *args, &block) {
         arity!(args, 1..=3);
         let file = send_value(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
@@ -36,7 +36,7 @@ ruby_class! {
     }
 
     // `GzipWriter.wrap(io) { |gz| … }` -- same, over an IO the caller owns.
-    def self."wrap" arity -1 (_recv, args, block) {
+    def self."wrap" arity -1 (_recv, *args, &block) {
         arity!(args, 1..=3);
         let gz = writer(args[0].clone(), super::level_of(args.get(1)), false);
         with_block(gz, block)
@@ -44,25 +44,25 @@ ruby_class! {
 
     // `#write` answers how many bytes went IN, as `IO#write` does -- and like
     // it, accepts any number of arguments, zero included.
-    def "write" arity -1 (recv, args, _block) {
+    def "write" arity -1 (recv, *args, &_block) {
         let mut total = 0;
         for arg in args {
             total += write_bytes(recv, &to_bytes(arg)?)?;
         }
         Ok(RubyValue::Int(total))
     }
-    def "<<" (recv, args, _block) {
+    def "<<" (recv, *args, &_block) {
         arity!(args, 1);
         write_bytes(recv, &to_bytes(&args[0])?)?;
         Ok(recv.clone())
     }
-    def "print" arity -1 (recv, args, _block) {
+    def "print" arity -1 (recv, *args, &_block) {
         for arg in args {
             write_bytes(recv, &to_bytes(arg)?)?;
         }
         Ok(RubyValue::Nil)
     }
-    def "printf" arity -1 (recv, args, _block) {
+    def "printf" arity -1 (recv, *args, &_block) {
         let Some(fmt) = args.first() else {
             return Err(crate::builtins::arg_error!("wrong number of arguments (given 0, expected 1+)"));
         };
@@ -73,7 +73,7 @@ ruby_class! {
         write_bytes(recv, text.as_bytes())?;
         Ok(RubyValue::Nil)
     }
-    def "putc" (recv, args, _block) {
+    def "putc" (recv, *args, &_block) {
         arity!(args, 1);
         let byte = match &args[0] {
             RubyValue::Int(n) => vec![*n as u8],
@@ -84,7 +84,7 @@ ruby_class! {
     }
     // `#puts` follows `Kernel#puts`: no arguments is a bare newline, an Array
     // is flattened, and a line that already ends in one is not given another.
-    def "puts" arity -1 (recv, args, _block) {
+    def "puts" arity -1 (recv, *args, &_block) {
         if args.is_empty() {
             write_bytes(recv, b"\n")?;
         }
@@ -101,18 +101,18 @@ ruby_class! {
 
     // How many UNCOMPRESSED bytes have been written -- CRuby's `pos` for a
     // writer, and the value that ends up in the footer's length field.
-    def "pos" (recv, args, _block) {
+    def "pos" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(open(recv)?.position()?))
     }
-    def "tell" (recv, args, _block) {
+    def "tell" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(open(recv)?.position()?))
     }
 
     // `#flush(flush = SYNC_FLUSH)` -- push what has been compressed so far
     // through to the IO without ending the member.
-    def "flush" arity -1 (recv, args, _block) {
+    def "flush" arity -1 (recv, *args, &_block) {
         arity!(args, 0..=1);
         let flush = match args.first() {
             None => FlushCompress::Sync,
@@ -131,7 +131,7 @@ ruby_class! {
     // The header fields, settable only until the header goes out -- which the
     // first `write` does. CRuby raises rather than silently dropping a late
     // assignment, because the value would never reach the file.
-    def "mtime=" (recv, args, _block) {
+    def "mtime=" (recv, *args, &_block) {
         arity!(args, 1);
         let secs = match &args[0] {
             RubyValue::Int(n) => *n,
@@ -140,12 +140,12 @@ ruby_class! {
         settable(recv)?.header.mtime = secs as u32;
         Ok(args[0].clone())
     }
-    def "orig_name=" (recv, args, _block) {
+    def "orig_name=" (recv, *args, &_block) {
         arity!(args, 1);
         settable(recv)?.header.orig_name = Some(header_text(&args[0])?);
         Ok(args[0].clone())
     }
-    def "comment=" (recv, args, _block) {
+    def "comment=" (recv, *args, &_block) {
         arity!(args, 1);
         settable(recv)?.header.comment = Some(header_text(&args[0])?);
         Ok(args[0].clone())

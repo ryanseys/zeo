@@ -85,23 +85,23 @@ ruby_module! {
     // after `include Math`, as a private `sqrt(x)`. Every argument coerces
     // through the numeric tower's `f64` view; domain violations raise
     // `Math::DomainError` with CRuby's exact message.
-    module_function def "sqrt"(_recv, args, _block) { checked(args, f64::sqrt, "sqrt") }
-    module_function def "cbrt"(_recv, args, _block) { plain(args, f64::cbrt) }
-    module_function def "sin"(_recv, args, _block) { plain(args, f64::sin) }
-    module_function def "cos"(_recv, args, _block) { plain(args, f64::cos) }
-    module_function def "tan"(_recv, args, _block) { plain(args, f64::tan) }
-    module_function def "asin"(_recv, args, _block) { checked(args, f64::asin, "asin") }
-    module_function def "acos"(_recv, args, _block) { checked(args, f64::acos, "acos") }
-    module_function def "atan"(_recv, args, _block) { plain(args, f64::atan) }
-    module_function def "exp"(_recv, args, _block) { plain(args, f64::exp) }
+    module_function def "sqrt"(_recv, *args, &_block) { checked(args, f64::sqrt, "sqrt") }
+    module_function def "cbrt"(_recv, *args, &_block) { plain(args, f64::cbrt) }
+    module_function def "sin"(_recv, *args, &_block) { plain(args, f64::sin) }
+    module_function def "cos"(_recv, *args, &_block) { plain(args, f64::cos) }
+    module_function def "tan"(_recv, *args, &_block) { plain(args, f64::tan) }
+    module_function def "asin"(_recv, *args, &_block) { checked(args, f64::asin, "asin") }
+    module_function def "acos"(_recv, *args, &_block) { checked(args, f64::acos, "acos") }
+    module_function def "atan"(_recv, *args, &_block) { plain(args, f64::atan) }
+    module_function def "exp"(_recv, *args, &_block) { plain(args, f64::exp) }
     // `expm1`/`log1p` keep precision near zero, where `exp(x) - 1` and
     // `log(1 + x)` lose it to cancellation.
-    module_function def "expm1"(_recv, args, _block) { plain(args, f64::exp_m1) }
-    module_function def "log1p"(_recv, args, _block) { checked(args, f64::ln_1p, "log1p") }
-    module_function def "log2"(_recv, args, _block) { checked(args, f64::log2, "log2") }
-    module_function def "log10"(_recv, args, _block) { checked(args, f64::log10, "log10") }
+    module_function def "expm1"(_recv, *args, &_block) { plain(args, f64::exp_m1) }
+    module_function def "log1p"(_recv, *args, &_block) { checked(args, f64::ln_1p, "log1p") }
+    module_function def "log2"(_recv, *args, &_block) { checked(args, f64::log2, "log2") }
+    module_function def "log10"(_recv, *args, &_block) { checked(args, f64::log10, "log10") }
     // `log(x)` natural; `log(x, base)` arbitrary-base.
-    module_function def "log"(_recv, args, _block) {
+    module_function def "log"(_recv, *args, &_block) {
         if args.is_empty() || args.len() > 2 {
             return Err(arg_error!(
                 "wrong number of arguments (given {}, expected 1..2)",
@@ -118,30 +118,30 @@ ruby_module! {
         }
         Ok(RubyValue::Float(r))
     }
-    module_function def "atan2"(_recv, args, _block) {
+    module_function def "atan2"(_recv, *args, &_block) {
         if args.len() != 2 {
             return Err(arg_error!("wrong number of arguments (given {}, expected 2)", args.len()));
         }
         Ok(RubyValue::Float(arg_f64(&args[0])?.atan2(arg_f64(&args[1])?)))
     }
-    module_function def "hypot"(_recv, args, _block) {
+    module_function def "hypot"(_recv, *args, &_block) {
         if args.len() != 2 {
             return Err(arg_error!("wrong number of arguments (given {}, expected 2)", args.len()));
         }
         Ok(RubyValue::Float(arg_f64(&args[0])?.hypot(arg_f64(&args[1])?)))
     }
-    module_function def "sinh"(_recv, args, _block) { plain(args, f64::sinh) }
-    module_function def "cosh"(_recv, args, _block) { plain(args, f64::cosh) }
-    module_function def "tanh"(_recv, args, _block) { plain(args, f64::tanh) }
-    module_function def "asinh"(_recv, args, _block) { plain(args, f64::asinh) }
+    module_function def "sinh"(_recv, *args, &_block) { plain(args, f64::sinh) }
+    module_function def "cosh"(_recv, *args, &_block) { plain(args, f64::cosh) }
+    module_function def "tanh"(_recv, *args, &_block) { plain(args, f64::tanh) }
+    module_function def "asinh"(_recv, *args, &_block) { plain(args, f64::asinh) }
     // `acosh(x<1)` and `atanh(|x|>1)` are NaN -> DomainError; `atanh(±1)` is
     // ±Infinity, which passes through (oracle-verified).
-    module_function def "acosh"(_recv, args, _block) { checked(args, f64::acosh, "acosh") }
-    module_function def "atanh"(_recv, args, _block) { checked(args, f64::atanh, "atanh") }
-    module_function def "erf"(_recv, args, _block) { plain(args, |x| unsafe { erf(x) }) }
-    module_function def "erfc"(_recv, args, _block) { plain(args, |x| unsafe { erfc(x) }) }
-    module_function def "gamma"(_recv, args, _block) { math_gamma(args).map(RubyValue::Float) }
-    module_function def "ldexp"(_recv, args, _block) {
+    module_function def "acosh"(_recv, *args, &_block) { checked(args, f64::acosh, "acosh") }
+    module_function def "atanh"(_recv, *args, &_block) { checked(args, f64::atanh, "atanh") }
+    module_function def "erf"(_recv, *args, &_block) { plain(args, |x| unsafe { erf(x) }) }
+    module_function def "erfc"(_recv, *args, &_block) { plain(args, |x| unsafe { erfc(x) }) }
+    module_function def "gamma"(_recv, *args, &_block) { math_gamma(args).map(RubyValue::Float) }
+    module_function def "ldexp"(_recv, *args, &_block) {
         if args.len() != 2 {
             return Err(math_arity(args.len(), "2"));
         }
@@ -150,8 +150,8 @@ ruby_module! {
         Ok(RubyValue::Float(unsafe { ldexp(fraction, exponent) }))
     }
     // `frexp`/`lgamma` answer a two-element Array, not a Float.
-    module_function def "frexp"(_recv, args, _block) { math_frexp(args) }
-    module_function def "lgamma"(_recv, args, _block) { math_lgamma(args) }
+    module_function def "frexp"(_recv, *args, &_block) { math_frexp(args) }
+    module_function def "lgamma"(_recv, *args, &_block) { math_lgamma(args) }
 }
 
 /// `Math.frexp(x) -> [fraction, exponent]` with `x == fraction * 2**exponent`

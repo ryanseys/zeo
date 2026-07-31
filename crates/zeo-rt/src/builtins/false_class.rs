@@ -9,21 +9,21 @@ use zeo_macros::ruby_class;
 ruby_class! {
     FalseClass = zeo_abi::FALSE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "&" arity 1 (_recv, args, _block) {
+    def "&" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(false))
     }
-    def "|" arity 1 (_recv, args, _block) {
+    def "|" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(args[0].truthy()))
     }
-    def "^" arity 1 (_recv, args, _block) {
+    def "^" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(args[0].truthy()))
     }
     // Declared here rather than left to Kernel's row for the same reason
     // `NilClass#inspect` is: the OWNER is observable, and pp reads it.
-    def "to_s" arity 0 | "inspect" (_recv, args, _block) {
+    def "to_s" arity 0 | "inspect" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new("false".to_string())))
     }

@@ -451,25 +451,25 @@ ruby_class! {
 
     // `Struct.new(:a, :b)` / `Struct.new("Name", :a, :b, keyword_init: true)`
     // MINTS a real subclass at runtime; `Struct[...]` is the same constructor.
-    def self."new" | "[]" (_recv, args, block) {
+    def self."new" | "[]" (_recv, *args, &block) {
         define_value_class(STRUCT_CLASS, false, args, block)
     }
 
-    def "initialize"(recv, args, _block) {
+    def "initialize"(recv, *args, &_block) {
         bind_members(recv, args, false)?;
         Ok(RubyValue::Nil)
     }
-    def "members"(recv, _args, _block) {
+    def "members"(recv, *_args, &_block) {
         build_members(recv)
     }
-    def "to_a" | "values" | "deconstruct" (recv, _args, _block) {
+    def "to_a" | "values" | "deconstruct" (recv, *_args, &_block) {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
-    def "to_h"(recv, args, block) {
+    def "to_h"(recv, *args, &block) {
         arity!(args, 0);
         struct_to_h(recv, block)
     }
-    def "each"(recv, args, block) {
+    def "each"(recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         for v in slots_of(recv) {
@@ -477,7 +477,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "each_pair"(recv, args, block) {
+    def "each_pair"(recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_pair", args, block);
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
@@ -487,12 +487,12 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "[]"(recv, args, _block) {
+    def "[]"(recv, *args, &_block) {
         arity!(args, 1);
         let i = member_index(recv, &args[0])?;
         Ok(slot_get(recv, i))
     }
-    def "[]="(recv, args, _block) {
+    def "[]="(recv, *args, &_block) {
         arity!(args, 2);
         if recv.is_frozen() {
             return Err(frozen_error(recv));
@@ -501,11 +501,11 @@ ruby_class! {
         slot_set(recv, i, args[1].clone());
         Ok(args[1].clone())
     }
-    def "values_at"(recv, args, block) {
+    def "values_at"(recv, *args, &block) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("values_at"), args, block)
     }
-    def "dig"(recv, args, _block) {
+    def "dig"(recv, *args, &_block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
@@ -518,27 +518,27 @@ ruby_class! {
         }
         send_value(&value, Symbol::intern("dig"), &args[1..], None)
     }
-    def "size" | "length" (recv, _args, _block) {
+    def "size" | "length" (recv, *_args, &_block) {
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         Ok(RubyValue::Int(meta.members.len() as i64))
     }
-    def "=="(recv, args, _block) {
+    def "=="(recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
     }
-    def "eql?"(recv, args, _block) {
+    def "eql?"(recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
     }
-    def "hash"(recv, _args, _block) {
+    def "hash"(recv, *_args, &_block) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("hash"), &[], None)
     }
-    def "deconstruct_keys"(recv, args, _block) {
+    def "deconstruct_keys"(recv, *args, &_block) {
         arity!(args, 1);
         deconstruct_keys(recv, &args[0])
     }
-    def "inspect" | "to_s" (recv, _args, _block) {
+    def "inspect" | "to_s" (recv, *_args, &_block) {
         build_inspect(recv)
     }
 }

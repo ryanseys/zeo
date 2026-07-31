@@ -420,18 +420,37 @@ ruby_class! {
     String = zeo_abi::STRING_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "length" arity 0 | "size" arity 0 (recv, args, _block) {
-        arity!(args, 0);
+    def "length" | "size" (recv) {
         Ok(RubyValue::Int(crate::string_len(recv_str!(recv))))
     }
-    def "empty?" arity 0 (recv, args, _block) {
-        arity!(args, 0);
+    def "empty?" (recv) {
         Ok(RubyValue::Bool(crate::string_len(recv_str!(recv)) == 0))
     }
 }
 ```
 
-The crate `zeo-dsl` reads this grammar. Two consumers then use it, so the two
+A def's parameter list gives both the argument-count check the body runs behind
+and the number `Method#arity` reports:
+
+```rust
+def "length" (recv)                             // 0
+def "index" cfunc (recv, needle, start = nil)   // -1
+def "unpack" (recv, fmt, **opts)                // -2
+def "push" (recv, *items)                       // -1
+def "insert" (recv, at, *rest)                  // -2, and "expected 1+"
+def "each" (recv, &block)                       // 0
+```
+
+The number follows CRuby's equation: take `min` and `max` from the signature,
+then `(min == max) ? min : -min-1`. CRuby applies it to C methods too, but C
+declares only `argc = N` or `argc = -1` — it cannot say "one required plus one
+optional". That is why `String#index` reports -1, and why no C method reports
+below -1. The `cfunc` marker records that lost precision.
+
+`cargo run -p xtask -- arity-oracle` records what ruby 4.0.6 reports, and a test
+diffs the declarations against it with no ruby needed at test time.
+
+The crate `zeo-dsl` reads this grammar. Three consumers then use it, so they
 cannot disagree:
 
 - `zeo-macros` expands it into the runtime method functions, the lookup tables
@@ -440,6 +459,8 @@ cannot disagree:
   These are the names that the compiler uses to resolve `respond_to?`, `is_a?`
   and constant lookups. The compiler sees the headers only. The method bodies
   are not visible to it.
+- The build tools read it to check arity against the oracle and to keep the
+  `cfunc` markers current.
 
 The standard-library extensions in `crates/zeo-rt/src/ext/` use the same DSL
 and the two gates above. Read [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
@@ -527,14 +548,15 @@ the full procedure.
 ## Project layout
 
 ```
-crates/    the six crates of the workspace (above)
-docs/      COMPATIBILITY, EXTENSIONS, EVAL_VM, TODO
-tests/     the test suites: examples, the spinel corpus, the gaps tracker
-gems/      51 gems (gems.toml controls the git-pinned ones)
-bench/     the performance suite (`cargo xtask bench`); read bench/README.md
-vendor/    rubygems and the generated files
-tools/     Ruby helper scripts (arity marks, method coverage)
-scripts/   corpus import, gap promotion, Ruby-against-zeo comparison
+crates/      the six crates of the workspace (above)
+docs/        COMPATIBILITY, EXTENSIONS, EVAL_VM, TODO
+tests/       the test suites: examples, the spinel corpus, the gaps tracker
+gems/        51 gems (gems.toml controls the git-pinned ones)
+bench/       the performance suite (`cargo xtask bench`); read bench/README.md
+conformance/ what the ruby oracle reports, recorded for the drift tests
+vendor/      rubygems and the generated files
+tools/       Ruby helper scripts (the arity oracle, method coverage)
+scripts/     corpus import, gap promotion, Ruby-against-zeo comparison
 ```
 
 ## Limits

@@ -30,7 +30,7 @@ ruby_class! {
     // `Class#new` -- the registry's dynamic constructor (`x = Widget;
     // x.new(...)`). A class with no allocator (builtins, exception-less
     // edge cases) raises real Ruby's NoMethodError shape for its kind.
-    def "new"(recv, args, block) {
+    def "new"(recv, *args, &block) {
         let cid = recv_cid(recv);
         // `Class.new(superclass) { body }` -- `recv` is `Class`
         // itself, so its `.new` mints a fresh ANONYMOUS class rather than an
@@ -87,7 +87,7 @@ ruby_class! {
     // class allocates its zero-initialized struct via its registered allocator;
     // a builtin value class answers its empty value (`String.allocate` -> `""`,
     // like CRuby, whose `allocate` yields the class's default instance).
-    def "allocate"(recv, _args, _block) {
+    def "allocate"(recv, *_args, &_block) {
         let cid = recv_cid(recv);
         if let Some(v) = builtin_allocate(cid) {
             return Ok(v);

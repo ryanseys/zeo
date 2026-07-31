@@ -41,19 +41,19 @@ fn cmp_or_fail(recv: &RubyValue, other: &RubyValue) -> Result<i64, Signal> {
 ruby_module! {
     Comparable = zeo_abi::COMPARABLE_CLASS;
 
-    def "<" arity 1 (recv, args, _block) {
+    def "<" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? < 0))
     }
-    def "<=" arity 1 (recv, args, _block) {
+    def "<=" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? <= 0))
     }
-    def ">" arity 1 (recv, args, _block) {
+    def ">" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? > 0))
     }
-    def ">=" arity 1 (recv, args, _block) {
+    def ">=" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? >= 0))
     }
@@ -62,7 +62,7 @@ ruby_module! {
     // pair (`<=>` answering nil) as `false` -- real Ruby's one nil-tolerant
     // Comparable method; a non-numeric result raises (via `cmp`'s
     // `rb_cmpint`).
-    def "==" arity 1 (recv, args, _block) {
+    def "==" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         match (recv, &args[0]) {
             (RubyValue::Object(a), RubyValue::Object(b)) if std::sync::Arc::ptr_eq(a, b) => {
@@ -71,7 +71,7 @@ ruby_module! {
             _ => Ok(RubyValue::Bool(cmp(recv, &args[0])? == Some(0))),
         }
     }
-    def "between?" arity 2 (recv, args, _block) {
+    def "between?" arity 2 (recv, *args, &_block) {
         arity!(args, 2);
         let lo = cmp_or_fail(recv, &args[0])?;
         let hi = cmp_or_fail(recv, &args[1])?;
@@ -82,7 +82,7 @@ ruby_module! {
     // beginless/endless range form; an exclusive bounded range is CRuby's
     // ArgumentError. Two present bounds must be ordered (CRuby rejects a
     // reversed pair).
-    def "clamp" (recv, args, _block) {
+    def "clamp" (recv, *args, &_block) {
         arity!(args, 1..=2);
         let (lo, hi): (Option<RubyValue>, Option<RubyValue>) = if args.len() == 2 {
             let open = |v: &RubyValue| if v.is_nil() { None } else { Some(v.clone()) };

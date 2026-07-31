@@ -159,7 +159,7 @@ ruby_class! {
     //
     // The test is on the END only, matching CRuby: a BEGINLESS range isn't
     // caught here and instead fails in `each`, which cannot start.
-    def "to_a" arity 0 | "entries" arity 0 (recv, args, _block) {
+    def "to_a" arity 0 | "entries" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         let unbounded = match end {
@@ -174,7 +174,7 @@ ruby_class! {
             .expect("Enumerable implements to_a")
     }
 
-    def "each" arity 0 (recv, args, block) {
+    def "each" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         let (start, end, exclusive) = range_parts(recv);
@@ -250,7 +250,7 @@ ruby_class! {
     // find-any for a Numeric comparator result (`0` hits, negative searches
     // low, positive high; `nil` on no hit). Binary search on the bounds -- no
     // materialization, so a huge range is fine.
-    def "bsearch" arity 0 (recv, args, block) {
+    def "bsearch" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = crate::builtins::need_block!(block);
         let (start, end, exclusive) = range_parts(recv);
@@ -327,7 +327,7 @@ ruby_class! {
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this runtime supports the
     // cover check is the faithful behavior for all four names.
-    def "===" arity 1 | "include?" arity 1 | "member?" arity 1 (recv, args, _block) {
+    def "===" arity 1 | "include?" arity 1 | "member?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
@@ -336,7 +336,7 @@ ruby_class! {
     }
     // `cover?` alone accepts a RANGE argument (range containment); `===`/
     // `include?`/`member?` treat a Range as an ordinary value (never covered).
-    def "cover?" arity 1 (recv, args, _block) {
+    def "cover?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let (start, end, exclusive) = range_parts(recv);
         if matches!(&args[0], RubyValue::Range(..)) {
@@ -347,7 +347,7 @@ ruby_class! {
     // `overlap?(other)` -- do two ranges share at least one element? False
     // when either range lies wholly beyond the other's end (CRuby range.c's
     // empty-region test); a beginless/endless bound never bounds that side.
-    def "overlap?" arity 1 (recv, args, _block) {
+    def "overlap?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Range(ob, oe, ox) = &args[0] else {
             return Err(type_error!("wrong argument type {} (expected Range)",
@@ -370,7 +370,7 @@ ruby_class! {
             !empty_region(sb, oe, ox) && !empty_region(ob, se, sx),
         ))
     }
-    def "last"(recv, args, _block) {
+    def "last"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let (start, end, exclusive) = range_parts(recv);
         match args.first() {
@@ -390,7 +390,7 @@ ruby_class! {
             }
         }
     }
-    def "size" arity 0 (recv, args, _block) {
+    def "size" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let (start, end, exclusive) = range_parts(recv);
         // The begin must be an Integer (CRuby iterates from it via `succ`).
@@ -423,7 +423,7 @@ ruby_class! {
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
     // `step(n)`: the blockless form returns an Enumerator.
-    def "step" | "%" arity 1 (recv, args, block) {
+    def "step" | "%" arity 1 (recv, *args, &block) {
         arity!(args, 1);
         let p = block_or_enum!(recv, "step", args, block);
         let (start, end, exclusive) = range_parts(recv);
@@ -493,12 +493,12 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "exclude_end?" arity 0 (recv, args, _block) {
+    def "exclude_end?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let (_, _, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(exclusive))
     }
-    def "begin" arity 0 | "first"(recv, args, _block) {
+    def "begin" arity 0 | "first"(recv, *args, &_block) {
         // `first` with an argument is Enumerable's n-form; only the 0-arg
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:
@@ -514,7 +514,7 @@ ruby_class! {
         let (start, _, _) = range_parts(recv);
         Ok(start.cloned().unwrap_or(RubyValue::Nil))
     }
-    def "end" arity 0 (recv, args, _block) {
+    def "end" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         Ok(end.cloned().unwrap_or(RubyValue::Nil))
@@ -523,7 +523,7 @@ ruby_class! {
     // iterated (`each`/`to_a` raise), so the Enumerable fallback would fail.
     // Other element types keep iterating through Enumerable, whose behavior is
     // already correct (and whose exclusive-`max` differs by type).
-    def "min"(recv, args, block) {
+    def "min"(recv, *args, &block) {
         let (start, end, _) = range_parts(recv);
         // A beginless range has no minimum -- CRuby raises rather than iterate
         // (which a bare `enumerable_send` would attempt endlessly). Holds
@@ -554,7 +554,7 @@ ruby_class! {
         crate::builtins::enumerable::enumerable_send(recv, "min", args, block)
             .expect("Enumerable implements min")
     }
-    def "max"(recv, args, block) {
+    def "max"(recv, *args, &block) {
         let (start, end, exclusive) = range_parts(recv);
         // An endless range has no maximum -- CRuby raises before iterating
         // (which would loop forever). Holds regardless of arg/block (verified

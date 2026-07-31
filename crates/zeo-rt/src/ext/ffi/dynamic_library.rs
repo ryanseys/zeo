@@ -94,7 +94,7 @@ ruby_class! {
 
     // `open(libname, flags)` -- `nil` opens the process image. A failure is a
     // `LoadError` whose message is the raw `dlerror` text.
-    def self."open"(_recv, args, _b) {
+    def self."open"(_recv, *args, &_b) {
         arity!(args, 2);
         let name = match &args[0] {
             RubyValue::Nil => None,
@@ -129,7 +129,7 @@ ruby_class! {
 
     // `dlsym` the name; a missing symbol answers a NULL `Pointer` (the gem's
     // callers test `#null?`).
-    def "find_function" | "find_variable"(recv, args, _b) {
+    def "find_function" | "find_variable"(recv, *args, &_b) {
         arity!(args, 1);
         let name = to_rstr(&args[0])?.lock().to_string();
         let cname =
@@ -138,7 +138,7 @@ ruby_class! {
         Ok(wrap_address(addr as usize))
     }
 
-    def "name"(recv, args, _b) {
+    def "name"(recv, *args, &_b) {
         arity!(args, 0);
         Ok(match &lib_of(recv).name {
             Some(n) => RubyValue::Str(crate::string_new(n.clone())),

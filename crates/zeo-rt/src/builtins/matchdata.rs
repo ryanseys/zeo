@@ -38,7 +38,7 @@ ruby_class! {
     // Two MatchData are equal when they cover the same string with the same
     // group spans (CRuby also checks the regexp; same-string-same-spans is the
     // observable equivalent here).
-    def "==" arity 1 | "eql?" arity 1 (recv, args, _block) {
+    def "==" arity 1 | "eql?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::MatchData(other) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -48,7 +48,7 @@ ruby_class! {
     }
     // `md[i]` / `md[name]` -- a single group; `md[start, length]` / `md[range]`
     // slice the group array (delegated to `Array#[]`, like CRuby).
-    def "[]"(recv, args, _block) {
+    def "[]"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let md = recv_md(recv);
         if args.len() == 2 || matches!(&args[0], RubyValue::Range(..)) {
@@ -57,25 +57,25 @@ ruby_class! {
         }
         crate::regexp::matchdata_get(&md, &args[0])
     }
-    def "pre_match" arity 0 (recv, args, _block) {
+    def "pre_match" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_pre_match(&recv_md(recv)))
     }
-    def "post_match" arity 0 (recv, args, _block) {
+    def "post_match" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_post_match(&recv_md(recv)))
     }
-    def "to_a" arity 0 (recv, args, _block) {
+    def "to_a" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_a(&recv_md(recv)))
     }
-    def "captures" arity 0 (recv, args, _block) {
+    def "captures" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
     // `#size`/`#length` -- the number of elements (whole match + every group),
     // i.e. `to_a.length`.
-    def "size" arity 0 | "length" arity 0 (recv, args, _block) {
+    def "size" arity 0 | "length" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let arr = crate::regexp::matchdata_to_a(&recv_md(recv));
         let n = match &arr {
@@ -86,7 +86,7 @@ ruby_class! {
     }
     // `values_at(*indices)` -- the groups at those indices (`0` is the whole
     // match), each resolved the same way `[]` does, gathered into an Array.
-    def "values_at"(recv, args, _block) {
+    def "values_at"(recv, *args, &_block) {
         let md = recv_md(recv);
         let out = args
             .iter()
@@ -94,7 +94,7 @@ ruby_class! {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "named_captures"(recv, args, _block) {
+    def "named_captures"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let nc = crate::regexp::matchdata_named_captures(&recv_md(recv));
         // `named_captures(symbolize_names: true)` keys the result with Symbols.
@@ -116,49 +116,49 @@ ruby_class! {
             .collect();
         Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))
     }
-    def "string" arity 0 (recv, args, _block) {
+    def "string" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_string(&recv_md(recv)))
     }
-    def "to_s" arity 0 (recv, args, _block) {
+    def "to_s" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_s(&recv_md(recv)))
     }
     // `offset(n)`/`byteoffset(n)` -- the char/byte `[start, end]` of group `n`
     // (index or named-group Symbol/String).
-    def "offset" arity 1 (recv, args, _block) {
+    def "offset" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         crate::regexp::matchdata_offset(&recv_md(recv), &args[0], false)
     }
-    def "byteoffset" arity 1 (recv, args, _block) {
+    def "byteoffset" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         crate::regexp::matchdata_offset(&recv_md(recv), &args[0], true)
     }
     // `begin`/`end` are the character start/end of a group; `bytebegin`/`byteend`
     // the byte start/end. Each is one end of the corresponding `offset` pair.
-    def "begin" arity 1 (recv, args, _block) {
+    def "begin" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], false, 0)
     }
-    def "end" arity 1 (recv, args, _block) {
+    def "end" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], false, 1)
     }
-    def "bytebegin" arity 1 (recv, args, _block) {
+    def "bytebegin" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], true, 0)
     }
-    def "byteend" arity 1 (recv, args, _block) {
+    def "byteend" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], true, 1)
     }
     // `MatchData#match(n)` -- the n-th group (like `[n]`); `match_length(n)` its
     // character length, or nil when the group didn't participate.
-    def "match" arity 1 (recv, args, _block) {
+    def "match" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         crate::regexp::matchdata_get(&recv_md(recv), &args[0])
     }
-    def "match_length" arity 1 (recv, args, _block) {
+    def "match_length" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(match crate::regexp::matchdata_get(&recv_md(recv), &args[0])? {
             RubyValue::Str(s) => RubyValue::Int(s.lock().char_len() as i64),
@@ -166,14 +166,14 @@ ruby_class! {
         })
     }
     // `deconstruct` -> the captures array (pattern-matching's array form).
-    def "deconstruct" arity 0 (recv, args, _block) {
+    def "deconstruct" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
     // `deconstruct_keys(keys)` -> the named captures as a Symbol-keyed Hash; with
     // an Array of keys, only those that name a capture (in the given order); with
     // nil, all of them (pattern-matching's hash form).
-    def "deconstruct_keys" arity 1 (recv, args, _block) {
+    def "deconstruct_keys" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let md = recv_md(recv);
         let named: Vec<(String, RubyValue)> = md
@@ -210,7 +210,7 @@ ruby_class! {
     }
     // `#<MatchData "whole" 1:"a" name:"b" ...>` -- groups labeled by name when
     // named, by 1-based index otherwise.
-    def "inspect" arity 0 (recv, args, _block) {
+    def "inspect" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let md = recv_md(recv);
         let RubyValue::Array(a) = crate::regexp::matchdata_to_a(&md) else { unreachable!() };
@@ -228,11 +228,11 @@ ruby_class! {
         s.push('>');
         Ok(RubyValue::Str(crate::string_new(s)))
     }
-    def "names" arity 0 (recv, args, _block) {
+    def "names" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_names(&recv_md(recv)))
     }
-    def "regexp" arity 0 (recv, args, _block) {
+    def "regexp" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_regexp(&recv_md(recv)))
     }

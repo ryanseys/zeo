@@ -12,7 +12,7 @@ ruby_class! {
     SizedQueue = zeo_abi::SIZED_QUEUE_CLASS < zeo_abi::QUEUE_CLASS;
 
     // `SizedQueue.new(n)` -- the bounded constructor.
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         arity!(args, 1);
         Ok(sized_queue_new(arg_int!(args, 0)))
     }

@@ -76,7 +76,7 @@ ruby_class! {
     // connect_timeout: nil, open_timeout: nil)` -- connect; the result
     // reads/writes as an IO. The timeout keywords are accepted (net/http
     // passes `open_timeout:`) and bound to the connect itself.
-    def self."new" | "open" arity -1 (_recv, args, _block) {
+    def self."new" | "open" arity -1 (_recv, *args, &_block) {
         let positional = kw_strip(args);
         arity!(positional, 1..=4);
         let timeout = kwarg_secs(args, "open_timeout")?

@@ -500,7 +500,7 @@ ruby_class! {
     // `size` never iterates: it takes the source's size and folds the ops that
     // have a knowable effect on it. A filtering op makes the result unknown
     // (nil) -- CRuby's rule, since it can't be answered without running.
-    def "size"(recv, args, _block) {
+    def "size"(recv, *args, &_block) {
         arity!(args, 0);
         let lz = lazy_of(recv);
         let mut size = source_size(&lz.source);
@@ -530,14 +530,14 @@ ruby_class! {
         Ok(size)
     }
 
-    def "map" | "collect"(recv, args, block) {
+    def "map" | "collect"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Map(need_block(block, "map")?)))
     }
     // `with_index([offset]) { |item, idx| ... }` -- lazily pairs each value with
     // an incrementing index; blockless it yields the `[item, idx]` pairs, with a
     // block it maps each pair through it (the block auto-splats the pair).
-    def "with_index" | "each_with_index"(recv, args, block) {
+    def "with_index" | "each_with_index"(recv, *args, &block) {
         arity!(args, 0..=1);
         let offset = match args.first() {
             Some(v) => crate::builtins::convert::to_index(v)?,
@@ -549,73 +549,73 @@ ruby_class! {
             _ => Ok(indexed),
         }
     }
-    def "flat_map" | "collect_concat"(recv, args, block) {
+    def "flat_map" | "collect_concat"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::FlatMap(need_block(block, "flat_map")?)))
     }
-    def "filter_map"(recv, args, block) {
+    def "filter_map"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::FilterMap(need_block(block, "filter_map")?)))
     }
-    def "select" | "filter" | "find_all"(recv, args, block) {
+    def "select" | "filter" | "find_all"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Select(need_block(block, "select")?)))
     }
-    def "reject"(recv, args, block) {
+    def "reject"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Reject(need_block(block, "reject")?)))
     }
-    def "take_while"(recv, args, block) {
+    def "take_while"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::TakeWhile(need_block(block, "take_while")?)))
     }
-    def "drop_while"(recv, args, block) {
+    def "drop_while"(recv, *args, &block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::DropWhile(need_block(block, "drop_while")?)))
     }
-    def "take"(recv, args, _block) {
+    def "take"(recv, *args, &_block) {
         arity!(args, 1);
         Ok(extend(recv, LazyOp::Take(count_arg(&args[0], "take")?)))
     }
-    def "drop"(recv, args, _block) {
+    def "drop"(recv, *args, &_block) {
         arity!(args, 1);
         Ok(extend(recv, LazyOp::Drop(count_arg(&args[0], "drop")?)))
     }
-    def "grep"(recv, args, block) {
+    def "grep"(recv, *args, &block) {
         arity!(args, 1);
         let blk = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
         Ok(extend(recv, LazyOp::Grep(args[0].clone(), false, blk)))
     }
-    def "grep_v"(recv, args, block) {
+    def "grep_v"(recv, *args, &block) {
         arity!(args, 1);
         let blk = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
         Ok(extend(recv, LazyOp::Grep(args[0].clone(), true, blk)))
     }
-    def "uniq"(recv, args, block) {
+    def "uniq"(recv, *args, &block) {
         arity!(args, 0);
         let key = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
         Ok(extend(recv, LazyOp::Uniq(key)))
     }
-    def "compact"(recv, args, _block) {
+    def "compact"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Compact))
     }
     // `each_cons(n)` / `each_slice(n)` -- lazy since ruby 3.1, so an infinite
     // source stays workable.
-    def "each_cons"(recv, args, block) {
+    def "each_cons"(recv, *args, &block) {
         arity!(args, 1);
         each_group(recv, args, block, false)
     }
-    def "each_slice"(recv, args, block) {
+    def "each_slice"(recv, *args, &block) {
         arity!(args, 1);
         each_group(recv, args, block, true)
     }
-    def "lazy"(recv, args, _block) {
+    def "lazy"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
     // Terminal operations: these run the chain.
-    def "first"(recv, args, _block) {
+    def "first"(recv, *args, &_block) {
         arity!(args, 0..=1);
         match args.first() {
             None => Ok(collect(lazy_of(recv), Some(1))?.into_iter().next().unwrap_or(RubyValue::Nil)),
@@ -625,11 +625,11 @@ ruby_class! {
             }
         }
     }
-    def "to_a" | "force" | "entries"(recv, args, _block) {
+    def "to_a" | "force" | "entries"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Array(array_new(collect(lazy_of(recv), None)?)))
     }
-    def "each"(recv, args, block) {
+    def "each"(recv, *args, &block) {
         arity!(args, 0);
         match block {
             Some(RubyValue::Proc(p)) => {
@@ -640,7 +640,7 @@ ruby_class! {
             _ => Ok(recv.clone()),
         }
     }
-    def "inspect" | "to_s"(recv, args, _block) {
+    def "inspect" | "to_s"(recv, *args, &_block) {
         arity!(args, 0);
         let _ = recv;
         // CRuby renders the full source+ops chain; this stable placeholder

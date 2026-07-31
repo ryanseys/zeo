@@ -24,7 +24,7 @@ ruby_class! {
 
     // `TCPServer.new([host, ] port)` -- bind + listen (a nil/omitted host binds
     // all interfaces). Port 0 lets the kernel pick; read it back via `#addr`.
-    def self."new" | "open"(_recv, args, _block) {
+    def self."new" | "open"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let (host, port) = host_port(args, "0.0.0.0")?;
         let listener = std::net::TcpListener::bind((host.as_str(), port))
@@ -36,7 +36,7 @@ ruby_class! {
     // `#accept` -- block for a client, answering a connected `TCPSocket`. The
     // blocking accept(2) is Gvl-released so a peer about to connect isn't
     // stalled by an armed Gvl holder parked here.
-    def "accept"(recv, args, _block) {
+    def "accept"(recv, *args, &_block) {
         arity!(args, 0);
         let fd = fd_of(recv)?;
         // SAFETY: accept(2) on an owned listening fd; the peer address is
@@ -53,7 +53,7 @@ ruby_class! {
     // `#accept_nonblock(exception: true)` -- accept only if a client is already
     // waiting; otherwise raise `IO::EAGAINWaitReadable` (or answer
     // `:wait_readable` under `exception: false`).
-    def "accept_nonblock"(recv, args, _block) {
+    def "accept_nonblock"(recv, *args, &_block) {
         let raises = crate::builtins::io::nonblock_raises(args);
         arity!(crate::builtins::io::kw_strip(args), 0);
         let Some((nfd, _, _)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
@@ -64,7 +64,7 @@ ruby_class! {
     }
     // `#listen(backlog)` -- a std-bound listener already listens, so this
     // re-applies the backlog and answers 0.
-    def "listen"(recv, args, _block) {
+    def "listen"(recv, *args, &_block) {
         arity!(args, 1);
         let fd = fd_of(recv)?;
         let backlog = crate::builtins::convert::to_index(&args[0])? as libc::c_int;

@@ -277,11 +277,11 @@ fn inspect_of(recv: &RubyValue) -> String {
 ruby_class! {
     Binding = zeo_abi::BINDING_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "receiver"(recv, args, _b) {
+    def "receiver"(recv, *args, &_b) {
         arity!(args, 0);
         Ok(recv_binding(recv).self_val.clone())
     }
-    def "source_location"(recv, args, _b) {
+    def "source_location"(recv, *args, &_b) {
         arity!(args, 0);
         let b = recv_binding(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
@@ -289,25 +289,25 @@ ruby_class! {
             RubyValue::Int(b.line as i64),
         ])))
     }
-    def "local_variables"(recv, args, _b) {
+    def "local_variables"(recv, *args, &_b) {
         arity!(args, 0);
         let names = recv_binding(recv).scope.names();
         Ok(RubyValue::Array(crate::array_new(
             names.iter().map(|n| RubyValue::Symbol(Symbol::intern(n))).collect(),
         )))
     }
-    def "local_variable_defined?"(recv, args, _b) {
+    def "local_variable_defined?"(recv, *args, &_b) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv_binding(recv).scope.defined(&var_name(&args[0])?)))
     }
-    def "local_variable_get"(recv, args, _b) {
+    def "local_variable_get"(recv, *args, &_b) {
         arity!(args, 1);
         let name = var_name(&args[0])?;
         recv_binding(recv).scope.get(&name).ok_or_else(|| {
             name_error!("local variable '{name}' is not defined for {}", inspect_of(recv))
         })
     }
-    def "local_variable_set"(recv, args, _b) {
+    def "local_variable_set"(recv, *args, &_b) {
         arity!(args, 2);
         let name = var_name(&args[0])?;
         recv_binding(recv).scope.set(&name, args[1].clone());
@@ -315,7 +315,7 @@ ruby_class! {
     }
     // `eval(src, file = "(eval)", line = 1)` -- the source runs in THIS
     // scope: its locals, its `self`, its lexical constants.
-    def "eval" arity -1 (recv, args, _b) {
+    def "eval" arity -1 (recv, *args, &_b) {
         arity!(args, 1..=3);
         let file = match args.get(1) {
             Some(v) => Some(crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned()),
@@ -327,7 +327,7 @@ ruby_class! {
         };
         crate::eval_vm::eval_with_binding(&args[0], recv_binding(recv), file, line)
     }
-    def "inspect" | "to_s"(recv, args, _b) {
+    def "inspect" | "to_s"(recv, *args, &_b) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(inspect_of(recv))))
     }

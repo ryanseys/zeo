@@ -250,15 +250,15 @@ fn new_random(seed_arg: Option<&RubyValue>) -> Result<RubyValue, Signal> {
 ruby_class! {
     Random = zeo_abi::RANDOM_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         crate::builtins::arity!(args, 0..=1);
         new_random(args.first())
     }
-    def self."rand"(_recv, args, _block) {
+    def self."rand"(_recv, *args, &_block) {
         crate::builtins::arity!(args, 0..=1);
         rand_with(&default_state().state, args.first())
     }
-    def self."bytes"(_recv, args, _block) {
+    def self."bytes"(_recv, *args, &_block) {
         crate::builtins::arity!(args, 1);
         let n = &bytes_count(&args[0])?;
         if *n < 0 {
@@ -270,7 +270,7 @@ ruby_class! {
     // SecRandomCopyBytes), NOT the seedable PRNG. This is the entropy source
     // SecureRandom sits on, so it must be genuinely cryptographic; a seeded
     // generator would make SecureRandom predictable.
-    def self."urandom"(_recv, args, _block) {
+    def self."urandom"(_recv, *args, &_block) {
         crate::builtins::arity!(args, 1);
         let n = &bytes_count(&args[0])?;
         if *n < 0 {
@@ -280,14 +280,14 @@ ruby_class! {
     }
     // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),
     // suitable for `Random.new`. Drawn from the default generator.
-    def self."new_seed"(_recv, args, _block) {
+    def self."new_seed"(_recv, *args, &_block) {
         crate::builtins::arity!(args, 0);
         let r = default_state().state.lock().limited(u64::from(u32::MAX));
         Ok(RubyValue::Int(r as i64 | 1))
     }
     // `Random.srand(seed = clock)` -- reseeds the DEFAULT generator, answering
     // the previous seed.
-    def self."srand"(_recv, args, _block) {
+    def self."srand"(_recv, *args, &_block) {
         crate::builtins::arity!(args, 0..=1);
         let (mt, seed) = seed_from(args.first())?;
         let mut guard = DEFAULT.lock();
@@ -296,11 +296,11 @@ ruby_class! {
         Ok(previous)
     }
 
-    def "rand"(recv, args, _block) {
+    def "rand"(recv, *args, &_block) {
         crate::builtins::arity!(args, 0..=1);
         rand_with(&as_random(recv).state, args.first())
     }
-    def "bytes"(recv, args, _block) {
+    def "bytes"(recv, *args, &_block) {
         crate::builtins::arity!(args, 1);
         let n = &bytes_count(&args[0])?;
         if *n < 0 {
@@ -308,14 +308,14 @@ ruby_class! {
         }
         Ok(random_bytes(&as_random(recv).state, *n as usize))
     }
-    def "seed"(recv, args, _block) {
+    def "seed"(recv, *args, &_block) {
         crate::builtins::arity!(args, 0);
         Ok(as_random(recv).seed.clone())
     }
     // `Random#==`: two generators are equal when their seed AND current stream
     // position match (so two fresh `Random.new(1)` are equal, but diverge once
     // either draws) -- CRuby compares state, not object identity.
-    def "=="(recv, args, _block) {
+    def "=="(recv, *args, &_block) {
         crate::builtins::arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));

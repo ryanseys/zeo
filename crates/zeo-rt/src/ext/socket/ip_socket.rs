@@ -44,7 +44,7 @@ ruby_class! {
 
     // `IPSocket.getaddress(host)` -- the first address the resolver answers for
     // `host`, as a String. A numeric host resolves to itself.
-    def self."getaddress"(_recv, args, _block) {
+    def self."getaddress"(_recv, *args, &_block) {
         arity!(args, 1);
         let host = crate::builtins::convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(crate::string_new(
@@ -53,17 +53,17 @@ ruby_class! {
     }
 
     // `#addr` -- `[family, port, hostname, ip]` for the local address.
-    def "addr"(recv, args, _block) {
+    def "addr"(recv, *args, &_block) {
         arity!(args, 0..=1); // (reverse_lookup) -- ignored, DNS is never done
         addr_array(recv, "getsockname(2)", libc::getsockname)
     }
     // `#peeraddr` -- the same array for the connected peer.
-    def "peeraddr"(recv, args, _block) {
+    def "peeraddr"(recv, *args, &_block) {
         arity!(args, 0..=1);
         addr_array(recv, "getpeername(2)", libc::getpeername)
     }
     // `#recvfrom(maxlen, flags = 0)` -- `[mesg, [family, port, host, ip]]`.
-    def "recvfrom"(recv, args, _block) {
+    def "recvfrom"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let fd = fd_of(recv)?;
         let maxlen = crate::builtins::convert::to_index(&args[0])?.max(0) as usize;

@@ -123,7 +123,7 @@ ruby_class! {
     Socket = zeo_abi::SOCKET_CLASS < zeo_abi::BASIC_SOCKET_CLASS;
 
     // `Socket.new(domain, type, protocol = 0)` -- a raw socket descriptor.
-    def self."new" | "open"(_recv, args, _block) {
+    def self."new" | "open"(_recv, *args, &_block) {
         arity!(args, 2..=3);
         let (domain, ty) = (sock_int(&args[0])?, sock_int(&args[1])?);
         let proto = match args.get(2) {
@@ -143,7 +143,7 @@ ruby_class! {
     // CLOSED (the shape net/http probes for and uses). `connect_timeout:` is
     // honoured; the other timeout keywords are accepted and ignored, since
     // resolution and connect happen in one blocking step here.
-    def self."tcp"(_recv, args, block) {
+    def self."tcp"(_recv, *args, &block) {
         let positional = super::kw_strip(args);
         arity!(positional, 2..=4);
         let (host, port) = super::host_port(positional, "127.0.0.1")?;
@@ -170,7 +170,7 @@ ruby_class! {
         out
     }
     // `Socket.gethostname` -- the host's name.
-    def self."gethostname"(_recv, args, _block) {
+    def self."gethostname"(_recv, *args, &_block) {
         arity!(args, 0);
         let mut buf = vec![0u8; 256];
         // SAFETY: `buf` is 256 writable bytes; gethostname NUL-terminates.
@@ -185,13 +185,13 @@ ruby_class! {
     // `Socket.getaddrinfo(host, service[, family, socktype, protocol, flags])`
     // -- `[family_name, port, canonname, addr, afamily, socktype, protocol]`
     // rows. Resolution runs through `libc::getaddrinfo`.
-    def self."getaddrinfo"(_recv, args, _block) {
+    def self."getaddrinfo"(_recv, *args, &_block) {
         arity!(args, 2..=6);
         getaddrinfo(args)
     }
     // `Socket.socketpair(domain, type, protocol = 0)` (aka `pair`) -- a
     // connected pair of `Socket`s (AF_UNIX in practice).
-    def self."socketpair" | "pair"(_recv, args, _block) {
+    def self."socketpair" | "pair"(_recv, *args, &_block) {
         arity!(args, 2..=3);
         let (domain, ty) = (sock_int(&args[0])?, sock_int(&args[1])?);
         let proto = match args.get(2) {
@@ -213,7 +213,7 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(vec![a, b])))
     }
     // `Socket.pack_sockaddr_in(port, host)` (aka `sockaddr_in`) -- packed bytes.
-    def self."pack_sockaddr_in" | "sockaddr_in"(_recv, args, _block) {
+    def self."pack_sockaddr_in" | "sockaddr_in"(_recv, *args, &_block) {
         arity!(args, 2);
         let port = super::port_of(&args[0])?;
         let host = args[1].to_display_string();
@@ -223,7 +223,7 @@ ruby_class! {
         Ok(binary_string(pack_ip_sockaddr(&ip)))
     }
     // `Socket.unpack_sockaddr_in(sockaddr)` -- `[port, ip_string]`.
-    def self."unpack_sockaddr_in"(_recv, args, _block) {
+    def self."unpack_sockaddr_in"(_recv, *args, &_block) {
         arity!(args, 1);
         let bytes = match &args[0] {
             RubyValue::Str(s) => s.lock().bytes().to_vec(),
@@ -240,7 +240,7 @@ ruby_class! {
     }
 
     // `#bind(sockaddr)` -- bind to a local packed-sockaddr / Addrinfo.
-    def "bind"(recv, args, _block) {
+    def "bind"(recv, *args, &_block) {
         arity!(args, 1);
         let fd = fd_of(recv)?;
         let sa = sockaddr_bytes(&args[0])?;
@@ -254,7 +254,7 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#connect(sockaddr)` -- connect to a peer.
-    def "connect"(recv, args, _block) {
+    def "connect"(recv, *args, &_block) {
         arity!(args, 1);
         let fd = fd_of(recv)?;
         let sa = sockaddr_bytes(&args[0])?;
@@ -268,7 +268,7 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#listen(backlog)` -- mark a bound socket as accepting connections.
-    def "listen"(recv, args, _block) {
+    def "listen"(recv, *args, &_block) {
         arity!(args, 1);
         let fd = fd_of(recv)?;
         let backlog = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
@@ -279,7 +279,7 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#accept` -- block for a connection, answering `[Socket, Addrinfo]`.
-    def "accept"(recv, args, _block) {
+    def "accept"(recv, *args, &_block) {
         arity!(args, 0);
         let fd = fd_of(recv)?;
         // SAFETY: a zeroed sockaddr_storage is valid; `len` bounds the write.
@@ -308,7 +308,7 @@ ruby_class! {
     }
     // `#accept_nonblock(exception: true)` -- accept only a connection already
     // pending, answering `[Socket, Addrinfo]` as `#accept` does.
-    def "accept_nonblock"(recv, args, _block) {
+    def "accept_nonblock"(recv, *args, &_block) {
         let raises = crate::builtins::io::nonblock_raises(args);
         arity!(crate::builtins::io::kw_strip(args), 0);
         let Some((nfd, storage, alen)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
@@ -324,7 +324,7 @@ ruby_class! {
     }
     // `#connect_nonblock(sockaddr, exception: true)` -- start a connect and
     // report it in flight rather than waiting for the handshake.
-    def "connect_nonblock"(recv, args, _block) {
+    def "connect_nonblock"(recv, *args, &_block) {
         let raises = crate::builtins::io::nonblock_raises(args);
         let positional = crate::builtins::io::kw_strip(args);
         arity!(positional, 1);
@@ -350,7 +350,7 @@ ruby_class! {
         ))
     }
     // `#recvfrom(maxlen, flags = 0)` -- `[mesg, sender_Addrinfo]`.
-    def "recvfrom"(recv, args, _block) {
+    def "recvfrom"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let fd = fd_of(recv)?;
         let maxlen = (crate::builtins::convert::to_index(&args[0])?).max(0) as usize;

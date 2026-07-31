@@ -68,7 +68,7 @@ ruby_class! {
     UNIXSocket = zeo_abi::UNIX_SOCKET_CLASS < zeo_abi::BASIC_SOCKET_CLASS;
 
     // `UNIXSocket.new(path)` -- connect to a listening AF_UNIX socket.
-    def self."new" | "open"(_recv, args, _block) {
+    def self."new" | "open"(_recv, *args, &_block) {
         arity!(args, 1);
         let path = crate::builtins::file::path_arg(&args[0], "new")?;
         // SAFETY: `connect_unix` yields a fresh, solely-owned descriptor.
@@ -76,7 +76,7 @@ ruby_class! {
     }
     // `UNIXSocket.pair(type = SOCK_STREAM)` (aka `socketpair`) -- a connected
     // pair of AF_UNIX sockets.
-    def self."pair" | "socketpair"(_recv, args, _block) {
+    def self."pair" | "socketpair"(_recv, *args, &_block) {
         arity!(args, 0..=2);
         let ty = match args.first() {
             None | Some(RubyValue::Nil) => libc::SOCK_STREAM,
@@ -99,19 +99,19 @@ ruby_class! {
     }
 
     // `#addr` -- `["AF_UNIX", local_path]`.
-    def "addr"(recv, args, _block) {
+    def "addr"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(unix_addr_array(name_path(fd_of(recv)?, "getsockname(2)", libc::getsockname)?))
     }
     // `#peeraddr` -- `["AF_UNIX", peer_path]`.
-    def "peeraddr"(recv, args, _block) {
+    def "peeraddr"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(unix_addr_array(name_path(fd_of(recv)?, "getpeername(2)", libc::getpeername)?))
     }
     // `#path` -- this socket's OWN (local) path via getsockname. A connected
     // client is unnamed, so its path is "" (CRuby's behaviour); a bound server
     // reports the path it listens on.
-    def "path"(recv, args, _block) {
+    def "path"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(string_new(
             name_path(fd_of(recv)?, "getsockname(2)", libc::getsockname)?,

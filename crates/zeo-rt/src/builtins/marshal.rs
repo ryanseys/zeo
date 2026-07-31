@@ -43,7 +43,7 @@ ruby_module! {
     const MINOR_VERSION = RubyValue::Int(MINOR as i64);
 
     // `Marshal.dump(obj[, io])` -> a BINARY String of the serialized object.
-    def self."dump"(_recv, args, _block) {
+    def self."dump"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let mut w = Writer::default();
         w.out.push(MAJOR);
@@ -54,7 +54,7 @@ ruby_module! {
     }
 
     // `Marshal.load(str)` -> the deserialized object.
-    def self."load"(_recv, args, _block) {
+    def self."load"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let RubyValue::Str(s) = &args[0] else {
             return Err(type_error!("instance of IO needed"));

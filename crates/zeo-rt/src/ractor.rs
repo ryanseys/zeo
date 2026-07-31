@@ -351,13 +351,14 @@ fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
 zeo_macros::ruby_class! {
     Ractor = zeo_abi::RACTOR_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."make_shareable"(_recv, args, _block) {
-        crate::builtins::arity!(args, 1);
-        make_shareable(&args[0]).map_err(|msg| crate::dispatch::raise_error("RactorError", msg))
+    // `copy:` is accepted and ignored: zeo deep-freezes in place, which is what
+    // `copy: false` asks for, and the copying form would need a deep clone the
+    // runtime does not have yet.
+    def self."make_shareable"(_recv, obj, **_opts) {
+        make_shareable(obj).map_err(|msg| crate::dispatch::raise_error("RactorError", msg))
     }
-    def self."shareable?"(_recv, args, _block) {
-        crate::builtins::arity!(args, 1);
-        Ok(RubyValue::Bool(shareable(&args[0])))
+    def self."shareable?"(_recv, obj) {
+        Ok(RubyValue::Bool(shareable(obj)))
     }
 }
 

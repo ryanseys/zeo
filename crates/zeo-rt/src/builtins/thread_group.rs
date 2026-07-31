@@ -55,7 +55,7 @@ ruby_class! {
     const Default = default_group();
 
     // Nothing ever encloses the default group.
-    def "enclosed?"(_recv, args, _block) {
+    def "enclosed?"(_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(false))
     }
@@ -63,7 +63,7 @@ ruby_class! {
     // already, so a valid call is a no-op answering the group; a non-Thread
     // argument is CRuby's TypeError, with its odd internal "VM/thread"
     // phrasing kept verbatim (oracle-verified).
-    def "add"(recv, args, _block) {
+    def "add"(recv, *args, &_block) {
         arity!(args, 1);
         if !matches!(&args[0], RubyValue::Thread(_)) {
             return Err(type_error!(
@@ -73,7 +73,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "list"(_recv, args, _block) {
+    def "list"(_recv, *args, &_block) {
         arity!(args, 0);
         crate::builtins::thread::lookup_class("list").expect("Thread.list is registered")(
             &RubyValue::Class(zeo_abi::THREAD_CLASS),

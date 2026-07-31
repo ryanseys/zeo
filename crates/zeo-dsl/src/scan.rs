@@ -67,12 +67,13 @@ pub struct AbiClass {
     pub includes: Vec<String>,
 }
 
-/// Collect every declaration under `crates/zeo-rt/src/{builtins,ext}`.
+/// Collect every declaration in the runtime. The walk covers all of
+/// `crates/zeo-rt/src`, not just `builtins/` and `ext/`, because `Ractor` is
+/// declared at the top level. A file that hosts the same-named `macro_rules!`
+/// instead falls out on its own: those tokens do not parse as a `ClassSpec`.
 pub fn scan_decls(root: &Path) -> Vec<Decl> {
     let mut out = Vec::new();
-    for sub in ["builtins", "ext"] {
-        walk_dir(&root.join("crates/zeo-rt/src").join(sub), root, &mut out);
-    }
+    walk_dir(&root.join("crates/zeo-rt/src"), root, &mut out);
     out.sort_by(|a, b| {
         (&a.class_const, a.kind, &a.name).cmp(&(&b.class_const, b.kind, &b.name))
     });

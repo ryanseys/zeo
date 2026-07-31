@@ -69,7 +69,7 @@ ruby_class! {
 
     // `FFI::Function.new(return_type, arg_types, pointer_or_proc, options?)`.
     // The options (`convention:`) name ABIs this platform doesn't distinguish.
-    def self."new"(_recv, args, _b) {
+    def self."new"(_recv, *args, &_b) {
         arity!(args, 3..=4);
         let ret = kind_of_type_value(&args[0])?;
         let arg_kinds = arg_kinds_of(&args[1])?;
@@ -90,7 +90,7 @@ ruby_class! {
         })))
     }
 
-    def "call"(recv, args, _b) {
+    def "call"(recv, *args, &_b) {
         let p = ptr_of(recv);
         let f = p.func.as_ref().expect("the Function table only dispatches on Function receivers");
         if args.len() != f.arg_kinds.len() {
@@ -114,7 +114,7 @@ ruby_class! {
 
     // The gem frees the libffi closure eagerly; ours lives as long as the
     // object (freed-state bookkeeping is the Ruby `Fiddle::Closure`'s).
-    def "free"(_recv, args, _b) {
+    def "free"(_recv, *args, &_b) {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }
@@ -184,7 +184,7 @@ mod invoker {
     // `FFI::VariadicInvoker.new(pointer, arg_types, return_type, options?)`.
     // `arg_types` ends with the `VARARGS` marker; everything before it is the
     // fixed prototype.
-    def self."new"(_recv, args, _b) {
+    def self."new"(_recv, *args, &_b) {
         arity!(args, 3..=4);
         let addr = target_address(&args[0])?;
         let RubyValue::Array(a) = &args[1] else {
@@ -211,7 +211,7 @@ mod invoker {
     // `call(*fixed_values, type, value, type, value, ...)` -- the trailing
     // pairs carry each variadic argument's type alongside its value, and get
     // the C default argument promotions.
-    def "call"(recv, args, _b) {
+    def "call"(recv, *args, &_b) {
         let inv = inv_of(recv);
         let n = inv.fixed.len();
         if args.len() < n || !(args.len() - n).is_multiple_of(2) {

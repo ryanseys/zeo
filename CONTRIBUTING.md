@@ -49,9 +49,11 @@ $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
   rescuable Ruby exception instead of panicking.
 - Raise through the typed macros (`type_error!`, `arg_error!`, …); argument
   conversion goes through `builtins/convert.rs` (the `rb_convert_type`
-  protocol), arity checks through `arity!`.
+  protocol).
 - One Ruby class/module per runtime module, declared with the
-  `ruby_class!`/`ruby_module!` DSL and oracle-verified arity metadata.
+  `ruby_class!`/`ruby_module!` DSL. A def's parameter list gives both its
+  argument-count check and its `Method#arity`; `cargo run -p xtask --
+  arity-oracle` records what ruby reports and the `builtin_arity` test gates it.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
 

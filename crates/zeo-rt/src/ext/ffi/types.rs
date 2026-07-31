@@ -166,15 +166,15 @@ ruby_class! {
     const DOUBLE = type_value(TypeKind::Scalar(FfiKind::F64));
     const FLOAT64 = type_value(TypeKind::Scalar(FfiKind::F64));
 
-    def "size"(recv, args, _b) {
+    def "size"(recv, *args, &_b) {
         arity!(args, 0);
         Ok(RubyValue::Int(t_of(recv).layout().0 as i64))
     }
-    def "alignment"(recv, args, _b) {
+    def "alignment"(recv, *args, &_b) {
         arity!(args, 0);
         Ok(RubyValue::Int(t_of(recv).layout().1 as i64))
     }
-    def "==" | "eql?"(recv, args, _b) {
+    def "==" | "eql?"(recv, *args, &_b) {
         arity!(args, 1);
         Ok(RubyValue::Bool(matches!(rtype_of(&args[0]), Some(o) if o.kind == t_of(recv).kind)))
     }

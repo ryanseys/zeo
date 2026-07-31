@@ -183,25 +183,25 @@ fn cert_of(recv: &RubyValue) -> &RCert {
 ruby_class! {
     Certificate = zeo_abi::OPENSSL_X509_CERT_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "to_der" (recv, args, _block) {
+    def "to_der" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(bin_str(cert_of(recv).der.clone()))
     }
     // `subject`/`issuer` answer the DN as a String; CRuby answers an
     // `X509::Name` whose `to_s` is this string (documented divergence).
-    def "subject" (recv, args, _block) {
+    def "subject" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(str(cert_of(recv).subject.clone()))
     }
-    def "issuer" (recv, args, _block) {
+    def "issuer" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(str(cert_of(recv).issuer.clone()))
     }
-    def "serial" (recv, args, _block) {
+    def "serial" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(str(cert_of(recv).serial.clone()))
     }
-    def "to_s" | "inspect" (recv, args, _block) {
+    def "to_s" | "inspect" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(str(format!(
             "#<OpenSSL::X509::Certificate subject={}>",

@@ -21,15 +21,15 @@ ruby_class! {
 
     // `y << v` forwards to the consumer's block and returns the yielder
     // (chainable: `y << 1 << 2`).
-    def "<<"(recv, args, _block) {
+    def "<<"(recv, *args, &_block) {
         recv_yielder(recv).call(args)?;
         Ok(recv.clone())
     }
     // `y.yield(*vs)` forwards and returns the block's own return value.
-    def "yield"(recv, args, _block) {
+    def "yield"(recv, *args, &_block) {
         recv_yielder(recv).call(args)
     }
-    def "to_proc"(recv, args, _block) {
+    def "to_proc"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Proc(recv_yielder(recv).clone()))
     }

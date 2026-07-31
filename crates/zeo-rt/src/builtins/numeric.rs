@@ -308,19 +308,19 @@ ruby_class! {
     Numeric = zeo_abi::NUMERIC_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "zero?" arity 0 (recv, args, _block) {
+    def "zero?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(num_eq(recv, &RubyValue::Int(0)).unwrap_or(false)))
     }
-    def "positive?" arity 0 (recv, args, _block) {
+    def "positive?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(1)))))
     }
-    def "negative?" arity 0 (recv, args, _block) {
+    def "negative?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1)))))
     }
-    def "nonzero?" arity 0 (recv, args, _block) {
+    def "nonzero?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(if num_eq(recv, &RubyValue::Int(0)).unwrap_or(false) {
             RubyValue::Nil
@@ -328,33 +328,33 @@ ruby_class! {
             recv.clone()
         })
     }
-    def "integer?" arity 0 (recv, args, _block) {
+    def "integer?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(recv, RubyValue::Int(_) | RubyValue::BigInt(_))))
     }
-    def "real?" arity 0 (recv, args, _block) {
+    def "real?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(!matches!(recv, RubyValue::Complex(_))))
     }
-    def "real" arity 0 (recv, args, _block) {
+    def "real" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "imag" arity 0 | "imaginary" arity 0 (_recv, args, _block) {
+    def "imag" arity 0 | "imaginary" arity 0 (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(0))
     }
-    def "to_c" arity 0 (recv, args, _block) {
+    def "to_c" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
     // A real number's cartesian view is `[self, 0]`.
-    def "rect" arity 0 | "rectangular" arity 0 (recv, args, _block) {
+    def "rect" arity 0 | "rectangular" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
     }
     // Polar view: magnitude `|self|`, angle `0` (non-negative) or `pi` (negative).
-    def "polar" arity 0 (recv, args, _block) {
+    def "polar" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let magnitude =
             crate::dispatch::send_value(recv, crate::Symbol::intern("abs"), &[], None)?;
@@ -365,15 +365,15 @@ ruby_class! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![magnitude, angle])))
     }
-    def "abs2" arity 0 (recv, args, _block) {
+    def "abs2" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         num_mul(recv, recv).expect("numeric receiver")
     }
-    def "conj" arity 0 | "conjugate" arity 0 (recv, args, _block) {
+    def "conj" arity 0 | "conjugate" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "angle" arity 0 | "arg" arity 0 | "phase" arity 0 (recv, args, _block) {
+    def "angle" arity 0 | "arg" arity 0 | "phase" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
         // only for the negative case; 0 stays Integer).
@@ -383,7 +383,7 @@ ruby_class! {
             RubyValue::Int(0)
         })
     }
-    def "divmod" arity 1 (recv, args, _block) {
+    def "divmod" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         // Float lane: CRuby's coupled `flo_divmod` adjusts the quotient and the
         // remainder together at a sign boundary, so `7.0.divmod(-Infinity)` is
@@ -447,7 +447,7 @@ ruby_class! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![q, r])))
     }
-    def "fdiv" arity 1 (recv, args, _block) {
+    def "fdiv" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         if lane(&args[0]).is_none() || matches!(args[0], RubyValue::Complex(_)) {
             return Err(coercion_error(recv, &args[0]));
@@ -456,11 +456,11 @@ ruby_class! {
             num_to_f64_unchecked(recv) / num_to_f64_unchecked(&args[0]),
         ))
     }
-    def "quo" arity 1 (recv, args, _block) {
+    def "quo" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         num_quo(recv, &args[0]).ok_or_else(|| coercion_error(recv, &args[0]))?
     }
-    def "remainder" arity 1 (recv, args, _block) {
+    def "remainder" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         // a - b*(a/b).truncate -- the truncated-division counterpart of %
         // (sign follows the DIVIDEND). BigInt's own `/` truncates.
@@ -501,7 +501,7 @@ ruby_class! {
     // `step(limit, step = 1)`; the blockless form returns an Enumerator.
     // Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
-    def "step" (recv, args, block) {
+    def "step" (recv, *args, &block) {
         arity!(args, 0..=2);
         let p = block_or_enum!(recv, "step", args, block);
         // `step` accepts positional (`1.step(10, 2)`) and/or keyword

@@ -22,11 +22,11 @@ ruby_class! {
     // The root class: no `< SUPER` (BasicObject has no superclass).
     BasicObject = zeo_abi::BASIC_OBJECT_CLASS;
 
-    def "==" (recv, args, _block) {
+    def "==" (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
-    def "!=" (recv, args, _block) {
+    def "!=" (recv, *args, &_block) {
         arity!(args, 1);
         // CRuby's `!=` is `!(self == other)` -- it dispatches the receiver's
         // OWN `==` (a Struct's value equality, a user override), not the
@@ -34,11 +34,11 @@ ruby_class! {
         let eq = crate::dispatch::send_value(recv, crate::Symbol::intern("=="), args, None)?;
         Ok(RubyValue::Bool(!eq.truthy()))
     }
-    def "!" (recv, args, _block) {
+    def "!" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(!recv.truthy()))
     }
-    def "equal?" (recv, args, _block) {
+    def "equal?" (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(value_identity(recv, &args[0])))
     }
@@ -54,7 +54,7 @@ ruby_class! {
     // permissive signature here would silently accept programs CRuby rejects.
     // `super()` (explicit empty parens) is the way to reach it from a method
     // that takes parameters.
-    def "initialize" (_recv, args, _block) {
+    def "initialize" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }
@@ -63,7 +63,7 @@ ruby_class! {
     // real NoMethodError for the ORIGINAL call, whose name arrives as the
     // first argument (the send-miss fallback prepends it) with the call's
     // own arguments after it. Hidden-private, like `initialize`.
-    def "method_missing" (recv, args, _block) {
+    def "method_missing" (recv, *args, &_block) {
         let Some((name, rest)) = args.split_first() else {
             return Err(arg_error!("no id given"));
         };
@@ -83,21 +83,21 @@ ruby_class! {
     // sees -- so `BO.new.send(:x)` must raise while `BO.new.__send__(:x)`
     // works. Ordinary objects still reach both through Kernel's own table,
     // which shares this implementation.
-    def "__send__" (recv, args, block) {
+    def "__send__" (recv, *args, &block) {
         dynamic_send(recv, args, block)
     }
     // `instance_exec(*args) { |*a| ... }` -- run the block with `self`
     // rebound to the receiver, forwarding args to the block's params.
     // Arity is NOT checked against the block's params: a non-lambda block is
     // lenient (extra args dropped, missing ones nil), exactly as `yield` is.
-    def "instance_exec" (recv, args, block) {
+    def "instance_exec" (recv, *args, &block) {
         let blk = block_proc(block, "instance_exec")?;
         crate::runtime_meta::with_singleton_definee(recv, || blk.call_with_self(recv, args))
     }
     // `instance_eval { ... }` -- the block form only. Real Ruby yields the
     // receiver to the block as well as rebinding self, which is what makes
     // `obj.instance_eval { |o| o == self }` true.
-    def "instance_eval" (recv, args, block) {
+    def "instance_eval" (recv, *args, &block) {
         if let Some(arg) = args.first() {
             // The string form (`obj.instance_eval("...")`) runs the source
             // through the eval VM with `self` rebound to the

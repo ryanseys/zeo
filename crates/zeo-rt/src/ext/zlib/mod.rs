@@ -145,35 +145,35 @@ ruby_module! {
 
     // `crc32`/`adler32` are CRuby module_functions (usable via `include Zlib`);
     // the compression calls are plain module methods. Arities match ruby 4.0.6.
-    module_function def "crc32" arity -1 (_recv, args, _block) {
+    module_function def "crc32" arity -1 (_recv, *args, &_block) {
         arity!(args, 0..=2);
         Ok(RubyValue::Int(i64::from(crc32(&bytes_arg(args.first())?, u32_arg(args.get(1), 0)))))
     }
-    module_function def "adler32" arity -1 (_recv, args, _block) {
+    module_function def "adler32" arity -1 (_recv, *args, &_block) {
         arity!(args, 0..=2);
         Ok(RubyValue::Int(i64::from(adler32(&bytes_arg(args.first())?, u32_arg(args.get(1), 1)))))
     }
 
     // `Zlib.deflate(str, level = DEFAULT_COMPRESSION)` -- zlib-format
     // compressed bytes (ASCII-8BIT).
-    def self."deflate" arity -1 (_recv, args, _block) {
+    def self."deflate" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=2);
         codec::one_shot_deflate(&bytes_arg(args.first())?, level_of(args.get(1)), codec::Wrap::Zlib)
     }
     // `Zlib.inflate(str)` -- decompress a zlib stream.
-    def self."inflate" arity 1 (_recv, args, _block) {
+    def self."inflate" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         codec::one_shot_inflate(&bytes_arg(args.first())?, codec::Wrap::Zlib)
     }
     // `Zlib.gzip(str, level: nil, strategy: nil)` -- a whole gzip member.
-    def self."gzip" arity -1 (_recv, args, _block) {
+    def self."gzip" arity -1 (_recv, *args, &_block) {
         let (positional, kwargs) = split_kwargs(args);
         arity!(positional, 1);
         let level = level_of(kw(&kwargs, "level").as_ref());
         gzip::gzip_string(&bytes_arg(positional.first())?, level)
     }
     // `Zlib.gunzip(str)` -- decompress a gzip member, footer checked.
-    def self."gunzip" arity 1 (_recv, args, _block) {
+    def self."gunzip" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         gzip::gunzip_string(&bytes_arg(args.first())?)
     }

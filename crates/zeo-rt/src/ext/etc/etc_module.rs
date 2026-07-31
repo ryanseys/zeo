@@ -18,24 +18,24 @@ ruby_module! {
     Etc = zeo_abi::ETC_MODULE;
 
     // The install-path helpers.
-    def self."sysconfdir"(_recv, args, _b) {
+    def self."sysconfdir"(_recv, *args, &_b) {
         arity!(args, 0);
         Ok(str_val("/etc".to_string()))
     }
-    def self."systmpdir"(_recv, args, _b) {
+    def self."systmpdir"(_recv, *args, &_b) {
         arity!(args, 0);
         Ok(str_val(system_tmpdir()))
     }
 
     // CPU count -- the affinity/online-processor count.
-    def self."nprocessors"(_recv, args, _b) {
+    def self."nprocessors"(_recv, *args, &_b) {
         arity!(args, 0);
         let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         Ok(RubyValue::Int(n as i64))
     }
 
     // The login name of the controlling terminal's user (nil if unavailable).
-    def self."getlogin"(_recv, args, _b) {
+    def self."getlogin"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         let p = unsafe { libc::getlogin() };
@@ -43,13 +43,13 @@ ruby_module! {
     }
 
     // uname(2) as a Hash of the five portable fields.
-    def self."uname"(_recv, args, _b) {
+    def self."uname"(_recv, *args, &_b) {
         arity!(args, 0);
         uname_hash()
     }
 
     // sysconf(3)/confstr(3): runtime system-configuration queries.
-    def self."sysconf"(_recv, args, _b) {
+    def self."sysconf"(_recv, *args, &_b) {
         arity!(args, 1);
         let name = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
         // A -1 return with errno unchanged (0) means "no limit / indeterminate"
@@ -63,7 +63,7 @@ ruby_module! {
         }
         Ok(RubyValue::Int(v))
     }
-    def self."confstr"(_recv, args, _b) {
+    def self."confstr"(_recv, *args, &_b) {
         arity!(args, 1);
         let name = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
         confstr_value(name)
@@ -71,7 +71,7 @@ ruby_module! {
 
     // The user database: by name, by uid (default: the effective uid), and the
     // cursor form (getpwent / setpwent / endpwent, and the `passwd` iterator).
-    def self."getpwnam"(_recv, args, _b) {
+    def self."getpwnam"(_recv, *args, &_b) {
         arity!(args, 1);
         let name = cstring_arg(&args[0])?;
         let _g = PWDB_LOCK.lock();
@@ -81,7 +81,7 @@ ruby_module! {
         }
         Ok(unsafe { passwd_from(pw) })
     }
-    def self."getpwuid"(_recv, args, _b) {
+    def self."getpwuid"(_recv, *args, &_b) {
         arity!(args, 0..=1);
         let uid = match args.first() {
             Some(v) => crate::builtins::convert::to_index(v)? as libc::uid_t,
@@ -94,19 +94,19 @@ ruby_module! {
         }
         Ok(unsafe { passwd_from(pw) })
     }
-    def self."setpwent"(_recv, args, _b) {
+    def self."setpwent"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         unsafe { libc::setpwent() };
         Ok(RubyValue::Nil)
     }
-    def self."endpwent"(_recv, args, _b) {
+    def self."endpwent"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         unsafe { libc::endpwent() };
         Ok(RubyValue::Nil)
     }
-    def self."getpwent"(_recv, args, _b) {
+    def self."getpwent"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         let pw = unsafe { libc::getpwent() };
@@ -114,7 +114,7 @@ ruby_module! {
     }
     // `Etc.passwd { |pw| ... }` iterates the whole database (from the current
     // cursor); without a block it is `getpwent`.
-    def self."passwd"(_recv, args, block) {
+    def self."passwd"(_recv, *args, &block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = block else {
             let _g = PWDB_LOCK.lock();
@@ -136,7 +136,7 @@ ruby_module! {
     }
 
     // The group database, mirroring the user one.
-    def self."getgrnam"(_recv, args, _b) {
+    def self."getgrnam"(_recv, *args, &_b) {
         arity!(args, 1);
         let name = cstring_arg(&args[0])?;
         let _g = PWDB_LOCK.lock();
@@ -146,7 +146,7 @@ ruby_module! {
         }
         Ok(unsafe { group_from(gr) })
     }
-    def self."getgrgid"(_recv, args, _b) {
+    def self."getgrgid"(_recv, *args, &_b) {
         arity!(args, 0..=1);
         let gid = match args.first() {
             Some(v) => crate::builtins::convert::to_index(v)? as libc::gid_t,
@@ -159,25 +159,25 @@ ruby_module! {
         }
         Ok(unsafe { group_from(gr) })
     }
-    def self."setgrent"(_recv, args, _b) {
+    def self."setgrent"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         unsafe { libc::setgrent() };
         Ok(RubyValue::Nil)
     }
-    def self."endgrent"(_recv, args, _b) {
+    def self."endgrent"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         unsafe { libc::endgrent() };
         Ok(RubyValue::Nil)
     }
-    def self."getgrent"(_recv, args, _b) {
+    def self."getgrent"(_recv, *args, &_b) {
         arity!(args, 0);
         let _g = PWDB_LOCK.lock();
         let gr = unsafe { libc::getgrent() };
         if gr.is_null() { Ok(RubyValue::Nil) } else { Ok(unsafe { group_from(gr) }) }
     }
-    def self."group"(_recv, args, block) {
+    def self."group"(_recv, *args, &block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = block else {
             let _g = PWDB_LOCK.lock();

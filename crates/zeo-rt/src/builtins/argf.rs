@@ -123,7 +123,7 @@ ruby_class! {
 
     // `#filename`/`#path` -- the current file (`"-"` = stdin). Before reading
     // begins, it is `ARGV[0]` (or `"-"` when `ARGV` is empty).
-    def "filename" | "path"(recv, args, _blk) {
+    def "filename" | "path"(recv, *args, &_blk) {
         arity!(args, 0);
         let argf = recv_argf(recv)?;
         if argf.started.load(Ordering::Relaxed) {
@@ -131,7 +131,7 @@ ruby_class! {
         }
         Ok(str_val(argv_files().into_iter().next().unwrap_or_else(|| "-".to_string())))
     }
-    def "each_line" | "each"(recv, args, blk) {
+    def "each_line" | "each"(recv, *args, &blk) {
         arity!(args, 0..=1);
         let Some(RubyValue::Proc(p)) = blk else {
             return Err(crate::dispatch::raise_no_block_yield());
@@ -143,21 +143,21 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "readlines" | "to_a"(recv, args, _blk) {
+    def "readlines" | "to_a"(recv, *args, &_blk) {
         arity!(args, 0..=1);
         let lines = all_lines(recv_argf(recv)?)?;
         Ok(RubyValue::Array(crate::collections::array_new(lines)))
     }
-    def "read"(recv, args, _blk) {
+    def "read"(recv, *args, &_blk) {
         arity!(args, 0..=1);
         let bytes = read_all(recv_argf(recv)?)?;
         Ok(str_val(String::from_utf8_lossy(&bytes).into_owned()))
     }
-    def "lineno"(recv, args, _blk) {
+    def "lineno"(recv, *args, &_blk) {
         arity!(args, 0);
         Ok(RubyValue::Int(recv_argf(recv)?.lineno.load(Ordering::Relaxed)))
     }
-    def "to_s" | "inspect"(recv, args, _blk) {
+    def "to_s" | "inspect"(recv, *args, &_blk) {
         arity!(args, 0);
         let _ = recv_argf(recv)?;
         Ok(str_val("ARGF".to_string()))

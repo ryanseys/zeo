@@ -15,7 +15,7 @@ use zeo_macros::ruby_module;
 ruby_module! {
     GC = zeo_abi::GC_CLASS;
 
-    def self."start" | "compact"(_recv, _args, _block) {
+    def self."start" | "compact"(_recv, *_args, &_block) {
         // No tracing collector to drive, but this is the honest moment to run
         // finalizers for objects whose last strong reference has dropped.
         crate::builtins::weak::run_finalizers_for_dead();
@@ -23,16 +23,16 @@ ruby_module! {
     }
     // Real Ruby answers the PREVIOUS enabled state. Always-false is
     // truthful here: the collector is never enabled, because there isn't one.
-    def self."enable" | "disable"(_recv, _args, _block) {
+    def self."enable" | "disable"(_recv, *_args, &_block) {
         Ok(RubyValue::Bool(false))
     }
-    def self."stress"(_recv, _args, _block) {
+    def self."stress"(_recv, *_args, &_block) {
         Ok(RubyValue::Bool(false))
     }
-    def self."count"(_recv, _args, _block) {
+    def self."count"(_recv, *_args, &_block) {
         Ok(RubyValue::Int(0))
     }
-    def self."stat"(_recv, _args, _block) {
+    def self."stat"(_recv, *_args, &_block) {
         Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
     }
 }

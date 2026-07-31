@@ -125,39 +125,39 @@ ruby_module! {
 
     // The version of the linked prism, which the gem reports as
     // `Prism::VERSION`.
-    def self."version"(_recv, args, _block) {
+    def self."version"(_recv, *args, &_block) {
         arity!(args, 0);
         let raw = unsafe { CStr::from_ptr(pm_version()) };
         Ok(RubyValue::Str(crate::string_new(raw.to_string_lossy().into_owned())))
     }
 
     // `Prism.dump`'s buffer: the serialized AST.
-    def self."serialize_parse"(_recv, args, _block) {
+    def self."serialize_parse"(_recv, *args, &_block) {
         arity!(args, 2);
         serialize(args, pm_serialize_parse)
     }
 
     // `Prism.lex`'s buffer: the token stream with its lex states.
-    def self."serialize_lex"(_recv, args, _block) {
+    def self."serialize_lex"(_recv, *args, &_block) {
         arity!(args, 2);
         serialize(args, pm_serialize_lex)
     }
 
     // `Prism.parse_lex`'s buffer: the AST and the token stream together.
-    def self."serialize_parse_lex"(_recv, args, _block) {
+    def self."serialize_parse_lex"(_recv, *args, &_block) {
         arity!(args, 2);
         serialize(args, pm_serialize_parse_lex)
     }
 
     // `Prism.parse_comments`' buffer.
-    def self."serialize_parse_comments"(_recv, args, _block) {
+    def self."serialize_parse_comments"(_recv, *args, &_block) {
         arity!(args, 2);
         serialize(args, pm_serialize_parse_comments)
     }
 
     // Whether the source parses with no errors -- answered without
     // building or serializing a tree.
-    def self."parse_success?"(_recv, args, _block) {
+    def self."parse_success?"(_recv, *args, &_block) {
         arity!(args, 2);
         let (source, options) = args_bytes(args)?;
         let ok = unsafe {

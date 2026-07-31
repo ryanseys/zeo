@@ -354,19 +354,19 @@ ruby_module! {
 
     // CRuby's `Psych.load`/`dump`/... are singleton module methods (`def self.`),
     // each arity -2 (one required arg + optional opts).
-    def self."load" arity -2 | "unsafe_load" arity -2 | "safe_load" arity -2 (_recv, args, _block) {
+    def self."load" arity -2 | "unsafe_load" arity -2 | "safe_load" arity -2 (_recv, *args, &_block) {
         arity!(args, 1..=2); // (yaml[, opts]) -- opts ignored
         let text = load_text(&args[0])?;
         let docs = load_documents(&text)?;
         Ok(docs.into_iter().next().unwrap_or(RubyValue::Nil))
     }
-    def self."dump" arity -2 (_recv, args, _block) {
+    def self."dump" arity -2 (_recv, *args, &_block) {
         arity!(args, 1..=2); // (obj[, io/opts]) -- only the compact string form
         Ok(RubyValue::Str(string_new(dump(&args[0]))))
     }
 
     // `Psych.load_file(path)` -- read the file and load its first document.
-    def self."load_file" arity -2 (_recv, args, _block) {
+    def self."load_file" arity -2 (_recv, *args, &_block) {
         arity!(args, 1..=2); // (path[, opts]) -- opts ignored
         let path = crate::builtins::file::path_arg(&args[0], "load_file")?;
         let text = crate::gvl::without_gvl(|| std::fs::read_to_string(&path)).map_err(|e| raise_error(
@@ -378,7 +378,7 @@ ruby_module! {
     }
     // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
     // one to a block (then the receiver's nil, matching CRuby's block form).
-    def self."load_stream" arity -2 (_recv, args, block) {
+    def self."load_stream" arity -2 (_recv, *args, &block) {
         arity!(args, 1..=2);
         let text = load_text(&args[0])?;
         let docs = load_documents(&text)?;
@@ -393,10 +393,10 @@ ruby_module! {
 
     // The `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) isn't
     // modelled; a clean NotImplementedError rather than a panic.
-    def self."parse" arity -2 (_recv, _args, _block) {
+    def self."parse" arity -2 (_recv, *_args, &_block) {
         Err(not_impl_error!("Psych.parse (the node-tree API) is not implemented"))
     }
-    def self."parse_stream" arity -2 (_recv, _args, _block) {
+    def self."parse_stream" arity -2 (_recv, *_args, &_block) {
         Err(not_impl_error!("Psych.parse_stream (the node-tree API) is not implemented"))
     }
 }

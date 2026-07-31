@@ -1261,7 +1261,7 @@ ruby_class! {
     // re-deriving it -- a present-but-lying `to_str` still raises TypeError.
     // The identity-preserving door: `try_convert` answers the object it was
     // handed, so a `class Name < String` survives as a `Name`.
-    def self."try_convert" arity 1 (_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(convert::try_convert_value(&args[0], "String", "to_str")?.unwrap_or(RubyValue::Nil))
     }
@@ -1271,7 +1271,7 @@ ruby_class! {
     // fresh buffer); a source string is copied, keeping its own encoding
     // unless `encoding:` overrides it. `capacity:` only hints allocation, so
     // it is accepted and ignored.
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         let enc_override = kw_encoding(args)?;
         // Strip a trailing options Hash before reading the positional source.
         let positional = match args.last() {
@@ -1305,7 +1305,7 @@ ruby_class! {
     // `String#-@` / `#dedup`: an already-frozen receiver is returned as-is
     // (CRuby #2630); otherwise the content is interned to its immortal
     // frozen twin, so two dedups of equal content are the same object.
-    def "-@" arity 0 | "dedup" arity 0 (recv, args, _block) {
+    def "-@" arity 0 | "dedup" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         if s.is_frozen() {
@@ -1319,7 +1319,7 @@ ruby_class! {
             crate::encoding::StrBuf::from_bytes(bytes, enc),
         )))
     }
-    def "bytes" arity 0 (recv, args, block) {
+    def "bytes" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let bytes: Vec<i64> = recv_str!(recv).lock().bytes().iter().map(|b| *b as i64).collect();
         // With a block, `bytes` behaves like `each_byte`: yield each, return self.
@@ -1333,7 +1333,7 @@ ruby_class! {
             bytes.into_iter().map(RubyValue::Int).collect(),
         )))
     }
-    def "each_byte" arity 0 (recv, args, block) {
+    def "each_byte" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_byte", args, block);
         let bytes: Vec<u8> = recv_str!(recv).lock().bytes().to_vec();
@@ -1342,7 +1342,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "getbyte" arity 1 (recv, args, _block) {
+    def "getbyte" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let i = arg_int!(args, 0);
         let s = recv_str!(recv).lock();
@@ -1353,7 +1353,7 @@ ruby_class! {
             RubyValue::Nil
         })
     }
-    def "setbyte" arity 2 (recv, args, _block) {
+    def "setbyte" arity 2 (recv, *args, &_block) {
         arity!(args, 2);
         let (i, b) = (arg_int!(args, 0), arg_int!(args, 1));
         let s = recv_str!(recv);
@@ -1372,7 +1372,7 @@ ruby_class! {
     // `byteslice(offset[, len])` -- a substring cut on BYTE boundaries (one
     // byte when `len` is omitted), tagged with the receiver's encoding; nil
     // when `offset` is out of range. Negative offsets count from the end.
-    def "byteslice"(recv, args, _block) {
+    def "byteslice"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let (bytes, enc) = {
             let s = recv_str!(recv).lock();
@@ -1434,7 +1434,7 @@ ruby_class! {
     }
     // `byteindex`/`byterindex(str[, offset])` -- the BYTE offset of the first
     // (respectively last) occurrence of a String needle, or nil.
-    def "byteindex"(recv, args, _block) {
+    def "byteindex"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let hay = recv_str!(recv).lock().bytes().to_vec();
         // `byteindex(regexp[, offset])` -- the BYTE offset of the first match.
@@ -1459,7 +1459,7 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "byterindex"(recv, args, _block) {
+    def "byterindex"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let hay = recv_str!(recv).lock().bytes().to_vec();
         // Omitted position searches the whole string (from the end); an
@@ -1486,19 +1486,19 @@ ruby_class! {
         })
     }
     // --- Encoding surface -------------------------------------------------
-    def "encoding" arity 0 (recv, args, _block) {
+    def "encoding" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::builtins::encoding::encoding_value(recv_str!(recv).lock().encoding()))
     }
     // `force_encoding` re-TAGS the bytes without touching them; `b` COPIES
     // them under ASCII-8BIT. Both return a value the caller can chain.
-    def "force_encoding" arity 1 (recv, args, _block) {
+    def "force_encoding" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let id = crate::builtins::encoding::arg_encoding(&args[0])?;
         recv_str!(recv).lock().set_encoding(id);
         Ok(recv.clone())
     }
-    def "b" arity 0 (recv, args, _block) {
+    def "b" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let bytes = recv_str!(recv).lock().bytes().to_vec();
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
@@ -1507,7 +1507,7 @@ ruby_class! {
     // receiver in place -- an Integer contributes its low byte (`n & 0xFF`), a
     // String its bytes verbatim -- keeping the receiver's encoding. Answers
     // self.
-    def "append_as_bytes"(recv, args, _block) {
+    def "append_as_bytes"(recv, *args, &_block) {
         let handle = recv_str!(recv);
         if handle.is_frozen() {
             return Err(crate::dispatch::raise_error_details(
@@ -1541,28 +1541,28 @@ ruby_class! {
     // `crypt(salt)`: the platform `crypt(3)` one-way hash (DES/MD5/... per the
     // salt), delegated to libc so the output matches the host Ruby exactly.
     // The result is ASCII-8BIT.
-    def "crypt" arity 1 (recv, args, _block) {
+    def "crypt" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         crypt_impl(recv, &args[0])
     }
-    def "ascii_only?" arity 0 (recv, args, _block) {
+    def "ascii_only?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_str!(recv).lock().ascii_only()))
     }
-    def "valid_encoding?" arity 0 (recv, args, _block) {
+    def "valid_encoding?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_str!(recv).lock().valid_encoding()))
     }
-    def "encode"(recv, args, _block) {
+    def "encode"(recv, *args, &_block) {
         encode_impl(recv, args, false)
     }
-    def "encode!"(recv, args, _block) {
+    def "encode!"(recv, *args, &_block) {
         encode_impl(recv, args, true)
     }
     // `unpack`/`unpack1`: deserialize the bytes per a template (see
     // `builtins::pack`). `unpack` answers the whole Array; `unpack1` the
     // first element (nil when empty).
-    def "unpack" arity -2 (recv, args, _block) {
+    def "unpack" arity -2 (recv, *args, &_block) {
         let positional = kw_strip(args);
         arity!(positional, 1);
         let template = unpack_template(&positional[0])?;
@@ -1571,7 +1571,7 @@ ruby_class! {
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(RubyValue::Array(crate::array_new(vals)))
     }
-    def "unpack1" arity -2 (recv, args, _block) {
+    def "unpack1" arity -2 (recv, *args, &_block) {
         let positional = kw_strip(args);
         arity!(positional, 1);
         let template = unpack_template(&positional[0])?;
@@ -1580,7 +1580,7 @@ ruby_class! {
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(vals.into_iter().next().unwrap_or(RubyValue::Nil))
     }
-    def "scrub"(recv, args, _block) {
+    def "scrub"(recv, *args, &_block) {
         // Rewrite every invalid byte sequence to the replacement (an explicit
         // String argument, else U+FFFD for a Unicode encoding / "?" otherwise).
         arity!(args, 0..=1);
@@ -1606,7 +1606,7 @@ ruby_class! {
     }
     // `scrub!` scrubs in place and ALWAYS answers the receiver (unlike the
     // other bang mutators, which answer nil when nothing changed).
-    def "scrub!"(recv, args, _block) {
+    def "scrub!"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let scrubbed = crate::dispatch::send_value(recv, crate::Symbol::intern("scrub"), args, None)?;
         let s = recv_str!(recv);
@@ -1625,7 +1625,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "include?" arity 1 (recv, args, _block) {
+    def "include?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let needle = arg_str!(args, 0);
         let found = recv_str!(recv)
@@ -1634,7 +1634,7 @@ ruby_class! {
             .contains(&*needle.lock().to_utf8_lossy());
         Ok(RubyValue::Bool(found))
     }
-    def "+" arity 1 (recv, args, _block) {
+    def "+" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let other = arg_str!(args, 0);
         // BYTE concatenation under the encoding-compatibility rule
@@ -1654,7 +1654,7 @@ ruby_class! {
         Ok(RubyValue::Str(crate::collections::string_wrap(joined)))
     }
     // Mutating append -- returns the receiver (the same object).
-    def "<<" arity 1 | "concat"(recv, args, _block) {
+    def "<<" arity 1 | "concat"(recv, *args, &_block) {
         // `<<` is syntactically a single-arg operator; `concat` accepts any
         // number of arguments and appends them left-to-right.
         let s = recv_str!(recv);
@@ -1747,7 +1747,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "*" arity 1 (recv, args, _block) {
+    def "*" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let n = arg_int!(args, 0);
         if n < 0 {
@@ -1778,59 +1778,59 @@ ruby_class! {
             _ => Err(arg_error!("string size too big")),
         }
     }
-    def "to_s" arity 0 | "to_str" arity 0 (recv, args, _block) {
+    def "to_s" arity 0 | "to_str" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "<=>" arity 1 (recv, args, _block) {
+    def "<=>" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Str(other) = &args[0] else {
             return Ok(RubyValue::Nil);
         };
         Ok(RubyValue::Int(str_byte_cmp(recv_str!(recv), other)))
     }
-    def "==" arity 1 | "eql?" arity 1 (recv, args, _block) {
+    def "==" arity 1 | "eql?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
     // Casing is encoding-aware (`StrBuf::*cased`): full Unicode for UTF-8
     // (unchanged), ASCII-only for BINARY/US-ASCII, Latin-1's own case map for
     // ISO-8859-1 -- and the result keeps the receiver's encoding.
-    def "upcase"(recv, args, _block) {
+    def "upcase"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().upcased())))
     }
-    def "downcase"(recv, args, _block) {
+    def "downcase"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().downcased())))
     }
-    def "capitalize"(recv, args, _block) {
+    def "capitalize"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().capitalized())))
     }
-    def "swapcase"(recv, args, _block) {
+    def "swapcase"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().swapcased())))
     }
-    def "strip"(recv, args, _block) {
+    def "strip"(recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         let buf = s.lock();
         Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_matches(is_rb_strip)))
     }
-    def "lstrip"(recv, args, _block) {
+    def "lstrip"(recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         let buf = s.lock();
         Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_start_matches(is_rb_strip)))
     }
-    def "rstrip"(recv, args, _block) {
+    def "rstrip"(recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         let buf = s.lock();
         Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_end_matches(is_rb_strip)))
     }
-    def "chars" arity 0 (recv, args, block) {
+    def "chars" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let chars = char_values(recv_str!(recv));
         // With a block, `chars` behaves like `each_char`: yield each, return self.
@@ -1845,7 +1845,7 @@ ruby_class! {
     // `lines` keeps each separator (`["a\n", "b\n", "c"]`).
     // `lines(sep = "\n", chomp: false)` -- split into lines, keeping the
     // separator unless `chomp:` strips it.
-    def "lines"(recv, args, block) {
+    def "lines"(recv, *args, &block) {
         arity!(args, 0..=2);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let ls = lines_from_args(&text, args);
@@ -1858,7 +1858,7 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(ls)))
     }
-    def "each_char" arity 0 (recv, args, block) {
+    def "each_char" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_char", args, block);
         for c in char_values(recv_str!(recv)) {
@@ -1869,14 +1869,14 @@ ruby_class! {
     // `grapheme_clusters`: the string split into extended grapheme clusters
     // (UAX #29) -- a base char plus its combining marks, a regional-indicator
     // flag pair, or a ZWJ emoji sequence each count as one.
-    def "grapheme_clusters" arity 0 (recv, args, _block) {
+    def "grapheme_clusters" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         use unicode_segmentation::UnicodeSegmentation;
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = text.graphemes(true).map(|g| str_value(g.to_string())).collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "each_grapheme_cluster" arity 0 (recv, args, block) {
+    def "each_grapheme_cluster" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         use unicode_segmentation::UnicodeSegmentation;
         let p = block_or_enum!(recv, "each_grapheme_cluster", args, block);
@@ -1894,19 +1894,19 @@ ruby_class! {
     // `unicode_normalize(form = :nfc)`: NFC/NFD/NFKC/NFKD normalization;
     // `unicode_normalized?(form = :nfc)` tests whether the receiver already is
     // in that form. An unknown form raises ArgumentError.
-    def "unicode_normalize"(recv, args, _block) {
+    def "unicode_normalize"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(str_value(normalize_form(&text, args.first())?))
     }
-    def "unicode_normalized?"(recv, args, _block) {
+    def "unicode_normalized?"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Bool(text == normalize_form(&text, args.first())?))
     }
     // `each_line` / `each_line(sep)`: a custom separator keeps its trailing
     // occurrence on each piece, exactly like the default `"\n"`.
-    def "each_line"(recv, args, block) {
+    def "each_line"(recv, *args, &block) {
         arity!(args, 0..=2);
         let p = block_or_enum!(recv, "each_line", args, block);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
@@ -1920,7 +1920,7 @@ ruby_class! {
     // shared regexp splitter. The optional `limit` caps the field count
     // (`> 0`, tail kept whole), keeps trailing empties (`< 0`), or drops
     // them (`0`/omitted).
-    def "split"(recv, args, block) {
+    def "split"(recv, *args, &block) {
         arity!(args, 0..=2);
         let (text, enc) = {
             let s = recv_str!(recv);
@@ -2000,7 +2000,7 @@ ruby_class! {
         }
         Ok(result)
     }
-    def "chomp"(recv, args, _block) {
+    def "chomp"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = match args.first() {
@@ -2029,7 +2029,7 @@ ruby_class! {
         };
         Ok(str_value(out))
     }
-    def "chop" arity 0 (recv, args, _block) {
+    def "chop" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         let buf = s.lock();
@@ -2042,14 +2042,14 @@ ruby_class! {
         }
         Ok(str_value_like(&buf, &cs.into_iter().collect::<String>()))
     }
-    def "reverse" arity 0 (recv, args, _block) {
+    def "reverse" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().reversed())))
     }
     // In-place `chomp`/`chop`: reuse the same trailing-separator logic, then
     // route through the shared bang mutator (frozen guard, nil when nothing
     // changed).
-    def "chomp!"(recv, args, _block) {
+    def "chomp!"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = match args.first() {
@@ -2075,7 +2075,7 @@ ruby_class! {
         };
         str_bang_replace(recv, out)
     }
-    def "chop!" arity 0 (recv, args, _block) {
+    def "chop!" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let mut cs: Vec<char> = text.chars().collect();
@@ -2089,23 +2089,23 @@ ruby_class! {
     // The transform `!` mutators: each reuses its non-bang sibling and writes
     // the result back (nil when unchanged). Grouped here so the whole family
     // stays one delegation path.
-    def "upcase!"(recv, args, block) { str_bang_via(recv, "upcase", args, block) }
-    def "downcase!"(recv, args, block) { str_bang_via(recv, "downcase", args, block) }
-    def "capitalize!"(recv, args, block) { str_bang_via(recv, "capitalize", args, block) }
-    def "swapcase!"(recv, args, block) { str_bang_via(recv, "swapcase", args, block) }
-    def "reverse!" arity 0 (recv, args, block) { str_bang_via(recv, "reverse", args, block) }
-    def "strip!"(recv, args, block) { str_bang_via(recv, "strip", args, block) }
-    def "lstrip!"(recv, args, block) { str_bang_via(recv, "lstrip", args, block) }
-    def "rstrip!"(recv, args, block) { str_bang_via(recv, "rstrip", args, block) }
-    def "sub!"(recv, args, block) { str_bang_via(recv, "sub", args, block) }
-    def "gsub!"(recv, args, block) { str_bang_via(recv, "gsub", args, block) }
-    def "tr!" arity 2 (recv, args, block) { str_bang_via(recv, "tr", args, block) }
-    def "delete!"(recv, args, block) { str_bang_via(recv, "delete", args, block) }
-    def "squeeze!"(recv, args, block) { str_bang_via(recv, "squeeze", args, block) }
-    def "succ!" arity 0 | "next!" arity 0 (recv, args, block) { str_bang_via(recv, "succ", args, block) }
+    def "upcase!"(recv, *args, &block) { str_bang_via(recv, "upcase", args, block) }
+    def "downcase!"(recv, *args, &block) { str_bang_via(recv, "downcase", args, block) }
+    def "capitalize!"(recv, *args, &block) { str_bang_via(recv, "capitalize", args, block) }
+    def "swapcase!"(recv, *args, &block) { str_bang_via(recv, "swapcase", args, block) }
+    def "reverse!" arity 0 (recv, *args, &block) { str_bang_via(recv, "reverse", args, block) }
+    def "strip!"(recv, *args, &block) { str_bang_via(recv, "strip", args, block) }
+    def "lstrip!"(recv, *args, &block) { str_bang_via(recv, "lstrip", args, block) }
+    def "rstrip!"(recv, *args, &block) { str_bang_via(recv, "rstrip", args, block) }
+    def "sub!"(recv, *args, &block) { str_bang_via(recv, "sub", args, block) }
+    def "gsub!"(recv, *args, &block) { str_bang_via(recv, "gsub", args, block) }
+    def "tr!" arity 2 (recv, *args, &block) { str_bang_via(recv, "tr", args, block) }
+    def "delete!"(recv, *args, &block) { str_bang_via(recv, "delete", args, block) }
+    def "squeeze!"(recv, *args, &block) { str_bang_via(recv, "squeeze", args, block) }
+    def "succ!" arity 0 | "next!" arity 0 (recv, *args, &block) { str_bang_via(recv, "succ", args, block) }
     // `sum` -- the CRuby checksum: the sum of the byte values, masked to `bits`
     // (default 16) bits. `chr` is the first character as a one-char String.
-    def "sum"(recv, args, _block) {
+    def "sum"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let bits = match args.first() {
             None => 16,
@@ -2119,13 +2119,13 @@ ruby_class! {
         };
         Ok(RubyValue::Int(masked))
     }
-    def "chr" arity 0 (recv, args, _block) {
+    def "chr" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let first: String = recv_str!(recv).lock().to_utf8_lossy().chars().take(1).collect();
         Ok(str_value(first))
     }
     // Empties the string in place (frozen guard); always answers the receiver.
-    def "clear" arity 0 (recv, args, _block) {
+    def "clear" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         if s.is_frozen() {
@@ -2140,7 +2140,7 @@ ruby_class! {
     }
     // The integer codepoints of each character (`each_codepoint` is the
     // block/enumerator form over the same values).
-    def "codepoints" arity 0 (recv, args, block) {
+    def "codepoints" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let cps: Vec<i64> = {
             let s = recv_str!(recv);
@@ -2158,7 +2158,7 @@ ruby_class! {
             cps.into_iter().map(RubyValue::Int).collect(),
         )))
     }
-    def "each_codepoint" arity 0 (recv, args, block) {
+    def "each_codepoint" arity 0 (recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_codepoint", args, block);
         for c in recv_str!(recv).lock().to_utf8_lossy().chars() {
@@ -2168,12 +2168,12 @@ ruby_class! {
     }
     // `[before, sep, after]` around the first (`partition`) / last
     // (`rpartition`) occurrence of a String or Regexp separator.
-    def "partition" arity 1 (recv, args, _block) {
+    def "partition" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Array(crate::array_new(str_partition(&text, &args[0], false)?.to_vec())))
     }
-    def "rpartition" arity 1 (recv, args, _block) {
+    def "rpartition" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Array(crate::array_new(str_partition(&text, &args[0], true)?.to_vec())))
@@ -2181,25 +2181,25 @@ ruby_class! {
     // Prefix/suffix removal -- the non-bang form always returns a new String
     // (a copy when the affix is absent); the bang form mutates and answers
     // `nil` when there was nothing to remove.
-    def "delete_prefix" arity 1 (recv, args, _block) {
+    def "delete_prefix" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let prefix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         Ok(str_value(text.strip_prefix(&prefix).unwrap_or(&text).to_string()))
     }
-    def "delete_prefix!" arity 1 (recv, args, _block) {
+    def "delete_prefix!" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let prefix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         str_bang_replace(recv, text.strip_prefix(&prefix).unwrap_or(&text).to_string())
     }
-    def "delete_suffix" arity 1 (recv, args, _block) {
+    def "delete_suffix" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let suffix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         Ok(str_value(text.strip_suffix(&suffix).unwrap_or(&text).to_string()))
     }
-    def "delete_suffix!" arity 1 (recv, args, _block) {
+    def "delete_suffix!" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let suffix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
@@ -2207,7 +2207,7 @@ ruby_class! {
     }
     // `+@`: an unfrozen receiver is returned as-is; a frozen one yields a
     // fresh mutable copy (the mirror of `-@`'s "freeze/dedup").
-    def "+@" arity 0 (recv, args, _block) {
+    def "+@" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         if !s.is_frozen() {
@@ -2222,7 +2222,7 @@ ruby_class! {
     // `bytesplice(index, length, str)` / `bytesplice(range, str)`: replaces
     // the byte span in place with `str`'s bytes and answers `str`. A frozen
     // receiver raises. (The 5-arg `str`-sub-span form is a separate gap.)
-    def "bytesplice"(recv, args, _block) {
+    def "bytesplice"(recv, *args, &_block) {
         arity!(args, 2..=3);
         let s = recv_str!(recv);
         if s.is_frozen() {
@@ -2284,7 +2284,7 @@ ruby_class! {
         // `bytesplice` returns the receiver (mutated self), not the replacement.
         Ok(recv.clone())
     }
-    def "index"(recv, args, _block) {
+    def "index"(recv, *args, &_block) {
         // `index(substr_or_regexp[, start])` -- the optional start is a CHAR
         // offset (from the end when negative) to begin searching at.
         arity!(args, 1..=2);
@@ -2327,7 +2327,7 @@ ruby_class! {
     // `rindex(str_or_regexp[, pos])`: the CHAR index of the LAST match whose
     // start is at or before `pos` (end-relative when negative; the whole
     // string when omitted), or nil.
-    def "rindex"(recv, args, _block) {
+    def "rindex"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let clen = text.chars().count() as i64;
@@ -2361,7 +2361,7 @@ ruby_class! {
     // The `[]`/`slice` forms: Int, (Int, Int), Range, String -- all
     // char-indexed and encoding-preserving (a substring of a BINARY string
     // stays BINARY; a UTF-8 multibyte char is one index).
-    def "[]" | "slice"(recv, args, _block) {
+    def "[]" | "slice"(recv, *args, &_block) {
         arity!(args, 1..=2);
         // Regexp indexing: `s[/re/]` is the whole match; `s[/re/, n]`/`s[/re/,
         // :name]` is that capture group (nil when the pattern doesn't match).
@@ -2413,20 +2413,20 @@ ruby_class! {
     // `v` (Ruby's index-assignment expression value). Out-of-range integers/
     // substrings raise IndexError; an out-of-range range begin raises
     // RangeError.
-    def "[]="(recv, args, _block) {
+    def "[]="(recv, *args, &_block) {
         arity!(args, 2..=3);
         index_set_impl(recv, args)
     }
     // `casecmp` is an ASCII case-insensitive `<=>`; `casecmp?` its boolean
     // (Unicode-aware) sibling. A non-String argument answers nil.
-    def "casecmp" arity 1 (recv, args, _block) {
+    def "casecmp" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Str(o) = &args[0] else { return Ok(RubyValue::Nil) };
         let a = recv_str!(recv).lock().to_utf8_lossy().to_lowercase();
         let b = o.lock().to_utf8_lossy().to_lowercase();
         Ok(RubyValue::Int(a.cmp(&b) as i64))
     }
-    def "casecmp?" arity 1 (recv, args, _block) {
+    def "casecmp?" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Str(o) = &args[0] else { return Ok(RubyValue::Nil) };
         let a = recv_str!(recv).lock().to_utf8_lossy().to_lowercase();
@@ -2436,30 +2436,30 @@ ruby_class! {
     // `oct`/`hex` parse a leading integer in base 8/16, honoring an explicit
     // `0x`/`0b`/`0o`/`0d` radix prefix and stopping at the first invalid
     // digit (0 when there is none) -- CRuby's lenient rule.
-    def "oct" arity 0 (recv, args, _block) {
+    def "oct" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 8))
     }
-    def "hex" arity 0 (recv, args, _block) {
+    def "hex" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 16))
     }
     // `slice!(index[, len])` / `slice!(range)` / `slice!(substring)`: removes
     // the matched portion from the receiver IN PLACE and returns it (nil when
     // nothing matched).
-    def "slice!"(recv, args, _block) {
+    def "slice!"(recv, *args, &_block) {
         arity!(args, 1..=2);
         guard_str_frozen(recv)?;
         slice_bang_impl(recv, args)
     }
     // `sub`/`gsub`: String or Regexp pattern; String replacement or block.
-    def "sub"(recv, args, block) {
+    def "sub"(recv, *args, &block) {
         sub_gsub(recv, args, block, false)
     }
-    def "gsub"(recv, args, block) {
+    def "gsub"(recv, *args, &block) {
         sub_gsub(recv, args, block, true)
     }
-    def "start_with?"(recv, args, _block) {
+    def "start_with?"(recv, *args, &_block) {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
             match a {
@@ -2482,7 +2482,7 @@ ruby_class! {
         }
         Ok(RubyValue::Bool(false))
     }
-    def "end_with?"(recv, args, _block) {
+    def "end_with?"(recv, *args, &_block) {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
             let suffix = &convert::to_rstr(a)?;
@@ -2494,7 +2494,7 @@ ruby_class! {
     }
     // `tr(from, to)` with `a-z` range expansion; a short `to` repeats its
     // last character (CRuby's rule).
-    def "tr" arity 2 (recv, args, _block) {
+    def "tr" arity 2 (recv, *args, &_block) {
         arity!(args, 2);
         let (from, from_neg) = tr_charset(&arg_str!(args, 0).lock().to_utf8_lossy());
         let to = expand_charset(&arg_str!(args, 1).lock().to_utf8_lossy());
@@ -2533,7 +2533,7 @@ ruby_class! {
     // collapses to one (`"hello".tr_s("l","r") == "hero"`). Delegating to
     // `tr` then `squeeze(to)` reproduces this: only the `to` characters are
     // squeezed, and an empty `to` (a delete) squeezes nothing.
-    def "tr_s" arity 2 (recv, args, _block) {
+    def "tr_s" arity 2 (recv, *args, &_block) {
         arity!(args, 2);
         let translated = crate::dispatch::send_value(recv, crate::Symbol::intern("tr"), args, None)?;
         crate::dispatch::send_value(
@@ -2543,11 +2543,11 @@ ruby_class! {
             None,
         )
     }
-    def "tr_s!" arity 2 (recv, args, block) { str_bang_via(recv, "tr_s", args, block) }
+    def "tr_s!" arity 2 (recv, *args, &block) { str_bang_via(recv, "tr_s", args, block) }
     // `delete`/`count` take ONE OR MORE char-set specs; a char is selected
     // only when it satisfies EVERY spec (CRuby's intersection rule), each of
     // which may itself be negated with a leading `^` or use `a-z` ranges.
-    def "delete"(recv, args, _block) {
+    def "delete"(recv, *args, &_block) {
         let sets = charset_specs(args)?;
         let s = recv_str!(recv);
         let buf = s.lock();
@@ -2557,7 +2557,7 @@ ruby_class! {
             .collect();
         Ok(str_value_like(&buf, &out))
     }
-    def "squeeze"(recv, args, _block) {
+    def "squeeze"(recv, *args, &_block) {
         // CRuby accepts MULTIPLE charset args: only chars in the INTERSECTION
         // of every set are squeezable. No args squeezes every run (unlike
         // count/delete, squeeze permits zero arguments).
@@ -2580,7 +2580,7 @@ ruby_class! {
         }
         Ok(str_value_like(&buf, &out))
     }
-    def "count"(recv, args, _block) {
+    def "count"(recv, *args, &_block) {
         // A no-arg `count` raises ArgumentError; CRuby attributes it to the
         // 'String#count' C-frame, so surface that in the backtrace.
         let _frame = crate::frames::synthetic_c_frame("String#count");
@@ -2592,7 +2592,7 @@ ruby_class! {
             .count();
         Ok(RubyValue::Int(n as i64))
     }
-    def "to_i"(recv, args, _block) {
+    def "to_i"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let base = match args.first() {
             None => 10,
@@ -2610,7 +2610,7 @@ ruby_class! {
         Ok(lenient_to_i(&recv_str!(recv).lock().to_utf8_lossy(), base))
     }
     // Lenient like `to_i`: the longest valid leading float, else 0.0.
-    def "to_f" arity 0 (recv, args, _block) {
+    def "to_f" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         // CRuby ignores a single underscore between two digits (`"1_000.5"` ->
@@ -2651,32 +2651,32 @@ ruby_class! {
     }
     // `to_r` -- the leading rational (`"3/4"`, `"1.5"`, `"12"`); junk with no
     // leading digits is `(0/1)`. Shares the parser with the `Rational` code.
-    def "to_r" arity 0 (recv, args, _block) {
+    def "to_r" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let (num, den) = crate::builtins::rational::parse_str_to_r(&text);
         crate::builtins::rational::rational_new(num, den)
     }
-    def "to_c" arity 0 (recv, args, _block) {
+    def "to_c" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         crate::builtins::complex::parse_str_to_c(&text)
     }
-    def "dump" arity 0 (recv, args, _block) {
+    def "dump" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(dump_str(&recv_str!(recv).lock())))
     }
-    def "undump" arity 0 (recv, args, _block) {
+    def "undump" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         undump_str(&recv_str!(recv).lock())
     }
-    def "to_sym" arity 0 | "intern" arity 0 (recv, args, _block) {
+    def "to_sym" arity 0 | "intern" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(crate::Symbol::intern(
             &recv_str!(recv).lock().to_utf8_lossy(),
         )))
     }
-    def "succ" arity 0 | "next" arity 0 (recv, args, _block) {
+    def "succ" arity 0 | "next" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         let buf = s.lock();
@@ -2695,7 +2695,7 @@ ruby_class! {
     // `upto(other[, exclusive])` -- yields successive `succ` values from self
     // through `other` (excluding `other` when `exclusive`); a blockless call
     // answers an Enumerator. Stops once a value grows past `other`.
-    def "upto"(recv, args, block) {
+    def "upto"(recv, *args, &block) {
         arity!(args, 1..=2);
         let exclusive = args.get(1).is_some_and(|v| v.truthy());
         let limit = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
@@ -2719,20 +2719,20 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "center"(recv, args, _block) {
+    def "center"(recv, *args, &_block) {
         arity!(args, 1..=2)
         ;
         pad(recv, args, Pad::Center)
     }
-    def "ljust"(recv, args, _block) {
+    def "ljust"(recv, *args, &_block) {
         arity!(args, 1..=2);
         pad(recv, args, Pad::Left)
     }
-    def "rjust"(recv, args, _block) {
+    def "rjust"(recv, *args, &_block) {
         arity!(args, 1..=2);
         pad(recv, args, Pad::Right)
     }
-    def "insert" arity 2 (recv, args, _block) {
+    def "insert" arity 2 (recv, *args, &_block) {
         arity!(args, 2);
         guard_str_frozen(recv)?;
         let at = arg_int!(args, 0);
@@ -2755,7 +2755,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `prepend(*strs)` -- insert every argument, in order, at the front.
-    def "prepend"(recv, args, _block) {
+    def "prepend"(recv, *args, &_block) {
         guard_str_frozen(recv)?;
         let mut prefix = String::new();
         for a in args {
@@ -2769,7 +2769,7 @@ ruby_class! {
         drop(guard);
         Ok(recv.clone())
     }
-    def "replace" arity 1 (recv, args, _block) {
+    def "replace" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         guard_str_frozen(recv)?;
         let new_text = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
@@ -2777,7 +2777,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `Integer#chr`'s inverse -- the first character's codepoint.
-    def "ord" arity 0 (recv, args, _block) {
+    def "ord" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         match recv_str!(recv).lock().chars().next() {
             Some(c) => Ok(RubyValue::Int(c as i64)),
@@ -2785,7 +2785,7 @@ ruby_class! {
         }
     }
     // `"%s..." % args` -- the shared sprintf engine (`builtins::format`).
-    def "%" arity 1 (recv, args, _block) {
+    def "%" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let format_args = match &args[0] {
             RubyValue::Array(a) => a.lock().to_vec(),
@@ -2796,7 +2796,7 @@ ruby_class! {
             &format_args,
         )?))
     }
-    def "=~" arity 1 (recv, args, _block) {
+    def "=~" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         match &args[0] {
             RubyValue::Regexp(re) => {
@@ -2809,7 +2809,7 @@ ruby_class! {
     // Both accept an optional start position (char offset, end-relative when
     // negative); a position outside the string means "no match" without even
     // running the engine.
-    def "match"(recv, args, block) {
+    def "match"(recv, *args, &block) {
         arity!(args, 1..=2);
         let re = to_regexp(&args[0])?;
         let (text, enc) = {
@@ -2832,7 +2832,7 @@ ruby_class! {
             _ => Ok(md),
         }
     }
-    def "match?"(recv, args, _block) {
+    def "match?"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let re = to_regexp(&args[0])?;
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
@@ -2841,7 +2841,7 @@ ruby_class! {
             None => false,
         }))
     }
-    def "scan" arity 1 (recv, args, block) {
+    def "scan" arity 1 (recv, *args, &block) {
         arity!(args, 1);
         let (text, enc) = {
             let s = recv_str!(recv);

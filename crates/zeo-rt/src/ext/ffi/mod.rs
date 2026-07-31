@@ -538,11 +538,11 @@ zeo_macros::ruby_module! {
 
     // `FFI.errno` / `FFI.errno=` -- the saved C errno; fiddle's `last_error`
     // reads through this.
-    def self."errno"(_recv, args, _b) {
+    def self."errno"(_recv, *args, &_b) {
         arity!(args, 0);
         Ok(RubyValue::Int(unsafe { *errno_location() } as i64))
     }
-    def self."errno="(_recv, args, _b) {
+    def self."errno="(_recv, *args, &_b) {
         arity!(args, 1);
         let v = crate::ffi::to_i64(&args[0])?;
         unsafe { *errno_location() = v as libc::c_int };

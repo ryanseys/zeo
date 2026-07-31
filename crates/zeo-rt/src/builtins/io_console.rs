@@ -736,17 +736,17 @@ ruby_class! {
 
     // The three editors CRuby gives a saved mode, so a caller can restore a
     // MODIFIED version of what it captured.
-    def "raw" (recv, args, _block) {
+    def "raw" (recv, *args, &_block) {
         let opts = raw_opts(args);
         raw_mode(&mut mode_of(recv)?.mode.lock(), opts);
         Ok(recv.clone())
     }
-    def "raw!" (recv, args, _block) {
+    def "raw!" (recv, *args, &_block) {
         let opts = raw_opts(args);
         raw_mode(&mut mode_of(recv)?.mode.lock(), opts);
         Ok(recv.clone())
     }
-    def "echo=" (recv, args, _block) {
+    def "echo=" (recv, *args, &_block) {
         arity!(args, 1);
         echo_mode(&mut mode_of(recv)?.mode.lock(), args[0].truthy());
         Ok(args[0].clone())

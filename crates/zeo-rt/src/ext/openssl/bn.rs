@@ -212,12 +212,12 @@ fn cmp_int(a: &BigNum, b: &BigNum) -> i64 {
 ruby_class! {
     BN = zeo_abi::OPENSSL_BN_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" arity -1 (_recv, args, _block) {
+    def self."new" arity -1 (_recv, *args, &_block) {
         Ok(wrap(construct(args)?))
     }
     // `BN.rand(bits, fill = 0, odd = false)` -- `fill` -1 allows a zero top
     // bit, 0 forces the top bit, 1 forces the top two (BN_rand's msb knob).
-    def self."rand" arity -1 (_recv, args, _block) {
+    def self."rand" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=3);
         let bits = convert::to_index(&args[0])? as i32;
         let msb = match args.get(1) {
@@ -234,7 +234,7 @@ ruby_class! {
         Ok(wrap(n))
     }
     // `BN.rand_range(range)` -- uniform in [0, range).
-    def self."rand_range" arity 1 (_recv, args, _block) {
+    def self."rand_range" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         let range = arg_bn(&args[0])?;
         let mut n = BigNum::new().map_err(bn_error)?;
@@ -242,7 +242,7 @@ ruby_class! {
         Ok(wrap(n))
     }
     // `BN.generate_prime(bits = 2048, safe = false, add = nil, rem = nil)`.
-    def self."generate_prime" arity -1 (_recv, args, _block) {
+    def self."generate_prime" arity -1 (_recv, *args, &_block) {
         arity!(args, 0..=4);
         let bits = match args.first() {
             None => 2048,
@@ -263,13 +263,13 @@ ruby_class! {
         Ok(wrap(n))
     }
 
-    def "to_i" | "to_int" (recv, args, _block) {
+    def "to_i" | "to_int" (recv, *args, &_block) {
         arity!(args, 0);
         to_int_value(&bn_of(recv).n.lock())
     }
     // `to_s(base = 10)`: 10/16 are digit strings, 2 the big-endian
     // magnitude bytes, 0 the MPI encoding.
-    def "to_s" arity -1 (recv, args, _block) {
+    def "to_s" arity -1 (recv, *args, &_block) {
         arity!(args, 0..=1);
         let base = match args.first() {
             None => 10,
@@ -284,26 +284,26 @@ ruby_class! {
             _ => Err(arg_error!("invalid radix {}", base)),
         }
     }
-    def "to_bn" (recv, args, _block) {
+    def "to_bn" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
 
-    def "+" (recv, args, _block) {
+    def "+" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         r.checked_add(&a, &b).map_err(bn_error)?;
         Ok(wrap(r))
     }
-    def "-" (recv, args, _block) {
+    def "-" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         r.checked_sub(&a, &b).map_err(bn_error)?;
         Ok(wrap(r))
     }
-    def "*" (recv, args, _block) {
+    def "*" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
@@ -311,7 +311,7 @@ ruby_class! {
         Ok(wrap(r))
     }
     // `/` answers BOTH halves -- `[quotient, remainder]` -- as CRuby's does.
-    def "/" (recv, args, _block) {
+    def "/" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut q = BigNum::new().map_err(bn_error)?;
@@ -320,28 +320,28 @@ ruby_class! {
         with_ctx(|c| r.checked_rem(&a, &b, c))?;
         Ok(RubyValue::Array(crate::array_new(vec![wrap(q), wrap(r)])))
     }
-    def "%" (recv, args, _block) {
+    def "%" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.nnmod(&a, &b, c))?;
         Ok(wrap(r))
     }
-    def "**" (recv, args, _block) {
+    def "**" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.exp(&a, &b, c))?;
         Ok(wrap(r))
     }
-    def "sqr" (recv, args, _block) {
+    def "sqr" (recv, *args, &_block) {
         arity!(args, 0);
         let a = self_bn(recv);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.sqr(&a, c))?;
         Ok(wrap(r))
     }
-    def "<<" (recv, args, _block) {
+    def "<<" (recv, *args, &_block) {
         arity!(args, 1);
         let a = self_bn(recv);
         let n = convert::to_index(&args[0])? as i32;
@@ -349,7 +349,7 @@ ruby_class! {
         r.lshift(&a, n).map_err(bn_error)?;
         Ok(wrap(r))
     }
-    def ">>" (recv, args, _block) {
+    def ">>" (recv, *args, &_block) {
         arity!(args, 1);
         let a = self_bn(recv);
         let n = convert::to_index(&args[0])? as i32;
@@ -358,49 +358,49 @@ ruby_class! {
         Ok(wrap(r))
     }
 
-    def "mod_exp" (recv, args, _block) {
+    def "mod_exp" (recv, *args, &_block) {
         arity!(args, 2);
         let (a, p, m) = (self_bn(recv), arg_bn(&args[0])?, arg_bn(&args[1])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.mod_exp(&a, &p, &m, c))?;
         Ok(wrap(r))
     }
-    def "mod_add" (recv, args, _block) {
+    def "mod_add" (recv, *args, &_block) {
         arity!(args, 2);
         let (a, b, m) = (self_bn(recv), arg_bn(&args[0])?, arg_bn(&args[1])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.mod_add(&a, &b, &m, c))?;
         Ok(wrap(r))
     }
-    def "mod_sub" (recv, args, _block) {
+    def "mod_sub" (recv, *args, &_block) {
         arity!(args, 2);
         let (a, b, m) = (self_bn(recv), arg_bn(&args[0])?, arg_bn(&args[1])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.mod_sub(&a, &b, &m, c))?;
         Ok(wrap(r))
     }
-    def "mod_mul" (recv, args, _block) {
+    def "mod_mul" (recv, *args, &_block) {
         arity!(args, 2);
         let (a, b, m) = (self_bn(recv), arg_bn(&args[0])?, arg_bn(&args[1])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.mod_mul(&a, &b, &m, c))?;
         Ok(wrap(r))
     }
-    def "mod_sqr" (recv, args, _block) {
+    def "mod_sqr" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, m) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.mod_sqr(&a, &m, c))?;
         Ok(wrap(r))
     }
-    def "mod_inverse" (recv, args, _block) {
+    def "mod_inverse" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, m) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
         with_ctx(|c| r.mod_inverse(&a, &m, c))?;
         Ok(wrap(r))
     }
-    def "gcd" (recv, args, _block) {
+    def "gcd" (recv, *args, &_block) {
         arity!(args, 1);
         let (a, b) = (self_bn(recv), arg_bn(&args[0])?);
         let mut r = BigNum::new().map_err(bn_error)?;
@@ -408,28 +408,28 @@ ruby_class! {
         Ok(wrap(r))
     }
 
-    def "num_bits" (recv, args, _block) {
+    def "num_bits" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(bn_of(recv).n.lock().num_bits() as i64))
     }
-    def "num_bytes" (recv, args, _block) {
+    def "num_bytes" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(bn_of(recv).n.lock().num_bytes() as i64))
     }
-    def "zero?" (recv, args, _block) {
+    def "zero?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(bn_of(recv).n.lock().num_bits() == 0))
     }
-    def "one?" (recv, args, _block) {
+    def "one?" (recv, *args, &_block) {
         arity!(args, 0);
         let one = BigNum::from_u32(1).map_err(bn_error)?;
         Ok(RubyValue::Bool(*bn_of(recv).n.lock() == one))
     }
-    def "odd?" (recv, args, _block) {
+    def "odd?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(bn_of(recv).n.lock().is_bit_set(0)))
     }
-    def "negative?" (recv, args, _block) {
+    def "negative?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(bn_of(recv).n.lock().is_negative()))
     }
@@ -437,14 +437,14 @@ ruby_class! {
     // `==` coerces an Integer right-hand side; `eql?` does NOT -- CRuby's
     // ossl_bn_eql demands a real BN, so `BN.new(255).eql?(255)` is false
     // where `== 255` is true.
-    def "==" (recv, args, _block) {
+    def "==" (recv, *args, &_block) {
         arity!(args, 1);
         let Ok(b) = arg_bn(&args[0]) else {
             return Ok(RubyValue::Bool(false));
         };
         Ok(RubyValue::Bool(self_bn(recv) == b))
     }
-    def "eql?" (recv, args, _block) {
+    def "eql?" (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -454,12 +454,12 @@ ruby_class! {
         };
         Ok(RubyValue::Bool(self_bn(recv) == copy(&other.n.lock())))
     }
-    def "<=>" | "cmp" (recv, args, _block) {
+    def "<=>" | "cmp" (recv, *args, &_block) {
         arity!(args, 1);
         let b = arg_bn(&args[0])?;
         Ok(RubyValue::Int(cmp_int(&self_bn(recv), &b)))
     }
-    def "ucmp" (recv, args, _block) {
+    def "ucmp" (recv, *args, &_block) {
         arity!(args, 1);
         let (mut a, mut b) = (self_bn(recv), arg_bn(&args[0])?);
         a.set_negative(false);
@@ -468,7 +468,7 @@ ruby_class! {
     }
     // Integer's `coerce` half: hand arithmetic between an Integer LHS and a
     // BN back to Integer math (`5 + bn` answers an Integer, as CRuby's does).
-    def "coerce" (recv, args, _block) {
+    def "coerce" (recv, *args, &_block) {
         arity!(args, 1);
         match &args[0] {
             v @ (RubyValue::Int(_) | RubyValue::BigInt(_)) => Ok(RubyValue::Array(
@@ -477,7 +477,7 @@ ruby_class! {
             _ => Err(type_error!("Don't know how to coerce")),
         }
     }
-    def "hash" (recv, args, _block) {
+    def "hash" (recv, *args, &_block) {
         arity!(args, 0);
         let n = bn_of(recv).n.lock();
         let mut h = std::hash::DefaultHasher::new();
@@ -488,7 +488,7 @@ ruby_class! {
 
     // `prime?(checks = nil)` -- BN_is_prime_ex; 0 checks means the
     // bit-length-derived default, CRuby's own nil.
-    def "prime?" arity -1 (recv, args, _block) {
+    def "prime?" arity -1 (recv, *args, &_block) {
         arity!(args, 0..=1);
         let checks = match args.first() {
             None | Some(RubyValue::Nil) => 0,
@@ -497,18 +497,18 @@ ruby_class! {
         let n = self_bn(recv);
         Ok(RubyValue::Bool(with_ctx(|c| n.is_prime(checks, c))?))
     }
-    def "bit_set?" (recv, args, _block) {
+    def "bit_set?" (recv, *args, &_block) {
         arity!(args, 1);
         let i = convert::to_index(&args[0])? as i32;
         Ok(RubyValue::Bool(bn_of(recv).n.lock().is_bit_set(i)))
     }
-    def "set_bit!" (recv, args, _block) {
+    def "set_bit!" (recv, *args, &_block) {
         arity!(args, 1);
         let i = convert::to_index(&args[0])? as i32;
         bn_of(recv).n.lock().set_bit(i).map_err(bn_error)?;
         Ok(recv.clone())
     }
-    def "clear_bit!" (recv, args, _block) {
+    def "clear_bit!" (recv, *args, &_block) {
         arity!(args, 1);
         let i = convert::to_index(&args[0])? as i32;
         bn_of(recv).n.lock().clear_bit(i).map_err(bn_error)?;

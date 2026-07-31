@@ -96,7 +96,7 @@ ruby_class! {
     HMAC = zeo_abi::OPENSSL_HMAC_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `OpenSSL::HMAC.new(key, digest)` -- digest by name or instance.
-    def self."new" arity 2 (_recv, args, _block) {
+    def self."new" arity 2 (_recv, *args, &_block) {
         arity!(args, 2);
         let key = str_bytes(&args[0])?;
         let (md, canonical) = md_from_value(&args[1])?;
@@ -109,49 +109,49 @@ ruby_class! {
             frozen: AtomicBool::new(false),
         })))
     }
-    def self."digest" arity 3 (_recv, args, _block) {
+    def self."digest" arity 3 (_recv, *args, &_block) {
         arity!(args, 3);
         Ok(bin_str(class_mac(args)?))
     }
-    def self."hexdigest" arity 3 (_recv, args, _block) {
+    def self."hexdigest" arity 3 (_recv, *args, &_block) {
         arity!(args, 3);
         Ok(str(hex(&class_mac(args)?)))
     }
-    def self."base64digest" arity 3 (_recv, args, _block) {
+    def self."base64digest" arity 3 (_recv, *args, &_block) {
         arity!(args, 3);
         Ok(str(base64(&class_mac(args)?)))
     }
 
-    def "update" | "<<" (recv, args, _block) {
+    def "update" | "<<" (recv, *args, &_block) {
         arity!(args, 1);
         hmac_of(recv).buf.lock().extend_from_slice(&str_bytes(&args[0])?);
         Ok(recv.clone())
     }
-    def "digest" (recv, args, _block) {
+    def "digest" (recv, *args, &_block) {
         arity!(args, 0);
         let h = hmac_of(recv);
         let out = h.mac(&h.buf.lock())?;
         Ok(bin_str(out))
     }
-    def "hexdigest" | "to_s" | "inspect" (recv, args, _block) {
+    def "hexdigest" | "to_s" | "inspect" (recv, *args, &_block) {
         arity!(args, 0);
         let h = hmac_of(recv);
         let out = h.mac(&h.buf.lock())?;
         Ok(str(hex(&out)))
     }
-    def "base64digest" (recv, args, _block) {
+    def "base64digest" (recv, *args, &_block) {
         arity!(args, 0);
         let h = hmac_of(recv);
         let out = h.mac(&h.buf.lock())?;
         Ok(str(base64(&out)))
     }
-    def "reset" (recv, args, _block) {
+    def "reset" (recv, *args, &_block) {
         arity!(args, 0);
         hmac_of(recv).buf.lock().clear();
         Ok(recv.clone())
     }
     // Constant-time MAC equality; false for anything that is not an HMAC.
-    def "==" (recv, args, _block) {
+    def "==" (recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));

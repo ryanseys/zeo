@@ -165,7 +165,7 @@ ruby_class! {
     SSLSocket = zeo_abi::OPENSSL_SSL_SOCKET_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `SSLSocket.new(io, context = SSLContext.new)`.
-    def self."new" arity -1 (_recv, args, _block) {
+    def self."new" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=2);
         let io = args[0].clone();
         let fd = crate::builtins::io::socket_raw_fd(&io)
@@ -194,25 +194,25 @@ ruby_class! {
         })))
     }
 
-    def "connect" (recv, args, _block) {
+    def "connect" (recv, *args, &_block) {
         arity!(args, 0);
         do_connect(recv)
     }
     // The descriptor is blocking, so the handshake always completes here
     // rather than answering :wait_readable (documented divergence).
-    def "connect_nonblock" arity -1 (recv, args, _block) {
+    def "connect_nonblock" arity -1 (recv, *args, &_block) {
         arity!(args, 0..=1);
         do_connect(recv)
     }
 
-    def "hostname" (recv, args, _block) {
+    def "hostname" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(match &sock_of(recv).st.lock().hostname {
             Some(h) => str(h.clone()),
             None => RubyValue::Nil,
         })
     }
-    def "hostname=" (recv, args, _block) {
+    def "hostname=" (recv, *args, &_block) {
         arity!(args, 1);
         sock_of(recv).st.lock().hostname = match &args[0] {
             RubyValue::Nil => None,
@@ -220,21 +220,21 @@ ruby_class! {
         };
         Ok(args[0].clone())
     }
-    def "sync_close" (recv, args, _block) {
+    def "sync_close" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(sock_of(recv).st.lock().sync_close.clone())
     }
-    def "sync_close=" (recv, args, _block) {
+    def "sync_close=" (recv, *args, &_block) {
         arity!(args, 1);
         sock_of(recv).st.lock().sync_close = args[0].clone();
         Ok(args[0].clone())
     }
-    def "io" | "to_io" (recv, args, _block) {
+    def "io" | "to_io" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(sock_of(recv).st.lock().io.clone())
     }
 
-    def "context" (recv, args, _block) {
+    def "context" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(sock_of(recv).st.lock().ctx.clone())
     }
@@ -242,7 +242,7 @@ ruby_class! {
     // The three unbuffered primitives `OpenSSL::Buffering` is written
     // against. Everything above them -- read/gets/puts/each_line/... -- lives
     // in that module, where CRuby puts it.
-    def "syswrite" arity -1 (recv, args, _block) {
+    def "syswrite" arity -1 (recv, *args, &_block) {
         let mut total = 0i64;
         for arg in args {
             // A trailing kwargs hash is `exception: false`, not data.
@@ -257,7 +257,7 @@ ruby_class! {
     }
     // One record's worth, blocking until something arrives; EOFError at the
     // end of the session, as CRuby's sysread does.
-    def "sysread" arity -1 (recv, args, _block) {
+    def "sysread" arity -1 (recv, *args, &_block) {
         arity!(args, 0..=3);
         let len = match args.first() {
             None | Some(RubyValue::Nil) => 16384,
@@ -271,14 +271,14 @@ ruby_class! {
     }
 
     // TLS session facts.
-    def "ssl_version" (recv, args, _block) {
+    def "ssl_version" (recv, *args, &_block) {
         arity!(args, 0);
         let mut st = sock_of(recv).st.lock();
         let stream = established(&mut st)?;
         Ok(str(stream.ssl().version_str().to_string()))
     }
     // CRuby answers [name, protocol version, secret bits, algorithm bits].
-    def "cipher" (recv, args, _block) {
+    def "cipher" (recv, *args, &_block) {
         arity!(args, 0);
         let mut st = sock_of(recv).st.lock();
         let Some(stream) = st.stream.as_mut() else {
@@ -298,7 +298,7 @@ ruby_class! {
     // Answers nil rather than raising when no session is up -- CRuby's
     // `ossl_ssl_get_peer_cert` reports "no certificate" for both the
     // never-connected and the anonymous-suite cases.
-    def "peer_cert" (recv, args, _block) {
+    def "peer_cert" (recv, *args, &_block) {
         arity!(args, 0);
         let mut st = sock_of(recv).st.lock();
         let Some(stream) = st.stream.as_mut() else {
@@ -309,7 +309,7 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "verify_result" (recv, args, _block) {
+    def "verify_result" (recv, *args, &_block) {
         arity!(args, 0);
         let mut st = sock_of(recv).st.lock();
         let stream = established(&mut st)?;
@@ -319,7 +319,7 @@ ruby_class! {
     // independent of it -- upstream's `post_connection_check` checks the
     // identity itself rather than trusting the connection's verify mode,
     // which is what makes it meaningful under VERIFY_NONE.
-    def "post_connection_check" (recv, args, _block) {
+    def "post_connection_check" (recv, *args, &_block) {
         arity!(args, 1);
         let hostname = convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
         let mut st = sock_of(recv).st.lock();
@@ -336,7 +336,7 @@ ruby_class! {
         }
         Ok(RubyValue::Bool(true))
     }
-    def "state" (recv, args, _block) {
+    def "state" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sock_of(recv).st.lock();
         Ok(str(if st.stream.is_some() { "SSLOK ".to_string() } else { "PINIT".to_string() }))
@@ -344,7 +344,7 @@ ruby_class! {
 
     // Shut the session down; the underlying IO closes only under
     // `sync_close`, CRuby's rule. `Buffering#close` flushes and calls this.
-    def "sysclose" (recv, args, _block) {
+    def "sysclose" (recv, *args, &_block) {
         arity!(args, 0);
         let (io, sync_close) = {
             let mut st = sock_of(recv).st.lock();

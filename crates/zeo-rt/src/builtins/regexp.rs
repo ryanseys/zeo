@@ -12,14 +12,14 @@ ruby_class! {
 
     // `Regexp.timeout` -- the process-wide default match timeout; zeo
     // enforces none, so it is always `nil`.
-    def self."timeout" arity 0 (_recv, args, _block) {
+    def self."timeout" arity 0 (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }
 
     // `Regexp.last_match` / `Regexp.last_match(n)` -- the thread-local `$~`
     // (whole MatchData), or its nth capture group when given an index.
-    def self."last_match"(_recv, args, _block) {
+    def self."last_match"(_recv, *args, &_block) {
         arity!(args, 0..=1);
         match args.first() {
             None => Ok(crate::lastmatch::last_match()),
@@ -30,7 +30,7 @@ ruby_class! {
     }
 
     // `Regexp.escape(str)` / `.quote(str)`: a source-safe literal of `str`.
-    def self."escape" | "quote"(_recv, args, _block) {
+    def self."escape" | "quote"(_recv, *args, &_block) {
         arity!(args, 1);
         let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let escaped = escape_regexp_source(&s.lock().to_utf8_lossy());
@@ -42,7 +42,7 @@ ruby_class! {
     // flags from the second argument -- an Integer bitmask of the three
     // `Regexp::` constants, or `true` (case-insensitive) / `false`/`nil`
     // (none), matching CRuby's historical boolean shorthand.
-    def self."new" | "compile"(_recv, args, _block) {
+    def self."new" | "compile"(_recv, *args, &_block) {
         arity!(args, 1..=3);
         // A Regexp source: clone it verbatim (flags and all), ignoring any
         // extra options -- CRuby warns but reuses the original.
@@ -69,7 +69,7 @@ ruby_class! {
     // `Regexp.union(pat, ...)` / `Regexp.union([pat, ...])`: an alternation of
     // the patterns. A String member is escaped; a Regexp member keeps its own
     // flags via its `(?-mix:src)` form. Empty -> the never-matching `(?!)`.
-    def self."union"(_recv, args, _block) {
+    def self."union"(_recv, *args, &_block) {
         let items: Vec<RubyValue> = match args {
             [RubyValue::Array(a)] => a.lock().to_vec(),
             _ => args.to_vec(),
@@ -97,14 +97,14 @@ ruby_class! {
     // `Regexp.try_convert(obj)` -- `obj` if it is already a Regexp, its
     // `to_regexp` if it defines one, else `nil`. Only a present-and-lying
     // `to_regexp` raises.
-    def self."try_convert" arity 1 (_recv, args, _block) {
+    def self."try_convert" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(crate::builtins::convert::try_convert_value(&args[0], "Regexp", "to_regexp")?
             .unwrap_or(RubyValue::Nil))
     }
 
     // `Regexp.linear_time?(re_or_str, flags = nil)` -- see the instance method.
-    def self."linear_time?"(_recv, args, _block) {
+    def self."linear_time?"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let source = match &args[0] {
             RubyValue::Regexp(re) => re.source.clone(),
@@ -116,11 +116,11 @@ ruby_class! {
         Ok(RubyValue::Bool(!has_backreference(&source)))
     }
 
-    def "===" arity 1 (recv, args, _block) {
+    def "===" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_case_eq(&args[0])))
     }
-    def "encoding" arity 0 (recv, args, _block) {
+    def "encoding" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let RubyValue::Regexp(re) = recv else {
             unreachable!("the Regexp table only dispatches on Regexp receivers")
@@ -128,14 +128,14 @@ ruby_class! {
         let id = crate::builtins::encoding::computed_encoding_of(&re.source);
         Ok(crate::builtins::encoding::encoding_value(id))
     }
-    def "source" arity 0 (recv, args, _block) {
+    def "source" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::regexp_source(re_of(recv)))
     }
     // `#match?` tests for a match without building a `MatchData` or touching
     // `$~`; `#match` and `#=~` do build one (and set `$~`) via the runtime
     // helpers String's own rows share.
-    def "match?"(recv, args, _block) {
+    def "match?"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let Some(h) = subject_arg(&args[0])? else { return Ok(RubyValue::Bool(false)) };
         // An optional start position (char offset, end-relative when negative)
@@ -145,19 +145,19 @@ ruby_class! {
         };
         Ok(RubyValue::Bool(crate::regexp_is_match(re_of(recv), &sub)))
     }
-    def "match"(recv, args, _block) {
+    def "match"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let Some(h) = subject_arg(&args[0])? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match(re_of(recv), &h))
     }
-    def "=~" arity 1 (recv, args, _block) {
+    def "=~" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         let Some(h) = subject_arg(&args[0])? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
     // `casefold?` reports the `/i` flag; `fixed_encoding?` is always false
     // (zeo regexps are encoding-agnostic over the supported set).
-    def "casefold?" arity 0 (recv, args, _block) {
+    def "casefold?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(re_of(recv).ignore_case))
     }
@@ -167,14 +167,14 @@ ruby_class! {
     // something other than US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` ->
     // US-ASCII -> false). The flag-forced cases (`/u`, `/n`) are a documented
     // gap: no encoding flag is threaded onto the compiled regexp yet.
-    def "fixed_encoding?" arity 0 (recv, args, _block) {
+    def "fixed_encoding?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let enc = crate::builtins::encoding::computed_encoding_of(&re_of(recv).source);
         Ok(RubyValue::Bool(enc != crate::encoding::US_ASCII))
     }
     // `names` lists the named capture groups in order; `named_captures` maps
     // each name to its 1-based capture position(s).
-    def "names" arity 0 (recv, args, _block) {
+    def "names" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         // Each distinct name once, in first-appearance order (a name reused by
         // several groups -- `/(?<a>x)(?<a>z)/` -- lists once, as CRuby does).
@@ -188,7 +188,7 @@ ruby_class! {
         let out = seen.into_iter().map(|n| RubyValue::Str(crate::string_new(n))).collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "named_captures" arity 0 (recv, args, _block) {
+    def "named_captures" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         // Map each name to the LIST of its 1-based group indices, in
         // first-appearance order: a name shared by several groups
@@ -216,13 +216,13 @@ ruby_class! {
     }
     // `#timeout` -- this pattern's per-match timeout; zeo sets none, so
     // it reports the global default (`nil`, "no timeout").
-    def "timeout" arity 0 (recv, args, _block) {
+    def "timeout" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let _ = re_of(recv);
         Ok(RubyValue::Nil)
     }
     // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
-    def "options" arity 0 (recv, args, _block) {
+    def "options" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         let re = re_of(recv);
         let bits = (re.ignore_case as i64) * IGNORECASE
@@ -233,7 +233,7 @@ ruby_class! {
     // `#linear_time?` -- whether matching is guaranteed linear-time. True
     // unless the pattern uses a backreference (lookaround and nested
     // quantifiers stay linear); oracle-verified.
-    def "linear_time?"(recv, args, _block) {
+    def "linear_time?"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(!has_backreference(&re_of(recv).source)))
     }

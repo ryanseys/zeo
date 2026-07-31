@@ -85,14 +85,14 @@ fn cv_of(recv: &RubyValue) -> &RConditionVariable {
 ruby_class! {
     ConditionVariable = zeo_abi::CONDITION_VARIABLE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         arity!(args, 0);
         Ok(new_cv())
     }
 
     // `wait(mutex, timeout=nil)` -- release `mutex`, park until signaled or
     // `timeout` seconds elapse, re-acquire `mutex`, return self.
-    def "wait"(recv, args, _block) {
+    def "wait"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let RubyValue::Mutex(rm) = &args[0] else {
             return Err(type_error!("no implicit conversion into Mutex"));
@@ -130,7 +130,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // Wake at most one waiter; returns self.
-    def "signal"(recv, args, _block) {
+    def "signal"(recv, *args, &_block) {
         arity!(args, 0);
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
@@ -138,7 +138,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // Wake all waiters; returns self.
-    def "broadcast"(recv, args, _block) {
+    def "broadcast"(recv, *args, &_block) {
         arity!(args, 0);
         let cv = cv_of(recv);
         let _g = cv.lock.lock();

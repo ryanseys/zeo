@@ -37,7 +37,7 @@ ruby_class! {
     UDPSocket = zeo_abi::UDP_SOCKET_CLASS < zeo_abi::IP_SOCKET_CLASS;
 
     // `UDPSocket.new(family = AF_INET)` -- an unbound datagram socket.
-    def self."new" | "open"(_recv, args, _block) {
+    def self."new" | "open"(_recv, *args, &_block) {
         arity!(args, 0..=1);
         let family = match args.first() {
             None | Some(RubyValue::Nil) => libc::AF_INET,
@@ -54,14 +54,14 @@ ruby_class! {
     }
 
     // `#bind(host, port)` -- associate a local address (port 0 = kernel-chosen).
-    def "bind"(recv, args, _block) {
+    def "bind"(recv, *args, &_block) {
         arity!(args, 2);
         let (host, port) = (args[0].to_display_string(), super::port_of(&args[1])?);
         associate(fd_of(recv)?, &host, port, "bind(2)", libc::bind)?;
         Ok(RubyValue::Int(0))
     }
     // `#connect(host, port)` -- set the default peer for `#send`/`IO#read`.
-    def "connect"(recv, args, _block) {
+    def "connect"(recv, *args, &_block) {
         arity!(args, 2);
         let (host, port) = (args[0].to_display_string(), super::port_of(&args[1])?);
         associate(fd_of(recv)?, &host, port, "connect(2)", libc::connect)?;
@@ -69,7 +69,7 @@ ruby_class! {
     }
     // `#send(mesg, flags[, host, port])` -- a datagram, to the connected peer or
     // (with host+port) an explicit destination. Answers the byte count.
-    def "send"(recv, args, _block) {
+    def "send"(recv, *args, &_block) {
         arity!(args, 2..=4);
         let fd = fd_of(recv)?;
         let data = crate::builtins::convert::to_rstr(&args[0])?.lock().bytes().to_vec();

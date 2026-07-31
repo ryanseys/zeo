@@ -139,17 +139,17 @@ ruby_module! {
 
     // `PTY.spawn([env,] command... [,options]) -> [r, w, pid]` (or yields the
     // trio). `getpty` is CRuby's older name for the same call.
-    def self."spawn" arity -1 (_recv, args, block) {
+    def self."spawn" arity -1 (_recv, *args, &block) {
         spawn_under_pty(args, block)
     }
-    def self."getpty" arity -1 (_recv, args, block) {
+    def self."getpty" arity -1 (_recv, *args, &block) {
         spawn_under_pty(args, block)
     }
 
     // `PTY.open -> [master, slave]` (or yields the pair and closes it after):
     // the raw pair with no child attached -- the master an IO, the slave a
     // File carrying its device path.
-    def self."open" arity 0 (_recv, args, block) {
+    def self."open" arity 0 (_recv, *args, &block) {
         arity!(args, 0);
         let (master, slave, name) = open_pair()?;
         let m = crate::builtins::io::pipe_value(master);
@@ -168,7 +168,7 @@ ruby_module! {
     // nil while it runs, its `Process::Status` once it exited or stopped
     // (`WUNTRACED`, as CRuby polls). With `raise`, a finished child raises
     // `PTY::ChildExited` instead.
-    def self."check" arity -1 (_recv, args, _block) {
+    def self."check" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=2);
         let pid = convert::to_index(&args[0])?;
         let do_raise = !matches!(args.get(1), None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)));

@@ -245,7 +245,7 @@ ruby_class! {
     StringScanner = zeo_abi::STRING_SCANNER_CLASS < zeo_abi::OBJECT_CLASS;
 
     // Anchored scan: on a hit, consume and return the matched text; else nil.
-    def "scan" (recv, args, _block) {
+    def "scan" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, true)? {
@@ -260,7 +260,7 @@ ruby_class! {
         }
     }
     // Like `scan` but returns the matched LENGTH (or nil), still advancing.
-    def "skip" (recv, args, _block) {
+    def "skip" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, true)? {
@@ -275,7 +275,7 @@ ruby_class! {
         }
     }
     // Anchored length probe -- does NOT advance. Returns the length or nil.
-    def "match?" (recv, args, _block) {
+    def "match?" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, true)? {
@@ -288,7 +288,7 @@ ruby_class! {
         }
     }
     // Like `scan` but does NOT advance (peek the matched text).
-    def "check" (recv, args, _block) {
+    def "check" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, true)? {
@@ -302,7 +302,7 @@ ruby_class! {
     }
     // Scan forward to and including the next match; consume and return the
     // text from the old position through the match, or nil.
-    def "scan_until" (recv, args, _block) {
+    def "scan_until" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, false)? {
@@ -320,7 +320,7 @@ ruby_class! {
         }
     }
     // `skip_until` -- `scan_until`'s length-returning form.
-    def "skip_until" (recv, args, _block) {
+    def "skip_until" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, false)? {
@@ -340,15 +340,15 @@ ruby_class! {
     // `(true, true)`, `skip` `(true, false)`, `check` `(false, true)`,
     // `match?` `(false, false)`. `search_full` is the same for the forward
     // search, over the whole span consumed rather than the match alone.
-    def "scan_full" (recv, args, _block) {
+    def "scan_full" (recv, *args, &_block) {
         arity!(args, 3);
         full_scan(&mut sc_of(recv).state.lock(), args, true)
     }
-    def "search_full" (recv, args, _block) {
+    def "search_full" (recv, *args, &_block) {
         arity!(args, 3);
         full_scan(&mut sc_of(recv).state.lock(), args, false)
     }
-    def "getch" (recv, args, _block) {
+    def "getch" (recv, *args, &_block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         if st.pos >= st.string.len() {
@@ -360,78 +360,78 @@ ruby_class! {
         st.consumed(from, to);
         Ok(str_val(&st.string[from..to]))
     }
-    def "peek" (recv, args, _block) {
+    def "peek" (recv, *args, &_block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         let st = sc_of(recv).state.lock();
         let end = (st.pos + (*n).max(0) as usize).min(st.string.len());
         Ok(str_val(&st.string[st.pos..end]))
     }
-    def "rest" (recv, args, _block) {
+    def "rest" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(str_val(&st.string[st.pos..]))
     }
     // Bytes, not characters -- the counterpart of `pos` (`charpos` is the one
     // that counts characters).
-    def "rest_size" (recv, args, _block) {
+    def "rest_size" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Int((st.string.len() - st.pos.min(st.string.len())) as i64))
     }
-    def "rest?" (recv, args, _block) {
+    def "rest?" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Bool(st.pos < st.string.len()))
     }
-    def "eos?" (recv, args, _block) {
+    def "eos?" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Bool(st.pos >= st.string.len()))
     }
     // BYTE offset -- Ruby's scanner positions are byte-based throughout.
-    def "pos" | "pointer" (recv, args, _block) {
+    def "pos" | "pointer" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(sc_of(recv).state.lock().pos as i64))
     }
     // ...and its CHARACTER-counting sibling, which differs the moment the
     // string holds anything multi-byte.
-    def "charpos" (recv, args, _block) {
+    def "charpos" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Int(st.string[..st.pos].chars().count() as i64))
     }
-    def "pos=" | "pointer=" (recv, args, _block) {
+    def "pos=" | "pointer=" (recv, *args, &_block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         sc_of(recv).state.lock().pos = (*n).max(0) as usize;
         Ok(args[0].clone())
     }
-    def "reset" (recv, args, _block) {
+    def "reset" (recv, *args, &_block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         st.pos = 0;
         st.last = None;
         Ok(recv.clone())
     }
-    def "terminate" (recv, args, _block) {
+    def "terminate" (recv, *args, &_block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         st.pos = st.string.len();
         st.last = None;
         Ok(recv.clone())
     }
-    def "matched" (recv, args, _block) {
+    def "matched" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(group_text(&st, 0))
     }
-    def "matched?" (recv, args, _block) {
+    def "matched?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(sc_of(recv).state.lock().last.is_some()))
     }
     // The matched text's BYTE length, or nil when the last attempt missed.
-    def "matched_size" (recv, args, _block) {
+    def "matched_size" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(match st.matched_span() {
@@ -439,7 +439,7 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "pre_match" (recv, args, _block) {
+    def "pre_match" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(match st.matched_span() {
@@ -447,7 +447,7 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "post_match" (recv, args, _block) {
+    def "post_match" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(match st.matched_span() {
@@ -458,7 +458,7 @@ ruby_class! {
     // `scanner[n]` / `scanner[:name]` -- a group of the LAST match. Unlike
     // `MatchData#[]`, an out-of-range INDEX answers nil rather than raising;
     // an unknown NAME still raises, matching CRuby.
-    def "[]" (recv, args, _block) {
+    def "[]" (recv, *args, &_block) {
         arity!(args, 1);
         let st = sc_of(recv).state.lock();
         Ok(match group_index(&st, &args[0])? {
@@ -468,14 +468,14 @@ ruby_class! {
     }
     // Every group EXCEPT the whole match, `nil` for one that didn't
     // participate; nil overall when the last attempt missed.
-    def "captures" (recv, args, _block) {
+    def "captures" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         let Some(m) = st.last.as_ref() else { return Ok(RubyValue::Nil) };
         let out = (1..m.groups.len()).map(|i| group_text(&st, i)).collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "values_at" (recv, args, _block) {
+    def "values_at" (recv, *args, &_block) {
         let st = sc_of(recv).state.lock();
         if st.last.is_none() {
             return Ok(RubyValue::Nil);
@@ -491,7 +491,7 @@ ruby_class! {
     }
     // `{ "name" => text }` for each named group -- `{}` (not nil) when the
     // pattern had none, and `{}` when the last attempt missed.
-    def "named_captures" (recv, args, _block) {
+    def "named_captures" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         let pairs = st.last.as_ref().map_or_else(Vec::new, |m| {
@@ -503,7 +503,7 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     // The group COUNT of the last match, whole match included -- nil on a miss.
-    def "size" (recv, args, _block) {
+    def "size" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(match st.last.as_ref() {
@@ -511,18 +511,18 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
-    def "beginning_of_line?" | "bol?" (recv, args, _block) {
+    def "beginning_of_line?" | "bol?" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(RubyValue::Bool(st.pos == 0 || st.string.as_bytes().get(st.pos - 1) == Some(&b'\n')))
     }
-    def "string" (recv, args, _block) {
+    def "string" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(str_val(&sc_of(recv).state.lock().string))
     }
     // Replacing the subject restarts the scan; APPENDING to it doesn't, which
     // is the whole point of `<<` (feeding a scanner incrementally).
-    def "string=" (recv, args, _block) {
+    def "string=" (recv, *args, &_block) {
         arity!(args, 1);
         let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let st = &mut *sc_of(recv).state.lock();
@@ -532,7 +532,7 @@ ruby_class! {
         st.prev_pos = None;
         Ok(args[0].clone())
     }
-    def "concat" | "<<" (recv, args, _block) {
+    def "concat" | "<<" (recv, *args, &_block) {
         arity!(args, 1);
         let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let text = s.lock().to_utf8_lossy().into_owned();
@@ -542,14 +542,14 @@ ruby_class! {
     // Whether `^`/`\A` anchor to the string start rather than the scan
     // position. Always false unless asked for at construction -- and see
     // `regexp::scanner_match` for why the true form isn't honoured yet.
-    def "fixed_anchor?" (recv, args, _block) {
+    def "fixed_anchor?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(sc_of(recv).state.lock().fixed_anchor))
     }
     // `#<StringScanner 5/30 "aaaaa" @ "aaaaa...">` -- position over length,
     // then up to five bytes each side of it; a spent scanner is just
     // `#<StringScanner fin>`.
-    def "inspect" (recv, args, _block) {
+    def "inspect" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         if st.pos >= st.string.len() {
@@ -577,7 +577,7 @@ ruby_class! {
 
     // `exist?(pattern)` -- look ahead for the next match WITHOUT advancing;
     // returns the byte count from the current position to the match end, or nil.
-    def "exist?" (recv, args, _block) {
+    def "exist?" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, false)? {
@@ -592,7 +592,7 @@ ruby_class! {
     }
     // Like `scan_until` but does NOT advance -- peek the text from the current
     // position through the next match, or nil.
-    def "check_until" (recv, args, _block) {
+    def "check_until" (recv, *args, &_block) {
         arity!(args, 1);
         let st = &mut *sc_of(recv).state.lock();
         match crate::regexp::scanner_match(&args[0], &st.string, st.pos, false)? {
@@ -607,7 +607,7 @@ ruby_class! {
     }
     // `unscan` -- back the pointer up to before the most recent advancing scan
     // (CRuby remembers exactly one); a ScanError if there is none.
-    def "unscan" (recv, args, _block) {
+    def "unscan" (recv, *args, &_block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         match st.prev_pos.take() {
@@ -628,7 +628,7 @@ ruby_class! {
         }
     }
     // `get_byte` -- one BYTE (not char), advancing by one; nil at end.
-    def "get_byte" (recv, args, _block) {
+    def "get_byte" (recv, *args, &_block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         if st.pos >= st.string.len() {
@@ -643,7 +643,7 @@ ruby_class! {
     }
     // `scan_byte`/`peek_byte` -- `get_byte`/`peek(1)` as an INTEGER, which is
     // what a byte-level lexer actually wants.
-    def "scan_byte" (recv, args, _block) {
+    def "scan_byte" (recv, *args, &_block) {
         arity!(args, 0);
         let st = &mut *sc_of(recv).state.lock();
         if st.pos >= st.string.len() {
@@ -655,7 +655,7 @@ ruby_class! {
         st.consumed(from, to);
         Ok(RubyValue::Int(byte as i64))
     }
-    def "peek_byte" (recv, args, _block) {
+    def "peek_byte" (recv, *args, &_block) {
         arity!(args, 0);
         let st = sc_of(recv).state.lock();
         Ok(match st.string.as_bytes().get(st.pos) {
@@ -666,7 +666,7 @@ ruby_class! {
     // `scan_integer(base: 10)` -- an optional sign then digits in base 10 or
     // 16 (where a `0x` prefix is allowed), consumed and returned as an
     // Integer. nil, consuming nothing, when the text isn't one.
-    def "scan_integer" (recv, args, _block) {
+    def "scan_integer" (recv, *args, &_block) {
         let base = integer_base(args)?;
         let st = &mut *sc_of(recv).state.lock();
         let tail = &st.string[st.pos..];
@@ -699,7 +699,7 @@ ruby_class! {
         Ok(RubyValue::Int(n))
     }
 
-    def self."new" (_recv, args, _block) {
+    def self."new" (_recv, *args, &_block) {
         arity!(args, 1..=2); // (string[, fixed_anchor: bool])
         let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let text = s.lock().to_utf8_lossy().into_owned();

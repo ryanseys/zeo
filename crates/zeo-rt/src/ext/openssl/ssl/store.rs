@@ -54,19 +54,19 @@ pub(crate) fn new_store() -> RubyValue {
 ruby_class! {
     Store = zeo_abi::OPENSSL_X509_STORE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" arity -1 (_recv, args, _block) {
+    def self."new" arity -1 (_recv, *args, &_block) {
         arity!(args, 0..=1);
         Ok(new_store())
     }
-    def "set_default_paths" (_recv, args, _block) {
+    def "set_default_paths" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }
-    def "add_file" (recv, args, _block) {
+    def "add_file" (recv, *args, &_block) {
         arity!(args, 1);
         Ok(recv.clone())
     }
-    def "add_path" (recv, args, _block) {
+    def "add_path" (recv, *args, &_block) {
         arity!(args, 1);
         Ok(recv.clone())
     }

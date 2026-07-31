@@ -79,21 +79,21 @@ ruby_class! {
 
     // `OpenSSL::Digest::SHA256.new(data = nil)` -- the algorithm is the
     // receiver class's own.
-    def self."new" arity -1 (recv, args, _block) {
+    def self."new" arity -1 (recv, *args, &_block) {
         arity!(args, 0..=1);
         let (id, name) = algo_of_class(recv);
         new_digest(id, &str(name.to_string()), args.first())
     }
     // One-shot class forms, data only.
-    def self."digest" arity 1 (recv, args, _block) {
+    def self."digest" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(bin_str(class_raw(recv, &args[0])?))
     }
-    def self."hexdigest" arity 1 (recv, args, _block) {
+    def self."hexdigest" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(str(hex(&class_raw(recv, &args[0])?)))
     }
-    def self."base64digest" arity 1 (recv, args, _block) {
+    def self."base64digest" arity 1 (recv, *args, &_block) {
         arity!(args, 1);
         Ok(str(super::base64(&class_raw(recv, &args[0])?)))
     }

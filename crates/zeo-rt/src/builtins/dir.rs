@@ -416,7 +416,7 @@ ruby_class! {
 
     // `Dir.new(path)` / `Dir.open(path)` -- a handle over the directory's
     // entries. The block form of `open` yields the handle and closes it after.
-    def self."new" | "open"(_recv, args, block) {
+    def self."new" | "open"(_recv, *args, &block) {
         arity!(args, 1..=2);
         let path = path_arg(&args[0], "open")?;
         let dir = open_dir(&path)?;
@@ -429,7 +429,7 @@ ruby_class! {
     }
     // `Dir.for_fd(fd)` -- a handle over an already-open directory descriptor.
     // It lists through the descriptor, so it has no path and `#path` is nil.
-    def self."for_fd"(_recv, args, _block) {
+    def self."for_fd"(_recv, *args, &_block) {
         arity!(args, 1);
         let fd = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
         let entries = read_names_fd(fd)?;
@@ -437,7 +437,7 @@ ruby_class! {
     }
     // `Dir.fchdir(fd)` -- `chdir` to an open directory descriptor. The block
     // form restores the previous directory afterwards, as `Dir.chdir` does.
-    def self."fchdir"(_recv, args, block) {
+    def self."fchdir"(_recv, *args, &block) {
         arity!(args, 1);
         let fd = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
         let previous = std::env::current_dir().ok();
@@ -453,12 +453,12 @@ ruby_class! {
         }
         out
     }
-    def self."pwd" | "getwd"(_recv, args, _block) {
+    def self."pwd" | "getwd"(_recv, *args, &_block) {
         arity!(args, 0);
         let d = std::env::current_dir().map_err(|e| raise_errno(&e, "getcwd", "."))?;
         Ok(str_val(d.to_string_lossy().into_owned()))
     }
-    def self."chdir"(_recv, args, block) {
+    def self."chdir"(_recv, *args, &block) {
         arity!(args, 0..=1);
         let target = match args.first() {
             Some(v) => path_arg(v, "chdir")?,
@@ -477,7 +477,7 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `entries` INCLUDES `.` and `..`; `children` excludes them.
-    def self."entries"(_recv, args, _block) {
+    def self."entries"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let path = path_arg(&args[0], "entries")?;
         let mut names = read_names(&path)?;
@@ -488,7 +488,7 @@ ruby_class! {
             names.into_iter().map(str_val).collect(),
         )))
     }
-    def self."children"(_recv, args, _block) {
+    def self."children"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let path = path_arg(&args[0], "children")?;
         let mut names = read_names(&path)?;
@@ -499,7 +499,7 @@ ruby_class! {
     }
     // `Dir.foreach(path)` -- yield each entry name (INCLUDING `.` and `..`,
     // like `entries`); without a block, an Enumerator.
-    def self."foreach"(recv, args, block) {
+    def self."foreach"(recv, *args, &block) {
         arity!(args, 1..=2);
         let path = path_arg(&args[0], "foreach")?;
         let p = block_or_enum!(recv, "foreach", args, block);
@@ -512,7 +512,7 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def self."each_child"(_recv, args, block) {
+    def self."each_child"(_recv, *args, &block) {
         arity!(args, 1);
         let path = path_arg(&args[0], "each_child")?;
         let Some(RubyValue::Proc(p)) = block else {
@@ -525,12 +525,12 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def self."exist?"(_recv, args, _block) {
+    def self."exist?"(_recv, *args, &_block) {
         arity!(args, 1);
         let path = path_arg(&args[0], "exist?")?;
         Ok(RubyValue::Bool(std::path::Path::new(&path).is_dir()))
     }
-    def self."empty?"(_recv, args, _block) {
+    def self."empty?"(_recv, *args, &_block) {
         arity!(args, 1);
         let path = path_arg(&args[0], "empty?")?;
         // A missing path raises (ENOENT); an existing NON-directory is simply
@@ -542,7 +542,7 @@ ruby_class! {
         }
         Ok(RubyValue::Bool(read_names(&path)?.is_empty()))
     }
-    def self."mkdir"(_recv, args, _block) {
+    def self."mkdir"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let path = path_arg(&args[0], "mkdir")?;
         std::fs::create_dir(&path).map_err(|e| raise_errno(&e, "mkdir", &path))?;
@@ -553,7 +553,7 @@ ruby_class! {
     // directory (recursively) afterward -- even if the block raises --
     // answering the block's value; without a block, answer the path for the
     // caller to clean up.
-    def self."mktmpdir"(_recv, args, block) {
+    def self."mktmpdir"(_recv, *args, &block) {
         arity!(args, 0..=2);
         let (prefix, suffix) = match args.first() {
             None | Some(RubyValue::Nil) => ("d".to_string(), String::new()),
@@ -598,13 +598,13 @@ ruby_class! {
             _ => Ok(str_val(path_str)),
         }
     }
-    def self."rmdir" | "unlink" | "delete"(_recv, args, _block) {
+    def self."rmdir" | "unlink" | "delete"(_recv, *args, &_block) {
         arity!(args, 1);
         let path = path_arg(&args[0], "rmdir")?;
         std::fs::remove_dir(&path).map_err(|e| raise_errno(&e, "rmdir", &path))?;
         Ok(RubyValue::Int(0))
     }
-    def self."home"(_recv, args, _block) {
+    def self."home"(_recv, *args, &_block) {
         arity!(args, 0..=1);
         Ok(str_val(std::env::var("HOME").unwrap_or_else(|_| "/".to_string())))
     }
@@ -616,7 +616,7 @@ ruby_class! {
     // missing convenience. It arrives with the stdlib work, as Ruby's own.
     // `Dir.glob(pat)` / `Dir[pat]` -- the block form yields each match and
     // answers nil; otherwise an Array. Multiple patterns union.
-    def self."glob" | "[]"(_recv, args, block) {
+    def self."glob" | "[]"(_recv, *args, &block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
@@ -655,7 +655,7 @@ ruby_class! {
     }
 
     // `#read` -- the next entry name (INCLUDING `.`/`..`), or nil at the end.
-    def "read"(recv, args, _block) {
+    def "read"(recv, *args, &_block) {
         arity!(args, 0);
         let d = live_dir(recv)?;
         let i = d.pos.fetch_add(1, Ordering::Relaxed);
@@ -670,7 +670,7 @@ ruby_class! {
     }
     // `#each` -- yield every entry from the current cursor onward (INCLUDING
     // `.`/`..`); without a block, an Enumerator over the entry array.
-    def "each"(recv, args, block) {
+    def "each"(recv, *args, &block) {
         arity!(args, 0);
         let entries: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
         let p = block_or_enum!(recv, "each", args, block);
@@ -680,7 +680,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `#each_child` -- like `#each` but WITHOUT `.` and `..`.
-    def "each_child"(recv, args, block) {
+    def "each_child"(recv, *args, &block) {
         arity!(args, 0);
         let entries: Vec<RubyValue> = live_dir(recv)?
             .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
@@ -692,18 +692,18 @@ ruby_class! {
     }
     // `#children` / `#entries` -- the entry names as an Array (children drops
     // `.`/`..`); both snapshot the whole listing regardless of the cursor.
-    def "children"(recv, args, _block) {
+    def "children"(recv, *args, &_block) {
         arity!(args, 0);
         let out: Vec<RubyValue> = live_dir(recv)?
             .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
     }
-    def "entries"(recv, args, _block) {
+    def "entries"(recv, *args, &_block) {
         arity!(args, 0);
         let out: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
     }
-    def "path" | "to_path"(recv, args, _block) {
+    def "path" | "to_path"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(match &recv_dir(recv)?.path {
             Some(p) => str_val(p.clone()),
@@ -711,30 +711,30 @@ ruby_class! {
         })
     }
     // `#pos`/`#tell` read the cursor; `#pos=`/`#seek` set it; `#rewind` zeroes it.
-    def "pos" | "tell"(recv, args, _block) {
+    def "pos" | "tell"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(live_dir(recv)?.pos.load(Ordering::Relaxed) as i64))
     }
     // `pos=` answers the new position; `seek` answers the Dir itself (so it
     // chains), the one behavioural difference between the two.
-    def "pos="(recv, args, _block) {
+    def "pos="(recv, *args, &_block) {
         arity!(args, 1);
         let n = crate::builtins::convert::to_index(&args[0])?;
         live_dir(recv)?.pos.store(n.max(0) as usize, Ordering::Relaxed);
         Ok(args[0].clone())
     }
-    def "seek"(recv, args, _block) {
+    def "seek"(recv, *args, &_block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
         Ok(recv.clone())
     }
-    def "rewind"(recv, args, _block) {
+    def "rewind"(recv, *args, &_block) {
         arity!(args, 0);
         live_dir(recv)?.pos.store(0, Ordering::Relaxed);
         Ok(recv.clone())
     }
-    def "close" as dir_h_close (recv, args, _block) {
+    def "close" as dir_h_close (recv, *args, &_block) {
         arity!(args, 0);
         let d = recv_dir(recv)?;
         d.open.store(false, Ordering::Relaxed);
@@ -744,11 +744,11 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "fileno"(recv, args, _block) {
+    def "fileno"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(live_dir(recv)?.fd.load(Ordering::Relaxed) as i64))
     }
-    def "inspect" | "to_s"(recv, args, _block) {
+    def "inspect" | "to_s"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(str_val(match &recv_dir(recv)?.path {
             Some(p) => format!("#<Dir:{p}>"),

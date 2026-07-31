@@ -40,26 +40,26 @@ ruby_module! {
     // `public_send`'s visibility gate lives in `dispatch::send_value_public_in`
     // and is applied by codegen at the call site, so this row is the
     // visibility-blind path both names funnel through once that check passes.
-    def "send" | "public_send"(recv, args, block) {
+    def "send" | "public_send"(recv, *args, &block) {
         crate::builtins::basic_object::dynamic_send(recv, args, block)
     }
 
     // The print family as REAL Kernel methods (Path 2): `obj.send(:puts,
     // ...)`, `self.puts` on `main`, and any dynamic dispatch reach these;
     // the receiver is ignored, exactly like CRuby's private Kernel#puts.
-    def "puts"(_recv, args, _block) {
+    def "puts"(_recv, *args, &_block) {
         kernel_puts(args)
     }
-    def "print"(_recv, args, _block) {
+    def "print"(_recv, *args, &_block) {
         kernel_print(args)
     }
-    def "p"(_recv, args, _block) {
+    def "p"(_recv, *args, &_block) {
         kernel_p(args)
     }
     // `Kernel#open(path, mode = "r")` -- opens a File (the `"|command"` pipe
     // form is out of scope); delegates to `File.open` so the block-closes-file
     // contract and mode handling are shared, never divergent.
-    def "open"(_recv, args, block) {
+    def "open"(_recv, *args, &block) {
         crate::builtins::file::lookup_class("open").unwrap()(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
             args,
@@ -74,7 +74,7 @@ ruby_module! {
     // shape -- honest, and rescuable by `begin; require dyn; rescue LoadError`
     // -- rather than a silent no-op. A non-String-convertible argument raises
     // the same TypeError CRuby's path coercion does.
-    def "require" | "require_relative" | "load"(_recv, args, _block) {
+    def "require" | "require_relative" | "load"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let path = crate::builtins::convert::to_rstr(&args[0])?
             .lock()
@@ -102,32 +102,32 @@ ruby_module! {
         }
         Err(sig)
     }
-    def "pp"(_recv, args, _block) {
+    def "pp"(_recv, *args, &_block) {
         kernel_pp(args)
     }
-    def "warn"(_recv, args, _block) {
+    def "warn"(_recv, *args, &_block) {
         kernel_warn(args)
     }
     // Spawning a child. `system` inherits stdout/stderr and answers a
     // true/false/nil verdict; the backtick captures stdout and answers it as a
     // String. Both set `$?` (see `builtins::process`). Private Kernel methods,
     // so `respond_to?`'s default hides them (see `is_hidden_builtin_private`).
-    def "system"(recv, args, block) {
+    def "system"(recv, *args, &block) {
         crate::builtins::process::system(recv, args, block)
     }
-    def "`"(recv, args, block) {
+    def "`"(recv, *args, &block) {
         crate::builtins::process::backquote(recv, args, block)
     }
     // `spawn` starts the child WITHOUT waiting and answers its pid -- the
     // Kernel spelling of `Process.spawn`, which Open3's popen family calls
     // receiverless from module context.
-    def "spawn"(_recv, args, _block) {
+    def "spawn"(_recv, *args, &_block) {
         crate::builtins::process::spawn_pid(args)
     }
     // `putc` -- writes one character to `$stdout` and returns its argument.
     // An Integer writes the low byte (`n & 0xff`); a String writes its first
     // character.
-    def "putc"(_recv, args, _block) {
+    def "putc"(_recv, *args, &_block) {
         arity!(args, 1);
         let out = crate::builtins::io::current_stdout();
         // Shared with `IO#putc`: first character in the string's own
@@ -139,32 +139,32 @@ ruby_module! {
     }
     // `public_method(:name)` -- a bound Method restricted to the public
     // surface (a private/protected name raises NameError).
-    def "public_method"(recv, args, _block) {
+    def "public_method"(recv, *args, &_block) {
         arity!(args, 1);
         crate::builtins::method::public_method_new(recv, &args[0])
     }
     // `Kernel#method(:name)` -- a bound Method object (see
     // `builtins::method`). Reaches every receiver via the MRO walk's
     // Kernel row, including the top-level `main` object.
-    def "method"(recv, args, _block) {
+    def "method"(recv, *args, &_block) {
         arity!(args, 1);
         crate::builtins::method::method_new(recv, &args[0])
     }
-    def "singleton_method"(recv, args, _block) {
+    def "singleton_method"(recv, *args, &_block) {
         arity!(args, 1);
         crate::builtins::method::singleton_method_new(recv, &args[0])
     }
     // `obj.singleton_class` -- the per-object singleton class as a real Class
     // value; defining a method on it installs a per-object singleton (see
     // `runtime_meta::runtime_singleton_class`).
-    def "singleton_class"(recv, args, _block) {
+    def "singleton_class"(recv, *args, &_block) {
         arity!(args, 0);
         crate::runtime_meta::runtime_singleton_class(recv)
     }
     // `obj.extend(Mod, ...)` -- mix each module's instance methods into the
     // receiver's singleton. The bare `extend Mod` STATEMENT form (no receiver)
     // is a separate parse-level mixin; this row is the method-call form only.
-    def "extend"(recv, args, _block) {
+    def "extend"(recv, *args, &_block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
@@ -178,7 +178,7 @@ ruby_module! {
     // receiver is a `Class`. Universal (this Kernel row is reached by every
     // receiver's MRO walk, including a class value). A singleton on an
     // immediate (Integer/Symbol/nil/...) is a `TypeError`, like CRuby.
-    def "define_singleton_method"(recv, args, block) {
+    def "define_singleton_method"(recv, *args, &block) {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
         if let Some(src) = args.get(1) {
@@ -199,7 +199,7 @@ ruby_module! {
     // THAT captured scope (its locals, its `self`, its cref); `nil` means the
     // current context, as in CRuby. The filename/lineno arguments set what
     // `__FILE__`/`__LINE__` report inside the source.
-    def "eval"(recv, args, _block) {
+    def "eval"(recv, *args, &_block) {
         arity!(args, 1..=4);
         let file = match args.get(2) {
             Some(v) if !v.is_nil() => {
@@ -229,7 +229,7 @@ ruby_module! {
     // `sleep(secs)` -- universal Kernel methods. The static codegen fast path
     // handles the literal `catch {}`/`throw` forms; these rows serve dynamic
     // dispatch (a `send :catch`, a `catch` reached through the MRO walk).
-    def "catch"(_recv, args, block) {
+    def "catch"(_recv, *args, &block) {
         arity!(args, 0..=1);
         // A bare `catch` mints a fresh, unique tag object (passed to the block).
         let tag = args
@@ -241,7 +241,7 @@ ruby_module! {
         })?;
         crate::kernel_catch(tag, blk)
     }
-    def "throw"(_recv, args, _block) {
+    def "throw"(_recv, *args, &_block) {
         crate::kernel_throw(args)
     }
     // `Kernel#raise`/`#fail` as REAL dispatch rows -- reached by
@@ -258,7 +258,7 @@ ruby_module! {
     // `cause:` doesn't reach this row (kwargs ride as a trailing Hash that
     // 2-arg shapes would misread; the automatic `$!` chaining below is
     // what dynamic callers get).
-    def "raise" | "fail"(_recv, args, _block) {
+    def "raise" | "fail"(_recv, *args, &_block) {
         arity!(args, 0..=3);
         let exc = match args {
             // Bare re-raise: the exception being rescued, exactly (same
@@ -304,10 +304,10 @@ ruby_module! {
         };
         Err(Signal::Raise(crate::dispatch::raise_with_cause(exc)))
     }
-    def "sleep"(_recv, args, _block) {
+    def "sleep"(_recv, *args, &_block) {
         crate::kernel_sleep(args)
     }
-    def "class"(recv, args, _block) {
+    def "class"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))
     }
@@ -315,7 +315,7 @@ ruby_module! {
     // pointer; immediates use CRuby's fixed/derived shapes (Integers
     // `2n+1`, nil/true/false their reserved slots). Strings/Arrays/Hashes
     // use their cell pointer -- identity, not content.
-    def "object_id" | "__id__"(recv, args, _block) {
+    def "object_id" | "__id__"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(match recv {
             RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
@@ -334,15 +334,15 @@ ruby_module! {
             _ => recv as *const _ as i64,
         }))
     }
-    def "nil?" arity 0 (recv, args, _block) {
+    def "nil?" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv.is_nil()))
     }
-    def "itself"(recv, args, _block) {
+    def "itself"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    def "caller"(_recv, args, _block) {
+    def "caller"(_recv, *args, &_block) {
         // The formatted frames above the calling frame (this builtin has no
         // frame of its own, so `start = 1` -- the default -- skips exactly
         // the caller). `caller(0)` includes the caller itself; a `start`
@@ -366,7 +366,7 @@ ruby_module! {
     // `caller`'s object form: the same window over the same frames, each entry
     // a `Thread::Backtrace::Location` with real `#path`/`#lineno`/`#label`
     // (forwardable builds its deprecation message out of them).
-    def "caller_locations"(_recv, args, _block) {
+    def "caller_locations"(_recv, *args, &_block) {
         arity!(args, 0..=2);
         let all = crate::frames::caller_frames(0);
         let (start, length) = caller_window(args);
@@ -387,52 +387,52 @@ ruby_module! {
     // `method(:Integer)`, `send`, a curry -- not only the codegen fast-path that
     // intercepts a direct literal call. Each delegates to the same runtime
     // routine that fast-path emits, so behavior is identical however it's reached.
-    def "format" | "sprintf"(_recv, args, _block) {
+    def "format" | "sprintf"(_recv, *args, &_block) {
         kernel_format(args)
     }
-    def "Integer"(_recv, args, _block) {
+    def "Integer"(_recv, *args, &_block) {
         kernel_integer(args)
     }
-    def "Float"(_recv, args, _block) {
+    def "Float"(_recv, *args, &_block) {
         kernel_float(args)
     }
-    def "String"(_recv, args, _block) {
+    def "String"(_recv, *args, &_block) {
         kernel_string(args)
     }
-    def "Array"(_recv, args, _block) {
+    def "Array"(_recv, *args, &_block) {
         kernel_array(args)
     }
-    def "Hash"(_recv, args, _block) {
+    def "Hash"(_recv, *args, &_block) {
         kernel_hash(args)
     }
-    def "Rational"(_recv, args, _block) {
+    def "Rational"(_recv, *args, &_block) {
         kernel_rational(args)
     }
     // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
     // removed). Present whenever the extension is compiled in; like `Time`'s
     // extra methods, it answers even without `require "bigdecimal"`.
     #[cfg(feature = "ext-bigdecimal")]
-    def "BigDecimal"(_recv, args, _block) {
+    def "BigDecimal"(_recv, *args, &_block) {
         crate::ext::bigdecimal::kernel_big_decimal(args)
     }
-    def "Complex"(_recv, args, _block) {
+    def "Complex"(_recv, *args, &_block) {
         kernel_complex(args)
     }
     // Private `Kernel#trap` -- the receiverless spelling of `Signal.trap`, same
     // validated no-op that records the action and returns the prior one.
-    def "trap"(_recv, args, block) {
+    def "trap"(_recv, *args, &block) {
         crate::builtins::signal::trap_impl(args, block)
     }
     // `proc(&b)` / `proc { }` -- answer the passed block as a Proc (it already IS
     // one at the ABI level). No block is CRuby's `ArgumentError`.
-    def "proc"(_recv, args, block) {
+    def "proc"(_recv, *args, &block) {
         arity!(args, 0);
         match block {
             Some(b @ RubyValue::Proc(_)) => Ok(b),
             _ => Err(arg_error!("tried to create Proc object without a block")),
         }
     }
-    def "dup"(recv, args, _block) {
+    def "dup"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(match recv {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?,
@@ -447,7 +447,7 @@ ruby_module! {
             _ => recv.dup_value(false)?,
         })
     }
-    def "clone"(recv, args, _block) {
+    def "clone"(recv, *args, &_block) {
         arity!(args, 0..=1);
         // `clone(freeze: nil)` PRESERVES the original's frozen state (the
         // default), `freeze: true` forces the copy frozen, `freeze: false`
@@ -487,30 +487,30 @@ ruby_module! {
         }
         Ok(copy)
     }
-    def "frozen?"(recv, args, _block) {
+    def "frozen?"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv.is_frozen()))
     }
-    def "freeze"(recv, args, _block) {
+    def "freeze"(recv, *args, &_block) {
         arity!(args, 0);
         recv.freeze_value()
     }
-    def "hash"(recv, args, _block) {
+    def "hash"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(crate::value_hash_code(recv)))
     }
-    def "to_s" arity 0 (recv, args, _block) {
+    def "to_s" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         // Fallible: `[obj].to_s` re-enters a user `inspect` per element,
         // and a raising one propagates (catchable, CRuby's rule).
         Ok(RubyValue::Str(crate::string_new(recv.try_display_string()?)))
     }
-    def "inspect" arity 0 (recv, args, _block) {
+    def "inspect" arity 0 (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv.try_inspect_string()?)))
     }
     // Kernel's default `===` is `==` (case subjects fall back to equality).
-    def "==="(recv, args, _block) {
+    def "==="(recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
@@ -519,7 +519,7 @@ ruby_module! {
     // define their own `<=>`, which the MRO walk reaches before this Kernel
     // fallback, so this only answers for the un-ordered types (Hash, Range,
     // Regexp, nil, true/false, Proc, Complex).
-    def "<=>"(recv, args, _block) {
+    def "<=>"(recv, *args, &_block) {
         arity!(args, 1);
         Ok(if recv.rb_eq(&args[0]) {
             RubyValue::Int(0)
@@ -529,20 +529,20 @@ ruby_module! {
     }
     // `eql?`: same class AND `==` (what makes `1.eql?(1.0)` false while
     // `1 == 1.0` is true -- oracle-verified).
-    def "eql?"(recv, args, _block) {
+    def "eql?"(recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(
             recv.class_id() == args[0].class_id() && recv.rb_eq(&args[0]),
         ))
     }
-    def "is_a?" | "kind_of?"(recv, args, _block) {
+    def "is_a?" | "kind_of?"(recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Class(target) = &args[0] else {
             return Err(type_error!("class or module required"));
         };
         Ok(RubyValue::Bool(crate::dispatch::is_a(recv.class_id(), *target)))
     }
-    def "instance_of?"(recv, args, _block) {
+    def "instance_of?"(recv, *args, &_block) {
         arity!(args, 1);
         let RubyValue::Class(target) = &args[0] else {
             return Err(type_error!("class or module required"));
@@ -551,7 +551,7 @@ ruby_module! {
     }
     // `respond_to?(name, include_all = false)` -- the second parameter
     // opts private methods back in (CRuby's default ignores them).
-    def "respond_to?"(recv, args, _block) {
+    def "respond_to?"(recv, *args, &_block) {
         arity!(args, 1..=2);
         let sym = match &args[0] {
             RubyValue::Symbol(s) => *s,
@@ -570,7 +570,7 @@ ruby_module! {
     // `Object#respond_to_missing?` default: false for every name -- what a
     // user override's `super` reaches (CRuby's
     // `rb_obj_respond_to_missing`). Hidden-private, like `initialize`.
-    def "respond_to_missing?"(_recv, args, _block) {
+    def "respond_to_missing?"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         Ok(RubyValue::Bool(false))
     }
@@ -579,23 +579,23 @@ ruby_module! {
     // these on Kernel is also what makes `respond_to?(:instance_variable_get)`
     // and a dynamic `send(:instance_variables)` resolve them uniformly -- the
     // static codegen path (call.rs) is just a fast path over the same helpers.
-    def "instance_variables"(recv, args, _block) {
+    def "instance_variables"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(crate::dispatch::instance_variables(recv))
     }
-    def "instance_variable_get"(recv, args, _block) {
+    def "instance_variable_get"(recv, *args, &_block) {
         arity!(args, 1);
         crate::dispatch::instance_variable_get(recv, &args[0])
     }
-    def "instance_variable_set"(recv, args, _block) {
+    def "instance_variable_set"(recv, *args, &_block) {
         arity!(args, 2);
         crate::dispatch::instance_variable_set(recv, &args[0], args[1].clone())
     }
-    def "remove_instance_variable"(recv, args, _block) {
+    def "remove_instance_variable"(recv, *args, &_block) {
         arity!(args, 1);
         crate::dispatch::remove_instance_variable(recv, &args[0])
     }
-    def "instance_variable_defined?"(recv, args, _block) {
+    def "instance_variable_defined?"(recv, *args, &_block) {
         arity!(args, 1);
         let name = crate::dispatch::ivar_name_arg(&args[0])?;
         let sym = Symbol::intern(&format!("@{name}"));
@@ -613,7 +613,7 @@ ruby_module! {
     // receiver) that class's own `def self.` methods. A builtin's list is a
     // subset of CRuby's (this runtime implements a subset), so callers assert
     // membership; a plain user object's list is exact.
-    def "methods" | "public_methods"(recv, args, _block) {
+    def "methods" | "public_methods"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let mut names = Vec::new();
@@ -628,7 +628,7 @@ ruby_module! {
         ));
         Ok(syms_to_array(dedup_syms(names)))
     }
-    def "private_methods"(recv, args, _block) {
+    def "private_methods"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let names = crate::dispatch::instance_method_names(
@@ -638,7 +638,7 @@ ruby_module! {
         );
         Ok(syms_to_array(names))
     }
-    def "protected_methods"(recv, args, _block) {
+    def "protected_methods"(recv, *args, &_block) {
         arity!(args, 0..=1);
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let names = crate::dispatch::instance_method_names(
@@ -651,7 +651,7 @@ ruby_module! {
     // A class/module receiver's own singleton methods are its `def self.`
     // methods; other receivers have no per-object singletons in this runtime's
     // value model, so they report an empty list.
-    def "singleton_methods"(recv, args, _block) {
+    def "singleton_methods"(recv, *args, &_block) {
         arity!(args, 0..=1);
         // A class's singleton methods are its class methods; any other
         // receiver's are the ones installed on it BY IDENTITY at runtime.
@@ -664,25 +664,25 @@ ruby_module! {
     // `Object#display([port])` -- writes `self.to_s` (no newline) to stdout
     // and answers nil. The optional port argument is accepted but ignored
     // (only the process stdout is modeled).
-    def "display"(recv, args, _block) {
+    def "display"(recv, *args, &_block) {
         arity!(args, 0..=1);
         kernel_print(std::slice::from_ref(recv))
     }
     // `Object#!~` -- the negation of `=~`, dispatched to the receiver's own
     // `=~` (so a receiver without one raises NoMethodError, exactly as CRuby
     // does since `Object#=~` was removed).
-    def "!~"(recv, args, _block) {
+    def "!~"(recv, *args, &_block) {
         arity!(args, 1);
         let matched = crate::dispatch::send_value(recv, crate::Symbol::intern("=~"), args, None)?;
         Ok(RubyValue::Bool(!matched.truthy()))
     }
-    def "tap"(recv, args, block) {
+    def "tap"(recv, *args, &block) {
         arity!(args, 0);
         let p = need_block!(block);
         p.call(std::slice::from_ref(recv))?;
         Ok(recv.clone())
     }
-    def "then" | "yield_self"(recv, args, block) {
+    def "then" | "yield_self"(recv, *args, &block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "then", args, block);
         p.call(std::slice::from_ref(recv))
@@ -691,7 +691,7 @@ ruby_module! {
     // loops forever, rescuing StopIteration and returning its `#result`
     // (a literal `loop do…end` is desugared in the lowerer, so this handles
     // the blockless and block-pass forms + the Enumerator re-invoke).
-    def "loop"(recv, args, block) {
+    def "loop"(recv, *args, &block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = &block else {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "loop", args));
@@ -718,7 +718,7 @@ ruby_module! {
     // args), CRuby's obj_to_enum. The block-as-size-proc
     // form is Tier B (rare; the stored-size Enumerator.new form covers
     // the practical cases).
-    def "to_enum" | "enum_for"(recv, args, _block) {
+    def "to_enum" | "enum_for"(recv, *args, &_block) {
         let meth = match args.first() {
             None => "each".to_string(),
             Some(RubyValue::Symbol(s)) => s.name().as_str().to_string(),
@@ -734,18 +734,18 @@ ruby_module! {
     // file arguments -- IS `$stdin`. zeo has no ARGF, so they forward to
     // `$stdin` directly and answer identically for every script that is not
     // a `while gets` filter over `ARGV`.
-    def "gets"(_recv, args, _block) {
+    def "gets"(_recv, *args, &_block) {
         stdin_send("gets", args)
     }
-    def "readline"(_recv, args, _block) {
+    def "readline"(_recv, *args, &_block) {
         stdin_send("readline", args)
     }
-    def "readlines"(_recv, args, _block) {
+    def "readlines"(_recv, *args, &_block) {
         stdin_send("readlines", args)
     }
     // `select` and `exec` are the same calls as `IO.select` and
     // `Process.exec`, which is exactly how CRuby defines them.
-    def "select"(_recv, args, _block) {
+    def "select"(_recv, *args, &_block) {
         crate::dispatch::send_value(
             &RubyValue::Class(zeo_abi::IO_CLASS),
             Symbol::intern("select"),
@@ -753,7 +753,7 @@ ruby_module! {
             None,
         )
     }
-    def "exec"(_recv, args, _block) {
+    def "exec"(_recv, *args, &_block) {
         crate::dispatch::send_value(
             &RubyValue::Class(zeo_abi::PROCESS_CLASS),
             Symbol::intern("exec"),
@@ -764,14 +764,14 @@ ruby_module! {
     // `test(?e, path)` -- the one-character file tests, each the `File`
     // predicate of the same meaning. The two-file comparison commands
     // (`?=`, `?<`, `?>`, `?-`) are not served here.
-    def "test"(_recv, args, _block) {
+    def "test"(_recv, *args, &_block) {
         arity!(args, 2);
         kernel_test(&args[0], &args[1])
     }
     // `trace_var(:$g) { |v| }` / `trace_var(:$g, command)` -- run something on
     // every assignment RUBY makes to a global. The runtime's own seeding is not
     // an assignment and fires nothing.
-    def "trace_var"(_recv, args, block) {
+    def "trace_var"(_recv, *args, &block) {
         arity!(args, 1..=2);
         let name = global_name_arg(&args[0])?;
         let command = match (args.get(1), block) {
@@ -786,7 +786,7 @@ ruby_module! {
     // `untrace_var(:$g)` drops every hook, `untrace_var(:$g, command)` just the
     // one, and both answer what they dropped. A name that was never assigned
     // AND never traced is a NameError.
-    def "untrace_var"(_recv, args, _block) {
+    def "untrace_var"(_recv, *args, &_block) {
         arity!(args, 1..=2);
         let name = global_name_arg(&args[0])?;
         if !crate::globals::is_traced(&name) && !crate::globals::global_defined(0, &name) {
@@ -799,7 +799,7 @@ ruby_module! {
     // from the runtime rather than the store and so are never in it. CRuby
     // reports its full predefined set in an unspecified order; zeo reports
     // the ones it models, which is what an `include?` probe asks about.
-    def "global_variables"(_recv, args, _block) {
+    def "global_variables"(_recv, *args, &_block) {
         arity!(args, 0);
         let mut names: Vec<String> = crate::globals::defined_globals();
         names.sort();

@@ -23,42 +23,42 @@ fn thread_error(msg: &str) -> crate::Signal {
 ruby_class! {
     Mutex = zeo_abi::MUTEX_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         arity!(args, 0);
         Ok(mutex_new())
     }
 
     // `lock`/`unlock` return self; a recursive or foreign lock/unlock is a
     // `ThreadError` carrying the runtime's message verbatim.
-    def "lock"(recv, args, _block) {
+    def "lock"(recv, *args, &_block) {
         arity!(args, 0);
         let m = recv.as_mutex_unchecked();
         mutex_lock(&m).map_err(thread_error)?;
         Ok(RubyValue::Mutex(m))
     }
-    def "unlock"(recv, args, _block) {
+    def "unlock"(recv, *args, &_block) {
         arity!(args, 0);
         let m = recv.as_mutex_unchecked();
         mutex_unlock(&m).map_err(thread_error)?;
         Ok(RubyValue::Mutex(m))
     }
-    def "locked?"(recv, args, _block) {
+    def "locked?"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_locked(&recv.as_mutex_unchecked())))
     }
     // `try_lock` -- acquire without blocking; `true` iff it was free.
-    def "try_lock"(recv, args, _block) {
+    def "try_lock"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_try_lock(&recv.as_mutex_unchecked())))
     }
-    def "owned?"(recv, args, _block) {
+    def "owned?"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_owned(&recv.as_mutex_unchecked())))
     }
     // `synchronize { }` -- lock, run the block, ALWAYS unlock (even on a
     // signal: an exception/`break` inside the block must release the lock on
     // its way out), then re-propagate. `break` exits it with the break value.
-    def "synchronize"(recv, _args, block) {
+    def "synchronize"(recv, *_args, &block) {
         let blk = need_block!(block);
         let m = recv.as_mutex_unchecked();
         mutex_lock(&m).map_err(thread_error)?;

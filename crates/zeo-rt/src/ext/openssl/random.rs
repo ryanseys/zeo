@@ -10,7 +10,7 @@ ruby_module! {
 
     // `OpenSSL::Random.random_bytes(n)` -- n cryptographically random bytes
     // (ASCII-8BIT), drawn from the OS CSPRNG.
-    def self."random_bytes" arity 1 (_recv, args, _block) {
+    def self."random_bytes" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         let n = &crate::builtins::convert::to_index(&args[0])?;
         if *n < 0 {

@@ -21,14 +21,14 @@ use zeo_macros::ruby_class;
 ruby_class! {
     Queue = zeo_abi::QUEUE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         arity!(args, 0);
         Ok(queue_new())
     }
 
     // `push`/`<<`/`enq` enqueue one value and return self; pushing to a
     // closed queue is a `ClosedQueueError`.
-    def "push" | "<<" | "enq" (recv, args, _block) {
+    def "push" | "<<" | "enq" (recv, *args, &_block) {
         arity!(args, 1);
         let q = recv.as_queue_unchecked();
         match queue_push(&q, args[0].clone()) {
@@ -38,38 +38,38 @@ ruby_class! {
     }
     // `pop`/`shift`/`deq` -- block (yielding) while empty and open; a closed
     // empty queue pops `nil`.
-    def "pop" | "shift" | "deq" (recv, args, _block) {
+    def "pop" | "shift" | "deq" (recv, *args, &_block) {
         arity!(args, 0);
         queue_pop(&recv.as_queue_unchecked())
     }
-    def "close"(recv, args, _block) {
+    def "close"(recv, *args, &_block) {
         arity!(args, 0);
         let q = recv.as_queue_unchecked();
         queue_close(&q);
         Ok(RubyValue::Queue(q))
     }
-    def "closed?"(recv, args, _block) {
+    def "closed?"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(queue_closed(&recv.as_queue_unchecked())))
     }
-    def "length" | "size" (recv, args, _block) {
+    def "length" | "size" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(queue_len(&recv.as_queue_unchecked())))
     }
-    def "empty?"(recv, args, _block) {
+    def "empty?"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(queue_len(&recv.as_queue_unchecked()) == 0))
     }
     // `SizedQueue#max`/`max=` -- the bound. `max` on an unbounded `Queue`
     // answers `nil` (a documented divergence: CRuby has no `Queue#max`).
-    def "max"(recv, args, _block) {
+    def "max"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(match queue_max(&recv.as_queue_unchecked()) {
             Some(n) => RubyValue::Int(n),
             None => RubyValue::Nil,
         })
     }
-    def "max="(recv, args, _block) {
+    def "max="(recv, *args, &_block) {
         arity!(args, 1);
         queue_set_max(&recv.as_queue_unchecked(), arg_int!(args, 0));
         Ok(args[0].clone())

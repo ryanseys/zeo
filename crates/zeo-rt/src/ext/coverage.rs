@@ -189,23 +189,23 @@ ruby_module! {
 
     // `start` / `start(lines: true)` -- setup + resume. Modes beyond line
     // coverage raise (the AOT instrumentation has no branch/method events).
-    def self."start"(_recv, args, _b) {
+    def self."start"(_recv, *args, &_b) {
         arity!(args, 0..=1);
         do_setup(args)?;
         do_resume()?;
         Ok(RubyValue::Nil)
     }
-    def self."setup"(_recv, args, _b) {
+    def self."setup"(_recv, *args, &_b) {
         arity!(args, 0..=1);
         do_setup(args)?;
         Ok(RubyValue::Nil)
     }
-    def self."resume"(_recv, args, _b) {
+    def self."resume"(_recv, *args, &_b) {
         arity!(args, 0);
         do_resume()?;
         Ok(RubyValue::Nil)
     }
-    def self."suspend"(_recv, args, _b) {
+    def self."suspend"(_recv, *args, &_b) {
         arity!(args, 0);
         let mut st = STATE.lock().expect("coverage state lock");
         if st.mode != Mode::Running {
@@ -215,12 +215,12 @@ ruby_module! {
         ENABLED.store(false, Ordering::Relaxed);
         Ok(RubyValue::Nil)
     }
-    def self."running?"(_recv, args, _b) {
+    def self."running?"(_recv, *args, &_b) {
         arity!(args, 0);
         let st = STATE.lock().expect("coverage state lock");
         Ok(RubyValue::Bool(st.mode == Mode::Running))
     }
-    def self."state"(_recv, args, _b) {
+    def self."state"(_recv, *args, &_b) {
         arity!(args, 0);
         let st = STATE.lock().expect("coverage state lock");
         Ok(RubyValue::Symbol(Symbol::intern(match st.mode {
@@ -231,7 +231,7 @@ ruby_module! {
     }
     // `result(stop: true, clear: true)` -- the measured coverage; by default
     // ends measurement (a second `result` raises "not enabled").
-    def self."result"(_recv, args, _b) {
+    def self."result"(_recv, *args, &_b) {
         arity!(args, 0..=1);
         let stop = kwarg_bool(args, "stop", true);
         let clear = kwarg_bool(args, "clear", true);
@@ -251,7 +251,7 @@ ruby_module! {
         }
         Ok(result)
     }
-    def self."peek_result"(_recv, args, _b) {
+    def self."peek_result"(_recv, *args, &_b) {
         arity!(args, 0);
         let st = STATE.lock().expect("coverage state lock");
         if st.mode == Mode::Idle {
@@ -260,7 +260,7 @@ ruby_module! {
         Ok(build_result(&st))
     }
     // Line coverage is the one mode the AOT instrumentation implements.
-    def self."supported?"(_recv, args, _b) {
+    def self."supported?"(_recv, *args, &_b) {
         arity!(args, 1);
         let RubyValue::Symbol(s) = &args[0] else {
             return Err(type_error!(

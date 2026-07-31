@@ -158,7 +158,7 @@ ruby_module! {
     // `Syslog.open(ident = $0, options = LOG_PID | LOG_CONS, facility =
     // LOG_USER)` -- open the process's one connection, answering the module
     // (or yielding it and closing after, the block form).
-    def self."open" arity -1 (_recv, args, block) {
+    def self."open" arity -1 (_recv, *args, &block) {
         arity!(args, 0..=3);
         if STATE.lock().ident.is_some() {
             return Err(runtime_error!("syslog already open"));
@@ -181,7 +181,7 @@ ruby_module! {
     // `reopen`/`open!` -- close (raising if there is nothing open, as the
     // plain `close` would) and open again with the NEW arguments; omitted
     // ones fall back to the defaults, not to the previous values.
-    def self."reopen" | "open!" arity -1 (recv, args, block) {
+    def self."reopen" | "open!" arity -1 (recv, *args, &block) {
         {
             let mut st = STATE.lock();
             if st.ident.is_none() {
@@ -199,12 +199,12 @@ ruby_module! {
         table(recv, args, block)
     }
 
-    def self."opened?" (_recv, args, _block) {
+    def self."opened?" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(STATE.lock().ident.is_some()))
     }
 
-    def self."close" (_recv, args, _block) {
+    def self."close" (_recv, *args, &_block) {
         arity!(args, 0);
         let mut st = STATE.lock();
         if st.ident.is_none() {
@@ -218,19 +218,19 @@ ruby_module! {
 
     // The connection's parameters -- nil while closed, including the ident
     // (CRuby forgets it on close).
-    def self."ident" (_recv, args, _block) {
+    def self."ident" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(match &STATE.lock().ident {
             Some(c) => RubyValue::Str(crate::string_new(c.to_string_lossy().into_owned())),
             None => RubyValue::Nil,
         })
     }
-    def self."options" (_recv, args, _block) {
+    def self."options" (_recv, *args, &_block) {
         arity!(args, 0);
         let st = STATE.lock();
         Ok(if st.ident.is_some() { RubyValue::Int(st.options) } else { RubyValue::Nil })
     }
-    def self."facility" (_recv, args, _block) {
+    def self."facility" (_recv, *args, &_block) {
         arity!(args, 0);
         let st = STATE.lock();
         Ok(if st.ident.is_some() { RubyValue::Int(st.facility) } else { RubyValue::Nil })
@@ -238,7 +238,7 @@ ruby_module! {
 
     // The process log mask. `setlogmask(0)` is the documented read-without-
     // modify spelling.
-    def self."mask" (_recv, args, _block) {
+    def self."mask" (_recv, *args, &_block) {
         arity!(args, 0);
         if STATE.lock().ident.is_none() {
             return Ok(RubyValue::Nil);
@@ -246,7 +246,7 @@ ruby_module! {
         // SAFETY: a 0 argument only reads the current mask.
         Ok(RubyValue::Int(i64::from(unsafe { libc::setlogmask(0) })))
     }
-    def self."mask=" (_recv, args, _block) {
+    def self."mask=" (_recv, *args, &_block) {
         arity!(args, 1);
         if STATE.lock().ident.is_none() {
             return Err(runtime_error!("must open syslog before setting log mask"));
@@ -258,62 +258,62 @@ ruby_module! {
     }
 
     // `Syslog.log(priority, format, *args)` and the per-priority shortcuts.
-    def self."log" arity -1 (_recv, args, _block) {
+    def self."log" arity -1 (_recv, *args, &_block) {
         min_arity(args, 2)?;
         log_with(convert::to_index(&args[0])?, &args[1..])
     }
-    def self."emerg" arity -1 (_recv, args, _block) {
+    def self."emerg" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_EMERG as i64, args)
     }
-    def self."alert" arity -1 (_recv, args, _block) {
+    def self."alert" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_ALERT as i64, args)
     }
-    def self."crit" arity -1 (_recv, args, _block) {
+    def self."crit" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_CRIT as i64, args)
     }
-    def self."err" arity -1 (_recv, args, _block) {
+    def self."err" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_ERR as i64, args)
     }
-    def self."warning" arity -1 (_recv, args, _block) {
+    def self."warning" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_WARNING as i64, args)
     }
-    def self."notice" arity -1 (_recv, args, _block) {
+    def self."notice" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_NOTICE as i64, args)
     }
-    def self."info" arity -1 (_recv, args, _block) {
+    def self."info" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_INFO as i64, args)
     }
-    def self."debug" arity -1 (_recv, args, _block) {
+    def self."debug" arity -1 (_recv, *args, &_block) {
         min_arity(args, 1)?;
         log_with(libc::LOG_DEBUG as i64, args)
     }
 
     // `instance` answers the module itself -- the Singleton-flavored spelling
     // some callers use.
-    def self."instance" (_recv, args, _block) {
+    def self."instance" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(syslog_value())
     }
 
     // The priority-mask macros, CAPITALIZED METHODS as in CRuby's Macros.
-    def self."LOG_MASK" arity 1 (_recv, args, _block) {
+    def self."LOG_MASK" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Int(1 << convert::to_index(&args[0])?))
     }
-    def self."LOG_UPTO" arity 1 (_recv, args, _block) {
+    def self."LOG_UPTO" arity 1 (_recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Int((1 << (convert::to_index(&args[0])? + 1)) - 1))
     }
 
     // CRuby's custom shape, not the default module inspect.
-    def self."inspect" (_recv, args, _block) {
+    def self."inspect" (_recv, *args, &_block) {
         arity!(args, 0);
         let st = STATE.lock();
         let text = match &st.ident {

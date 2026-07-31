@@ -242,7 +242,7 @@ ruby_class! {
     Option = zeo_abi::SOCKET_OPTION_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `Socket::Option.new(family, level, optname, data)` -- the raw form.
-    def self."new"(_recv, args, _block) {
+    def self."new"(_recv, *args, &_block) {
         arity!(args, 4);
         let family = opt_int(&args[0], None)?;
         let level = opt_int(&args[1], None)?;
@@ -251,7 +251,7 @@ ruby_class! {
         Ok(RubyValue::Object(RSockOpt::new(family, level, optname, data)))
     }
     // `Socket::Option.int(family, level, optname, integer)`.
-    def self."int"(_recv, args, _block) {
+    def self."int"(_recv, *args, &_block) {
         arity!(args, 4);
         let family = opt_int(&args[0], None)?;
         let level = opt_int(&args[1], None)?;
@@ -261,7 +261,7 @@ ruby_class! {
     }
     // `Socket::Option.bool(family, level, optname, flag)` -- an int option
     // holding 0 or 1.
-    def self."bool"(_recv, args, _block) {
+    def self."bool"(_recv, *args, &_block) {
         arity!(args, 4);
         let family = opt_int(&args[0], None)?;
         let level = opt_int(&args[1], None)?;
@@ -271,7 +271,7 @@ ruby_class! {
     }
     // `Socket::Option.linger(onoff, secs)` -- the SO_LINGER pair. Its family is
     // AF_UNSPEC: linger is not family-specific.
-    def self."linger"(_recv, args, _block) {
+    def self."linger"(_recv, *args, &_block) {
         arity!(args, 2);
         let onoff = match &args[0] {
             RubyValue::Int(n) => *n as i32,
@@ -288,33 +288,33 @@ ruby_class! {
         )))
     }
 
-    def "family"(recv, args, _block) {
+    def "family"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(opt_of(recv).family as i64))
     }
-    def "level"(recv, args, _block) {
+    def "level"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(opt_of(recv).level as i64))
     }
-    def "optname"(recv, args, _block) {
+    def "optname"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(opt_of(recv).optname as i64))
     }
     // `#data`/`#to_s` -- the kernel's own bytes (ASCII-8BIT).
-    def "data" | "to_s"(recv, args, _block) {
+    def "data" | "to_s"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(binary_string(opt_of(recv).data.clone()))
     }
-    def "int"(recv, args, _block) {
+    def "int"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(data_int(opt_of(recv))? as i64))
     }
-    def "bool"(recv, args, _block) {
+    def "bool"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(data_int(opt_of(recv))? != 0))
     }
     // `#linger` -- `[onoff, secs]` for an SO_LINGER option.
-    def "linger"(recv, args, _block) {
+    def "linger"(recv, *args, &_block) {
         arity!(args, 0);
         let o = opt_of(recv);
         let Some((onoff, secs)) = linger_pair(o) else {
@@ -325,7 +325,7 @@ ruby_class! {
             RubyValue::Int(secs as i64),
         ])))
     }
-    def "inspect"(recv, args, _block) {
+    def "inspect"(recv, *args, &_block) {
         arity!(args, 0);
         let o = opt_of(recv);
         let family = name_of(FAMILIES, o.family).unwrap_or_else(|| o.family.to_string());

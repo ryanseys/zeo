@@ -15,19 +15,19 @@ ruby_class! {
     // `#close` shuts the member down and closes the IO underneath if this
     // stream opened it; `#finish` leaves the IO alone. Both answer the IO --
     // which is how `GzipWriter.open(path) { … }` hands back the File.
-    def "close" (recv, args, _block) {
+    def "close" (recv, *args, &_block) {
         arity!(args, 0);
         gz_of(recv).state.lock().shut_down(true)
     }
-    def "finish" (recv, args, _block) {
+    def "finish" (recv, *args, &_block) {
         arity!(args, 0);
         gz_of(recv).state.lock().shut_down(false)
     }
-    def "closed?" (recv, args, _block) {
+    def "closed?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(gz_of(recv).state.lock().closed))
     }
-    def "to_io" (recv, args, _block) {
+    def "to_io" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(open(recv)?.io.clone())
     }
@@ -35,30 +35,30 @@ ruby_class! {
     // The header fields. A gzip header records only the two extreme
     // compression levels, so `#level` answers -1 for everything between --
     // see `frame::level_from_xfl`.
-    def "orig_name" (recv, args, _block) {
+    def "orig_name" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(text_or_nil(open(recv)?.header.orig_name.as_deref()))
     }
-    def "comment" (recv, args, _block) {
+    def "comment" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(text_or_nil(open(recv)?.header.comment.as_deref()))
     }
-    def "level" (recv, args, _block) {
+    def "level" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(frame::level_from_xfl(open(recv)?.header.xfl)))
     }
-    def "os_code" (recv, args, _block) {
+    def "os_code" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(i64::from(open(recv)?.header.os)))
     }
-    def "mtime" (recv, args, _block) {
+    def "mtime" (recv, *args, &_block) {
         arity!(args, 0);
         let secs = i64::from(open(recv)?.header.mtime);
         Ok(crate::builtins::time::time_from_parts(secs, 0))
     }
     // The running CRC-32 of the uncompressed bytes -- the value that goes into
     // the footer, and that a reader has verified once it reaches the end.
-    def "crc" (recv, args, _block) {
+    def "crc" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(i64::from(open(recv)?.crc)))
     }
@@ -66,11 +66,11 @@ ruby_class! {
     // zeo writes through to the IO on every call, so `sync` is already the
     // behaviour `sync = true` asks for; the flag is recorded and reported so a
     // caller reading it back sees what it set.
-    def "sync" (recv, args, _block) {
+    def "sync" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(open(recv)?.sync))
     }
-    def "sync=" (recv, args, _block) {
+    def "sync=" (recv, *args, &_block) {
         arity!(args, 1);
         open(recv)?.sync = args[0].truthy();
         Ok(args[0].clone())

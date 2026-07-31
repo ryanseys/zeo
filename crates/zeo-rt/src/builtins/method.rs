@@ -249,7 +249,7 @@ ruby_class! {
     // An ordinary Method dispatches like any other call. One re-seated by
     // `#super_method` must resume the walk AT its home instead, or it would
     // find the override it was reached through and recurse.
-    def "call" | "()" | "[]" | "===" (recv, args, blk) {
+    def "call" | "()" | "[]" | "===" (recv, *args, &blk) {
         let m = recv_method(recv);
         if m.home == m.chain() {
             return crate::dispatch::send_value(&m.recv, m.name, args, blk);
@@ -263,16 +263,16 @@ ruby_class! {
             }
         }
     }
-    def "name"(recv, _args, _blk) {
+    def "name"(recv, *_args, &_blk) {
         Ok(RubyValue::Symbol(recv_method(recv).name))
     }
-    def "receiver"(recv, _args, _blk) {
+    def "receiver"(recv, *_args, &_blk) {
         Ok(recv_method(recv).recv.clone())
     }
     // `Method#to_proc` yields a lambda (`lambda? == true`) carrying the
     // method's arity, which is what `#curry` needs to know how many arguments
     // to gather before invoking.
-    def "to_proc" as m_to_proc (recv, _args, _blk) {
+    def "to_proc" as m_to_proc (recv, *_args, &_blk) {
         let m = recv_method(recv);
         let (target, name) = (m.recv.clone(), m.name);
         let arity = crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
@@ -282,7 +282,7 @@ ruby_class! {
             true,
         )))
     }
-    def "arity"(recv, _args, _blk) {
+    def "arity"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         // A user `def` has a baked descriptor; a builtin has none, so `-1`
         // (var-args) stays the honest catch-all there.
@@ -290,7 +290,7 @@ ruby_class! {
             crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1),
         ))
     }
-    def "parameters"(recv, _args, _blk) {
+    def "parameters"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         // Builtins have no baked signature -- CRuby reports them as a lone rest;
         // mirror that so `#parameters` is always an Array.
@@ -299,7 +299,7 @@ ruby_class! {
     }
     // CRuby unbinds to the OWNER, not to the class the method was reached
     // through: `Sub.new.method(:greet).unbind` is `Base`'s.
-    def "unbind"(recv, _args, _blk) {
+    def "unbind"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         Ok(RubyValue::Object(Arc::new(RUnboundMethod {
             class_id: m.chain(),
@@ -311,13 +311,13 @@ ruby_class! {
     // `Method#owner` -- the class or module in the receiver's ancestry that
     // actually defines the method (which may be an ancestor of the receiver's
     // class, not the class itself).
-    def "owner"(recv, _args, _blk) {
+    def "owner"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         Ok(RubyValue::Class(m.owner().unwrap_or(m.home)))
     }
     // `Method#original_name` -- the name the method was DEFINED under, which
     // differs from `#name` only for one reached through an alias.
-    def "original_name"(recv, _args, _blk) {
+    def "original_name"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         Ok(RubyValue::Symbol(crate::method_meta::original_name(m.home, m.kind, m.name)))
     }
@@ -325,14 +325,14 @@ ruby_class! {
     // `def` keyword's own span. `nil` for a method with no Ruby source this
     // AOT runtime tracks (a builtin, a `define_method` body), matching CRuby's
     // `nil` for C-defined methods.
-    def "source_location"(recv, _args, _blk) {
+    def "source_location"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         Ok(crate::method_meta::source_location(m.home, m.kind, m.name))
     }
     // `Method#super_method` -- the same method as the NEXT ancestor up defines
     // it, or `nil` at the end of the chain. The result is re-seated onto that
     // ancestor, so calling it runs the ancestor's body.
-    def "super_method"(recv, _args, _blk) {
+    def "super_method"(recv, *_args, &_blk) {
         let m = recv_method(recv);
         let Some(owner) = m.owner() else {
             return Ok(RubyValue::Nil);
@@ -352,17 +352,17 @@ ruby_class! {
     }
     // `meth >> other` -- a Proc running `meth` then piping its result into
     // `other` (`other.call(meth.call(*args))`). `other` is any callable.
-    def ">>"(recv, args, _blk) {
+    def ">>"(recv, *args, &_blk) {
         compose(recv, args, true)
     }
     // `meth << other` -- the reverse pipe: `meth.call(other.call(*args))`.
-    def "<<"(recv, args, _blk) {
+    def "<<"(recv, *args, &_blk) {
         compose(recv, args, false)
     }
     // `Method#==`/`#eql?` -- same defining method (name + owner) bound to the
     // SAME receiver. CRuby compares receivers by identity, not by `==`, so two
     // Methods over two equal-but-distinct Strings are unequal.
-    def "==" | "eql?" (recv, args, _blk) {
+    def "==" | "eql?" (recv, *args, &_blk) {
         let m = recv_method(recv);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -381,7 +381,7 @@ ruby_class! {
     // receiver folds in exactly the way `value_identity` COMPARES it -- an
     // allocation address for a heap value, the value itself for an immediate
     // -- so two Methods that are `==` can never hash apart.
-    def "hash"(recv, _args, _blk) {
+    def "hash"(recv, *_args, &_blk) {
         use std::hash::{Hash, Hasher};
         let m = recv_method(recv);
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -396,13 +396,13 @@ ruby_class! {
     // `Method#box` -- the namespace this method was defined in. zeo has no
     // namespaces, so every method it can hand back belongs to none: nil, the
     // same answer ruby gives for a method defined outside any.
-    def "box"(recv, args, _blk) {
+    def "box"(recv, *args, &_blk) {
         arity!(args, 0);
         let _ = recv;
         Ok(RubyValue::Nil)
     }
     // `Method#curry` -- curries the equivalent Proc (`to_proc.curry`).
-    def "curry"(recv, args, _blk) {
+    def "curry"(recv, *args, &_blk) {
         let proc = m_to_proc(recv, &[], None)?;
         crate::dispatch::send_value(&proc, Symbol::intern("curry"), args, None)
     }
@@ -412,7 +412,7 @@ ruby_class! {
     // through a class receiver names the singleton class that method hangs
     // off, and everything else names the receiver's class -- qualified with
     // the owner whenever an ancestor is the one that actually defines it.
-    def "inspect" | "to_s" (recv, _args, _blk) {
+    def "inspect" | "to_s" (recv, *_args, &_blk) {
         let m = recv_method(recv);
         // An alias names the class its SOURCE came from, not its own owner:
         // `alias_method :w, :x` in `B < A`, where `A` defines `x`, prints

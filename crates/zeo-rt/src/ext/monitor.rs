@@ -121,19 +121,19 @@ ruby_class! {
 
     // `mon_enter` is the `MonitorMixin` spelling of `enter`; both names reach
     // the same C function in CRuby, so both are rows here.
-    def "enter" | "mon_enter" (recv, args, _block) {
+    def "enter" | "mon_enter" (recv, *args, &_block) {
         arity!(args, 0);
         monitor_of(recv).enter()?;
         Ok(RubyValue::Nil)
     }
-    def "exit" | "mon_exit" (recv, args, _block) {
+    def "exit" | "mon_exit" (recv, *args, &_block) {
         arity!(args, 0);
         monitor_of(recv).exit()?;
         Ok(RubyValue::Nil)
     }
     // `try_enter` never blocks: `true` iff this execution now holds it,
     // which a re-entry always does.
-    def "try_enter" | "mon_try_enter" (recv, args, _block) {
+    def "try_enter" | "mon_try_enter" (recv, *args, &_block) {
         arity!(args, 0);
         let m = monitor_of(recv);
         if !mutex_owned(&m.mutex) && !mutex_try_lock(&m.mutex) {
@@ -142,18 +142,18 @@ ruby_class! {
         m.count.fetch_add(1, Ordering::Relaxed);
         Ok(RubyValue::Bool(true))
     }
-    def "mon_locked?" (recv, args, _block) {
+    def "mon_locked?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_locked(&monitor_of(recv).mutex)))
     }
-    def "mon_owned?" (recv, args, _block) {
+    def "mon_owned?" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_owned(&monitor_of(recv).mutex)))
     }
     // Enter, run the block, ALWAYS leave -- an exception or `break` out of
     // the block must still unwind one nesting level. Same shape as
     // `Mutex#synchronize`, which is what `mon_synchronize` aliases to.
-    def "synchronize" | "mon_synchronize" (recv, _args, block) {
+    def "synchronize" | "mon_synchronize" (recv, *_args, &block) {
         let blk = need_block!(block);
         let m = monitor_of(recv);
         m.enter()?;
@@ -162,7 +162,7 @@ ruby_class! {
         r
     }
 
-    def self."new" (_recv, args, _block) {
+    def self."new" (_recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Object(Arc::new(RMonitor::new())))
     }

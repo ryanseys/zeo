@@ -185,7 +185,7 @@ ruby_module! {
 
     // `OpenSSL.fixed_length_secure_compare(a, b)` -- constant-time equality;
     // raises ArgumentError when the lengths differ.
-    def self."fixed_length_secure_compare" arity 2 (_recv, args, _block) {
+    def self."fixed_length_secure_compare" arity 2 (_recv, *args, &_block) {
         arity!(args, 2);
         let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
         if a.len() != b.len() {
@@ -195,7 +195,7 @@ ruby_module! {
     }
     // `OpenSSL.secure_compare(a, b)` -- length-independent constant-time
     // equality (true iff the strings are equal).
-    def self."secure_compare" arity 2 (_recv, args, _block) {
+    def self."secure_compare" arity 2 (_recv, *args, &_block) {
         arity!(args, 2);
         let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
         Ok(RubyValue::Bool(constant_time_eq(&a, &b)))

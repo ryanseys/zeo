@@ -451,7 +451,7 @@ ruby_module! {
     // `NKF.nkf(opt, str)`: the filter. The option string picks the output
     // (mandatory) and optionally the input encoding; without `-J/-E/-S/-W`
     // or `--ic=` the input is guessed per `guess`.
-    def self."nkf" (_recv, args, _block) {
+    def self."nkf" (_recv, *args, &_block) {
         arity!(args, 2);
         let opt = convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
         let o = parse_opts(&opt);
@@ -477,7 +477,7 @@ ruby_module! {
     }
 
     // `NKF.guess(str)`: the detected Encoding object (see `guess_id`).
-    def self."guess" (_recv, args, _block) {
+    def self."guess" (_recv, *args, &_block) {
         arity!(args, 1);
         let bytes = convert::to_rstr(&args[0])?.lock().bytes().to_vec();
         Ok(encoding_value(guess_id(&bytes)))

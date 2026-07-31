@@ -26,20 +26,55 @@
 //!
 //!     const INFINITY = f64::INFINITY;                    // 0+ constants (RHS is a Rust expr)
 //!
-//!     def "<=>"(recv, args, block) { /* real Rust */ }   // instance method (name: str or ident)
-//!     def "between?" arity 2 (recv, args, block) { .. }  // optional per-name arity
-//!     def "succ" | "next" (recv, args, block) { .. }     // aliases sharing one body
-//!     private def helper(recv, args, block) { .. }       // visibility prefix
-//!     def self.pid(recv, args, block) { .. }             // class/singleton method
+//!     def "<=>"(recv, other) { /* real Rust */ }         // instance method (name: str or ident)
+//!     def "succ" | "next" (recv) { .. }                  // aliases sharing one body
+//!     private def helper(recv, *args) { .. }             // visibility prefix
+//!     def self.pid(recv) { .. }                          // class/singleton method
 //!     #[cfg(target_vendor = "apple")] def "change"(..){} // platform-gated def
 //!
 //!     alias cmp = "<=>";                                 // late alias (new = existing)
 //!
 //!     class Status = STATUS_CLASS < OBJECT_CLASS {        // nested, braced body
-//!         def "exitstatus"(recv, args, block) { .. }      //   -> Process::Status
+//!         def "exitstatus"(recv) { .. }                   //   -> Process::Status
 //!     }
 //! }
 //! ```
+//!
+//! A def's PARAMETER LIST is the single declaration of its shape. Both the
+//! argument-count guard the macro emits and the number `Method#arity` reports
+//! come from it, so the two cannot disagree:
+//!
+//! ```text
+//! (recv)                        // 0        exactly none
+//! (recv, needle)                // 1        exactly one
+//! (recv, needle, start = nil)   // -2       one required, one defaulted
+//! (recv, from, to?)             // -2       `?` binds Option, to tell absent from nil
+//! (recv, *items)                // -1       any number
+//! (recv, at, *rest)             // -2       one or more -- "expected 1+"
+//! (recv, fmt, **opts)           // -2       kwargs count as one extra slot
+//! (recv, &block)                // 0        a block never counts
+//! ```
+//!
+//! The number follows CRuby's own equation (`proc.c:1655`, `proc.c:3452`):
+//! `min` and `max` from the signature, then `(min == max) ? min : -min-1`.
+//! CRuby applies it to C methods too, but C declares only `argc = N` or
+//! `argc = -1` -- it cannot say "one required plus one optional", which is why
+//! `String#index` reports -1 and why no C method reports below -1. A `cfunc`
+//! marker before the parameter list records that lost precision and collapses a
+//! ranged signature back to the -1 CRuby reports. It is one bit, and the only
+//! arity fact left for a human to write:
+//!
+//! ```text
+//! def "index" cfunc (recv, needle, start = nil) { .. }   // -2 by the equation, -1 in CRuby
+//! ```
+//!
+//! A per-name `arity N` override remains for the rare def whose `|`-joined
+//! names genuinely differ (`"<<"` takes exactly one where `push` is variadic).
+//!
+//! One caveat worth knowing: the guard is per-DEF (one shared body) while the
+//! reported arity is per-NAME, so a def whose names disagree cannot raise
+//! differently for each. That was equally true of the hand-written guards this
+//! replaced.
 //!
 //! Superclass and `include` targets are written as `ClassId` CONSTS (the one
 //! hard-ABI token), not names -- so the build.rs projection can emit them
@@ -539,24 +574,6 @@ fn parse_params(
         params.push(Param { name, kind });
     }
 
-    // TRANSITIONAL: the legacy `(recv, args, block)` triple, which means
-    // exactly `(recv, *args, &block)` -- no guard, arity -1. Two bare required
-    // parameters is not yet a shape any def uses, so the reading is
-    // unambiguous; the sweep that rewrites every header deletes this branch.
-    if params.len() == 2
-        && rest.is_none()
-        && kwrest.is_none()
-        && block.is_none()
-        && params
-            .iter()
-            .all(|p| matches!(p.kind, ParamKind::Required))
-    {
-        let mut it = params.into_iter();
-        let args = it.next().expect("checked len").name;
-        let blk = it.next().expect("checked len").name;
-        return Ok((Vec::new(), Some(args), None, Some(blk)));
-    }
-
     Ok((params, rest, kwrest, block))
 }
 
@@ -763,37 +780,19 @@ mod tests {
         assert_eq!(spec.methods[0].names[0].arity, None);
     }
 
-    /// The legacy triple means exactly `(recv, *args, &block)`: no guard, no
-    /// bound parameters, arity -1. Delete with the transitional branch.
+    /// Two bare parameters mean two required arguments. They used to be read as
+    /// the legacy `(recv, args, block)` triple, which is why every header was
+    /// swept to the explicit `(recv, *args, &block)` before that branch went.
     #[test]
-    fn the_legacy_triple_reads_as_rest_plus_block() {
-        let spec = parse_module(quote! {
-            M = MATH_CLASS;
-            def "sqrt"(_recv, args, block) { Ok(RubyValue::Nil) }
-        });
-        let m = &spec.methods[0];
-        assert!(m.params.is_empty());
-        assert_eq!(m.rest.as_ref().unwrap(), "args");
-        assert_eq!(m.block.as_ref().unwrap(), "block");
-        assert_eq!(m.min_args(), 0);
-        assert_eq!(m.max_args(), None);
-        assert_eq!(m.derived_arity(), -1);
-    }
-
-    /// The one shape the transitional legacy branch takes from us: two bare
-    /// required parameters. No def spells that yet -- the ones that will
-    /// (`arity!(args, 2)`) are converted only after the sweep deletes the
-    /// branch. Pinned so the collision is a recorded fact rather than a
-    /// surprise, and so removing the branch visibly flips this test.
-    #[test]
-    fn two_bare_parameters_still_read_as_the_legacy_triple() {
+    fn two_bare_parameters_are_two_required_arguments() {
         let spec = parse_module(quote! {
             M = M_CLASS;
             def "insert"(_recv, at, other) { }
         });
         let m = &spec.methods[0];
-        assert!(m.params.is_empty(), "read as (recv, *at, &other), not (a, b)");
-        assert_eq!(m.derived_arity(), -1);
+        assert_eq!(m.params.len(), 2);
+        assert!(m.rest.is_none() && m.block.is_none());
+        assert_eq!(m.derived_arity(), 2);
     }
 
     /// CRuby's `arity = (min == max) ? min : -min-1`, over every shape the
@@ -805,9 +804,7 @@ mod tests {
             M = MATH_CLASS;
             def "length"(_recv) { }
             def "index"(_recv, needle) { }
-            // Spelled with a block so it is not read as the legacy triple --
-            // see `two_bare_parameters_still_read_as_the_legacy_triple`.
-            def "insert"(_recv, at, other, &blk) { }
+            def "insert"(_recv, at, other) { }
             def "first"(_recv, n = RubyValue::Nil) { }
             def "slice"(_recv, from, to?) { }
             def "push"(_recv, *items) { }

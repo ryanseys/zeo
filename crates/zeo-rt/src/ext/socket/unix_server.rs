@@ -22,7 +22,7 @@ ruby_class! {
     // `UNIXServer.new(path)` -- create + bind + listen on an AF_UNIX socket. The
     // path must not already exist (bind fails with EADDRINUSE otherwise, exactly
     // as CRuby).
-    def self."new" | "open"(_recv, args, _block) {
+    def self."new" | "open"(_recv, *args, &_block) {
         arity!(args, 1);
         let path = crate::builtins::file::path_arg(&args[0], "new")?;
         // SAFETY: a plain socket(2) call.
@@ -44,7 +44,7 @@ ruby_class! {
     }
 
     // `#accept` -- block for a client, answering a connected `UNIXSocket`.
-    def "accept"(recv, args, _block) {
+    def "accept"(recv, *args, &_block) {
         arity!(args, 0);
         let fd = fd_of(recv)?;
         // SAFETY: accept(2) on an owned listening fd.
@@ -59,7 +59,7 @@ ruby_class! {
     }
     // `#accept_nonblock(exception: true)` -- accept only a client already
     // waiting; see `TCPServer#accept_nonblock`.
-    def "accept_nonblock"(recv, args, _block) {
+    def "accept_nonblock"(recv, *args, &_block) {
         let raises = crate::builtins::io::nonblock_raises(args);
         arity!(crate::builtins::io::kw_strip(args), 0);
         let Some((nfd, _, _)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
@@ -69,7 +69,7 @@ ruby_class! {
         Ok(unsafe { socket_from_raw_fd(nfd, UNIX_SOCKET_CLASS) })
     }
     // `#listen(backlog)` -- already listening; re-apply and answer 0.
-    def "listen"(recv, args, _block) {
+    def "listen"(recv, *args, &_block) {
         arity!(args, 1);
         let fd = fd_of(recv)?;
         let backlog = crate::builtins::convert::to_index(&args[0])? as libc::c_int;

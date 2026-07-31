@@ -82,21 +82,21 @@ fn rendered(loc: &BacktraceLocation) -> String {
 ruby_class! {
     BacktraceLocationClass = zeo_abi::BACKTRACE_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "path"(recv, args, _block) {
+    def "path"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(string_new(loc_of(recv).path.clone())))
     }
     // zeo's frames record the path the compiler saw, which is already absolute
     // for every spliced file -- so the two answers coincide here.
-    def "absolute_path"(recv, args, _block) {
+    def "absolute_path"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(string_new(loc_of(recv).path.clone())))
     }
-    def "lineno"(recv, args, _block) {
+    def "lineno"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(loc_of(recv).lineno))
     }
-    def "label"(recv, args, _block) {
+    def "label"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(string_new(loc_of(recv).label.clone())))
     }
@@ -104,7 +104,7 @@ ruby_class! {
     // `block (2 levels) in` prefix a nested block carries, and minus the
     // `Klass#` / `Klass.` owner qualification. A synthetic label
     // (`<main>`, `<class:Foo>`) is already bare and passes through.
-    def "base_label"(recv, args, _block) {
+    def "base_label"(recv, *args, &_block) {
         arity!(args, 0);
         let label = &loc_of(recv).label;
         let base = label.rsplit_once(" in ").map_or(label.as_str(), |(_, m)| m);
@@ -114,11 +114,11 @@ ruby_class! {
         };
         Ok(RubyValue::Str(string_new(base.to_string())))
     }
-    def "to_s"(recv, args, _block) {
+    def "to_s"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(string_new(rendered(loc_of(recv)))))
     }
-    def "inspect"(recv, args, _block) {
+    def "inspect"(recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Str(string_new(format!("{:?}", rendered(loc_of(recv))))))
     }

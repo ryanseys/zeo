@@ -152,61 +152,61 @@ ruby_class! {
     Digest = zeo_abi::OPENSSL_DIGEST_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `OpenSSL::Digest.new(name, data = nil)` -- the name-taking base form.
-    def self."new" arity -1 (_recv, args, _block) {
+    def self."new" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=2);
         new_digest(zeo_abi::OPENSSL_DIGEST_CLASS, &args[0], args.get(1))
     }
     // `OpenSSL::Digest.digest("SHA256", data)` / `.hexdigest` /
     // `.base64digest` -- one-shot class forms, algorithm name first.
-    def self."digest" arity 2 (_recv, args, _block) {
+    def self."digest" arity 2 (_recv, *args, &_block) {
         arity!(args, 2);
         let (md, _) = md_from_value(&args[0])?;
         Ok(bin_str(raw_hash(md, &str_bytes(&args[1])?)?))
     }
-    def self."hexdigest" arity 2 (_recv, args, _block) {
+    def self."hexdigest" arity 2 (_recv, *args, &_block) {
         arity!(args, 2);
         let (md, _) = md_from_value(&args[0])?;
         Ok(str(hex(&raw_hash(md, &str_bytes(&args[1])?)?)))
     }
-    def self."base64digest" arity 2 (_recv, args, _block) {
+    def self."base64digest" arity 2 (_recv, *args, &_block) {
         arity!(args, 2);
         let (md, _) = md_from_value(&args[0])?;
         Ok(str(base64(&raw_hash(md, &str_bytes(&args[1])?)?)))
     }
 
     // -- the streaming instance surface (shared by the subclasses via MRO) --
-    def "update" | "<<" (recv, args, _block) {
+    def "update" | "<<" (recv, *args, &_block) {
         arity!(args, 1);
         digest_of(recv).buf.lock().extend_from_slice(&str_bytes(&args[0])?);
         Ok(recv.clone())
     }
-    def "hexdigest" | "to_s" (recv, args, _block) {
+    def "hexdigest" | "to_s" (recv, *args, &_block) {
         Ok(str(hex(&finalize(recv, args)?)))
     }
-    def "digest" (recv, args, _block) {
+    def "digest" (recv, *args, &_block) {
         Ok(bin_str(finalize(recv, args)?))
     }
-    def "base64digest" (recv, args, _block) {
+    def "base64digest" (recv, *args, &_block) {
         Ok(str(base64(&finalize(recv, args)?)))
     }
-    def "reset" (recv, args, _block) {
+    def "reset" (recv, *args, &_block) {
         arity!(args, 0);
         digest_of(recv).buf.lock().clear();
         Ok(recv.clone())
     }
-    def "name" (recv, args, _block) {
+    def "name" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(str(digest_of(recv).algo_name()))
     }
-    def "digest_length" | "length" | "size" (recv, args, _block) {
+    def "digest_length" | "length" | "size" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(digest_of(recv).md().size() as i64))
     }
-    def "block_length" (recv, args, _block) {
+    def "block_length" (recv, *args, &_block) {
         arity!(args, 0);
         Ok(RubyValue::Int(digest_of(recv).md().block_size() as i64))
     }
-    def "==" (recv, args, _block) {
+    def "==" (recv, *args, &_block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(digest_eq(recv, &args[0])?))
     }
