@@ -60,12 +60,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         Some("add") => cmd_add(root, &args[1..]),
         Some("sync") => cmd_sync(root, &args[1..]),
         Some("update") => cmd_update(root, &args[1..]),
-        _ => Err(
-            "usage: cargo run -p xtask -- gem \
+        _ => Err("usage: cargo run -p xtask -- gem \
              <add <owner/repo> [--tag <t>] [--name <n>] [--subdir <d>] | \
              sync [<name>] [--check] [--check-oracle] | update <name> [--tag <t>]>"
-                .to_string(),
-        ),
+            .to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -280,7 +278,10 @@ fn fetch_checkout(name: &str, url: &str, tag: &str, rev: &str) -> Result<PathBuf
         Some(&cache),
         &["fetch", "--depth", "1", url, &format!("refs/tags/{tag}")],
     )?;
-    git(Some(&cache), &["checkout", "--quiet", "--detach", "FETCH_HEAD"])?;
+    git(
+        Some(&cache),
+        &["checkout", "--quiet", "--detach", "FETCH_HEAD"],
+    )?;
     let head = git(Some(&cache), &["rev-parse", "HEAD"])?;
     let head = head.trim();
     if head != rev {
@@ -346,15 +347,21 @@ fn vendor(checkout: &Path, dest: &Path, entry: &GemEntry) -> Result<(), String> 
     copy_tree(&src_lib, &dest_lib)?;
 
     // Carry any license the gem ships (kept per gems/UPSTREAM.md policy).
-    for lic in ["COPYING", "BSDL", "LICENSE", "LICENSE.txt", "LICENSE.md", "MIT-LICENSE"] {
+    for lic in [
+        "COPYING",
+        "BSDL",
+        "LICENSE",
+        "LICENSE.txt",
+        "LICENSE.md",
+        "MIT-LICENSE",
+    ] {
         // A sub-gem carries its own license when it has one, else the repo's.
         let from = [src_root.join(lic), checkout.join(lic)]
             .into_iter()
             .find(|p| p.is_file())
             .unwrap_or_else(|| checkout.join(lic));
         if from.is_file() {
-            std::fs::copy(&from, dest.join(lic))
-                .map_err(|e| format!("copying {lic}: {e}"))?;
+            std::fs::copy(&from, dest.join(lic)).map_err(|e| format!("copying {lic}: {e}"))?;
         }
     }
 
@@ -392,9 +399,7 @@ fn check_against_oracle(root: &Path, entry: &GemEntry) -> Result<(), String> {
     // resolves to the system install (`mise which ruby` is the same resolution
     // the golden harness uses).
     let gemdir = match git_free_command("mise", &["which", "gem"]) {
-        Ok(path) if !path.trim().is_empty() => {
-            git_free_command(path.trim(), &["env", "gemdir"])?
-        }
+        Ok(path) if !path.trim().is_empty() => git_free_command(path.trim(), &["env", "gemdir"])?,
         _ => git_free_command("gem", &["env", "gemdir"])?,
     };
     let vendored = root.join("gems").join(&entry.name).join("lib");
@@ -414,7 +419,11 @@ fn check_against_oracle(root: &Path, entry: &GemEntry) -> Result<(), String> {
         // install -- requiring all of them would skip a gem that ships a file
         // ruby-core drops (open3's `jruby_windows.rb`), which is precisely the
         // sort of thing worth reporting rather than hiding.
-        match libdir.filter(|d| list_files(&vendored).iter().any(|rel| d.join(rel).is_file())) {
+        match libdir.filter(|d| {
+            list_files(&vendored)
+                .iter()
+                .any(|rel| d.join(rel).is_file())
+        }) {
             Some(d) => (d, false),
             None => {
                 println!(
@@ -533,9 +542,9 @@ fn dirs_equal(a: &Path, b: &Path) -> bool {
     if a_files != b_files {
         return false;
     }
-    a_files.iter().all(|rel| {
-        std::fs::read(a.join(rel)).ok() == std::fs::read(b.join(rel)).ok()
-    })
+    a_files
+        .iter()
+        .all(|rel| std::fs::read(a.join(rel)).ok() == std::fs::read(b.join(rel)).ok())
 }
 
 /// How the vendored tree compares to the installed one: every vendored file
@@ -566,7 +575,9 @@ fn vendored_matches_install(vendored: &Path, installed: &Path) -> OracleDiff {
 /// Relative paths of every file under `dir` (empty if `dir` is missing).
 fn list_files(dir: &Path) -> Vec<PathBuf> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in rd.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -595,7 +606,10 @@ fn read_manifest(path: &Path) -> Result<Vec<GemEntry>, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(name) = line.strip_prefix("[gems.").and_then(|s| s.strip_suffix(']')) {
+        if let Some(name) = line
+            .strip_prefix("[gems.")
+            .and_then(|s| s.strip_suffix(']'))
+        {
             entries.push(GemEntry {
                 name: name.to_string(),
                 github: String::new(),
@@ -720,7 +734,11 @@ mod tests {
     #[test]
     fn a_missing_manifest_is_an_empty_one_rather_than_an_error() {
         // `gem add` on a fresh tree has nothing to read yet.
-        assert!(read_manifest(Path::new("/nonexistent/gems.toml")).unwrap().is_empty());
+        assert!(
+            read_manifest(Path::new("/nonexistent/gems.toml"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -780,8 +798,12 @@ mod tests {
         let dir = scratch("no-lib");
         let checkout = dir.join("checkout");
         std::fs::create_dir_all(&checkout).unwrap();
-        let err = vendor(&checkout, &dir.join("out"), &entry("bundler", Some("bundler")))
-            .unwrap_err();
+        let err = vendor(
+            &checkout,
+            &dir.join("out"),
+            &entry("bundler", Some("bundler")),
+        )
+        .unwrap_err();
         assert!(err.contains("bundler"), "{err}");
         assert!(err.contains("no lib/"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);

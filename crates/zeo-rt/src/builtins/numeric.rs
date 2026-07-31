@@ -57,7 +57,11 @@ enum NumLane {
 /// together so their signs stay consistent, including the infinite-divisor
 /// edge (`mod` takes the dividend when `y` is infinite and `x` finite).
 fn flo_divmod(x: f64, y: f64) -> (f64, f64) {
-    let mut m = if y.is_infinite() && x.is_finite() { x } else { x % y };
+    let mut m = if y.is_infinite() && x.is_finite() {
+        x
+    } else {
+        x % y
+    };
     let mut div = if x.is_infinite() && y.is_finite() {
         x
     } else {
@@ -663,13 +667,25 @@ mod tests {
             .expect("Numeric has instance methods");
         (tbl.lookup)(name).unwrap_or_else(|| panic!("Numeric#{name} is defined"))
     }
-    fn divmod(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn divmod(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("divmod")(recv, args, block)
     }
-    fn remainder(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn remainder(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("remainder")(recv, args, block)
     }
-    fn step(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn step(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("step")(recv, args, block)
     }
 

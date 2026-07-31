@@ -97,12 +97,24 @@ mod tests {
     #[test]
     fn lock_owned_unlock_round_trips() {
         let m = mutex_new();
-        assert_eq!(imethod("owned?")(&m, &[], None).unwrap().inspect_string(), "false");
+        assert_eq!(
+            imethod("owned?")(&m, &[], None).unwrap().inspect_string(),
+            "false"
+        );
         imethod("lock")(&m, &[], None).unwrap();
-        assert_eq!(imethod("locked?")(&m, &[], None).unwrap().inspect_string(), "true");
-        assert_eq!(imethod("owned?")(&m, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(
+            imethod("locked?")(&m, &[], None).unwrap().inspect_string(),
+            "true"
+        );
+        assert_eq!(
+            imethod("owned?")(&m, &[], None).unwrap().inspect_string(),
+            "true"
+        );
         imethod("unlock")(&m, &[], None).unwrap();
-        assert_eq!(imethod("locked?")(&m, &[], None).unwrap().inspect_string(), "false");
+        assert_eq!(
+            imethod("locked?")(&m, &[], None).unwrap().inspect_string(),
+            "false"
+        );
     }
 
     #[test]

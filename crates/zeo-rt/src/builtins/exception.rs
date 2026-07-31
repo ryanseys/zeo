@@ -612,7 +612,11 @@ fn exc_receiver(
 /// CRuby answers for a hand-built `LoadError.new("m")`, rather than the error
 /// an unset `#key` raises). Backed by a REAL `@path` ivar, not a hidden detail
 /// slot: CRuby lists it in `instance_variables`.
-fn exc_path(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_path(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(recv.ivar_get_named("path").unwrap_or(RubyValue::Nil))
 }
 

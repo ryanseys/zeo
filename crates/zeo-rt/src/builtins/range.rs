@@ -639,8 +639,14 @@ mod tests {
     #[test]
     fn endpoints_and_exclusion_report() {
         let r = int_range(1, 5, true);
-        assert!(matches!(imethod("begin")(&r, &[], None).unwrap(), RubyValue::Int(1)));
-        assert!(matches!(imethod("end")(&r, &[], None).unwrap(), RubyValue::Int(5)));
+        assert!(matches!(
+            imethod("begin")(&r, &[], None).unwrap(),
+            RubyValue::Int(1)
+        ));
+        assert!(matches!(
+            imethod("end")(&r, &[], None).unwrap(),
+            RubyValue::Int(5)
+        ));
         assert!(matches!(
             imethod("exclude_end?")(&r, &[], None).unwrap(),
             RubyValue::Bool(true)

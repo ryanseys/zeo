@@ -213,7 +213,11 @@ impl StrBuf {
     /// same-encoding string, or `None` when out of range.
     pub fn char_at(&self, i: i64) -> Option<StrBuf> {
         if self.byte_per_char() {
-            let idx = if i < 0 { i + self.bytes.len() as i64 } else { i };
+            let idx = if i < 0 {
+                i + self.bytes.len() as i64
+            } else {
+                i
+            };
             let byte = *self.bytes.get(usize::try_from(idx).ok()?)?;
             return Some(StrBuf::from_bytes(vec![byte], self.enc));
         }

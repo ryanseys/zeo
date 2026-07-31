@@ -212,7 +212,11 @@ pub fn fire_entry(file: &'static str, label: &'static str, line: u32) {
 #[cold]
 pub fn fire_exit(fr: &crate::frames::Frame) {
     dispatch(Snapshot {
-        bit: if fr.method.starts_with('<') { END } else { RETURN },
+        bit: if fr.method.starts_with('<') {
+            END
+        } else {
+            RETURN
+        },
         path: fr.file,
         lineno: fr.end_line,
         label: fr.method,
@@ -556,7 +560,10 @@ mod tests {
 
     #[test]
     fn labels_parse_to_method_and_class_parts() {
-        assert_eq!(label_parts("Speaker#volume"), Some(("Speaker", false, "volume")));
+        assert_eq!(
+            label_parts("Speaker#volume"),
+            Some(("Speaker", false, "volume"))
+        );
         assert_eq!(label_parts("A::B.build"), Some(("A::B", true, "build")));
         assert_eq!(
             label_parts("block in Widget#scale"),

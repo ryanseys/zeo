@@ -6,8 +6,8 @@
 //! only ever sees a `Deflate` or an `Inflate`.
 
 use super::codec::{self, Codec, Wrap, ready, zs_of};
-use crate::builtins::arity;
 use crate::RubyValue;
+use crate::builtins::arity;
 use zeo_macros::ruby_class;
 
 ruby_class! {

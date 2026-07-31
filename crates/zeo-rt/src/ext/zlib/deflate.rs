@@ -4,8 +4,8 @@ use super::codec::{
     self, Flush, RZStream, Wrap, bytes_of, flush_of, ready, run_and_maybe_detach, stream_error,
     wrap_of, yield_or_return,
 };
-use crate::builtins::{arity, convert, not_impl_error};
 use crate::RubyValue;
+use crate::builtins::{arity, convert, not_impl_error};
 use flate2::FlushCompress;
 use std::sync::Arc;
 use zeo_macros::ruby_class;

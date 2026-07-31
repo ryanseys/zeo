@@ -107,20 +107,35 @@ mod tests {
     #[test]
     fn push_len_pop_empty_round_trip() {
         let q = queue_new();
-        assert_eq!(imethod("empty?")(&q, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(
+            imethod("empty?")(&q, &[], None).unwrap().inspect_string(),
+            "true"
+        );
         imethod("push")(&q, &[RubyValue::Int(1)], None).unwrap();
         imethod("push")(&q, &[RubyValue::Int(2)], None).unwrap();
-        assert_eq!(imethod("length")(&q, &[], None).unwrap().inspect_string(), "2");
+        assert_eq!(
+            imethod("length")(&q, &[], None).unwrap().inspect_string(),
+            "2"
+        );
         assert_eq!(imethod("pop")(&q, &[], None).unwrap().inspect_string(), "1");
         assert_eq!(imethod("pop")(&q, &[], None).unwrap().inspect_string(), "2");
-        assert_eq!(imethod("empty?")(&q, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(
+            imethod("empty?")(&q, &[], None).unwrap().inspect_string(),
+            "true"
+        );
     }
 
     #[test]
     fn closed_empty_queue_pops_nil() {
         let q = queue_new();
         imethod("close")(&q, &[], None).unwrap();
-        assert_eq!(imethod("closed?")(&q, &[], None).unwrap().inspect_string(), "true");
-        assert_eq!(imethod("pop")(&q, &[], None).unwrap().inspect_string(), "nil");
+        assert_eq!(
+            imethod("closed?")(&q, &[], None).unwrap().inspect_string(),
+            "true"
+        );
+        assert_eq!(
+            imethod("pop")(&q, &[], None).unwrap().inspect_string(),
+            "nil"
+        );
     }
 }

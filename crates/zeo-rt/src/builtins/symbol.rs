@@ -3,8 +3,8 @@
 //! `to_proc` builds the `&:name` block (one dynamic dispatch per call).
 
 use crate::builtins::{arg_error, arity};
-use zeo_macros::ruby_class;
 use crate::{RProc, RubyValue, Symbol};
+use zeo_macros::ruby_class;
 
 fn recv_sym(recv: &RubyValue) -> Symbol {
     match recv {

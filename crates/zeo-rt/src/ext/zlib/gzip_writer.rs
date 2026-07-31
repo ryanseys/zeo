@@ -174,7 +174,9 @@ fn with_block(gz: RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Sign
 }
 
 /// The state of a writer whose header has NOT gone out yet.
-fn settable(recv: &RubyValue) -> Result<parking_lot::MutexGuard<'_, super::gzip::GzipState>, Signal> {
+fn settable(
+    recv: &RubyValue,
+) -> Result<parking_lot::MutexGuard<'_, super::gzip::GzipState>, Signal> {
     let st = open(recv)?;
     match &st.dir {
         Direction::Write(w) if w.header_written => Err(gz_error("header is already written")),

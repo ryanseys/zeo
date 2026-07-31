@@ -260,9 +260,8 @@ fn binding_scope_local_types<'a>(
     let Some(names) = binding_names else {
         return std::borrow::Cow::Borrowed(types);
     };
-    let demoted = |n: &String| {
-        captured.contains(n) && matches!(types.get(n), Some(TyKind::Object(_)))
-    };
+    let demoted =
+        |n: &String| captured.contains(n) && matches!(types.get(n), Some(TyKind::Object(_)));
     if !names.iter().any(demoted) {
         return std::borrow::Cow::Borrowed(types);
     }
@@ -508,9 +507,7 @@ pub(crate) fn scope_frame_guard(
     );
     // The `def`'s `end` line, `TracePoint`'s `:return` lineno; a scope
     // located only through its body (no `def_node`) stays 0 = untraced.
-    let end_line = scope
-        .def_node
-        .map_or(0, |n| source_end_line(compiler, n));
+    let end_line = scope.def_node.map_or(0, |n| source_end_line(compiler, n));
     quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
 }
 
@@ -1268,7 +1265,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             }
         }
         for (name, vis) in &compiler.class(ClassId(id)).class_visibility_overrides {
-            let verb = if *vis == crate::hir::Visibility::Private { 3 } else { 4 };
+            let verb = if *vis == crate::hir::Visibility::Private {
+                3
+            } else {
+                4
+            };
             push_vis_row(id, name, verb);
         }
         // Each method DEFINED DIRECTLY on this class (not materialized from an
@@ -1549,9 +1550,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // program that reflects this way marks every method name reachable. Same
     // over-approximation policy as the runtime-`super` shapes below: a
     // spurious bridge is dead code, a missing one is a wrong NoMethodError.
-    if compiler.hir.all_nodes().iter().any(|node| {
-        matches!(node, crate::hir::HirNode::Call { name, .. } if name == "super_method")
-    }) {
+    if compiler.hir.all_nodes().iter().any(
+        |node| matches!(node, crate::hir::HirNode::Call { name, .. } if name == "super_method"),
+    ) {
         super_global.extend(compiler.scopes.iter().map(|scope| scope.name.as_str()));
     }
     // RUNTIME-defined methods with a `super` in their body reach targets by
@@ -1618,8 +1619,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let mut bridged: Vec<crate::compiler::ScopeId> = Vec::new();
         for &sid in &class.own_methods {
             let name = &compiler.scope(sid).name;
-            if !super_global.contains(name.as_str())
-                && !super_pairs.contains(&(cid, name.as_str()))
+            if !super_global.contains(name.as_str()) && !super_pairs.contains(&(cid, name.as_str()))
             {
                 continue;
             }
@@ -1963,10 +1963,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // registration loops and bridge emitter ABOVE, not by anything the
     // program quote below interpolates lazily.
     let row_calls = POOLS.with_borrow(|p| {
-        let vm = (!p.vm_rows.is_empty())
-            .then(|| quote! { __registry.define_value_rows(__VM_ROWS); });
-        let cm = (!p.cm_rows.is_empty())
-            .then(|| quote! { __registry.define_class_rows(__CM_ROWS); });
+        let vm =
+            (!p.vm_rows.is_empty()).then(|| quote! { __registry.define_value_rows(__VM_ROWS); });
+        let cm =
+            (!p.cm_rows.is_empty()).then(|| quote! { __registry.define_class_rows(__CM_ROWS); });
         let vis = (!p.vis_rows.is_empty())
             .then(|| quote! { __registry.mark_visibility_rows(__VIS_ROWS); });
         quote! { #vm #cm #vis }
@@ -2217,9 +2217,12 @@ pub(crate) fn emit_class_body_site(
         for &n in stmts {
             hoisting::collect_locals(compiler, n, &mut own);
         }
-        captures
-            .locals
-            .extend(enclosing_captured.iter().filter(|n| !own.contains(n)).cloned());
+        captures.locals.extend(
+            enclosing_captured
+                .iter()
+                .filter(|n| !own.contains(n))
+                .cloned(),
+        );
     }
     let no_locals = HashMap::new();
     let cx = Ctx {
@@ -2281,9 +2284,7 @@ pub(crate) fn emit_class_body_site(
             };
             let label = format!("<{kind}:{}>", compiler.leaf_name(cid));
             // The body's `end` line, `TracePoint`'s `:end` lineno.
-            let end_line = site
-                .def_node
-                .map_or(0, |n| source_end_line(compiler, n));
+            let end_line = site.def_node.map_or(0, |n| source_end_line(compiler, n));
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
         }
         None => quote! {},
@@ -2448,8 +2449,13 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let label_counter = Cell::new(0u32);
     let mut no_captures =
         captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
-    let binding_names =
-        captures::binding_scope_names(compiler, &scope.body, &scope.params, &mut no_captures, false);
+    let binding_names = captures::binding_scope_names(
+        compiler,
+        &scope.body,
+        &scope.params,
+        &mut no_captures,
+        false,
+    );
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -2710,8 +2716,13 @@ fn emit_value_self_method_fn(
     let label_counter = Cell::new(0u32);
     let mut method_captures =
         captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
-    let binding_names =
-        captures::binding_scope_names(compiler, &scope.body, &scope.params, &mut method_captures, false);
+    let binding_names = captures::binding_scope_names(
+        compiler,
+        &scope.body,
+        &scope.params,
+        &mut method_captures,
+        false,
+    );
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,

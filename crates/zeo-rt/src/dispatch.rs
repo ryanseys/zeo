@@ -6,9 +6,9 @@
 //! this module at all -- it's the one deliberate architectural addition.
 
 use crate::builtins::{arg_error, frozen_error, name_error, type_error};
+use crate::{FMap, FSet};
 use crate::{RubyValue, Signal, Symbol};
 use std::any::Any;
-use crate::{FMap, FSet};
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
@@ -972,7 +972,8 @@ impl ClassRegistry {
     /// method -- what codegen emits for a class's whole `def` list.
     pub fn mark_own_rows(&mut self, id: ClassId, names: &[&str]) {
         if let Some(e) = self.entries.get_mut(&id.0) {
-            e.own_methods.extend(names.iter().map(|n| Symbol::intern(n)));
+            e.own_methods
+                .extend(names.iter().map(|n| Symbol::intern(n)));
         }
     }
 
@@ -1777,11 +1778,7 @@ pub fn class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
 
 /// [`class_method_owner`]'s `#super_method` companion: the next definer
 /// strictly after `after`.
-pub fn class_method_owner_after(
-    cid: ClassId,
-    after: ClassId,
-    name: Symbol,
-) -> Option<ClassId> {
+pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> Option<ClassId> {
     let at = ancestors_of_value(cid).iter().position(|&a| a == after)?;
     scan_class_method_owner(cid, at + 1, name)
 }
@@ -1792,15 +1789,20 @@ pub fn class_method_owner_after(
 /// `Array.method(:try_convert).owner` too.
 fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
     let n = name.name();
-    ancestors_of_value(cid).iter().skip(skip).copied().find(|&anc| {
-        (crate::runtime_meta::is_live()
-            && crate::runtime_meta::overlay_class_method(anc, name).is_some())
-            || REGISTRY
-                .get()
-                .and_then(|r| r.entries.get(&anc.0))
-                .is_some_and(|e| e.own_class_methods.contains(&name))
-            || crate::builtins::class_method_table(anc).is_some_and(|lookup| lookup(&n).is_some())
-    })
+    ancestors_of_value(cid)
+        .iter()
+        .skip(skip)
+        .copied()
+        .find(|&anc| {
+            (crate::runtime_meta::is_live()
+                && crate::runtime_meta::overlay_class_method(anc, name).is_some())
+                || REGISTRY
+                    .get()
+                    .and_then(|r| r.entries.get(&anc.0))
+                    .is_some_and(|e| e.own_class_methods.contains(&name))
+                || crate::builtins::class_method_table(anc)
+                    .is_some_and(|lookup| lookup(&n).is_some())
+        })
 }
 
 /// `Module#method_defined?` -- true when `name` resolves to a public OR
@@ -2913,10 +2915,9 @@ pub fn run_initialize(
     // the overlay, which is where a caller holding a bare class -- rather than a
     // receiver `send_in` could resolve from -- has to ask.
     if crate::runtime_meta::is_live() {
-        if let Some(f) = crate::runtime_meta::runtime_class_method(
-            class,
-            crate::symbol::wk::initialize(),
-        ) {
+        if let Some(f) =
+            crate::runtime_meta::runtime_class_method(class, crate::symbol::wk::initialize())
+        {
             f.call(recv, args, block)?;
             return Ok(());
         }
@@ -3325,7 +3326,11 @@ fn build_exception(value: &RubyValue, msg: &[RubyValue]) -> Result<RubyValue, Si
         RubyValue::Class(cid) => class_method_owner(*cid, exception).is_some(),
         _ => true,
     };
-    let name = if has_own { exception } else { Symbol::intern("new") };
+    let name = if has_own {
+        exception
+    } else {
+        Symbol::intern("new")
+    };
     send_value(value, name, msg, None)
 }
 
@@ -3405,13 +3410,12 @@ pub fn define_in_default_definee(
     // singleton class. That is how `SingleForwardable` installs its
     // delegators: it builds a `proc { def name(...) ... end }` and
     // `instance_eval`s it against the module.
-    let installer = if matches!(recv, RubyValue::Class(_))
-        && !crate::runtime_meta::singleton_definee(recv)
-    {
-        "define_method"
-    } else {
-        "define_singleton_method"
-    };
+    let installer =
+        if matches!(recv, RubyValue::Class(_)) && !crate::runtime_meta::singleton_definee(recv) {
+            "define_method"
+        } else {
+            "define_singleton_method"
+        };
     send_value(
         recv,
         Symbol::intern(installer),
@@ -3930,8 +3934,7 @@ pub fn send_value_cached(
                 }
                 RubyValue::Object(_) => {}
                 _ => {
-                    if let Some(Some(hit)) =
-                        REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
+                    if let Some(Some(hit)) = REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
                     {
                         note_dispatch(name);
                         let _ = site.hit.set((id.0, Cached::Value(hit.f)));
@@ -4116,7 +4119,12 @@ fn send_in_reason(
     // Thread's `join`/`value` if uncaught there, and printed by the
     // top-level uncaught handler otherwise. Shares the one method-missing
     // raiser with every other failure mode.
-    Err(raise_method_missing(&boxed, &name.to_string(), args, reason))
+    Err(raise_method_missing(
+        &boxed,
+        &name.to_string(),
+        args,
+        reason,
+    ))
 }
 
 #[cfg(test)]

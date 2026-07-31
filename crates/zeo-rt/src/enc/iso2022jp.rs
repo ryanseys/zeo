@@ -122,7 +122,10 @@ pub(crate) struct Encoder {
 
 impl Encoder {
     pub(crate) fn new(emit_halfwidth: bool) -> Self {
-        Encoder { mode: Mode::Ascii, emit_halfwidth }
+        Encoder {
+            mode: Mode::Ascii,
+            emit_halfwidth,
+        }
     }
 
     fn enter(&mut self, mode: Mode, out: &mut Vec<u8>) {
@@ -216,7 +219,10 @@ mod tests {
     fn halfwidth_kana_is_refused_unless_asked_for() {
         assert_eq!(encode("\u{FF71}", false), Err(()));
         // nkf's -x -j form: ESC ( I, then the JIS X 0201 byte.
-        assert_eq!(encode("\u{FF71}\u{FF72}", true), Ok(b"\x1B(I12\x1B(B".to_vec()));
+        assert_eq!(
+            encode("\u{FF71}\u{FF72}", true),
+            Ok(b"\x1B(I12\x1B(B".to_vec())
+        );
     }
 
     #[test]

@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::builtins::file::{basename_of, dirname_of, expand_path_of, extname_of, path_arg};
 use crate::builtins::arity;
+use crate::builtins::file::{basename_of, dirname_of, expand_path_of, extname_of, path_arg};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PATHNAME_CLASS};

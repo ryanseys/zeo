@@ -171,11 +171,15 @@ impl Engine {
                     .map(|i| c.get(i).map(|m| (m.start(), m.end())))
                     .collect(),
             }),
-            Engine::Fancy(r) => r.captures_from_pos(haystack, start).ok().flatten().map(|c| Caps {
-                spans: (0..c.len())
-                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                    .collect(),
-            }),
+            Engine::Fancy(r) => r
+                .captures_from_pos(haystack, start)
+                .ok()
+                .flatten()
+                .map(|c| Caps {
+                    spans: (0..c.len())
+                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                        .collect(),
+                }),
             // Search the WHOLE `haystack` starting at byte `start` (not a
             // `haystack[start..]` slice): Onig reads the real character before
             // `start` from the full buffer, so `^`/`$`/`\A`/`\Z`/`\G` anchor
@@ -391,7 +395,11 @@ type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
 /// classes are ASCII-only, so they are spelled out as properties instead.
 /// `None` leaves the source untouched, which sends the pattern to Onig.
 fn posix_class_expansion(name: &str, negated: bool) -> Option<String> {
-    let (p, n) = if negated { ("\\P", "\\p") } else { ("\\p", "\\P") };
+    let (p, n) = if negated {
+        ("\\P", "\\p")
+    } else {
+        ("\\p", "\\P")
+    };
     Some(match name {
         "alpha" => format!("{p}{{Alphabetic}}"),
         "upper" => format!("{p}{{Uppercase}}"),

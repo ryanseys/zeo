@@ -47,7 +47,10 @@ pub(crate) fn compute_coderange(bytes: &[u8], enc: EncodingId) -> CodeRange {
         // Multibyte: STRUCTURALLY valid sequences only (an unmapped pair is
         // still a character; a bad lead/trail or truncated lead is Broken).
         EncKind::MultiByte(family) => {
-            if crate::enc::mb::mb_ranges(family, bytes).iter().all(|(_, v)| *v) {
+            if crate::enc::mb::mb_ranges(family, bytes)
+                .iter()
+                .all(|(_, v)| *v)
+            {
                 CodeRange::Valid
             } else {
                 CodeRange::Broken

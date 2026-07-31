@@ -274,7 +274,11 @@ fn each_line(
 ) -> Result<RubyValue, Signal> {
     let Some(RubyValue::Proc(p)) = block else {
         let args: Vec<RubyValue> = sep.cloned().into_iter().collect();
-        return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_line", &args));
+        return Ok(crate::builtins::enumerator::enumerator_for(
+            recv,
+            "each_line",
+            &args,
+        ));
     };
     while let Some(line) = read_line(recv, sep)? {
         p.call(&[line])?;

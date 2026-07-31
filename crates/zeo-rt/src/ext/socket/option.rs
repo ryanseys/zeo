@@ -131,9 +131,17 @@ const OPTNAMES: &[(i32, i32, &str)] = &[
     (libc::IPPROTO_IP, libc::IP_MULTICAST_TTL, "MULTICAST_TTL"),
     (libc::IPPROTO_IP, libc::IP_MULTICAST_LOOP, "MULTICAST_LOOP"),
     (libc::IPPROTO_IP, libc::IP_ADD_MEMBERSHIP, "ADD_MEMBERSHIP"),
-    (libc::IPPROTO_IP, libc::IP_DROP_MEMBERSHIP, "DROP_MEMBERSHIP"),
+    (
+        libc::IPPROTO_IP,
+        libc::IP_DROP_MEMBERSHIP,
+        "DROP_MEMBERSHIP",
+    ),
     (libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, "V6ONLY"),
-    (libc::IPPROTO_IPV6, libc::IPV6_MULTICAST_HOPS, "MULTICAST_HOPS"),
+    (
+        libc::IPPROTO_IPV6,
+        libc::IPV6_MULTICAST_HOPS,
+        "MULTICAST_HOPS",
+    ),
     (libc::IPPROTO_IPV6, libc::IPV6_UNICAST_HOPS, "UNICAST_HOPS"),
 ];
 

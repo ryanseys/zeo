@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use crate::Signal;
 use crate::builtins::{arity, type_error};
-use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ARGF_CLASS, ClassId};
+use zeo_macros::ruby_class;
 
 /// The singleton `ARGF` reader. Its cursor state is the current file name and
 /// line number; the file list itself is read live from the `ARGV` constant

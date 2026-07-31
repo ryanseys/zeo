@@ -36,7 +36,10 @@ fn str_arg(v: &RubyValue, _method: &str) -> Result<String, Signal> {
 /// (`0xB3` -> `U+00B3` -> `C2 B3`), so a binary digest would encode as the
 /// wrong, longer Base64. `to_str`-coerced, like CRuby's `Array#pack("m")`.
 fn bytes_arg(v: &RubyValue) -> Result<Vec<u8>, Signal> {
-    Ok(crate::builtins::convert::to_rstr(v)?.lock().bytes().to_vec())
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .bytes()
+        .to_vec())
 }
 
 ruby_module! {
@@ -191,10 +194,17 @@ mod tests {
 
     #[test]
     fn encode_variants_match_ruby() {
-        assert_eq!(out(f("encode64")(&RubyValue::Nil, &[s("hi")], None)), "aGk=\n");
+        assert_eq!(
+            out(f("encode64")(&RubyValue::Nil, &[s("hi")], None)),
+            "aGk=\n"
+        );
         assert_eq!(out(f("encode64")(&RubyValue::Nil, &[s("")], None)), "");
         assert_eq!(
-            out(f("strict_encode64")(&RubyValue::Nil, &[s("hello world!")], None)),
+            out(f("strict_encode64")(
+                &RubyValue::Nil,
+                &[s("hello world!")],
+                None
+            )),
             "aGVsbG8gd29ybGQh"
         );
         assert_eq!(encode(&[0xFB, 0xEF, 0xBE], URL), "----");
@@ -202,7 +212,10 @@ mod tests {
 
     #[test]
     fn decode_variants_match_ruby() {
-        assert_eq!(out(f("decode64")(&RubyValue::Nil, &[s("YWJj\n")], None)), "abc");
+        assert_eq!(
+            out(f("decode64")(&RubyValue::Nil, &[s("YWJj\n")], None)),
+            "abc"
+        );
         assert_eq!(
             out(f("strict_decode64")(&RubyValue::Nil, &[s("YWJj")], None)),
             "abc"

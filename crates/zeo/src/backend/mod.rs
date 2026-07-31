@@ -67,7 +67,10 @@ use std::time::SystemTime;
 /// `regex-automata` and `jiff` are all in the runtime's graph). Capped here, and
 /// overridable for a big CI machine.
 fn job_cap() -> usize {
-    if let Some(n) = std::env::var("ZEO_BUILD_JOBS").ok().and_then(|v| v.parse().ok()) {
+    if let Some(n) = std::env::var("ZEO_BUILD_JOBS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
         return n;
     }
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -93,7 +96,12 @@ fn lock_runtime_build() -> Option<std::fs::File> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).ok()?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .ok()?;
     // EINTR is the only retryable error here; anything else means we proceed
     // unlocked rather than fail a build over a lock we couldn't take.
     while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
@@ -356,14 +364,18 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
     let mut cmd = std::process::Command::new("cargo");
     match linkage {
         Linkage::Static => {
-            cmd.arg("build").arg("--quiet").arg("--jobs").arg(job_cap().to_string());
+            cmd.arg("build")
+                .arg("--quiet")
+                .arg("--jobs")
+                .arg(job_cap().to_string());
             if let Some(flag) = profile.cargo_flag() {
                 cmd.arg(flag);
             }
             cmd.args(["-p", "zeo-rt"]);
             if runtime == Runtime::Eval {
                 cmd.arg("--features").arg("eval-vm");
-                cmd.arg("--target-dir").arg(variant_target_dir(runtime, linkage));
+                cmd.arg("--target-dir")
+                    .arg(variant_target_dir(runtime, linkage));
             }
         }
         Linkage::Dynamic => {
@@ -372,7 +384,10 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             // normally). Always its own target dir -- a `prefer-dynamic` build
             // must not clobber the static rlib.
             // `--jobs` must precede the `--` separator or cargo hands it to rustc.
-            cmd.arg("rustc").arg("--quiet").arg("--jobs").arg(job_cap().to_string());
+            cmd.arg("rustc")
+                .arg("--quiet")
+                .arg("--jobs")
+                .arg(job_cap().to_string());
             if let Some(flag) = profile.cargo_flag() {
                 cmd.arg(flag);
             }
@@ -381,7 +396,8 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
                 cmd.arg("--features").arg("eval-vm");
             }
             cmd.arg("--crate-type").arg("dylib");
-            cmd.arg("--target-dir").arg(variant_target_dir(runtime, linkage));
+            cmd.arg("--target-dir")
+                .arg(variant_target_dir(runtime, linkage));
             cmd.arg("--");
             cmd.arg("-C").arg("prefer-dynamic");
             cmd.arg("-C").arg(install_name_arg());
@@ -403,7 +419,11 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
 /// `@rpath` install name; ELF platforms use a bare soname. (Only the macOS path
 /// is exercised today; the ELF form mirrors the standard shared-object recipe.)
 fn install_name_arg() -> String {
-    let file = format!("{}zeo_rt{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    let file = format!(
+        "{}zeo_rt{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
     if cfg!(target_os = "macos") {
         format!("link-arg=-Wl,-install_name,@rpath/{file}")
     } else {
@@ -793,11 +813,9 @@ pub fn build_binary(
             }
             None => {
                 let _ = std::fs::remove_dir_all(&staging);
-                return Err(
-                    "dynamic linkage needs the std lib dir, but `rustc --print \
+                return Err("dynamic linkage needs the std lib dir, but `rustc --print \
                      target-libdir` failed"
-                        .to_string(),
-                );
+                    .to_string());
             }
         }
     }

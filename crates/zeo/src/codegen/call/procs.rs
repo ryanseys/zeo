@@ -183,8 +183,13 @@ pub(crate) fn emit_proc_or_lambda_value(
     // A `binding` inside this block exposes the block's OWN names too, so they
     // need the same cell promotion a nested block's capture would give them --
     // which is exactly what putting them in `nested_captured` arranges.
-    let block_binding =
-        crate::codegen::captures::binding_scope_names(cx.compiler, body, params, &mut nested_caps, false);
+    let block_binding = crate::codegen::captures::binding_scope_names(
+        cx.compiler,
+        body,
+        params,
+        &mut nested_caps,
+        false,
+    );
     let nested_captured: std::collections::HashSet<String> = nested_caps.locals;
     // ... and it exposes the ENCLOSING scope's locals by name, not by
     // syntactic reference, so every one of those cells is cloned in -- minus
@@ -377,8 +382,7 @@ pub(crate) fn emit_proc_or_lambda_value(
     // only matters if this body can raise `Signal::Return` at its own level;
     // a relayed inner return terminates correctly against a `None` home.
     // Conservative: nested blocks/lambdas recurse, `def`/`class` bodies stop.
-    let with_home =
-        body_contains_return(&cx.compiler.hir, body).then(|| quote! { .with_home() });
+    let with_home = body_contains_return(&cx.compiler.hir, body).then(|| quote! { .with_home() });
     // `Proc#binding` -- the scope this block is WRITTEN in, captured here at
     // construction, in the enclosing context (`cx`, not `proc_cx`): CRuby's
     // answer holds that scope's `self` and locals, never the block's own,
@@ -390,8 +394,8 @@ pub(crate) fn emit_proc_or_lambda_value(
     //
     // Built in the PRELUDE, not here: the closure below is `move`, so it has
     // already consumed the cell handles by the time the builder chain runs.
-    let proc_binding = (cx.compiler.hir.uses_proc_binding() && cx.binding_names.is_some())
-        .then(|| {
+    let proc_binding =
+        (cx.compiler.hir.uses_proc_binding() && cx.binding_names.is_some()).then(|| {
             let (file, line) = proc_loc.unwrap_or_else(|| ("(eval)".to_string(), 0));
             let scope = crate::codegen::call::emit_binding_value(cx, &file, line);
             quote! { let __proc_binding = #scope; }

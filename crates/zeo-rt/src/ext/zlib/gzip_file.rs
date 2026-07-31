@@ -5,8 +5,8 @@
 
 use super::frame;
 use super::gzip::{gz_of, open};
-use crate::builtins::arity;
 use crate::RubyValue;
+use crate::builtins::arity;
 use zeo_macros::ruby_class;
 
 ruby_class! {

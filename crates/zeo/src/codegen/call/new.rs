@@ -106,7 +106,9 @@ pub fn emit_new(
     // `.new` to that method like any other class method; the default
     // allocate-then-`initialize` below is what its `super` reaches.
     if cx.compiler.class_method_in_chain(cid, "new").is_some() {
-        return super::reflect::emit_class_method_call_on(cx, cid, "new", args, kwargs, block, None);
+        return super::reflect::emit_class_method_call_on(
+            cx, cid, "new", args, kwargs, block, None,
+        );
     }
     let ci = cx.compiler.class(cid);
     if cx.compiler.has_generated_struct(cid) {

@@ -9,8 +9,8 @@
 //! one of those points; the rules themselves are short.
 
 use std::sync::Arc;
-use zeo_macros::ruby_class;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use zeo_macros::ruby_class;
 
 use crate::builtins::file::{path_arg, raise_errno};
 use crate::builtins::{arg_error, arity, block_or_enum, io_error, type_error};
@@ -365,9 +365,7 @@ fn open_dir(path: &str) -> Result<RubyValue, Signal> {
 /// The entry names behind an already-open descriptor. Reads through a DUP, so
 /// `closedir` frees only the copy and the caller's descriptor stays open.
 fn read_names_fd(fd: libc::c_int) -> Result<Vec<String>, Signal> {
-    let bad = || {
-        crate::dispatch::raise_error("Errno::EBADF", "Bad file descriptor".to_string())
-    };
+    let bad = || crate::dispatch::raise_error("Errno::EBADF", "Bad file descriptor".to_string());
     let copy = unsafe { libc::dup(fd) };
     if copy < 0 {
         return Err(bad());
@@ -759,7 +757,6 @@ ruby_class! {
     }
 }
 
-
 /// The entry names in `path`, excluding `.`/`..` -- the shared read the
 /// listing rows use, with the ENOENT raise they all need.
 fn read_names(path: &str) -> Result<Vec<String>, Signal> {
@@ -780,8 +777,13 @@ mod tests {
     use super::*;
 
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::DIR_CLASS).unwrap()
-            .class.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::DIR_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     fn s(v: &str) -> RubyValue {
@@ -972,7 +974,9 @@ mod tests {
 
     #[test]
     fn pwd_answers_an_absolute_path() {
-        let got = cmethod("pwd")(&cls(), &[], None).unwrap().to_display_string();
+        let got = cmethod("pwd")(&cls(), &[], None)
+            .unwrap()
+            .to_display_string();
         assert!(got.starts_with('/'), "pwd was not absolute: {got}");
     }
 

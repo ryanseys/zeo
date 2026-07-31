@@ -849,7 +849,6 @@ fn civil_to_epoch_utc(parts: &[i64]) -> i64 {
     days * 86_400 + get(3, 0) * 3600 + get(4, 0) * 60 + get(5, 0)
 }
 
-
 /// Rounding mode for `Time#round`/`#floor`/`#ceil`.
 enum Rounding {
     Floor,
@@ -1381,9 +1380,32 @@ ruby_class! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn imethod(n:&str)->crate::builtins::BuiltinMethodFn{(crate::builtins::registered_table(zeo_abi::TIME_CLASS).unwrap().instance.as_ref().unwrap().lookup)(n).unwrap()}
-    fn cmethod(n:&str)->crate::builtins::BuiltinMethodFn{(crate::builtins::registered_table(zeo_abi::TIME_CLASS).unwrap().class.as_ref().unwrap().lookup)(n).unwrap()}
-    fn ilookup(n:&str)->Option<crate::builtins::BuiltinMethodFn>{(crate::builtins::registered_table(zeo_abi::TIME_CLASS).unwrap().instance.as_ref().unwrap().lookup)(n)}
+    fn imethod(n: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::TIME_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(n)
+        .unwrap()
+    }
+    fn cmethod(n: &str) -> crate::builtins::BuiltinMethodFn {
+        (crate::builtins::registered_table(zeo_abi::TIME_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(n)
+        .unwrap()
+    }
+    fn ilookup(n: &str) -> Option<crate::builtins::BuiltinMethodFn> {
+        (crate::builtins::registered_table(zeo_abi::TIME_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(n)
+    }
 
     /// A fixed instant: 2023-11-14 22:13:20 UTC. Every assertion below was
     /// read off `ruby 4.0.6` for this same epoch second.
@@ -1435,7 +1457,10 @@ mod tests {
             imethod("to_s")(&t, &[], None).unwrap().to_display_string(),
             "2023-11-14 22:13:20 UTC"
         );
-        assert_eq!(imethod("zone")(&t, &[], None).unwrap().to_display_string(), "UTC");
+        assert_eq!(
+            imethod("zone")(&t, &[], None).unwrap().to_display_string(),
+            "UTC"
+        );
         assert!(matches!(
             imethod("utc?")(&t, &[], None).unwrap(),
             RubyValue::Bool(true)
@@ -1445,7 +1470,9 @@ mod tests {
     #[test]
     fn the_epoch_itself_renders_as_1970() {
         assert_eq!(
-            imethod("to_s")(&utc_at(0), &[], None).unwrap().to_display_string(),
+            imethod("to_s")(&utc_at(0), &[], None)
+                .unwrap()
+                .to_display_string(),
             "1970-01-01 00:00:00 UTC"
         );
     }
@@ -1458,7 +1485,10 @@ mod tests {
             imethod("to_s")(&t, &[], None).unwrap().to_display_string(),
             "2023-11-14 17:13:20 -0500"
         );
-        assert!(matches!(imethod("zone")(&t, &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            imethod("zone")(&t, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
         assert!(matches!(
             imethod("utc?")(&t, &[], None).unwrap(),
             RubyValue::Bool(false)
@@ -1472,7 +1502,9 @@ mod tests {
         let t = utc_at(EPOCH);
         let f = |fmt: &str| {
             let arg = RubyValue::Str(crate::collections::string_new(fmt.to_string()));
-            imethod("strftime")(&t, &[arg], None).unwrap().to_display_string()
+            imethod("strftime")(&t, &[arg], None)
+                .unwrap()
+                .to_display_string()
         };
         assert_eq!(f("%Y-%m-%d %H:%M:%S"), "2023-11-14 22:13:20");
         assert_eq!(f("%F %T"), "2023-11-14 22:13:20");
@@ -1493,7 +1525,9 @@ mod tests {
         let t = utc_at(EPOCH);
         let f = |fmt: &str| {
             let arg = RubyValue::Str(crate::collections::string_new(fmt.to_string()));
-            imethod("strftime")(&t, &[arg], None).unwrap().to_display_string()
+            imethod("strftime")(&t, &[arg], None)
+                .unwrap()
+                .to_display_string()
         };
         assert_eq!(f("%-m/%-d"), "11/14");
         assert_eq!(f("%-H"), "22");
@@ -1517,7 +1551,9 @@ mod tests {
         let t = utc_at(EPOCH);
         let f = |fmt: &str| {
             let arg = RubyValue::Str(crate::collections::string_new(fmt.to_string()));
-            imethod("strftime")(&t, &[arg], None).unwrap().to_display_string()
+            imethod("strftime")(&t, &[arg], None)
+                .unwrap()
+                .to_display_string()
         };
         assert_eq!(f("100%%"), "100%");
         assert_eq!(f("%Q"), "%Q");
@@ -1557,7 +1593,10 @@ mod tests {
         // Exactly 10.8s (integral nanoseconds), not the double 10.8.
         let t = time_value(10, 800_000_000, Some(0));
         let sum = imethod("+")(&t, &[RubyValue::Float(0.5)], None).unwrap();
-        assert!(matches!(imethod("to_i")(&sum, &[], None).unwrap(), RubyValue::Int(11)));
+        assert!(matches!(
+            imethod("to_i")(&sum, &[], None).unwrap(),
+            RubyValue::Int(11)
+        ));
         assert!(matches!(
             imethod("nsec")(&sum, &[], None).unwrap(),
             RubyValue::Int(300_000_000)
@@ -1571,7 +1610,10 @@ mod tests {
         )
         .unwrap();
         let diff = imethod("-")(&from_float, &[RubyValue::Float(0.9)], None).unwrap();
-        assert!(matches!(imethod("to_i")(&diff, &[], None).unwrap(), RubyValue::Int(9)));
+        assert!(matches!(
+            imethod("to_i")(&diff, &[], None).unwrap(),
+            RubyValue::Int(9)
+        ));
         assert!(matches!(
             imethod("nsec")(&diff, &[], None).unwrap(),
             RubyValue::Int(900_000_000)
@@ -1629,7 +1671,9 @@ mod tests {
     fn inspect_shows_trimmed_subseconds_and_to_s_does_not() {
         let t = time_value(EPOCH, 500_000_000, Some(RTime::UTC));
         assert_eq!(
-            imethod("inspect")(&t, &[], None).unwrap().to_display_string(),
+            imethod("inspect")(&t, &[], None)
+                .unwrap()
+                .to_display_string(),
             "2023-11-14 22:13:20.5 UTC"
         );
         assert_eq!(

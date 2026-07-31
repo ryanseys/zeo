@@ -439,7 +439,10 @@ fn callback_proc_drives_qsort_and_bsearch() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "[1, 3, 5, 7, 9]\n[40, 30, 20, 10]\n7\nmiss\n");
+    assert_eq!(
+        result.stdout,
+        "[1, 3, 5, 7, 9]\n[40, 30, 20, 10]\n7\nmiss\n"
+    );
 }
 
 // An exception raised inside a callback cannot unwind through the C frames, so

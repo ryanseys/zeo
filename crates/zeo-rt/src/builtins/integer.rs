@@ -11,7 +11,6 @@
 //! fixnum value (equality/hashing/matching stay canonical).
 
 use crate::builtins::{arg_error, arity, block_or_enum, range_error, type_error};
-use zeo_macros::ruby_class;
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -19,6 +18,7 @@ use num_traits::cast::FromPrimitive;
 use num_traits::{Signed, ToPrimitive, Zero};
 use std::cmp::Ordering;
 use std::sync::Arc;
+use zeo_macros::ruby_class;
 
 /// THE Integer constructor: demotes to `Int` whenever the value fits i64.
 pub fn int_value(n: BigInt) -> RubyValue {
@@ -1047,7 +1047,12 @@ fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Sign
             other => return Err(arg_error!("invalid rounding mode: {other}")),
         },
         RubyValue::Nil => HalfMode::Up,
-        other => return Err(arg_error!("invalid rounding mode: {}", other.to_display_string())),
+        other => {
+            return Err(arg_error!(
+                "invalid rounding mode: {}",
+                other.to_display_string()
+            ));
+        }
     };
     Ok((&args[..args.len() - 1], mode))
 }
@@ -1122,14 +1127,18 @@ fn int_round_family(
     Ok(int_value(if negative { -rounded_mag } else { rounded_mag }))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::INTEGER_CLASS).unwrap()
-            .class.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::INTEGER_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     fn big(s: &str) -> RubyValue {

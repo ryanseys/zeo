@@ -134,7 +134,8 @@ mod tests {
 
         // Setting a flag round-trips and answers the assigned operand.
         let cat = RubyValue::Symbol(Symbol::intern("performance"));
-        let set = cmethod("[]=")(&RubyValue::Nil, &[cat.clone(), RubyValue::Bool(true)], None).unwrap();
+        let set =
+            cmethod("[]=")(&RubyValue::Nil, &[cat.clone(), RubyValue::Bool(true)], None).unwrap();
         assert!(set.truthy());
         assert!(aref("performance"));
         cmethod("[]=")(&RubyValue::Nil, &[cat, RubyValue::Bool(false)], None).unwrap();

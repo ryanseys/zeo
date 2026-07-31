@@ -243,11 +243,19 @@ mod tests {
     fn class_forms_match_ruby() {
         // ruby 4.0.6: OpenSSL::Digest.hexdigest("SHA256", "abc") et al.
         assert_eq!(
-            t(cm("hexdigest")(&RubyValue::Nil, &[s("SHA256"), s("abc")], None)),
+            t(cm("hexdigest")(
+                &RubyValue::Nil,
+                &[s("SHA256"), s("abc")],
+                None
+            )),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(
-            t(cm("hexdigest")(&RubyValue::Nil, &[s("SHA1"), s("abc")], None)),
+            t(cm("hexdigest")(
+                &RubyValue::Nil,
+                &[s("SHA1"), s("abc")],
+                None
+            )),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
     }
@@ -274,7 +282,10 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         let fresh = cm("new")(&RubyValue::Nil, &[s("SHA256")], None).unwrap();
-        assert_eq!(t(im("hexdigest")(&d, &[], None)), t(im("hexdigest")(&fresh, &[], None)));
+        assert_eq!(
+            t(im("hexdigest")(&d, &[], None)),
+            t(im("hexdigest")(&fresh, &[], None))
+        );
     }
 
     #[test]
@@ -291,7 +302,9 @@ mod tests {
         // Seeding via new(name, data) equals updating after construction.
         let e = cm("new")(&RubyValue::Nil, &[s("SHA384")], None).unwrap();
         im("update")(&e, &[s("abc")], None).unwrap();
-        assert_eq!(t(im("hexdigest")(&d, &[], None)), t(im("hexdigest")(&e, &[], None)));
+        assert_eq!(
+            t(im("hexdigest")(&d, &[], None)),
+            t(im("hexdigest")(&e, &[], None))
+        );
     }
-
 }

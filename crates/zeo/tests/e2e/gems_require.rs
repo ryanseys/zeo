@@ -322,9 +322,8 @@ fn a_require_under_a_statically_false_engine_guard_is_pruned_not_spliced() {
     // but this one's guard folds statically false on CRuby-targeting zeo, so
     // the target must be PRUNED, not spliced (splicing would fail to resolve
     // it). The program compiles and the guarded require is simply dead.
-    let result = run_ruby(
-        "require \"no_such_engine_lib_xyz\" if RUBY_ENGINE == \"jruby\"\nputs \"ok\"\n",
-    );
+    let result =
+        run_ruby("require \"no_such_engine_lib_xyz\" if RUBY_ENGINE == \"jruby\"\nputs \"ok\"\n");
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "ok\n");
 }

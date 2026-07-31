@@ -145,13 +145,21 @@ pub(crate) fn lookup(name: &str) -> Option<BuiltinMethodFn> {
     })
 }
 
-fn env_get(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_get(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1);
     let k = key(&args[0])?;
     Ok(std::env::var(&k).map_or(RubyValue::Nil, str_val))
 }
 
-fn env_set(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_set(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 2);
     let k = key(&args[0])?;
     match &args[1] {
@@ -174,7 +182,11 @@ fn env_set(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> 
     }
 }
 
-fn env_fetch(_recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_fetch(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1..=2);
     let k = key(&args[0])?;
     if let Ok(v) = std::env::var(&k) {
@@ -193,7 +205,11 @@ fn env_fetch(_recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
     ))
 }
 
-fn env_key_p(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_key_p(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1);
     let k = key(&args[0])?;
     Ok(RubyValue::Bool(std::env::var(&k).is_ok()))
@@ -202,7 +218,11 @@ fn env_key_p(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -
 // These would otherwise reach the Hash snapshot (which silently accepts a
 // non-String key); ENV validates the key to a String first, so a Symbol
 // raises TypeError -- matching CRuby.
-fn env_assoc(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_assoc(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1);
     let k = key(&args[0])?;
     Ok(std::env::var(&k).map_or(RubyValue::Nil, |v| {
@@ -210,7 +230,11 @@ fn env_assoc(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -
     }))
 }
 
-fn env_values_at(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_values_at(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     let mut out = Vec::with_capacity(args.len());
     for a in args {
         let k = key(a)?;
@@ -219,7 +243,11 @@ fn env_values_at(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue
     Ok(RubyValue::Array(crate::array_new(out)))
 }
 
-fn env_slice(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_slice(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     let mut pairs = Vec::new();
     for a in args {
         let k = key(a)?;
@@ -230,7 +258,11 @@ fn env_slice(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -
     Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))
 }
 
-fn env_delete(_recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_delete(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1);
     let k = key(&args[0])?;
     match std::env::var(&k) {
@@ -247,7 +279,11 @@ fn env_delete(_recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -
     }
 }
 
-fn env_key_for_value(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_key_for_value(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1);
     let want = key(&args[0])?;
     Ok(pairs()
@@ -256,38 +292,65 @@ fn env_key_for_value(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyV
         .map_or(RubyValue::Nil, |(k, _)| str_val(k)))
 }
 
-fn env_keys(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_keys(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     Ok(RubyValue::Array(crate::collections::array_new(
         pairs().into_iter().map(|(k, _)| str_val(k)).collect(),
     )))
 }
 
-fn env_values(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_values(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     Ok(RubyValue::Array(crate::collections::array_new(
         pairs().into_iter().map(|(_, v)| str_val(v)).collect(),
     )))
 }
 
-fn env_to_h(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_to_h(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     Ok(RubyValue::Hash(crate::collections::hash_new(
-        pairs().into_iter().map(|(k, v)| (str_val(k), str_val(v))).collect(),
+        pairs()
+            .into_iter()
+            .map(|(k, v)| (str_val(k), str_val(v)))
+            .collect(),
     )))
 }
 
-fn env_size(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_size(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     Ok(RubyValue::Int(pairs().len() as i64))
 }
 
-fn env_empty_p(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_empty_p(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     Ok(RubyValue::Bool(pairs().is_empty()))
 }
 
-fn env_each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_each(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     let Some(RubyValue::Proc(p)) = block else {
         return Err(crate::dispatch::raise_no_block_yield());
@@ -298,7 +361,11 @@ fn env_each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
     Ok(recv.clone())
 }
 
-fn env_clear(recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_clear(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     for (k, _) in pairs() {
         // SAFETY: same libc-level race note as `set_var` above.
@@ -307,7 +374,11 @@ fn env_clear(recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) ->
     Ok(recv.clone())
 }
 
-fn env_inspect(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_inspect(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     // `inspect` renders ENV like a Hash -- reuse the Hash inspect so the
     // shape can't drift from it.
@@ -315,7 +386,11 @@ fn env_inspect(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>)
 }
 
 // `ENV.to_s` is the literal `"ENV"` (NOT the Hash rendering `#inspect` gives).
-fn env_to_s(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_to_s(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     Ok(str_val("ENV".to_string()))
 }
@@ -324,22 +399,42 @@ fn env_to_s(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) ->
 // CRuby raises TypeError with these exact messages (overriding Kernel#dup/
 // #clone and #freeze, which is why they need explicit entries here rather
 // than falling through to the Hash snapshot).
-fn env_dup(_recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
-    Err(type_error!("Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash"))
+fn env_dup(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    Err(type_error!(
+        "Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash"
+    ))
 }
 
-fn env_clone(_recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
-    Err(type_error!("Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash"))
+fn env_clone(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    Err(type_error!(
+        "Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash"
+    ))
 }
 
-fn env_freeze(_recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_freeze(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     Err(type_error!("cannot freeze ENV"))
 }
 
 // `ENV.update(hash, ...)` / `ENV.merge!(...)` -- set each name => value into
 // the real environment; a block resolves a key already present, taking
 // (key, old, new). Answers ENV.
-fn env_update(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_update(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     for a in args {
         let h = &crate::builtins::convert::to_rhash(a)?;
         for (k, v) in crate::collections::hash_pairs(h) {
@@ -359,47 +454,82 @@ fn env_update(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
 // `ENV.delete_if { |k, v| }` -- remove every pair the block accepts; answers
 // ENV. `reject!` is the same removal but answers nil when NOTHING changed
 // (CRuby's bang-method convention).
-fn env_delete_if(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_delete_if(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     env_remove_matching(&require_block(block)?, true)?;
     Ok(recv.clone())
 }
 
-fn env_reject_bang(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_reject_bang(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     let changed = env_remove_matching(&require_block(block)?, true)?;
-    Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    Ok(if changed {
+        recv.clone()
+    } else {
+        RubyValue::Nil
+    })
 }
 
 // `ENV.keep_if { |k, v| }` -- remove every pair the block REJECTS; answers
 // ENV. `select!`/`filter!` answer nil when nothing changed.
-fn env_keep_if(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_keep_if(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     env_remove_matching(&require_block(block)?, false)?;
     Ok(recv.clone())
 }
 
-fn env_select_bang(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_select_bang(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     let changed = env_remove_matching(&require_block(block)?, false)?;
-    Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    Ok(if changed {
+        recv.clone()
+    } else {
+        RubyValue::Nil
+    })
 }
 
 // `ENV.shift` -- remove and return the first `[name, value]` pair, nil if
 // the environment is empty.
-fn env_shift(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_shift(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 0);
     match pairs().into_iter().next() {
         Some((k, v)) => {
             unsafe { std::env::remove_var(&k) };
-            Ok(RubyValue::Array(crate::array_new(vec![str_val(k), str_val(v)])))
+            Ok(RubyValue::Array(crate::array_new(vec![
+                str_val(k),
+                str_val(v),
+            ])))
         }
         None => Ok(RubyValue::Nil),
     }
 }
 
 // `ENV.replace(hash)` -- make the environment exactly `hash`.
-fn env_replace(recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+fn env_replace(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
     crate::builtins::arity!(args, 1);
     let h = &crate::builtins::convert::to_rhash(&args[0])?;
     let next = crate::collections::hash_pairs(h);

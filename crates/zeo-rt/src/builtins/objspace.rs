@@ -365,7 +365,10 @@ mod tests {
             }));
             // NotImplementedError raised; registry-less in a bare unit test, so
             // it either panics or returns Err.
-            assert!(r.is_err() || r.unwrap().is_err(), "{name} should not succeed");
+            assert!(
+                r.is_err() || r.unwrap().is_err(),
+                "{name} should not succeed"
+            );
         }
     }
 
@@ -453,12 +456,9 @@ mod tests {
         );
         assert!(r.is_ok(), "define_finalizer with a block succeeds");
         // undefine_finalizer answers the object it was given.
-        let back = os_cmethod("undefine_finalizer")(
-            &RubyValue::Nil,
-            std::slice::from_ref(&obj),
-            None,
-        )
-        .unwrap();
+        let back =
+            os_cmethod("undefine_finalizer")(&RubyValue::Nil, std::slice::from_ref(&obj), None)
+                .unwrap();
         assert!(same_object(&back, &obj));
     }
 

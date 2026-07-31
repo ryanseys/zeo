@@ -95,7 +95,11 @@ pub(crate) fn struct_each(
 ) -> Result<RubyValue, Signal> {
     let Some(RubyValue::Proc(p)) = block else {
         // No block -> an Enumerator over the values, matching Struct#each.
-        return Ok(crate::builtins::enumerator::enumerator_for(recv, "each", &[]));
+        return Ok(crate::builtins::enumerator::enumerator_for(
+            recv,
+            "each",
+            &[],
+        ));
     };
     for m in members {
         p.call(&[row.field(m).unwrap()])?;
@@ -110,7 +114,11 @@ pub(crate) fn struct_index(
 ) -> Result<RubyValue, Signal> {
     match key {
         RubyValue::Int(i) => {
-            let idx = if *i < 0 { *i + members.len() as i64 } else { *i };
+            let idx = if *i < 0 {
+                *i + members.len() as i64
+            } else {
+                *i
+            };
             let name = members
                 .get(usize::try_from(idx).unwrap_or(usize::MAX))
                 .copied()
@@ -192,11 +200,26 @@ fn uname_hash() -> Result<RubyValue, Signal> {
     }
     let field = |a: &[libc::c_char]| -> RubyValue { str_val(unsafe { cstr(a.as_ptr()) }) };
     Ok(RubyValue::Hash(crate::collections::hash_new(vec![
-        (RubyValue::Symbol(Symbol::intern("sysname")), field(&u.sysname)),
-        (RubyValue::Symbol(Symbol::intern("nodename")), field(&u.nodename)),
-        (RubyValue::Symbol(Symbol::intern("release")), field(&u.release)),
-        (RubyValue::Symbol(Symbol::intern("version")), field(&u.version)),
-        (RubyValue::Symbol(Symbol::intern("machine")), field(&u.machine)),
+        (
+            RubyValue::Symbol(Symbol::intern("sysname")),
+            field(&u.sysname),
+        ),
+        (
+            RubyValue::Symbol(Symbol::intern("nodename")),
+            field(&u.nodename),
+        ),
+        (
+            RubyValue::Symbol(Symbol::intern("release")),
+            field(&u.release),
+        ),
+        (
+            RubyValue::Symbol(Symbol::intern("version")),
+            field(&u.version),
+        ),
+        (
+            RubyValue::Symbol(Symbol::intern("machine")),
+            field(&u.machine),
+        ),
     ])))
 }
 

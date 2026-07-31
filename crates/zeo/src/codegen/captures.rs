@@ -141,9 +141,7 @@ pub fn block_captures(
 fn scope_calls_binding(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => return false,
-        HirNode::Block { .. } | HirNode::Lambda { .. }
-            if compiler.hir.uses_proc_binding() =>
-        {
+        HirNode::Block { .. } | HirNode::Lambda { .. } if compiler.hir.uses_proc_binding() => {
             return true;
         }
         HirNode::Call {
@@ -281,7 +279,11 @@ pub fn body_contains_escaping_return(compiler: &Compiler, body: &[NodeId]) -> bo
 
 /// Body-list helper threading the `in_escaping` state (whether we are already
 /// lexically inside an escaping block).
-fn body_contains_escaping_return_in(compiler: &Compiler, body: &[NodeId], in_escaping: bool) -> bool {
+fn body_contains_escaping_return_in(
+    compiler: &Compiler,
+    body: &[NodeId],
+    in_escaping: bool,
+) -> bool {
     body.iter()
         .any(|&n| node_contains_escaping_return(compiler, n, in_escaping))
 }

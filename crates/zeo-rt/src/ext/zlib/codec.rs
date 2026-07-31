@@ -310,7 +310,12 @@ impl Deflating {
 
     /// Feed `input` to the codec, appending everything it produces to `out`.
     /// Answers whether the stream reached its end.
-    pub(super) fn run(&mut self, input: &[u8], flush: FlushCompress, out: &mut Vec<u8>) -> Result<bool, Signal> {
+    pub(super) fn run(
+        &mut self,
+        input: &[u8],
+        flush: FlushCompress,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, Signal> {
         if self.wrap == Wrap::Gzip && !self.header_written {
             out.extend_from_slice(
                 &Header {
@@ -392,7 +397,12 @@ impl Inflating {
         }
 
         // Auto-detect: gzip announces itself, so anything else must be zlib.
-        if self.wrap == Wrap::Auto && self.header_pending.first().is_some_and(|&b| b != frame::MAGIC[0]) {
+        if self.wrap == Wrap::Auto
+            && self
+                .header_pending
+                .first()
+                .is_some_and(|&b| b != frame::MAGIC[0])
+        {
             if self.header_pending.len() < 2 {
                 return Ok(None);
             }
@@ -414,7 +424,12 @@ impl Inflating {
         }
     }
 
-    pub(super) fn run(&mut self, input: &[u8], flush: FlushDecompress, out: &mut Vec<u8>) -> Result<bool, Signal> {
+    pub(super) fn run(
+        &mut self,
+        input: &[u8],
+        flush: FlushDecompress,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, Signal> {
         let Some(input) = self.take_header(input)? else {
             return Ok(false);
         };
@@ -796,8 +811,14 @@ mod tests {
     #[test]
     fn auto_detect_reads_zlib_and_gzip_alike() {
         let text = b"auto-detected";
-        assert_eq!(inflate_all(&deflate_all(text, Wrap::Zlib), Wrap::Auto), text);
-        assert_eq!(inflate_all(&deflate_all(text, Wrap::Gzip), Wrap::Auto), text);
+        assert_eq!(
+            inflate_all(&deflate_all(text, Wrap::Zlib), Wrap::Auto),
+            text
+        );
+        assert_eq!(
+            inflate_all(&deflate_all(text, Wrap::Gzip), Wrap::Auto),
+            text
+        );
     }
 
     /// A header split across writes has to be reassembled -- the case a
@@ -827,7 +848,10 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(out, text, "{wrap:?} should reassemble a split header");
-            assert!(codec.footer_checked, "{wrap:?} should have checked a footer");
+            assert!(
+                codec.footer_checked,
+                "{wrap:?} should have checked a footer"
+            );
         }
     }
 
@@ -854,7 +878,9 @@ mod tests {
                         footer_checked: false,
                         api: Api::Stream,
                     };
-                    codec.run(&bad, FlushDecompress::Finish, &mut out).map(|_| bin_str(out))
+                    codec
+                        .run(&bad, FlushDecompress::Finish, &mut out)
+                        .map(|_| bin_str(out))
                 }),
                 "a footer corrupted at {at} should be refused"
             );
@@ -866,9 +892,13 @@ mod tests {
     /// CRuby's "incorrect header check" would be unreachable.
     #[test]
     fn a_non_zlib_header_is_rejected_by_the_checksum_rule() {
-        assert!(refuses(|| check_zlib_header(b"not compressed at all").map(|_| RubyValue::Nil)));
+        assert!(refuses(
+            || check_zlib_header(b"not compressed at all").map(|_| RubyValue::Nil)
+        ));
         // A valid method nibble but a checksum that doesn't divide by 31.
-        assert!(refuses(|| check_zlib_header(b"\x78\x9d").map(|_| RubyValue::Nil)));
+        assert!(refuses(
+            || check_zlib_header(b"\x78\x9d").map(|_| RubyValue::Nil)
+        ));
         // Too short to judge yet -- the codec will ask again.
         assert!(check_zlib_header(b"\x78").is_ok());
         assert!(check_zlib_header(b"\x78\x9c").is_ok());
@@ -932,7 +962,9 @@ mod tests {
             api: Api::Stream,
         };
         let mut early = Vec::new();
-        partial.run(&first, FlushDecompress::None, &mut early).unwrap();
+        partial
+            .run(&first, FlushDecompress::None, &mut early)
+            .unwrap();
         assert_eq!(early, b"hello");
 
         // ...and the whole stream still decodes once finished.
@@ -963,4 +995,3 @@ mod tests {
         assert_eq!(classify(&[]), 1);
     }
 }
-

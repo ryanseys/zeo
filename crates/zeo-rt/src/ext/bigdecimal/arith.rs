@@ -96,7 +96,9 @@ fn round_coeff(coeff: &BigUint, drop: u64, mode: u32, sign: i8, sticky: bool) ->
 /// significant). A carry that adds a digit ("999" -> "100") bumps the
 /// exponent.
 pub(crate) fn left_round(bd: &BD, mode: u32, n: i64) -> BD {
-    let BD::Fin { sign, coeff, exp } = bd else { return bd.clone() };
+    let BD::Fin { sign, coeff, exp } = bd else {
+        return bd.clone();
+    };
     let l = ndigits(coeff) as i64;
     if n <= 0 || l <= n {
         return bd.clone();
@@ -109,7 +111,9 @@ pub(crate) fn left_round(bd: &BD, mode: u32, n: i64) -> BD {
 /// `VpMidRound`: round at `nf` digits after the decimal point (`nf` may be
 /// negative -- `round(-1)` works in tens).
 pub(crate) fn mid_round(bd: &BD, mode: u32, nf: i64) -> BD {
-    let BD::Fin { sign, coeff, exp } = bd else { return bd.clone() };
+    let BD::Fin { sign, coeff, exp } = bd else {
+        return bd.clone();
+    };
     let l = ndigits(coeff) as i64;
     // Digits kept: everything down to 10^-nf, i.e. exp + nf of them.
     let keep = exp + nf;
@@ -201,7 +205,18 @@ pub(crate) fn add(a: &BD, b: &BD) -> BD {
         (BD::Zero(x), BD::Zero(y)) => BD::Zero(if *x < 0 && *y < 0 { -1 } else { 1 }),
         (BD::Zero(_), v) => v.clone(),
         (v, BD::Zero(_)) => v.clone(),
-        (BD::Fin { sign: sa, coeff: ca, exp: ea }, BD::Fin { sign: sb, coeff: cb, exp: eb }) => {
+        (
+            BD::Fin {
+                sign: sa,
+                coeff: ca,
+                exp: ea,
+            },
+            BD::Fin {
+                sign: sb,
+                coeff: cb,
+                exp: eb,
+            },
+        ) => {
             let (sa, ca, la) = as_int_scaled(*sa, ca, *ea);
             let (sb, cb, lb) = as_int_scaled(*sb, cb, *eb);
             let low = la.min(lb);
@@ -231,7 +246,18 @@ pub(crate) fn mult(a: &BD, b: &BD) -> BD {
         (BD::Inf(_), BD::Zero(_)) | (BD::Zero(_), BD::Inf(_)) => BD::NaN,
         (BD::Inf(x), other) | (other, BD::Inf(x)) => BD::Inf(x * other.sign_factor()),
         (BD::Zero(x), other) | (other, BD::Zero(x)) => BD::Zero(x * other.sign_factor()),
-        (BD::Fin { sign: sa, coeff: ca, exp: ea }, BD::Fin { sign: sb, coeff: cb, exp: eb }) => {
+        (
+            BD::Fin {
+                sign: sa,
+                coeff: ca,
+                exp: ea,
+            },
+            BD::Fin {
+                sign: sb,
+                coeff: cb,
+                exp: eb,
+            },
+        ) => {
             let (sa, ca, la) = as_int_scaled(*sa, ca, *ea);
             let (sb, cb, lb) = as_int_scaled(*sb, cb, *eb);
             from_int_scaled(sa * sb, ca * cb, la + lb)
@@ -243,8 +269,18 @@ pub(crate) fn mult(a: &BD, b: &BD) -> BD {
 /// a TRUE sticky tail (the exact remainder decides half cases) -- what
 /// CRuby's remainder-nudge approximates. Callers gate zero/special cases.
 pub(crate) fn div_to(a: &BD, b: &BD, ix: i64) -> BD {
-    let (BD::Fin { sign: sa, coeff: ca, exp: ea }, BD::Fin { sign: sb, coeff: cb, exp: eb }) =
-        (a, b)
+    let (
+        BD::Fin {
+            sign: sa,
+            coeff: ca,
+            exp: ea,
+        },
+        BD::Fin {
+            sign: sb,
+            coeff: cb,
+            exp: eb,
+        },
+    ) = (a, b)
     else {
         unreachable!("div_to takes finite nonzero operands")
     };
@@ -291,15 +327,29 @@ pub(crate) fn default_div_prec(a: &BD, b: &BD) -> i64 {
 
 /// Exact truncated integer quotient of two finite nonzero values.
 pub(crate) fn trunc_quotient(a: &BD, b: &BD) -> BD {
-    let (BD::Fin { sign: sa, coeff: ca, exp: ea }, BD::Fin { sign: sb, coeff: cb, exp: eb }) =
-        (a, b)
+    let (
+        BD::Fin {
+            sign: sa,
+            coeff: ca,
+            exp: ea,
+        },
+        BD::Fin {
+            sign: sb,
+            coeff: cb,
+            exp: eb,
+        },
+    ) = (a, b)
     else {
         unreachable!("trunc_quotient takes finite nonzero operands")
     };
     let (sa, ca, la) = as_int_scaled(*sa, ca, *ea);
     let (sb, cb, lb) = as_int_scaled(*sb, cb, *eb);
     let d = la - lb;
-    let q = if d >= 0 { (ca * pow10(d as u64)) / cb } else { ca / (cb * pow10((-d) as u64)) };
+    let q = if d >= 0 {
+        (ca * pow10(d as u64)) / cb
+    } else {
+        ca / (cb * pow10((-d) as u64))
+    };
     from_int_scaled(sa * sb, q, 0)
 }
 
@@ -308,12 +358,39 @@ pub(crate) fn cmp(a: &BD, b: &BD) -> Option<Ordering> {
     match (a, b) {
         (BD::NaN, _) | (_, BD::NaN) => None,
         (BD::Inf(x), BD::Inf(y)) => Some(x.cmp(y)),
-        (BD::Inf(x), _) => Some(if *x > 0 { Ordering::Greater } else { Ordering::Less }),
-        (_, BD::Inf(y)) => Some(if *y > 0 { Ordering::Less } else { Ordering::Greater }),
+        (BD::Inf(x), _) => Some(if *x > 0 {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }),
+        (_, BD::Inf(y)) => Some(if *y > 0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
         (BD::Zero(_), BD::Zero(_)) => Some(Ordering::Equal),
-        (BD::Zero(_), v) => Some(if v.sign_factor() > 0 { Ordering::Less } else { Ordering::Greater }),
-        (v, BD::Zero(_)) => Some(if v.sign_factor() > 0 { Ordering::Greater } else { Ordering::Less }),
-        (BD::Fin { sign: sa, coeff: ca, exp: ea }, BD::Fin { sign: sb, coeff: cb, exp: eb }) => {
+        (BD::Zero(_), v) => Some(if v.sign_factor() > 0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        (v, BD::Zero(_)) => Some(if v.sign_factor() > 0 {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }),
+        (
+            BD::Fin {
+                sign: sa,
+                coeff: ca,
+                exp: ea,
+            },
+            BD::Fin {
+                sign: sb,
+                coeff: cb,
+                exp: eb,
+            },
+        ) => {
             if sa != sb {
                 return Some(sa.cmp(sb));
             }
@@ -353,7 +430,10 @@ mod tests {
         assert_eq!(show(&mult(&s("2"), &s("3.5"))), "0.7e1");
         assert_eq!(show(&mult(&s("-1.5"), &s("1.5"))), "-0.225e1");
         assert_eq!(add(&s("1.5"), &s("-1.5")), BD::Zero(1));
-        assert_eq!(show(&add(&s("1e50"), &s("1"))), "0.100000000000000000000000000000000000000000000000001e51");
+        assert_eq!(
+            show(&add(&s("1e50"), &s("1"))),
+            "0.100000000000000000000000000000000000000000000000001e51"
+        );
     }
 
     #[test]

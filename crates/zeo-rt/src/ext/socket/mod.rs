@@ -266,7 +266,10 @@ pub(crate) fn raw_to_socketaddr(storage: &libc::sockaddr_storage) -> Option<Sock
                 // `s_addr` is already network-order bytes -- read them as octets
                 // directly (going through a host-order u32 would byte-swap).
                 let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
-                Some(SocketAddr::V4(SocketAddrV4::new(ip, u16::from_be(sin.sin_port))))
+                Some(SocketAddr::V4(SocketAddrV4::new(
+                    ip,
+                    u16::from_be(sin.sin_port),
+                )))
             }
             libc::AF_INET6 => {
                 let sin6 = &*(storage as *const _ as *const libc::sockaddr_in6);
@@ -308,7 +311,10 @@ pub(crate) fn pack_unix_sockaddr(
         su.sun_family = libc::AF_UNIX as libc::sa_family_t;
         let bytes = path.as_bytes();
         if bytes.len() >= su.sun_path.len() {
-            return Err(arg_error!("too long unix socket path ({} bytes given)", bytes.len()));
+            return Err(arg_error!(
+                "too long unix socket path ({} bytes given)",
+                bytes.len()
+            ));
         }
         for (i, &b) in bytes.iter().enumerate() {
             su.sun_path[i] = b as libc::c_char;
@@ -338,9 +344,7 @@ pub(crate) fn parse_unix_sockaddr(storage: &libc::sockaddr_storage) -> String {
 pub(crate) fn pack_ip_sockaddr(addr: &SocketAddr) -> Vec<u8> {
     let (storage, len) = socketaddr_to_raw(addr);
     // SAFETY: `len` bytes of `storage` were initialized by socketaddr_to_raw.
-    unsafe {
-        std::slice::from_raw_parts(&storage as *const _ as *const u8, len as usize).to_vec()
-    }
+    unsafe { std::slice::from_raw_parts(&storage as *const _ as *const u8, len as usize).to_vec() }
 }
 
 /// An ASCII-8BIT String value from raw bytes (what the sockaddr accessors
@@ -353,7 +357,11 @@ pub(crate) fn binary_string(bytes: Vec<u8>) -> RubyValue {
 /// `#recvfrom` answer. Reverse DNS is never performed, so `hostname == ip`
 /// (matching CRuby with `do_not_reverse_lookup`).
 pub(crate) fn ip_addr_array(addr: &SocketAddr) -> RubyValue {
-    let fam = if addr.is_ipv6() { "AF_INET6" } else { "AF_INET" };
+    let fam = if addr.is_ipv6() {
+        "AF_INET6"
+    } else {
+        "AF_INET"
+    };
     let ip = addr.ip().to_string();
     RubyValue::Array(crate::array_new(vec![
         RubyValue::Str(crate::string_new(fam.to_string())),

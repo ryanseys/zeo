@@ -4,8 +4,8 @@
 //! that seed, number for number.
 
 use std::sync::Arc;
-use zeo_macros::ruby_class;
 use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_macros::ruby_class;
 
 use num_bigint::BigInt;
 use num_traits::cast::FromPrimitive;
@@ -87,7 +87,10 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(crate::mt::Mt, RubyValue), Sign
 /// ArgumentError (CRuby: `invalid argument - <n>`), NOT a silent 0.
 /// `Random#rand`'s domain error for a non-finite Float bound or endpoint.
 fn edom() -> Signal {
-    raise_error("Errno::EDOM", "Numerical argument out of domain".to_string())
+    raise_error(
+        "Errno::EDOM",
+        "Numerical argument out of domain".to_string(),
+    )
 }
 
 fn rand_with(state: &Mutex<crate::mt::Mt>, bound: Option<&RubyValue>) -> Result<RubyValue, Signal> {
@@ -169,7 +172,9 @@ fn rand_range(
             if span <= 0 {
                 return Err(invalid());
             }
-            Ok(RubyValue::Int(a + state.lock().limited(span as u64 - 1) as i64))
+            Ok(RubyValue::Int(
+                a + state.lock().limited(span as u64 - 1) as i64,
+            ))
         }
         _ => {
             let a = to_f64(lo)?;
@@ -349,7 +354,6 @@ fn default_state() -> Arc<RandomObj> {
     }
     guard.clone().expect("default Random installed")
 }
-
 
 #[cfg(test)]
 mod tests {

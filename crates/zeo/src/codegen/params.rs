@@ -109,7 +109,10 @@ fn signature_param_pairs(
         let ident = safe_ident(name);
         // `(RubyValue, RubyValue)`, not `(Symbol, RubyValue)`: a `**kwrest` hash
         // can hold non-symbol keys (`method HELP_MAPPINGS => :help`).
-        items.push((ident, quote! { Vec<(zeo_rt::RubyValue, zeo_rt::RubyValue)> }));
+        items.push((
+            ident,
+            quote! { Vec<(zeo_rt::RubyValue, zeo_rt::RubyValue)> },
+        ));
     }
     if needs_block {
         items.push((format_ident!("__blk"), quote! { Option<zeo_rt::RubyValue> }));
@@ -588,7 +591,9 @@ pub fn emit_call_args_to(
                 Some(n) if declared(n) => {}
                 Some(n) => return raise_argument_error(format!("unknown keyword: :{n}")),
                 None => {
-                    let KwArg::Pair(k, _) = &kwargs[i] else { unreachable!() };
+                    let KwArg::Pair(k, _) = &kwargs[i] else {
+                        unreachable!()
+                    };
                     return raise_argument_error(format!(
                         "unknown keyword: {}",
                         kw_key_label(cx, *k)
@@ -684,7 +689,9 @@ pub fn emit_call_args_to(
                             quote! { zeo_rt::RubyValue::Symbol(#sym) }
                         }
                         None => {
-                            let KwArg::Pair(k, _) = &kwargs[i] else { unreachable!() };
+                            let KwArg::Pair(k, _) = &kwargs[i] else {
+                                unreachable!()
+                            };
                             box_if_object_typed(cx, *k, emit_expr(cx, *k))
                         }
                     };
@@ -2185,7 +2192,7 @@ mod tests {
             defining_class: None,
             class_self: None,
             current_method: None,
-        current_method_origin: None,
+            current_method_origin: None,
             local_types: std::borrow::Cow::Owned(std::collections::HashMap::new()),
             label_counter: &label_counter,
             loop_labels: None,

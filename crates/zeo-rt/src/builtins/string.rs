@@ -6,8 +6,8 @@
 //! plan.
 
 use crate::builtins::{
-    arg_error, arg_int, arg_str, arity, block_or_enum, convert, index_error,
-    range_error, recv_str, regexp_error, type_error,
+    arg_error, arg_int, arg_str, arity, block_or_enum, convert, index_error, range_error, recv_str,
+    regexp_error, type_error,
 };
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
@@ -3031,7 +3031,12 @@ pub(crate) fn split_lines(text: &str) -> Vec<RubyValue> {
 /// `sub`/`gsub`: `\\` -> `\`, `\&`/`\0` -> the match, `` \` `` -> the text
 /// before it, `\'` -> the text after; `\1`..`\9` insert nothing (a String
 /// pattern captures no groups). Any other `\X` stays literal.
-fn expand_str_replacement(template: &str, prematch: &str, matched: &str, postmatch: &str) -> String {
+fn expand_str_replacement(
+    template: &str,
+    prematch: &str,
+    matched: &str,
+    postmatch: &str,
+) -> String {
     let mut out = String::new();
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
@@ -3155,7 +3160,10 @@ fn sub_gsub(
             // A String replacement still processes replacement escapes (`\\`,
             // `\&`/`\0`, `\``, `\'`) per match, exactly like the Regexp form;
             // `\1`..`\9` insert nothing (a String pattern has no groups).
-            let template = convert::to_rstr(&args[1])?.lock().to_utf8_lossy().into_owned();
+            let template = convert::to_rstr(&args[1])?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned();
             // An empty pattern matches (emptily) at every character boundary and
             // at the end: gsub inserts the replacement before each char and at
             // the end (`"hi".gsub("", "-") == "-h-i-"`); sub only at the start.
@@ -3163,7 +3171,12 @@ fn sub_gsub(
                 let mut out = String::new();
                 for (k, (pos, ch)) in char_boundaries(&text).enumerate() {
                     if global || k == 0 {
-                        out.push_str(&expand_str_replacement(&template, &text[..pos], "", &text[pos..]));
+                        out.push_str(&expand_str_replacement(
+                            &template,
+                            &text[..pos],
+                            "",
+                            &text[pos..],
+                        ));
                     }
                     if let Some(ch) = ch {
                         out.push(ch);
@@ -3204,7 +3217,8 @@ fn sub_gsub(
                 let mut out = String::new();
                 for (k, (_, ch)) in char_boundaries(&text).enumerate() {
                     if global || k == 0 {
-                        let replaced = p.call(&[RubyValue::Str(crate::string_new(String::new()))])?;
+                        let replaced =
+                            p.call(&[RubyValue::Str(crate::string_new(String::new()))])?;
                         out.push_str(&replaced.to_display_string());
                     }
                     if let Some(ch) = ch {
@@ -3324,16 +3338,19 @@ fn kw_unpack_offset(args: &[RubyValue], len: usize) -> Result<usize, Signal> {
     Ok(off)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::STRING_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::STRING_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
-
 
     fn s(v: &str) -> RubyValue {
         RubyValue::Str(crate::string_new(v.to_string()))
@@ -3355,9 +3372,15 @@ mod tests {
 
     #[test]
     fn casecmp_families() {
-        assert_eq!(show(imethod("casecmp")(&s("Hello"), &[s("hello")], None)), "0");
+        assert_eq!(
+            show(imethod("casecmp")(&s("Hello"), &[s("hello")], None)),
+            "0"
+        );
         assert_eq!(show(imethod("casecmp")(&s("A"), &[s("b")], None)), "-1");
-        assert_eq!(show(imethod("casecmp?")(&s("Hello"), &[s("HELLO")], None)), "true");
+        assert_eq!(
+            show(imethod("casecmp?")(&s("Hello"), &[s("HELLO")], None)),
+            "true"
+        );
         assert_eq!(show(imethod("casecmp?")(&s("a"), &[s("b")], None)), "false");
     }
 
@@ -3385,7 +3408,11 @@ mod tests {
             "[\"h\", \"e\", \"l\", \"l\", \"o\"]"
         );
         assert_eq!(
-            show(imethod("split")(&s("hello"), &[s(""), RubyValue::Int(2)], None)),
+            show(imethod("split")(
+                &s("hello"),
+                &[s(""), RubyValue::Int(2)],
+                None
+            )),
             "[\"h\", \"ello\"]"
         );
     }
@@ -3403,7 +3430,11 @@ mod tests {
             "\"hello world\""
         );
         assert_eq!(
-            show(imethod("[]")(&s("hello world"), &[re, RubyValue::Int(2)], None)),
+            show(imethod("[]")(
+                &s("hello world"),
+                &[re, RubyValue::Int(2)],
+                None
+            )),
             "\"world\""
         );
     }
@@ -3414,7 +3445,10 @@ mod tests {
             show(imethod("capitalize")(&s("hello world"), &[], None)),
             "\"Hello world\""
         );
-        assert_eq!(show(imethod("swapcase")(&s("HeLLo"), &[], None)), "\"hEllO\"");
+        assert_eq!(
+            show(imethod("swapcase")(&s("HeLLo"), &[], None)),
+            "\"hEllO\""
+        );
         assert_eq!(show(imethod("strip")(&s("  hi  "), &[], None)), "\"hi\"");
         assert_eq!(show(imethod("lstrip")(&s("  hi"), &[], None)), "\"hi\"");
     }
@@ -3454,7 +3488,10 @@ mod tests {
             show(imethod("tr")(&s("hello"), &[s("a-y"), s("b-z")], None)),
             "\"ifmmp\""
         );
-        assert_eq!(show(imethod("tr")(&s("a-b_c"), &[s("-_"), s(" ")], None)), "\"a b c\"");
+        assert_eq!(
+            show(imethod("tr")(&s("a-b_c"), &[s("-_"), s(" ")], None)),
+            "\"a b c\""
+        );
     }
 
     #[test]
@@ -3522,17 +3559,34 @@ mod tests {
     #[test]
     fn padding_and_charset_rows_match_the_oracle() {
         assert_eq!(
-            show(imethod("center")(&s("hi"), &[RubyValue::Int(7), s("*")], None)),
+            show(imethod("center")(
+                &s("hi"),
+                &[RubyValue::Int(7), s("*")],
+                None
+            )),
             "\"**hi***\""
         );
         assert_eq!(
-            show(imethod("ljust")(&s("hi"), &[RubyValue::Int(5), s(".")], None)),
+            show(imethod("ljust")(
+                &s("hi"),
+                &[RubyValue::Int(5), s(".")],
+                None
+            )),
             "\"hi...\""
         );
-        assert_eq!(show(imethod("delete")(&s("hello"), &[s("l")], None)), "\"heo\"");
+        assert_eq!(
+            show(imethod("delete")(&s("hello"), &[s("l")], None)),
+            "\"heo\""
+        );
         assert_eq!(show(imethod("squeeze")(&s("aabbcc"), &[], None)), "\"abc\"");
-        assert_eq!(show(imethod("squeeze")(&s("aabbcc"), &[s("a")], None)), "\"abbcc\"");
-        assert_eq!(show(imethod("count")(&s("hello world"), &[s("lo")], None)), "5");
+        assert_eq!(
+            show(imethod("squeeze")(&s("aabbcc"), &[s("a")], None)),
+            "\"abbcc\""
+        );
+        assert_eq!(
+            show(imethod("count")(&s("hello world"), &[s("lo")], None)),
+            "5"
+        );
     }
 
     #[test]

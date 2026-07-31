@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Endpoint, binary_string, pack_ip_sockaddr, resolve_one};
-use crate::builtins::{arity, arg_error};
+use crate::builtins::{arg_error, arity};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use zeo_abi::ADDRINFO_CLASS;

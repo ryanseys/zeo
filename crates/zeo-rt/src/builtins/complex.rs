@@ -11,12 +11,12 @@
 //! demotes.
 
 use crate::builtins::numeric::{num_add_or_panic, num_mul_or_panic, num_sub_or_panic};
-use zeo_macros::ruby_class;
 use crate::builtins::{arity, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_traits::One;
 use std::sync::Arc;
+use zeo_macros::ruby_class;
 
 pub struct RComplexData {
     pub real: RubyValue,
@@ -469,8 +469,13 @@ mod tests {
     use super::*;
 
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::COMPLEX_CLASS).unwrap()
-            .class.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::COMPLEX_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     fn cpx(r: i64, i: i64) -> RubyValue {
@@ -881,4 +886,3 @@ fn conv_target(conv: &str) -> &'static str {
         _ => "Rational",
     }
 }
-

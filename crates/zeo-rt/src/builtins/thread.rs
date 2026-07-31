@@ -71,7 +71,9 @@ fn t_inspect(
 ) -> Result<RubyValue, Signal> {
     let t = recv.as_thread_unchecked();
     let status = if thread_alive(&t) { "run" } else { "dead" };
-    Ok(RubyValue::Str(crate::string_new(thread::thread_inspect(&t, status))))
+    Ok(RubyValue::Str(crate::string_new(thread::thread_inspect(
+        &t, status,
+    ))))
 }
 
 fn t_name(

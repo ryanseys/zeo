@@ -3,11 +3,10 @@
 //! to CRuby's real TypeError); the Tier A breadth lands in stage E.
 
 use crate::RubyValue;
-use zeo_macros::ruby_class;
 use crate::builtins::{
-    arg_error, arg_int, arity, block_or_enum, convert, index_error,
-    recv_array, type_error,
+    arg_error, arg_int, arity, block_or_enum, convert, index_error, recv_array, type_error,
 };
+use zeo_macros::ruby_class;
 
 ruby_class! {
     Array = zeo_abi::ARRAY_CLASS < zeo_abi::OBJECT_CLASS;
@@ -1555,7 +1554,10 @@ fn join_into(
     Ok(())
 }
 
-fn push_or_raise(out: &mut crate::enc::StrBuf, part: &crate::enc::StrBuf) -> Result<(), crate::Signal> {
+fn push_or_raise(
+    out: &mut crate::enc::StrBuf,
+    part: &crate::enc::StrBuf,
+) -> Result<(), crate::Signal> {
     out.push_buf(part).map_err(|_| {
         crate::dispatch::raise_error(
             "Encoding::CompatibilityError",
@@ -1585,7 +1587,10 @@ fn values_eql(a: &RubyValue, b: &RubyValue) -> bool {
 /// no block, groups by the element's own `eql?`/`hash` (so `[1.0, 1]` keeps
 /// both). With a block, groups by the block's return value instead, comparing
 /// those keys by `eql?`/`hash` -- CRuby's `rb_ary_uniq` semantics.
-fn uniq_dedup(items: &[RubyValue], block: Option<&RubyValue>) -> Result<Vec<RubyValue>, crate::Signal> {
+fn uniq_dedup(
+    items: &[RubyValue],
+    block: Option<&RubyValue>,
+) -> Result<Vec<RubyValue>, crate::Signal> {
     let mut out: Vec<RubyValue> = Vec::new();
     match block {
         None => {
@@ -1850,7 +1855,6 @@ pub(crate) fn flatten_to_depth(items: &[RubyValue], depth: i64) -> Vec<RubyValue
     out
 }
 
-
 /// `arr[start, len] = value` / `arr[range] = value` -- CRuby's
 /// `rb_ary_splice`: replaces the `start..start+len` span with `value`'s
 /// `to_ary` coercion (see `splice_elems`), padding with `nil` when `start`
@@ -2008,8 +2012,13 @@ mod tests {
     use super::*;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::ARRAY_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::ARRAY_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     fn arr(vals: Vec<RubyValue>) -> RubyValue {
@@ -2205,7 +2214,9 @@ mod tests {
     fn index_rejects_a_symbol_with_a_type_error_shape() {
         let a = arr(vec![RubyValue::Int(1)]);
         let sym = RubyValue::Symbol(crate::Symbol::intern("x"));
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| imethod("[]")(&a, &[sym], None)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            imethod("[]")(&a, &[sym], None)
+        }));
         assert!(r.is_err()); // registry-less: TypeError surfaces as a panic
     }
 

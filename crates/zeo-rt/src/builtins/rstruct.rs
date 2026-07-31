@@ -35,15 +35,13 @@ use std::sync::{Arc, LazyLock, RwLock};
 use parking_lot::Mutex;
 use zeo_abi::{ClassId, STRUCT_CLASS};
 
-use crate::builtins::{
-    arg_error, arity, block_or_enum, index_error, name_error, type_error,
-};
+use crate::builtins::{arg_error, arity, block_or_enum, index_error, name_error, type_error};
 use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
-use zeo_macros::ruby_class;
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
 use crate::{array_new, hash_new, string_new};
+use zeo_macros::ruby_class;
 
 // ---------------------------------------------------------------------------
 // Per-class metadata: the member list, shared by every instance of a struct
@@ -134,10 +132,7 @@ pub fn marshal_members(recv: &RubyValue) -> Option<Vec<(Symbol, RubyValue)>> {
 /// so they register no descriptor of their own). A reader (`:x`) takes no args; a
 /// writer (`:x=`, structs only) takes one required `value`. `None` when `name`
 /// is not a member accessor of this class.
-pub fn accessor_params(
-    class_id: ClassId,
-    name: Symbol,
-) -> Option<crate::method_meta::Descriptor> {
+pub fn accessor_params(class_id: ClassId, name: Symbol) -> Option<crate::method_meta::Descriptor> {
     use crate::method_meta::ParamKind;
     let meta = meta_of(class_id)?;
     let n = name.name();
@@ -560,7 +555,11 @@ fn frozen_error(recv: &RubyValue) -> Signal {
 /// The default member-setter shared by `Struct#initialize`/`Data#initialize`:
 /// bind constructor args to slots. Positional (nil-filling for a plain Struct,
 /// exact-arity for keyword_init/Data) or by keyword (a trailing Hash).
-pub(crate) fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(), Signal> {
+pub(crate) fn bind_members(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    is_data: bool,
+) -> Result<(), Signal> {
     let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     let n = meta.members.len();
 

@@ -566,7 +566,10 @@ impl Hir {
         *self.proc_binding.get_or_init(|| {
             self.nodes.iter().any(|node| match node {
                 HirNode::Call {
-                    receiver, name, args, ..
+                    receiver,
+                    name,
+                    args,
+                    ..
                 } => {
                     (name == "binding" && receiver.is_some() && args.is_empty())
                         || (matches!(name.as_str(), "send" | "__send__" | "public_send")
@@ -1715,7 +1718,10 @@ pub enum HirNode {
     /// this node names the class those methods refine. Deliberately not an
     /// `Include`: a refinement edits no ancestry at all -- it is consulted
     /// only at the call sites a `using` scope covers.
-    Refine { target: String, holder: String },
+    Refine {
+        target: String,
+        holder: String,
+    },
     /// `using M` -- activates every refinement `M` holds for the code
     /// lexically AFTER this point, to the end of the enclosing body (the
     /// rest of the file at the top level). The position comes from this
@@ -2455,7 +2461,9 @@ impl HirNode {
                     arm.guard.iter().for_each(|(g, _)| visit(*g));
                     each(arm.body.iter().copied(), visit);
                 }
-                else_body.iter().for_each(|b| each(b.iter().copied(), visit));
+                else_body
+                    .iter()
+                    .for_each(|b| each(b.iter().copied(), visit));
             }
             HirNode::MatchPredicate { subject, pattern }
             | HirNode::MatchRequired { subject, pattern } => {

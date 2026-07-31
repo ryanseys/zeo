@@ -48,7 +48,9 @@ impl RubyObject for RBigDecimal {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RBigDecimal { bd: self.bd.clone() })
+        Arc::new(RBigDecimal {
+            bd: self.bd.clone(),
+        })
     }
 }
 
@@ -69,7 +71,10 @@ fn checked(bd: BD) -> Result<RubyValue, Signal> {
         )),
         BD::Inf(s) if flags & EXCEPTION_INFINITY != 0 => Err(raise_error(
             "FloatDomainError",
-            format!("Computation results in '{}Infinity'", if *s < 0 { "-" } else { "" }),
+            format!(
+                "Computation results in '{}Infinity'",
+                if *s < 0 { "-" } else { "" }
+            ),
         )),
         _ => Ok(wrap(bd)),
     }
@@ -96,7 +101,11 @@ fn bd_from_bigint(n: &BigInt) -> BD {
 /// precision, else the receiver's word-aligned digit capacity, floored at
 /// `2*DOUBLE_FIG`.
 fn coerce_prec(a: &BD, prec: i64) -> i64 {
-    let p = if prec == 0 { (a.word_prec() * 9) as i64 } else { prec };
+    let p = if prec == 0 {
+        (a.word_prec() * 9) as i64
+    } else {
+        prec
+    };
     p.max(2 * DOUBLE_FIG)
 }
 
@@ -154,20 +163,28 @@ fn div2(a: &BD, b: &BD, ix: i64) -> Result<RubyValue, Signal> {
             return checked(BD::NaN);
         }
         if arith::exception_flags() & EXCEPTION_ZERODIVIDE != 0 {
-            return Err(raise_error("FloatDomainError", "Divide by zero".to_string()));
+            return Err(raise_error(
+                "FloatDomainError",
+                "Divide by zero".to_string(),
+            ));
         }
         return checked(BD::Inf(a.sign_factor() * b.sign_factor()));
     }
     if a.is_zero() {
         return checked(BD::Zero(a.sign_factor() * b.sign_factor()));
     }
-    let ix = if ix == 0 { arith::default_div_prec(a, b) } else { ix };
+    let ix = if ix == 0 {
+        arith::default_div_prec(a, b)
+    } else {
+        ix
+    };
     checked(arith::div_to(a, b, ix))
 }
 
 /// Floor (or truncating) quotient and matching modulus -- `DoDivmod`.
 fn do_divmod(a: &BD, b: &BD, truncate: bool) -> Result<(BD, BD), Signal> {
-    if matches!(a, BD::NaN) || matches!(b, BD::NaN)
+    if matches!(a, BD::NaN)
+        || matches!(b, BD::NaN)
         || (matches!(a, BD::Inf(_)) && matches!(b, BD::Inf(_)))
     {
         return Ok((BD::NaN, BD::NaN));
@@ -210,7 +227,10 @@ fn to_integer(bd: &BD) -> Result<RubyValue, Signal> {
         )),
         BD::Inf(s) => Err(raise_error(
             "FloatDomainError",
-            format!("Computation results in '{}Infinity'", if *s < 0 { "-" } else { "" }),
+            format!(
+                "Computation results in '{}Infinity'",
+                if *s < 0 { "-" } else { "" }
+            ),
         )),
         BD::Zero(_) => Ok(RubyValue::Int(0)),
         BD::Fin { sign, coeff, exp } => {
@@ -318,7 +338,13 @@ pub(crate) fn kernel_big_decimal(args: &[RubyValue]) -> Result<RubyValue, Signal
             Some(n)
         }
     };
-    let fail = |sig: Signal| if exception { Err(sig) } else { Ok(RubyValue::Nil) };
+    let fail = |sig: Signal| {
+        if exception {
+            Err(sig)
+        } else {
+            Ok(RubyValue::Nil)
+        }
+    };
     match &args[0] {
         RubyValue::Str(s) => {
             let text = s.lock().to_utf8_lossy().into_owned();
@@ -338,7 +364,11 @@ pub(crate) fn kernel_big_decimal(args: &[RubyValue]) -> Result<RubyValue, Signal
         }
         RubyValue::Rational(r) => match digs {
             None => fail(arg_error!("can't omit precision for a Rational.")),
-            Some(d) => checked(rational_bd(&r.num, &r.den, if d == 0 { 2 * DOUBLE_FIG } else { d })?),
+            Some(d) => checked(rational_bd(
+                &r.num,
+                &r.den,
+                if d == 0 { 2 * DOUBLE_FIG } else { d },
+            )?),
         },
         v => match bd_of(v) {
             Some(bd) => checked(bd.clone()),
@@ -359,7 +389,10 @@ fn split_exception_kwarg(args: &[RubyValue]) -> (&[RubyValue], bool) {
     if let Some(RubyValue::Hash(h)) = args.last() {
         let key = RubyValue::Symbol(crate::Symbol::intern("exception"));
         if crate::hash_has_key(h, &key) && crate::hash_len(h) == 1 {
-            let on = !matches!(crate::hash_get(h, &key), RubyValue::Nil | RubyValue::Bool(false));
+            let on = !matches!(
+                crate::hash_get(h, &key),
+                RubyValue::Nil | RubyValue::Bool(false)
+            );
             return (&args[..args.len() - 1], on);
         }
     }

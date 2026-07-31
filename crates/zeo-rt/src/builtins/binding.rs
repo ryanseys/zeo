@@ -191,7 +191,10 @@ pub fn binding_new(
     binding_value(
         self_val,
         Arc::new(BindingScope::new(
-            locals.into_iter().map(|(n, c)| (n.to_string(), c)).collect(),
+            locals
+                .into_iter()
+                .map(|(n, c)| (n.to_string(), c))
+                .collect(),
         )),
         file.to_string(),
         line,

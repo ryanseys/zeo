@@ -250,7 +250,6 @@ fn norm(bytes: &[u8], source: &Path, run_cwd: &Path) -> Vec<u8> {
     ))
 }
 
-
 // ---- sidecars ----
 
 struct Sidecars {
@@ -373,7 +372,8 @@ fn run_oracle(
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let ruby = resolve_ruby(run_cwd);
     let mut cmd = Command::new(&ruby);
-    cmd.arg("--disable-error_highlight").arg("--disable-did_you_mean");
+    cmd.arg("--disable-error_highlight")
+        .arg("--disable-did_you_mean");
     // `Ruby::Box` examples need the experimental namespace flag + env.
     if source.contains("Ruby::Box") {
         cmd.arg("-W:no-experimental").env("RUBY_BOX", "1");
@@ -472,16 +472,15 @@ pub fn run_golden(
 
     match mode {
         Mode::Pass if matched => Ok(()),
-        Mode::Pass => Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into()),
+        Mode::Pass => {
+            Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into())
+        }
         Mode::Xfail if matched => Err(format!(
             "GAP FIXED -- {stem} now matches ruby. Promote it: \
              `scripts/promote-gap.sh {stem}` (moves it + its sidecars into tests/, \
              the zeo-authored suite -- NOT tests/spinel/, which mirrors the vendored \
              spinel corpus).",
-            stem = rb
-                .file_stem()
-                .unwrap_or(rb.as_os_str())
-                .to_string_lossy()
+            stem = rb.file_stem().unwrap_or(rb.as_os_str()).to_string_lossy()
         )
         .into()),
         Mode::Xfail => Ok(()), // still diverges: expected.

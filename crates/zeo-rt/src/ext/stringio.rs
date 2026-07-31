@@ -13,14 +13,14 @@
 //! bytes), matching this runtime's default `Str` -- CRuby's StringIO preserves
 //! arbitrary bytes with an encoding.
 
+use crate::RubyValue;
 use crate::builtins::{arity, eof_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
-use crate::RubyValue;
-use zeo_macros::ruby_class;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeo_abi::STRINGIO_CLASS;
+use zeo_macros::ruby_class;
 
 struct State {
     bytes: Vec<u8>,
@@ -462,7 +462,10 @@ mod tests {
             .expect("StringIO is a registered builtin table")
     }
     fn im(name: &str) -> crate::builtins::BuiltinMethodFn {
-        let t = tbl().instance.as_ref().expect("StringIO has instance methods");
+        let t = tbl()
+            .instance
+            .as_ref()
+            .expect("StringIO has instance methods");
         (t.lookup)(name).unwrap_or_else(|| panic!("StringIO#{name} is defined"))
     }
     fn cm(name: &str) -> crate::builtins::BuiltinMethodFn {
@@ -481,7 +484,10 @@ mod tests {
     #[test]
     fn read_and_rewind_track_position() {
         let io = cm("new")(&RubyValue::Nil, &[s("hello")], None).unwrap();
-        assert_eq!(text(&im("read")(&io, &[RubyValue::Int(3)], None).unwrap()), "hel");
+        assert_eq!(
+            text(&im("read")(&io, &[RubyValue::Int(3)], None).unwrap()),
+            "hel"
+        );
         assert_eq!(text(&im("read")(&io, &[], None).unwrap()), "lo");
         assert!(matches!(
             im("eof?")(&io, &[], None).unwrap(),
@@ -496,7 +502,10 @@ mod tests {
         let io = cm("new")(&RubyValue::Nil, &[s("a\nb")], None).unwrap();
         assert_eq!(text(&im("gets")(&io, &[], None).unwrap()), "a\n");
         assert_eq!(text(&im("gets")(&io, &[], None).unwrap()), "b");
-        assert!(matches!(im("gets")(&io, &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            im("gets")(&io, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
     }
 
     /// A StringIO over BINARY content must hand the same bytes back. Decoding
@@ -526,13 +535,17 @@ mod tests {
         // `read(len)` is the one read CRuby answers in binary regardless, and
         // a byte count may land mid-character -- so it must not re-encode.
         let head = im("read")(&io, &[RubyValue::Int(2)], None).unwrap();
-        let RubyValue::Str(head) = head else { panic!("read(2) should answer a String") };
+        let RubyValue::Str(head) = head else {
+            panic!("read(2) should answer a String")
+        };
         assert_eq!(head.lock().bytes(), &raw[..2]);
 
         // In a binary buffer every byte is its own character.
         im("rewind")(&io, &[], None).unwrap();
         let ch = im("getc")(&io, &[], None).unwrap();
-        let RubyValue::Str(ch) = ch else { panic!("getc should answer a String") };
+        let RubyValue::Str(ch) = ch else {
+            panic!("getc should answer a String")
+        };
         assert_eq!(ch.lock().bytes(), &[0x1f]);
     }
 
@@ -547,7 +560,9 @@ mod tests {
         )
         .unwrap();
         let ch = im("getc")(&io, &[], None).unwrap();
-        let RubyValue::Str(ch) = ch else { panic!("getc should answer a String") };
+        let RubyValue::Str(ch) = ch else {
+            panic!("getc should answer a String")
+        };
         assert_eq!(ch.lock().bytes(), "\u{e9}".as_bytes());
         assert_eq!(ch.lock().encoding(), crate::encoding::UTF_8);
     }
@@ -557,14 +572,20 @@ mod tests {
         let io = cm("new")(&RubyValue::Nil, &[s("hé")], None).unwrap();
         assert_eq!(text(&im("getc")(&io, &[], None).unwrap()), "h");
         assert_eq!(text(&im("getc")(&io, &[], None).unwrap()), "é");
-        assert!(matches!(im("getc")(&io, &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            im("getc")(&io, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
     }
 
     #[test]
     fn seek_repositions_by_whence() {
         let io = cm("new")(&RubyValue::Nil, &[s("abcdef")], None).unwrap();
         im("seek")(&io, &[RubyValue::Int(2)], None).unwrap();
-        assert_eq!(text(&im("read")(&io, &[RubyValue::Int(2)], None).unwrap()), "cd");
+        assert_eq!(
+            text(&im("read")(&io, &[RubyValue::Int(2)], None).unwrap()),
+            "cd"
+        );
         im("seek")(&io, &[RubyValue::Int(-1), RubyValue::Int(2)], None).unwrap();
         assert_eq!(text(&im("read")(&io, &[], None).unwrap()), "f");
     }

@@ -33,9 +33,9 @@ pub mod lower_error;
 pub mod rename;
 
 pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
+mod guard_fold;
 pub mod parse;
 pub mod types;
-mod guard_fold;
 
 /// The compile-time file context `require` resolution needs --
 /// see `parse::parse_and_lower_with`. `Default` (no path, no roots) keeps

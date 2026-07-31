@@ -220,7 +220,6 @@ ruby_class! {
     }
 }
 
-
 /// `Encoding.compatible?` for two objects: strings compare through their
 /// contents (an ASCII-only string is compatible with any ascii-compatible
 /// encoding), and two `Encoding`s are compatible iff equal or one is
@@ -306,12 +305,22 @@ mod tests {
     use super::*;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::ENCODING_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::ENCODING_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::ENCODING_CLASS).unwrap()
-            .class.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::ENCODING_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
     use crate::encoding::{ISO_8859_1, US_ASCII, UTF_8};
 
@@ -328,9 +337,16 @@ mod tests {
     #[test]
     fn name_and_inspect() {
         let utf8 = encoding_value(UTF_8);
-        assert_eq!(imethod("name")(&utf8, &[], None).unwrap().to_display_string(), "UTF-8");
         assert_eq!(
-            imethod("inspect")(&utf8, &[], None).unwrap().to_display_string(),
+            imethod("name")(&utf8, &[], None)
+                .unwrap()
+                .to_display_string(),
+            "UTF-8"
+        );
+        assert_eq!(
+            imethod("inspect")(&utf8, &[], None)
+                .unwrap()
+                .to_display_string(),
             "#<Encoding:UTF-8>"
         );
     }

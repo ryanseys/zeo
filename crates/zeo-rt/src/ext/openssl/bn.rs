@@ -138,7 +138,9 @@ fn construct(args: &[RubyValue]) -> Result<BigNum, Signal> {
     match &args[0] {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Object(_) => {
             if args.len() > 1 {
-                return Err(arg_error!("wrong number of arguments (given 2, expected 1)"));
+                return Err(arg_error!(
+                    "wrong number of arguments (given 2, expected 1)"
+                ));
             }
             arg_bn(&args[0])
         }
@@ -555,8 +557,7 @@ mod tests {
         assert_eq!(int(im("to_i")(&bn(255), &[], None)), 255);
         let from_dec = cm("new")(&RubyValue::Nil, &[s("255")], None).unwrap();
         assert_eq!(int(im("to_i")(&from_dec, &[], None)), 255);
-        let from_hex =
-            cm("new")(&RubyValue::Nil, &[s("ff"), RubyValue::Int(16)], None).unwrap();
+        let from_hex = cm("new")(&RubyValue::Nil, &[s("ff"), RubyValue::Int(16)], None).unwrap();
         assert_eq!(int(im("to_i")(&from_hex, &[], None)), 255);
         assert_eq!(int(im("to_i")(&bn(-42), &[], None)), -42);
     }
@@ -568,7 +569,9 @@ mod tests {
         assert_eq!(t(im("to_s")(&b, &[RubyValue::Int(16)], None)), "FF");
         // ruby 4.0.6: BN.new(65537).to_s(0).unpack1("H*") == "00000003010001".
         let mpi = im("to_s")(&bn(65537), &[RubyValue::Int(0)], None).unwrap();
-        let RubyValue::Str(mpi) = mpi else { panic!("expected Str") };
+        let RubyValue::Str(mpi) = mpi else {
+            panic!("expected Str")
+        };
         assert_eq!(super::super::hex(mpi.lock().bytes()), "00000003010001");
         // And back in through base 0.
         let round = cm("new")(
@@ -589,10 +592,15 @@ mod tests {
         let minus = im("-")(&b, &[RubyValue::Int(5)], None).unwrap();
         assert_eq!(int(im("to_i")(&minus, &[], None)), 250);
         let div = im("/")(&b, &[bn(4)], None).unwrap();
-        let RubyValue::Array(pair) = div else { panic!("expected [q, r]") };
+        let RubyValue::Array(pair) = div else {
+            panic!("expected [q, r]")
+        };
         assert_eq!(int(im("to_i")(&crate::array_get(&pair, 0), &[], None)), 63);
         assert_eq!(int(im("to_i")(&crate::array_get(&pair, 1), &[], None)), 3);
-        assert_eq!(int(im("to_i")(&im("%")(&b, &[bn(7)], None).unwrap(), &[], None)), 3);
+        assert_eq!(
+            int(im("to_i")(&im("%")(&b, &[bn(7)], None).unwrap(), &[], None)),
+            3
+        );
         let pow = im("**")(&bn(3), &[bn(4)], None).unwrap();
         assert_eq!(int(im("to_i")(&pow, &[], None)), 81);
         let modexp = im("mod_exp")(&b, &[bn(3), bn(100)], None).unwrap();
@@ -610,8 +618,14 @@ mod tests {
         let b = bn(255);
         assert_eq!(int(im("num_bits")(&b, &[], None)), 8);
         assert_eq!(int(im("num_bytes")(&b, &[], None)), 1);
-        assert!(matches!(im("odd?")(&b, &[], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(im("zero?")(&bn(0), &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            im("odd?")(&b, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            im("zero?")(&bn(0), &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         assert!(matches!(
             im("==")(&b, &[RubyValue::Int(255)], None).unwrap(),
             RubyValue::Bool(true)
@@ -619,9 +633,18 @@ mod tests {
         assert_eq!(int(im("<=>")(&b, &[bn(300)], None)), -1);
         // ucmp compares magnitudes.
         assert_eq!(int(im("ucmp")(&b, &[bn(-300)], None)), -1);
-        assert!(matches!(im("prime?")(&bn(97), &[], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(im("prime?")(&bn(100), &[], None).unwrap(), RubyValue::Bool(false)));
-        assert!(matches!(im("bit_set?")(&b, &[RubyValue::Int(0)], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            im("prime?")(&bn(97), &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            im("prime?")(&bn(100), &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
+        assert!(matches!(
+            im("bit_set?")(&b, &[RubyValue::Int(0)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         let c = bn(255);
         im("set_bit!")(&c, &[RubyValue::Int(8)], None).unwrap();
         assert_eq!(int(im("to_i")(&c, &[], None)), 511);
@@ -654,7 +677,10 @@ mod tests {
         let r = cm("rand")(&RubyValue::Nil, &[RubyValue::Int(64)], None).unwrap();
         assert!(int(im("num_bits")(&r, &[], None)) <= 64);
         let p = cm("generate_prime")(&RubyValue::Nil, &[RubyValue::Int(32)], None).unwrap();
-        assert!(matches!(im("prime?")(&p, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            im("prime?")(&p, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         let range = bn(100);
         let rr = cm("rand_range")(&RubyValue::Nil, &[range], None).unwrap();
         assert_eq!(int(im("<=>")(&rr, &[bn(100)], None)), -1);

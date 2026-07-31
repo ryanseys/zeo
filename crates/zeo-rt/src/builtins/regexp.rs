@@ -4,8 +4,8 @@
 //! String's, sharing `crate::regexp`'s helpers with the static paths.
 
 use crate::RubyValue;
-use zeo_macros::ruby_class;
 use crate::builtins::{arity, regexp_error};
+use zeo_macros::ruby_class;
 
 ruby_class! {
     Regexp = zeo_abi::REGEXP_CLASS < zeo_abi::OBJECT_CLASS;
@@ -368,14 +368,18 @@ fn escape_regexp_source(s: &str) -> String {
     out
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::REGEXP_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::REGEXP_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     #[test]

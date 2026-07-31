@@ -92,11 +92,15 @@ mod tests {
             "true"
         );
         assert_eq!(
-            imethod("to_a")(&RubyValue::Nil, &[], None).unwrap().inspect_string(),
+            imethod("to_a")(&RubyValue::Nil, &[], None)
+                .unwrap()
+                .inspect_string(),
             "[]"
         );
         assert_eq!(
-            imethod("to_i")(&RubyValue::Nil, &[], None).unwrap().inspect_string(),
+            imethod("to_i")(&RubyValue::Nil, &[], None)
+                .unwrap()
+                .inspect_string(),
             "0"
         );
     }

@@ -34,7 +34,6 @@ pub(crate) mod data;
 pub(crate) mod dir;
 pub(crate) mod encoding;
 pub(crate) mod enumerable;
-pub(crate) mod formatter;
 pub(crate) mod enumerator;
 pub(crate) mod env;
 pub(crate) mod exception;
@@ -43,6 +42,7 @@ pub(crate) mod fiber;
 pub(crate) mod file;
 pub(crate) mod float;
 pub(crate) mod format;
+pub(crate) mod formatter;
 pub(crate) mod gc;
 pub(crate) mod hash;
 pub(crate) mod integer;
@@ -359,7 +359,6 @@ pub(crate) fn convert_name_of(v: &RubyValue) -> String {
         _ => class_name_of(v),
     }
 }
-
 
 /// The typed error constructors: `type_error!("no implicit conversion...")`
 /// over `raise_error("TypeError", format!(...))`, so the class name is spelled

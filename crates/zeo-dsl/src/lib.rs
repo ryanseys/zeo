@@ -48,7 +48,7 @@
 
 use proc_macro2::TokenStream;
 use syn::parse::ParseStream;
-use syn::{braced, parenthesized, Attribute, Expr, Ident, LitInt, LitStr, Path, Token};
+use syn::{Attribute, Expr, Ident, LitInt, LitStr, Path, Token, braced, parenthesized};
 
 /// A fully-parsed `ruby_class! { ... }` body.
 pub struct ClassSpec {
@@ -280,7 +280,8 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
             spec.methods.push(parse_def(input, visibility, attrs)?);
         }
         "def" => {
-            spec.methods.push(parse_def(input, Visibility::Public, attrs)?);
+            spec.methods
+                .push(parse_def(input, Visibility::Public, attrs)?);
         }
         "module_function" => {
             // `module_function def foo(...)` -- a module function: emitted into
@@ -392,10 +393,7 @@ fn parse_method_name(input: ParseStream) -> syn::Result<String> {
 /// Whether the next token is the identifier `word` (a contextual keyword like
 /// `arity`, which is not a real Rust keyword).
 fn peek_ident(input: ParseStream, word: &str) -> bool {
-    input
-        .fork()
-        .parse::<Ident>()
-        .is_ok_and(|id| id == word)
+    input.fork().parse::<Ident>().is_ok_and(|id| id == word)
 }
 
 #[cfg(test)]
@@ -443,7 +441,10 @@ mod tests {
             def "union"(recv, args, _block) { set_add(recv, args) }
         });
         // The `as X` binds the FIRST def's fn name; aliases still share it.
-        assert_eq!(spec.methods[0].bound_name.as_ref().unwrap().to_string(), "set_add");
+        assert_eq!(
+            spec.methods[0].bound_name.as_ref().unwrap().to_string(),
+            "set_add"
+        );
         assert_eq!(spec.methods[0].names.len(), 2);
         assert_eq!(spec.methods[0].names[1].ruby, "<<");
         // A def without `as` leaves the fn name to the mangler.
@@ -468,7 +469,10 @@ mod tests {
             ClassKind::Module => panic!("expected a class"),
         }
         assert_eq!(spec.includes.len(), 1);
-        assert_eq!(spec.includes[0].segments.last().unwrap().ident, "COMPARABLE_CLASS");
+        assert_eq!(
+            spec.includes[0].segments.last().unwrap().ident,
+            "COMPARABLE_CLASS"
+        );
         assert_eq!(spec.consts.len(), 2);
         assert_eq!(spec.consts[0].name.to_string(), "INFINITY");
         assert_eq!(spec.methods.len(), 2);
@@ -552,7 +556,10 @@ mod tests {
         // A nested class carries its own kind, id, superclass, and methods.
         let status = &spec.nested[0];
         assert_eq!(status.name.to_string(), "Status");
-        assert_eq!(status.id.segments.last().unwrap().ident, "PROCESS_STATUS_CLASS");
+        assert_eq!(
+            status.id.segments.last().unwrap().ident,
+            "PROCESS_STATUS_CLASS"
+        );
         match &status.kind {
             ClassKind::Class { superclass } => {
                 let sup = superclass.as_ref().expect("Status declares a superclass");

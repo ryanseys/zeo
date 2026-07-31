@@ -68,10 +68,10 @@ pub fn groups(compiler: &Compiler) -> Vec<Group> {
         .collect();
     // Deterministic order: the emission must not depend on hash iteration.
     out.sort_by(|a, b| {
-        (a.defining_class.0, &a.name, a.members[0].0 .0).cmp(&(
+        (a.defining_class.0, &a.name, a.members[0].0.0).cmp(&(
             b.defining_class.0,
             &b.name,
-            b.members[0].0 .0,
+            b.members[0].0.0,
         ))
     });
     out

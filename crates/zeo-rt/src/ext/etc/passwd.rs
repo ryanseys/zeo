@@ -11,9 +11,9 @@ use super::{
     StructRow, members_array, str_val, struct_each, struct_index, struct_inspect, struct_to_a,
     struct_to_h,
 };
+use crate::RubyValue;
 use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject};
-use crate::RubyValue;
 use zeo_abi::{ClassId, ETC_PASSWD_CLASS};
 use zeo_macros::ruby_class;
 
@@ -199,7 +199,9 @@ mod tests {
     fn struct_to_a_and_to_h_cover_every_member_in_order() {
         let pw = a_passwd();
         let to_a = struct_to_a(&pw, PASSWD_MEMBERS);
-        let RubyValue::Array(a) = to_a else { panic!("to_a is an Array") };
+        let RubyValue::Array(a) = to_a else {
+            panic!("to_a is an Array")
+        };
         assert_eq!(a.lock().to_vec().len(), PASSWD_MEMBERS.len());
         // First three values, in member order.
         assert_eq!(a.lock().to_vec()[0].inspect_string(), "\"alice\"");
@@ -213,14 +215,31 @@ mod tests {
     #[test]
     fn struct_index_accepts_int_symbol_and_string() {
         let pw = a_passwd();
-        assert_eq!(struct_index(&pw, PASSWD_MEMBERS, &RubyValue::Int(0)).unwrap().inspect_string(), "\"alice\"");
+        assert_eq!(
+            struct_index(&pw, PASSWD_MEMBERS, &RubyValue::Int(0))
+                .unwrap()
+                .inspect_string(),
+            "\"alice\""
+        );
         // Negative index counts from the end (shell is member index 6).
         assert_eq!(
-            struct_index(&pw, PASSWD_MEMBERS, &RubyValue::Int(-(PASSWD_MEMBERS.len() as i64))).unwrap().inspect_string(),
+            struct_index(
+                &pw,
+                PASSWD_MEMBERS,
+                &RubyValue::Int(-(PASSWD_MEMBERS.len() as i64))
+            )
+            .unwrap()
+            .inspect_string(),
             "\"alice\""
         );
         assert_eq!(
-            struct_index(&pw, PASSWD_MEMBERS, &RubyValue::Symbol(Symbol::intern("uid"))).unwrap().inspect_string(),
+            struct_index(
+                &pw,
+                PASSWD_MEMBERS,
+                &RubyValue::Symbol(Symbol::intern("uid"))
+            )
+            .unwrap()
+            .inspect_string(),
             "1000"
         );
         // (Out-of-range / unknown-member RAISES are covered by the e2e tests,
@@ -231,7 +250,10 @@ mod tests {
     #[test]
     fn inspect_has_the_struct_shape() {
         let s = struct_inspect("Etc::Passwd", &a_passwd(), PASSWD_MEMBERS);
-        assert!(s.starts_with("#<struct Etc::Passwd name=\"alice\", passwd=\"*\", uid=1000"), "{s}");
+        assert!(
+            s.starts_with("#<struct Etc::Passwd name=\"alice\", passwd=\"*\", uid=1000"),
+            "{s}"
+        );
     }
 
     // The `#[cfg]`-on-`def` DSL feature: the BSD-only accessors are in the
@@ -242,7 +264,8 @@ mod tests {
         let table = crate::builtins::registered_table(ETC_PASSWD_CLASS)
             .and_then(|t| t.instance.as_ref())
             .expect("Etc::Passwd registers an instance table");
-        let present = |name: &str| (table.lookup)(name).is_some() && (table.names)().contains(&name);
+        let present =
+            |name: &str| (table.lookup)(name).is_some() && (table.names)().contains(&name);
         // Portable accessors are always there.
         assert!(present("name") && present("shell"));
         let expected = cfg!(target_vendor = "apple");

@@ -11,8 +11,8 @@ use super::{
     read_int_array, read_int_m, str_bytes, wrap_address, write_float_array, write_float_m,
     write_int_array, write_int_m,
 };
-use crate::builtins::{arity, index_error, type_error};
 use crate::RubyValue;
+use crate::builtins::{arity, index_error, type_error};
 use zeo_abi::FFI_POINTER_CLASS;
 use zeo_macros::ruby_class;
 

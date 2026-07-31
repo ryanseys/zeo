@@ -93,7 +93,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let baseline = read_baseline(&baseline_path);
 
     let hello = std::env::temp_dir().join("zeo-compile-bench-hello.rb");
-    std::fs::write(&hello, "puts 1+1\n").unwrap_or_else(|e| panic!("writing {}: {e}", hello.display()));
+    std::fs::write(&hello, "puts 1+1\n")
+        .unwrap_or_else(|e| panic!("writing {}: {e}", hello.display()));
 
     let mut rows: Vec<Row> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
@@ -103,7 +104,11 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 continue;
             }
         }
-        let rb = if rel.is_empty() { hello.clone() } else { root.join(rel) };
+        let rb = if rel.is_empty() {
+            hello.clone()
+        } else {
+            root.join(rel)
+        };
         match run_one(&zeo_bin, name, &rb, runs) {
             Ok(row) => {
                 report(&row, baseline.iter().find(|b| b.name == row.name));
@@ -131,7 +136,11 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 
     if !failures.is_empty() {
-        println!("\n{} program(s) failed: {}", failures.len(), failures.join(", "));
+        println!(
+            "\n{} program(s) failed: {}",
+            failures.len(),
+            failures.join(", ")
+        );
         return ExitCode::FAILURE;
     }
     if rows.is_empty() {
@@ -184,7 +193,10 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         if !out.status.success() {
             return Err(format!(
                 "zeo -S failed: {}",
-                String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("")
+                String::from_utf8_lossy(&out.stderr)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
             ));
         }
         rust_lines = out.stdout.iter().filter(|&&b| b == b'\n').count() as u64;

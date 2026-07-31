@@ -57,13 +57,21 @@ fn stamp_line(
     let Some((file, line)) = crate::codegen::source_location(cx.compiler, stmt) else {
         return tokens;
     };
-    if prev_line.as_ref().is_some_and(|(f, l)| *f == file && *l == line) {
+    if prev_line
+        .as_ref()
+        .is_some_and(|(f, l)| *f == file && *l == line)
+    {
         return tokens;
     }
     let mut cov = TokenStream::new();
     if crate::codegen::coverage_active() {
         let entering_spliced_file = prev_line.as_ref().is_some_and(|(f, _)| *f != file)
-            && cx.compiler.hir.files.first().is_none_or(|f0| f0.name != file);
+            && cx
+                .compiler
+                .hir
+                .files
+                .first()
+                .is_none_or(|f0| f0.name != file);
         if entering_spliced_file {
             cov.extend(quote! { zeo_rt::cov_file_loaded(#file); });
         }

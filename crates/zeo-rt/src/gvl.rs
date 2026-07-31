@@ -657,7 +657,11 @@ mod tests {
                     continue;
                 }
                 // The preemption timer: classified, not forgotten.
-                if window.contains("zeo-timer") || lines[i..(i + 4).min(lines.len())].join("\n").contains("zeo-timer") {
+                if window.contains("zeo-timer")
+                    || lines[i..(i + 4).min(lines.len())]
+                        .join("\n")
+                        .contains("zeo-timer")
+                {
                     continue;
                 }
                 unmarked.push(format!("{file}:{}", i + 1));

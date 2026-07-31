@@ -8,12 +8,12 @@
 //! (see `complex.rs`).
 
 use crate::builtins::{arg_error, arity, type_error};
-use zeo_macros::ruby_class;
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{Signed, ToPrimitive, Zero};
 use std::sync::Arc;
+use zeo_macros::ruby_class;
 
 pub struct RRationalData {
     pub num: BigInt,
@@ -226,7 +226,7 @@ mod tests {
             .as_ref()
             .expect("Rational has instance methods")
             .lookup)(name)
-            .unwrap_or_else(|| panic!("Rational#{name} is defined"))
+        .unwrap_or_else(|| panic!("Rational#{name} is defined"))
     }
 
     fn rat(n: i64, d: i64) -> RubyValue {
@@ -279,7 +279,8 @@ mod tests {
     /// All shapes oracle-verified against ruby 4.0.6.
     #[test]
     fn rationalize_finds_the_simplest_rational_within_eps() {
-        let go = |r: RubyValue, e: RubyValue| parts(&imethod("rationalize")(&r, &[e], None).unwrap());
+        let go =
+            |r: RubyValue, e: RubyValue| parts(&imethod("rationalize")(&r, &[e], None).unwrap());
         assert_eq!(go(rat(1, 3), rat(1, 10)), (1, 3));
         assert_eq!(go(rat(5000, 10001), rat(1, 100)), (1, 2));
         assert_eq!(go(rat(3, 4), rat(1, 10)), (2, 3));
@@ -288,7 +289,10 @@ mod tests {
         assert_eq!(go(rat(-1, 3), rat(1, 10)), (-1, 3));
         // Zero/absent eps answer self; a span past an integer picks ceil(a).
         assert_eq!(go(rat(1, 3), RubyValue::Int(0)), (1, 3));
-        assert_eq!(parts(&imethod("rationalize")(&rat(1, 3), &[], None).unwrap()), (1, 3));
+        assert_eq!(
+            parts(&imethod("rationalize")(&rat(1, 3), &[], None).unwrap()),
+            (1, 3)
+        );
         assert_eq!(go(rat(1, 3), RubyValue::Int(2)), (-1, 1));
         assert_eq!(go(rat(1, 3), rat(1, 2)), (0, 1));
     }

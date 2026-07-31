@@ -6,7 +6,9 @@
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 
-use super::{errno_error, host_port, kw_strip, kwarg_secs, map_io_err, resolve_one, socketaddr_to_raw};
+use super::{
+    errno_error, host_port, kw_strip, kwarg_secs, map_io_err, resolve_one, socketaddr_to_raw,
+};
 use crate::builtins::io::socket_from_raw_fd;
 use crate::builtins::{arity, convert};
 use crate::{RubyValue, Signal};
@@ -31,7 +33,11 @@ fn local_bind(args: &[RubyValue]) -> Result<Option<SocketAddr>, Signal> {
 /// Connect from a specific source address: socket(2) + bind(2) + connect(2)
 /// by hand, since `TcpStream::connect` owns the whole sequence.
 fn connect_bound(local: SocketAddr, remote: SocketAddr) -> Result<TcpStream, Signal> {
-    let domain = if remote.is_ipv6() { libc::AF_INET6 } else { libc::AF_INET };
+    let domain = if remote.is_ipv6() {
+        libc::AF_INET6
+    } else {
+        libc::AF_INET
+    };
     let fd = unsafe { libc::socket(domain, libc::SOCK_STREAM, 0) };
     if fd < 0 {
         return Err(errno_error("socket(2)"));

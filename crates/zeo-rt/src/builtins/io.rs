@@ -112,7 +112,10 @@ pub struct RIo {
     /// told. Unset, a READABLE stream reports `Encoding.default_external` and
     /// a write-only one reports nil -- CRuby's rule, and why this cannot just
     /// default to the process encoding.
-    encodings: parking_lot::Mutex<(Option<crate::encoding::EncodingId>, Option<crate::encoding::EncodingId>)>,
+    encodings: parking_lot::Mutex<(
+        Option<crate::encoding::EncodingId>,
+        Option<crate::encoding::EncodingId>,
+    )>,
 }
 
 /// The read-ahead buffer behind `gets`/`each_line`/`getc`/`getbyte`.
@@ -271,7 +274,8 @@ pub(crate) fn set_fd_cloexec(fd: libc::c_int) {
 /// `#pid` answers it and `#close` reaps the child into `$?`.
 pub(crate) fn popen_value(f: std::fs::File, pid: i64) -> RubyValue {
     let io = RIo::new(IoBackend::Pipe(Some(f)), None);
-    io.child_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+    io.child_pid
+        .store(pid, std::sync::atomic::Ordering::Relaxed);
     // A popen handle is unbuffered, as CRuby's is.
     io.sync.store(true, std::sync::atomic::Ordering::Relaxed);
     RubyValue::Object(Arc::new(io))
@@ -396,7 +400,13 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
         IoBackend::Std(StdStream::Stdin) => Err(io_error!("not opened for writing")),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
         IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => blocking_write_all(f, bytes)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "write", io.path.as_deref().unwrap_or_default())),
+            .map_err(|e| {
+                crate::builtins::file::raise_errno(
+                    &e,
+                    "write",
+                    io.path.as_deref().unwrap_or_default(),
+                )
+            }),
     })
 }
 
@@ -800,15 +810,7 @@ fn select_ready(
     } else {
         &mut tv
     };
-    let n = unsafe {
-        libc::select(
-            nfds,
-            &mut sets[0],
-            &mut sets[1],
-            &mut sets[2],
-            deadline,
-        )
-    };
+    let n = unsafe { libc::select(nfds, &mut sets[0], &mut sets[1], &mut sets[2], deadline) };
     if n < 0 {
         return Err(crate::builtins::file::raise_errno(
             &std::io::Error::last_os_error(),
@@ -1449,11 +1451,7 @@ fn line_opts(args: &[RubyValue]) -> LineOpts {
 /// Read the next line's bytes: up to and including the separator, or `limit`
 /// bytes, or EOF. An empty result means EOF. Byte-at-a-time so the position
 /// lands exactly after the line (a buffered read would desync `tell`).
-fn read_line_bytes(
-    io: &RIo,
-    f: &mut std::fs::File,
-    opts: &LineOpts,
-) -> std::io::Result<Vec<u8>> {
+fn read_line_bytes(io: &RIo, f: &mut std::fs::File, opts: &LineOpts) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
     loop {
         if let Some(lim) = opts.limit {
@@ -1582,7 +1580,9 @@ fn read_one_char(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<Stri
     };
     let mut buf = vec![b0];
     for _ in 1..n {
-        let Some(b) = buffered_byte(io, f)? else { break };
+        let Some(b) = buffered_byte(io, f)? else {
+            break;
+        };
         buf.push(b);
     }
     Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
@@ -1712,10 +1712,8 @@ fn io_external_encoding(
     if let Some(id) = io.encodings.lock().0 {
         return Ok(crate::builtins::encoding::encoding_value(id));
     }
-    let write_only = matches!(
-        stream_of(recv),
-        Some(StdStream::Stdout | StdStream::Stderr)
-    ) || fd_access_mode(recv) == Some(libc::O_WRONLY);
+    let write_only = matches!(stream_of(recv), Some(StdStream::Stdout | StdStream::Stderr))
+        || fd_access_mode(recv) == Some(libc::O_WRONLY);
     Ok(if write_only {
         RubyValue::Nil
     } else {
@@ -1760,10 +1758,12 @@ fn io_set_encoding(
         if let RubyValue::Str(sp) = &args[0] {
             let spec = sp.lock().to_utf8_lossy().into_owned();
             if let Some((ext, int)) = spec.split_once(':') {
-                let ext = crate::builtins::encoding::arg_encoding(
-                    &RubyValue::Str(crate::string_new(ext.to_string())))?;
-                let int = crate::builtins::encoding::arg_encoding(
-                    &RubyValue::Str(crate::string_new(int.to_string())))?;
+                let ext = crate::builtins::encoding::arg_encoding(&RubyValue::Str(
+                    crate::string_new(ext.to_string()),
+                ))?;
+                let int = crate::builtins::encoding::arg_encoding(&RubyValue::Str(
+                    crate::string_new(int.to_string()),
+                ))?;
                 *io.encodings.lock() = (Some(ext), Some(int));
                 return Ok(recv.clone());
             }
@@ -2102,7 +2102,10 @@ fn io_nonblock_scoped(
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 0..=1);
     let Some(RubyValue::Proc(p)) = blk else {
-        return Err(crate::raise_error("LocalJumpError", "no block given".to_string()));
+        return Err(crate::raise_error(
+            "LocalJumpError",
+            "no block given".to_string(),
+        ));
     };
     let on = args.first().is_none_or(|v| v.truthy());
     let Some(fd) = io_raw_fd(recv) else {
@@ -2411,7 +2414,11 @@ pub(crate) fn nonblock_raises(args: &[RubyValue]) -> bool {
 /// under `exception: false`. The exception INCLUDES `IO::WaitReadable`/
 /// `IO::WaitWritable`, which is what a retry loop rescues.
 pub(crate) fn would_block(write: bool, raises: bool, ctx: &str) -> Result<RubyValue, Signal> {
-    let symbol = if write { "wait_writable" } else { "wait_readable" };
+    let symbol = if write {
+        "wait_writable"
+    } else {
+        "wait_readable"
+    };
     if !raises {
         return Ok(RubyValue::Symbol(crate::Symbol::intern(symbol)));
     }
@@ -3071,7 +3078,9 @@ fn io_class_popen(
         // `IO.popen("-")` forks the interpreter itself -- there is no second
         // interpreter image to run in an AOT-compiled program.
         RubyValue::Str(s) if s.lock().to_utf8_lossy() == "-" => {
-            return Err(not_impl_error!("IO.popen(\"-\") (fork) is not supported by zeo"));
+            return Err(not_impl_error!(
+                "IO.popen(\"-\") (fork) is not supported by zeo"
+            ));
         }
         RubyValue::Array(a) => spawn_args.extend(a.lock().iter().cloned()),
         other => spawn_args.push(other.clone()),
@@ -3117,7 +3126,9 @@ fn io_class_popen(
                 .map_err(|e| crate::builtins::process::spawn_error(&e))?,
         ));
         cmd.stdout(Stdio::from(child_end));
-        let child = cmd.spawn().map_err(|e| crate::builtins::process::spawn_error(&e))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| crate::builtins::process::spawn_error(&e))?;
         popen_value(parent, i64::from(child.id()))
     } else {
         if write {
@@ -3125,7 +3136,9 @@ fn io_class_popen(
         } else {
             cmd.stdout(Stdio::piped());
         }
-        let mut child = cmd.spawn().map_err(|e| crate::builtins::process::spawn_error(&e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| crate::builtins::process::spawn_error(&e))?;
         let f: std::fs::File = if write {
             std::os::fd::OwnedFd::from(child.stdin.take().expect("stdin was piped")).into()
         } else {
@@ -3176,7 +3189,10 @@ fn io_class_copy_stream(
         match crate::dispatch::send_value(&args[0], crate::Symbol::intern("read"), &[], None)? {
             RubyValue::Str(s) => s.lock().bytes().to_vec(),
             RubyValue::Nil => Vec::new(), // EOF
-            other => crate::builtins::convert::to_rstr(&other)?.lock().bytes().to_vec(),
+            other => crate::builtins::convert::to_rstr(&other)?
+                .lock()
+                .bytes()
+                .to_vec(),
         }
     } else {
         let src = crate::builtins::file::path_arg(&args[0], "copy_stream")?;

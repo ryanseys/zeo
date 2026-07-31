@@ -132,8 +132,13 @@ fn raw_mode(t: &mut libc::termios, opts: RawOpts) {
 fn cooked_mode(t: &mut libc::termios) {
     t.c_iflag |= libc::BRKINT | libc::ISTRIP | libc::ICRNL | libc::IXON;
     t.c_oflag |= libc::OPOST;
-    t.c_lflag |=
-        libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN;
+    t.c_lflag |= libc::ECHO
+        | libc::ECHOE
+        | libc::ECHOK
+        | libc::ECHONL
+        | libc::ICANON
+        | libc::ISIG
+        | libc::IEXTEN;
 }
 
 fn echo_mode(t: &mut libc::termios, on: bool) {
@@ -172,9 +177,8 @@ fn raw_opts(args: &[RubyValue]) -> RawOpts {
         }
     };
     opts.min = get("min").map(|v| crate::builtins::numeric::num_to_f64_unchecked(&v) as i64);
-    opts.time = get("time").map(|v| {
-        (crate::builtins::numeric::num_to_f64_unchecked(&v) * 10.0) as i64
-    });
+    opts.time =
+        get("time").map(|v| (crate::builtins::numeric::num_to_f64_unchecked(&v) * 10.0) as i64);
     opts.intr = matches!(get("intr"), Some(RubyValue::Bool(true)));
     opts
 }
@@ -208,34 +212,65 @@ fn int_arg(v: &RubyValue) -> Result<i64, Signal> {
 
 // -- the IO rows -------------------------------------------------------
 
-pub fn raw(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn raw(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let opts = raw_opts(args);
-    in_mode(recv, "IO#raw", |t| raw_mode(t, opts), || yield_self(recv, block))
+    in_mode(
+        recv,
+        "IO#raw",
+        |t| raw_mode(t, opts),
+        || yield_self(recv, block),
+    )
 }
 
-pub fn raw_bang(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn raw_bang(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let opts = raw_opts(args);
     set_mode(recv, "IO#raw!", |t| raw_mode(t, opts))
 }
 
-pub fn cooked(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cooked(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     in_mode(recv, "IO#cooked", cooked_mode, || yield_self(recv, block))
 }
 
-pub fn cooked_bang(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cooked_bang(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     set_mode(recv, "IO#cooked!", cooked_mode)
 }
 
-pub fn echo_p(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn echo_p(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     let fd = io::raw_fd(recv)?;
     let t = get_attr(fd).ok_or_else(|| not_a_terminal(recv, "IO#echo?"))?;
-    Ok(RubyValue::Bool(t.c_lflag & (libc::ECHO | libc::ECHONL) != 0))
+    Ok(RubyValue::Bool(
+        t.c_lflag & (libc::ECHO | libc::ECHONL) != 0,
+    ))
 }
 
-pub fn echo_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn echo_set(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let on = args[0].truthy();
     set_mode(recv, "IO#echo=", |t| echo_mode(t, on))?;
@@ -243,23 +278,45 @@ pub fn echo_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -
     Ok(args[0].clone())
 }
 
-pub fn noecho(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn noecho(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
-    in_mode(recv, "IO#noecho", |t| echo_mode(t, false), || yield_self(recv, block))
+    in_mode(
+        recv,
+        "IO#noecho",
+        |t| echo_mode(t, false),
+        || yield_self(recv, block),
+    )
 }
 
 /// `getch` -- one character, read with the terminal in raw mode. With
 /// `min:`/`time:` it can answer nil, the read having timed out with nothing
 /// gathered; that is the same nil `getc` answers at EOF.
-pub fn getch(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn getch(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let opts = raw_opts(args);
-    in_mode(recv, "IO#getch", |t| raw_mode(t, opts), || send0(recv, "getc"))
+    in_mode(
+        recv,
+        "IO#getch",
+        |t| raw_mode(t, opts),
+        || send0(recv, "getc"),
+    )
 }
 
 /// `getpass(prompt = nil)` -- print the prompt, read a line with echo off,
 /// then print the newline the user's Return didn't echo. The answer is
 /// chomped, as CRuby's is.
-pub fn getpass(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn getpass(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0..=1);
     if let Some(prompt) = args.first().filter(|v| !matches!(v, RubyValue::Nil)) {
         let s = crate::builtins::convert::to_rstr(prompt)?
@@ -268,7 +325,12 @@ pub fn getpass(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) ->
             .into_owned();
         write_str(recv, s)?;
     }
-    let line = in_mode(recv, "IO#getpass", |t| echo_mode(t, false), || send0(recv, "gets"))?;
+    let line = in_mode(
+        recv,
+        "IO#getpass",
+        |t| echo_mode(t, false),
+        || send0(recv, "gets"),
+    )?;
     write_str(recv, "\n".to_string())?;
     match line {
         RubyValue::Nil => Ok(RubyValue::Nil),
@@ -289,24 +351,40 @@ fn flush_queue(
     Ok(recv.clone())
 }
 
-pub fn iflush(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn iflush(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     flush_queue(recv, "IO#iflush", libc::TCIFLUSH)
 }
 
-pub fn oflush(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn oflush(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     flush_queue(recv, "IO#oflush", libc::TCOFLUSH)
 }
 
-pub fn ioflush(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn ioflush(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     flush_queue(recv, "IO#ioflush", libc::TCIOFLUSH)
 }
 
 /// `ttyname` -- the device path behind the stream, or nil when it isn't a
 /// terminal (CRuby answers nil rather than raising here).
-pub fn ttyname(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn ttyname(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     let fd = io::raw_fd(recv)?;
     // SAFETY: `ttyname` answers a pointer into thread-local storage, valid
@@ -322,10 +400,16 @@ pub fn ttyname(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) ->
 }
 
 /// `winsize = [rows, columns]`.
-pub fn winsize_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn winsize_set(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let RubyValue::Array(dims) = &args[0] else {
-        return Err(crate::builtins::type_error!("expected an Array of [rows, columns]"));
+        return Err(crate::builtins::type_error!(
+            "expected an Array of [rows, columns]"
+        ));
     };
     let dims = dims.lock().clone();
     let fd = io::raw_fd(recv)?;
@@ -340,14 +424,22 @@ pub fn winsize_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>
 
 /// `console_mode` -- the current terminal settings, to be handed back to
 /// `console_mode=` later.
-pub fn console_mode(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn console_mode(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     let fd = io::raw_fd(recv)?;
     let t = get_attr(fd).ok_or_else(|| not_a_terminal(recv, "IO#console_mode"))?;
     Ok(RubyValue::Object(std::sync::Arc::new(ConsoleMode::new(t))))
 }
 
-pub fn console_mode_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn console_mode_set(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let mode = mode_of(&args[0])?;
     let saved = *mode.mode.lock();
@@ -357,7 +449,11 @@ pub fn console_mode_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyV
 
 /// `pressed?` and `check_winsize_changed` are Windows-only in CRuby too --
 /// this is its own message, verbatim, not a zeo decline.
-pub fn pressed_p(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn pressed_p(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let _frame = crate::frames::synthetic_c_frame("IO#pressed?");
     Err(not_impl_error!(
         "pressed?() function is unimplemented on this machine"
@@ -381,35 +477,59 @@ pub fn check_winsize_changed(
 // same as CRuby, where redirecting a program's output captures the escapes
 // rather than failing.
 
-pub fn beep(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn beep(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     write_str(recv, "\x07".to_string())
 }
 
-pub fn clear_screen(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn clear_screen(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     write_str(recv, "\x1b[2J\x1b[1;1H".to_string())
 }
 
-pub fn erase_line(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn erase_line(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     write_str(recv, format!("\x1b[{}K", int_arg(&args[0])?))
 }
 
-pub fn erase_screen(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn erase_screen(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     write_str(recv, format!("\x1b[{}J", int_arg(&args[0])?))
 }
 
 /// `goto(line, column)` -- both zero-based, as CRuby's are, over an escape
 /// whose own coordinates start at one.
-pub fn goto(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn goto(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 2);
     let (row, col) = (int_arg(&args[0])? + 1, int_arg(&args[1])? + 1);
     write_str(recv, format!("\x1b[{row};{col}H"))
 }
 
-pub fn goto_column(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn goto_column(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     write_str(recv, format!("\x1b[{}G", int_arg(&args[0])? + 1))
 }
@@ -421,27 +541,51 @@ fn move_by(recv: &RubyValue, args: &[RubyValue], letter: char) -> Result<RubyVal
     write_str(recv, format!("\x1b[{}{letter}", int_arg(&args[0])?))
 }
 
-pub fn cursor_up(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cursor_up(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     move_by(recv, args, 'A')
 }
 
-pub fn cursor_down(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cursor_down(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     move_by(recv, args, 'B')
 }
 
-pub fn cursor_right(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cursor_right(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     move_by(recv, args, 'C')
 }
 
-pub fn cursor_left(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cursor_left(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     move_by(recv, args, 'D')
 }
 
-pub fn scroll_forward(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn scroll_forward(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     move_by(recv, args, 'S')
 }
 
-pub fn scroll_backward(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn scroll_backward(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     move_by(recv, args, 'T')
 }
 
@@ -449,45 +593,60 @@ pub fn scroll_backward(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyVa
 /// terminal itself (the DSR escape) and parses the `ESC [ row ; col R` reply,
 /// which is why it needs raw mode: the reply arrives on the INPUT side and
 /// would otherwise be echoed and line-buffered.
-pub fn cursor(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cursor(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 0);
     let opts = RawOpts {
         min: Some(1),
         ..RawOpts::default()
     };
-    in_mode(recv, "IO#cursor", |t| raw_mode(t, opts), || {
-        write_str(recv, "\x1b[6n".to_string())?;
-        send0(recv, "flush")?;
-        let mut reply = String::new();
-        // The reply ends at 'R'; a stream that answers nothing (not a real
-        // terminal, however it typed) ends the loop at EOF.
-        while let RubyValue::Str(s) = send0(recv, "getc")? {
-            let c = s.lock().to_utf8_lossy().into_owned();
-            let done = c == "R";
-            reply.push_str(&c);
-            if done {
-                break;
+    in_mode(
+        recv,
+        "IO#cursor",
+        |t| raw_mode(t, opts),
+        || {
+            write_str(recv, "\x1b[6n".to_string())?;
+            send0(recv, "flush")?;
+            let mut reply = String::new();
+            // The reply ends at 'R'; a stream that answers nothing (not a real
+            // terminal, however it typed) ends the loop at EOF.
+            while let RubyValue::Str(s) = send0(recv, "getc")? {
+                let c = s.lock().to_utf8_lossy().into_owned();
+                let done = c == "R";
+                reply.push_str(&c);
+                if done {
+                    break;
+                }
             }
-        }
-        let digits: Vec<i64> = reply
-            .trim_start_matches(['\x1b', '['])
-            .trim_end_matches('R')
-            .split(';')
-            .filter_map(|p| p.parse::<i64>().ok())
-            .collect();
-        // The escape's coordinates are one-based; Ruby's are not.
-        Ok(RubyValue::Array(crate::collections::array_new(vec![
-            RubyValue::Int(digits.first().copied().unwrap_or(1) - 1),
-            RubyValue::Int(digits.get(1).copied().unwrap_or(1) - 1),
-        ])))
-    })
+            let digits: Vec<i64> = reply
+                .trim_start_matches(['\x1b', '['])
+                .trim_end_matches('R')
+                .split(';')
+                .filter_map(|p| p.parse::<i64>().ok())
+                .collect();
+            // The escape's coordinates are one-based; Ruby's are not.
+            Ok(RubyValue::Array(crate::collections::array_new(vec![
+                RubyValue::Int(digits.first().copied().unwrap_or(1) - 1),
+                RubyValue::Int(digits.get(1).copied().unwrap_or(1) - 1),
+            ])))
+        },
+    )
 }
 
 /// `cursor = [row, column]` -- `goto` by another spelling.
-pub fn cursor_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn cursor_set(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let RubyValue::Array(pos) = &args[0] else {
-        return Err(crate::builtins::type_error!("expected an Array of [row, column]"));
+        return Err(crate::builtins::type_error!(
+            "expected an Array of [row, column]"
+        ));
     };
     let pos = pos.lock().clone();
     let row = pos.first().map(int_arg).transpose()?.unwrap_or(0);
@@ -627,10 +786,7 @@ mod tests {
 
     #[test]
     fn ttyname_is_nil_for_a_non_terminal() {
-        assert!(matches!(
-            ttyname(&a_pipe(), &[], None),
-            Ok(RubyValue::Nil)
-        ));
+        assert!(matches!(ttyname(&a_pipe(), &[], None), Ok(RubyValue::Nil)));
     }
 
     #[test]
@@ -676,10 +832,7 @@ mod tests {
     #[test]
     fn raw_opts_reads_the_keyword_hash_and_scales_time() {
         let h = RubyValue::Hash(crate::collections::hash_new(vec![
-            (
-                RubyValue::Symbol(Symbol::intern("min")),
-                RubyValue::Int(2),
-            ),
+            (RubyValue::Symbol(Symbol::intern("min")), RubyValue::Int(2)),
             (
                 RubyValue::Symbol(Symbol::intern("time")),
                 RubyValue::Float(0.5),
@@ -701,7 +854,10 @@ mod tests {
         echo_mode(&mut t, true);
         assert_ne!(t.c_lflag & libc::ECHO, 0);
         echo_mode(&mut t, false);
-        assert_eq!(t.c_lflag & (libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ECHONL), 0);
+        assert_eq!(
+            t.c_lflag & (libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ECHONL),
+            0
+        );
     }
 
     #[test]
@@ -724,8 +880,13 @@ mod tests {
     /// The `c_lflag` bits a program sets, as opposed to the status bits the
     /// kernel maintains there itself -- the only part of the flag word a
     /// save/restore round trip is required to reproduce.
-    const OWNED: libc::tcflag_t =
-        libc::ICANON | libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ECHONL | libc::ISIG | libc::IEXTEN;
+    const OWNED: libc::tcflag_t = libc::ICANON
+        | libc::ECHO
+        | libc::ECHOE
+        | libc::ECHOK
+        | libc::ECHONL
+        | libc::ISIG
+        | libc::IEXTEN;
 
     /// A pseudo-terminal, the only terminal a test can rely on having. It is
     /// the SLAVE side that carries the line discipline -- `tcgetattr` on the
@@ -760,9 +921,12 @@ mod tests {
         let before = get_attr(fd).expect("a pty has a terminal mode");
         assert_ne!(before.c_lflag & libc::ICANON, 0, "a fresh pty is cooked");
 
-        let seen = in_mode(&pty, "test", |t| raw_mode(t, RawOpts::default()), || {
-            Ok(get_attr(fd).expect("still a terminal").c_lflag)
-        })
+        let seen = in_mode(
+            &pty,
+            "test",
+            |t| raw_mode(t, RawOpts::default()),
+            || Ok(get_attr(fd).expect("still a terminal").c_lflag),
+        )
         .unwrap();
         assert_eq!(seen & libc::ICANON, 0, "the block ran in raw mode");
         // Only the flags a program owns: the kernel also keeps status bits
@@ -789,7 +953,10 @@ mod tests {
             || Err(Signal::Break(RubyValue::Nil)),
         );
         assert!(out.is_err());
-        assert_eq!(get_attr(fd).unwrap().c_lflag & OWNED, before.c_lflag & OWNED);
+        assert_eq!(
+            get_attr(fd).unwrap().c_lflag & OWNED,
+            before.c_lflag & OWNED
+        );
     }
 
     /// A saved mode is a plain value: editing the copy leaves the terminal
@@ -802,7 +969,10 @@ mod tests {
             panic!("console_mode answers an object")
         };
         let saved = RubyValue::Object(saved);
-        raw_mode(&mut mode_of(&saved).unwrap().mode.lock(), RawOpts::default());
+        raw_mode(
+            &mut mode_of(&saved).unwrap().mode.lock(),
+            RawOpts::default(),
+        );
         assert_ne!(
             get_attr(fd).unwrap().c_lflag & libc::ICANON,
             0,

@@ -195,7 +195,7 @@ mod tests {
                 defining_class: None,
                 class_self: None,
                 current_method: None,
-        current_method_origin: None,
+                current_method_origin: None,
                 local_types: Cow::Borrowed(&self.empty_locals),
                 label_counter: &self.labels,
                 loop_labels: None,

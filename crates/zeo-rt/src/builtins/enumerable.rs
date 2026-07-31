@@ -48,7 +48,6 @@
 
 use crate::builtins::block_or_enum;
 use crate::builtins::{arg_error, type_error};
-use zeo_macros::ruby_module;
 use crate::collections::array_new;
 use crate::dispatch::send_value;
 use crate::signal::Signal;
@@ -56,6 +55,7 @@ use crate::value::RubyValue;
 use crate::{RProc, Symbol};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use zeo_macros::ruby_module;
 
 /// Compat shim over the generated `lookup` table, for the runtime's
 /// internal callers (`range`/`array`/`kernel` forward whole-collection

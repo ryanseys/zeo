@@ -40,6 +40,7 @@
 //! code executes -- matching this runtime's general "no ensure on
 //! never-finished fibers" simplification.
 
+use crate::coroutine::{Coroutine, CoroutineResult};
 use crate::{RubyValue, Signal, Symbol};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -47,7 +48,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
-use crate::coroutine::{Coroutine, CoroutineResult};
 
 /// The Send+Sync half of a Fiber -- what `RubyValue::Fiber` actually
 /// carries. The coroutine itself is in [`FIBERS`] on `owner`'s thread.

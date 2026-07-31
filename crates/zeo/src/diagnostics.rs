@@ -13,11 +13,11 @@
 //! via `Display`/`From`, so the in-process harnesses keep asserting on the
 //! exact message text they always have.
 
+use crate::hir::{SourceFile, Span};
+use crate::lower_error::{LowerError, LowerErrorKind};
 use miette::{Diagnostic, LabeledSpan, NamedSource, SourceCode};
 use std::fmt;
 use thiserror::Error;
-use crate::hir::{SourceFile, Span};
-use crate::lower_error::{LowerError, LowerErrorKind};
 
 /// A located lowering failure: the `LowerError` plus everything a renderer
 /// needs (file name, source text, byte span). Built at the driver boundary

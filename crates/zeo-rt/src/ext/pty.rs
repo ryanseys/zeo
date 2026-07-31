@@ -53,7 +53,9 @@ fn open_pair() -> Result<(std::fs::File, std::fs::File, String), Signal> {
     let name = match unsafe { libc::ttyname(slave) } {
         p if p.is_null() => String::new(),
         // SAFETY: non-null `ttyname` answers a NUL-terminated device path.
-        p => unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned(),
+        p => unsafe { std::ffi::CStr::from_ptr(p) }
+            .to_string_lossy()
+            .into_owned(),
     };
     crate::builtins::io::set_fd_cloexec(master);
     crate::builtins::io::set_fd_cloexec(slave);
@@ -80,7 +82,10 @@ fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyV
 
     let (master, slave, _name) = open_pair()?;
     let mut cmd = crate::builtins::process::build_spawn_command(args)?;
-    let dup = |f: &std::fs::File| f.try_clone().map_err(|e| crate::builtins::process::spawn_error(&e));
+    let dup = |f: &std::fs::File| {
+        f.try_clone()
+            .map_err(|e| crate::builtins::process::spawn_error(&e))
+    };
     cmd.stdin(Stdio::from(dup(&slave)?));
     cmd.stdout(Stdio::from(dup(&slave)?));
     cmd.stderr(Stdio::from(slave));
@@ -98,7 +103,9 @@ fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyV
             Ok(())
         });
     }
-    let child = cmd.spawn().map_err(|e| crate::builtins::process::spawn_error(&e))?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| crate::builtins::process::spawn_error(&e))?;
     // `Command` retains the slave Stdio fds until it drops; while any copy of
     // the slave stays open here, the master never sees EOF (`IO.popen` has the
     // same note).
@@ -108,7 +115,9 @@ fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyV
     // Two handles on the ONE master fd, CRuby's own shape: a reader that knows
     // the child (`#pid`), and a writer.
     let r = crate::builtins::io::popen_value(
-        master.try_clone().map_err(|e| crate::builtins::process::spawn_error(&e))?,
+        master
+            .try_clone()
+            .map_err(|e| crate::builtins::process::spawn_error(&e))?,
         pid,
     );
     let w = crate::builtins::io::pipe_value(master);

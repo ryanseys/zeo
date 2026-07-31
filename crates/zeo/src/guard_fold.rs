@@ -206,7 +206,12 @@ fn is_gem_version(compiler: &Compiler, cref: &[ClassId], box_id: u32, name: &str
 /// for a lexicographic `String#<=>` comparison: a string literal,
 /// `RUBY_VERSION`/`RUBY_ENGINE_VERSION`, a `Scope::NAME = "..."` constant, or
 /// `Gem.rubygems_version`'s underlying `Gem::VERSION` string.
-fn static_string(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId) -> Option<String> {
+fn static_string(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+) -> Option<String> {
     match &compiler.hir[node] {
         HirNode::StringLit(_) => string_lit(compiler, node),
         HirNode::ClassRef(name) => match name.as_str() {
@@ -220,15 +225,19 @@ fn static_string(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeI
             _ => const_init(compiler, cref, box_id, None, name)
                 .and_then(|(_, v)| string_lit(compiler, v)),
         },
-        HirNode::QualifiedConstRead(scope, name) => const_init(compiler, cref, box_id, Some(scope), name)
-            .and_then(|(_, v)| string_lit(compiler, v)),
+        HirNode::QualifiedConstRead(scope, name) => {
+            const_init(compiler, cref, box_id, Some(scope), name)
+                .and_then(|(_, v)| string_lit(compiler, v))
+        }
         HirNode::Call {
             receiver: Some(r),
             name,
             args,
             ..
         } if name == "rubygems_version" && args.is_empty() => match &compiler.hir[*r] {
-            HirNode::ClassRef(rn) if rn == "Gem" => const_string(compiler, cref, box_id, "Gem::VERSION"),
+            HirNode::ClassRef(rn) if rn == "Gem" => {
+                const_string(compiler, cref, box_id, "Gem::VERSION")
+            }
             _ => None,
         },
         _ => None,

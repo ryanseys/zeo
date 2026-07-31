@@ -44,7 +44,8 @@ impl RubyObject for RDynLib {
         self.frozen.load(std::sync::atomic::Ordering::Relaxed)
     }
     fn set_frozen(&self) {
-        self.frozen.store(true, std::sync::atomic::Ordering::Relaxed)
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed)
     }
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()

@@ -16,10 +16,10 @@
 //! The `Kconv` wrapper module and the `String#tojis`/`#toeuc`/... patches
 //! are the gem's Ruby half (`gems/nkf/lib/kconv.rb`, vendored upstream).
 
+use crate::RubyValue;
 use crate::builtins::encoding::encoding_value;
 use crate::builtins::{arg_error, arity, convert};
 use crate::enc::{self, EncodingId, Unit};
-use crate::RubyValue;
 use zeo_macros::ruby_module;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -197,7 +197,9 @@ fn guess_id(bytes: &[u8]) -> EncodingId {
 }
 
 fn valid_in(bytes: &[u8], id: EncodingId) -> bool {
-    crate::string_from_bytes(bytes.to_vec(), id).lock().valid_encoding()
+    crate::string_from_bytes(bytes.to_vec(), id)
+        .lock()
+        .valid_encoding()
 }
 
 /// Decodes `bytes` under `from` into text, LOSSILY: bytes the encoding
@@ -322,11 +324,10 @@ fn q_decode(s: &str) -> Vec<u8> {
 
 /// The fullwidth forms of U+FF61..U+FF9F, in codepoint order.
 const FULLWIDTH: &[char] = &[
-    '。', '「', '」', '、', '・', 'ヲ', 'ァ', 'ィ', 'ゥ', 'ェ', 'ォ', 'ャ', 'ュ', 'ョ', 'ッ',
-    'ー', 'ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク', 'ケ', 'コ', 'サ', 'シ', 'ス', 'セ',
-    'ソ', 'タ', 'チ', 'ツ', 'テ', 'ト', 'ナ', 'ニ', 'ヌ', 'ネ', 'ノ', 'ハ', 'ヒ', 'フ', 'ヘ',
-    'ホ', 'マ', 'ミ', 'ム', 'メ', 'モ', 'ヤ', 'ユ', 'ヨ', 'ラ', 'リ', 'ル', 'レ', 'ロ', 'ワ',
-    'ン', '゛', '゜',
+    '。', '「', '」', '、', '・', 'ヲ', 'ァ', 'ィ', 'ゥ', 'ェ', 'ォ', 'ャ', 'ュ', 'ョ', 'ッ', 'ー',
+    'ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク', 'ケ', 'コ', 'サ', 'シ', 'ス', 'セ', 'ソ', 'タ',
+    'チ', 'ツ', 'テ', 'ト', 'ナ', 'ニ', 'ヌ', 'ネ', 'ノ', 'ハ', 'ヒ', 'フ', 'ヘ', 'ホ', 'マ', 'ミ',
+    'ム', 'メ', 'モ', 'ヤ', 'ユ', 'ヨ', 'ラ', 'リ', 'ル', 'レ', 'ロ', 'ワ', 'ン', '゛', '゜',
 ];
 
 /// Halfwidth->fullwidth katakana folding (nkf's default), including the
@@ -346,7 +347,14 @@ fn fold_halfwidth(s: &str) -> String {
         let mark = chars.peek().map(|n| *n as u32);
         if mark == Some(0xFF9E) && combines_with_dakuten(full) {
             chars.next();
-            out.push(char::from_u32(if full == 'ウ' { 0x30F4 } else { full as u32 + 1 }).expect("kana"));
+            out.push(
+                char::from_u32(if full == 'ウ' {
+                    0x30F4
+                } else {
+                    full as u32 + 1
+                })
+                .expect("kana"),
+            );
         } else if mark == Some(0xFF9F) && ('ハ'..='ホ').contains(&full) {
             chars.next();
             out.push(char::from_u32(full as u32 + 2).expect("kana"));

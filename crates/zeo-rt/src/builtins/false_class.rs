@@ -44,8 +44,23 @@ mod tests {
     fn false_algebra_is_truthiness_logic() {
         use crate::RubyValue;
         let f = RubyValue::Bool(false);
-        assert_eq!(imethod("&")(&f, &[RubyValue::Bool(true)], None).unwrap().inspect_string(), "false");
-        assert_eq!(imethod("|")(&f, &[RubyValue::Int(1)], None).unwrap().inspect_string(), "true");
-        assert_eq!(imethod("^")(&f, &[RubyValue::Nil], None).unwrap().inspect_string(), "false");
+        assert_eq!(
+            imethod("&")(&f, &[RubyValue::Bool(true)], None)
+                .unwrap()
+                .inspect_string(),
+            "false"
+        );
+        assert_eq!(
+            imethod("|")(&f, &[RubyValue::Int(1)], None)
+                .unwrap()
+                .inspect_string(),
+            "true"
+        );
+        assert_eq!(
+            imethod("^")(&f, &[RubyValue::Nil], None)
+                .unwrap()
+                .inspect_string(),
+            "false"
+        );
     }
 }

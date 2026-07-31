@@ -21,7 +21,6 @@
 
 use crate::RubyValue;
 use crate::builtins::{arity, need_block, thread_error};
-use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::thread::{
     RMutex, mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
@@ -29,6 +28,7 @@ use crate::thread::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use zeo_abi::MONITOR_CLASS;
+use zeo_macros::ruby_class;
 
 pub struct RMonitor {
     mutex: RMutex,

@@ -26,13 +26,13 @@
 
 use crate::builtins::{arg_error, name_error, runtime_error, type_error};
 use crate::dispatch::{
-    ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value,
-    registry_lookup_cloned, send_super_from,
+    ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, registry_lookup_cloned,
+    send_super_from,
 };
 use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
+use crate::{FMap, FSet};
 use std::any::Any;
 use std::cell::RefCell;
-use crate::{FMap, FSet};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -456,12 +456,10 @@ pub(crate) fn with_singleton_definee<T>(
 /// class -- true exactly inside an `instance_eval`/`instance_exec` of `recv`.
 pub(crate) fn singleton_definee(recv: &RubyValue) -> bool {
     SINGLETON_DEFINEE.with(|s| {
-        s.borrow()
-            .last()
-            .is_some_and(|open| match (open, recv) {
-                (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
-                _ => crate::builtins::basic_object::value_identity(open, recv),
-            })
+        s.borrow().last().is_some_and(|open| match (open, recv) {
+            (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
+            _ => crate::builtins::basic_object::value_identity(open, recv),
+        })
     })
 }
 
@@ -607,31 +605,33 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
         let name = coerce_method_name(Some(arg))?;
         if kind != AttrKind::Writer {
             let key: Arc<str> = Arc::from(name.name().as_str());
-            let getter = MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
-                if !args.is_empty() {
-                    return Err(arg_error!(
-                        "wrong number of arguments (given {}, expected 0)",
-                        args.len()
-                    ));
-                }
-                Ok(recv.ivar_get_named(&key).unwrap_or(RubyValue::Nil))
-            }));
+            let getter =
+                MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
+                    if !args.is_empty() {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 0)",
+                            args.len()
+                        ));
+                    }
+                    Ok(recv.ivar_get_named(&key).unwrap_or(RubyValue::Nil))
+                }));
             install_attr(id, name, getter);
             defined.push(RubyValue::Symbol(name));
         }
         if kind != AttrKind::Reader {
             let key: Arc<str> = Arc::from(name.name().as_str());
             let setter_name = Symbol::intern(&format!("{}=", name.name()));
-            let setter = MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
-                let [v] = args else {
-                    return Err(arg_error!(
-                        "wrong number of arguments (given {}, expected 1)",
-                        args.len()
-                    ));
-                };
-                recv.ivar_set_named(&key, v.clone());
-                Ok(v.clone())
-            }));
+            let setter =
+                MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
+                    let [v] = args else {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 1)",
+                            args.len()
+                        ));
+                    };
+                    recv.ivar_set_named(&key, v.clone());
+                    Ok(v.clone())
+                }));
             install_attr(id, setter_name, setter);
             defined.push(RubyValue::Symbol(setter_name));
         }
@@ -951,7 +951,8 @@ pub fn runtime_class_method_visibility(
     let mut w = maps().classes.write().unwrap();
     let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
     for a in args {
-        e.class_methods_vis.insert(coerce_method_name(Some(a))?, private);
+        e.class_methods_vis
+            .insert(coerce_method_name(Some(a))?, private);
     }
     drop(w);
     patch_class(id);
@@ -1444,7 +1445,11 @@ fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
         .copied()
         .filter(|m| !present.contains(m))
         .collect();
-    let cut = if placement == Placement::Before { at } else { at + 1 };
+    let cut = if placement == Placement::Before {
+        at
+    } else {
+        at + 1
+    };
     let mut new_anc = Vec::with_capacity(current.len() + fresh.len());
     new_anc.extend_from_slice(&current[..cut]);
     new_anc.extend_from_slice(&fresh);
@@ -1721,12 +1726,13 @@ pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
     // mark is what survives a later `private :m` lookup on the copy alone.
     let mut methods = crate::FMap::default();
     let mut methods_vis = crate::FMap::default();
-    let record = |name: Symbol, vis, methods: &mut crate::FMap<_, _>, vism: &mut crate::FMap<_, _>| {
-        if let Some(m) = module_own_method_impl(mid, name) {
-            methods.insert(name, m);
-            vism.insert(name, vis);
-        }
-    };
+    let record =
+        |name: Symbol, vis, methods: &mut crate::FMap<_, _>, vism: &mut crate::FMap<_, _>| {
+            if let Some(m) = module_own_method_impl(mid, name) {
+                methods.insert(name, m);
+                vism.insert(name, vis);
+            }
+        };
     for (filter, vis) in [
         (
             crate::dispatch::VisFilter::Public,

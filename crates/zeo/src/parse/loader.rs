@@ -68,13 +68,13 @@
 //! are pre-existing unsupported territory, unchanged by splicing.
 
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
-use crate::lower_error::LowerError;
-use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
 use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
 use crate::lower::features::{canonical_ext_feature, is_builtin_feature};
 use crate::lower::{PResult, lower_node};
+use crate::lower_error::LowerError;
 use crate::rename;
+use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 
 /// One gem: a named directory with a `.gemspec`, contributing one or more
 /// `require` search roots.
@@ -409,7 +409,8 @@ impl Loader {
                             if matches!(name.as_str(), "require" | "require_relative" | "load") {
                                 let Some(spliced) = self.lower_require_statement(
                                     hir, result, &call, &name, dir, file_idx, bx,
-                                )? else {
+                                )?
+                                else {
                                     return Err(format!(
                                         "`box.{name}` needs a compile-time-resolvable literal target (zeo limitation) -- a box's require graph is spliced at compile time"
                                     ).into());
@@ -537,7 +538,13 @@ impl Loader {
             for call in &nested.calls {
                 let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
                 if let Some(spliced) = self.lower_require_statement(
-                    hir, result, call, &cname, dir, file_idx, current_box,
+                    hir,
+                    result,
+                    call,
+                    &cname,
+                    dir,
+                    file_idx,
+                    current_box,
                 )? {
                     combined.extend(spliced);
                 }
@@ -749,9 +756,7 @@ impl Loader {
                 // `rbconfig`, which real Ruby generates at build time), then a
                 // statically linked extension?
                 None => {
-                    if let Some(spliced) =
-                        self.splice_synthetic_shim(hir, feature, current_box)?
-                    {
+                    if let Some(spliced) = self.splice_synthetic_shim(hir, feature, current_box)? {
                         return Ok(spliced);
                     }
                     return self.activate_static_ext(hir, feature);
@@ -1033,7 +1038,10 @@ impl Loader {
     }
 
     /// The actual search behind [`Loader::resolve_require`]'s memo.
-    fn resolve_require_uncached(&self, feature: &str) -> PResult<Option<(PathBuf, Option<String>)>> {
+    fn resolve_require_uncached(
+        &self,
+        feature: &str,
+    ) -> PResult<Option<(PathBuf, Option<String>)>> {
         if feature.starts_with("./") || feature.starts_with("../") || feature.starts_with('~') {
             return Err(format!(
                 "`require \"{feature}\"`: `./`/`../`/`~` paths resolve against the runtime working directory in real Ruby, which doesn't exist at compile time -- use `require_relative` instead"
@@ -1569,14 +1577,20 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
         };
     }
     if let Some(and) = node.as_and_node() {
-        return match (eval_static_guard(&and.left()), eval_static_guard(&and.right())) {
+        return match (
+            eval_static_guard(&and.left()),
+            eval_static_guard(&and.right()),
+        ) {
             (Some(false), _) | (_, Some(false)) => Some(false),
             (Some(true), Some(true)) => Some(true),
             _ => None,
         };
     }
     if let Some(or) = node.as_or_node() {
-        return match (eval_static_guard(&or.left()), eval_static_guard(&or.right())) {
+        return match (
+            eval_static_guard(&or.left()),
+            eval_static_guard(&or.right()),
+        ) {
             (Some(true), _) | (_, Some(true)) => Some(true),
             (Some(false), Some(false)) => Some(false),
             _ => None,
@@ -1585,7 +1599,10 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
     if let Some(call) = node.as_call_node() {
         let name = call.name().as_slice();
         if name == b"!" && call.arguments().is_none() {
-            return call.receiver().and_then(|r| eval_static_guard(&r)).map(|b| !b);
+            return call
+                .receiver()
+                .and_then(|r| eval_static_guard(&r))
+                .map(|b| !b);
         }
         if matches!(name, b"==" | b"!=") {
             if let (Some(recv), Some(args)) = (call.receiver(), call.arguments()) {
@@ -1824,7 +1841,10 @@ fn collect_parse_warnings(
             continue;
         }
         let upto = warning.location().start_offset().min(source.len());
-        let line = 1 + source.as_bytes()[..upto].iter().filter(|&&b| b == b'\n').count() as u32;
+        let line = 1 + source.as_bytes()[..upto]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count() as u32;
         hir.warnings.push(crate::diagnostics::CompileWarning {
             file: file.to_string(),
             line,

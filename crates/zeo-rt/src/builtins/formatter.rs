@@ -20,10 +20,10 @@ use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
 
 use crate::builtins::{arg_error, arity, type_error};
-use zeo_macros::ruby_module;
 use crate::dispatch::send_value;
 use crate::encoding::ASCII_8BIT;
 use crate::{RubyValue, Signal, Symbol, string_new};
+use zeo_macros::ruby_module;
 
 const STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -36,14 +36,22 @@ fn entropy(recv: &RubyValue, n: i64) -> Result<Vec<u8>, Signal> {
     if n < 0 {
         return Err(arg_error!("negative string size (or size too big)"));
     }
-    let v = send_value(recv, Symbol::intern("gen_random"), &[RubyValue::Int(n)], None)?;
+    let v = send_value(
+        recv,
+        Symbol::intern("gen_random"),
+        &[RubyValue::Int(n)],
+        None,
+    )?;
     let RubyValue::Str(_) = v else {
         return Err(type_error!(
             "gen_random must return a String of {n} bytes, got {}",
             crate::builtins::class_name_of(&v)
         ));
     };
-    Ok(crate::builtins::convert::to_rstr(&v)?.lock().bytes().to_vec())
+    Ok(crate::builtins::convert::to_rstr(&v)?
+        .lock()
+        .bytes()
+        .to_vec())
 }
 
 /// The byte-count argument shared by `random_bytes`/`hex`/`base64`/... : a
@@ -162,7 +170,11 @@ fn choose(recv: &RubyValue, source: &[RubyValue], n: i64) -> Result<RubyValue, S
     let mut out = String::new();
     for _ in 0..n.max(0) {
         let idx = rand_int_below(recv, source.len() as u64)? as usize;
-        out.push_str(&crate::builtins::convert::to_rstr(&source[idx])?.lock().to_utf8_lossy());
+        out.push_str(
+            &crate::builtins::convert::to_rstr(&source[idx])?
+                .lock()
+                .to_utf8_lossy(),
+        );
     }
     Ok(RubyValue::Str(string_new(out)))
 }
@@ -294,7 +306,9 @@ fn random_in_range(recv: &RubyValue, range: &RubyValue) -> Result<RubyValue, Sig
             if span <= 0 {
                 return Err(invalid());
             }
-            Ok(RubyValue::Int(lo + rand_int_below(recv, span as u64)? as i64))
+            Ok(RubyValue::Int(
+                lo + rand_int_below(recv, span as u64)? as i64,
+            ))
         }
         (Some(b), Some(e)) => {
             let lo = to_f(b)?;

@@ -9,9 +9,9 @@ use super::passwd::passwd_from;
 use super::{
     PWDB_LOCK, confstr_value, cstr, cstring_arg, errno_ptr, str_val, system_tmpdir, uname_hash,
 };
+use crate::RubyValue;
 use crate::builtins::{arg_error, arity};
 use crate::dispatch::raise_error;
-use crate::RubyValue;
 use zeo_macros::ruby_module;
 
 ruby_module! {

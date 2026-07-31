@@ -57,7 +57,10 @@ mod tests {
     #[test]
     fn gc_rows_are_no_ops_that_answer_ruby_shapes() {
         let cls = RubyValue::Class(zeo_abi::GC_CLASS);
-        assert!(matches!(cmethod("start")(&cls, &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            cmethod("start")(&cls, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
         assert!(matches!(
             cmethod("count")(&cls, &[], None).unwrap(),
             RubyValue::Int(0)

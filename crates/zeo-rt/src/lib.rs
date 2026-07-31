@@ -24,18 +24,18 @@ pub mod encoding;
 // Runtime string `eval`. Always compiled -- the module's public
 // `eval_string` is the stub-or-real entry, gating only its prism-backed
 // interpreter internals behind the `eval-vm` feature.
-mod eval_vm;
 mod coroutine;
+mod eval_vm;
 mod exec;
 mod ext;
 pub mod ffi;
 mod fiber;
+mod flipflop;
 mod frames;
 mod globals;
 pub mod gvl;
 mod handling;
 mod ivars;
-mod flipflop;
 mod lastmatch;
 mod method_meta;
 mod mt;
@@ -45,9 +45,9 @@ mod regexp;
 mod rproc;
 mod runtime_meta;
 mod signal;
-mod tramp;
 mod symbol;
 mod thread;
+mod tramp;
 mod value;
 
 pub use arith::*;
@@ -76,44 +76,43 @@ pub use builtins::weak::run_finalizers;
 // Re-exported for the `#[global_allocator]` a STATICALLY-linked generated
 // program declares under the backend's `zeo_static_alloc` cfg -- see
 // `backend::build_binary` and codegen's main assembly.
-pub use mimalloc::MiMalloc;
-pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set, CivarSite};
-pub use ivars::IvarCell;
+pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
-pub use constants::{const_get, const_get_master, const_get_scoped, const_set, ConstSite};
+pub use constants::{ConstSite, const_get, const_get_master, const_get_scoped, const_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
-    ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS,
-    FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS,
-    MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MissingReason, NIL_CLASS, NUMERIC_CLASS,
-    Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj,
-    RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn,
-    YIELDER_CLASS, bind_dynamic_kwargs, call_singleton_super_target, class_is_module, class_name,
-    coerce_raise_arg, coerce_raise_arg_with_message, construct_by_class_id, describe_receiver,
-    CallSite, downcast_robj, downcast_robj_ref, ivar_frozen_error, send_value_cached,
-    install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
-    rescue_matches_any,
-    ivar_defined, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
-    ivar_slot_set_dyn, main_object, make_name_error,
-    arity_error, method_name_symbol, raise_error, raise_error_details, raise_method_missing,
-    raise_no_block_yield, raise_stop_iteration, raise_with_cause, responds_to,
-    refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
-    responds_to_or_missing, responds_to_value, run_initialize, send, send_in,
-    define_in_default_definee, send_dispatch_in, send_super_class_from, send_super_from, send_value,
-    send_value_in,
-    send_value_public_in, send_value_vcall_in, stamp_backtrace, validate_aliases, validate_class_aliases, value_class,
+    CallSite, ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS,
+    FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
+    MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MissingReason, NIL_CLASS,
+    NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
+    REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    TRUE_CLASS, ValueMethodFn, YIELDER_CLASS, arity_error, bind_dynamic_kwargs,
+    call_singleton_super_target, class_is_module, class_name, coerce_raise_arg,
+    coerce_raise_arg_with_message, construct_by_class_id, define_in_default_definee,
+    describe_receiver, downcast_robj, downcast_robj_ref, install_class_registry,
+    instance_variable_get, instance_variable_set, instance_variables, is_a, ivar_defined,
+    ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
+    ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol, raise_error,
+    raise_error_details, raise_method_missing, raise_no_block_yield, raise_stop_iteration,
+    raise_with_cause, refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
+    rescue_matches_any, responds_to, responds_to_or_missing, responds_to_value, run_initialize,
+    send, send_dispatch_in, send_in, send_super_class_from, send_super_from, send_value,
+    send_value_cached, send_value_in, send_value_public_in, send_value_vcall_in, stamp_backtrace,
+    validate_aliases, validate_class_aliases, value_class,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use flipflop::{flip_flop_on, flip_flop_set};
 pub use gvl::mark_sole_thread;
+pub use ivars::IvarCell;
 pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match,
 };
 pub use method_meta::{MetaRow, MethodKind, MethodMeta, ParamKind, register_meta_rows};
+pub use mimalloc::MiMalloc;
 
 /// The Ruby class name of any value -- what the generated top level suffixes an
 /// uncaught exception's message with (`"msg (ClassName)"`, CRuby's own form).
@@ -121,19 +120,22 @@ pub fn class_name_of_value(v: &RubyValue) -> String {
     builtins::class_name_of(v)
 }
 
+pub use builtins::array::{array_pop_checked, array_push_checked, array_shift_checked};
+pub use builtins::enumerable::SumAcc;
 pub use builtins::process::last_child_status;
+pub use builtins::rmodule::const_defined_in;
+#[cfg(feature = "ext-coverage")]
+pub use ext::coverage::{cov_file_loaded, cov_line, coverage_install};
 pub use fiber::{
     FiberHandle, FiberResume, FiberYield, RFiber, fiber_alive, fiber_current, fiber_new,
     fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
 };
 pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line, synthetic_c_frame};
-#[cfg(feature = "ext-coverage")]
-pub use ext::coverage::{cov_file_loaded, cov_line, coverage_install};
-pub use builtins::rmodule::const_defined_in;
 pub use globals::{
     global_alias, global_assign, global_defined, global_get, global_set, seed_loaded_features,
 };
 pub use handling::{current_exception, pop_handling, push_handling};
+pub use pools::{LitPool, SymPool};
 pub use ractor::{
     RRactor, RactorData, make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send,
     shareable,
@@ -141,13 +143,10 @@ pub use ractor::{
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
-    class_maybe_patched, iter_inline_ok, iter_inline_ok_for, name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
-    runtime_define_singleton_method, send_super_dynamic,
+    class_maybe_patched, iter_inline_ok, iter_inline_ok_for, name_runtime_class_if_anonymous,
+    runtime_class_new, runtime_define_method, runtime_define_singleton_method, send_super_dynamic,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
-pub use builtins::array::{array_pop_checked, array_push_checked, array_shift_checked};
-pub use builtins::enumerable::SumAcc;
-pub use pools::{LitPool, SymPool};
 pub use symbol::Symbol;
 pub use thread::{
     MutexData, QueueData, RMutex, RQueue, RThread, ThreadData, mutex_lock, mutex_locked, mutex_new,

@@ -138,7 +138,12 @@ fn str_val(text: &str) -> RubyValue {
 /// out-of-range index, which is `StringScanner#[]`'s answer where
 /// `MatchData#[]` would raise.
 fn group_text(st: &State, i: usize) -> RubyValue {
-    match st.last.as_ref().and_then(|m| m.groups.get(i).copied()).flatten() {
+    match st
+        .last
+        .as_ref()
+        .and_then(|m| m.groups.get(i).copied())
+        .flatten()
+    {
         Some((a, b)) => str_val(&st.string[a..b]),
         None => RubyValue::Nil,
     }
@@ -733,11 +738,17 @@ mod tests {
             .expect("StringScanner is a registered builtin table")
     }
     fn im(name: &str) -> crate::builtins::BuiltinMethodFn {
-        let t = tbl().instance.as_ref().expect("StringScanner has instance methods");
+        let t = tbl()
+            .instance
+            .as_ref()
+            .expect("StringScanner has instance methods");
         (t.lookup)(name).unwrap_or_else(|| panic!("StringScanner#{name} is defined"))
     }
     fn cm(name: &str) -> crate::builtins::BuiltinMethodFn {
-        let t = tbl().class.as_ref().expect("StringScanner has class methods");
+        let t = tbl()
+            .class
+            .as_ref()
+            .expect("StringScanner has class methods");
         (t.lookup)(name).unwrap_or_else(|| panic!("StringScanner.{name} is defined"))
     }
     fn scanner(subject: &str) -> RubyValue {
@@ -776,7 +787,10 @@ mod tests {
         assert_eq!(text(&call(&sc, "[]", &[RubyValue::Int(1)])), "key");
         assert_eq!(text(&call(&sc, "[]", &[RubyValue::Int(2)])), "value");
         // An out-of-range index is nil here, where `MatchData#[]` would raise.
-        assert!(matches!(call(&sc, "[]", &[RubyValue::Int(9)]), RubyValue::Nil));
+        assert!(matches!(
+            call(&sc, "[]", &[RubyValue::Int(9)]),
+            RubyValue::Nil
+        ));
         // ...and a negative index counts back from the last group.
         assert_eq!(text(&call(&sc, "[]", &[RubyValue::Int(-1)])), "value");
         assert!(matches!(call(&sc, "size", &[]), RubyValue::Int(3)));
@@ -788,7 +802,11 @@ mod tests {
         call(&sc, "scan", &[re("(?<y>\\d+)-(?<m>\\d+)")]);
         assert_eq!(text(&call(&sc, "[]", &[s("y")])), "2026");
         assert_eq!(
-            text(&call(&sc, "[]", &[RubyValue::Symbol(crate::Symbol::intern("m"))])),
+            text(&call(
+                &sc,
+                "[]",
+                &[RubyValue::Symbol(crate::Symbol::intern("m"))]
+            )),
             "07"
         );
         // The unknown-NAME IndexError needs the exception registry, which only
@@ -836,7 +854,10 @@ mod tests {
         let sc = scanner("+12ab");
         assert!(matches!(call(&sc, "scan_integer", &[]), RubyValue::Int(12)));
         assert_eq!(text(&call(&sc, "rest", &[])), "ab");
-        assert!(matches!(call(&scanner("ab"), "scan_integer", &[]), RubyValue::Nil));
+        assert!(matches!(
+            call(&scanner("ab"), "scan_integer", &[]),
+            RubyValue::Nil
+        ));
     }
 
     #[test]

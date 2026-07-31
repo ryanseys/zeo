@@ -10,9 +10,9 @@
 //! generated `main()` and read-only afterwards -- the same posture as the
 //! class registry and the constant store.
 
+use crate::FMap;
 use crate::{ClassId, RubyValue, Symbol};
 use parking_lot::RwLock;
-use crate::FMap;
 use std::sync::{Arc, LazyLock};
 
 /// One parameter's kind, matching the leading symbol Ruby's `#parameters`
@@ -194,10 +194,7 @@ impl MetaRow {
         }
     }
 
-    pub const fn params(
-        mut self,
-        params: &'static [(ParamKind, Option<&'static str>)],
-    ) -> MetaRow {
+    pub const fn params(mut self, params: &'static [(ParamKind, Option<&'static str>)]) -> MetaRow {
         self.params = params;
         self
     }
@@ -272,8 +269,17 @@ pub(crate) fn record_singleton_params(key: usize, name: Symbol, body: &crate::RP
 
 /// Record what a runtime `define_method` / `class_eval`-`def` installed on
 /// `class`. Keyed like any compiled `def`, so every reader reaches it already.
-pub(crate) fn record_runtime_params(class: ClassId, kind: MethodKind, name: Symbol, body: &crate::RProc) {
-    let key = MethodKey { class: class.0, kind, name };
+pub(crate) fn record_runtime_params(
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+    body: &crate::RProc,
+) {
+    let key = MethodKey {
+        class: class.0,
+        kind,
+        name,
+    };
     let meta = MethodMeta {
         key,
         params: descriptor_from_proc(body),
@@ -299,7 +305,14 @@ pub fn lookup(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Arc<Meth
     let map = META.read();
     crate::dispatch::ancestors_of_value(class)
         .iter()
-        .find_map(|&anc| map.get(&MethodKey { class: anc.0, kind, name }).cloned())
+        .find_map(|&anc| {
+            map.get(&MethodKey {
+                class: anc.0,
+                kind,
+                name,
+            })
+            .cloned()
+        })
 }
 
 /// The parameter descriptor for `name` on `class`, as reached through `recv`
@@ -587,21 +600,36 @@ mod tests {
         let req = |n: &str| (ParamKind::Req, Some(n.to_string()));
         assert_eq!(arity_of(&[]), 0);
         assert_eq!(arity_of(&[req("a"), req("b")]), 2);
-        assert_eq!(arity_of(&[req("a"), (ParamKind::Opt, Some("b".into()))]), -2);
+        assert_eq!(
+            arity_of(&[req("a"), (ParamKind::Opt, Some("b".into()))]),
+            -2
+        );
         assert_eq!(arity_of(&[(ParamKind::Rest, None)]), -1);
         // A required keyword adds one mandatory slot and stays fixed; an
         // optional one only makes the method variadic.
-        assert_eq!(arity_of(&[req("a"), (ParamKind::KeyReq, Some("k".into()))]), 2);
-        assert_eq!(arity_of(&[req("a"), (ParamKind::Key, Some("k".into()))]), -2);
+        assert_eq!(
+            arity_of(&[req("a"), (ParamKind::KeyReq, Some("k".into()))]),
+            2
+        );
+        assert_eq!(
+            arity_of(&[req("a"), (ParamKind::Key, Some("k".into()))]),
+            -2
+        );
         // A block parameter never counts.
-        assert_eq!(arity_of(&[req("a"), (ParamKind::Block, Some("b".into()))]), 1);
+        assert_eq!(
+            arity_of(&[req("a"), (ParamKind::Block, Some("b".into()))]),
+            1
+        );
     }
 
     #[test]
     fn a_builtin_arity_becomes_an_anonymous_descriptor() {
         let kinds = |d: Descriptor| d.into_iter().map(|(k, n)| (k.tag(), n)).collect::<Vec<_>>();
         assert!(anonymous_descriptor(0).is_empty());
-        assert_eq!(kinds(anonymous_descriptor(2)), [("req", None), ("req", None)]);
+        assert_eq!(
+            kinds(anonymous_descriptor(2)),
+            [("req", None), ("req", None)]
+        );
         assert_eq!(kinds(anonymous_descriptor(-1)), [("rest", None)]);
         assert_eq!(
             kinds(anonymous_descriptor(-3)),

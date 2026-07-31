@@ -36,8 +36,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::parse::Parser;
 use syn::Ident;
+use syn::parse::Parser;
 use zeo_dsl::ClassSpec;
 
 /// A Ruby class: `ruby_class! { Float = FLOAT_CLASS < NUMERIC_CLASS; def ... }`.
@@ -185,8 +185,10 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
     // The linkme registration. A unique static name per class so multiple
     // ruby_class! invocations (each in its own module) never collide;
     // upper-cased since it's a static.
-    let register_ident =
-        format_ident!("__RUBY_CLASS_TABLE_{}", spec.name.to_string().to_uppercase());
+    let register_ident = format_ident!(
+        "__RUBY_CLASS_TABLE_{}",
+        spec.name.to_string().to_uppercase()
+    );
     let register = quote! {
         #[linkme::distributed_slice(crate::builtins::BUILTIN_TABLES)]
         static #register_ident: crate::builtins::BuiltinClassTable =

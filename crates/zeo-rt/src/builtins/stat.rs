@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use crate::Signal;
 use crate::builtins::{arg_error, arity, type_error};
-use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ClassId, FILE_STAT_CLASS};
+use zeo_macros::ruby_class;
 
 /// A captured `stat(2)` result. `libc::stat` is `Copy` and self-contained, so
 /// the whole object is a plain value behind the `Arc` every `RObj` needs.

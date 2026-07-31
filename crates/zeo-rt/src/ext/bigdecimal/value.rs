@@ -16,7 +16,11 @@ pub(crate) enum BD {
     Inf(i8),
     /// Signed zero, as CRuby keeps it (`BigDecimal("-0")` is `-0.0`).
     Zero(i8),
-    Fin { sign: i8, coeff: BigUint, exp: i64 },
+    Fin {
+        sign: i8,
+        coeff: BigUint,
+        exp: i64,
+    },
 }
 
 impl BD {
@@ -38,7 +42,11 @@ impl BD {
     }
 
     pub(crate) fn one() -> BD {
-        BD::Fin { sign: 1, coeff: BigUint::one(), exp: 1 }
+        BD::Fin {
+            sign: 1,
+            coeff: BigUint::one(),
+            exp: 1,
+        }
     }
 
     pub(crate) fn sign_factor(&self) -> i8 {
@@ -121,9 +129,11 @@ impl BD {
             BD::NaN => BD::NaN,
             BD::Inf(s) => BD::Inf(-s),
             BD::Zero(s) => BD::Zero(-s),
-            BD::Fin { sign, coeff, exp } => {
-                BD::Fin { sign: -sign, coeff: coeff.clone(), exp: *exp }
-            }
+            BD::Fin { sign, coeff, exp } => BD::Fin {
+                sign: -sign,
+                coeff: coeff.clone(),
+                exp: *exp,
+            },
         }
     }
 
@@ -132,7 +142,11 @@ impl BD {
             BD::NaN => BD::NaN,
             BD::Inf(_) => BD::Inf(1),
             BD::Zero(_) => BD::Zero(1),
-            BD::Fin { coeff, exp, .. } => BD::Fin { sign: 1, coeff: coeff.clone(), exp: *exp },
+            BD::Fin { coeff, exp, .. } => BD::Fin {
+                sign: 1,
+                coeff: coeff.clone(),
+                exp: *exp,
+            },
         }
     }
 
@@ -140,9 +154,11 @@ impl BD {
     /// half's workhorse.
     pub(crate) fn decimal_shift(&self, i: i64) -> BD {
         match self {
-            BD::Fin { sign, coeff, exp } => {
-                BD::Fin { sign: *sign, coeff: coeff.clone(), exp: exp + i }
-            }
+            BD::Fin { sign, coeff, exp } => BD::Fin {
+                sign: *sign,
+                coeff: coeff.clone(),
+                exp: exp + i,
+            },
             other => other.clone(),
         }
     }
@@ -339,9 +355,15 @@ pub(crate) fn to_s(bd: &BD, fmt: &str) -> String {
                 let e = *exp;
                 let l = digits.len() as i64;
                 let (int_part, frac_part) = if e <= 0 {
-                    ("0".to_string(), format!("{}{}", "0".repeat((-e) as usize), digits))
+                    (
+                        "0".to_string(),
+                        format!("{}{}", "0".repeat((-e) as usize), digits),
+                    )
                 } else if e >= l {
-                    (format!("{}{}", digits, "0".repeat((e - l) as usize)), "0".to_string())
+                    (
+                        format!("{}{}", digits, "0".repeat((e - l) as usize)),
+                        "0".to_string(),
+                    )
                 } else {
                     let (a, b) = digits.split_at(e as usize);
                     (a.to_string(), b.to_string())
@@ -388,13 +410,48 @@ mod tests {
 
     #[test]
     fn parses_and_normalizes() {
-        assert_eq!(s("1.5"), BD::Fin { sign: 1, coeff: 15u8.into(), exp: 1 });
-        assert_eq!(s("-0.003"), BD::Fin { sign: -1, coeff: 3u8.into(), exp: -2 });
-        assert_eq!(s("1e100"), BD::Fin { sign: 1, coeff: 1u8.into(), exp: 101 });
-        assert_eq!(s("100"), BD::Fin { sign: 1, coeff: 1u8.into(), exp: 3 });
+        assert_eq!(
+            s("1.5"),
+            BD::Fin {
+                sign: 1,
+                coeff: 15u8.into(),
+                exp: 1
+            }
+        );
+        assert_eq!(
+            s("-0.003"),
+            BD::Fin {
+                sign: -1,
+                coeff: 3u8.into(),
+                exp: -2
+            }
+        );
+        assert_eq!(
+            s("1e100"),
+            BD::Fin {
+                sign: 1,
+                coeff: 1u8.into(),
+                exp: 101
+            }
+        );
+        assert_eq!(
+            s("100"),
+            BD::Fin {
+                sign: 1,
+                coeff: 1u8.into(),
+                exp: 3
+            }
+        );
         assert_eq!(s("1_000"), s("1000"));
         assert_eq!(s(" 1.5 "), s("1.5"));
-        assert_eq!(s(".5"), BD::Fin { sign: 1, coeff: 5u8.into(), exp: 0 });
+        assert_eq!(
+            s(".5"),
+            BD::Fin {
+                sign: 1,
+                coeff: 5u8.into(),
+                exp: 0
+            }
+        );
         assert_eq!(s("-0"), BD::Zero(-1));
         assert_eq!(s("Infinity"), BD::Inf(1));
         assert_eq!(s("NaN"), BD::NaN);

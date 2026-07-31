@@ -10,7 +10,7 @@
 //! reads back off this module's own constant table, so the two halves cannot
 //! drift.
 
-use crate::builtins::{arity, arg_error, convert, runtime_error};
+use crate::builtins::{arg_error, arity, convert, runtime_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 
@@ -52,12 +52,17 @@ fn int_arg(v: Option<&RubyValue>, default: i64) -> Result<i64, Signal> {
 /// connection is closed. Mask resets to "everything" (0xff) on each open,
 /// CRuby's observed behaviour.
 fn do_open(ident: String, options: i64, facility: i64) -> Result<(), Signal> {
-    let c_ident = std::ffi::CString::new(ident).map_err(|_| arg_error!("string contains null byte"))?;
+    let c_ident =
+        std::ffi::CString::new(ident).map_err(|_| arg_error!("string contains null byte"))?;
     let mut st = STATE.lock();
     // SAFETY: the CString is stored in STATE below and outlives the
     // connection, satisfying openlog's keep-the-pointer contract.
     unsafe {
-        libc::openlog(c_ident.as_ptr(), options as libc::c_int, facility as libc::c_int);
+        libc::openlog(
+            c_ident.as_ptr(),
+            options as libc::c_int,
+            facility as libc::c_int,
+        );
         libc::setlogmask(0xff);
     }
     *st = LogState {
@@ -76,7 +81,10 @@ fn log_with(pri: i64, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if STATE.lock().ident.is_none() {
         return Err(runtime_error!("must open syslog before write"));
     }
-    let fmt = convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
+    let fmt = convert::to_rstr(&args[0])?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
     let msg = crate::builtins::format::sprintf(&fmt, &args[1..])?;
     let c_msg = std::ffi::CString::new(msg).map_err(|_| arg_error!("string contains null byte"))?;
     // SAFETY: both strings are live NUL-terminated buffers for the call.
@@ -361,8 +369,14 @@ mod tests {
     #[test]
     fn the_mask_macros_match_syslog_h() {
         // LOG_MASK(LOG_ERR) == 8, LOG_UPTO(LOG_ERR) == 15 -- ruby 4.0.5.
-        assert_eq!(int(f("LOG_MASK")(&RubyValue::Nil, &[RubyValue::Int(3)], None)), 8);
-        assert_eq!(int(f("LOG_UPTO")(&RubyValue::Nil, &[RubyValue::Int(3)], None)), 15);
+        assert_eq!(
+            int(f("LOG_MASK")(&RubyValue::Nil, &[RubyValue::Int(3)], None)),
+            8
+        );
+        assert_eq!(
+            int(f("LOG_UPTO")(&RubyValue::Nil, &[RubyValue::Int(3)], None)),
+            15
+        );
     }
 
     /// The whole lifecycle in ONE test, because the connection is process-wide
@@ -373,18 +387,42 @@ mod tests {
         super::install_constants();
         let nil = RubyValue::Nil;
 
-        assert!(matches!(f("opened?")(&nil, &[], None).unwrap(), RubyValue::Bool(false)));
-        assert!(matches!(f("ident")(&nil, &[], None).unwrap(), RubyValue::Nil));
-        assert!(matches!(f("mask")(&nil, &[], None).unwrap(), RubyValue::Nil));
-        assert!(refuses(|| log_with(6, &[RubyValue::Str(crate::string_new("x".into()))])));
+        assert!(matches!(
+            f("opened?")(&nil, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
+        assert!(matches!(
+            f("ident")(&nil, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
+        assert!(matches!(
+            f("mask")(&nil, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
+        assert!(refuses(|| log_with(
+            6,
+            &[RubyValue::Str(crate::string_new("x".into()))]
+        )));
 
         let ident = RubyValue::Str(crate::string_new("zeo-syslog-test".to_string()));
         f("open")(&nil, std::slice::from_ref(&ident), None).unwrap();
-        assert!(matches!(f("opened?")(&nil, &[], None).unwrap(), RubyValue::Bool(true)));
-        assert_eq!(int(f("options")(&nil, &[], None)), i64::from(libc::LOG_PID | libc::LOG_CONS));
-        assert_eq!(int(f("facility")(&nil, &[], None)), i64::from(libc::LOG_USER));
+        assert!(matches!(
+            f("opened?")(&nil, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert_eq!(
+            int(f("options")(&nil, &[], None)),
+            i64::from(libc::LOG_PID | libc::LOG_CONS)
+        );
+        assert_eq!(
+            int(f("facility")(&nil, &[], None)),
+            i64::from(libc::LOG_USER)
+        );
         assert_eq!(int(f("mask")(&nil, &[], None)), 255);
-        assert!(refuses(|| f("open")(&nil, &[ident], None)), "double open must refuse");
+        assert!(
+            refuses(|| f("open")(&nil, &[ident], None)),
+            "double open must refuse"
+        );
 
         let fmt = RubyValue::Str(crate::string_new("zeo syslog unit probe %d".to_string()));
         f("log")(&nil, &[RubyValue::Int(6), fmt, RubyValue::Int(42)], None).unwrap();
@@ -393,7 +431,13 @@ mod tests {
         assert_eq!(int(f("mask")(&nil, &[], None)), 31);
 
         f("close")(&nil, &[], None).unwrap();
-        assert!(matches!(f("ident")(&nil, &[], None).unwrap(), RubyValue::Nil));
-        assert!(refuses(|| f("close")(&nil, &[], None)), "double close must refuse");
+        assert!(matches!(
+            f("ident")(&nil, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
+        assert!(
+            refuses(|| f("close")(&nil, &[], None)),
+            "double close must refuse"
+        );
     }
 }

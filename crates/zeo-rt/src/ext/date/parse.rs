@@ -138,7 +138,11 @@ fn numeric_offset(text: &str) -> Option<i64> {
         }
         match d.len() {
             1 | 2 => (d.parse().ok()?, 0, 0),
-            3 | 4 => (d[..d.len() - 2].parse().ok()?, d[d.len() - 2..].parse().ok()?, 0),
+            3 | 4 => (
+                d[..d.len() - 2].parse().ok()?,
+                d[d.len() - 2..].parse().ok()?,
+                0,
+            ),
             5 | 6 => (
                 d[..d.len() - 4].parse().ok()?,
                 d[d.len() - 4..d.len() - 2].parse().ok()?,
@@ -246,8 +250,9 @@ fn strip_comments(text: &str) -> String {
 /// carries no information the rest of the date does not, so it is recorded and
 /// removed before anything else looks at the digits.
 fn parse_day(rest: &mut String, f: &mut Fields) {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?").expect("valid"));
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?").expect("valid")
+    });
     let Some(m) = RE.captures(rest) else { return };
     let name = m[1].to_ascii_lowercase();
     let wday = DAYS.iter().position(|d| *d == name).expect("matched above");
@@ -331,13 +336,18 @@ fn numbers(text: &str) -> Vec<Num> {
 /// apostrophe) means a year, and of two short numbers the first is the day.
 fn parse_named_month(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?").expect("valid")
+        Regex::new(r"(?i)\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?")
+            .expect("valid")
     });
     let Some(m) = RE.captures(rest) else {
         return false;
     };
     let name = m[1].to_ascii_lowercase();
-    let mon = MONTHS.iter().position(|x| *x == name).expect("matched above") as i64 + 1;
+    let mon = MONTHS
+        .iter()
+        .position(|x| *x == name)
+        .expect("matched above") as i64
+        + 1;
     let mut residue = rest.clone();
     residue.replace_range(m.get(0).expect("group 0 always matches").range(), " ");
 
@@ -399,8 +409,7 @@ fn parse_iso(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
 
 /// `2024-015` -- the ISO 8601 ordinal date, a year and a day OF that year.
 fn parse_iso_ordinal(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(-?\d+)-(\d{3})\b").expect("valid"));
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(-?\d+)-(\d{3})\b").expect("valid"));
     let Some(m) = RE.captures(rest) else {
         return false;
     };
@@ -557,7 +566,10 @@ mod tests {
         assert_eq!(keyed("2024-01-15", "mon").as_deref(), Some("1"));
         assert_eq!(keyed("2024-01-15", "mday").as_deref(), Some("15"));
         assert_eq!(keyed("2024-01-15T10:30:00Z", "hour").as_deref(), Some("10"));
-        assert_eq!(keyed("2024-01-15T10:30:00Z", "offset").as_deref(), Some("0"));
+        assert_eq!(
+            keyed("2024-01-15T10:30:00Z", "offset").as_deref(),
+            Some("0")
+        );
     }
 
     #[test]

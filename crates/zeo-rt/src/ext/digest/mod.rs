@@ -28,9 +28,7 @@ use linkme::distributed_slice;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use zeo_abi::{
-    DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS,
-};
+use zeo_abi::{DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS};
 
 // `Digest::MD5` self-registers its (shared) table through `algorithm.rs`'s
 // `ruby_class!`; SHA1/SHA256/SHA512 are the same table under a different id.
@@ -354,11 +352,19 @@ mod tests {
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
         assert_eq!(
-            t(cm("hexdigest")(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
+            t(cm("hexdigest")(
+                &cls(DIGEST_SHA256_CLASS),
+                &[s("abc")],
+                None
+            )),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(
-            t(cm("base64digest")(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
+            t(cm("base64digest")(
+                &cls(DIGEST_SHA256_CLASS),
+                &[s("abc")],
+                None
+            )),
             "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
         );
     }
@@ -398,7 +404,10 @@ mod tests {
         im("update")(&a, &[s("hello")], None).unwrap();
         let b = cm("new")(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
         im("update")(&b, &[s("hello")], None).unwrap();
-        assert!(matches!(im("==")(&a, &[b], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            im("==")(&a, &[b], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         let hexed = t(im("hexdigest")(&a, &[], None));
         assert!(matches!(
             im("==")(&a, &[s(&hexed)], None).unwrap(),

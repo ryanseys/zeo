@@ -2,10 +2,10 @@
 //! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
 
 use crate::RubyValue;
-use zeo_macros::ruby_class;
 use crate::builtins::{
     arg_error, arity, block_or_enum, convert, frozen_error, recv_hash, type_error,
 };
+use zeo_macros::ruby_class;
 
 /// CRuby's `rb_hash_modify` guard: a frozen Hash raises before any in-place
 /// mutation. Shared by every mutator so a frozen receiver can't slip through.
@@ -813,18 +813,27 @@ fn hash_filter(
     Ok(RubyValue::Hash(crate::hash_new(out)))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::HASH_CLASS).unwrap()
-            .class.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::HASH_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::HASH_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::HASH_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     #[test]

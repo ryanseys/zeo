@@ -146,8 +146,7 @@ fn build_result(st: &CovState) -> RubyValue {
         .files
         .iter()
         .filter_map(|file| {
-            let &(_, total, stmt_lines, def_lines) =
-                st.table.iter().find(|(f, ..)| f == file)?;
+            let &(_, total, stmt_lines, def_lines) = st.table.iter().find(|(f, ..)| f == file)?;
             let empty = HashMap::new();
             let counts = st.counts.get(file).unwrap_or(&empty);
             let mut lines = vec![RubyValue::Nil; total as usize];

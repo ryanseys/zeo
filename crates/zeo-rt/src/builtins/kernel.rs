@@ -11,9 +11,7 @@
 //! numeric operator rows move into `integer.rs`/`float.rs` (stage C) -- it
 //! would shadow the post-walk numeric `<=>` today.
 
-use crate::builtins::{
-    arg_error, arity, block_or_enum, local_jump_error, need_block, type_error,
-};
+use crate::builtins::{arg_error, arity, block_or_enum, local_jump_error, need_block, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
 
@@ -1794,8 +1792,11 @@ mod tests {
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
         (crate::builtins::registered_table(zeo_abi::KERNEL_CLASS)
             .expect("Kernel is registered")
-            .instance.as_ref().expect("Kernel has instance methods")
-            .lookup)(name).unwrap_or_else(|| panic!("Kernel#{name} is defined"))
+            .instance
+            .as_ref()
+            .expect("Kernel has instance methods")
+            .lookup)(name)
+        .unwrap_or_else(|| panic!("Kernel#{name} is defined"))
     }
 
     #[test]

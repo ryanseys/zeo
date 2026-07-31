@@ -31,11 +31,11 @@
 // NameError for unresolved constants; the feature-off stub raises
 // NotImplementedError. Each import exists only where its arm compiles, or
 // the other build flags it unused.
+use crate::builtins::binding::RBinding;
 #[cfg(feature = "eval-vm")]
 use crate::builtins::name_error;
 #[cfg(not(feature = "eval-vm"))]
 use crate::builtins::not_impl_error;
-use crate::builtins::binding::RBinding;
 use crate::{RubyValue, Signal};
 
 /// Which surface invoked the eval -- it decides where a `def` inside the
@@ -126,8 +126,7 @@ pub fn eval_value_in_scope(
     let Some(b) = crate::builtins::binding::as_binding(chosen) else {
         return Err(crate::builtins::type_error!(
             "wrong argument type {} (expected binding)",
-            crate::dispatch::class_name(binding.class_id())
-                .unwrap_or_else(|| "Object".to_string())
+            crate::dispatch::class_name(binding.class_id()).unwrap_or_else(|| "Object".to_string())
         ));
     };
     // Without an explicit binding the source runs in a CHILD of the caller's
@@ -1113,12 +1112,9 @@ mod imp {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
             // Private methods count for an implicit receiver, as in Ruby.
             let all = call.receiver().is_none();
-            let found = crate::dispatch::responds_to_or_missing(
-                &receiver,
-                Symbol::intern(&name),
-                all,
-            )
-            .unwrap_or(false);
+            let found =
+                crate::dispatch::responds_to_or_missing(&receiver, Symbol::intern(&name), all)
+                    .unwrap_or(false);
             return match found {
                 true => answer("method"),
                 false => Ok(RubyValue::Nil),

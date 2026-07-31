@@ -142,7 +142,9 @@ pub(crate) fn emit_binding_with_self(
         .binding_names
         .iter()
         .flat_map(|names| names.iter())
-        .filter(|n| super::hoisting::local_storage(cx, n) == super::hoisting::LocalStorage::Captured)
+        .filter(|n| {
+            super::hoisting::local_storage(cx, n) == super::hoisting::LocalStorage::Captured
+        })
         .map(|n| {
             let ident = safe_ident(n);
             quote! { (#n, ::std::sync::Arc::clone(&#ident)) }
@@ -571,9 +573,10 @@ fn emit_array_iter_splice(
     let keep_orig = matches!(mode, ArrayIterMode::Filter { .. })
         .then(|| quote! { let __iter_orig = __iter_e.clone(); });
     let (inner, consume) = match mode {
-        ArrayIterMode::Each { .. } => {
-            (super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo), quote! {})
-        }
+        ArrayIterMode::Each { .. } => (
+            super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo),
+            quote! {},
+        ),
         ArrayIterMode::Map => (
             super::loops::emit_redo_wrapped_body_value(&loop_cx, body, &redo),
             quote! { __iter_out.push(__iter_y); },
@@ -887,7 +890,11 @@ fn emit_typed_iter_inline(
                 }
             }
         }
-        K::ArrayEach | K::ArrayEachWithIndex | K::ArrayMap | K::ArraySelect | K::ArrayReject
+        K::ArrayEach
+        | K::ArrayEachWithIndex
+        | K::ArrayMap
+        | K::ArraySelect
+        | K::ArrayReject
         | K::ArraySum => {
             let mode = match kind {
                 K::ArrayEach => ArrayIterMode::Each { with_index: false },
@@ -989,7 +996,14 @@ fn resolve_send(cx: &Ctx, recv_id: NodeId, name: &str) -> SendTarget {
             .any(|&sid| cx.compiler.scope(sid).name == name)
             || crate::builtin_surface::provides_instance_method(anc, name)
     };
-    match cx.compiler.class(cid).ancestors.iter().copied().find(|&a| defines(a)) {
+    match cx
+        .compiler
+        .class(cid)
+        .ancestors
+        .iter()
+        .copied()
+        .find(|&a| defines(a))
+    {
         // Nobody closer than Kernel/BasicObject: the reinterpreting one.
         Some(crate::compiler::KERNEL_CLASS | crate::compiler::BASIC_OBJECT_CLASS) | None => {
             SendTarget::Kernel
@@ -1222,8 +1236,7 @@ pub fn emit_call(
                 .filter(|&(_, h)| cx.compiler.refinement_defines(h, name))
                 .collect();
             if !candidates.is_empty() {
-                let recv =
-                    boxed_implicit_self(cx).expect("every context has an implicit self");
+                let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
                 let mut arg_exprs: Vec<TokenStream> = args
                     .iter()
                     .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)))
@@ -2130,9 +2143,9 @@ fn dispatch(
     // (`String#size` is both a refinable name and an inlined length read),
     // and before the blank-slate guard, which asks a question about the
     // target class the refinement deliberately never touched.
-    if let Some(tokens) = emit_refined_call(
-        cx, recv_id, name, args, kwargs, block, block_arg, recv_expr,
-    ) {
+    if let Some(tokens) =
+        emit_refined_call(cx, recv_id, name, args, kwargs, block, block_arg, recv_expr)
+    {
         return tokens;
     }
 
@@ -3294,7 +3307,8 @@ fn dispatch(
                     return err;
                 }
             }
-            if let Some(inlined) = emit_inline_accessor(cx, cid, scope, recv_expr, args, kwargs, block, block_arg)
+            if let Some(inlined) =
+                emit_inline_accessor(cx, cid, scope, recv_expr, args, kwargs, block, block_arg)
             {
                 return inlined;
             }

@@ -15,7 +15,6 @@
 //! object), which needs a runtime `extend` on the loaded instance.
 
 use crate::builtins::{arg_error, arity, type_error};
-use zeo_macros::ruby_module;
 use crate::collections::{
     array_get, array_len, array_new, array_push, hash_new, hash_pairs, hash_set, string_from_bytes,
 };
@@ -29,6 +28,7 @@ use crate::value::RubyValue;
 use num_bigint::{BigInt, Sign};
 use std::collections::HashMap;
 use std::sync::Arc;
+use zeo_macros::ruby_module;
 
 const MAJOR: u8 = 4;
 const MINOR: u8 = 8;

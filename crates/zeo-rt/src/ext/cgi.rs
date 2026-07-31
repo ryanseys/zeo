@@ -199,9 +199,16 @@ mod tests {
             t(f("escape")(&RubyValue::Nil, &[s("a b&c=d~e.f-g_h")], None)),
             "a+b%26c%3Dd~e.f-g_h"
         );
-        assert_eq!(t(f("unescape")(&RubyValue::Nil, &[s("a+b%26c")], None)), "a b&c");
         assert_eq!(
-            t(f("escapeURIComponent")(&RubyValue::Nil, &[s("a b&c")], None)),
+            t(f("unescape")(&RubyValue::Nil, &[s("a+b%26c")], None)),
+            "a b&c"
+        );
+        assert_eq!(
+            t(f("escapeURIComponent")(
+                &RubyValue::Nil,
+                &[s("a b&c")],
+                None
+            )),
             "a%20b%26c"
         );
     }
@@ -221,7 +228,11 @@ mod tests {
             "<a>&\"'"
         );
         assert_eq!(
-            t(f("unescapeHTML")(&RubyValue::Nil, &[s("&#x41;&#66;")], None)),
+            t(f("unescapeHTML")(
+                &RubyValue::Nil,
+                &[s("&#x41;&#66;")],
+                None
+            )),
             "AB"
         );
     }

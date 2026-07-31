@@ -11,8 +11,8 @@
 use std::cell::RefCell;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::Command;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::builtins::{arg_error, arity, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
@@ -717,7 +717,10 @@ pub(crate) fn raw_waitpid(pid: i64, flags: i64) -> Result<Option<(i64, i32)>, Si
         match std::io::Error::last_os_error().raw_os_error() {
             Some(libc::EINTR) => continue,
             Some(libc::ECHILD) => {
-                return Err(raise_error("Errno::ECHILD", "No child processes".to_string()));
+                return Err(raise_error(
+                    "Errno::ECHILD",
+                    "No child processes".to_string(),
+                ));
             }
             _ => return Err(errno_fail("waitpid")),
         }
@@ -937,7 +940,6 @@ fn recv_tms(recv: &RubyValue) -> &RTms {
         _ => panic!("Process::Tms table row dispatched on a non-Object receiver"),
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // `$?` -- the last child status, thread-local like CRuby's own special global.
@@ -1274,7 +1276,9 @@ fn option_key(k: &RubyValue) -> OptKey {
                     _ => None,
                 })
                 .collect();
-            if names.len() == 2 && names.contains(&"out".to_string()) && names.contains(&"err".to_string())
+            if names.len() == 2
+                && names.contains(&"out".to_string())
+                && names.contains(&"err".to_string())
             {
                 OptKey::OutErr
             } else {
@@ -1472,7 +1476,8 @@ mod tests {
             panic!("expected a Float")
         };
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let RubyValue::Float(b) = cmethod("clock_gettime")(&process_module(), &[m], None).unwrap() else {
+        let RubyValue::Float(b) = cmethod("clock_gettime")(&process_module(), &[m], None).unwrap()
+        else {
             panic!("expected a Float")
         };
         assert!(b > a, "monotonic clock went backwards: {a} -> {b}");
@@ -1483,7 +1488,8 @@ mod tests {
     #[test]
     fn the_unit_argument_scales_and_types_the_answer() {
         let m = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
-        let ms = cmethod("clock_gettime")(&process_module(),
+        let ms = cmethod("clock_gettime")(
+            &process_module(),
             &[
                 m.clone(),
                 RubyValue::Symbol(crate::Symbol::intern("millisecond")),
@@ -1493,7 +1499,8 @@ mod tests {
         .unwrap();
         assert!(matches!(ms, RubyValue::Int(_)));
 
-        let fs = cmethod("clock_gettime")(&process_module(),
+        let fs = cmethod("clock_gettime")(
+            &process_module(),
             &[m, RubyValue::Symbol(crate::Symbol::intern("float_second"))],
             None,
         )
@@ -1505,7 +1512,8 @@ mod tests {
     #[test]
     fn an_unknown_unit_raises() {
         let r = std::panic::catch_unwind(|| {
-            cmethod("clock_gettime")(&process_module(),
+            cmethod("clock_gettime")(
+                &process_module(),
                 &[
                     RubyValue::Int(libc::CLOCK_MONOTONIC as i64),
                     RubyValue::Symbol(crate::Symbol::intern("fortnights")),
@@ -1542,7 +1550,11 @@ mod tests {
         (tbl.lookup)(name).unwrap_or_else(|| panic!("#{name} is defined"))
     }
 
-    fn call(f: crate::builtins::BuiltinMethodFn, recv: &RubyValue, args: &[RubyValue]) -> RubyValue {
+    fn call(
+        f: crate::builtins::BuiltinMethodFn,
+        recv: &RubyValue,
+        args: &[RubyValue],
+    ) -> RubyValue {
         f(recv, args, None).expect("method should not raise")
     }
 
@@ -1580,23 +1592,58 @@ mod tests {
     #[test]
     fn status_reads_a_normal_exit() {
         let s = new_status(4242, 7 << 8);
-        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &s, &[])), 7);
-        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "success?"), &s, &[])));
-        assert!(boolean(&call(imethod(PROCESS_STATUS_CLASS, "exited?"), &s, &[])));
-        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "signaled?"), &s, &[])));
+        assert_eq!(
+            int(&call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &s, &[])),
+            7
+        );
+        assert!(!boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "success?"),
+            &s,
+            &[]
+        )));
+        assert!(boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "exited?"),
+            &s,
+            &[]
+        )));
+        assert!(!boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "signaled?"),
+            &s,
+            &[]
+        )));
         assert!(call(imethod(PROCESS_STATUS_CLASS, "termsig"), &s, &[]).is_nil());
-        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "stopped?"), &s, &[])));
-        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "pid"), &s, &[])), 4242);
-        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "to_i"), &s, &[])), (7 << 8) as i64);
-        assert_eq!(text(&call(imethod(PROCESS_STATUS_CLASS, "to_s"), &s, &[])), "pid 4242 exit 7");
+        assert!(!boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "stopped?"),
+            &s,
+            &[]
+        )));
+        assert_eq!(
+            int(&call(imethod(PROCESS_STATUS_CLASS, "pid"), &s, &[])),
+            4242
+        );
+        assert_eq!(
+            int(&call(imethod(PROCESS_STATUS_CLASS, "to_i"), &s, &[])),
+            (7 << 8) as i64
+        );
+        assert_eq!(
+            text(&call(imethod(PROCESS_STATUS_CLASS, "to_s"), &s, &[])),
+            "pid 4242 exit 7"
+        );
     }
 
     /// Exit code 0 is the only `success? == true` case.
     #[test]
     fn status_zero_exit_is_the_only_success() {
         let ok = new_status(1, 0);
-        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &ok, &[])), 0);
-        assert!(boolean(&call(imethod(PROCESS_STATUS_CLASS, "success?"), &ok, &[])));
+        assert_eq!(
+            int(&call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &ok, &[])),
+            0
+        );
+        assert!(boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "success?"),
+            &ok,
+            &[]
+        )));
     }
 
     /// A signal death: `raw = signo`, so `exitstatus`/`success?` are nil (the
@@ -1606,9 +1653,20 @@ mod tests {
         let s = new_status(5, 9); // SIGKILL
         assert!(call(imethod(PROCESS_STATUS_CLASS, "exitstatus"), &s, &[]).is_nil());
         assert!(call(imethod(PROCESS_STATUS_CLASS, "success?"), &s, &[]).is_nil());
-        assert!(boolean(&call(imethod(PROCESS_STATUS_CLASS, "signaled?"), &s, &[])));
-        assert_eq!(int(&call(imethod(PROCESS_STATUS_CLASS, "termsig"), &s, &[])), 9);
-        assert!(!boolean(&call(imethod(PROCESS_STATUS_CLASS, "exited?"), &s, &[])));
+        assert!(boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "signaled?"),
+            &s,
+            &[]
+        )));
+        assert_eq!(
+            int(&call(imethod(PROCESS_STATUS_CLASS, "termsig"), &s, &[])),
+            9
+        );
+        assert!(!boolean(&call(
+            imethod(PROCESS_STATUS_CLASS, "exited?"),
+            &s,
+            &[]
+        )));
     }
 
     /// `$? == int` and `$? == other_status` both compare the raw status word.
@@ -1628,10 +1686,22 @@ mod tests {
     #[test]
     fn tms_exposes_the_four_cpu_times() {
         let t = new_tms(1.0, 2.0, 3.0, 4.0);
-        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "utime"), &t, &[])), 1.0);
-        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "stime"), &t, &[])), 2.0);
-        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "cutime"), &t, &[])), 3.0);
-        assert_eq!(float(&call(imethod(PROCESS_TMS_CLASS, "cstime"), &t, &[])), 4.0);
+        assert_eq!(
+            float(&call(imethod(PROCESS_TMS_CLASS, "utime"), &t, &[])),
+            1.0
+        );
+        assert_eq!(
+            float(&call(imethod(PROCESS_TMS_CLASS, "stime"), &t, &[])),
+            2.0
+        );
+        assert_eq!(
+            float(&call(imethod(PROCESS_TMS_CLASS, "cutime"), &t, &[])),
+            3.0
+        );
+        assert_eq!(
+            float(&call(imethod(PROCESS_TMS_CLASS, "cstime"), &t, &[])),
+            4.0
+        );
         // `to_a`/`values` share one body -- both answer the four in order.
         for name in ["to_a", "values"] {
             let RubyValue::Array(a) = call(imethod(PROCESS_TMS_CLASS, name), &t, &[]) else {
@@ -1653,7 +1723,10 @@ mod tests {
     fn times_answers_a_tms_struct() {
         let t = call(cmethod("times"), &process_module(), &[]);
         assert!(matches!(&t, RubyValue::Object(o) if o.class_id() == PROCESS_TMS_CLASS));
-        assert!(matches!(call(imethod(PROCESS_TMS_CLASS, "utime"), &t, &[]), RubyValue::Float(_)));
+        assert!(matches!(
+            call(imethod(PROCESS_TMS_CLASS, "utime"), &t, &[]),
+            RubyValue::Float(_)
+        ));
     }
 
     // -- resource limits / groups / pgrp ------------------------------------
@@ -1662,9 +1735,14 @@ mod tests {
     /// (RLIM_INFINITY comparing greater than any finite soft limit).
     #[test]
     fn getrlimit_answers_a_soft_hard_pair() {
-        let lim = call(cmethod("getrlimit"), &process_module(),
-            &[RubyValue::Int(libc::RLIMIT_NOFILE as i64)]);
-        let RubyValue::Array(a) = lim else { panic!("getrlimit is an Array") };
+        let lim = call(
+            cmethod("getrlimit"),
+            &process_module(),
+            &[RubyValue::Int(libc::RLIMIT_NOFILE as i64)],
+        );
+        let RubyValue::Array(a) = lim else {
+            panic!("getrlimit is an Array")
+        };
         let a = a.lock();
         assert_eq!(a.len(), 2);
         let (soft, hard) = (int(&a[0]), int(&a[1]));
@@ -1677,11 +1755,22 @@ mod tests {
     #[test]
     fn maxgroups_write_is_clamped_on_read() {
         let ceiling = unsafe { libc::sysconf(libc::_SC_NGROUPS_MAX) };
-        call(cmethod("maxgroups="), &process_module(), &[RubyValue::Int(1_000_000)]);
+        call(
+            cmethod("maxgroups="),
+            &process_module(),
+            &[RubyValue::Int(1_000_000)],
+        );
         let capped = int(&call(cmethod("maxgroups"), &process_module(), &[]));
-        assert!(capped > 0 && capped <= ceiling, "{capped} should be within (0, {ceiling}]");
+        assert!(
+            capped > 0 && capped <= ceiling,
+            "{capped} should be within (0, {ceiling}]"
+        );
 
-        call(cmethod("maxgroups="), &process_module(), &[RubyValue::Int(8)]);
+        call(
+            cmethod("maxgroups="),
+            &process_module(),
+            &[RubyValue::Int(8)],
+        );
         assert_eq!(int(&call(cmethod("maxgroups"), &process_module(), &[])), 8);
     }
 
@@ -1689,7 +1778,11 @@ mod tests {
     #[test]
     fn process_group_queries_agree() {
         let pgrp = int(&call(cmethod("getpgrp"), &process_module(), &[]));
-        let pgid = int(&call(cmethod("getpgid"), &process_module(), &[RubyValue::Int(0)]));
+        let pgid = int(&call(
+            cmethod("getpgid"),
+            &process_module(),
+            &[RubyValue::Int(0)],
+        ));
         assert_eq!(pgrp, pgid);
         assert!(pgrp > 0);
     }
@@ -1728,13 +1821,42 @@ mod tests {
             .names;
         let present: std::collections::HashSet<&str> = names().iter().copied().collect();
         for expected in [
-            "pid", "fork", "_fork", "kill", "ppid", "exit", "exit!", "abort", "wait", "waitpid",
-            "wait2", "waitpid2", "waitall", "detach", "last_status", "getpgid", "setpgid",
-            "getrlimit", "setrlimit", "maxgroups", "maxgroups=", "setproctitle", "warmup",
-            "daemon", "getpriority", "setpriority", "clock_gettime", "clock_getres", "times",
-            "spawn", "exec",
+            "pid",
+            "fork",
+            "_fork",
+            "kill",
+            "ppid",
+            "exit",
+            "exit!",
+            "abort",
+            "wait",
+            "waitpid",
+            "wait2",
+            "waitpid2",
+            "waitall",
+            "detach",
+            "last_status",
+            "getpgid",
+            "setpgid",
+            "getrlimit",
+            "setrlimit",
+            "maxgroups",
+            "maxgroups=",
+            "setproctitle",
+            "warmup",
+            "daemon",
+            "getpriority",
+            "setpriority",
+            "clock_gettime",
+            "clock_getres",
+            "times",
+            "spawn",
+            "exec",
         ] {
-            assert!(present.contains(expected), "Process.{expected} missing from the surface");
+            assert!(
+                present.contains(expected),
+                "Process.{expected} missing from the surface"
+            );
         }
         // The nested classes are registered as their own tables.
         assert!(crate::builtins::registered_table(PROCESS_STATUS_CLASS).is_some());
@@ -1756,7 +1878,9 @@ mod tests {
         c.get_program().to_string_lossy().into_owned()
     }
     fn args_of(c: &Command) -> Vec<String> {
-        c.get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+        c.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     /// Multiple arguments always exec directly: the first is the program, the
@@ -1814,7 +1938,8 @@ mod tests {
         let env = hash(vec![(rstr("DROP"), RubyValue::Nil)]);
         let cmd = build_spawn_command(&[env, rstr("true")]).unwrap();
         assert!(
-            cmd.get_envs().any(|(k, v)| k.to_str() == Some("DROP") && v.is_none()),
+            cmd.get_envs()
+                .any(|(k, v)| k.to_str() == Some("DROP") && v.is_none()),
             "DROP should be marked for removal"
         );
     }
@@ -1830,7 +1955,10 @@ mod tests {
     #[test]
     fn option_key_classifies_redirect_keys() {
         assert!(matches!(option_key(&sym("chdir")), OptKey::Chdir));
-        assert!(matches!(option_key(&sym("unsetenv_others")), OptKey::UnsetenvOthers));
+        assert!(matches!(
+            option_key(&sym("unsetenv_others")),
+            OptKey::UnsetenvOthers
+        ));
         assert!(matches!(option_key(&sym("in")), OptKey::In));
         assert!(matches!(option_key(&sym("out")), OptKey::Out));
         assert!(matches!(option_key(&RubyValue::Int(2)), OptKey::Err));

@@ -76,9 +76,7 @@ pub fn run_ruby_packages(
         linkage,
         zeo::backend::GenOpt::Unoptimized,
     )
-    .unwrap_or_else(|e| {
-        panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
-    });
+    .unwrap_or_else(|e| panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}"));
     let out = std::process::Command::new(&bin)
         .output()
         .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
@@ -194,9 +192,7 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         linkage,
         zeo::backend::GenOpt::Unoptimized,
     )
-    .unwrap_or_else(|e| {
-        panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
-    });
+    .unwrap_or_else(|e| panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}"));
 
     let mut cmd = std::process::Command::new(&bin);
     cmd.args(args);

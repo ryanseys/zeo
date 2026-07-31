@@ -389,7 +389,6 @@ fn civil_args(args: &[RubyValue]) -> Result<(i64, i64, i64), Signal> {
     ))
 }
 
-
 /// The class a `Date` class method should build (`Date` or a `DateTime`).
 fn class_of(recv: &RubyValue) -> ClassId {
     match recv {

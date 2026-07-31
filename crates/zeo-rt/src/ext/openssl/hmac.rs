@@ -240,8 +240,11 @@ mod tests {
         im("update")(&h, &[s("x")], None).unwrap();
         assert_eq!(
             t(im("hexdigest")(&h, &[], None)),
-            t(cm("hexdigest")(&RubyValue::Nil, &[s("SHA256"), s("key"), s("x")], None))
+            t(cm("hexdigest")(
+                &RubyValue::Nil,
+                &[s("SHA256"), s("key"), s("x")],
+                None
+            ))
         );
     }
-
 }

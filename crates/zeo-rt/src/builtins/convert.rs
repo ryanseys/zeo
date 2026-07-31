@@ -254,7 +254,6 @@ pub fn to_rstr(v: &RubyValue) -> Result<crate::collections::RStr, Signal> {
     }
 }
 
-
 /// [`to_ary`] unwrapped to the array handle.
 pub fn to_rary(v: &RubyValue) -> Result<crate::collections::RArray, Signal> {
     match to_ary(v)? {

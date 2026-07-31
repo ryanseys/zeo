@@ -40,8 +40,8 @@
 
 use crate::builtins::enumerable::pack;
 use crate::builtins::{arg_error, arity, type_error};
-use zeo_macros::ruby_class;
 use crate::collections::array_new;
+use crate::coroutine::CoroutineResult;
 use crate::dispatch::{raise_stop_iteration, send_value};
 use crate::signal::Signal;
 use crate::value::RubyValue;
@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::ThreadId;
-use crate::coroutine::CoroutineResult;
+use zeo_macros::ruby_class;
 
 /// What `to_enum` captures -- CRuby's `struct enumerator`'s `obj`/`meth`/
 /// `args` triple, or the `Enumerator.new` generator block. Cloned into
@@ -372,9 +372,9 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
         let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
             // `y.yield` suspends, then returns the value `#feed` injected on the
             // resume (empty resume -> nil), so `got = y.yield(x)` sees it.
-            let fed = crate::coroutine::yield_current::<Vec<RubyValue>, RubyValue>(RubyValue::Array(
-                array_new(raw.to_vec()),
-            ));
+            let fed = crate::coroutine::yield_current::<Vec<RubyValue>, RubyValue>(
+                RubyValue::Array(array_new(raw.to_vec())),
+            );
             Ok(fed
                 .and_then(|v| v.into_iter().next())
                 .unwrap_or(RubyValue::Nil))
@@ -859,16 +859,32 @@ mod tests {
             .expect("Enumerator has instance methods");
         (tbl.lookup)(name).unwrap_or_else(|| panic!("Enumerator#{name} is defined"))
     }
-    fn each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn each(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("each")(recv, args, block)
     }
-    fn rewind(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn rewind(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("rewind")(recv, args, block)
     }
-    fn size(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn size(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("size")(recv, args, block)
     }
-    fn with_index(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fn with_index(
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
         imethod("with_index")(recv, args, block)
     }
 

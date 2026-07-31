@@ -5,8 +5,8 @@
 //! default would be silent wrongness.
 
 use crate::RubyValue;
-use zeo_macros::ruby_class;
 use crate::builtins::arg_error;
+use zeo_macros::ruby_class;
 
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     match recv {
@@ -207,7 +207,6 @@ ruby_class! {
     }
 }
 
-
 /// One step of `Proc#curry`: a proc that either invokes the target (enough
 /// arguments collected) or answers the next curried step.
 fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> RubyValue {
@@ -237,8 +236,13 @@ mod tests {
     use super::*;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::PROC_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::PROC_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     #[test]
@@ -288,16 +292,26 @@ mod tests {
     #[test]
     fn arity_and_lambda_p_read_the_recorded_metadata() {
         let p = adder3();
-        assert_eq!(imethod("arity")(&p, &[], None).unwrap().inspect_string(), "3");
-        assert_eq!(imethod("lambda?")(&p, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(
+            imethod("arity")(&p, &[], None).unwrap().inspect_string(),
+            "3"
+        );
+        assert_eq!(
+            imethod("lambda?")(&p, &[], None).unwrap().inspect_string(),
+            "true"
+        );
 
         let plain = RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)));
         assert_eq!(
-            imethod("arity")(&plain, &[], None).unwrap().inspect_string(),
+            imethod("arity")(&plain, &[], None)
+                .unwrap()
+                .inspect_string(),
             "-1"
         );
         assert_eq!(
-            imethod("lambda?")(&plain, &[], None).unwrap().inspect_string(),
+            imethod("lambda?")(&plain, &[], None)
+                .unwrap()
+                .inspect_string(),
             "false"
         );
     }
@@ -317,7 +331,8 @@ mod tests {
     #[test]
     fn curry_accepts_grouped_arguments() {
         let curried = imethod("curry")(&adder3(), &[], None).unwrap();
-        let step = imethod("call")(&curried, &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
+        let step =
+            imethod("call")(&curried, &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
         let out = imethod("call")(&step, &[RubyValue::Int(3)], None).unwrap();
         assert!(matches!(out, RubyValue::Int(6)));
 
@@ -362,11 +377,15 @@ mod tests {
     fn a_curried_proc_reports_var_args_arity_and_is_a_lambda() {
         let curried = imethod("curry")(&adder3(), &[], None).unwrap();
         assert_eq!(
-            imethod("arity")(&curried, &[], None).unwrap().inspect_string(),
+            imethod("arity")(&curried, &[], None)
+                .unwrap()
+                .inspect_string(),
             "-1"
         );
         assert_eq!(
-            imethod("lambda?")(&curried, &[], None).unwrap().inspect_string(),
+            imethod("lambda?")(&curried, &[], None)
+                .unwrap()
+                .inspect_string(),
             "true"
         );
     }
@@ -393,7 +412,12 @@ mod tests {
             false,
         ));
         // min = 1, so one argument completes it.
-        let out = imethod("call")(&imethod("curry")(&p, &[], None).unwrap(), &[RubyValue::Int(9)], None).unwrap();
+        let out = imethod("call")(
+            &imethod("curry")(&p, &[], None).unwrap(),
+            &[RubyValue::Int(9)],
+            None,
+        )
+        .unwrap();
         assert!(matches!(out, RubyValue::Int(1)));
     }
 }

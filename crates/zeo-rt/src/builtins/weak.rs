@@ -668,5 +668,4 @@ mod tests {
         m.prune();
         assert_eq!(m.live_pairs().len(), 0);
     }
-
 }

@@ -23,8 +23,8 @@ use crate::builtins::{arity, not_impl_error};
 use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
-use zeo_macros::ruby_module;
 use yaml_rust2::Yaml;
+use zeo_macros::ruby_module;
 
 /// Load every document, from the PARSER's event stream rather than
 /// `YamlLoader`'s node tree. A node tree cannot answer the question psych's

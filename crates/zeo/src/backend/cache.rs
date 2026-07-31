@@ -287,7 +287,10 @@ pub(super) const GENERATED_CRATE_NAME: &str = "zeo_gen";
 /// Content-addressing also makes the path in a `rustc` failure stable and
 /// findable, rather than naming a file a previous run had already deleted.
 pub(super) fn generated_source_path(rust_source: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("zeo-gen-{:016x}.rs", fnv1a64(rust_source.as_bytes())))
+    std::env::temp_dir().join(format!(
+        "zeo-gen-{:016x}.rs",
+        fnv1a64(rust_source.as_bytes())
+    ))
 }
 
 /// Writes via a per-writer temp file + rename, so that concurrent compiles of

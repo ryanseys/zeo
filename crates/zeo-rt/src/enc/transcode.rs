@@ -235,8 +235,8 @@ pub fn transcode(
     } else {
         (to, &[])
     };
-    let mut jis = (to == crate::enc::table::ISO_2022_JP)
-        .then(|| crate::enc::iso2022jp::Encoder::new(false));
+    let mut jis =
+        (to == crate::enc::table::ISO_2022_JP).then(|| crate::enc::iso2022jp::Encoder::new(false));
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     out.extend_from_slice(bom);
     for unit in decode(bytes, from) {
@@ -244,7 +244,9 @@ pub fn transcode(
             Unit::Invalid(raw, style) => {
                 if opts.invalid_replace {
                     match jis.as_mut() {
-                        Some(enc) => emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out),
+                        Some(enc) => {
+                            emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out)
+                        }
                         None => out.extend_from_slice(&replacement(opts, to)),
                     }
                 } else {
@@ -282,24 +284,27 @@ pub fn transcode(
             Unit::Unmapped(raw) => {
                 if opts.undef_replace {
                     match jis.as_mut() {
-                        Some(enc) => emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out),
+                        Some(enc) => {
+                            emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out)
+                        }
                         None => out.extend_from_slice(&replacement(opts, to)),
                     }
                 } else {
                     let escaped: String = raw.iter().map(|b| quote_byte(*b)).collect();
-                    let msg = if to == crate::enc::table::UTF_8 && transcoder_name(from) == from.name() {
-                        format!("\"{escaped}\" from {} to UTF-8", from.name())
-                    } else {
-                        let tail = if to == crate::enc::table::UTF_8 {
-                            String::new()
+                    let msg =
+                        if to == crate::enc::table::UTF_8 && transcoder_name(from) == from.name() {
+                            format!("\"{escaped}\" from {} to UTF-8", from.name())
                         } else {
-                            format!(" to {}", transcoder_name(to))
+                            let tail = if to == crate::enc::table::UTF_8 {
+                                String::new()
+                            } else {
+                                format!(" to {}", transcoder_name(to))
+                            };
+                            format!(
+                                "\"{escaped}\" to UTF-8 in conversion from {} to UTF-8{tail}",
+                                from.name()
+                            )
                         };
-                        format!(
-                            "\"{escaped}\" to UTF-8 in conversion from {} to UTF-8{tail}",
-                            from.name()
-                        )
-                    };
                     return Err(TranscodeError::UndefinedConversion(msg));
                 }
             }
@@ -339,7 +344,9 @@ pub fn transcode(
                     push_xml_ref(&mut out, c, xml);
                 } else if opts.undef_replace {
                     match jis.as_mut() {
-                        Some(enc) => emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out),
+                        Some(enc) => {
+                            emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out)
+                        }
                         None => out.extend_from_slice(&replacement(opts, to)),
                     }
                 } else {

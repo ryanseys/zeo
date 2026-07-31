@@ -252,7 +252,10 @@ mod tests {
 
     #[test]
     fn checksums_match_ruby() {
-        assert_eq!(int(f("crc32")(&RubyValue::Nil, &[s("abc")], None)), 891568578);
+        assert_eq!(
+            int(f("crc32")(&RubyValue::Nil, &[s("abc")], None)),
+            891568578
+        );
         assert_eq!(int(f("crc32")(&RubyValue::Nil, &[], None)), 0);
         assert_eq!(
             int(f("crc32")(
@@ -262,7 +265,10 @@ mod tests {
             )),
             2063213118
         );
-        assert_eq!(int(f("adler32")(&RubyValue::Nil, &[s("abc")], None)), 38600999);
+        assert_eq!(
+            int(f("adler32")(&RubyValue::Nil, &[s("abc")], None)),
+            38600999
+        );
         assert_eq!(int(f("adler32")(&RubyValue::Nil, &[], None)), 1);
     }
 
@@ -294,7 +300,10 @@ mod tests {
             text.as_bytes()
         );
         let gz = f("gzip")(&RubyValue::Nil, &[msg], None).unwrap();
-        assert_eq!(bytes(f("gunzip")(&RubyValue::Nil, &[gz], None)), text.as_bytes());
+        assert_eq!(
+            bytes(f("gunzip")(&RubyValue::Nil, &[gz], None)),
+            text.as_bytes()
+        );
     }
 
     /// Every level round-trips, and `level:` -- a KEYWORD for `gzip` where it

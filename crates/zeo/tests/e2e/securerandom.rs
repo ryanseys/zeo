@@ -194,10 +194,7 @@ fn extended_formatter_redispatches_gen_random_to_the_host() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "abababab\n[171, 171, 171]\n00000000\n0\n"
-    );
+    assert_eq!(result.stdout, "abababab\n[171, 171, 171]\n00000000\n0\n");
 }
 
 #[test]

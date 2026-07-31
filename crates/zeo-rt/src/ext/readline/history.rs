@@ -159,7 +159,11 @@ mod tests {
     fn the_table_is_registered_and_rows_share_the_one_list() {
         let table = crate::builtins::registered_table(zeo_abi::READLINE_HISTORY_CLASS)
             .expect("Readline::HISTORY is a registered builtin table");
-        let lookup = table.instance.as_ref().expect("HISTORY has instance rows").lookup;
+        let lookup = table
+            .instance
+            .as_ref()
+            .expect("HISTORY has instance rows")
+            .lookup;
         let h = history_value();
 
         let push = lookup("push").expect("push row");
@@ -168,11 +172,16 @@ mod tests {
         assert!(matches!(len(&h, &[], None).unwrap(), RubyValue::Int(n) if n >= 2));
 
         let at = lookup("[]").expect("[] row");
-        assert!(matches!(at(&h, &[RubyValue::Int(-1)], None).unwrap(), RubyValue::Str(s) if s.lock().to_utf8_lossy() == "two"));
+        assert!(
+            matches!(at(&h, &[RubyValue::Int(-1)], None).unwrap(), RubyValue::Str(s) if s.lock().to_utf8_lossy() == "two")
+        );
 
         let clear = lookup("clear").expect("clear row");
         clear(&h, &[], None).unwrap();
         let empty = lookup("empty?").expect("empty? row");
-        assert!(matches!(empty(&h, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            empty(&h, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
     }
 }

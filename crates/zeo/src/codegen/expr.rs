@@ -2021,15 +2021,12 @@ pub(super) fn slot_of(
     name: &str,
 ) -> Option<usize> {
     let info = compiler.class(class);
-    info.ivars
-        .iter()
-        .position(|iv| iv == name)
-        .or_else(|| {
-            info.hidden_ivars
-                .iter()
-                .position(|iv| iv == name)
-                .map(|i| info.ivars.len() + i)
-        })
+    info.ivars.iter().position(|iv| iv == name).or_else(|| {
+        info.hidden_ivars
+            .iter()
+            .position(|iv| iv == name)
+            .map(|i| info.ivars.len() + i)
+    })
 }
 
 /// A cvar WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s docs

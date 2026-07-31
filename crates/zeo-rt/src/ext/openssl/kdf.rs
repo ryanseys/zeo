@@ -124,7 +124,11 @@ mod tests {
             ("hash", s("SHA256")),
         ]);
         assert_eq!(
-            hex_out(f("pbkdf2_hmac")(&RubyValue::Nil, &[s("password"), kw], None)),
+            hex_out(f("pbkdf2_hmac")(
+                &RubyValue::Nil,
+                &[s("password"), kw],
+                None
+            )),
             "632c2812e46d4604102ba7618e9d6d7d2f8128f6266b4a03264d2a0460b7dcb3"
         );
     }
@@ -167,5 +171,4 @@ mod tests {
             "1effd93afcf2b28964026631bf4362b0"
         );
     }
-
 }

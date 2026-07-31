@@ -476,7 +476,13 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
         // prepended is closest (reverse, as `extends`/`prepends` expand). Every
         // position's own copy joins `singleton_targets` so a `super` chain finds
         // the receiver's own copy at any position.
-        for &m in compiler.class(cid).class_method_prepends.clone().iter().rev() {
+        for &m in compiler
+            .class(cid)
+            .class_method_prepends
+            .clone()
+            .iter()
+            .rev()
+        {
             for sid in compiler.class(m).own_methods.clone() {
                 let name = compiler.scope(sid).name.clone();
                 let is_winner = seen.insert(name.clone());
@@ -785,7 +791,10 @@ fn index_node(
             index_node(compiler, owner, value, sites, next);
             let after = *next;
             *next += 1;
-            compiler.const_def_order.entry((owner, name)).or_insert(after);
+            compiler
+                .const_def_order
+                .entry((owner, name))
+                .or_insert(after);
         }
         // A box's top level is its own scope; everything else is an ordinary
         // statement container whose children run right here.

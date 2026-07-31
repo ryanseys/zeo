@@ -1144,7 +1144,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             None => None,
             Some(sc) => Some(superclass_name(hir, &sc)?),
         };
-        let body = lower_class_body(result, hir, class.body(), superclass.as_deref(), Some(&name))?;
+        let body = lower_class_body(
+            result,
+            hir,
+            class.body(),
+            superclass.as_deref(),
+            Some(&name),
+        )?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass,
@@ -1364,9 +1370,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // a user `def puts` cannot shadow `Kernel.puts`).
         let receiver = call.receiver().filter(|r| {
             !(KERNEL_FOLDED_FUNCTIONS.contains(&name.as_str())
-                && r.as_constant_read_node().is_some_and(|c| {
-                    String::from_utf8_lossy(c.name().as_slice()) == "Kernel"
-                }))
+                && r.as_constant_read_node()
+                    .is_some_and(|c| String::from_utf8_lossy(c.name().as_slice()) == "Kernel"))
         });
 
         // `ClassName.new(args)` -- a distinct node; see hir.rs. The
@@ -1900,9 +1905,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // if and when it executes. That is what makes the optional-dependency
         // idiom (`begin; require "x"; rescue LoadError`) behave at runtime
         // exactly as in CRuby, rather than a compile error.
-        if receiver.is_none()
-            && matches!(name.as_str(), "require" | "require_relative" | "load")
-        {
+        if receiver.is_none() && matches!(name.as_str(), "require" | "require_relative" | "load") {
             // A non-top-level `require`/`require_relative` of a LITERAL feature
             // is usually a compile-time no-op: the loader's eager pre-pass
             // (`Loader::lower_file_statements`) already spliced the target, so
@@ -2378,8 +2381,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // block); the pathological in-method `alias` (definee = the owner class,
     // not self) stays unmodeled -- it was a hard error here before too.
     if let Some(alias) = node.as_alias_method_node() {
-        let new_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(&alias.new_name())?));
-        let old_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(&alias.old_name())?));
+        let new_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(
+            &alias.new_name(),
+        )?));
+        let old_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(
+            &alias.old_name(),
+        )?));
         return Ok(hir.push(HirNode::Call {
             receiver: None,
             name: "alias_method".to_string(),

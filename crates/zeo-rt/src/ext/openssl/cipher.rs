@@ -26,37 +26,180 @@ use zeo_macros::ruby_class;
 /// fetchability -- the legacy-provider entries (`rc4`, `bf`, `idea`) list
 /// here yet fail at `new`, as they do under CRuby.
 const CIPHER_NAMES: &[&str] = &[
-    "aes-128-cbc", "aes-128-ccm", "aes-128-cfb", "aes-128-cfb1", "aes-128-cfb8", "aes-128-ctr",
-    "aes-128-ecb", "aes-128-gcm", "aes-128-ocb", "aes-128-ofb", "aes-128-xts", "aes-192-cbc",
-    "aes-192-ccm", "aes-192-cfb", "aes-192-cfb1", "aes-192-cfb8", "aes-192-ctr", "aes-192-ecb",
-    "aes-192-gcm", "aes-192-ocb", "aes-192-ofb", "aes-256-cbc", "aes-256-ccm", "aes-256-cfb",
-    "aes-256-cfb1", "aes-256-cfb8", "aes-256-ctr", "aes-256-ecb", "aes-256-gcm", "aes-256-ocb",
-    "aes-256-ofb", "aes-256-xts", "aes128", "aes128-wrap", "aes128-wrap-pad", "aes192",
-    "aes192-wrap", "aes192-wrap-pad", "aes256", "aes256-wrap", "aes256-wrap-pad", "aria-128-cbc",
-    "aria-128-ccm", "aria-128-cfb", "aria-128-cfb1", "aria-128-cfb8", "aria-128-ctr",
-    "aria-128-ecb", "aria-128-gcm", "aria-128-ofb", "aria-192-cbc", "aria-192-ccm",
-    "aria-192-cfb", "aria-192-cfb1", "aria-192-cfb8", "aria-192-ctr", "aria-192-ecb",
-    "aria-192-gcm", "aria-192-ofb", "aria-256-cbc", "aria-256-ccm", "aria-256-cfb",
-    "aria-256-cfb1", "aria-256-cfb8", "aria-256-ctr", "aria-256-ecb", "aria-256-gcm",
-    "aria-256-ofb", "aria128", "aria192", "aria256", "bf", "bf-cbc", "bf-cfb", "bf-ecb",
-    "bf-ofb", "blowfish", "camellia-128-cbc", "camellia-128-cfb", "camellia-128-cfb1",
-    "camellia-128-cfb8", "camellia-128-ctr", "camellia-128-ecb", "camellia-128-ofb",
-    "camellia-192-cbc", "camellia-192-cfb", "camellia-192-cfb1", "camellia-192-cfb8",
-    "camellia-192-ctr", "camellia-192-ecb", "camellia-192-ofb", "camellia-256-cbc",
-    "camellia-256-cfb", "camellia-256-cfb1", "camellia-256-cfb8", "camellia-256-ctr",
-    "camellia-256-ecb", "camellia-256-ofb", "camellia128", "camellia192", "camellia256", "cast",
-    "cast-cbc", "cast5-cbc", "cast5-cfb", "cast5-ecb", "cast5-ofb", "chacha20",
-    "chacha20-poly1305", "des", "des-cbc", "des-cfb", "des-cfb1", "des-cfb8", "des-ecb",
-    "des-ede", "des-ede-cbc", "des-ede-cfb", "des-ede-ecb", "des-ede-ofb", "des-ede3",
-    "des-ede3-cbc", "des-ede3-cfb", "des-ede3-cfb1", "des-ede3-cfb8", "des-ede3-ecb",
-    "des-ede3-ofb", "des-ofb", "des3", "des3-wrap", "desx", "desx-cbc", "id-aes128-CCM",
-    "id-aes128-GCM", "id-aes128-wrap", "id-aes128-wrap-pad", "id-aes192-CCM", "id-aes192-GCM",
-    "id-aes192-wrap", "id-aes192-wrap-pad", "id-aes256-CCM", "id-aes256-GCM", "id-aes256-wrap",
-    "id-aes256-wrap-pad", "id-smime-alg-CMS3DESwrap", "idea", "idea-cbc", "idea-cfb",
-    "idea-ecb", "idea-ofb", "rc2", "rc2-128", "rc2-40", "rc2-40-cbc", "rc2-64", "rc2-64-cbc",
-    "rc2-cbc", "rc2-cfb", "rc2-ecb", "rc2-ofb", "rc4", "rc4-40", "rc4-hmac-md5", "seed",
-    "seed-cbc", "seed-cfb", "seed-ecb", "seed-ofb", "sm4", "sm4-cbc", "sm4-cfb", "sm4-ctr",
-    "sm4-ecb", "sm4-ofb",
+    "aes-128-cbc",
+    "aes-128-ccm",
+    "aes-128-cfb",
+    "aes-128-cfb1",
+    "aes-128-cfb8",
+    "aes-128-ctr",
+    "aes-128-ecb",
+    "aes-128-gcm",
+    "aes-128-ocb",
+    "aes-128-ofb",
+    "aes-128-xts",
+    "aes-192-cbc",
+    "aes-192-ccm",
+    "aes-192-cfb",
+    "aes-192-cfb1",
+    "aes-192-cfb8",
+    "aes-192-ctr",
+    "aes-192-ecb",
+    "aes-192-gcm",
+    "aes-192-ocb",
+    "aes-192-ofb",
+    "aes-256-cbc",
+    "aes-256-ccm",
+    "aes-256-cfb",
+    "aes-256-cfb1",
+    "aes-256-cfb8",
+    "aes-256-ctr",
+    "aes-256-ecb",
+    "aes-256-gcm",
+    "aes-256-ocb",
+    "aes-256-ofb",
+    "aes-256-xts",
+    "aes128",
+    "aes128-wrap",
+    "aes128-wrap-pad",
+    "aes192",
+    "aes192-wrap",
+    "aes192-wrap-pad",
+    "aes256",
+    "aes256-wrap",
+    "aes256-wrap-pad",
+    "aria-128-cbc",
+    "aria-128-ccm",
+    "aria-128-cfb",
+    "aria-128-cfb1",
+    "aria-128-cfb8",
+    "aria-128-ctr",
+    "aria-128-ecb",
+    "aria-128-gcm",
+    "aria-128-ofb",
+    "aria-192-cbc",
+    "aria-192-ccm",
+    "aria-192-cfb",
+    "aria-192-cfb1",
+    "aria-192-cfb8",
+    "aria-192-ctr",
+    "aria-192-ecb",
+    "aria-192-gcm",
+    "aria-192-ofb",
+    "aria-256-cbc",
+    "aria-256-ccm",
+    "aria-256-cfb",
+    "aria-256-cfb1",
+    "aria-256-cfb8",
+    "aria-256-ctr",
+    "aria-256-ecb",
+    "aria-256-gcm",
+    "aria-256-ofb",
+    "aria128",
+    "aria192",
+    "aria256",
+    "bf",
+    "bf-cbc",
+    "bf-cfb",
+    "bf-ecb",
+    "bf-ofb",
+    "blowfish",
+    "camellia-128-cbc",
+    "camellia-128-cfb",
+    "camellia-128-cfb1",
+    "camellia-128-cfb8",
+    "camellia-128-ctr",
+    "camellia-128-ecb",
+    "camellia-128-ofb",
+    "camellia-192-cbc",
+    "camellia-192-cfb",
+    "camellia-192-cfb1",
+    "camellia-192-cfb8",
+    "camellia-192-ctr",
+    "camellia-192-ecb",
+    "camellia-192-ofb",
+    "camellia-256-cbc",
+    "camellia-256-cfb",
+    "camellia-256-cfb1",
+    "camellia-256-cfb8",
+    "camellia-256-ctr",
+    "camellia-256-ecb",
+    "camellia-256-ofb",
+    "camellia128",
+    "camellia192",
+    "camellia256",
+    "cast",
+    "cast-cbc",
+    "cast5-cbc",
+    "cast5-cfb",
+    "cast5-ecb",
+    "cast5-ofb",
+    "chacha20",
+    "chacha20-poly1305",
+    "des",
+    "des-cbc",
+    "des-cfb",
+    "des-cfb1",
+    "des-cfb8",
+    "des-ecb",
+    "des-ede",
+    "des-ede-cbc",
+    "des-ede-cfb",
+    "des-ede-ecb",
+    "des-ede-ofb",
+    "des-ede3",
+    "des-ede3-cbc",
+    "des-ede3-cfb",
+    "des-ede3-cfb1",
+    "des-ede3-cfb8",
+    "des-ede3-ecb",
+    "des-ede3-ofb",
+    "des-ofb",
+    "des3",
+    "des3-wrap",
+    "desx",
+    "desx-cbc",
+    "id-aes128-CCM",
+    "id-aes128-GCM",
+    "id-aes128-wrap",
+    "id-aes128-wrap-pad",
+    "id-aes192-CCM",
+    "id-aes192-GCM",
+    "id-aes192-wrap",
+    "id-aes192-wrap-pad",
+    "id-aes256-CCM",
+    "id-aes256-GCM",
+    "id-aes256-wrap",
+    "id-aes256-wrap-pad",
+    "id-smime-alg-CMS3DESwrap",
+    "idea",
+    "idea-cbc",
+    "idea-cfb",
+    "idea-ecb",
+    "idea-ofb",
+    "rc2",
+    "rc2-128",
+    "rc2-40",
+    "rc2-40-cbc",
+    "rc2-64",
+    "rc2-64-cbc",
+    "rc2-cbc",
+    "rc2-cfb",
+    "rc2-ecb",
+    "rc2-ofb",
+    "rc4",
+    "rc4-40",
+    "rc4-hmac-md5",
+    "seed",
+    "seed-cbc",
+    "seed-cfb",
+    "seed-ecb",
+    "seed-ofb",
+    "sm4",
+    "sm4-cbc",
+    "sm4-cfb",
+    "sm4-ctr",
+    "sm4-ecb",
+    "sm4-ofb",
 ];
 
 fn cipher_error(msg: String) -> Signal {
@@ -171,9 +314,11 @@ fn rebuild(st: &mut CState) -> Result<(), Signal> {
     let init_err = |e: openssl::error::ErrorStack| cipher_error(stack_reason(&e));
     let encrypt = st.dir.unwrap_or(true);
     if encrypt {
-        ctx.encrypt_init(Some(&cipher), None, None).map_err(init_err)?;
+        ctx.encrypt_init(Some(&cipher), None, None)
+            .map_err(init_err)?;
     } else {
-        ctx.decrypt_init(Some(&cipher), None, None).map_err(init_err)?;
+        ctx.decrypt_init(Some(&cipher), None, None)
+            .map_err(init_err)?;
     }
     ctx.set_padding(st.padding);
     if let Some(n) = st.iv_len {
@@ -182,9 +327,11 @@ fn rebuild(st: &mut CState) -> Result<(), Signal> {
     let (key, iv) = (st.key.clone(), st.iv.clone());
     if key.is_some() || iv.is_some() {
         if encrypt {
-            ctx.encrypt_init(None, key.as_deref(), iv.as_deref()).map_err(init_err)?;
+            ctx.encrypt_init(None, key.as_deref(), iv.as_deref())
+                .map_err(init_err)?;
         } else {
-            ctx.decrypt_init(None, key.as_deref(), iv.as_deref()).map_err(init_err)?;
+            ctx.decrypt_init(None, key.as_deref(), iv.as_deref())
+                .map_err(init_err)?;
         }
     }
     st.ctx = Some(ctx);
@@ -214,11 +361,7 @@ fn set_dir(recv: &RubyValue, encrypt: bool) -> Result<RubyValue, Signal> {
 
 /// Validate-and-store one of the keying parameters, applying it to the live
 /// context (building one if a direction is already known).
-fn set_param(
-    recv: &RubyValue,
-    arg: &RubyValue,
-    is_key: bool,
-) -> Result<RubyValue, Signal> {
+fn set_param(recv: &RubyValue, arg: &RubyValue, is_key: bool) -> Result<RubyValue, Signal> {
     let bytes = str_bytes(arg)?;
     let c = cipher_of(recv);
     let mut st = c.st.lock();
@@ -514,7 +657,10 @@ mod tests {
         RubyValue::Str(crate::string_new(text.to_string()))
     }
     fn bytes(text: &[u8]) -> RubyValue {
-        RubyValue::Str(crate::string_from_bytes(text.to_vec(), crate::encoding::ASCII_8BIT))
+        RubyValue::Str(crate::string_from_bytes(
+            text.to_vec(),
+            crate::encoding::ASCII_8BIT,
+        ))
     }
     fn im(name: &str) -> crate::builtins::BuiltinMethodFn {
         let table = registered_table(zeo_abi::OPENSSL_CIPHER_CLASS)
@@ -625,10 +771,7 @@ mod tests {
         im("padding=")(&c, &[RubyValue::Int(0)], None).unwrap();
         let mut ct = raw(im("update")(&c, &[s("0123456789abcdef")], None));
         ct.extend(raw(im("final")(&c, &[], None)));
-        assert_eq!(
-            super::super::hex(&ct),
-            "2e87d243c361cf658497b59d01f0aa40"
-        );
+        assert_eq!(super::super::hex(&ct), "2e87d243c361cf658497b59d01f0aa40");
     }
 
     #[test]
@@ -649,14 +792,31 @@ mod tests {
     fn metadata_matches_ruby() {
         let c = cm("new")(&RubyValue::Nil, &[s("aes-256-cbc")], None).unwrap();
         let name = im("name")(&c, &[], None).unwrap();
-        let RubyValue::Str(name) = name else { panic!("expected Str") };
+        let RubyValue::Str(name) = name else {
+            panic!("expected Str")
+        };
         assert_eq!(name.lock().to_utf8_lossy(), "AES-256-CBC");
-        assert!(matches!(im("key_len")(&c, &[], None).unwrap(), RubyValue::Int(32)));
-        assert!(matches!(im("iv_len")(&c, &[], None).unwrap(), RubyValue::Int(16)));
-        assert!(matches!(im("block_size")(&c, &[], None).unwrap(), RubyValue::Int(16)));
-        assert!(matches!(im("authenticated?")(&c, &[], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            im("key_len")(&c, &[], None).unwrap(),
+            RubyValue::Int(32)
+        ));
+        assert!(matches!(
+            im("iv_len")(&c, &[], None).unwrap(),
+            RubyValue::Int(16)
+        ));
+        assert!(matches!(
+            im("block_size")(&c, &[], None).unwrap(),
+            RubyValue::Int(16)
+        ));
+        assert!(matches!(
+            im("authenticated?")(&c, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
         let g = cm("new")(&RubyValue::Nil, &[s("aes-256-gcm")], None).unwrap();
-        assert!(matches!(im("authenticated?")(&g, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            im("authenticated?")(&g, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
     }
 
     #[test]

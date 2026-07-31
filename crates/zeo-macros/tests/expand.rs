@@ -127,7 +127,10 @@ fn a_bound_name_is_callable_by_its_rust_name_and_via_the_table() {
     // and returns the same thing -- proving the direct call and the Ruby-name
     // dispatch reach one shared implementation.
     let clamp = comparable::lookup("clamp").expect("`clamp` defined");
-    assert_eq!(clamp(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(5));
+    assert_eq!(
+        clamp(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(5)
+    );
     // And the bound name is still reachable by its Ruby name "cmp".
     assert!(comparable::lookup("cmp").is_some());
 }
@@ -137,7 +140,10 @@ fn a_module_function_lands_in_both_the_instance_and_class_tables() {
     // `mf` resolves as an instance method AND as a class method, both running
     // the one shared body -- CRuby's `module_function` shape.
     let inst = comparable::lookup("mf").expect("mf is an instance method");
-    assert_eq!(inst(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(77));
+    assert_eq!(
+        inst(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(77)
+    );
     let cls = comparable::lookup_class("mf").expect("mf is a class method");
     assert_eq!(cls(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(77));
 }
@@ -166,7 +172,10 @@ fn instance_lookup_arity_and_names() {
 fn a_cfg_on_a_def_gates_the_fn_and_its_table_rows_together() {
     // The always-true cfg keeps `cfg_in` in the lookup, names, and arity tables.
     let cfg_in = comparable::lookup("cfg_in").expect("cfg_in present under cfg(all())");
-    assert_eq!(cfg_in(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(1));
+    assert_eq!(
+        cfg_in(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(1)
+    );
     assert!(comparable::lookup_names().contains(&"cfg_in"));
     assert_eq!(comparable::lookup_arity("cfg_in"), Some(0));
 
@@ -180,14 +189,20 @@ fn a_cfg_on_a_def_gates_the_fn_and_its_table_rows_together() {
 fn late_alias_shares_impl_and_arity() {
     // `lteq` aliases `<`: same behavior, same arity, distinct name.
     let lteq = comparable::lookup("lteq").expect("alias registered");
-    assert_eq!(lteq(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(-1));
+    assert_eq!(
+        lteq(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(-1)
+    );
     assert_eq!(comparable::lookup_arity("lteq"), Some(1));
 }
 
 #[test]
 fn class_methods_live_in_a_separate_table() {
     let probe = comparable::lookup_class("probe").expect("`self.probe` defined");
-    assert_eq!(probe(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(99));
+    assert_eq!(
+        probe(&RubyValue::Nil, &[], None).unwrap(),
+        RubyValue::Int(99)
+    );
     // Class name is not an instance method, and vice versa.
     assert!(comparable::lookup("probe").is_none());
     assert!(comparable::lookup_class("<").is_none());
@@ -198,7 +213,9 @@ fn constants_install_through_the_thunk() {
     comparable::install_constants();
     let seeded = crate::constants::SEEDED.lock().unwrap();
     assert!(
-        seeded.iter().any(|(owner, name)| *owner == 22 && name == "SENTINEL"),
+        seeded
+            .iter()
+            .any(|(owner, name)| *owner == 22 && name == "SENTINEL"),
         "expected SENTINEL seeded under COMPARABLE_CLASS(22), got {seeded:?}"
     );
 }
@@ -242,7 +259,10 @@ fn linkme_registers_the_table_keyed_by_class_id() {
         .expect("Comparable registered into BUILTIN_TABLES");
     assert!(entry.instance.is_some(), "has an instance table");
     assert!(entry.class.is_some(), "has a class-method table");
-    assert!(entry.install_constants.is_some(), "has a constant installer");
+    assert!(
+        entry.install_constants.is_some(),
+        "has a constant installer"
+    );
 
     // The registered fn pointers behave identically to the module's.
     let lookup = entry.instance.as_ref().unwrap().lookup;

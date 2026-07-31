@@ -7,9 +7,9 @@ use super::{
     StructRow, members_array, str_val, struct_each, struct_index, struct_inspect, struct_to_a,
     struct_to_h,
 };
+use crate::RubyValue;
 use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject};
-use crate::RubyValue;
 use zeo_abi::{ClassId, ETC_GROUP_CLASS};
 use zeo_macros::ruby_class;
 
@@ -119,9 +119,15 @@ mod tests {
 
     #[test]
     fn members_are_symbols() {
-        let RubyValue::Array(a) = members_array(GROUP_MEMBERS) else { panic!() };
+        let RubyValue::Array(a) = members_array(GROUP_MEMBERS) else {
+            panic!()
+        };
         assert_eq!(
-            a.lock().to_vec().iter().map(|v| v.inspect_string()).collect::<Vec<_>>(),
+            a.lock()
+                .to_vec()
+                .iter()
+                .map(|v| v.inspect_string())
+                .collect::<Vec<_>>(),
             vec![":name", ":passwd", ":gid", ":mem"]
         );
     }

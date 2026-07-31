@@ -259,12 +259,7 @@ impl WriteState {
 }
 
 pub(super) fn io_write(io: &RubyValue, bytes: Vec<u8>) -> Result<(), Signal> {
-    crate::dispatch::send_value(
-        io,
-        Symbol::intern("write"),
-        &[super::bin_str(bytes)],
-        None,
-    )?;
+    crate::dispatch::send_value(io, Symbol::intern("write"), &[super::bin_str(bytes)], None)?;
     Ok(())
 }
 
@@ -322,7 +317,12 @@ impl ReadState {
 
     /// Decode one round of input into the buffer, pulling more from the IO if
     /// the codec wants it. Answers how many bytes it appended.
-    fn decode_more(&mut self, io: &RubyValue, crc: &mut u32, size: &mut u32) -> Result<usize, Signal> {
+    fn decode_more(
+        &mut self,
+        io: &RubyValue,
+        crc: &mut u32,
+        size: &mut u32,
+    ) -> Result<usize, Signal> {
         if self.stream_end {
             return Ok(0);
         }
@@ -359,7 +359,12 @@ impl ReadState {
 
     /// Verify the footer, exactly once, at the moment the stream drains. Every
     /// read entry point calls this after filling; it is a no-op until then.
-    pub(super) fn check_when_drained(&mut self, io: &RubyValue, crc: u32, size: u32) -> Result<bool, Signal> {
+    pub(super) fn check_when_drained(
+        &mut self,
+        io: &RubyValue,
+        crc: u32,
+        size: u32,
+    ) -> Result<bool, Signal> {
         if !self.drained() {
             return Ok(false);
         }

@@ -378,8 +378,12 @@ fn getaddrinfo(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let hint_socktype = args.get(3).map(sock_int).transpose()?.unwrap_or(0);
     let hint_protocol = args.get(4).map(sock_int).transpose()?.unwrap_or(0);
 
-    let c_host = host.as_ref().map(|h| std::ffi::CString::new(h.as_str()).unwrap_or_default());
-    let c_serv = service.as_ref().map(|s| std::ffi::CString::new(s.as_str()).unwrap_or_default());
+    let c_host = host
+        .as_ref()
+        .map(|h| std::ffi::CString::new(h.as_str()).unwrap_or_default());
+    let c_serv = service
+        .as_ref()
+        .map(|s| std::ffi::CString::new(s.as_str()).unwrap_or_default());
 
     // SAFETY: hints is a zeroed addrinfo we fill; result is populated by
     // getaddrinfo and freed via freeaddrinfo; each node is read while the list
@@ -413,7 +417,11 @@ fn getaddrinfo(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                     n,
                 );
                 if let Some(addr) = raw_to_socketaddr(&storage) {
-                    let fam = if addr.is_ipv6() { "AF_INET6" } else { "AF_INET" };
+                    let fam = if addr.is_ipv6() {
+                        "AF_INET6"
+                    } else {
+                        "AF_INET"
+                    };
                     out.push(RubyValue::Array(crate::array_new(vec![
                         str_val(fam),
                         RubyValue::Int(addr.port() as i64),
@@ -441,7 +449,9 @@ fn unpack_sockaddr_in(bytes: &[u8]) -> Result<std::net::SocketAddr, Signal> {
     // and sockaddr_storage into an aligned storage before reading a family.
     unsafe {
         let mut storage: libc::sockaddr_storage = std::mem::zeroed();
-        let n = bytes.len().min(std::mem::size_of::<libc::sockaddr_storage>());
+        let n = bytes
+            .len()
+            .min(std::mem::size_of::<libc::sockaddr_storage>());
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), &mut storage as *mut _ as *mut u8, n);
         raw_to_socketaddr(&storage).ok_or_else(|| arg_error!("not an AF_INET/AF_INET6 sockaddr"))
     }

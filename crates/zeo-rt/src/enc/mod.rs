@@ -41,11 +41,11 @@ pub use table::{
     UTF_16LE, UTF_32, UTF_32BE, UTF_32LE, WINDOWS_31J, WINDOWS_1250, WINDOWS_1251, WINDOWS_1252,
     WINDOWS_1253, WINDOWS_1254, WINDOWS_1255, WINDOWS_1256, WINDOWS_1257, all, find,
 };
-pub(crate) use transcode::{Unit, decode};
 pub use transcode::{
     NewlineMode, TranscodeError, TranscodeFallback, TranscodeOptions, XmlMode, encode_scalar,
     transcode,
 };
+pub(crate) use transcode::{Unit, decode};
 
 #[cfg(test)]
 mod tests;

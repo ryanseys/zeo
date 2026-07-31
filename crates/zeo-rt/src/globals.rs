@@ -6,9 +6,9 @@
 //! the plan's research contract). Box 0 is the root/main program. Same
 //! `LazyLock<Mutex<_>>` pattern as `cvars`/`constants`/the Symbol interner.
 
+use crate::FMap;
 use crate::RubyValue;
 use parking_lot::Mutex;
-use crate::FMap;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -214,8 +214,10 @@ fn special_get(special: Special) -> RubyValue {
     match special {
         Special::ErrorInfo => crate::current_exception().unwrap_or(RubyValue::Nil),
         Special::ErrorPosition => match crate::current_exception() {
-            Some(exc) => crate::dispatch::send_value(&exc, crate::symbol::wk::backtrace(), &[], None)
-                .unwrap_or(RubyValue::Nil),
+            Some(exc) => {
+                crate::dispatch::send_value(&exc, crate::symbol::wk::backtrace(), &[], None)
+                    .unwrap_or(RubyValue::Nil)
+            }
             None => RubyValue::Nil,
         },
         Special::ChildStatus => crate::last_child_status(),
@@ -304,7 +306,10 @@ pub fn global_assign(box_id: u32, name: &str, value: RubyValue) -> Result<(), cr
         }
         Some(Special::ErrorPosition) => match crate::current_exception() {
             Some(exc) => crate::builtins::exception::apply_custom_backtrace(&exc, &value),
-            None => Err(crate::raise_error("ArgumentError", "$! not set".to_string())),
+            None => Err(crate::raise_error(
+                "ArgumentError",
+                "$! not set".to_string(),
+            )),
         },
         Some(_) => Err(crate::raise_error(
             "NameError",
@@ -334,7 +339,11 @@ pub fn seed_default_globals() {
     // Seeding them as Arrays is what lets the near-universal
     // `$LOAD_PATH.unshift File.dirname(__FILE__)` preamble run instead of
     // raising on nil.
-    global_set(0, "$LOAD_PATH", RubyValue::Array(crate::array_new(Vec::new())));
+    global_set(
+        0,
+        "$LOAD_PATH",
+        RubyValue::Array(crate::array_new(Vec::new())),
+    );
     global_alias(0, "$:", "$LOAD_PATH");
     global_alias(0, "$-I", "$LOAD_PATH");
     global_set(
@@ -357,7 +366,11 @@ pub fn seed_loaded_features(paths: &[&str]) {
         .iter()
         .map(|p| RubyValue::Str(crate::string_new((*p).to_string())))
         .collect();
-    global_set(0, "$LOADED_FEATURES", RubyValue::Array(crate::array_new(values)));
+    global_set(
+        0,
+        "$LOADED_FEATURES",
+        RubyValue::Array(crate::array_new(values)),
+    );
 }
 
 /// Whether `name` has ever been assigned in this box -- backs

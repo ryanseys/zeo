@@ -124,7 +124,16 @@ pub fn emit_super(
                  defining class's own pool"
             )
         }
-        return emit_runtime_super(cx, mname, &Params::default(), args, kwargs, false, block, block_arg);
+        return emit_runtime_super(
+            cx,
+            mname,
+            &Params::default(),
+            args,
+            kwargs,
+            false,
+            block,
+            block_arg,
+        );
     };
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
@@ -162,7 +171,16 @@ pub fn emit_super(
     // extend shape: a class-method `super` never targets a value builtin's
     // INSTANCE method -- it keeps its runtime handoff below.)
     if found.is_none() && pos.is_some() && cx.compiler.is_value_subclass(receiver_class) {
-        return emit_value_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg);
+        return emit_value_super(
+            cx,
+            mname,
+            &current_params,
+            args,
+            kwargs,
+            zsuper,
+            block,
+            block_arg,
+        );
     }
 
     // No user definition above the defining class. Real Ruby has NO
@@ -176,7 +194,16 @@ pub fn emit_super(
     // scan misses -- an included module's, or one registered at runtime. Hand
     // off to the runtime walk, which finds those and raises correctly if not.
     let Some((new_defining_class, _sid, target_is_module_instance)) = found else {
-        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg);
+        return emit_runtime_super(
+            cx,
+            mname,
+            &current_params,
+            args,
+            kwargs,
+            zsuper,
+            block,
+            block_arg,
+        );
     };
 
     // The resolved target dispatches at RUNTIME -- the parent's HIR is
@@ -208,7 +235,16 @@ pub fn emit_super(
             }
         };
     }
-    emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg)
+    emit_runtime_super(
+        cx,
+        mname,
+        &current_params,
+        args,
+        kwargs,
+        zsuper,
+        block,
+        block_arg,
+    )
 }
 
 /// The ancestor whose SINGLETON-chain slot holds `defining_class`: the class
@@ -366,8 +402,8 @@ fn emit_runtime_super(
         // answered `D#name`'s `super` with Base's copy of `D#name`, one
         // level down, forever. Name the ancestor whose singleton-chain slot
         // holds the module instead, which IS in the ancestry.
-        let def_id = singleton_chain_host(cx, recv_class, cx.defining_class)
-            .map_or(def_id, |host| host.0);
+        let def_id =
+            singleton_chain_host(cx, recv_class, cx.defining_class).map_or(def_id, |host| host.0);
         return quote! {
             {
                 let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();

@@ -94,7 +94,13 @@ pub(super) fn emit_redo_wrapped_body(
 /// docs for the `negate` flag. The exit test runs at the TOP of the outer
 /// loop (before the body), matching Ruby: a `while false` body never
 /// executes at all.
-pub fn emit_while(cx: &Ctx, cond: NodeId, body: &[NodeId], negate: bool, post: bool) -> TokenStream {
+pub fn emit_while(
+    cx: &Ctx,
+    cond: NodeId,
+    body: &[NodeId],
+    negate: bool,
+    post: bool,
+) -> TokenStream {
     let outer = fresh_label(cx, "while");
     let redo = fresh_label(cx, "while_body");
     let loop_cx = cx.in_loop(redo.clone(), outer.clone());

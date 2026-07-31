@@ -10,9 +10,9 @@
 //! through `String` and non-UTF-8 paths are out of reach.
 
 use crate::builtins::{arg_error, arity, block_or_enum, type_error};
-use zeo_macros::ruby_class;
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
+use zeo_macros::ruby_class;
 
 /// Map an `io::Error` to the Ruby `Errno::*` raise CRuby would make, with
 /// its message shape: `No such file or directory @ rb_sysopen - /nope/x`.
@@ -1283,7 +1283,11 @@ mod tests {
     }
     macro_rules! cwrap {
         ($rust:ident => $ruby:literal) => {
-            fn $rust(r: &RubyValue, a: &[RubyValue], b: Option<RubyValue>) -> Result<RubyValue, Signal> {
+            fn $rust(
+                r: &RubyValue,
+                a: &[RubyValue],
+                b: Option<RubyValue>,
+            ) -> Result<RubyValue, Signal> {
                 cmethod($ruby)(r, a, b)
             }
         };

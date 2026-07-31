@@ -5,7 +5,7 @@
 
 use std::os::fd::RawFd;
 
-use super::{errno_error, parse_unix_sockaddr, pack_unix_sockaddr};
+use super::{errno_error, pack_unix_sockaddr, parse_unix_sockaddr};
 use crate::builtins::io::{socket_from_raw_fd, socket_raw_fd};
 use crate::builtins::{arity, io_error};
 use crate::{RubyValue, Signal, string_new};

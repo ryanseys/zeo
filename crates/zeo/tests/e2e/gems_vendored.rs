@@ -47,11 +47,17 @@ fn both_gems_are_pinned_to_the_one_upstream_repo() {
     // vendors rubygems' `lib/` twice and bundler is simply absent.
     assert_eq!(manifest_value("bundler", "subdir"), "bundler");
     assert!(
-        !manifest_block("rubygems").iter().any(|(k, _)| k == "subdir"),
+        !manifest_block("rubygems")
+            .iter()
+            .any(|(k, _)| k == "subdir"),
         "rubygems is the repo root; a subdir there would vendor the wrong tree"
     );
     for gem in ["rubygems", "bundler"] {
-        assert_eq!(manifest_value(gem, "rev").len(), 40, "{gem} rev is a full SHA");
+        assert_eq!(
+            manifest_value(gem, "rev").len(),
+            40,
+            "{gem} rev is a full SHA"
+        );
     }
 }
 
@@ -78,7 +84,10 @@ fn the_vendored_trees_carry_the_files_their_requires_name() {
         assert!(repo(rel).is_file(), "missing vendored file: {rel}");
     }
     // The gemspec `xtask gem` writes is what makes the directory a package.
-    for rel in ["gems/rubygems/rubygems.gemspec", "gems/bundler/bundler.gemspec"] {
+    for rel in [
+        "gems/rubygems/rubygems.gemspec",
+        "gems/bundler/bundler.gemspec",
+    ] {
         assert!(repo(rel).is_file(), "missing stub gemspec: {rel}");
     }
 }
@@ -94,13 +103,22 @@ fn the_vendored_versions_agree_with_their_manifest_tags() {
             .lines()
             .find(|l| l.trim_start().starts_with("VERSION = "))
             .expect("a VERSION assignment");
-        line.split('"').nth(1).expect("a quoted version").to_string()
+        line.split('"')
+            .nth(1)
+            .expect("a quoted version")
+            .to_string()
     };
     let tag_version = |gem: &str| {
         let tag = manifest_value(gem, "tag");
-        tag.rsplit_once('v').expect("a v-prefixed tag").1.to_string()
+        tag.rsplit_once('v')
+            .expect("a v-prefixed tag")
+            .1
+            .to_string()
     };
-    assert_eq!(version_in("gems/rubygems/lib/rubygems.rb"), tag_version("rubygems"));
+    assert_eq!(
+        version_in("gems/rubygems/lib/rubygems.rb"),
+        tag_version("rubygems")
+    );
     assert_eq!(
         version_in("gems/bundler/lib/bundler/version.rb"),
         tag_version("bundler")
@@ -187,6 +205,9 @@ fn the_disclosure_record_names_both_as_faithful_bundled_gems() {
             .find(|l| l.trim_start().starts_with(&format!("{gem:?}:")))
             .unwrap_or_else(|| panic!("{gem} is missing from the disclosure record:\n{json}"));
         assert!(line.contains(r#""by": "bundled-gem""#), "{line}");
-        assert!(!line.contains("diverges"), "{gem} must not be flagged divergent: {line}");
+        assert!(
+            !line.contains("diverges"),
+            "{gem} must not be flagged divergent: {line}"
+        );
     }
 }

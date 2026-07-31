@@ -64,7 +64,9 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "psych" | "yaml" => Some("yaml-rust2-backed; not libyaml/the psych gem"),
         "zlib" => Some("flate2-backed; not the zlib C extension"),
         "digest" => Some("RustCrypto-backed; not the OpenSSL digest C extension"),
-        "openssl" => Some("a vendored OpenSSL 3 via rust-openssl; PKey generation, X509 issuance and SSLServer are absent"),
+        "openssl" => Some(
+            "a vendored OpenSSL 3 via rust-openssl; PKey generation, X509 issuance and SSLServer are absent",
+        ),
         "strscan" => Some("a zeo reimplementation of StringScanner"),
         "stringio" => Some("a zeo reimplementation of StringIO"),
         "date" => Some("a zeo reimplementation of Date/DateTime"),
@@ -73,7 +75,9 @@ pub fn substitution_note(name: &str) -> Option<&'static str> {
         "cgi" | "cgi/escape" => Some("a zeo reimplementation of CGI escaping"),
         "nkf" => Some("a zeo reimplementation over its own encoding engine; not the nkf C library"),
         "bigdecimal" => Some("native core reimplemented; the gem's Ruby half is vendored upstream"),
-        "ffi" => Some("zeo's own FFI (compile-time externs + a libffi runtime tier); not the ffi gem"),
+        "ffi" => {
+            Some("zeo's own FFI (compile-time externs + a libffi runtime tier); not the ffi gem")
+        }
         "fiddle" => Some("the gem's own FFI backend over zeo's ffi; not the fiddle C extension"),
         "coverage" => {
             Some("line coverage over zeo's AOT instrumentation; not the VM coverage extension")

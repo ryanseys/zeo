@@ -23,7 +23,8 @@ use syn::parse::Parser;
 use zeo_dsl::ClassSpec;
 
 fn main() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let rt_src = Path::new(&manifest_dir).join("../zeo-rt/src");
 
     let mut surfaces: Vec<Surface> = Vec::new();

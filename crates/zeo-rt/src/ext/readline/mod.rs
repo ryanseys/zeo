@@ -75,7 +75,10 @@ impl rustyline::completion::Completer for RlHelper {
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         let (proc_v, breaks) = {
             let st = STATE.lock();
-            (st.completion_proc.clone(), st.completer_word_break_characters.clone())
+            (
+                st.completion_proc.clone(),
+                st.completer_word_break_characters.clone(),
+            )
         };
         let RubyValue::Proc(p) = proc_v else {
             return Ok((0, Vec::new()));
@@ -119,13 +122,19 @@ fn plain_read(input: Option<RubyValue>) -> Result<Option<String>, Signal> {
         return match crate::dispatch::send_value(&io, crate::Symbol::intern("gets"), &[], None)? {
             RubyValue::Nil => Ok(None),
             line => Ok(Some(
-                convert::to_rstr(&line)?.lock().to_utf8_lossy().trim_end_matches('\n').to_string(),
+                convert::to_rstr(&line)?
+                    .lock()
+                    .to_utf8_lossy()
+                    .trim_end_matches('\n')
+                    .to_string(),
             )),
         };
     }
     let mut buf = String::new();
-    let n = crate::gvl::without_gvl(|| std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut buf))
-        .map_err(|e| crate::builtins::file::raise_errno(&e, "readline", "<STDIN>"))?;
+    let n = crate::gvl::without_gvl(|| {
+        std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut buf)
+    })
+    .map_err(|e| crate::builtins::file::raise_errno(&e, "readline", "<STDIN>"))?;
     if n == 0 {
         return Ok(None);
     }
@@ -148,9 +157,10 @@ fn editor_read(prompt: &str) -> Result<Option<String>, Signal> {
     match editor.readline(prompt) {
         Ok(line) => Ok(Some(line)),
         Err(rustyline::error::ReadlineError::Eof) => Ok(None),
-        Err(rustyline::error::ReadlineError::Interrupted) => {
-            Err(crate::dispatch::raise_error("Interrupt", "Interrupt".to_string()))
-        }
+        Err(rustyline::error::ReadlineError::Interrupted) => Err(crate::dispatch::raise_error(
+            "Interrupt",
+            "Interrupt".to_string(),
+        )),
         Err(e) => Err(crate::dispatch::raise_error("RuntimeError", e.to_string())),
     }
 }

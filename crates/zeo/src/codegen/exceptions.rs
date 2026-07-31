@@ -464,7 +464,12 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
                     .flat_map(|kw| kw.node_ids())
                     .any(|a| node_contains_bubbling_loop_jump(compiler, a))
         }
-        HirNode::SuperCall { args, kwargs, block_arg, .. } => {
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            block_arg,
+            ..
+        } => {
             args.iter()
                 .any(|a| node_contains_bubbling_loop_jump(compiler, a.node_id()))
                 || kwargs

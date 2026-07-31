@@ -7,12 +7,12 @@
 //! only the set-specific surface lives here.
 
 use crate::builtins::{arg_error, arity, block_or_enum};
-use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RHash, RubyValue, Signal};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeo_abi::SET_CLASS;
+use zeo_macros::ruby_class;
 
 pub struct RSet {
     /// Element -> unit. The value is unused; membership is key presence, and
@@ -654,18 +654,27 @@ fn coerce_set(v: &RubyValue) -> Result<RubyValue, Signal> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::SET_CLASS).unwrap()
-            .instance.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::SET_CLASS)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
-        (crate::builtins::registered_table(zeo_abi::SET_CLASS).unwrap()
-            .class.as_ref().unwrap().lookup)(name).unwrap()
+        (crate::builtins::registered_table(zeo_abi::SET_CLASS)
+            .unwrap()
+            .class
+            .as_ref()
+            .unwrap()
+            .lookup)(name)
+        .unwrap()
     }
 
     fn ints(xs: &[i64]) -> RubyValue {
@@ -707,7 +716,10 @@ mod tests {
             imethod("include?")(&s, &[RubyValue::Int(9)], None).unwrap(),
             RubyValue::Bool(false)
         ));
-        assert!(matches!(imethod("size")(&s, &[], None).unwrap(), RubyValue::Int(3)));
+        assert!(matches!(
+            imethod("size")(&s, &[], None).unwrap(),
+            RubyValue::Int(3)
+        ));
     }
 
     #[test]
@@ -724,9 +736,15 @@ mod tests {
             RubyValue::Int(2)
         ));
         let diff = imethod("-")(&a, &[ints(&[2])], None).unwrap();
-        assert!(matches!(imethod("size")(&diff, &[], None).unwrap(), RubyValue::Int(2)));
+        assert!(matches!(
+            imethod("size")(&diff, &[], None).unwrap(),
+            RubyValue::Int(2)
+        ));
         let sym = imethod("^")(&a, &[ints(&[2, 3, 4])], None).unwrap();
-        assert!(matches!(imethod("size")(&sym, &[], None).unwrap(), RubyValue::Int(2)));
+        assert!(matches!(
+            imethod("size")(&sym, &[], None).unwrap(),
+            RubyValue::Int(2)
+        ));
     }
 
     #[test]
@@ -801,7 +819,8 @@ mod tests {
             RubyValue::Int(3)
         ));
         // Two-arg block: 1-2-3-4 chain is one strongly-connected component.
-        let chain = imethod("divide")(&ints(&[1, 2, 3, 4]), &[], block2(|x, y| (x - y).abs() == 1)).unwrap();
+        let chain = imethod("divide")(&ints(&[1, 2, 3, 4]), &[], block2(|x, y| (x - y).abs() == 1))
+            .unwrap();
         assert!(matches!(
             imethod("size")(&chain, &[], None).unwrap(),
             RubyValue::Int(1)

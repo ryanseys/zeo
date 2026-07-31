@@ -1323,7 +1323,11 @@ mod compare_by_identity_tests {
             let (mut h1, mut h2) = (state.build_hasher(), state.build_hasher());
             owned.hash(&mut h1);
             StrProbe(sb.bytes(), sb.hash_key_tag()).hash(&mut h2);
-            assert_eq!(h1.finish(), h2.finish(), "probe/owned diverged for {text:?}");
+            assert_eq!(
+                h1.finish(),
+                h2.finish(),
+                "probe/owned diverged for {text:?}"
+            );
         }
         // And end to end: a string key stored owned is found via the probe
         // paths (get/has_key/delete all take them).

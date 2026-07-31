@@ -454,7 +454,9 @@ fn process_top_stmt(
         // bare `M`-method call resolves through implicit self.
         let m = m.clone();
         match resolve_module_target(compiler, &m, &[], 0)? {
-            Some(target) => compiler.classes[OBJECT_CLASS.0 as usize].includes.push(target),
+            Some(target) => compiler.classes[OBJECT_CLASS.0 as usize]
+                .includes
+                .push(target),
             // Registration-only otherwise, so the deferred read has to be added
             // to the statements codegen emits or it would never run.
             None => {
@@ -868,7 +870,8 @@ fn splice_decidable_ifs(
         } = &compiler.hir[s]
         {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
-            if branch_has_top_defs(compiler, &then_body) || branch_has_top_defs(compiler, &else_body)
+            if branch_has_top_defs(compiler, &then_body)
+                || branch_has_top_defs(compiler, &else_body)
             {
                 if let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond) {
                     let branch = if taken { then_body } else { else_body };
@@ -1324,8 +1327,16 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         register_class(compiler, name.to_string(), None, true, &[], &[], 0, None)?;
     }
     for (name, superclass, marker) in [
-        ("IO::EAGAINWaitReadable", "Errno::EAGAIN", "IO::WaitReadable"),
-        ("IO::EAGAINWaitWritable", "Errno::EAGAIN", "IO::WaitWritable"),
+        (
+            "IO::EAGAINWaitReadable",
+            "Errno::EAGAIN",
+            "IO::WaitReadable",
+        ),
+        (
+            "IO::EAGAINWaitWritable",
+            "Errno::EAGAIN",
+            "IO::WaitWritable",
+        ),
         (
             "IO::EINPROGRESSWaitReadable",
             "Errno::EINPROGRESS",
@@ -1351,7 +1362,9 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
             compiler.resolve_class(name, &[], 0),
             compiler.resolve_class(marker, &[], 0),
         ) else {
-            return Err(format!("{name} or {marker} went missing right after registration"));
+            return Err(format!(
+                "{name} or {marker} went missing right after registration"
+            ));
         };
         compiler.classes[cls.0 as usize].includes.push(module);
     }
@@ -1539,7 +1552,11 @@ fn collect_shell_kinds(
 /// `class Sub` held only to nest a class already takes). Returns `None` for a
 /// genuinely-undefined container, so the caller keeps the "unknown
 /// class/module" error that catches typos.
-fn resolve_or_create_container(compiler: &mut Compiler, path: &str, box_id: u32) -> Option<ClassId> {
+fn resolve_or_create_container(
+    compiler: &mut Compiler,
+    path: &str,
+    box_id: u32,
+) -> Option<ClassId> {
     if let Some(cid) = compiler.resolve_class(path, &[], box_id) {
         return Some(cid);
     }
@@ -1611,7 +1628,9 @@ fn resolve_or_create_lexical(
         if let Some(cid) = compiler.resolve_class(&cand, &[], box_id) {
             return Some(cid);
         }
-        let key = crate::constpath::ConstPath::parse(&cand).unanchored().to_string();
+        let key = crate::constpath::ConstPath::parse(&cand)
+            .unanchored()
+            .to_string();
         if compiler.shell_kinds.contains_key(&(box_id, key)) {
             return resolve_or_create_container(compiler, &cand, box_id);
         }
@@ -3359,8 +3378,14 @@ mod builtin_reopen_tests {
         // method on. It has: a class value's own ancestry runs `Class ->
         // Module -> Object`, which is the chain the MRO walk already takes.
         for (src, cid) in [
-            ("class Class\n  def probe\n    1\n  end\nend\n", crate::compiler::CLASS_CLASS),
-            ("class Module\n  def probe\n    1\n  end\nend\n", crate::compiler::MODULE_CLASS),
+            (
+                "class Class\n  def probe\n    1\n  end\nend\n",
+                crate::compiler::CLASS_CLASS,
+            ),
+            (
+                "class Module\n  def probe\n    1\n  end\nend\n",
+                crate::compiler::MODULE_CLASS,
+            ),
         ] {
             let a = analyze_src(src);
             let probes = a

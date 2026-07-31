@@ -111,10 +111,7 @@ impl<const N: usize> Inner<N> {
     }
 
     fn find(&self, name: &str) -> Option<usize> {
-        self.invented
-            .as_ref()?
-            .iter()
-            .position(|i| i.name == name)
+        self.invented.as_ref()?.iter().position(|i| i.name == name)
     }
 }
 
@@ -713,4 +710,3 @@ mod tests {
         assert_eq!(vals, vec![Some(3), Some(1)]);
     }
 }
-

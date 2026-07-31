@@ -16,12 +16,12 @@
 
 use crate::builtins::enumerator::{enumerator_for, pull_next};
 use crate::builtins::{arg_error, arity};
-use zeo_macros::ruby_class;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;
 use std::sync::Arc;
 use zeo_abi::LAZY_CLASS;
+use zeo_macros::ruby_class;
 
 /// One link in a lazy chain. Block-bearing ops store the block; `Take`/`Drop`
 /// store a count; `Grep` stores its `===` pattern, whether to invert
@@ -658,8 +658,11 @@ mod tests {
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
         (crate::builtins::registered_table(zeo_abi::LAZY_CLASS)
             .expect("Lazy is registered")
-            .instance.as_ref().expect("Lazy has instance methods")
-            .lookup)(name).unwrap_or_else(|| panic!("Lazy#{name} is defined"))
+            .instance
+            .as_ref()
+            .expect("Lazy has instance methods")
+            .lookup)(name)
+        .unwrap_or_else(|| panic!("Lazy#{name} is defined"))
     }
 
     fn arr(xs: &[i64]) -> RubyValue {
@@ -714,7 +717,8 @@ mod tests {
 
     #[test]
     fn select_then_map_chains_left_to_right() {
-        let sel = imethod("select")(&make_lazy(&arr(&[1, 2, 3, 4, 5, 6])), &[], Some(is_even())).unwrap();
+        let sel =
+            imethod("select")(&make_lazy(&arr(&[1, 2, 3, 4, 5, 6])), &[], Some(is_even())).unwrap();
         let mapped = imethod("map")(&sel, &[], Some(times_two())).unwrap();
         assert_eq!(first_n(&mapped, 3), vec![4, 8, 12]);
     }
@@ -732,7 +736,8 @@ mod tests {
 
     #[test]
     fn first_without_arg_returns_one_element() {
-        let mapped = imethod("map")(&make_lazy(&arr(&[1, 2, 3, 4])), &[], Some(times_two())).unwrap();
+        let mapped =
+            imethod("map")(&make_lazy(&arr(&[1, 2, 3, 4])), &[], Some(times_two())).unwrap();
         assert!(matches!(
             imethod("first")(&mapped, &[], None).unwrap(),
             RubyValue::Int(2)
@@ -741,7 +746,8 @@ mod tests {
 
     #[test]
     fn drop_uniq_and_compact() {
-        let dropped = imethod("drop")(&make_lazy(&arr(&[1, 2, 3, 4])), &[RubyValue::Int(2)], None).unwrap();
+        let dropped =
+            imethod("drop")(&make_lazy(&arr(&[1, 2, 3, 4])), &[RubyValue::Int(2)], None).unwrap();
         assert_eq!(first_n(&dropped, 2), vec![3, 4]);
 
         let uniqued = imethod("uniq")(&make_lazy(&arr(&[1, 1, 2, 2, 3, 1])), &[], None).unwrap();

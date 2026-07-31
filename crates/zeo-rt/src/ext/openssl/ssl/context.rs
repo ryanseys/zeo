@@ -234,7 +234,10 @@ mod tests {
             im("verify_hostname")(&ctx, &[], None).unwrap(),
             RubyValue::Bool(false)
         ));
-        assert!(matches!(im("ca_file")(&ctx, &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            im("ca_file")(&ctx, &[], None).unwrap(),
+            RubyValue::Nil
+        ));
         // set_params installs CRuby's defaults: VERIFY_PEER + hostname.
         im("set_params")(&ctx, &[], None).unwrap();
         assert!(matches!(

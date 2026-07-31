@@ -133,8 +133,7 @@ fn do_connect(recv: &RubyValue) -> Result<RubyValue, Signal> {
                 .map_err(|e| ssl_error(reason(&e)))?;
         }
     }
-    let mut stream =
-        SslStream::new(ssl, FdStream(st.fd)).map_err(|e| ssl_error(reason(&e)))?;
+    let mut stream = SslStream::new(ssl, FdStream(st.fd)).map_err(|e| ssl_error(reason(&e)))?;
     crate::gvl::without_gvl(|| stream.connect())
         .map_err(|e| ssl_error(format!("SSL_connect returned=1 errno=0 state=error: {e}")))?;
     st.stream = Some(stream);

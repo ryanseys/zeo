@@ -19,9 +19,9 @@
 //! variables per-thread, a real semantic bug, not just a representation
 //! change.
 
+use crate::FMap;
 use crate::RubyValue;
 use parking_lot::Mutex;
-use crate::FMap;
 use std::sync::LazyLock;
 
 /// Two-level (owner -> name -> value), so reads probe with their borrowed

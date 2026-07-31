@@ -234,12 +234,7 @@ impl FrameGuard {
     // generated crate, which is a separate rustc invocation -- without the
     // hint (and an optimized generated build) each is a cross-crate call.
     #[inline]
-    pub fn push(
-        file: &'static str,
-        method: &'static str,
-        line: u32,
-        end_line: u32,
-    ) -> FrameGuard {
+    pub fn push(file: &'static str, method: &'static str, line: u32, end_line: u32) -> FrameGuard {
         push_frame(Frame {
             file,
             line,
