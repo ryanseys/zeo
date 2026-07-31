@@ -889,9 +889,9 @@ fn tramp_frame_arg(callee_frame: &TokenStream) -> Option<TokenStream> {
 pub fn emit_accessor_trampoline(
     class_ident: &proc_macro2::Ident,
     shape: &AccessorShape,
+    slot: usize,
     callee_frame: &TokenStream,
 ) -> TokenStream {
-    let field = safe_ident(&shape.ivar);
     let head = format_ident!(
         "{}",
         match shape.kind {
@@ -902,7 +902,7 @@ pub fn emit_accessor_trampoline(
     let frame_arg = (!shape.attr_generated)
         .then(|| tramp_frame_arg(callee_frame))
         .flatten();
-    quote! { zeo_rt::zeo_tramp!(#head #class_ident, #field #frame_arg) }
+    quote! { zeo_rt::zeo_tramp!(#head #class_ident, #slot #frame_arg) }
 }
 
 pub fn emit_dynamic_trampoline(

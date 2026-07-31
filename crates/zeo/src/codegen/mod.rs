@@ -2789,7 +2789,14 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let scope = compiler.scope(sid);
         let frame = scope_frame_guard(compiler, scope, false);
         let tramp = match compiler.accessor_shape(cid, scope) {
-            Some(shape) => params::emit_accessor_trampoline(&name_ident, shape, &frame),
+            Some(shape) => {
+                let slot = ci
+                    .ivars
+                    .iter()
+                    .position(|iv| *iv == shape.ivar)
+                    .expect("`accessor_shape` only matches a declared ivar");
+                params::emit_accessor_trampoline(&name_ident, shape, slot, &frame)
+            }
             None => params::emit_dynamic_trampoline(
                 &name_ident,
                 &scope.name,

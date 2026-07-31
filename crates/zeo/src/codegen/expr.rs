@@ -855,26 +855,26 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // docs -- `let self = ...;` is illegal Rust, so the closure
             // clones into a DIFFERENT name).
             let slf = &cx.self_ident;
-            // The `MutexGuard` from `.lock()` is bound to an explicit `__g`
-            // local, INSIDE its own block, rather than written as a single
-            // bare `#slf.#ident.lock().clone()` expression: Rust's
-            // temporary-lifetime rule keeps an UNNAMED `.lock()` guard alive
-            // until the end of the ENCLOSING STATEMENT, not just this one
-            // sub-expression, so referencing the SAME ivar TWICE within one
-            // statement (any expression reading an ivar more than once, e.g.
-            // `@x * @x`, not just the already-guarded read-modify-WRITE
-            // shape Part 9 audited) silently deadlocks a non-reentrant
-            // `parking_lot::Mutex` -- confirmed via a minimal, standalone
-            // repro BEFORE this fix, and confirmed this exact `{ let __g =
-            // ...; __g.clone() }` shape (not just wrapping in a bare `{ }`
-            // block, which does NOT change the guard's drop timing -- also
-            // confirmed empirically) resolves it.
-            // `unwrap_or(Nil)`: the slot is `Option`-shaped so `defined?` and
-            // `instance_variables` can tell "never assigned" from "assigned
-            // nil" (see `ruby_class!`'s field docs), but a READ is `nil` either
-            // way, as in Ruby.
-            quote! {
-                { let __g = #slf.#ident.lock(); __g.clone().unwrap_or(zeo_rt::RubyValue::Nil) }
+            // `IvarCell::get` hands back an OWNED value, never a guard, so
+            // reading the same ivar twice in one statement (`@x * @x`) is just
+            // two calls. The old per-ivar `Mutex` needed a `{ let __g = ...;
+            // __g.clone() }` shape here, because an unnamed `.lock()`
+            // temporary lives to the end of the enclosing STATEMENT and a
+            // second read of the same non-reentrant lock hung forever.
+            let current = cx
+                .current_class
+                .expect("an ivar on a typed self has a concrete class");
+            match ivar_slot(cx, current, name) {
+                Some(slot) => quote! { #slf.__ivars.get(#slot) },
+                None => {
+                    let class_ident = super::ident::class_ident(cx.compiler, current);
+                    let key = ident.to_string();
+                    quote! {
+                        #slf.__ivars
+                            .get_named(#class_ident::__IVAR_NAMES, #key)
+                            .unwrap_or(zeo_rt::RubyValue::Nil)
+                    }
+                }
             }
         }
         HirNode::IvarWrite(name, value) => {
@@ -1965,16 +1965,32 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
         .current_class
         .expect("ivar write outside a class context");
     let class_ident = super::ident::class_ident(cx.compiler, current);
+    // Writing is what makes an ivar DEFINED -- the cell stamps it with an
+    // assignment order the old per-slot `Option` had nowhere to record.
+    let store = match ivar_slot(cx, current, name) {
+        Some(slot) => quote! { #slf.__ivars.set(#slot, #value); },
+        None => {
+            let key = ident.to_string();
+            quote! { #slf.__ivars.set_named(#class_ident::__IVAR_NAMES, #key, #value); }
+        }
+    };
     quote! {
         if zeo_rt::RubyObject::is_frozen(&*#slf) {
             return Err(zeo_rt::ivar_frozen_error(
                 #class_ident::new_handle(Clone::clone(&#slf)),
             ));
         }
-        // `Some(..)`: writing is exactly what makes the ivar DEFINED, and the
-        // slot's `Option` is how that fact is stored (`ruby_class!`).
-        *#slf.#ident.lock() = Some(#value);
+        #store
     }
+}
+
+/// Which slot of the receiver's `IvarCell` one ivar occupies -- its position in
+/// the class's own declared list, which is the order `ruby_class!` lays the
+/// slots out in. `None` for a name the class never declared, which the emitted
+/// code must still reach through the cell's by-NAME entry so it lands in the
+/// same storage `instance_variable_get` sees.
+pub(super) fn ivar_slot(cx: &Ctx, class: ClassId, name: &str) -> Option<usize> {
+    cx.compiler.class(class).ivars.iter().position(|iv| iv == name)
 }
 
 /// A cvar WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s docs

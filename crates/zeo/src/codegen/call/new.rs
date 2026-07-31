@@ -8,7 +8,6 @@ use quote::quote;
 
 use crate::codegen::Ctx;
 use crate::codegen::expr::{box_if_object_typed, emit_expr};
-use crate::codegen::ident::safe_ident;
 use crate::hir::{KwArg, NodeId};
 use proc_macro2::TokenStream;
 
@@ -179,20 +178,13 @@ pub fn emit_new(
 /// `emit_new_with_arg_tokens`' hand-bound one, which must construct the
 /// identical object.
 fn emit_ctor_struct(cx: &Ctx, cid: crate::compiler::ClassId) -> TokenStream {
-    let ci = cx.compiler.class(cid);
     let class_ident = crate::codegen::ident::class_ident(cx.compiler, cid);
-    let fields = ci.ivars.iter().map(|iv| {
-        let f = safe_ident(iv);
-        // `None`, not `Nil`: a freshly allocated object has no ivars assigned
-        // yet, which is what `defined?`/`instance_variables` report on.
-        quote! { #f: zeo_rt::parking_lot::Mutex::new(None), }
-    });
     // Every object starts unfrozen -- `.freeze`'s per-object flag (see
-    // `ruby_class!`'s `__frozen` field docs).
+    // `ruby_class!`'s `__frozen` field docs) -- and with no ivar ASSIGNED,
+    // which is what `defined?`/`instance_variables` report on.
     let fields = quote! {
         __frozen: std::sync::atomic::AtomicBool::new(false),
-        __overflow: zeo_rt::parking_lot::Mutex::new(std::collections::HashMap::new()),
-        #(#fields)*
+        __ivars: zeo_rt::IvarCell::new(),
     };
     // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
     // holding this needs to be `Arc::clone()`-able on every re-read

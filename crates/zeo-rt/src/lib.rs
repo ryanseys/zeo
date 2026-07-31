@@ -34,6 +34,7 @@ mod frames;
 mod globals;
 pub mod gvl;
 mod handling;
+mod ivars;
 mod flipflop;
 mod lastmatch;
 mod method_meta;
@@ -76,6 +77,7 @@ pub use builtins::weak::run_finalizers;
 // `backend::build_binary` and codegen's main assembly.
 pub use mimalloc::MiMalloc;
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set, CivarSite};
+pub use ivars::IvarCell;
 pub use collections::*;
 pub use constants::{const_get, const_get_master, const_get_scoped, const_set, ConstSite};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
@@ -177,16 +179,6 @@ pub fn check_ints() -> Result<(), Signal> {
 /// implementation detail of this runtime crate (Part 9).
 pub use parking_lot;
 
-/// A thin, poison-free wrapper around `parking_lot::Mutex::lock` -- a single
-/// choke point every generated read/write site goes through (Part 9), in
-/// case a uniform policy ever needs one later. `parking_lot`'s `Mutex` has
-/// no poisoning at all (unlike `std::sync::Mutex`), matching Ruby's own
-/// semantics: there's no such thing as a "poisoned object" if a thread
-/// panics while holding a lock on it.
-pub fn lock<T>(m: &parking_lot::Mutex<T>) -> parking_lot::MutexGuard<'_, T> {
-    m.lock()
-}
-
 /// Mirrors CRuby's `Kernel#puts` for the single scalar-argument case (the
 /// only form the original examples used): print the value, adding a trailing
 /// newline only if it doesn't already end in one.
@@ -246,6 +238,17 @@ pub fn p(value: RubyValue) -> RubyValue {
 /// all -- they're MATERIALIZED directly onto whichever class(es)
 /// include/prepend/extend them (see the plan's Part 6), so every method
 /// this macro ever sees already belongs, concretely, to `$name`.
+/// Turns one ivar name into `()`, so `ruby_class!` can count its ivars with
+/// `<[()]>::len` -- a const expression, which is what the `IvarCell<N>` field
+/// type needs. `macro_rules!` has no stable way to count a repetition.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! ivar_unit {
+    ($ivar:ident) => {
+        ()
+    };
+}
+
 #[macro_export]
 macro_rules! ruby_class {
     (
@@ -271,28 +274,24 @@ macro_rules! ruby_class {
             /// (a literal Ruby `@__frozen` would -- same accepted, vanishing
             /// residual risk as every other `__`-reserved name in codegen).
             pub __frozen: std::sync::atomic::AtomicBool,
-            /// One slot per ivar the class body names. `None` is "never
-            /// assigned", which Ruby distinguishes from an assigned `nil`:
-            /// `defined?(@x)` and `instance_variables` report the second and not
-            /// the first, and `@x` reads `nil` either way. A plain
-            /// `Mutex<RubyValue>` initialized to `Nil` cannot tell them apart,
-            /// which made `@x = {} unless defined? @x` -- observer's shape --
-            /// skip its own initialization.
-            $( pub $ivar: $crate::parking_lot::Mutex<Option<$crate::RubyValue>>, )*
-            /// Ivars the class body never declared but a runtime path INVENTED
-            /// -- an `instance_exec`/`class_eval`-added method assigning a fresh
-            /// `@name`, or `instance_variable_set(:@new, ...)`. A generated
-            /// struct has a fixed field per declared ivar; this name-keyed
-            /// overflow catches everything else so those writes are visible to
-            /// later reads/reflection (retires the `dispatch.rs` invented-ivar
-            /// TODO). Empty for the overwhelmingly common no-invented-ivar case.
-            pub __overflow: $crate::parking_lot::Mutex<
-                std::collections::HashMap<String, $crate::RubyValue>,
-            >,
+            /// Every ivar this class names, in declaration order, behind ONE
+            /// lock -- plus whatever a runtime path invents. See
+            /// [`IvarCell`](crate::IvarCell): the slot INDEX is what generated
+            /// code uses, and `__IVAR_NAMES` is what the by-name reflection
+            /// paths resolve against.
+            pub __ivars: $crate::IvarCell<{ <[()]>::len(&[$($crate::ivar_unit!($ivar)),*]) }>,
         }
 
         impl $name {
             pub const CLASS_ID: $crate::ClassId = $crate::ClassId($id);
+
+            /// The declared ivar names, minus the `@`, positionally matching
+            /// the cell's slots. The field idents ARE the names (codegen's
+            /// `safe_ident`), so `stringify!` recovers them with no second
+            /// list to keep in sync. Only the by-NAME paths -- reflection, and
+            /// a receiver whose class codegen could not know -- consult it;
+            /// generated reads and writes carry the index.
+            pub const __IVAR_NAMES: &'static [&'static str] = &[$(stringify!($ivar)),*];
 
             /// Accepts an already-`Arc`-wrapped value (never `Self` by
             /// value): generated code stores every `New`-constructed object
@@ -345,8 +344,7 @@ macro_rules! ruby_class {
             pub fn __allocate(_class: $crate::ClassId) -> $crate::RObj {
                 std::sync::Arc::new($name {
                     __frozen: std::sync::atomic::AtomicBool::new(false),
-                    $( $ivar: $crate::parking_lot::Mutex::new(None), )*
-                    __overflow: $crate::parking_lot::Mutex::new(std::collections::HashMap::new()),
+                    __ivars: $crate::IvarCell::new(),
                 })
             }
 
@@ -372,24 +370,14 @@ macro_rules! ruby_class {
             // Only ASSIGNED ivars, here and in `ivar_pairs`: a declared slot
             // nothing ever wrote does not exist as far as Ruby is concerned.
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
-                let mut vals: Vec<$crate::RubyValue> = Vec::new();
-                $( if let Some(v) = self.$ivar.lock().clone() { vals.push(v); } )*
-                vals.extend(self.__overflow.lock().values().cloned());
-                vals
+                self.__ivars.values()
             }
             // Field-declaration order, `@`-prefixed to match Ruby's ivar
             // names -- the field idents ARE the names minus the `@` (see
             // `ivar_get_named`'s `stringify!` note), so no extra list to keep
             // in sync.
             fn ivar_pairs(&self) -> Vec<(String, $crate::RubyValue)> {
-                let mut pairs: Vec<(String, $crate::RubyValue)> = Vec::new();
-                $( if let Some(v) = self.$ivar.lock().clone() {
-                    pairs.push((format!("@{}", stringify!($ivar)), v));
-                } )*
-                for (k, v) in self.__overflow.lock().iter() {
-                    pairs.push((format!("@{k}"), v.clone()));
-                }
-                pairs
+                self.__ivars.pairs(Self::__IVAR_NAMES)
             }
             // By-NAME ivar access, for receivers whose concrete class codegen
             // couldn't know statically (`instance_exec`'s rebound self). The
@@ -398,38 +386,18 @@ macro_rules! ruby_class {
             // to keep in sync. See the trait's docs for the invented-ivar
             // TODO.
             fn ivar_get_named(&self, name: &str) -> Option<$crate::RubyValue> {
-                match name {
-                    // A declared-but-unassigned slot reads `nil`, as Ruby's
-                    // ivars do -- `Some(Nil)`, not `None`, which means "this
-                    // class has no such slot at all".
-                    $( stringify!($ivar) => {
-                        Some(self.$ivar.lock().clone().unwrap_or($crate::RubyValue::Nil))
-                    } )*
-                    // An invented ivar reads its overflow value, or `None`
-                    // (never assigned) so a probe can tell it's undefined.
-                    _ => self.__overflow.lock().get(name).cloned(),
-                }
+                self.__ivars.get_named(Self::__IVAR_NAMES, name)
             }
             fn ivar_set_named(&self, name: &str, v: $crate::RubyValue) -> bool {
-                match name {
-                    $( stringify!($ivar) => { *self.$ivar.lock() = Some(v); true } )*
-                    // An undeclared name lands in the overflow map, so
-                    // `instance_exec`/`class_eval` bodies and
-                    // `instance_variable_set(:@new, ...)` stick.
-                    _ => { self.__overflow.lock().insert(name.to_string(), v); true }
-                }
+                self.__ivars.set_named(Self::__IVAR_NAMES, name, v);
+                true
             }
             // `Kernel#remove_instance_variable` -- empties the slot and returns
             // the old value, or `None` for a name that was never assigned (the
             // caller raises `NameError`), which is now a real distinction
             // rather than the approximation the old always-present slot forced.
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
-                match name {
-                    $( stringify!($ivar) => self.$ivar.lock().take(), )*
-                    // An invented ivar genuinely vanishes (name-keyed), so a
-                    // remove of an absent one answers `None` -> NameError.
-                    _ => self.__overflow.lock().remove(name),
-                }
+                self.__ivars.remove_named(Self::__IVAR_NAMES, name)
             }
             // `Kernel#dup`/`#clone`'s shallow copy (see the trait method's
             // docs): fresh struct, each ivar's CURRENT value cloned (a
@@ -440,8 +408,7 @@ macro_rules! ruby_class {
                     __frozen: std::sync::atomic::AtomicBool::new(
                         copy_frozen && $crate::RubyObject::is_frozen(self),
                     ),
-                    $( $ivar: $crate::parking_lot::Mutex::new(self.$ivar.lock().clone()), )*
-                    __overflow: $crate::parking_lot::Mutex::new(self.__overflow.lock().clone()),
+                    __ivars: self.__ivars.duplicate(),
                 })
             }
         }
@@ -509,8 +476,8 @@ mod tests {
             name: "Point";
             ancestors: [9100, 0, 25, 24]; // [Point, Object, Kernel, BasicObject]
             ivars { x }
-            def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = Some(x); Ok(RubyValue::Nil) }
-            def x(self: std::sync::Arc<Self>) { Ok(self.x.lock().clone().unwrap_or(RubyValue::Nil)) }
+            def initialize(self: std::sync::Arc<Self>, x: RubyValue) { self.__ivars.set(0, x); Ok(RubyValue::Nil) }
+            def x(self: std::sync::Arc<Self>) { Ok(self.__ivars.get(0)) }
             dispatch {
                 "initialize" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
@@ -566,12 +533,12 @@ mod tests {
             ancestors: [9102, 22, 0, 25, 24]; // [Temp, Comparable, Object, Kernel, BasicObject]
             ivars { deg }
             def cmp(self: std::sync::Arc<Self>, other: RubyValue) {
-                let mine = self.deg.lock().clone().unwrap_or(RubyValue::Nil);
+                let mine = self.__ivars.get(0);
                 let theirs = match &other {
                     RubyValue::Object(o) => {
                         let t = downcast_robj::<Temp>(o).expect("Temp <=> Temp only in tests");
 
-                        t.deg.lock().clone().unwrap_or(RubyValue::Nil)
+                        t.__ivars.get(0)
                     }
                     _ => return Ok(RubyValue::Nil),
                 };
@@ -592,12 +559,22 @@ mod tests {
         }
     }
 
-    fn temp(deg: i64) -> RubyValue {
-        RubyValue::Object(Temp::new_handle(std::sync::Arc::new(Temp {
+    fn point_at(x: i64) -> std::sync::Arc<Point> {
+        let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
-            __overflow: Default::default(),
-            deg: parking_lot::Mutex::new(Some(RubyValue::Int(deg))),
-        })))
+            __ivars: IvarCell::new(),
+        });
+        p.__ivars.set(0, RubyValue::Int(x));
+        p
+    }
+
+    fn temp(deg: i64) -> RubyValue {
+        let t = std::sync::Arc::new(Temp {
+            __frozen: Default::default(),
+            __ivars: IvarCell::new(),
+        });
+        t.__ivars.set(0, RubyValue::Int(deg));
+        RubyValue::Object(Temp::new_handle(t))
     }
 
     /// The class registry is a process-wide `OnceLock`, rejecting a second
@@ -695,8 +672,7 @@ mod tests {
     fn static_path_stores_and_reads_ivar() {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(None),
+            __ivars: IvarCell::new(),
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
         match p.x().unwrap() {
@@ -707,11 +683,7 @@ mod tests {
 
     #[test]
     fn new_handle_erases_to_a_trait_object() {
-        let handle: RObj = Point::new_handle(std::sync::Arc::new(Point {
-            __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(Some(RubyValue::Int(7))),
-        }));
+        let handle: RObj = Point::new_handle(point_at(7));
         assert_eq!(handle.class_id(), Point::CLASS_ID);
     }
 
@@ -742,8 +714,7 @@ mod tests {
 
         let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(None),
+            __ivars: IvarCell::new(),
         })));
         assert!(!obj.is_frozen());
         obj.freeze_value().unwrap();
@@ -761,7 +732,7 @@ mod tests {
         install();
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         }));
         let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
@@ -772,7 +743,7 @@ mod tests {
         install();
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         }));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
@@ -783,26 +754,21 @@ mod tests {
     /// original untouched), frozen flag copied only by `clone`.
     #[test]
     fn dup_object_copies_ivars_into_a_fresh_instance() {
-        let p = std::sync::Arc::new(Point {
-            __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(Some(RubyValue::Int(1))),
-        });
+        let p = point_at(1);
 
         let copy = RubyObject::dup_object(&*p, false);
         let concrete = downcast_robj::<Point>(&copy).expect("same concrete class");
-        *concrete.x.lock() = Some(RubyValue::Int(99));
+        concrete.__ivars.set(0, RubyValue::Int(99));
 
-        assert_eq!(p.x.lock().clone().unwrap().to_display_string(), "1");
-        assert_eq!(concrete.x.lock().clone().unwrap().to_display_string(), "99");
+        assert_eq!(p.__ivars.get(0).to_display_string(), "1");
+        assert_eq!(concrete.__ivars.get(0).to_display_string(), "99");
     }
 
     #[test]
     fn dup_object_frozen_flag_follows_the_copy_frozen_rule() {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(None),
+            __ivars: IvarCell::new(),
         });
         RubyObject::set_frozen(&*p);
 
@@ -824,7 +790,7 @@ mod tests {
         install();
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         }));
         let result = send(&g, Symbol::intern("dup"), &[], None).unwrap();
         let RubyValue::Object(copy) = result else {
@@ -876,7 +842,7 @@ mod tests {
         assert!(five_class.rb_eq(&RubyValue::Class(INTEGER_CLASS)));
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         }));
         let g_class = send(&g, Symbol::intern("class"), &[], None).unwrap();
         assert!(g_class.rb_eq(&RubyValue::Class(Greeter::CLASS_ID)));
@@ -906,8 +872,7 @@ mod tests {
         let point_class = RubyValue::Class(Point::CLASS_ID);
         let instance = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(None),
+            __ivars: IvarCell::new(),
         })));
 
         assert!(point_class.rb_case_eq(&instance));
@@ -930,8 +895,7 @@ mod tests {
         install();
         let p: RObj = Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
-            __overflow: Default::default(),
-            x: parking_lot::Mutex::new(None),
+            __ivars: IvarCell::new(),
         }));
         let _ = send(&p, Symbol::intern("nope"), &[], None);
     }
@@ -968,11 +932,11 @@ mod tests {
         // No `==`, no Comparable: reference identity (real `Object#==`).
         let g1 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         })));
         let g2 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         })));
         assert!(g1.rb_eq(&g1.clone()));
         assert!(!g1.rb_eq(&g2));
@@ -987,7 +951,7 @@ mod tests {
         install();
         let g = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
-            __overflow: Default::default(),
+            __ivars: IvarCell::new(),
         })));
         let s = g.to_display_string();
         assert!(s.starts_with("#<Greeter:0x") && s.ends_with('>'), "got {s}");

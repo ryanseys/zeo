@@ -57,7 +57,7 @@ macro_rules! zeo_tramp {
             <$ty>::$meth(this, $(args[$ix].clone(),)* blk)
         }
     };
-    (rd $ty:ty, $field:ident $(, $frame:stmt)?) => {
+    (rd $ty:ty, $slot:literal $(, $frame:stmt)?) => {
         |recv: &$crate::RObj, args: &[$crate::RubyValue], _blk: Option<$crate::RubyValue>|
             -> Result<$crate::RubyValue, $crate::Signal> {
             if !args.is_empty() {
@@ -66,13 +66,10 @@ macro_rules! zeo_tramp {
             }
             let this = $crate::downcast_robj_ref::<$ty>(recv)
                 .expect("class_id guarantees this downcast");
-            // `unwrap_or(Nil)` for the same reason the static read does it:
-            // the slot is `Option`-shaped so `defined?` can tell "never
-            // assigned" from "assigned nil", but a READ is `nil` either way.
-            Ok(this.$field.lock().clone().unwrap_or($crate::RubyValue::Nil))
+            Ok(this.__ivars.get($slot))
         }
     };
-    (wr $ty:ty, $field:ident $(, $frame:stmt)?) => {
+    (wr $ty:ty, $slot:literal $(, $frame:stmt)?) => {
         |recv: &$crate::RObj, args: &[$crate::RubyValue], _blk: Option<$crate::RubyValue>|
             -> Result<$crate::RubyValue, $crate::Signal> {
             if args.len() != 1 {
@@ -85,7 +82,7 @@ macro_rules! zeo_tramp {
                 $($frame;)?
                 return Err($crate::ivar_frozen_error(recv.clone()));
             }
-            *this.$field.lock() = Some(args[0].clone());
+            this.__ivars.set($slot, args[0].clone());
             // A writer's value is its ARGUMENT, not the assignment's target --
             // `(o.x = 1)` is `1` even where `x=` returns something else.
             Ok(args[0].clone())

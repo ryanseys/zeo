@@ -3668,14 +3668,8 @@ fn emit_inline_accessor(
         return None;
     }
     let shape = cx.compiler.accessor_shape(cid, scope)?;
-    let field = crate::codegen::ident::safe_ident(&shape.ivar);
+    let slot = super::expr::ivar_slot(cx, cid, &shape.ivar)?;
     match (shape.kind, args) {
-        // The `{ let __g = ...; __g.clone() }` shape, not a bare
-        // `.lock().clone()`: Rust keeps an UNNAMED guard alive to the end of
-        // the enclosing STATEMENT, so `p.x + p.x` -- two inlined reads of one
-        // non-reentrant `Mutex` in one statement -- would hang. Same reasoning,
-        // same fix, as the `IvarRead` arm in `codegen::expr`.
-        //
         // `&#recv_expr`, not `#recv_expr`: a receiver expression is often a
         // temporary (`Clone::clone(&x)`), and borrowing it in a `let` extends
         // it to the end of THIS block, where taking the field off the
@@ -3683,8 +3677,7 @@ fn emit_inline_accessor(
         (AccessorKind::Reader, []) => Some(quote! {
             {
                 let __r = &#recv_expr;
-                let __g = __r.#field.lock();
-                __g.clone().unwrap_or(zeo_rt::RubyValue::Nil)
+                __r.__ivars.get(#slot)
             }
         }),
         (AccessorKind::Writer, [arg]) => {
@@ -3694,9 +3687,7 @@ fn emit_inline_accessor(
             // the slot is `RubyValue`, but an Object-typed RHS emits a bare
             // `Arc<Concrete>`.
             let v = super::expr::box_if_object_typed(cx, *arg, v);
-            // Receiver bound before the argument, and the argument before the
-            // lock: Ruby evaluates left to right, and a `#v` that reads this
-            // same ivar would otherwise `lock()` under the write guard.
+            // Receiver bound before the argument: Ruby evaluates left to right.
             Some(quote! {
                 {
                     let __r = &#recv_expr;
@@ -3706,7 +3697,7 @@ fn emit_inline_accessor(
                             #class_ident::new_handle(Clone::clone(__r)),
                         ))?;
                     }
-                    *__r.#field.lock() = Some(__v.clone());
+                    __r.__ivars.set(#slot, __v.clone());
                     __v
                 }
             })
