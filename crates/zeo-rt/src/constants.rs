@@ -12,10 +12,11 @@
 //! `cvars`/the Symbol interner: two threads referencing the same top-level
 //! constant must see the same value.
 
+use crate::FMap;
 use crate::RubyValue;
 use parking_lot::Mutex;
-use crate::FMap;
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, OnceLock};
 
 /// Two-level (owner -> name -> value): the inner map's `Box<str>` keys let
 /// every read probe with its borrowed `&str` -- the pre-split
@@ -23,6 +24,80 @@ use std::sync::LazyLock;
 /// ancestor on the fallback walk.
 static CONSTANTS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
+
+/// Bumped by every operation that can change what any constant resolves to --
+/// a write, a removal, and the naming of a runtime class (which is what makes
+/// a nested `Owner::Name` newly resolvable). One counter for the whole table,
+/// because a per-site cache only has to know that NOTHING changed.
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// `u64::MAX` marks a [`ConstSite`] that has not cached anything yet, so it can
+/// never compare equal to a real epoch.
+const UNFILLED: u64 = u64::MAX;
+
+#[inline]
+pub fn const_epoch() -> u64 {
+    EPOCH.load(Ordering::Acquire)
+}
+
+pub(crate) fn bump_const_epoch() {
+    EPOCH.fetch_add(1, Ordering::Release);
+}
+
+/// One emitted constant reference, holding the value it last resolved to and
+/// the epoch it resolved at. The lookup behind it is a global lock, two hashes
+/// and -- on a miss -- an ancestor walk, so a constant read in a loop is worth
+/// caching; a hit costs two atomic loads and a `RubyValue` clone.
+///
+/// A site that fills its cache and then sees any constant written ANYWHERE
+/// falls back to the full lookup permanently. That is deliberate: a `OnceLock`
+/// cannot be refilled, and the alternative -- storage the site could keep
+/// pointing at -- needs a lock per read, which is most of what this avoids.
+/// Constants are written while a program loads and read while it runs, so the
+/// sites that matter fill after the last write. A degraded site costs exactly
+/// what every site cost before.
+pub struct ConstSite {
+    cached: OnceLock<RubyValue>,
+    epoch: AtomicU64,
+}
+
+impl Default for ConstSite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConstSite {
+    pub const fn new() -> Self {
+        Self {
+            cached: OnceLock::new(),
+            epoch: AtomicU64::new(UNFILLED),
+        }
+    }
+
+    /// `resolve` runs the site's real lookup. It is a closure rather than a
+    /// `(owner, name)` pair because the emitted lookup is a chain -- the owner,
+    /// then the enclosing top level, then a box's master namespace -- and the
+    /// cache should cover all of it, not just the first link.
+    #[inline]
+    pub fn get(&self, resolve: impl FnOnce() -> Option<RubyValue>) -> Option<RubyValue> {
+        if let Some(value) = self.cached.get() {
+            if self.epoch.load(Ordering::Acquire) == const_epoch() {
+                return Some(value.clone());
+            }
+            return resolve();
+        }
+        // Read BEFORE resolving: a write landing between the lookup and the
+        // store must leave the site stamped with the older epoch, so readers
+        // reject the value rather than trusting a stale one.
+        let epoch = const_epoch();
+        let value = resolve()?;
+        if self.cached.set(value.clone()).is_ok() {
+            self.epoch.store(epoch, Ordering::Release);
+        }
+        Some(value)
+    }
+}
 
 /// The `Object`-owned constant names that existed before the program's own top
 /// level ran -- `RUBY_VERSION`, `ARGV`, the seeded encodings, everything
@@ -150,6 +225,7 @@ pub fn const_names_of(owner_class_id: u32) -> Vec<String> {
 /// Drops `owner`'s OWN binding for `name`, returning it. An inherited
 /// constant is left alone -- `Module#remove_const` only removes its own.
 pub fn const_remove(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    bump_const_epoch();
     CONSTANTS
         .lock()
         .get_mut(&owner_class_id)
@@ -157,6 +233,7 @@ pub fn const_remove(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 }
 
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
+    bump_const_epoch();
     // Naming an anonymous runtime class (`Foo = Class.new`): the FIRST
     // constant it's bound to becomes its name, matching CRuby -- so `Foo.name`
     // / `puts Foo` report `"Foo"` rather than `#<Class:...>`. A no-op for a

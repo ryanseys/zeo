@@ -1883,6 +1883,10 @@ pub fn name_runtime_class_if_anonymous(id: ClassId, name: &str) {
         let mut slot = entry.name.write().unwrap();
         if slot.is_none() {
             *slot = Some(name.to_string());
+            // A named class is reachable as a nested constant of its namespace
+            // (`constants::nested_class_of` asks the registry, not the table),
+            // so naming one changes what a constant lookup can find.
+            crate::constants::bump_const_epoch();
         }
     }
 }

@@ -2150,11 +2150,15 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // as written (`uninitialized constant Store::MISSING`); a bare miss
     // inside a class/module body is qualified by the cref head's
     // fully-qualified name (`uninitialized constant Store::Cart::DEFAULT`
-    // -- oracle-verified); a bare top-level miss stays bare.
+    // -- oracle-verified); a bare top-level miss stays bare. A top-level `def`
+    // has `Object` as its defining class, and `Object` is where a bare lookup
+    // ENDS rather than a namespace it was qualified by, so it prints bare too.
     let qualified = match (scope, cx.defining_class) {
         (Some(s), _) => format!("{s}::{name}"),
-        (None, Some(d)) => format!("{}::{name}", cx.compiler.fq_name(d)),
-        (None, None) => name.to_string(),
+        (None, Some(d)) if d != zeo_abi::OBJECT_CLASS => {
+            format!("{}::{name}", cx.compiler.fq_name(d))
+        }
+        _ => name.to_string(),
     };
     // The raised `NameError` carries `#name` (the missing leaf as a Symbol) and
     // `#receiver` (the class the lookup ran against -- `Object` at top level, the
@@ -2181,14 +2185,23 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
             lookup = quote! { #lookup.or_else(|| zeo_rt::const_get_master(#name)) };
         }
     }
+    // The lookup behind a constant read is a global lock and at least two
+    // hashes, and the same site asks the same question every time it runs, so
+    // it caches what it found -- see `zeo_rt::ConstSite` for how the cache
+    // knows when to stop trusting itself. Only a HIT is cached: a miss raises,
+    // and the constant may well be defined by the time the site runs again.
+    let site = quote::format_ident!("__CONST_{}_{}", owner, name.to_uppercase());
     quote! {
-        match #lookup {
-            Some(__v) => __v,
-            None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
-                format!("uninitialized constant {}", #qualified),
-                #name,
-                zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
-            )))),
+        {
+            static #site: zeo_rt::ConstSite = zeo_rt::ConstSite::new();
+            match #site.get(|| #lookup) {
+                Some(__v) => __v,
+                None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
+                    format!("uninitialized constant {}", #qualified),
+                    #name,
+                    zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
+                )))),
+            }
         }
     }
 }
