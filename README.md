@@ -571,11 +571,3 @@ Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 You can use zeo under the [MIT](LICENSE-MIT) license or the
 [Apache 2.0](LICENSE-APACHE) license. Select the license that you prefer.
-
-If you contribute to zeo, and you do not give different terms, your
-contribution has these same two licenses. The Apache 2.0 license gives the
-definition of a contribution.
-
-The components from other projects keep their own licenses, which agree with
-these. For the source of each one, read `gems/UPSTREAM.md`,
-`tests/spinel/UPSTREAM.md` and `bench/UPSTREAM.md`.
