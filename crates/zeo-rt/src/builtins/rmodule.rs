@@ -544,7 +544,7 @@ ruby_class! {
     // the name to EXIST before it can take it away.
     def "append_features" (recv, args, _block) {
         arity!(args, 1..=1);
-        crate::runtime_meta::runtime_include(&args[0], &[recv.clone()])?;
+        crate::runtime_meta::runtime_include(&args[0], std::slice::from_ref(recv))?;
         Ok(recv.clone())
     }
     def "extend_object" (recv, args, _block) {

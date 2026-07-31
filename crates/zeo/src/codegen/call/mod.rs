@@ -1594,34 +1594,33 @@ pub fn emit_call(
             && kwargs.is_empty()
             && block.is_none()
             && block_arg.is_none()
+            && cx.current_class.is_some()
         {
-            if cx.current_class.is_some() {
-                // `boxed_implicit_self` rather than a local box: it checks
-                // `self_is_dynamic` FIRST, which is what a method emitted
-                // into an `__own_` bridge container needs -- there `self`
-                // arrives as a `RubyValue` parameter even though
-                // `current_class` names an ordinary struct-backed class, and
-                // boxing it again is a type error. prism's `Pattern#scan`
-                // (`return to_enum(:scan, root) unless block_given?`) is one
-                // of forty-odd such methods irb pulls in.
-                let boxed = boxed_implicit_self(cx).expect("a method context has an implicit self");
-                let arg_exprs: Vec<TokenStream> = args
-                    .iter()
-                    .map(|&a| {
-                        let e = emit_expr(cx, a);
-                        box_if_object_typed(cx, a, e)
-                    })
-                    .collect();
-                let name_sym = super::pooled_sym(name);
-                return quote! {
-                    zeo_rt::send_value_in(#__bx,
-                        &#boxed,
-                        #name_sym,
-                        &[#(#arg_exprs),*],
-                        None,
-                    )?
-                };
-            }
+            // `boxed_implicit_self` rather than a local box: it checks
+            // `self_is_dynamic` FIRST, which is what a method emitted
+            // into an `__own_` bridge container needs -- there `self`
+            // arrives as a `RubyValue` parameter even though
+            // `current_class` names an ordinary struct-backed class, and
+            // boxing it again is a type error. prism's `Pattern#scan`
+            // (`return to_enum(:scan, root) unless block_given?`) is one
+            // of forty-odd such methods irb pulls in.
+            let boxed = boxed_implicit_self(cx).expect("a method context has an implicit self");
+            let arg_exprs: Vec<TokenStream> = args
+                .iter()
+                .map(|&a| {
+                    let e = emit_expr(cx, a);
+                    box_if_object_typed(cx, a, e)
+                })
+                .collect();
+            let name_sym = super::pooled_sym(name);
+            return quote! {
+                zeo_rt::send_value_in(#__bx,
+                    &#boxed,
+                    #name_sym,
+                    &[#(#arg_exprs),*],
+                    None,
+                )?
+            };
         }
         // Nothing static matched: sibling methods, top-level defs, the
         // Kernel functions and the `proc`/`at_exit`/`__method__`/`method`
@@ -2044,6 +2043,7 @@ fn emit_refined_call(
 /// (only `Module#instance_methods` stays blind to it), so at a site any
 /// `using` covers they hand the WHOLE active set to the runtime: which
 /// name is being asked about is not a compile-time fact here.
+#[allow(clippy::too_many_arguments)]
 fn emit_refined_reflection(
     cx: &Ctx,
     recv_id: NodeId,
