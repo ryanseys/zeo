@@ -12,9 +12,17 @@ do not open public issues for suspected vulnerabilities.
   user, like any native binary; compiling untrusted Ruby source is equivalent
   to running it.
 - `SecureRandom`/`OpenSSL::Random` draw from the operating system's CSPRNG.
-  The `openssl` extension is a small pure-Rust subset -- it does not provide
-  TLS or certificate verification today; treat any code path expecting real
-  OpenSSL guarantees as unsupported (see docs/EXTENSIONS.md).
+- The `openssl` extension binds a **vendored OpenSSL 3.x** through the
+  official rust-openssl bindings, so the digest, cipher, BN and TLS
+  primitives are the ones CRuby binds. Client-side TLS verifies certificates:
+  `SSLContext` honours `verify_mode`, `ca_file`/`ca_path` and the system
+  trust store. As in CRuby, a bare `SSLContext.new` starts at `VERIFY_NONE`
+  -- net/http raises it to `VERIFY_PEER`, but code that builds its own
+  context must set it. PKey generation, X509 issuance, PKCS#7, ASN1 and
+  `SSLServer` are declined; see docs/EXTENSIONS.md and docs/COMPATIBILITY.md.
+- **OpenSSL links statically into every compiled binary.** An OpenSSL
+  security fix reaches a program only when you rebuild it with an updated
+  zeo. Programs already shipped keep the version they were compiled with.
 - `Kernel#rand`/`Random` are deterministic PRNGs and are NOT suitable for
   secrets (true in CRuby as well).
 
