@@ -14,7 +14,7 @@
 //! Ruby-level `marshal_load`. Not yet handled: `e` (a singleton-extended
 //! object), which needs a runtime `extend` on the loaded instance.
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::collections::{
     array_get, array_len, array_new, array_push, hash_new, hash_pairs, hash_set, string_from_bytes,
 };
@@ -43,20 +43,18 @@ ruby_module! {
     const MINOR_VERSION = RubyValue::Int(MINOR as i64);
 
     // `Marshal.dump(obj[, io])` -> a BINARY String of the serialized object.
-    def self."dump"(_recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def self."dump" cfunc (_recv, arg1, _arg2?) {
         let mut w = Writer::default();
         w.out.push(MAJOR);
         w.out.push(MINOR);
-        w.write(&args[0])?;
+        w.write(arg1)?;
         let s = crate::string_from_bytes(w.out, crate::encoding::ASCII_8BIT);
         Ok(RubyValue::Str(s))
     }
 
     // `Marshal.load(str)` -> the deserialized object.
-    def self."load"(_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let RubyValue::Str(s) = &args[0] else {
+    def self."load"(_recv, arg1, _arg2?) {
+        let RubyValue::Str(s) = arg1 else {
             return Err(type_error!("instance of IO needed"));
         };
         let bytes = s.lock().bytes().to_vec();

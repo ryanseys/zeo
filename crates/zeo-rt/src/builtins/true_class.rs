@@ -3,28 +3,23 @@
 //! iff `obj` is, `true | obj` is always true, `true ^ obj` is `obj`'s negation.
 
 use crate::RubyValue;
-use crate::builtins::arity;
 use zeo_macros::ruby_class;
 
 ruby_class! {
     TrueClass = zeo_abi::TRUE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "&" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(args[0].truthy()))
+    def "&" (_recv, other) {
+        Ok(RubyValue::Bool((*other).truthy()))
     }
-    def "|" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "|" (_recv, _other) {
         Ok(RubyValue::Bool(true))
     }
-    def "^" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(!args[0].truthy()))
+    def "^" (_recv, other) {
+        Ok(RubyValue::Bool(!(*other).truthy()))
     }
     // Declared here rather than left to Kernel's row for the same reason
     // `NilClass#inspect` is: the OWNER is observable, and pp reads it.
-    def "to_s" arity 0 | "inspect" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_s" arity 0 | "inspect" (_recv) {
         Ok(RubyValue::Str(crate::string_new("true".to_string())))
     }
 }

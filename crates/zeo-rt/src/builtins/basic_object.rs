@@ -22,9 +22,8 @@ ruby_class! {
     // The root class: no `< SUPER` (BasicObject has no superclass).
     BasicObject = zeo_abi::BASIC_OBJECT_CLASS;
 
-    def "==" (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
+    def "==" (recv, other) {
+        Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
     def "!=" (recv, *args, &_block) {
         arity!(args, 1);
@@ -34,13 +33,11 @@ ruby_class! {
         let eq = crate::dispatch::send_value(recv, crate::Symbol::intern("=="), args, None)?;
         Ok(RubyValue::Bool(!eq.truthy()))
     }
-    def "!" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "!" (recv) {
         Ok(RubyValue::Bool(!recv.truthy()))
     }
-    def "equal?" (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(value_identity(recv, &args[0])))
+    def "equal?" (recv, arg) {
+        Ok(RubyValue::Bool(value_identity(recv, arg)))
     }
     // The root `initialize`: private, takes NO arguments, does nothing
     // (`rb_obj_dummy`, `object.c`; registered with arity 0 at
@@ -54,8 +51,7 @@ ruby_class! {
     // permissive signature here would silently accept programs CRuby rejects.
     // `super()` (explicit empty parens) is the way to reach it from a method
     // that takes parameters.
-    def "initialize" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "initialize" (_recv) {
         Ok(RubyValue::Nil)
     }
     // The root `method_missing` (CRuby's `rb_method_missing`,

@@ -14,7 +14,7 @@
 //! divergence retained from the port: decoded non-UTF-8 bytes are lossily
 //! replaced (this runtime's default `Str` is UTF-8; CRuby returns BINARY).
 
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use crate::{RubyValue, Signal, string_new};
 use zeo_macros::ruby_module;
 
@@ -48,9 +48,8 @@ ruby_module! {
     // `module_function` in CRuby's base64.rb: each is BOTH a public method on the
     // `Base64` module (`Base64.encode64`) and a private instance method reachable
     // through `include Base64` -- so both dispatch paths route here.
-    module_function def "encode64" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let data = bytes_arg(&args[0])?;
+    module_function def "encode64" (_recv, arg) {
+        let data = bytes_arg(arg)?;
         let raw = encode(&data, STD);
         let mut out = String::with_capacity(raw.len() + raw.len() / 60 + 1);
         for chunk in raw.as_bytes().chunks(60) {
@@ -59,17 +58,15 @@ ruby_module! {
         }
         Ok(RubyValue::Str(string_new(out)))
     }
-    module_function def "strict_encode64" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let data = bytes_arg(&args[0])?;
+    module_function def "strict_encode64" (_recv, arg) {
+        let data = bytes_arg(arg)?;
         Ok(RubyValue::Str(string_new(encode(&data, STD))))
     }
-    module_function def "urlsafe_encode64" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let data = bytes_arg(&args[0])?;
+    module_function def "urlsafe_encode64" (_recv, arg1, arg2?) {
+        let data = bytes_arg(arg1)?;
         let mut out = encode(&data, URL);
         // A `padding: false` keyword strips the trailing '=' padding.
-        if let Some(RubyValue::Hash(h)) = args.get(1) {
+        if let Some(RubyValue::Hash(h)) = arg2 {
             let pad = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("padding")));
             if matches!(pad, RubyValue::Bool(false)) {
                 out = out.trim_end_matches('=').to_string();
@@ -77,9 +74,8 @@ ruby_module! {
         }
         Ok(RubyValue::Str(string_new(out)))
     }
-    module_function def "decode64" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let text = str_arg(&args[0], "decode64")?;
+    module_function def "decode64" (_recv, arg) {
+        let text = str_arg(arg, "decode64")?;
         // Liberal: keep only alphabet/padding characters (like `unpack1("m")`).
         let cleaned: String = text
             .chars()
@@ -89,14 +85,12 @@ ruby_module! {
             .expect("liberal decode only sees pre-filtered alphabet chars");
         Ok(RubyValue::Str(string_new(String::from_utf8_lossy(&bytes).into_owned())))
     }
-    module_function def "strict_decode64" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let text = str_arg(&args[0], "strict_decode64")?;
+    module_function def "strict_decode64" (_recv, arg) {
+        let text = str_arg(arg, "strict_decode64")?;
         Ok(RubyValue::Str(string_new(strict_decode(&text, STD)?)))
     }
-    module_function def "urlsafe_decode64" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let mut text = str_arg(&args[0], "urlsafe_decode64")?;
+    module_function def "urlsafe_decode64" (_recv, arg) {
+        let mut text = str_arg(arg, "urlsafe_decode64")?;
         // Ruby (2.3+) accepts unpadded urlsafe input; re-pad before decoding.
         while !text.len().is_multiple_of(4) {
             text.push('=');

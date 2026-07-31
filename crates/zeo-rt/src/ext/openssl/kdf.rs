@@ -26,7 +26,7 @@ ruby_module! {
     KDF = zeo_abi::OPENSSL_KDF_MODULE;
 
     // `KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)`.
-    def self."pbkdf2_hmac" arity -1 (_recv, *args, &_block) {
+    def self."pbkdf2_hmac" (_recv, *args, &_block) {
         let (positional, kwargs) = split_kwargs(args);
         arity!(positional, 1);
         let pass = str_bytes(&positional[0])?;
@@ -41,7 +41,7 @@ ruby_module! {
     }
 
     // `KDF.hkdf(ikm, salt:, info:, length:, hash:)` (RFC 5869).
-    def self."hkdf" arity -1 (_recv, *args, &_block) {
+    def self."hkdf" (_recv, *args, &_block) {
         let (positional, kwargs) = split_kwargs(args);
         arity!(positional, 1);
         let ikm = str_bytes(&positional[0])?;
@@ -67,7 +67,7 @@ ruby_module! {
 
     // `KDF.scrypt(pass, salt:, N:, r:, p:, length:)`. `maxmem` 0 keeps
     // OpenSSL's default ceiling, as CRuby's binding does.
-    def self."scrypt" arity -1 (_recv, *args, &_block) {
+    def self."scrypt" (_recv, *args, &_block) {
         let (positional, kwargs) = split_kwargs(args);
         arity!(positional, 1);
         let pass = str_bytes(&positional[0])?;

@@ -6,7 +6,6 @@
 
 use crate::RProc;
 use crate::RubyValue;
-use crate::builtins::arity;
 use zeo_macros::ruby_class;
 
 fn recv_yielder(recv: &RubyValue) -> &RProc {
@@ -29,8 +28,7 @@ ruby_class! {
     def "yield"(recv, *args, &_block) {
         recv_yielder(recv).call(args)
     }
-    def "to_proc"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_proc"(recv) {
         Ok(RubyValue::Proc(recv_yielder(recv).clone()))
     }
 }

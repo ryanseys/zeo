@@ -378,9 +378,8 @@ ruby_module! {
     }
     // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
     // one to a block (then the receiver's nil, matching CRuby's block form).
-    def self."load_stream" arity -2 (_recv, *args, &block) {
-        arity!(args, 1..=2);
-        let text = load_text(&args[0])?;
+    def self."load_stream" (_recv, arg1, _arg2?, &block) {
+        let text = load_text(arg1)?;
         let docs = load_documents(&text)?;
         if let Some(RubyValue::Proc(p)) = &block {
             for doc in &docs {

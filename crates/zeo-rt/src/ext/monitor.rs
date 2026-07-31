@@ -20,7 +20,7 @@
 //! mixin whose `@mon_data` is nil.
 
 use crate::RubyValue;
-use crate::builtins::{arity, need_block, thread_error};
+use crate::builtins::{need_block, thread_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::thread::{
     RMutex, mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
@@ -121,20 +121,17 @@ ruby_class! {
 
     // `mon_enter` is the `MonitorMixin` spelling of `enter`; both names reach
     // the same C function in CRuby, so both are rows here.
-    def "enter" | "mon_enter" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "enter" | "mon_enter" (recv) {
         monitor_of(recv).enter()?;
         Ok(RubyValue::Nil)
     }
-    def "exit" | "mon_exit" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "exit" | "mon_exit" (recv) {
         monitor_of(recv).exit()?;
         Ok(RubyValue::Nil)
     }
     // `try_enter` never blocks: `true` iff this execution now holds it,
     // which a re-entry always does.
-    def "try_enter" | "mon_try_enter" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "try_enter" | "mon_try_enter" (recv) {
         let m = monitor_of(recv);
         if !mutex_owned(&m.mutex) && !mutex_try_lock(&m.mutex) {
             return Ok(RubyValue::Bool(false));
@@ -142,12 +139,10 @@ ruby_class! {
         m.count.fetch_add(1, Ordering::Relaxed);
         Ok(RubyValue::Bool(true))
     }
-    def "mon_locked?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "mon_locked?" (recv) {
         Ok(RubyValue::Bool(mutex_locked(&monitor_of(recv).mutex)))
     }
-    def "mon_owned?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "mon_owned?" (recv) {
         Ok(RubyValue::Bool(mutex_owned(&monitor_of(recv).mutex)))
     }
     // Enter, run the block, ALWAYS leave -- an exception or `break` out of
@@ -162,8 +157,7 @@ ruby_class! {
         r
     }
 
-    def self."new" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."new" cfunc (_recv) {
         Ok(RubyValue::Object(Arc::new(RMonitor::new())))
     }
 }

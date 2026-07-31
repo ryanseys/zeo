@@ -197,9 +197,8 @@ ruby_module! {
     // back to it. A host defining its own `gen_random` (SecureRandom) shadows
     // this, so it is normally unused; it exists so `entropy`'s `gen_random`
     // send resolves for a `bytes`-only host too.
-    def "gen_random"(recv, *args, &_block) {
-        arity!(args, 1);
-        send_value(recv, Symbol::intern("bytes"), std::slice::from_ref(&args[0]), None)
+    def "gen_random"(recv, arg) {
+        send_value(recv, Symbol::intern("bytes"), std::slice::from_ref(arg), None)
     }
     // `random_bytes(n = 16)` -- n raw bytes (ASCII-8BIT).
     def "random_bytes"(recv, *args, &_block) {
@@ -228,12 +227,10 @@ ruby_module! {
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, URL, padding))))
     }
     // `uuid` / `uuid_v4` -- a random RFC 9562 version-4 UUID.
-    def "uuid"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "uuid"(recv) {
         uuid_v4(recv)
     }
-    def "uuid_v4"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "uuid_v4"(recv) {
         uuid_v4(recv)
     }
     // `random_number(n = 0)` -- an integer in `[0, n)` for a positive Integer,
@@ -265,13 +262,12 @@ ruby_module! {
         choose(recv, &chars, n)
     }
     // `choose(source, n)` -- public in CRuby's formatter.
-    def "choose"(recv, *args, &_block) {
-        arity!(args, 2);
-        let RubyValue::Array(a) = &args[0] else {
+    def "choose"(recv, arg1, arg2) {
+        let RubyValue::Array(a) = arg1 else {
             return Err(type_error!("no implicit conversion into Array"));
         };
         let source = a.lock().to_vec();
-        let n = crate::builtins::convert::to_index(&args[1])?;
+        let n = crate::builtins::convert::to_index(arg2)?;
         choose(recv, &source, n)
     }
 }

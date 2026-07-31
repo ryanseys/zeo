@@ -12,7 +12,6 @@ use super::{
     struct_to_h,
 };
 use crate::RubyValue;
-use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject};
 use zeo_abi::{ClassId, ETC_PASSWD_CLASS};
 use zeo_macros::ruby_class;
@@ -137,29 +136,29 @@ pub(crate) unsafe fn passwd_from(pw: *const libc::passwd) -> RubyValue {
 ruby_class! {
     Passwd = zeo_abi::ETC_PASSWD_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "name"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_passwd(recv).name.clone())) }
-    def "passwd"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_passwd(recv).passwd.clone())) }
-    def "uid"(recv, *args, &_b) { arity!(args, 0); Ok(RubyValue::Int(recv_passwd(recv).uid as i64)) }
-    def "gid"(recv, *args, &_b) { arity!(args, 0); Ok(RubyValue::Int(recv_passwd(recv).gid as i64)) }
-    def "gecos"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_passwd(recv).gecos.clone())) }
-    def "dir"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_passwd(recv).dir.clone())) }
-    def "shell"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_passwd(recv).shell.clone())) }
+    def "name"(recv) { Ok(str_val(recv_passwd(recv).name.clone())) }
+    def "passwd"(recv) { Ok(str_val(recv_passwd(recv).passwd.clone())) }
+    def "uid"(recv) { Ok(RubyValue::Int(recv_passwd(recv).uid as i64)) }
+    def "gid"(recv) { Ok(RubyValue::Int(recv_passwd(recv).gid as i64)) }
+    def "gecos"(recv) { Ok(str_val(recv_passwd(recv).gecos.clone())) }
+    def "dir"(recv) { Ok(str_val(recv_passwd(recv).dir.clone())) }
+    def "shell"(recv) { Ok(str_val(recv_passwd(recv).shell.clone())) }
 
     // The BSD/Darwin-only accessors -- the `#[cfg]` gates the fn AND its
     // lookup/names/arity rows, so on glibc they simply don't exist.
     #[cfg(target_vendor = "apple")]
-    def "change"(recv, *args, &_b) { arity!(args, 0); Ok(recv_passwd(recv).field("change").unwrap()) }
+    def "change"(recv) { Ok(recv_passwd(recv).field("change").unwrap()) }
     #[cfg(target_vendor = "apple")]
-    def "uclass"(recv, *args, &_b) { arity!(args, 0); Ok(recv_passwd(recv).field("uclass").unwrap()) }
+    def "uclass"(recv) { Ok(recv_passwd(recv).field("uclass").unwrap()) }
     #[cfg(target_vendor = "apple")]
-    def "expire"(recv, *args, &_b) { arity!(args, 0); Ok(recv_passwd(recv).field("expire").unwrap()) }
+    def "expire"(recv) { Ok(recv_passwd(recv).field("expire").unwrap()) }
 
-    def "members"(_recv, *args, &_b) { arity!(args, 0); Ok(members_array(PASSWD_MEMBERS)) }
-    def "to_a" | "values"(recv, *args, &_b) { arity!(args, 0); Ok(struct_to_a(recv_passwd(recv), PASSWD_MEMBERS)) }
-    def "to_h"(recv, *args, &_b) { arity!(args, 0); Ok(struct_to_h(recv_passwd(recv), PASSWD_MEMBERS)) }
-    def "each"(recv, *args, &block) { arity!(args, 0); struct_each(recv_passwd(recv), PASSWD_MEMBERS, block, recv) }
-    def "[]"(recv, *args, &_b) { arity!(args, 1); struct_index(recv_passwd(recv), PASSWD_MEMBERS, &args[0]) }
-    def "to_s" | "inspect"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(struct_inspect("Etc::Passwd", recv_passwd(recv), PASSWD_MEMBERS))) }
+    def "members"(_recv) { Ok(members_array(PASSWD_MEMBERS)) }
+    def "to_a" | "values"(recv) { Ok(struct_to_a(recv_passwd(recv), PASSWD_MEMBERS)) }
+    def "to_h"(recv) { Ok(struct_to_h(recv_passwd(recv), PASSWD_MEMBERS)) }
+    def "each"(recv, &block) { struct_each(recv_passwd(recv), PASSWD_MEMBERS, block, recv) }
+    def "[]"(recv, arg) { struct_index(recv_passwd(recv), PASSWD_MEMBERS, arg) }
+    def "to_s" | "inspect"(recv) { Ok(str_val(struct_inspect("Etc::Passwd", recv_passwd(recv), PASSWD_MEMBERS))) }
 }
 
 #[cfg(test)]

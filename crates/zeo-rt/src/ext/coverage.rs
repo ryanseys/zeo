@@ -200,13 +200,11 @@ ruby_module! {
         do_setup(args)?;
         Ok(RubyValue::Nil)
     }
-    def self."resume"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."resume"(_recv) {
         do_resume()?;
         Ok(RubyValue::Nil)
     }
-    def self."suspend"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."suspend"(_recv) {
         let mut st = STATE.lock().expect("coverage state lock");
         if st.mode != Mode::Running {
             return Err(runtime_error!("coverage measurement is not running"));
@@ -215,13 +213,11 @@ ruby_module! {
         ENABLED.store(false, Ordering::Relaxed);
         Ok(RubyValue::Nil)
     }
-    def self."running?"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."running?"(_recv) {
         let st = STATE.lock().expect("coverage state lock");
         Ok(RubyValue::Bool(st.mode == Mode::Running))
     }
-    def self."state"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."state"(_recv) {
         let st = STATE.lock().expect("coverage state lock");
         Ok(RubyValue::Symbol(Symbol::intern(match st.mode {
             Mode::Idle => "idle",
@@ -251,8 +247,7 @@ ruby_module! {
         }
         Ok(result)
     }
-    def self."peek_result"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."peek_result"(_recv) {
         let st = STATE.lock().expect("coverage state lock");
         if st.mode == Mode::Idle {
             return Err(runtime_error!("coverage measurement is not enabled"));
@@ -260,12 +255,11 @@ ruby_module! {
         Ok(build_result(&st))
     }
     // Line coverage is the one mode the AOT instrumentation implements.
-    def self."supported?"(_recv, *args, &_b) {
-        arity!(args, 1);
-        let RubyValue::Symbol(s) = &args[0] else {
+    def self."supported?"(_recv, arg) {
+        let RubyValue::Symbol(s) = arg else {
             return Err(type_error!(
                 "wrong argument type {} (expected Symbol)",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::class_name_of(arg)
             ));
         };
         Ok(RubyValue::Bool(s.name() == "lines"))

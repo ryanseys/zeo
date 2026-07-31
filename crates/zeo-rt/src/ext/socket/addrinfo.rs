@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Endpoint, binary_string, pack_ip_sockaddr, resolve_one};
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use zeo_abi::ADDRINFO_CLASS;
@@ -127,10 +127,9 @@ ruby_class! {
     Addrinfo = zeo_abi::ADDRINFO_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `Addrinfo.tcp(host, port)` -- an AF_INET/AF_INET6 stream address.
-    def self."tcp"(_recv, *args, &_block) {
-        arity!(args, 2);
-        let port = super::port_of(&args[1])?;
-        let ip = host_ip(&args[0].to_display_string())?;
+    def self."tcp"(_recv, arg1, arg2) {
+        let port = super::port_of(arg2)?;
+        let ip = host_ip(&(*arg1).to_display_string())?;
         Ok(RubyValue::Object(RAddrinfo::new(
             Endpoint::Ip(SocketAddr::new(ip, port)),
             libc::SOCK_STREAM,
@@ -138,10 +137,9 @@ ruby_class! {
         )))
     }
     // `Addrinfo.udp(host, port)` -- an AF_INET/AF_INET6 datagram address.
-    def self."udp"(_recv, *args, &_block) {
-        arity!(args, 2);
-        let port = super::port_of(&args[1])?;
-        let ip = host_ip(&args[0].to_display_string())?;
+    def self."udp"(_recv, arg1, arg2) {
+        let port = super::port_of(arg2)?;
+        let ip = host_ip(&(*arg1).to_display_string())?;
         Ok(RubyValue::Object(RAddrinfo::new(
             Endpoint::Ip(SocketAddr::new(ip, port)),
             libc::SOCK_DGRAM,
@@ -149,9 +147,8 @@ ruby_class! {
         )))
     }
     // `Addrinfo.ip(host)` -- a bare IP address (port 0, no socktype/protocol).
-    def self."ip"(_recv, *args, &_block) {
-        arity!(args, 1);
-        let ip = host_ip(&args[0].to_display_string())?;
+    def self."ip"(_recv, arg) {
+        let ip = host_ip(&(*arg).to_display_string())?;
         Ok(RubyValue::Object(RAddrinfo::new(
             Endpoint::Ip(SocketAddr::new(ip, 0)),
             0,
@@ -159,61 +156,50 @@ ruby_class! {
         )))
     }
     // `Addrinfo.unix(path[, socktype])` -- an AF_UNIX address (default STREAM).
-    def self."unix"(_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let path = args[0].to_display_string();
-        let socktype = match args.get(1) {
+    def self."unix" cfunc (_recv, arg1, arg2?) {
+        let path = (*arg1).to_display_string();
+        let socktype = match arg2 {
             Some(RubyValue::Int(n)) => *n as i32,
             _ => libc::SOCK_STREAM,
         };
         Ok(RubyValue::Object(RAddrinfo::new(Endpoint::Unix(path), socktype, 0)))
     }
 
-    def "afamily" | "pfamily"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "afamily" | "pfamily"(recv) {
         Ok(RubyValue::Int(afamily_of(&ai_of(recv).endpoint) as i64))
     }
-    def "socktype"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "socktype"(recv) {
         Ok(RubyValue::Int(ai_of(recv).socktype as i64))
     }
-    def "protocol"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "protocol"(recv) {
         Ok(RubyValue::Int(ai_of(recv).protocol as i64))
     }
-    def "ip?"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "ip?"(recv) {
         Ok(RubyValue::Bool(matches!(ai_of(recv).endpoint, Endpoint::Ip(_))))
     }
-    def "ipv4?"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "ipv4?"(recv) {
         Ok(RubyValue::Bool(matches!(ai_of(recv).endpoint, Endpoint::Ip(SocketAddr::V4(_)))))
     }
-    def "ipv6?"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "ipv6?"(recv) {
         Ok(RubyValue::Bool(matches!(ai_of(recv).endpoint, Endpoint::Ip(SocketAddr::V6(_)))))
     }
-    def "unix?"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "unix?"(recv) {
         Ok(RubyValue::Bool(matches!(ai_of(recv).endpoint, Endpoint::Unix(_))))
     }
     // `#ip_address` -- the address without the port; raises for a Unix address.
-    def "ip_address"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "ip_address"(recv) {
         match &ai_of(recv).endpoint {
             Endpoint::Ip(a) => Ok(str_val(a.ip().to_string())),
             Endpoint::Unix(_) => Err(arg_error!("need IPv4 or IPv6 address")),
         }
     }
-    def "ip_port"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "ip_port"(recv) {
         match &ai_of(recv).endpoint {
             Endpoint::Ip(a) => Ok(RubyValue::Int(a.port() as i64)),
             Endpoint::Unix(_) => Err(arg_error!("need IPv4 or IPv6 address")),
         }
     }
-    def "unix_path"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "unix_path"(recv) {
         match &ai_of(recv).endpoint {
             Endpoint::Unix(p) => Ok(str_val(p.clone())),
             Endpoint::Ip(_) => Err(arg_error!("need AF_UNIX address")),
@@ -221,15 +207,13 @@ ruby_class! {
     }
     // `#to_sockaddr`/`#to_s` -- the packed `sockaddr` bytes (ASCII-8BIT). Unix
     // addresses aren't packed here (out of scope) -- a plain path String.
-    def "to_sockaddr" | "to_s"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_sockaddr" | "to_s"(recv) {
         match &ai_of(recv).endpoint {
             Endpoint::Ip(a) => Ok(binary_string(pack_ip_sockaddr(a))),
             Endpoint::Unix(p) => Ok(str_val(p.clone())),
         }
     }
-    def "inspect"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect"(recv) {
         let ai = ai_of(recv);
         let body = match &ai.endpoint {
             Endpoint::Ip(a) => {

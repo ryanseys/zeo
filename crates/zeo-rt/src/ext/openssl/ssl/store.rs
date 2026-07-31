@@ -4,7 +4,6 @@
 //! what actually decides trust is the owning `SSLContext`'s `ca_file`/
 //! default-paths configuration.
 
-use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue};
 use std::sync::Arc;
@@ -54,20 +53,16 @@ pub(crate) fn new_store() -> RubyValue {
 ruby_class! {
     Store = zeo_abi::OPENSSL_X509_STORE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" arity -1 (_recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def self."new" (_recv, _arg?) {
         Ok(new_store())
     }
-    def "set_default_paths" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "set_default_paths" (_recv) {
         Ok(RubyValue::Nil)
     }
-    def "add_file" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "add_file" (recv, _arg) {
         Ok(recv.clone())
     }
-    def "add_path" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "add_path" (recv, _arg) {
         Ok(recv.clone())
     }
 }

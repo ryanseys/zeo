@@ -7,7 +7,6 @@
 
 use super::codec::{self, Codec, Wrap, ready, zs_of};
 use crate::RubyValue;
-use crate::builtins::arity;
 use zeo_macros::ruby_class;
 
 ruby_class! {
@@ -15,58 +14,47 @@ ruby_class! {
 
     // The counters. `total_in`/`total_out` include the container's framing,
     // as zlib's do.
-    def "total_in" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "total_in" (recv) {
         Ok(RubyValue::Int(ready(recv)?.total_in as i64))
     }
-    def "total_out" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "total_out" (recv) {
         Ok(RubyValue::Int(ready(recv)?.total_out as i64))
     }
     // The running Adler-32 (zlib framing) or CRC-32 (gzip framing) -- zlib
     // overloads one field for both, and reports whichever the container uses.
-    def "adler" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "adler" (recv) {
         Ok(RubyValue::Int(i64::from(ready(recv)?.adler)))
     }
-    def "data_type" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "data_type" (recv) {
         Ok(RubyValue::Int(ready(recv)?.data_type))
     }
 
     // Lifecycle. `finished?`/`stream_end?` ask whether the DATA ended;
     // `closed?`/`ended?` whether the caller shut the stream down. CRuby
     // aliases each pair, and so does this.
-    def "finished?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "finished?" (recv) {
         Ok(RubyValue::Bool(ready(recv)?.finished))
     }
-    def "stream_end?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "stream_end?" (recv) {
         Ok(RubyValue::Bool(ready(recv)?.finished))
     }
-    def "closed?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "closed?" (recv) {
         Ok(RubyValue::Bool(zs_of(recv).state.lock().closed))
     }
-    def "ended?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "ended?" (recv) {
         Ok(RubyValue::Bool(zs_of(recv).state.lock().closed))
     }
-    def "close" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "close" (recv) {
         zs_of(recv).state.lock().closed = true;
         Ok(RubyValue::Nil)
     }
-    def "end" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "end" (recv) {
         zs_of(recv).state.lock().closed = true;
         Ok(RubyValue::Nil)
     }
 
     // Start over with the same settings, discarding everything queued.
-    def "reset" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "reset" (recv) {
         let st = &mut *ready(recv)?;
         match &mut st.codec {
             Codec::Deflate(d) => {
@@ -97,39 +85,33 @@ ruby_class! {
     }
 
     // Run to the end of the stream and hand back everything queued.
-    def "finish" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "finish" arity -1 (recv, _arg?) {
         codec::finish(recv)
     }
 
     // The two buffer views. Input is always consumed whole, so `avail_in` is 0
     // and `flush_next_in` is always empty; output is queued, so
     // `flush_next_out` drains it.
-    def "avail_in" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "avail_in" (recv) {
         drop(ready(recv)?);
         Ok(RubyValue::Int(0))
     }
-    def "flush_next_in" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "flush_next_in" (recv) {
         drop(ready(recv)?);
         Ok(super::bin_str(Vec::new()))
     }
-    def "flush_next_out" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "flush_next_out" (recv) {
         let st = &mut *ready(recv)?;
         Ok(super::bin_str(std::mem::take(&mut st.out)))
     }
-    def "avail_out" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "avail_out" (recv) {
         Ok(RubyValue::Int(ready(recv)?.avail_out))
     }
     // zlib sizes its output buffer with this. zeo grows its own on demand, so
     // the value is recorded and reported back but changes nothing.
-    def "avail_out=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let n = crate::builtins::convert::to_index(&args[0])?;
+    def "avail_out=" (recv, arg) {
+        let n = crate::builtins::convert::to_index(arg)?;
         ready(recv)?.avail_out = n;
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
 }

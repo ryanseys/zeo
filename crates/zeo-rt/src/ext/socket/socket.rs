@@ -123,10 +123,9 @@ ruby_class! {
     Socket = zeo_abi::SOCKET_CLASS < zeo_abi::BASIC_SOCKET_CLASS;
 
     // `Socket.new(domain, type, protocol = 0)` -- a raw socket descriptor.
-    def self."new" | "open"(_recv, *args, &_block) {
-        arity!(args, 2..=3);
-        let (domain, ty) = (sock_int(&args[0])?, sock_int(&args[1])?);
-        let proto = match args.get(2) {
+    def self."new" | "open" cfunc (_recv, arg1, arg2, arg3?) {
+        let (domain, ty) = (sock_int(arg1)?, sock_int(arg2)?);
+        let proto = match arg3 {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => sock_int(v)?,
         };
@@ -170,8 +169,7 @@ ruby_class! {
         out
     }
     // `Socket.gethostname` -- the host's name.
-    def self."gethostname"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."gethostname"(_recv) {
         let mut buf = vec![0u8; 256];
         // SAFETY: `buf` is 256 writable bytes; gethostname NUL-terminates.
         let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
@@ -191,10 +189,9 @@ ruby_class! {
     }
     // `Socket.socketpair(domain, type, protocol = 0)` (aka `pair`) -- a
     // connected pair of `Socket`s (AF_UNIX in practice).
-    def self."socketpair" | "pair"(_recv, *args, &_block) {
-        arity!(args, 2..=3);
-        let (domain, ty) = (sock_int(&args[0])?, sock_int(&args[1])?);
-        let proto = match args.get(2) {
+    def self."socketpair" | "pair" cfunc (_recv, arg1, arg2, arg3?) {
+        let (domain, ty) = (sock_int(arg1)?, sock_int(arg2)?);
+        let proto = match arg3 {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => sock_int(v)?,
         };
@@ -213,19 +210,17 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(vec![a, b])))
     }
     // `Socket.pack_sockaddr_in(port, host)` (aka `sockaddr_in`) -- packed bytes.
-    def self."pack_sockaddr_in" | "sockaddr_in"(_recv, *args, &_block) {
-        arity!(args, 2);
-        let port = super::port_of(&args[0])?;
-        let host = args[1].to_display_string();
+    def self."pack_sockaddr_in" | "sockaddr_in"(_recv, arg1, arg2) {
+        let port = super::port_of(arg1)?;
+        let host = (*arg2).to_display_string();
         let ip = host.parse::<std::net::IpAddr>()
             .map(|ip| std::net::SocketAddr::new(ip, port))
             .or_else(|_| resolve_one(&host, port))?;
         Ok(binary_string(pack_ip_sockaddr(&ip)))
     }
     // `Socket.unpack_sockaddr_in(sockaddr)` -- `[port, ip_string]`.
-    def self."unpack_sockaddr_in"(_recv, *args, &_block) {
-        arity!(args, 1);
-        let bytes = match &args[0] {
+    def self."unpack_sockaddr_in"(_recv, arg) {
+        let bytes = match arg {
             RubyValue::Str(s) => s.lock().bytes().to_vec(),
             other => return Err(type_error!(
                 "no implicit conversion of {} into String",
@@ -240,10 +235,9 @@ ruby_class! {
     }
 
     // `#bind(sockaddr)` -- bind to a local packed-sockaddr / Addrinfo.
-    def "bind"(recv, *args, &_block) {
-        arity!(args, 1);
+    def "bind"(recv, arg) {
         let fd = fd_of(recv)?;
-        let sa = sockaddr_bytes(&args[0])?;
+        let sa = sockaddr_bytes(arg)?;
         // SAFETY: `sa` describes `sa.len()` initialized sockaddr bytes.
         let rc = unsafe {
             libc::bind(fd, sa.as_ptr() as *const libc::sockaddr, sa.len() as libc::socklen_t)
@@ -254,10 +248,9 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#connect(sockaddr)` -- connect to a peer.
-    def "connect"(recv, *args, &_block) {
-        arity!(args, 1);
+    def "connect"(recv, arg) {
         let fd = fd_of(recv)?;
-        let sa = sockaddr_bytes(&args[0])?;
+        let sa = sockaddr_bytes(arg)?;
         // SAFETY: as bind.
         let rc = crate::gvl::without_gvl(|| unsafe {
             libc::connect(fd, sa.as_ptr() as *const libc::sockaddr, sa.len() as libc::socklen_t)
@@ -268,10 +261,9 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#listen(backlog)` -- mark a bound socket as accepting connections.
-    def "listen"(recv, *args, &_block) {
-        arity!(args, 1);
+    def "listen"(recv, arg) {
         let fd = fd_of(recv)?;
-        let backlog = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+        let backlog = crate::builtins::convert::to_index(arg)? as libc::c_int;
         // SAFETY: a plain listen(2) on an owned fd.
         if unsafe { libc::listen(fd, backlog) } != 0 {
             return Err(errno_error("listen(2)"));
@@ -279,8 +271,7 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `#accept` -- block for a connection, answering `[Socket, Addrinfo]`.
-    def "accept"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "accept"(recv) {
         let fd = fd_of(recv)?;
         // SAFETY: a zeroed sockaddr_storage is valid; `len` bounds the write.
         let (nfd, storage, alen) = unsafe {
@@ -350,11 +341,10 @@ ruby_class! {
         ))
     }
     // `#recvfrom(maxlen, flags = 0)` -- `[mesg, sender_Addrinfo]`.
-    def "recvfrom"(recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "recvfrom" cfunc (recv, arg1, arg2?) {
         let fd = fd_of(recv)?;
-        let maxlen = (crate::builtins::convert::to_index(&args[0])?).max(0) as usize;
-        let flags = match args.get(1) {
+        let maxlen = (crate::builtins::convert::to_index(arg1)?).max(0) as usize;
+        let flags = match arg2 {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => crate::builtins::convert::to_index(v)? as libc::c_int,
         };

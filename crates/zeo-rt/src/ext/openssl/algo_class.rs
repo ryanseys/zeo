@@ -8,7 +8,7 @@
 
 use super::digest::new_digest;
 use super::{bin_str, hex, md_by_name, str, str_bytes};
-use crate::builtins::{BUILTIN_TABLES, BuiltinClassTable, MethodTable, arity};
+use crate::builtins::{BUILTIN_TABLES, BuiltinClassTable, MethodTable};
 use crate::{ClassId, RubyValue, Signal};
 use linkme::distributed_slice;
 use zeo_abi::{
@@ -79,23 +79,19 @@ ruby_class! {
 
     // `OpenSSL::Digest::SHA256.new(data = nil)` -- the algorithm is the
     // receiver class's own.
-    def self."new" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def self."new" (recv, arg?) {
         let (id, name) = algo_of_class(recv);
-        new_digest(id, &str(name.to_string()), args.first())
+        new_digest(id, &str(name.to_string()), arg)
     }
     // One-shot class forms, data only.
-    def self."digest" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(bin_str(class_raw(recv, &args[0])?))
+    def self."digest" (recv, arg) {
+        Ok(bin_str(class_raw(recv, arg)?))
     }
-    def self."hexdigest" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(str(hex(&class_raw(recv, &args[0])?)))
+    def self."hexdigest" (recv, arg) {
+        Ok(str(hex(&class_raw(recv, arg)?)))
     }
-    def self."base64digest" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(str(super::base64(&class_raw(recv, &args[0])?)))
+    def self."base64digest" arity 1 (recv, arg) {
+        Ok(str(super::base64(&class_raw(recv, arg)?)))
     }
 }
 

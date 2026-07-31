@@ -96,10 +96,9 @@ ruby_class! {
     HMAC = zeo_abi::OPENSSL_HMAC_CLASS < zeo_abi::OBJECT_CLASS;
 
     // `OpenSSL::HMAC.new(key, digest)` -- digest by name or instance.
-    def self."new" arity 2 (_recv, *args, &_block) {
-        arity!(args, 2);
-        let key = str_bytes(&args[0])?;
-        let (md, canonical) = md_from_value(&args[1])?;
+    def self."new" cfunc (_recv, arg1, arg2) {
+        let key = str_bytes(arg1)?;
+        let (md, canonical) = md_from_value(arg2)?;
         // Probe once so an unusable algorithm surfaces at construction.
         one_shot(md, &key, b"")?;
         Ok(RubyValue::Object(Arc::new(RHmac {
@@ -122,38 +121,32 @@ ruby_class! {
         Ok(str(base64(&class_mac(args)?)))
     }
 
-    def "update" | "<<" (recv, *args, &_block) {
-        arity!(args, 1);
-        hmac_of(recv).buf.lock().extend_from_slice(&str_bytes(&args[0])?);
+    def "update" | "<<" (recv, other) {
+        hmac_of(recv).buf.lock().extend_from_slice(&str_bytes(other)?);
         Ok(recv.clone())
     }
-    def "digest" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "digest" (recv) {
         let h = hmac_of(recv);
         let out = h.mac(&h.buf.lock())?;
         Ok(bin_str(out))
     }
-    def "hexdigest" | "to_s" | "inspect" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "hexdigest" | "to_s" | "inspect" (recv) {
         let h = hmac_of(recv);
         let out = h.mac(&h.buf.lock())?;
         Ok(str(hex(&out)))
     }
-    def "base64digest" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "base64digest" (recv) {
         let h = hmac_of(recv);
         let out = h.mac(&h.buf.lock())?;
         Ok(str(base64(&out)))
     }
-    def "reset" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "reset" (recv) {
         hmac_of(recv).buf.lock().clear();
         Ok(recv.clone())
     }
     // Constant-time MAC equality; false for anything that is not an HMAC.
-    def "==" (recv, *args, &_block) {
-        arity!(args, 1);
-        let RubyValue::Object(o) = &args[0] else {
+    def "==" (recv, other) {
+        let RubyValue::Object(o) = other else {
             return Ok(RubyValue::Bool(false));
         };
         let Some(other) = o.as_any().downcast_ref::<RHmac>() else {

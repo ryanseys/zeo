@@ -125,8 +125,7 @@ ruby_module! {
 
     // The version of the linked prism, which the gem reports as
     // `Prism::VERSION`.
-    def self."version"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."version"(_recv) {
         let raw = unsafe { CStr::from_ptr(pm_version()) };
         Ok(RubyValue::Str(crate::string_new(raw.to_string_lossy().into_owned())))
     }

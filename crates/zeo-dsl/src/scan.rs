@@ -48,6 +48,10 @@ pub struct Decl {
     /// `name.arity.unwrap_or(def.derived_arity())` the proc-macro emits, so a
     /// tool reading this sees exactly what the runtime registers.
     pub arity: i64,
+    /// What the def's parameter list alone implies, ignoring any override.
+    pub derived: i64,
+    /// Whether this name carries an explicit `arity N`.
+    pub override_written: bool,
     /// Repo-relative, so the output is machine-independent.
     pub file: String,
     pub line: usize,
@@ -171,6 +175,8 @@ fn collect_spec(spec: &ClassSpec, rel: &str, out: &mut Vec<Decl>) {
                     kind,
                     name: name.ruby.clone(),
                     arity: name.arity.unwrap_or(derived),
+                    derived,
+                    override_written: name.arity.is_some(),
                     file: rel.to_owned(),
                     line,
                     cfg: cfg.clone(),

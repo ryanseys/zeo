@@ -696,13 +696,12 @@ ruby_class! {
     // `Enumerator.produce([initial]) { |prev| ... }` -- an endless generator
     // (#2483). With `initial`, that value is yielded first; then each block
     // result is yielded, forever (bounded by the consumer, e.g. `take`/`first`).
-    def self."produce"(_recv, *args, &block) {
-        arity!(args, 0..=1);
+    def self."produce"(_recv, arg?, &block) {
         let Some(RubyValue::Proc(generator)) = block else {
             return Err(arg_error!("tried to create Producer without a block"));
         };
         Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
-            source: EnumSource::Produce { initial: args.first().cloned(), block: generator },
+            source: EnumSource::Produce { initial: arg.cloned(), block: generator },
             size_hint: None,
             state: Mutex::new(ExternState::default()),
             frozen: std::sync::atomic::AtomicBool::new(false),
@@ -736,46 +735,39 @@ ruby_class! {
 
     // `e + other` -- an `Enumerator::Chain` over the two, in order. Chaining
     // a chain nests rather than flattens, matching CRuby.
-    def "+"(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(chain_of(vec![recv.clone(), args[0].clone()]))
+    def "+"(recv, other) {
+        Ok(chain_of(vec![recv.clone(), (*other).clone()]))
     }
 
-    def "next"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "next"(recv) {
         Ok(ary2sv(take_next(recv_enum(recv))?))
     }
 
-    def "next_values"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "next_values"(recv) {
         Ok(RubyValue::Array(array_new(take_next(recv_enum(recv))?)))
     }
 
-    def "peek"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "peek"(recv) {
         Ok(ary2sv(fill_peek(recv_enum(recv))?))
     }
 
-    def "peek_values"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "peek_values"(recv) {
         Ok(RubyValue::Array(array_new(fill_peek(recv_enum(recv))?)))
     }
 
     // `#feed(value)` -- set the value the generator's paused `y.yield` returns
     // on the next `#next`. Setting it twice before a `#next` consumes it is a
     // TypeError; the call itself answers nil.
-    def "feed"(recv, *args, &_block) {
-        arity!(args, 1);
+    def "feed"(recv, arg) {
         let mut st = recv_enum(recv).state.lock();
         if st.feed.is_some() {
             return Err(type_error!("feed value already set"));
         }
-        st.feed = Some(args[0].clone());
+        st.feed = Some((*arg).clone());
         Ok(RubyValue::Nil)
     }
 
-    def "rewind"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "rewind"(recv) {
         let e = recv_enum(recv);
         let mut st = e.state.lock();
         if let Some(id) = st.fiber.take() {
@@ -796,16 +788,14 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "size"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "size"(recv) {
         Ok(enum_size(recv_enum(recv)))
     }
 
     // `Enumerator#to_s` is inherited `Object#to_s` in CRuby but prints the
     // same `#<Enumerator: ...>` shape via #inspect in practice; sharing
     // one implementation matches the observable output.
-    def "inspect" | "to_s" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect" | "to_s" (recv) {
         Ok(RubyValue::Str(crate::string_new(enum_inspect(recv_enum(recv)))))
     }
 
@@ -826,8 +816,7 @@ ruby_class! {
         }
     }
 
-    def "each_with_index"(recv, *args, &block) {
-        arity!(args, 0);
+    def "each_with_index"(recv, &block) {
         let e = recv_enum(recv);
         match block {
             Some(b) => drive_with_index(e, b, 0),

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use crate::Signal;
-use crate::builtins::{arity, type_error};
+use crate::builtins::type_error;
 use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ARGF_CLASS, ClassId};
@@ -123,16 +123,14 @@ ruby_class! {
 
     // `#filename`/`#path` -- the current file (`"-"` = stdin). Before reading
     // begins, it is `ARGV[0]` (or `"-"` when `ARGV` is empty).
-    def "filename" | "path"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "filename" | "path"(recv) {
         let argf = recv_argf(recv)?;
         if argf.started.load(Ordering::Relaxed) {
             return Ok(str_val(argf.filename.lock().clone()));
         }
         Ok(str_val(argv_files().into_iter().next().unwrap_or_else(|| "-".to_string())))
     }
-    def "each_line" | "each"(recv, *args, &blk) {
-        arity!(args, 0..=1);
+    def "each_line" | "each"(recv, _arg?, &blk) {
         let Some(RubyValue::Proc(p)) = blk else {
             return Err(crate::dispatch::raise_no_block_yield());
         };
@@ -143,22 +141,18 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "readlines" | "to_a"(recv, *args, &_blk) {
-        arity!(args, 0..=1);
+    def "readlines" | "to_a"(recv, _arg?) {
         let lines = all_lines(recv_argf(recv)?)?;
         Ok(RubyValue::Array(crate::collections::array_new(lines)))
     }
-    def "read"(recv, *args, &_blk) {
-        arity!(args, 0..=1);
+    def "read"(recv, _arg?) {
         let bytes = read_all(recv_argf(recv)?)?;
         Ok(str_val(String::from_utf8_lossy(&bytes).into_owned()))
     }
-    def "lineno"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "lineno"(recv) {
         Ok(RubyValue::Int(recv_argf(recv)?.lineno.load(Ordering::Relaxed)))
     }
-    def "to_s" | "inspect"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "to_s" | "inspect"(recv) {
         let _ = recv_argf(recv)?;
         Ok(str_val("ARGF".to_string()))
     }

@@ -20,29 +20,23 @@ fn forward(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue
 ruby_module! {
     SocketForwarder = zeo_abi::OPENSSL_SOCKET_FORWARDER_MODULE;
 
-    def "closed?" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "closed?", args)
+    def "closed?" (recv) {
+        forward(recv, "closed?", &[])
     }
-    def "fileno" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "fileno", args)
+    def "fileno" (recv) {
+        forward(recv, "fileno", &[])
     }
-    def "addr" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "addr", args)
+    def "addr" (recv) {
+        forward(recv, "addr", &[])
     }
-    def "peeraddr" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "peeraddr", args)
+    def "peeraddr" (recv) {
+        forward(recv, "peeraddr", &[])
     }
-    def "local_address" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "local_address", args)
+    def "local_address" (recv) {
+        forward(recv, "local_address", &[])
     }
-    def "remote_address" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "remote_address", args)
+    def "remote_address" (recv) {
+        forward(recv, "remote_address", &[])
     }
     def "setsockopt" (recv, *args, &_block) {
         arity!(args, 3);
@@ -52,36 +46,34 @@ ruby_module! {
         arity!(args, 2);
         forward(recv, "getsockopt", args)
     }
-    def "fcntl" arity -1 (recv, *args, &_block) {
+    def "fcntl" (recv, *args, &_block) {
         forward(recv, "fcntl", args)
     }
     def "close_on_exec=" (recv, *args, &_block) {
         arity!(args, 1);
         forward(recv, "close_on_exec=", args)
     }
-    def "close_on_exec?" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "close_on_exec?", args)
+    def "close_on_exec?" (recv) {
+        forward(recv, "close_on_exec?", &[])
     }
     def "do_not_reverse_lookup=" (recv, *args, &_block) {
         arity!(args, 1);
         forward(recv, "do_not_reverse_lookup=", args)
     }
-    def "timeout" (recv, *args, &_block) {
-        arity!(args, 0);
-        forward(recv, "timeout", args)
+    def "timeout" (recv) {
+        forward(recv, "timeout", &[])
     }
     def "timeout=" (recv, *args, &_block) {
         arity!(args, 1);
         forward(recv, "timeout=", args)
     }
-    def "wait" arity -1 (recv, *args, &_block) {
+    def "wait" (recv, *args, &_block) {
         forward(recv, "wait", args)
     }
-    def "wait_readable" arity -1 (recv, *args, &_block) {
+    def "wait_readable" (recv, *args, &_block) {
         forward(recv, "wait_readable", args)
     }
-    def "wait_writable" arity -1 (recv, *args, &_block) {
+    def "wait_writable" (recv, *args, &_block) {
         forward(recv, "wait_writable", args)
     }
 }

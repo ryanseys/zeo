@@ -168,12 +168,11 @@ ruby_module! {
     // CRuby's json/common.rb declares these `module_function`, so each is both a
     // public `JSON.parse` and a private instance method reachable via `include
     // JSON`. Arity is -2 (one required arg + optional opts).
-    module_function def "parse" arity -2 | "load" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let text = parse_text(&args[0])?;
+    module_function def "parse" | "load" arity -2 (_recv, arg1, arg2?) {
+        let text = parse_text(arg1)?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;
-        Ok(to_ruby(&value, symbolize_opt(args.get(1))))
+        Ok(to_ruby(&value, symbolize_opt(arg2)))
     }
     module_function def "generate" arity -2 | "dump" arity -2 (_recv, *args, &_block) {
         arity!(args, 1..=2); // (obj[, opts]) -- opts ignored for compact form
@@ -181,10 +180,9 @@ ruby_module! {
         generate_into(&args[0], None, &mut out);
         Ok(RubyValue::Str(string_new(out)))
     }
-    module_function def "pretty_generate" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2);
+    module_function def "pretty_generate" (_recv, arg1, _arg2?) {
         let mut out = String::new();
-        generate_into(&args[0], Some(0), &mut out);
+        generate_into(arg1, Some(0), &mut out);
         Ok(RubyValue::Str(string_new(out)))
     }
 }

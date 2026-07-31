@@ -12,7 +12,7 @@ use crate::builtins::rstruct::{
     StructInstance, bind_members, build_inspect, build_members, deconstruct_keys,
     define_value_class, meta_of, slots_of, struct_equal, struct_to_h,
 };
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use crate::dispatch::send_value;
 use crate::symbol::Symbol;
 use zeo_abi::DATA_CLASS;
@@ -33,16 +33,14 @@ ruby_class! {
     def "members"(recv, *_args, &_block) {
         build_members(recv)
     }
-    def "to_h"(recv, *args, &block) {
-        arity!(args, 0);
+    def "to_h"(recv, &block) {
         struct_to_h(recv, block)
     }
     def "deconstruct"(recv, *_args, &_block) {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
-    def "deconstruct_keys"(recv, *args, &_block) {
-        arity!(args, 1);
-        deconstruct_keys(recv, &args[0])
+    def "deconstruct_keys"(recv, arg) {
+        deconstruct_keys(recv, arg)
     }
     // `d.with(x: 1)` -- a copy with the named members replaced. Changes arrive
     // as a trailing keyword hash (the G2 convention).
@@ -65,13 +63,11 @@ ruby_class! {
         copy.set_frozen();
         Ok(RubyValue::Object(copy))
     }
-    def "=="(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
+    def "=="(recv, other) {
+        Ok(RubyValue::Bool(struct_equal(recv, other)))
     }
-    def "eql?"(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
+    def "eql?"(recv, arg) {
+        Ok(RubyValue::Bool(struct_equal(recv, arg)))
     }
     def "hash"(recv, *_args, &_block) {
         // Hash the slots ARRAY (structural), NOT a fresh `to_h` Hash -- a Hash

@@ -4,7 +4,7 @@
 //! is a stateless singleton handle (CRuby's is an `Object` extended with a
 //! module, equally payload-free).
 
-use crate::builtins::{arity, convert};
+use crate::builtins::convert;
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
@@ -64,7 +64,7 @@ fn push_arg(v: &RubyValue) -> Result<String, Signal> {
 ruby_class! {
     History = zeo_abi::READLINE_HISTORY_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "push" arity -1 (recv, *args, &_block) {
+    def "push" (recv, *args, &_block) {
         let mut st = super::STATE.lock();
         for v in args {
             let s = push_arg(v)?;
@@ -72,42 +72,36 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "<<" (recv, *args, &_block) {
-        arity!(args, 1);
-        super::STATE.lock().history.push(push_arg(&args[0])?);
+    def "<<" (recv, other) {
+        super::STATE.lock().history.push(push_arg(other)?);
         Ok(recv.clone())
     }
 
-    def "[]" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "[]" cfunc (_recv, arg) {
         let st = super::STATE.lock();
-        let i = resolve(convert::to_index(&args[0])?, st.history.len())?;
+        let i = resolve(convert::to_index(arg)?, st.history.len())?;
         Ok(str_value(&st.history[i]))
     }
-    def "[]=" (_recv, *args, &_block) {
-        arity!(args, 2);
-        let s = push_arg(&args[1])?;
+    def "[]=" cfunc (_recv, arg1, arg2) {
+        let s = push_arg(arg2)?;
         let mut st = super::STATE.lock();
-        let i = resolve(convert::to_index(&args[0])?, st.history.len())?;
+        let i = resolve(convert::to_index(arg1)?, st.history.len())?;
         st.history[i] = s;
-        Ok(args[1].clone())
+        Ok((*arg2).clone())
     }
 
-    def "delete_at" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "delete_at" (_recv, arg) {
         let mut st = super::STATE.lock();
-        let i = resolve(convert::to_index(&args[0])?, st.history.len())?;
+        let i = resolve(convert::to_index(arg)?, st.history.len())?;
         Ok(str_value(&st.history.remove(i)))
     }
-    def "pop" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "pop" cfunc (_recv) {
         Ok(match super::STATE.lock().history.pop() {
             Some(s) => str_value(&s),
             None => RubyValue::Nil,
         })
     }
-    def "shift" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "shift" cfunc (_recv) {
         let mut st = super::STATE.lock();
         if st.history.is_empty() {
             return Ok(RubyValue::Nil);
@@ -118,8 +112,7 @@ ruby_class! {
     // `each` powers the whole included-Enumerable surface (`to_a`,
     // `include?`, ...). The snapshot up front keeps the lock out of the
     // block, which may itself touch HISTORY.
-    def "each" (recv, *args, &block) {
-        arity!(args, 0);
+    def "each" (recv, &block) {
         let Some(RubyValue::Proc(p)) = block else {
             return Err(crate::dispatch::raise_no_block_yield());
         };
@@ -130,23 +123,19 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "length" | "size" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "length" | "size" (_recv) {
         Ok(RubyValue::Int(super::STATE.lock().history.len() as i64))
     }
-    def "empty?" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "empty?" (_recv) {
         Ok(RubyValue::Bool(super::STATE.lock().history.is_empty()))
     }
-    def "clear" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "clear" (recv) {
         super::STATE.lock().history.clear();
         Ok(recv.clone())
     }
 
     // The classic extension's own answer.
-    def "to_s" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_s" (_recv) {
         Ok(str_value("HISTORY"))
     }
 }

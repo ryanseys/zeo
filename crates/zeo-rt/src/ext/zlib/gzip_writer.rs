@@ -5,7 +5,7 @@
 //! the deflate tail and the footer that make it a complete member.
 
 use super::gzip::{Direction, RGzipFile, gz_error, gz_of, open};
-use crate::builtins::{arity, convert};
+use crate::builtins::convert;
 use crate::dispatch::send_value;
 use crate::{RubyValue, Signal, Symbol};
 use flate2::FlushCompress;
@@ -16,53 +16,49 @@ ruby_class! {
     GzipWriter = zeo_abi::ZLIB_GZIP_WRITER_CLASS < zeo_abi::ZLIB_GZIP_FILE_CLASS;
 
     // `GzipWriter.new(io, level = nil, strategy = nil)`.
-    def self."new" arity -1 (_recv, *args, &_block) {
-        arity!(args, 1..=3);
-        Ok(writer(args[0].clone(), super::level_of(args.get(1)), false))
+    def self."new" arity -1 (_recv, arg1, arg2?, _arg3?) {
+        Ok(writer((*arg1).clone(), super::level_of(arg2), false))
     }
 
     // `GzipWriter.open(path, level = nil) { |gz| … }` -- opens the file
     // itself, so `#close` closes it, and closes it even if the block raises.
-    def self."open" arity -1 (_recv, *args, &block) {
-        arity!(args, 1..=3);
+    def self."open" arity -1 (_recv, arg1, arg2?, _arg3?, &block) {
         let file = send_value(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
             Symbol::intern("new"),
-            &[args[0].clone(), RubyValue::Str(crate::string_new("wb".to_string()))],
+            &[(*arg1).clone(), RubyValue::Str(crate::string_new("wb".to_string()))],
             None,
         )?;
-        let gz = writer(file, super::level_of(args.get(1)), true);
+        let gz = writer(file, super::level_of(arg2), true);
         with_block(gz, block)
     }
 
     // `GzipWriter.wrap(io) { |gz| … }` -- same, over an IO the caller owns.
-    def self."wrap" arity -1 (_recv, *args, &block) {
-        arity!(args, 1..=3);
-        let gz = writer(args[0].clone(), super::level_of(args.get(1)), false);
+    def self."wrap" arity -1 (_recv, arg1, arg2?, _arg3?, &block) {
+        let gz = writer((*arg1).clone(), super::level_of(arg2), false);
         with_block(gz, block)
     }
 
     // `#write` answers how many bytes went IN, as `IO#write` does -- and like
     // it, accepts any number of arguments, zero included.
-    def "write" arity -1 (recv, *args, &_block) {
+    def "write" (recv, *args, &_block) {
         let mut total = 0;
         for arg in args {
             total += write_bytes(recv, &to_bytes(arg)?)?;
         }
         Ok(RubyValue::Int(total))
     }
-    def "<<" (recv, *args, &_block) {
-        arity!(args, 1);
-        write_bytes(recv, &to_bytes(&args[0])?)?;
+    def "<<" (recv, other) {
+        write_bytes(recv, &to_bytes(other)?)?;
         Ok(recv.clone())
     }
-    def "print" arity -1 (recv, *args, &_block) {
+    def "print" (recv, *args, &_block) {
         for arg in args {
             write_bytes(recv, &to_bytes(arg)?)?;
         }
         Ok(RubyValue::Nil)
     }
-    def "printf" arity -1 (recv, *args, &_block) {
+    def "printf" (recv, *args, &_block) {
         let Some(fmt) = args.first() else {
             return Err(crate::builtins::arg_error!("wrong number of arguments (given 0, expected 1+)"));
         };
@@ -73,18 +69,17 @@ ruby_class! {
         write_bytes(recv, text.as_bytes())?;
         Ok(RubyValue::Nil)
     }
-    def "putc" (recv, *args, &_block) {
-        arity!(args, 1);
-        let byte = match &args[0] {
+    def "putc" (recv, arg) {
+        let byte = match arg {
             RubyValue::Int(n) => vec![*n as u8],
             other => to_bytes(other)?.into_iter().take(1).collect(),
         };
         write_bytes(recv, &byte)?;
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
     // `#puts` follows `Kernel#puts`: no arguments is a bare newline, an Array
     // is flattened, and a line that already ends in one is not given another.
-    def "puts" arity -1 (recv, *args, &_block) {
+    def "puts" (recv, *args, &_block) {
         if args.is_empty() {
             write_bytes(recv, b"\n")?;
         }
@@ -101,20 +96,17 @@ ruby_class! {
 
     // How many UNCOMPRESSED bytes have been written -- CRuby's `pos` for a
     // writer, and the value that ends up in the footer's length field.
-    def "pos" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "pos" (recv) {
         Ok(RubyValue::Int(open(recv)?.position()?))
     }
-    def "tell" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "tell" (recv) {
         Ok(RubyValue::Int(open(recv)?.position()?))
     }
 
     // `#flush(flush = SYNC_FLUSH)` -- push what has been compressed so far
     // through to the IO without ending the member.
-    def "flush" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let flush = match args.first() {
+    def "flush" (recv, arg?) {
+        let flush = match arg {
             None => FlushCompress::Sync,
             other => super::codec::flush_of(other)?,
         };
@@ -131,24 +123,21 @@ ruby_class! {
     // The header fields, settable only until the header goes out -- which the
     // first `write` does. CRuby raises rather than silently dropping a late
     // assignment, because the value would never reach the file.
-    def "mtime=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let secs = match &args[0] {
+    def "mtime=" (recv, arg) {
+        let secs = match arg {
             RubyValue::Int(n) => *n,
             other => convert::to_index(&send_value(other, Symbol::intern("to_i"), &[], None)?)?,
         };
         settable(recv)?.header.mtime = secs as u32;
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def "orig_name=" (recv, *args, &_block) {
-        arity!(args, 1);
-        settable(recv)?.header.orig_name = Some(header_text(&args[0])?);
-        Ok(args[0].clone())
+    def "orig_name=" (recv, arg) {
+        settable(recv)?.header.orig_name = Some(header_text(arg)?);
+        Ok((*arg).clone())
     }
-    def "comment=" (recv, *args, &_block) {
-        arity!(args, 1);
-        settable(recv)?.header.comment = Some(header_text(&args[0])?);
-        Ok(args[0].clone())
+    def "comment=" (recv, arg) {
+        settable(recv)?.header.comment = Some(header_text(arg)?);
+        Ok((*arg).clone())
     }
 }
 

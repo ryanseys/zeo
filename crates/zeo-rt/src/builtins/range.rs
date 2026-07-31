@@ -159,8 +159,7 @@ ruby_class! {
     //
     // The test is on the END only, matching CRuby: a BEGINLESS range isn't
     // caught here and instead fails in `each`, which cannot start.
-    def "to_a" arity 0 | "entries" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_a" | "entries" arity 0 (recv) {
         let (_, end, _) = range_parts(recv);
         let unbounded = match end {
             None => true,
@@ -174,9 +173,8 @@ ruby_class! {
             .expect("Enumerable implements to_a")
     }
 
-    def "each" arity 0 (recv, *args, &block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "each", args, block);
+    def "each" (recv, &block) {
+        let p = block_or_enum!(recv, "each", &[], block);
         let (start, end, exclusive) = range_parts(recv);
         match start {
             // An integer start iterates integers upward. A finite Int/Float
@@ -250,8 +248,7 @@ ruby_class! {
     // find-any for a Numeric comparator result (`0` hits, negative searches
     // low, positive high; `nil` on no hit). Binary search on the bounds -- no
     // materialization, so a huge range is fine.
-    def "bsearch" arity 0 (recv, *args, &block) {
-        arity!(args, 0);
+    def "bsearch" (recv, &block) {
         let p = crate::builtins::need_block!(block);
         let (start, end, exclusive) = range_parts(recv);
         // A float range bisects over the doubles' monotonic integer image
@@ -327,31 +324,28 @@ ruby_class! {
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this runtime supports the
     // cover check is the faithful behavior for all four names.
-    def "===" arity 1 | "include?" arity 1 | "member?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "===" | "include?" arity 1 | "member?" arity 1 (recv, other) {
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
-            start, end, exclusive, &args[0],
+            start, end, exclusive, other,
         )))
     }
     // `cover?` alone accepts a RANGE argument (range containment); `===`/
     // `include?`/`member?` treat a Range as an ordinary value (never covered).
-    def "cover?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "cover?" (recv, arg) {
         let (start, end, exclusive) = range_parts(recv);
-        if matches!(&args[0], RubyValue::Range(..)) {
-            return Ok(RubyValue::Bool(range_covers_range(start, end, exclusive, &args[0])));
+        if matches!(arg, RubyValue::Range(..)) {
+            return Ok(RubyValue::Bool(range_covers_range(start, end, exclusive, arg)));
         }
-        Ok(RubyValue::Bool(crate::value::range_covers(start, end, exclusive, &args[0])))
+        Ok(RubyValue::Bool(crate::value::range_covers(start, end, exclusive, arg)))
     }
     // `overlap?(other)` -- do two ranges share at least one element? False
     // when either range lies wholly beyond the other's end (CRuby range.c's
     // empty-region test); a beginless/endless bound never bounds that side.
-    def "overlap?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let RubyValue::Range(ob, oe, ox) = &args[0] else {
+    def "overlap?" (recv, arg) {
+        let RubyValue::Range(ob, oe, ox) = arg else {
             return Err(type_error!("wrong argument type {} (expected Range)",
-                    crate::builtins::class_name_of(&args[0])));
+                    crate::builtins::class_name_of(arg)));
         };
         let (sb, se, sx) = range_parts(recv);
         let (ob, oe, ox) = (ob.as_deref(), oe.as_deref(), *ox);
@@ -370,10 +364,9 @@ ruby_class! {
             !empty_region(sb, oe, ox) && !empty_region(ob, se, sx),
         ))
     }
-    def "last"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "last"(recv, arg?) {
         let (start, end, exclusive) = range_parts(recv);
-        match args.first() {
+        match arg {
             None => Ok(end.cloned().unwrap_or(RubyValue::Nil)),
             Some(v) => {
                 let n = crate::builtins::convert::to_index(v)?;
@@ -390,8 +383,7 @@ ruby_class! {
             }
         }
     }
-    def "size" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "size" (recv) {
         let (start, end, exclusive) = range_parts(recv);
         // The begin must be an Integer (CRuby iterates from it via `succ`).
         let s = match start {
@@ -493,8 +485,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "exclude_end?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "exclude_end?" (recv) {
         let (_, _, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(exclusive))
     }
@@ -514,8 +505,7 @@ ruby_class! {
         let (start, _, _) = range_parts(recv);
         Ok(start.cloned().unwrap_or(RubyValue::Nil))
     }
-    def "end" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "end" (recv) {
         let (_, end, _) = range_parts(recv);
         Ok(end.cloned().unwrap_or(RubyValue::Nil))
     }

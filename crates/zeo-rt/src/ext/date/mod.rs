@@ -211,46 +211,36 @@ ruby_class! {
     Date = zeo_abi::DATE_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "year" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "year" (recv) {
         Ok(RubyValue::Int(jdn_to_civil(date_of(recv).jdn).0))
     }
-    def "month" | "mon" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "month" | "mon" (recv) {
         Ok(RubyValue::Int(jdn_to_civil(date_of(recv).jdn).1))
     }
-    def "day" | "mday" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "day" | "mday" (recv) {
         Ok(RubyValue::Int(jdn_to_civil(date_of(recv).jdn).2))
     }
-    def "wday" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "wday" (recv) {
         Ok(RubyValue::Int(jdn_wday(date_of(recv).jdn)))
     }
-    def "yday" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "yday" (recv) {
         Ok(RubyValue::Int(jdn_yday(date_of(recv).jdn)))
     }
-    def "jd" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "jd" (recv) {
         Ok(RubyValue::Int(date_of(recv).jdn))
     }
-    def "leap?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "leap?" (recv) {
         let y = jdn_to_civil(date_of(recv).jdn).0;
         Ok(RubyValue::Bool(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)))
     }
-    def "to_s" | "iso8601" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_s" | "iso8601" (recv) {
         Ok(RubyValue::Str(string_new(iso_string(date_of(recv).jdn))))
     }
-    def "inspect" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect" (recv) {
         Ok(RubyValue::Str(string_new(format!("#<Date: {}>", iso_string(date_of(recv).jdn)))))
     }
-    def "strftime" (recv, *args, &_block) {
-        arity!(args, 1);
-        let fmt = &crate::builtins::convert::to_rstr(&args[0])?;
+    def "strftime" cfunc (recv, arg) {
+        let fmt = &crate::builtins::convert::to_rstr(arg)?;
         let fmt = fmt.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(string_new(date_strftime(date_of(recv).jdn, &fmt))))
     }
@@ -263,18 +253,16 @@ ruby_class! {
         };
         Ok(RubyValue::Object(RDate::new(d.jdn + n, d.class_id)))
     }
-    def "prev_day" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "prev_day" (recv, arg?) {
         let d = date_of(recv);
-        let n = args.first().and_then(day_count).unwrap_or(1);
+        let n = arg.and_then(day_count).unwrap_or(1);
         Ok(RubyValue::Object(RDate::new(d.jdn - n, d.class_id)))
     }
     // `date - n` -> a Date n days earlier; `date - other_date` -> the Rational
     // day difference (CRuby's result type).
-    def "-" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "-" (recv, other) {
         let d = date_of(recv);
-        if let RubyValue::Object(o) = &args[0] {
+        if let RubyValue::Object(o) = other {
             if let Some(other) = o.as_any().downcast_ref::<RDate>() {
                 return crate::builtins::rational::rational_new(
                     num_bigint::BigInt::from(d.jdn - other.jdn),
@@ -282,18 +270,16 @@ ruby_class! {
                 );
             }
         }
-        let n = day_count(&args[0]).ok_or_else(|| type_error!("expected numeric or date"))?;
+        let n = day_count(other).ok_or_else(|| type_error!("expected numeric or date"))?;
         Ok(RubyValue::Object(RDate::new(d.jdn - n, d.class_id)))
     }
-    def "next" | "succ" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "next" | "succ" (recv) {
         let d = date_of(recv);
         Ok(RubyValue::Object(RDate::new(d.jdn + 1, d.class_id)))
     }
-    def "<=>" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "<=>" (recv, other) {
         let a = date_of(recv).jdn;
-        let b = match &args[0] {
+        let b = match other {
             RubyValue::Object(o) => match o.as_any().downcast_ref::<RDate>() {
                 Some(other) => other.jdn,
                 None => return Ok(RubyValue::Nil),
@@ -302,10 +288,9 @@ ruby_class! {
         };
         Ok(RubyValue::Int((a.cmp(&b) as i64).signum()))
     }
-    def "==" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "==" (recv, other) {
         let a = date_of(recv).jdn;
-        let equal = matches!(&args[0], RubyValue::Object(o)
+        let equal = matches!(other, RubyValue::Object(o)
             if o.as_any().downcast_ref::<RDate>().is_some_and(|d| d.jdn == a));
         Ok(RubyValue::Bool(equal))
     }
@@ -315,9 +300,8 @@ ruby_class! {
         let (y, m, d) = civil_args(args)?;
         Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
     }
-    def self."jd" (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let jdn = match args.first() {
+    def self."jd" (recv, arg?) {
+        let jdn = match arg {
             None => 0,
             Some(RubyValue::Int(n)) => *n,
             Some(RubyValue::Float(f)) => f.trunc() as i64,
@@ -325,24 +309,21 @@ ruby_class! {
         };
         Ok(RubyValue::Object(RDate::new(jdn, class_of(recv))))
     }
-    def self."today" (recv, *args, &_block) {
-        arity!(args, 0);
+    def self."today" cfunc (recv) {
         Ok(RubyValue::Object(RDate::new(today_jdn(), class_of(recv))))
     }
-    def self."parse" (recv, *args, &_block) {
-        arity!(args, 1..=3);
-        let s = &crate::builtins::convert::to_rstr(&args[0])?;
+    def self."parse" cfunc (recv, arg1, _arg2?, _arg3?) {
+        let s = &crate::builtins::convert::to_rstr(arg1)?;
         let text = s.lock().to_utf8_lossy().into_owned();
         let (y, m, d) = parse_date(&text)?;
         Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
     }
     // The heuristic scanner itself, which `Date.parse` and the `time` gem's
     // `Time.parse` both read their fields out of. See `parse.rs`.
-    def self."_parse" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let s = &crate::builtins::convert::to_rstr(&args[0])?;
+    def self."_parse" cfunc (_recv, arg1, arg2?) {
+        let s = &crate::builtins::convert::to_rstr(arg1)?;
         let text = s.lock().to_utf8_lossy().into_owned();
-        let comp = args.get(1).is_none_or(RubyValue::truthy);
+        let comp = arg2.is_none_or(RubyValue::truthy);
         Ok(RubyValue::Hash(crate::collections::hash_new(parse::date_parse(&text, comp))))
     }
     def self."valid_date?" | "valid_civil?" (_recv, *args, &_block) {
@@ -356,9 +337,8 @@ ruby_class! {
         let jdn = civil_to_jdn(y, m, d);
         Ok(RubyValue::Bool(jdn_to_civil(jdn) == (y, m, d)))
     }
-    def self."leap?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let y = &match &args[0] {
+    def self."leap?" (_recv, arg) {
+        let y = &match arg {
             RubyValue::Int(n) => *n,
             RubyValue::Float(f) => f.trunc() as i64,
             _ => return Err(type_error!("invalid year (not numeric)")),

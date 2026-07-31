@@ -41,40 +41,34 @@ fn cmp_or_fail(recv: &RubyValue, other: &RubyValue) -> Result<i64, Signal> {
 ruby_module! {
     Comparable = zeo_abi::COMPARABLE_CLASS;
 
-    def "<" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? < 0))
+    def "<" (recv, other) {
+        Ok(RubyValue::Bool(cmp_or_fail(recv, other)? < 0))
     }
-    def "<=" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? <= 0))
+    def "<=" (recv, other) {
+        Ok(RubyValue::Bool(cmp_or_fail(recv, other)? <= 0))
     }
-    def ">" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? > 0))
+    def ">" (recv, other) {
+        Ok(RubyValue::Bool(cmp_or_fail(recv, other)? > 0))
     }
-    def ">=" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? >= 0))
+    def ">=" (recv, other) {
+        Ok(RubyValue::Bool(cmp_or_fail(recv, other)? >= 0))
     }
     // Identity wins first (CRuby's `x == y` short-circuit); otherwise equal
     // iff `<=>` is 0. `Comparable#==` deliberately treats an incomparable
     // pair (`<=>` answering nil) as `false` -- real Ruby's one nil-tolerant
     // Comparable method; a non-numeric result raises (via `cmp`'s
     // `rb_cmpint`).
-    def "==" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match (recv, &args[0]) {
+    def "==" (recv, other) {
+        match (recv, other) {
             (RubyValue::Object(a), RubyValue::Object(b)) if std::sync::Arc::ptr_eq(a, b) => {
                 Ok(RubyValue::Bool(true))
             }
-            _ => Ok(RubyValue::Bool(cmp(recv, &args[0])? == Some(0))),
+            _ => Ok(RubyValue::Bool(cmp(recv, other)? == Some(0))),
         }
     }
-    def "between?" arity 2 (recv, *args, &_block) {
-        arity!(args, 2);
-        let lo = cmp_or_fail(recv, &args[0])?;
-        let hi = cmp_or_fail(recv, &args[1])?;
+    def "between?" (recv, arg1, arg2) {
+        let lo = cmp_or_fail(recv, arg1)?;
+        let hi = cmp_or_fail(recv, arg2)?;
         Ok(RubyValue::Bool(lo >= 0 && hi <= 0))
     }
     // `clamp(lo, hi)` or `clamp(range)`. In the two-argument form a `nil`

@@ -22,9 +22,8 @@ ruby_class! {
     // `UNIXServer.new(path)` -- create + bind + listen on an AF_UNIX socket. The
     // path must not already exist (bind fails with EADDRINUSE otherwise, exactly
     // as CRuby).
-    def self."new" | "open"(_recv, *args, &_block) {
-        arity!(args, 1);
-        let path = crate::builtins::file::path_arg(&args[0], "new")?;
+    def self."new" | "open" cfunc (_recv, arg) {
+        let path = crate::builtins::file::path_arg(arg, "new")?;
         // SAFETY: a plain socket(2) call.
         let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
         if fd < 0 {
@@ -44,8 +43,7 @@ ruby_class! {
     }
 
     // `#accept` -- block for a client, answering a connected `UNIXSocket`.
-    def "accept"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "accept"(recv) {
         let fd = fd_of(recv)?;
         // SAFETY: accept(2) on an owned listening fd.
         let nfd = crate::gvl::without_gvl(|| unsafe {
@@ -69,10 +67,9 @@ ruby_class! {
         Ok(unsafe { socket_from_raw_fd(nfd, UNIX_SOCKET_CLASS) })
     }
     // `#listen(backlog)` -- already listening; re-apply and answer 0.
-    def "listen"(recv, *args, &_block) {
-        arity!(args, 1);
+    def "listen"(recv, arg) {
         let fd = fd_of(recv)?;
-        let backlog = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+        let backlog = crate::builtins::convert::to_index(arg)? as libc::c_int;
         // SAFETY: listen(2) on an owned fd.
         if unsafe { libc::listen(fd, backlog) } != 0 {
             return Err(errno_error("listen(2)"));

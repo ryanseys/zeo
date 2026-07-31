@@ -28,7 +28,7 @@ use parking_lot::Mutex;
 use zeo_abi::ClassId;
 use zeo_macros::ruby_class;
 
-use crate::builtins::{arity, name_error, type_error};
+use crate::builtins::{name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -277,58 +277,50 @@ fn inspect_of(recv: &RubyValue) -> String {
 ruby_class! {
     Binding = zeo_abi::BINDING_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "receiver"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "receiver"(recv) {
         Ok(recv_binding(recv).self_val.clone())
     }
-    def "source_location"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "source_location"(recv) {
         let b = recv_binding(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Str(crate::string_new(b.file.clone())),
             RubyValue::Int(b.line as i64),
         ])))
     }
-    def "local_variables"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "local_variables"(recv) {
         let names = recv_binding(recv).scope.names();
         Ok(RubyValue::Array(crate::array_new(
             names.iter().map(|n| RubyValue::Symbol(Symbol::intern(n))).collect(),
         )))
     }
-    def "local_variable_defined?"(recv, *args, &_b) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(recv_binding(recv).scope.defined(&var_name(&args[0])?)))
+    def "local_variable_defined?"(recv, arg) {
+        Ok(RubyValue::Bool(recv_binding(recv).scope.defined(&var_name(arg)?)))
     }
-    def "local_variable_get"(recv, *args, &_b) {
-        arity!(args, 1);
-        let name = var_name(&args[0])?;
+    def "local_variable_get"(recv, arg) {
+        let name = var_name(arg)?;
         recv_binding(recv).scope.get(&name).ok_or_else(|| {
             name_error!("local variable '{name}' is not defined for {}", inspect_of(recv))
         })
     }
-    def "local_variable_set"(recv, *args, &_b) {
-        arity!(args, 2);
-        let name = var_name(&args[0])?;
-        recv_binding(recv).scope.set(&name, args[1].clone());
-        Ok(args[1].clone())
+    def "local_variable_set"(recv, arg1, arg2) {
+        let name = var_name(arg1)?;
+        recv_binding(recv).scope.set(&name, (*arg2).clone());
+        Ok((*arg2).clone())
     }
     // `eval(src, file = "(eval)", line = 1)` -- the source runs in THIS
     // scope: its locals, its `self`, its lexical constants.
-    def "eval" arity -1 (recv, *args, &_b) {
-        arity!(args, 1..=3);
-        let file = match args.get(1) {
+    def "eval" arity -1 (recv, arg1, arg2?, arg3?) {
+        let file = match arg2 {
             Some(v) => Some(crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned()),
             None => None,
         };
-        let line = match args.get(2) {
+        let line = match arg3 {
             Some(v) => Some(crate::builtins::convert::to_index(v)? as u32),
             None => None,
         };
-        crate::eval_vm::eval_with_binding(&args[0], recv_binding(recv), file, line)
+        crate::eval_vm::eval_with_binding(arg1, recv_binding(recv), file, line)
     }
-    def "inspect" | "to_s"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "inspect" | "to_s"(recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_of(recv))))
     }
 }

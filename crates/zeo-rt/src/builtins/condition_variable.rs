@@ -10,7 +10,7 @@
 //! On wake (or timeout) the Ruby mutex is re-acquired before returning.
 
 use crate::RubyValue;
-use crate::builtins::{arity, thread_error, type_error};
+use crate::builtins::{thread_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -85,19 +85,17 @@ fn cv_of(recv: &RubyValue) -> &RConditionVariable {
 ruby_class! {
     ConditionVariable = zeo_abi::CONDITION_VARIABLE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."new" cfunc (_recv) {
         Ok(new_cv())
     }
 
     // `wait(mutex, timeout=nil)` -- release `mutex`, park until signaled or
     // `timeout` seconds elapse, re-acquire `mutex`, return self.
-    def "wait"(recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let RubyValue::Mutex(rm) = &args[0] else {
+    def "wait"(recv, arg1, arg2?) {
+        let RubyValue::Mutex(rm) = arg1 else {
             return Err(type_error!("no implicit conversion into Mutex"));
         };
-        let timeout = match args.get(1) {
+        let timeout = match arg2 {
             None | Some(RubyValue::Nil) => None,
             Some(RubyValue::Int(i)) => Some(Duration::from_secs_f64(*i as f64)),
             Some(RubyValue::Float(f)) => Some(Duration::from_secs_f64(*f)),
@@ -130,16 +128,14 @@ ruby_class! {
         Ok(recv.clone())
     }
     // Wake at most one waiter; returns self.
-    def "signal"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "signal"(recv) {
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
         cv.cond.notify_one();
         Ok(recv.clone())
     }
     // Wake all waiters; returns self.
-    def "broadcast"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "broadcast"(recv) {
         let cv = cv_of(recv);
         let _g = cv.lock.lock();
         cv.cond.notify_all();

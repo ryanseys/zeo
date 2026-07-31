@@ -8,7 +8,6 @@ use super::{
     struct_to_h,
 };
 use crate::RubyValue;
-use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject};
 use zeo_abi::{ClassId, ETC_GROUP_CLASS};
 use zeo_macros::ruby_class;
@@ -101,16 +100,16 @@ pub(crate) unsafe fn group_from(gr: *const libc::group) -> RubyValue {
 ruby_class! {
     Group = zeo_abi::ETC_GROUP_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "name"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_group(recv).name.clone())) }
-    def "passwd"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(recv_group(recv).passwd.clone())) }
-    def "gid"(recv, *args, &_b) { arity!(args, 0); Ok(RubyValue::Int(recv_group(recv).gid as i64)) }
-    def "mem"(recv, *args, &_b) { arity!(args, 0); Ok(recv_group(recv).field("mem").unwrap()) }
-    def "members"(_recv, *args, &_b) { arity!(args, 0); Ok(members_array(GROUP_MEMBERS)) }
-    def "to_a" | "values"(recv, *args, &_b) { arity!(args, 0); Ok(struct_to_a(recv_group(recv), GROUP_MEMBERS)) }
-    def "to_h"(recv, *args, &_b) { arity!(args, 0); Ok(struct_to_h(recv_group(recv), GROUP_MEMBERS)) }
-    def "each"(recv, *args, &block) { arity!(args, 0); struct_each(recv_group(recv), GROUP_MEMBERS, block, recv) }
-    def "[]"(recv, *args, &_b) { arity!(args, 1); struct_index(recv_group(recv), GROUP_MEMBERS, &args[0]) }
-    def "to_s" | "inspect"(recv, *args, &_b) { arity!(args, 0); Ok(str_val(struct_inspect("Etc::Group", recv_group(recv), GROUP_MEMBERS))) }
+    def "name"(recv) { Ok(str_val(recv_group(recv).name.clone())) }
+    def "passwd"(recv) { Ok(str_val(recv_group(recv).passwd.clone())) }
+    def "gid"(recv) { Ok(RubyValue::Int(recv_group(recv).gid as i64)) }
+    def "mem"(recv) { Ok(recv_group(recv).field("mem").unwrap()) }
+    def "members"(_recv) { Ok(members_array(GROUP_MEMBERS)) }
+    def "to_a" | "values"(recv) { Ok(struct_to_a(recv_group(recv), GROUP_MEMBERS)) }
+    def "to_h"(recv) { Ok(struct_to_h(recv_group(recv), GROUP_MEMBERS)) }
+    def "each"(recv, &block) { struct_each(recv_group(recv), GROUP_MEMBERS, block, recv) }
+    def "[]"(recv, arg) { struct_index(recv_group(recv), GROUP_MEMBERS, arg) }
+    def "to_s" | "inspect"(recv) { Ok(str_val(struct_inspect("Etc::Group", recv_group(recv), GROUP_MEMBERS))) }
 }
 
 #[cfg(test)]

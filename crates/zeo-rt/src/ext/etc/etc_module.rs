@@ -10,7 +10,7 @@ use super::{
     PWDB_LOCK, confstr_value, cstr, cstring_arg, errno_ptr, str_val, system_tmpdir, uname_hash,
 };
 use crate::RubyValue;
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use crate::dispatch::raise_error;
 use zeo_macros::ruby_module;
 
@@ -18,40 +18,34 @@ ruby_module! {
     Etc = zeo_abi::ETC_MODULE;
 
     // The install-path helpers.
-    def self."sysconfdir"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."sysconfdir"(_recv) {
         Ok(str_val("/etc".to_string()))
     }
-    def self."systmpdir"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."systmpdir"(_recv) {
         Ok(str_val(system_tmpdir()))
     }
 
     // CPU count -- the affinity/online-processor count.
-    def self."nprocessors"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."nprocessors"(_recv) {
         let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         Ok(RubyValue::Int(n as i64))
     }
 
     // The login name of the controlling terminal's user (nil if unavailable).
-    def self."getlogin"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."getlogin"(_recv) {
         let _g = PWDB_LOCK.lock();
         let p = unsafe { libc::getlogin() };
         if p.is_null() { Ok(RubyValue::Nil) } else { Ok(str_val(unsafe { cstr(p) })) }
     }
 
     // uname(2) as a Hash of the five portable fields.
-    def self."uname"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."uname"(_recv) {
         uname_hash()
     }
 
     // sysconf(3)/confstr(3): runtime system-configuration queries.
-    def self."sysconf"(_recv, *args, &_b) {
-        arity!(args, 1);
-        let name = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+    def self."sysconf"(_recv, arg) {
+        let name = crate::builtins::convert::to_index(arg)? as libc::c_int;
         // A -1 return with errno unchanged (0) means "no limit / indeterminate"
         // -> nil, matching CRuby; a real error (EINVAL: unknown name) raises.
         unsafe { *errno_ptr() = 0; }
@@ -63,27 +57,24 @@ ruby_module! {
         }
         Ok(RubyValue::Int(v))
     }
-    def self."confstr"(_recv, *args, &_b) {
-        arity!(args, 1);
-        let name = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+    def self."confstr"(_recv, arg) {
+        let name = crate::builtins::convert::to_index(arg)? as libc::c_int;
         confstr_value(name)
     }
 
     // The user database: by name, by uid (default: the effective uid), and the
     // cursor form (getpwent / setpwent / endpwent, and the `passwd` iterator).
-    def self."getpwnam"(_recv, *args, &_b) {
-        arity!(args, 1);
-        let name = cstring_arg(&args[0])?;
+    def self."getpwnam"(_recv, arg) {
+        let name = cstring_arg(arg)?;
         let _g = PWDB_LOCK.lock();
         let pw = unsafe { libc::getpwnam(name.as_ptr()) };
         if pw.is_null() {
-            return Err(arg_error!("can't find user for {}", args[0].inspect_string()));
+            return Err(arg_error!("can't find user for {}", (*arg).inspect_string()));
         }
         Ok(unsafe { passwd_from(pw) })
     }
-    def self."getpwuid"(_recv, *args, &_b) {
-        arity!(args, 0..=1);
-        let uid = match args.first() {
+    def self."getpwuid"(_recv, arg?) {
+        let uid = match arg {
             Some(v) => crate::builtins::convert::to_index(v)? as libc::uid_t,
             None => unsafe { libc::geteuid() },
         };
@@ -94,28 +85,24 @@ ruby_module! {
         }
         Ok(unsafe { passwd_from(pw) })
     }
-    def self."setpwent"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."setpwent"(_recv) {
         let _g = PWDB_LOCK.lock();
         unsafe { libc::setpwent() };
         Ok(RubyValue::Nil)
     }
-    def self."endpwent"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."endpwent"(_recv) {
         let _g = PWDB_LOCK.lock();
         unsafe { libc::endpwent() };
         Ok(RubyValue::Nil)
     }
-    def self."getpwent"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."getpwent"(_recv) {
         let _g = PWDB_LOCK.lock();
         let pw = unsafe { libc::getpwent() };
         if pw.is_null() { Ok(RubyValue::Nil) } else { Ok(unsafe { passwd_from(pw) }) }
     }
     // `Etc.passwd { |pw| ... }` iterates the whole database (from the current
     // cursor); without a block it is `getpwent`.
-    def self."passwd"(_recv, *args, &block) {
-        arity!(args, 0);
+    def self."passwd"(_recv, &block) {
         let Some(RubyValue::Proc(p)) = block else {
             let _g = PWDB_LOCK.lock();
             let pw = unsafe { libc::getpwent() };
@@ -136,19 +123,17 @@ ruby_module! {
     }
 
     // The group database, mirroring the user one.
-    def self."getgrnam"(_recv, *args, &_b) {
-        arity!(args, 1);
-        let name = cstring_arg(&args[0])?;
+    def self."getgrnam"(_recv, arg) {
+        let name = cstring_arg(arg)?;
         let _g = PWDB_LOCK.lock();
         let gr = unsafe { libc::getgrnam(name.as_ptr()) };
         if gr.is_null() {
-            return Err(arg_error!("can't find group for {}", args[0].inspect_string()));
+            return Err(arg_error!("can't find group for {}", (*arg).inspect_string()));
         }
         Ok(unsafe { group_from(gr) })
     }
-    def self."getgrgid"(_recv, *args, &_b) {
-        arity!(args, 0..=1);
-        let gid = match args.first() {
+    def self."getgrgid"(_recv, arg?) {
+        let gid = match arg {
             Some(v) => crate::builtins::convert::to_index(v)? as libc::gid_t,
             None => unsafe { libc::getegid() },
         };
@@ -159,26 +144,22 @@ ruby_module! {
         }
         Ok(unsafe { group_from(gr) })
     }
-    def self."setgrent"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."setgrent"(_recv) {
         let _g = PWDB_LOCK.lock();
         unsafe { libc::setgrent() };
         Ok(RubyValue::Nil)
     }
-    def self."endgrent"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."endgrent"(_recv) {
         let _g = PWDB_LOCK.lock();
         unsafe { libc::endgrent() };
         Ok(RubyValue::Nil)
     }
-    def self."getgrent"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def self."getgrent"(_recv) {
         let _g = PWDB_LOCK.lock();
         let gr = unsafe { libc::getgrent() };
         if gr.is_null() { Ok(RubyValue::Nil) } else { Ok(unsafe { group_from(gr) }) }
     }
-    def self."group"(_recv, *args, &block) {
-        arity!(args, 0);
+    def self."group"(_recv, &block) {
         let Some(RubyValue::Proc(p)) = block else {
             let _g = PWDB_LOCK.lock();
             let gr = unsafe { libc::getgrent() };

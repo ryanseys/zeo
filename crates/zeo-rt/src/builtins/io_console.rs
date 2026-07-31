@@ -746,10 +746,9 @@ ruby_class! {
         raw_mode(&mut mode_of(recv)?.mode.lock(), opts);
         Ok(recv.clone())
     }
-    def "echo=" (recv, *args, &_block) {
-        arity!(args, 1);
-        echo_mode(&mut mode_of(recv)?.mode.lock(), args[0].truthy());
-        Ok(args[0].clone())
+    def "echo=" (recv, arg) {
+        echo_mode(&mut mode_of(recv)?.mode.lock(), (*arg).truthy());
+        Ok((*arg).clone())
     }
 }
 

@@ -60,18 +60,15 @@ ruby_class! {
             other => other,
         }
     }
-    def "to_proc"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0);
+    def "to_proc"(recv) {
         Ok(recv.clone())
     }
     // Both read the metadata codegen recorded from the block/lambda's own
     // static `Params` (see `RProc::with_meta`).
-    def "arity"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0);
+    def "arity"(recv) {
         Ok(RubyValue::Int(recv_proc(recv).arity() as i64))
     }
-    def "lambda?"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0);
+    def "lambda?"(recv) {
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
     // `Proc#binding` -- the scope the block was WRITTEN in: its `self` and
@@ -82,8 +79,7 @@ ruby_class! {
     // captured scope -- a runtime-internal one like `Symbol#to_proc`, or any
     // proc in a program that never mentions `Proc#binding`, which is what
     // lets codegen skip the capture -- is CRuby's C-level proc.
-    def "binding"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0);
+    def "binding"(recv) {
         let Some(b) = recv_proc(recv).binding() else {
             return Err(crate::builtins::arg_error!(
                 "Can't create Binding from C level Proc"
@@ -92,16 +88,14 @@ ruby_class! {
         Ok(crate::builtins::binding::rebind(b))
     }
     // Returns self, and does nothing else -- see `Module#ruby2_keywords`.
-    def "ruby2_keywords"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0);
+    def "ruby2_keywords"(recv) {
         Ok(recv.clone())
     }
     // `source_location` -> `[file, line]`. zeo is whole-program AOT and
     // the conformance harness disables the line map, so a proc's exact
     // origin isn't tracked; the pair's SHAPE and element types match CRuby
     // (`[String, Integer]`), which is what proc introspection relies on.
-    def "source_location"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0);
+    def "source_location"(recv) {
         let _ = recv_proc(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Str(crate::string_new(String::new())),
@@ -111,15 +105,14 @@ ruby_class! {
     // `parameters` -- `[[kind, name], ...]` from the static signature codegen
     // recorded. A kind-only entry (anonymous `*`/`**`/`&`) is a one-element
     // array, matching CRuby.
-    def "parameters"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0..=1);
+    def "parameters"(recv, arg?) {
         let p = recv_proc(recv);
         // `parameters(lambda:)` forces the reporting view: true reports
         // plain positionals as :req, false as :opt, nil/absent follows the
         // receiver's own lambda-ness. Kinds are stored canonically (lambda
         // style), so a proc-view report demotes every mandatory positional
         // (:req -> :opt); rest/opt/keyword/block kinds never change.
-        let lambda_view = match args.first() {
+        let lambda_view = match arg {
             Some(RubyValue::Hash(h)) => h
                 .lock()
                 .values()
@@ -149,10 +142,9 @@ ruby_class! {
     // application answers a FRESH curried proc -- `add.curry[1]` is reusable,
     // never mutating shared state (CRuby's `proc_curry` builds a new proc
     // per step the same way).
-    def "curry"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 0..=1);
+    def "curry"(recv, arg?) {
         let p = recv_proc(recv).clone();
-        let n = match args.first() {
+        let n = match arg {
             // An explicit nil arity is accepted as absent (CRuby's
             // proc_curry); anything else through the `to_int` protocol.
             // A negative (optional/rest) arity has no fixed slot count to
@@ -169,13 +161,12 @@ ruby_class! {
     // `(f << g).call(x)` is `f.call(g.call(x))`. The other operand is any
     // callable (Proc, Method, ...), invoked through its own `call`; the
     // result is a var-args lambda.
-    def ">>"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 1);
+    def ">>"(recv, other) {
         let f = recv_proc(recv).clone();
         // The composed proc's lambda-ness follows the FIRST function to run:
         // for `f >> g` that is the receiver `f` (CRuby's proc_compose).
         let is_lambda = f.is_lambda();
-        let g = args[0].clone();
+        let g = (*other).clone();
         Ok(RubyValue::Proc(crate::RProc::with_meta(
             move |a: &[RubyValue]| {
                 let mid = f.call(a)?;
@@ -185,10 +176,9 @@ ruby_class! {
             is_lambda,
         )))
     }
-    def "<<"(recv, *args, &_block) {
-        crate::builtins::arity!(args, 1);
+    def "<<"(recv, other) {
         let f = recv_proc(recv).clone();
-        let g = args[0].clone();
+        let g = (*other).clone();
         // For `f << g`, `g` runs first, so the composition follows the
         // ARGUMENT's lambda-ness (a non-Proc callable, e.g. a Method, is
         // lambda-like -> true).

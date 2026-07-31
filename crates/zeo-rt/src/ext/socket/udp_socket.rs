@@ -37,9 +37,8 @@ ruby_class! {
     UDPSocket = zeo_abi::UDP_SOCKET_CLASS < zeo_abi::IP_SOCKET_CLASS;
 
     // `UDPSocket.new(family = AF_INET)` -- an unbound datagram socket.
-    def self."new" | "open"(_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let family = match args.first() {
+    def self."new" | "open"(_recv, arg?) {
+        let family = match arg {
             None | Some(RubyValue::Nil) => libc::AF_INET,
             Some(RubyValue::Int(n)) => *n as libc::c_int,
             Some(v) => crate::builtins::convert::to_index(v)? as libc::c_int,
@@ -54,16 +53,14 @@ ruby_class! {
     }
 
     // `#bind(host, port)` -- associate a local address (port 0 = kernel-chosen).
-    def "bind"(recv, *args, &_block) {
-        arity!(args, 2);
-        let (host, port) = (args[0].to_display_string(), super::port_of(&args[1])?);
+    def "bind"(recv, arg1, arg2) {
+        let (host, port) = ((*arg1).to_display_string(), super::port_of(arg2)?);
         associate(fd_of(recv)?, &host, port, "bind(2)", libc::bind)?;
         Ok(RubyValue::Int(0))
     }
     // `#connect(host, port)` -- set the default peer for `#send`/`IO#read`.
-    def "connect"(recv, *args, &_block) {
-        arity!(args, 2);
-        let (host, port) = (args[0].to_display_string(), super::port_of(&args[1])?);
+    def "connect"(recv, arg1, arg2) {
+        let (host, port) = ((*arg1).to_display_string(), super::port_of(arg2)?);
         associate(fd_of(recv)?, &host, port, "connect(2)", libc::connect)?;
         Ok(RubyValue::Int(0))
     }

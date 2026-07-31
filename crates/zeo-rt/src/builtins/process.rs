@@ -56,8 +56,7 @@ ruby_module! {
     const RLIM_SAVED_CUR = RubyValue::Int(libc::RLIM_INFINITY as i64);
     const RLIM_SAVED_MAX = RubyValue::Int(libc::RLIM_INFINITY as i64);
 
-    def self.pid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.pid(_recv) {
         Ok(RubyValue::Int(std::process::id() as i64))
     }
     // `Process._fork` (process.c) -- the low-level primitive `Process.fork` /
@@ -66,8 +65,7 @@ ruby_module! {
     // `ForkTracker`, whose `super` lands here). Performs the real fork(2) and
     // answers the child pid (0 in the child), matching CRuby on a fork-capable
     // platform; it only ever runs if the program actually forks.
-    def self._fork(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self._fork(_recv) {
         let pid = unsafe { libc::fork() };
         if pid < 0 {
             return Err(raise_error("SystemCallError", std::io::Error::last_os_error().to_string()));
@@ -83,8 +81,7 @@ ruby_module! {
     // top level uses (a `SystemExit` status is respected; any other uncaught
     // exception is reported and exits 1). Child with NO block: `nil`, so the
     // caller drives the child itself.
-    def self.fork(recv, *args, &block) {
-        arity!(args, 0);
+    def self.fork(recv, &block) {
         let pid = crate::dispatch::send_value(recv, crate::Symbol::intern("_fork"), &[], None)?;
         if matches!(pid, RubyValue::Int(0)) {
             if let Some(RubyValue::Proc(p)) = block {
@@ -169,48 +166,39 @@ ruby_module! {
     }
     // `Process.ppid` has no portable std equivalent; libc's getppid is the
     // honest answer rather than a fabricated one.
-    def self.ppid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.ppid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getppid() } as i64))
     }
-    def self.clock_gettime(_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let clock = int_arg(&args[0])?;
-        clock_in_unit(clock_seconds(clock)?, args.get(1))
+    def self.clock_gettime cfunc (_recv, arg1, arg2?) {
+        let clock = int_arg(arg1)?;
+        clock_in_unit(clock_seconds(clock)?, arg2)
     }
     // `Process.clock_getres(clock_id [, unit])` -- the clock's resolution, in the
     // same units `clock_gettime` accepts (default a Float of seconds).
-    def self.clock_getres(_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let clock = int_arg(&args[0])?;
-        clock_in_unit(clock_res_seconds(clock)?, args.get(1))
+    def self.clock_getres cfunc (_recv, arg1, arg2?) {
+        let clock = int_arg(arg1)?;
+        clock_in_unit(clock_res_seconds(clock)?, arg2)
     }
     // Real/effective user and group ids (libc getuid/geteuid/getgid/getegid).
-    def self.uid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.uid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getuid() } as i64))
     }
-    def self.euid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.euid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::geteuid() } as i64))
     }
-    def self.gid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.gid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getgid() } as i64))
     }
-    def self.egid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.egid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getegid() } as i64))
     }
     // `Process.getpgrp` -- the current process group id.
-    def self.getpgrp(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.getpgrp(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getpgrp() } as i64))
     }
     // `Process.getsid([pid])` -- the session id of `pid` (0/none = this process).
-    def self.getsid(_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let pid = match args.first() {
+    def self.getsid(_recv, arg?) {
+        let pid = match arg {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => int_arg(v)? as libc::pid_t,
         };
@@ -223,10 +211,9 @@ ruby_module! {
     // `Process.getpriority(which, who)` -- the scheduling priority. `getpriority`
     // returns -1 both for a real -1 priority and on error, so errno is cleared
     // first and checked after (CRuby does the same).
-    def self.getpriority(_recv, *args, &_block) {
-        arity!(args, 2);
-        let which = int_arg(&args[0])? as libc::c_int;
-        let who = int_arg(&args[1])? as libc::id_t;
+    def self.getpriority(_recv, arg1, arg2) {
+        let which = int_arg(arg1)? as libc::c_int;
+        let who = int_arg(arg2)? as libc::id_t;
         unsafe { *libc::__error() = 0 };
         let prio = unsafe { libc::getpriority(which, who) };
         if prio == -1 && unsafe { *libc::__error() } != 0 {
@@ -235,8 +222,7 @@ ruby_module! {
         Ok(RubyValue::Int(prio as i64))
     }
     // `Process.groups` -- the supplementary group ids, as an Array of Integer.
-    def self.groups(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.groups(_recv) {
         let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
         let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
         let n = unsafe { libc::getgroups(buf.len() as libc::c_int, buf.as_mut_ptr()) };
@@ -249,8 +235,7 @@ ruby_module! {
     }
     // `Process.times` -- a Process::Tms of CPU seconds, from `getrusage` for
     // this process (utime/stime) and its reaped children (cutime/cstime).
-    def self.times(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.times(_recv) {
         // SAFETY: each `getrusage` fully initializes its zeroed out-param.
         let rusage = |who: libc::c_int| -> libc::rusage {
             let mut u: libc::rusage = unsafe { std::mem::zeroed() };
@@ -263,9 +248,8 @@ ruby_module! {
         Ok(new_tms(secs(me.ru_utime), secs(me.ru_stime), secs(kids.ru_utime), secs(kids.ru_stime)))
     }
     // `Process.getpgid(pid)` -- the process group id of `pid` (0 = this process).
-    def self.getpgid(_recv, *args, &_block) {
-        arity!(args, 1);
-        let pid = int_arg(&args[0])? as libc::pid_t;
+    def self.getpgid(_recv, arg) {
+        let pid = int_arg(arg)? as libc::pid_t;
         let pgid = unsafe { libc::getpgid(pid) };
         if pgid < 0 {
             return Err(errno_fail("getpgid"));
@@ -273,26 +257,23 @@ ruby_module! {
         Ok(RubyValue::Int(pgid as i64))
     }
     // `Process.setpgid(pid, pgrp)` -- put `pid` into process group `pgrp`.
-    def self.setpgid(_recv, *args, &_block) {
-        arity!(args, 2);
-        let pid = int_arg(&args[0])? as libc::pid_t;
-        let pgrp = int_arg(&args[1])? as libc::pid_t;
+    def self.setpgid(_recv, arg1, arg2) {
+        let pid = int_arg(arg1)? as libc::pid_t;
+        let pgrp = int_arg(arg2)? as libc::pid_t;
         if unsafe { libc::setpgid(pid, pgrp) } != 0 {
             return Err(errno_fail("setpgid"));
         }
         Ok(RubyValue::Int(0))
     }
     // `Process.setpgrp` -- make this process a group leader (setpgid(0, 0)).
-    def self.setpgrp(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.setpgrp(_recv) {
         if unsafe { libc::setpgid(0, 0) } != 0 {
             return Err(errno_fail("setpgrp"));
         }
         Ok(RubyValue::Int(0))
     }
     // `Process.setsid` -- start a new session; answers the new session id.
-    def self.setsid(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.setsid(_recv) {
         let sid = unsafe { libc::setsid() };
         if sid < 0 {
             return Err(errno_fail("setsid"));
@@ -300,56 +281,50 @@ ruby_module! {
         Ok(RubyValue::Int(sid as i64))
     }
     // `Process.setpriority(which, who, prio)` -- set a scheduling priority.
-    def self.setpriority(_recv, *args, &_block) {
-        arity!(args, 3);
-        let which = int_arg(&args[0])? as libc::c_int;
-        let who = int_arg(&args[1])? as libc::id_t;
-        let prio = int_arg(&args[2])? as libc::c_int;
+    def self.setpriority(_recv, arg1, arg2, arg3) {
+        let which = int_arg(arg1)? as libc::c_int;
+        let who = int_arg(arg2)? as libc::id_t;
+        let prio = int_arg(arg3)? as libc::c_int;
         if unsafe { libc::setpriority(which, who, prio) } != 0 {
             return Err(errno_fail("setpriority"));
         }
         Ok(RubyValue::Int(0))
     }
     // Real/effective id setters -- each answers its Integer argument (CRuby's shape).
-    def self."uid="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let id = int_arg(&args[0])?;
+    def self."uid="(_recv, arg) {
+        let id = int_arg(arg)?;
         if unsafe { libc::setuid(id as libc::uid_t) } != 0 {
             return Err(errno_fail("setuid"));
         }
         Ok(RubyValue::Int(id))
     }
-    def self."gid="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let id = int_arg(&args[0])?;
+    def self."gid="(_recv, arg) {
+        let id = int_arg(arg)?;
         if unsafe { libc::setgid(id as libc::gid_t) } != 0 {
             return Err(errno_fail("setgid"));
         }
         Ok(RubyValue::Int(id))
     }
-    def self."euid="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let id = int_arg(&args[0])?;
+    def self."euid="(_recv, arg) {
+        let id = int_arg(arg)?;
         if unsafe { libc::seteuid(id as libc::uid_t) } != 0 {
             return Err(errno_fail("seteuid"));
         }
         Ok(RubyValue::Int(id))
     }
-    def self."egid="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let id = int_arg(&args[0])?;
+    def self."egid="(_recv, arg) {
+        let id = int_arg(arg)?;
         if unsafe { libc::setegid(id as libc::gid_t) } != 0 {
             return Err(errno_fail("setegid"));
         }
         Ok(RubyValue::Int(id))
     }
     // `Process.groups = [gid, ...]` -- replace the supplementary groups; answers the arg.
-    def self."groups="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let RubyValue::Array(a) = &args[0] else {
+    def self."groups="(_recv, arg) {
+        let RubyValue::Array(a) = arg else {
             return Err(type_error!(
                 "no implicit conversion of {} into Array",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::class_name_of(arg)
             ));
         };
         let gids: Vec<libc::gid_t> = a
@@ -360,12 +335,11 @@ ruby_module! {
         if unsafe { libc::setgroups(gids.len() as libc::c_int, gids.as_ptr()) } != 0 {
             return Err(errno_fail("setgroups"));
         }
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
     // `Process.getrlimit(resource)` -> `[soft, hard]`.
-    def self.getrlimit(_recv, *args, &_block) {
-        arity!(args, 1);
-        let res = int_arg(&args[0])?;
+    def self.getrlimit(_recv, arg) {
+        let res = int_arg(arg)?;
         // SAFETY: getrlimit fully initializes the zeroed out-param on success.
         let mut lim: libc::rlimit = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrlimit(res as _, &mut lim) } != 0 {
@@ -377,11 +351,10 @@ ruby_module! {
         ])))
     }
     // `Process.setrlimit(resource, soft [, hard])` -- hard defaults to soft.
-    def self.setrlimit(_recv, *args, &_block) {
-        arity!(args, 2..=3);
-        let res = int_arg(&args[0])?;
-        let cur = int_arg(&args[1])?;
-        let max = match args.get(2) {
+    def self.setrlimit cfunc (_recv, arg1, arg2, arg3?) {
+        let res = int_arg(arg1)?;
+        let cur = int_arg(arg2)?;
+        let max = match arg3 {
             Some(v) => int_arg(v)?,
             None => cur,
         };
@@ -396,48 +369,42 @@ ruby_module! {
     }
     // `Process.maxgroups` / `maxgroups=` -- a settable ceiling CRuby keeps for
     // `getgroups`; not a syscall, just a stored bound.
-    def self.maxgroups(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.maxgroups(_recv) {
         // CRuby caps the reported ceiling at the system NGROUPS_MAX (16 on
         // macOS), so a larger stored bound reads back clamped.
         let stored = PROCESS_MAXGROUPS.load(Ordering::Relaxed);
         let cap = unsafe { libc::sysconf(libc::_SC_NGROUPS_MAX) };
         Ok(RubyValue::Int(if cap > 0 { stored.min(cap) } else { stored }))
     }
-    def self."maxgroups="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let n = int_arg(&args[0])?;
+    def self."maxgroups="(_recv, arg) {
+        let n = int_arg(arg)?;
         PROCESS_MAXGROUPS.store(n, Ordering::Relaxed);
         Ok(RubyValue::Int(n))
     }
     // `Process.argv0` -- the program name (`$0`) at startup.
-    def self.argv0(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.argv0(_recv) {
         Ok(crate::globals::global_get(0, "$0"))
     }
     // `Process.setproctitle(str)` -- answers the title. macOS has no portable
     // setproctitle, so the cosmetic title itself is a best-effort no-op.
-    def self.setproctitle(_recv, *args, &_block) {
-        arity!(args, 1);
-        crate::builtins::convert::to_str(&args[0])
+    def self.setproctitle(_recv, arg) {
+        crate::builtins::convert::to_str(arg)
     }
     // `Process.warmup` -- a JIT/heap warmup hint; nothing to warm here.
-    def self.warmup(_recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def self.warmup(_recv, _arg?) {
         Ok(RubyValue::Bool(true))
     }
     // `Process.initgroups(username, gid)` -- set the supplementary group list
     // from the group database for `username` plus `gid`; answers the new
     // groups. Typically root-only.
-    def self.initgroups(_recv, *args, &_block) {
-        arity!(args, 2);
-        let RubyValue::Str(user) = &args[0] else {
+    def self.initgroups(_recv, arg1, arg2) {
+        let RubyValue::Str(user) = arg1 else {
             return Err(type_error!(
                 "no implicit conversion of {} into String",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::class_name_of(arg1)
             ));
         };
-        let gid = int_arg(&args[1])? as libc::c_int;
+        let gid = int_arg(arg2)? as libc::c_int;
         let cuser = std::ffi::CString::new(user.lock().to_utf8_lossy().into_owned())
             .map_err(|_| arg_error!("string contains null byte"))?;
         if unsafe { libc::initgroups(cuser.as_ptr(), gid) } != 0 {
@@ -447,12 +414,11 @@ ruby_module! {
     }
     // `Process.daemon(nochdir = nil, noclose = nil)` -- detach into the
     // background; answers 0.
-    def self.daemon(_recv, *args, &_block) {
-        arity!(args, 0..=2);
+    def self.daemon(_recv, arg1?, arg2?) {
         let truthy =
             |v: Option<&RubyValue>| matches!(v, Some(x) if !x.is_nil() && !matches!(x, RubyValue::Bool(false)));
-        let nochdir = if truthy(args.first()) { 1 } else { 0 };
-        let noclose = if truthy(args.get(1)) { 1 } else { 0 };
+        let nochdir = if truthy(arg1) { 1 } else { 0 };
+        let noclose = if truthy(arg2) { 1 } else { 0 };
         #[allow(deprecated)]
         let ret = unsafe { libc::daemon(nochdir, noclose) };
         if ret != 0 {
@@ -465,10 +431,9 @@ ruby_module! {
     // A default pid of -1 waits for any child; `WNOHANG` makes a not-yet-exited
     // child answer `nil` (with `$?` cleared) instead of blocking. No children
     // at all raises `Errno::ECHILD`, CRuby's own behaviour.
-    def self."wait" | "waitpid"(_recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let pid = args.first().map(int_arg).transpose()?.unwrap_or(-1);
-        let flags = args.get(1).map(int_arg).transpose()?.unwrap_or(0);
+    def self."wait" | "waitpid"(_recv, arg1?, arg2?) {
+        let pid = arg1.map(int_arg).transpose()?.unwrap_or(-1);
+        let flags = arg2.map(int_arg).transpose()?.unwrap_or(0);
         match raw_waitpid(pid, flags)? {
             Some((reaped, raw)) => {
                 set_last_child_status(new_status(reaped, raw));
@@ -483,10 +448,9 @@ ruby_module! {
     // `Process.wait2` / `Process.waitpid2` -- like `wait`, but the answer is the
     // `[pid, Process::Status]` pair (still setting `$?`), or `nil` under
     // `WNOHANG` with no ready child.
-    def self."wait2" | "waitpid2"(_recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let pid = args.first().map(int_arg).transpose()?.unwrap_or(-1);
-        let flags = args.get(1).map(int_arg).transpose()?.unwrap_or(0);
+    def self."wait2" | "waitpid2"(_recv, arg1?, arg2?) {
+        let pid = arg1.map(int_arg).transpose()?.unwrap_or(-1);
+        let flags = arg2.map(int_arg).transpose()?.unwrap_or(0);
         match raw_waitpid(pid, flags)? {
             Some((reaped, raw)) => {
                 let status = new_status(reaped, raw);
@@ -505,8 +469,7 @@ ruby_module! {
     // `Process.waitall` -- reap EVERY child, answering an Array of
     // `[pid, Process::Status]` pairs (empty when there were none). `$?` ends as
     // the last reaped child's status, matching CRuby.
-    def self.waitall(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.waitall(_recv) {
         let mut pairs = Vec::new();
         loop {
             match raw_waitpid(-1, 0) {
@@ -528,8 +491,7 @@ ruby_module! {
     }
     // `Process.last_status` -- the `$?` of the current thread: the
     // `Process::Status` of the last child this thread waited on, or `nil`.
-    def self.last_status(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self.last_status(_recv) {
         Ok(last_child_status())
     }
     // `Process.detach(pid)` -- reap `pid` in the BACKGROUND so it never lingers
@@ -538,9 +500,8 @@ ruby_module! {
     // exposing `#pid`); zeo returns a plain Thread, which covers the usual
     // `detach(pid).join` / `.value` contract. The reaper runs on its own
     // thread, so it does not touch the caller's `$?`.
-    def self.detach(_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(detach_thread(int_arg(&args[0])?))
+    def self.detach(_recv, arg) {
+        Ok(detach_thread(int_arg(arg)?))
     }
     // `Process.spawn([env,] command... [,options])` -- start a child WITHOUT
     // waiting (unlike `system`), answering its pid; the child is reapable with
@@ -567,8 +528,7 @@ ruby_module! {
     // accessors read the raw wait-status word it carries. Nested here so the one
     // process.rs owns the whole `Process` namespace, Ruby-style.
     class Status = zeo_abi::PROCESS_STATUS_CLASS < zeo_abi::OBJECT_CLASS {
-        def "exitstatus"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "exitstatus"(recv) {
             Ok(match recv_status(recv).exitstatus() {
                 Some(code) => RubyValue::Int(code as i64),
                 None => RubyValue::Nil,
@@ -576,38 +536,31 @@ ruby_module! {
         }
         // `nil` (not `false`) when the child was signalled rather than exiting --
         // CRuby's own three-valued answer.
-        def "success?"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "success?"(recv) {
             Ok(match recv_status(recv).exitstatus() {
                 Some(code) => RubyValue::Bool(code == 0),
                 None => RubyValue::Nil,
             })
         }
-        def "pid"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "pid"(recv) {
             Ok(RubyValue::Int(recv_status(recv).pid))
         }
-        def "to_i"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "to_i"(recv) {
             Ok(RubyValue::Int(recv_status(recv).raw as i64))
         }
-        def "exited?"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "exited?"(recv) {
             Ok(RubyValue::Bool(recv_status(recv).exitstatus().is_some()))
         }
-        def "signaled?"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "signaled?"(recv) {
             Ok(RubyValue::Bool(recv_status(recv).termsig().is_some()))
         }
-        def "termsig"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "termsig"(recv) {
             Ok(match recv_status(recv).termsig() {
                 Some(sig) => RubyValue::Int(sig as i64),
                 None => RubyValue::Nil,
             })
         }
-        def "stopped?"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "stopped?"(recv) {
             // A reaped child is never in the stopped state (that needs WUNTRACED,
             // which `wait()` doesn't set), so this is always false here.
             let _ = recv_status(recv);
@@ -615,10 +568,9 @@ ruby_module! {
         }
         // `$? == 0` (an Integer) and `$? == other_status` both compare the raw
         // status word, CRuby's rule.
-        def "=="(recv, *args, &_block) {
-            arity!(args, 1);
+        def "=="(recv, other) {
             let me = recv_status(recv).raw as i64;
-            Ok(RubyValue::Bool(match &args[0] {
+            Ok(RubyValue::Bool(match other {
                 RubyValue::Int(i) => *i == me,
                 RubyValue::Object(o) => o
                     .as_any()
@@ -627,12 +579,10 @@ ruby_module! {
                 _ => false,
             }))
         }
-        def "to_s"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "to_s"(recv) {
             Ok(RubyValue::Str(crate::string_new(status_describe(recv_status(recv)))))
         }
-        def "inspect"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "inspect"(recv) {
             Ok(RubyValue::Str(crate::string_new(format!(
                 "#<Process::Status: {}>",
                 status_describe(recv_status(recv))
@@ -646,24 +596,19 @@ ruby_module! {
     class Tms = zeo_abi::PROCESS_TMS_CLASS < zeo_abi::OBJECT_CLASS {
         include zeo_abi::COMPARABLE_CLASS;
 
-        def "utime"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "utime"(recv) {
             Ok(RubyValue::Float(recv_tms(recv).utime))
         }
-        def "stime"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "stime"(recv) {
             Ok(RubyValue::Float(recv_tms(recv).stime))
         }
-        def "cutime"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "cutime"(recv) {
             Ok(RubyValue::Float(recv_tms(recv).cutime))
         }
-        def "cstime"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "cstime"(recv) {
             Ok(RubyValue::Float(recv_tms(recv).cstime))
         }
-        def "to_a" | "values"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "to_a" | "values"(recv) {
             let t = recv_tms(recv);
             Ok(RubyValue::Array(crate::array_new(vec![
                 RubyValue::Float(t.utime),
@@ -672,8 +617,7 @@ ruby_module! {
                 RubyValue::Float(t.cstime),
             ])))
         }
-        def "to_s" | "inspect"(recv, *args, &_block) {
-            arity!(args, 0);
+        def "to_s" | "inspect"(recv) {
             let t = recv_tms(recv);
             // Ruby renders a whole-valued Float as `1.0`; `inspect_string` on a
             // Float value is exactly that formatter, so the struct line matches.

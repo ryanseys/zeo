@@ -35,7 +35,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 use parking_lot::Mutex;
 use zeo_abi::{ClassId, STRUCT_CLASS};
 
-use crate::builtins::{arg_error, arity, block_or_enum, index_error, name_error, type_error};
+use crate::builtins::{arg_error, block_or_enum, index_error, name_error, type_error};
 use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -465,21 +465,18 @@ ruby_class! {
     def "to_a" | "values" | "deconstruct" (recv, *_args, &_block) {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
-    def "to_h"(recv, *args, &block) {
-        arity!(args, 0);
+    def "to_h"(recv, &block) {
         struct_to_h(recv, block)
     }
-    def "each"(recv, *args, &block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "each", args, block);
+    def "each"(recv, &block) {
+        let p = block_or_enum!(recv, "each", &[], block);
         for v in slots_of(recv) {
             p.call(&[v])?;
         }
         Ok(recv.clone())
     }
-    def "each_pair"(recv, *args, &block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "each_pair", args, block);
+    def "each_pair"(recv, &block) {
+        let p = block_or_enum!(recv, "each_pair", &[], block);
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         let slots = slots_of(recv);
         for (m, v) in meta.members.iter().zip(slots.iter()) {
@@ -487,19 +484,17 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "[]"(recv, *args, &_block) {
-        arity!(args, 1);
-        let i = member_index(recv, &args[0])?;
+    def "[]"(recv, arg) {
+        let i = member_index(recv, arg)?;
         Ok(slot_get(recv, i))
     }
-    def "[]="(recv, *args, &_block) {
-        arity!(args, 2);
+    def "[]="(recv, arg1, arg2) {
         if recv.is_frozen() {
             return Err(frozen_error(recv));
         }
-        let i = member_index(recv, &args[0])?;
-        slot_set(recv, i, args[1].clone());
-        Ok(args[1].clone())
+        let i = member_index(recv, arg1)?;
+        slot_set(recv, i, (*arg2).clone());
+        Ok((*arg2).clone())
     }
     def "values_at"(recv, *args, &block) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
@@ -522,21 +517,18 @@ ruby_class! {
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         Ok(RubyValue::Int(meta.members.len() as i64))
     }
-    def "=="(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
+    def "=="(recv, other) {
+        Ok(RubyValue::Bool(struct_equal(recv, other)))
     }
-    def "eql?"(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(struct_equal(recv, &args[0])))
+    def "eql?"(recv, arg) {
+        Ok(RubyValue::Bool(struct_equal(recv, arg)))
     }
     def "hash"(recv, *_args, &_block) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("hash"), &[], None)
     }
-    def "deconstruct_keys"(recv, *args, &_block) {
-        arity!(args, 1);
-        deconstruct_keys(recv, &args[0])
+    def "deconstruct_keys"(recv, arg) {
+        deconstruct_keys(recv, arg)
     }
     def "inspect" | "to_s" (recv, *_args, &_block) {
         build_inspect(recv)

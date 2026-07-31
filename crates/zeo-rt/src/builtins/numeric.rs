@@ -308,54 +308,43 @@ ruby_class! {
     Numeric = zeo_abi::NUMERIC_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "zero?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "zero?" (recv) {
         Ok(RubyValue::Bool(num_eq(recv, &RubyValue::Int(0)).unwrap_or(false)))
     }
-    def "positive?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "positive?" (recv) {
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(1)))))
     }
-    def "negative?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "negative?" (recv) {
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1)))))
     }
-    def "nonzero?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "nonzero?" (recv) {
         Ok(if num_eq(recv, &RubyValue::Int(0)).unwrap_or(false) {
             RubyValue::Nil
         } else {
             recv.clone()
         })
     }
-    def "integer?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "integer?" (recv) {
         Ok(RubyValue::Bool(matches!(recv, RubyValue::Int(_) | RubyValue::BigInt(_))))
     }
-    def "real?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "real?" (recv) {
         Ok(RubyValue::Bool(!matches!(recv, RubyValue::Complex(_))))
     }
-    def "real" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "real" (recv) {
         Ok(recv.clone())
     }
-    def "imag" arity 0 | "imaginary" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "imag" | "imaginary" arity 0 (_recv) {
         Ok(RubyValue::Int(0))
     }
-    def "to_c" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_c" (recv) {
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
     // A real number's cartesian view is `[self, 0]`.
-    def "rect" arity 0 | "rectangular" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "rect" | "rectangular" arity 0 (recv) {
         Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
     }
     // Polar view: magnitude `|self|`, angle `0` (non-negative) or `pi` (negative).
-    def "polar" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "polar" (recv) {
         let magnitude =
             crate::dispatch::send_value(recv, crate::Symbol::intern("abs"), &[], None)?;
         let angle = if matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1))) {
@@ -365,16 +354,13 @@ ruby_class! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![magnitude, angle])))
     }
-    def "abs2" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "abs2" (recv) {
         num_mul(recv, recv).expect("numeric receiver")
     }
-    def "conj" arity 0 | "conjugate" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "conj" | "conjugate" arity 0 (recv) {
         Ok(recv.clone())
     }
-    def "angle" arity 0 | "arg" arity 0 | "phase" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "angle" | "arg" arity 0 | "phase" arity 0 (recv) {
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
         // only for the negative case; 0 stays Integer).
         Ok(if matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1))) {
@@ -383,18 +369,17 @@ ruby_class! {
             RubyValue::Int(0)
         })
     }
-    def "divmod" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "divmod" (recv, arg) {
         // Float lane: CRuby's coupled `flo_divmod` adjusts the quotient and the
         // remainder together at a sign boundary, so `7.0.divmod(-Infinity)` is
         // `[-1, -Infinity]`, not `[0, -Infinity]` -- an independent floor of
         // `7.0 / -Infinity` (== -0.0) would answer 0.
-        if matches!(lane(recv), Some(NumLane::Flo)) || matches!(lane(&args[0]), Some(NumLane::Flo)) {
-            if lane(recv).is_none() || lane(&args[0]).is_none() {
-                return Err(coercion_error(recv, &args[0]));
+        if matches!(lane(recv), Some(NumLane::Flo)) || matches!(lane(arg), Some(NumLane::Flo)) {
+            if lane(recv).is_none() || lane(arg).is_none() {
+                return Err(coercion_error(recv, arg));
             }
             let x = num_to_f64_unchecked(recv);
-            let y = num_to_f64_unchecked(&args[0]);
+            let y = num_to_f64_unchecked(arg);
             if y == 0.0 {
                 return Err(crate::dispatch::raise_error(
                     "ZeroDivisionError",
@@ -412,10 +397,10 @@ ruby_class! {
             );
             return Ok(RubyValue::Array(crate::array_new(vec![q, RubyValue::Float(m)])));
         }
-        let q = num_div(recv, &args[0])
-            .ok_or_else(|| coercion_error(recv, &args[0]))??;
-        let r = num_mod(recv, &args[0])
-            .ok_or_else(|| coercion_error(recv, &args[0]))??;
+        let q = num_div(recv, arg)
+            .ok_or_else(|| coercion_error(recv, arg))??;
+        let r = num_mod(recv, arg)
+            .ok_or_else(|| coercion_error(recv, arg))??;
         // The QUOTIENT converts to Integer even on the Float lane
         // (`7.divmod(2.5)` is `[2, 2.0]` -- oracle-verified; CRuby's
         // flo_divmod floors then rb_dbl2ival's the div half).
@@ -447,53 +432,50 @@ ruby_class! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![q, r])))
     }
-    def "fdiv" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        if lane(&args[0]).is_none() || matches!(args[0], RubyValue::Complex(_)) {
-            return Err(coercion_error(recv, &args[0]));
+    def "fdiv" (recv, arg) {
+        if lane(arg).is_none() || matches!( *arg, RubyValue::Complex(_)) {
+            return Err(coercion_error(recv, arg));
         }
         Ok(RubyValue::Float(
-            num_to_f64_unchecked(recv) / num_to_f64_unchecked(&args[0]),
+            num_to_f64_unchecked(recv) / num_to_f64_unchecked(arg),
         ))
     }
-    def "quo" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        num_quo(recv, &args[0]).ok_or_else(|| coercion_error(recv, &args[0]))?
+    def "quo" (recv, arg) {
+        num_quo(recv, arg).ok_or_else(|| coercion_error(recv, arg))?
     }
-    def "remainder" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "remainder" (recv, arg) {
         // a - b*(a/b).truncate -- the truncated-division counterpart of %
         // (sign follows the DIVIDEND). BigInt's own `/` truncates.
-        match (recv, &args[0]) {
+        match (recv, arg) {
             (
                 RubyValue::Int(_) | RubyValue::BigInt(_),
                 RubyValue::Int(_) | RubyValue::BigInt(_),
             ) => {
-                if crate::builtins::integer::int_is_zero(&args[0]) {
+                if crate::builtins::integer::int_is_zero(arg) {
                     return Err(crate::dispatch::raise_error(
                         "ZeroDivisionError",
                         "divided by 0".to_string(),
                     ));
                 }
                 let a = crate::builtins::integer::to_bigint(recv);
-                let b = crate::builtins::integer::to_bigint(&args[0]);
+                let b = crate::builtins::integer::to_bigint(arg);
                 Ok(crate::builtins::integer::int_value(&a - &b * (&a / &b)))
             }
             _ => {
-                if lane(&args[0]).is_none() {
-                    return Err(coercion_error(recv, &args[0]));
+                if lane(arg).is_none() {
+                    return Err(coercion_error(recv, arg));
                 }
                 // Exact on the Rational lane (no Float operand): a - b*(a/b).truncate,
                 // so `(7/2).remainder(1/3)` is `(1/6)`, not a Float.
-                let hi = lane(recv).zip(lane(&args[0])).map(|(a, b)| a.max(b));
+                let hi = lane(recv).zip(lane(arg)).map(|(a, b)| a.max(b));
                 if hi == Some(NumLane::Rat) {
-                    let coerce = || coercion_error(recv, &args[0]);
-                    let q = num_div(recv, &args[0]).ok_or_else(coerce)??;
+                    let coerce = || coercion_error(recv, arg);
+                    let q = num_div(recv, arg).ok_or_else(coerce)??;
                     let t = num_trunc_exact(&q);
-                    let bt = num_mul(&args[0], &t).ok_or_else(coerce)??;
+                    let bt = num_mul(arg, &t).ok_or_else(coerce)??;
                     return num_sub(recv, &bt).ok_or_else(coerce)?;
                 }
-                let (a, b) = (num_to_f64_unchecked(recv), num_to_f64_unchecked(&args[0]));
+                let (a, b) = (num_to_f64_unchecked(recv), num_to_f64_unchecked(arg));
                 Ok(RubyValue::Float(a - b * (a / b).trunc()))
             }
         }

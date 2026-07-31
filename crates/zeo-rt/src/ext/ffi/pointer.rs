@@ -102,10 +102,9 @@ ruby_class! {
 
     // -- strings & raw bytes --
     // `read_string` -> up to the first NUL; `read_string(len)` -> exactly len bytes.
-    def "read_string"(recv, *args, &_b) {
-        arity!(args, 0..=1);
+    def "read_string"(recv, arg?) {
         let p = ptr_of(recv);
-        match args.first() {
+        match arg {
             None | Some(RubyValue::Nil) => {
                 p.check_bounds(0, 1)?;
                 let bytes = unsafe { std::ffi::CStr::from_ptr(p.base as *const c_char) }.to_bytes().to_vec();
@@ -119,11 +118,10 @@ ruby_class! {
         }
     }
     // `get_string(offset, length = nil)` -- NUL-terminated at offset, or fixed length.
-    def "get_string"(recv, *args, &_b) {
-        arity!(args, 1..=2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
+    def "get_string"(recv, arg1, arg2?) {
+        let off = crate::ffi::to_i64(arg1)? as usize;
         let p = ptr_of(recv);
-        match args.get(1) {
+        match arg2 {
             None | Some(RubyValue::Nil) => {
                 p.check_bounds(off, 1)?;
                 let bytes = unsafe { std::ffi::CStr::from_ptr(p.base.add(off) as *const c_char) }.to_bytes().to_vec();
@@ -144,10 +142,9 @@ ruby_class! {
         }
     }
     // `put_string(offset, str)` writes the bytes plus a terminating NUL.
-    def "put_string"(recv, *args, &_b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let bytes = str_bytes(&args[1])?;
+    def "put_string"(recv, arg1, arg2) {
+        let off = crate::ffi::to_i64(arg1)? as usize;
+        let bytes = str_bytes(arg2)?;
         let p = ptr_of(recv);
         p.check_bounds(off, bytes.len() + 1)?;
         unsafe {
@@ -157,32 +154,29 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `read_bytes(len)` / `get_bytes(offset, len)` -- raw bytes, NUL-agnostic.
-    def "read_bytes"(recv, *args, &_b) {
-        arity!(args, 1);
-        let n = crate::ffi::to_i64(&args[0])? as usize;
+    def "read_bytes"(recv, arg) {
+        let n = crate::ffi::to_i64(arg)? as usize;
         let p = ptr_of(recv);
         p.check_bounds(0, n)?;
         Ok(bytes_to_str(unsafe { p.read_bytes_at(0, n) }))
     }
-    def "get_bytes"(recv, *args, &_b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let n = crate::ffi::to_i64(&args[1])? as usize;
+    def "get_bytes"(recv, arg1, arg2) {
+        let off = crate::ffi::to_i64(arg1)? as usize;
+        let n = crate::ffi::to_i64(arg2)? as usize;
         let p = ptr_of(recv);
         p.check_bounds(off, n)?;
         Ok(bytes_to_str(unsafe { p.read_bytes_at(off, n) }))
     }
     // `put_bytes(offset, str, index = 0, length = nil)` -- raw bytes (a slice
     // of `str` starting at `index`), no NUL.
-    def "put_bytes"(recv, *args, &_b) {
-        arity!(args, 2..=4);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let mut bytes = str_bytes(&args[1])?;
-        let idx = match args.get(2) {
+    def "put_bytes"(recv, arg1, arg2, arg3?, arg4?) {
+        let off = crate::ffi::to_i64(arg1)? as usize;
+        let mut bytes = str_bytes(arg2)?;
+        let idx = match arg3 {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => crate::ffi::to_i64(v)? as usize,
         };
-        let len = match args.get(3) {
+        let len = match arg4 {
             None | Some(RubyValue::Nil) => bytes.len().saturating_sub(idx),
             Some(v) => crate::ffi::to_i64(v)? as usize,
         };
@@ -197,9 +191,8 @@ ruby_class! {
         unsafe { p.write_bytes_at(off, &bytes) };
         Ok(recv.clone())
     }
-    def "write_bytes"(recv, *args, &_b) {
-        arity!(args, 1);
-        let bytes = str_bytes(&args[0])?;
+    def "write_bytes"(recv, arg) {
+        let bytes = str_bytes(arg)?;
         let p = ptr_of(recv);
         p.check_bounds(0, bytes.len())?;
         unsafe { p.write_bytes_at(0, &bytes) };
@@ -223,41 +216,33 @@ ruby_class! {
     def "write_array_of_float"(r, *a, &_b) { write_float_array(r, a, 4) }
 
     // -- identity / arithmetic --
-    def "null?"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "null?"(recv) {
         Ok(RubyValue::Bool(ptr_of(recv).address() == 0))
     }
     // Whether the extent is known (owned buffers yes, raw addresses no) --
     // fiddle sizes its wrappers off this.
-    def "size_limit?"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "size_limit?"(recv) {
         Ok(RubyValue::Bool(ptr_of(recv).size.is_some()))
     }
-    def "to_ptr"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "to_ptr"(recv) {
         Ok(recv.clone())
     }
-    def "address" | "to_i"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "address" | "to_i"(recv) {
         Ok(RubyValue::Int(ptr_of(recv).address() as i64))
     }
-    def "size" | "total"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "size" | "total"(recv) {
         Ok(RubyValue::Int(ptr_of(recv).size.unwrap_or(0) as i64))
     }
-    def "+"(recv, *args, &_b) {
-        arity!(args, 1);
-        let delta = crate::ffi::to_i64(&args[0])? as usize;
+    def "+"(recv, other) {
+        let delta = crate::ffi::to_i64(other)? as usize;
         Ok(RubyValue::Object(Arc::new(ptr_of(recv).offset(delta))))
     }
-    def "==" | "eql?"(recv, *args, &_b) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(address_of(&args[0]) == Some(ptr_of(recv).address())))
+    def "==" | "eql?"(recv, other) {
+        Ok(RubyValue::Bool(address_of(other) == Some(ptr_of(recv).address())))
     }
-    def "slice"(recv, *args, &_b) {
-        arity!(args, 2);
-        let off = crate::ffi::to_i64(&args[0])? as usize;
-        let len = crate::ffi::to_i64(&args[1])? as usize;
+    def "slice"(recv, arg1, arg2) {
+        let off = crate::ffi::to_i64(arg1)? as usize;
+        let len = crate::ffi::to_i64(arg2)? as usize;
         let mut p = ptr_of(recv).offset(off);
         p.size = Some(len);
         Ok(RubyValue::Object(Arc::new(p)))

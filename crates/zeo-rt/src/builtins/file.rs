@@ -656,17 +656,15 @@ ruby_class! {
         Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
     }
     // `binread` always answers ASCII-8BIT bytes, no transcoding.
-    def self."binread" (_recv, *args, &_block) {
-        arity!(args, 1..=3);
-        let path = path_arg(&args[0], "binread")?;
+    def self."binread" (_recv, arg1, _arg2?, _arg3?) {
+        let path = path_arg(arg1, "binread")?;
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
     }
-    def self."binwrite" (_recv, *args, &_block) {
-        arity!(args, 2..=3);
-        let path = path_arg(&args[0], "binwrite")?;
-        let data = write_bytes(&args[1]);
+    def self."binwrite" (_recv, arg1, arg2, _arg3?) {
+        let path = path_arg(arg1, "binwrite")?;
+        let data = write_bytes(arg2);
         crate::gvl::without_gvl(|| std::fs::write(&path, &data))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Int(data.len() as i64))
@@ -708,25 +706,21 @@ ruby_class! {
     }
     // `File.ftype(path)` -- the `lstat` file-type string (doesn't follow a
     // trailing symlink).
-    def self."ftype" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let path = path_arg(&args[0], "ftype")?;
+    def self."ftype" (_recv, arg) {
+        let path = path_arg(arg, "ftype")?;
         Ok(str_val(ftype_string(&path)?.to_string()))
     }
     // `File.stat(path)` follows a final symlink; `File.lstat(path)` does not.
-    def self."stat" (_recv, *args, &_block) {
-        arity!(args, 1);
-        crate::builtins::stat::stat_from_path(&path_arg(&args[0], "stat")?, true)
+    def self."stat" (_recv, arg) {
+        crate::builtins::stat::stat_from_path(&path_arg(arg, "stat")?, true)
     }
-    def self."lstat" (_recv, *args, &_block) {
-        arity!(args, 1);
-        crate::builtins::stat::stat_from_path(&path_arg(&args[0], "lstat")?, false)
+    def self."lstat" (_recv, arg) {
+        crate::builtins::stat::stat_from_path(&path_arg(arg, "lstat")?, false)
     }
     // `File.truncate(path, len)` -- resize to `len` bytes; answers 0.
-    def self."truncate" (_recv, *args, &_block) {
-        arity!(args, 2);
-        let path = path_arg(&args[0], "truncate")?;
-        let len = &match &args[1] {
+    def self."truncate" (_recv, arg1, arg2) {
+        let path = path_arg(arg1, "truncate")?;
+        let len = &match arg2 {
             RubyValue::Nil => {
                 return Err(type_error!("no implicit conversion from nil"));
             }
@@ -739,36 +733,32 @@ ruby_class! {
     }
     // `File.absolute_path(path [, base])` -- like `expand_path` but WITHOUT
     // `~` expansion (a leading `~` stays literal).
-    def self."absolute_path" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let p = path_arg(&args[0], "absolute_path")?;
-        let base = match args.get(1) {
+    def self."absolute_path" cfunc (_recv, arg1, arg2?) {
+        let p = path_arg(arg1, "absolute_path")?;
+        let base = match arg2 {
             None | Some(RubyValue::Nil) => None,
             Some(v) => Some(path_arg(v, "absolute_path")?),
         };
         Ok(str_val(expand_path_of(&p, base.as_deref())?))
     }
     // `File.path(obj)` -- the path String of a String or `to_path`-able object.
-    def self."path" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(str_val(path_arg(&args[0], "path")?))
+    def self."path" (_recv, arg) {
+        Ok(str_val(path_arg(arg, "path")?))
     }
     // `File.fnmatch(pattern, path [, flags])` / `fnmatch?` -- glob match.
-    def self."fnmatch" | "fnmatch?" (_recv, *args, &_block) {
-        arity!(args, 2..=3);
-        let pat = path_arg(&args[0], "fnmatch")?;
-        let name = path_arg(&args[1], "fnmatch")?;
+    def self."fnmatch" | "fnmatch?" cfunc (_recv, arg1, arg2, _arg3?) {
+        let pat = path_arg(arg1, "fnmatch")?;
+        let name = path_arg(arg2, "fnmatch")?;
         Ok(RubyValue::Bool(fnmatch(&pat, &name)))
     }
-    def self."write" (_recv, *args, &_block) {
-        arity!(args, 2..=3);
-        let path = path_arg(&args[0], "write")?;
+    def self."write" (_recv, arg1, arg2, arg3?) {
+        let path = path_arg(arg1, "write")?;
         // Bytes are written VERBATIM (a String emits its own bytes, so a
         // BINARY string round-trips unchanged).
-        let data = write_bytes(&args[1]);
+        let data = write_bytes(arg2);
         // The third argument is either an Integer offset (write in place,
         // WITHOUT truncating) or an options Hash (`mode: "a"` to append).
-        match args.get(2) {
+        match arg3 {
             Some(RubyValue::Int(off)) => {
                 use std::io::{Seek, Write};
                 // No truncate: a positional write patches bytes at `off`,
@@ -784,7 +774,7 @@ ruby_class! {
                     .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
                 f.write_all(&data).map_err(|e| raise_errno(&e, "write", &path))?;
             }
-            Some(RubyValue::Hash(_)) if kwarg_str(args.get(2), "mode").as_deref() == Some("a") => {
+            Some(RubyValue::Hash(_)) if kwarg_str(arg3, "mode").as_deref() == Some("a") => {
                 use std::io::Write;
                 let mut f = std::fs::OpenOptions::new()
                     .append(true)
@@ -801,119 +791,98 @@ ruby_class! {
     // `File.exists?` (with the trailing `s`) was removed in Ruby 3.2 -- only
     // `exist?` remains, so the misspelling raises NoMethodError, as Dir.exist?
     // already does (no `exists?` alias).
-    def self."exist?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(meta(&path_arg(&args[0], "exist?")?).is_some()))
+    def self."exist?" (_recv, arg) {
+        Ok(RubyValue::Bool(meta(&path_arg(arg, "exist?")?).is_some()))
     }
-    def self."file?" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."file?" (_recv, arg) {
         Ok(RubyValue::Bool(
-            meta(&path_arg(&args[0], "file?")?).is_some_and(|m| m.is_file()),
+            meta(&path_arg(arg, "file?")?).is_some_and(|m| m.is_file()),
         ))
     }
-    def self."directory?" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."directory?" (_recv, arg) {
         Ok(RubyValue::Bool(
-            meta(&path_arg(&args[0], "directory?")?).is_some_and(|m| m.is_dir()),
+            meta(&path_arg(arg, "directory?")?).is_some_and(|m| m.is_dir()),
         ))
     }
-    def self."size" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let path = path_arg(&args[0], "size")?;
+    def self."size" (_recv, arg) {
+        let path = path_arg(arg, "size")?;
         let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "rb_file_s_size", &path))?;
         Ok(RubyValue::Int(m.len() as i64))
     }
-    def self."size?" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."size?" (_recv, arg) {
         // `size?` answers nil for a missing file AND for an empty one --
         // it is the "is there content" predicate, not a size reader.
-        Ok(match meta(&path_arg(&args[0], "size?")?) {
+        Ok(match meta(&path_arg(arg, "size?")?) {
             Some(m) if m.len() > 0 => RubyValue::Int(m.len() as i64),
             _ => RubyValue::Nil,
         })
     }
-    def self."zero?" | "empty?" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."zero?" | "empty?" (_recv, arg) {
         Ok(RubyValue::Bool(
-            meta(&path_arg(&args[0], "zero?")?).is_some_and(|m| m.len() == 0),
+            meta(&path_arg(arg, "zero?")?).is_some_and(|m| m.len() == 0),
         ))
     }
     // The permission predicates come in two flavours: the plain ones ask the
     // EFFECTIVE uid/gid, the `*_real?` ones the real one.
-    def self."readable?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "readable?")?;
+    def self."readable?" (_recv, arg) {
+        let p = path_arg(arg, "readable?")?;
         Ok(RubyValue::Bool(access_eff(&p, libc::R_OK)))
     }
-    def self."writable?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "writable?")?;
+    def self."writable?" (_recv, arg) {
+        let p = path_arg(arg, "writable?")?;
         Ok(RubyValue::Bool(access_eff(&p, libc::W_OK)))
     }
-    def self."readable_real?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "readable_real?")?;
+    def self."readable_real?" (_recv, arg) {
+        let p = path_arg(arg, "readable_real?")?;
         Ok(RubyValue::Bool(access(&p, libc::R_OK)))
     }
-    def self."writable_real?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "writable_real?")?;
+    def self."writable_real?" (_recv, arg) {
+        let p = path_arg(arg, "writable_real?")?;
         Ok(RubyValue::Bool(access(&p, libc::W_OK)))
     }
-    def self."executable_real?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "executable_real?")?;
+    def self."executable_real?" (_recv, arg) {
+        let p = path_arg(arg, "executable_real?")?;
         Ok(RubyValue::Bool(access(&p, libc::X_OK)))
     }
     // File-type predicates (follow a final symlink, unlike `ftype`'s lstat).
-    def self."pipe?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "pipe?")?, SpecialKind::Fifo)))
+    def self."pipe?" (_recv, arg) {
+        Ok(RubyValue::Bool(ftype_is(&path_arg(arg, "pipe?")?, SpecialKind::Fifo)))
     }
-    def self."socket?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "socket?")?, SpecialKind::Socket)))
+    def self."socket?" (_recv, arg) {
+        Ok(RubyValue::Bool(ftype_is(&path_arg(arg, "socket?")?, SpecialKind::Socket)))
     }
-    def self."blockdev?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "blockdev?")?, SpecialKind::Block)))
+    def self."blockdev?" (_recv, arg) {
+        Ok(RubyValue::Bool(ftype_is(&path_arg(arg, "blockdev?")?, SpecialKind::Block)))
     }
-    def self."chardev?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "chardev?")?, SpecialKind::Char)))
+    def self."chardev?" (_recv, arg) {
+        Ok(RubyValue::Bool(ftype_is(&path_arg(arg, "chardev?")?, SpecialKind::Char)))
     }
     // Set-user/group-id and sticky bits.
-    def self."setuid?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(mode_has(&path_arg(&args[0], "setuid?")?, libc::S_ISUID)))
+    def self."setuid?" (_recv, arg) {
+        Ok(RubyValue::Bool(mode_has(&path_arg(arg, "setuid?")?, libc::S_ISUID)))
     }
-    def self."setgid?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(mode_has(&path_arg(&args[0], "setgid?")?, libc::S_ISGID)))
+    def self."setgid?" (_recv, arg) {
+        Ok(RubyValue::Bool(mode_has(&path_arg(arg, "setgid?")?, libc::S_ISGID)))
     }
-    def self."sticky?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(mode_has(&path_arg(&args[0], "sticky?")?, libc::S_ISVTX)))
+    def self."sticky?" (_recv, arg) {
+        Ok(RubyValue::Bool(mode_has(&path_arg(arg, "sticky?")?, libc::S_ISVTX)))
     }
     // Ownership by the effective uid/gid.
-    def self."owned?" (_recv, *args, &_block) {
+    def self."owned?" (_recv, arg) {
         use std::os::unix::fs::MetadataExt;
-        arity!(args, 1);
-        let p = path_arg(&args[0], "owned?")?;
+        let p = path_arg(arg, "owned?")?;
         Ok(RubyValue::Bool(meta(&p).is_some_and(|m| m.uid() == unsafe { libc::geteuid() })))
     }
-    def self."grpowned?" (_recv, *args, &_block) {
+    def self."grpowned?" (_recv, arg) {
         use std::os::unix::fs::MetadataExt;
-        arity!(args, 1);
-        let p = path_arg(&args[0], "grpowned?")?;
+        let p = path_arg(arg, "grpowned?")?;
         Ok(RubyValue::Bool(meta(&p).is_some_and(|m| m.gid() == unsafe { libc::getegid() })))
     }
     // `File.identical?(a, b)` -- same device and inode.
-    def self."identical?" (_recv, *args, &_block) {
+    def self."identical?" (_recv, arg1, arg2) {
         use std::os::unix::fs::MetadataExt;
-        arity!(args, 2);
-        let a = path_arg(&args[0], "identical?")?;
-        let b = path_arg(&args[1], "identical?")?;
+        let a = path_arg(arg1, "identical?")?;
+        let b = path_arg(arg2, "identical?")?;
         let same = match (meta(&a), meta(&b)) {
             (Some(x), Some(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
             _ => false,
@@ -921,9 +890,8 @@ ruby_class! {
         Ok(RubyValue::Bool(same))
     }
     // `File.atime(path)` -- last access time as a Time.
-    def self."atime" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let path = path_arg(&args[0], "atime")?;
+    def self."atime" (_recv, arg) {
+        let path = path_arg(arg, "atime")?;
         let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "atime", &path))?;
         let t = m
             .accessed()
@@ -934,27 +902,23 @@ ruby_class! {
     }
     // `File.ctime(path)` -- inode change time as a Time (st_ctime, which std
     // exposes only through the unix `ctime`/`ctime_nsec` seconds pair).
-    def self."ctime" (_recv, *args, &_block) {
+    def self."ctime" (_recv, arg) {
         use std::os::unix::fs::MetadataExt;
-        arity!(args, 1);
-        let path = path_arg(&args[0], "ctime")?;
+        let path = path_arg(arg, "ctime")?;
         let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "ctime", &path))?;
         Ok(crate::builtins::time::time_from_parts(m.ctime(), m.ctime_nsec() as u32))
     }
     // `File.world_readable?`/`world_writable?` -- the low permission bits
     // (`mode & 0777`) when others have the access, else nil (CRuby's contract).
-    def self."world_readable?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(world_perm(&path_arg(&args[0], "world_readable?")?, libc::S_IROTH))
+    def self."world_readable?" (_recv, arg) {
+        Ok(world_perm(&path_arg(arg, "world_readable?")?, libc::S_IROTH))
     }
-    def self."world_writable?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(world_perm(&path_arg(&args[0], "world_writable?")?, libc::S_IWOTH))
+    def self."world_writable?" (_recv, arg) {
+        Ok(world_perm(&path_arg(arg, "world_writable?")?, libc::S_IWOTH))
     }
     // `File.birthtime(path)` -- the creation time as a Time (st_birthtime).
-    def self."birthtime" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let path = path_arg(&args[0], "birthtime")?;
+    def self."birthtime" (_recv, arg) {
+        let path = path_arg(arg, "birthtime")?;
         let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "birthtime", &path))?;
         let t = m
             .created()
@@ -964,10 +928,9 @@ ruby_class! {
         Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
     }
     // `File.link(old, new)` -- create a hard link; answers 0.
-    def self."link" (_recv, *args, &_block) {
-        arity!(args, 2);
-        let old = path_arg(&args[0], "link")?;
-        let new = path_arg(&args[1], "link")?;
+    def self."link" (_recv, arg1, arg2) {
+        let old = path_arg(arg1, "link")?;
+        let new = path_arg(arg2, "link")?;
         std::fs::hard_link(&old, &new).map_err(|e| raise_errno(&e, "link", &new))?;
         Ok(RubyValue::Int(0))
     }
@@ -1003,16 +966,14 @@ ruby_class! {
         Ok(str_val(real.join(base).to_string_lossy().into_owned()))
     }
     // `File.symlink(target, link)` -- create a symbolic link; answers 0.
-    def self."symlink" (_recv, *args, &_block) {
-        arity!(args, 2);
-        let target = path_arg(&args[0], "symlink")?;
-        let link = path_arg(&args[1], "symlink")?;
+    def self."symlink" (_recv, arg1, arg2) {
+        let target = path_arg(arg1, "symlink")?;
+        let link = path_arg(arg2, "symlink")?;
         std::os::unix::fs::symlink(&target, &link).map_err(|e| raise_errno(&e, "symlink", &link))?;
         Ok(RubyValue::Int(0))
     }
-    def self."symlink?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "symlink?")?;
+    def self."symlink?" (_recv, arg) {
+        let p = path_arg(arg, "symlink?")?;
         Ok(RubyValue::Bool(
             std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()),
         ))
@@ -1040,9 +1001,8 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `File.readlink(link)` -- the path a symlink points to.
-    def self."readlink" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "readlink")?;
+    def self."readlink" (_recv, arg) {
+        let p = path_arg(arg, "readlink")?;
         let target = std::fs::read_link(&p).map_err(|e| raise_errno(&e, "readlink", &p))?;
         Ok(str_val(target.to_string_lossy().into_owned()))
     }
@@ -1071,9 +1031,8 @@ ruby_class! {
     }
     // `File.umask` -- the current file-creation mask; `File.umask(mask)` sets it
     // and answers the previous value. Reading is non-destructive (set-then-restore).
-    def self."umask" (_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        match args.first() {
+    def self."umask" (_recv, arg?) {
+        match arg {
             Some(v) => {
                 let new = match v {
                     RubyValue::Nil => {
@@ -1111,9 +1070,8 @@ ruby_class! {
         }
         Ok(RubyValue::Int((args.len() - 1) as i64))
     }
-    def self."executable?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "executable?")?;
+    def self."executable?" (_recv, arg) {
+        let p = path_arg(arg, "executable?")?;
         Ok(RubyValue::Bool(access_eff(&p, libc::X_OK)))
     }
     def self."delete" | "unlink" (_recv, *args, &_block) {
@@ -1126,28 +1084,25 @@ ruby_class! {
         }
         Ok(RubyValue::Int(n))
     }
-    def self."rename" (_recv, *args, &_block) {
-        arity!(args, 2);
-        let from = path_arg(&args[0], "rename")?;
-        let to = path_arg(&args[1], "rename")?;
+    def self."rename" (_recv, arg1, arg2) {
+        let from = path_arg(arg1, "rename")?;
+        let to = path_arg(arg2, "rename")?;
         std::fs::rename(&from, &to).map_err(|e| raise_errno(&e, "rename", &from))?;
         Ok(RubyValue::Int(0))
     }
     // --- The pure-path family: string work, never touches the disk --------
-    def self."basename" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let path = path_arg(&args[0], "basename")?;
-        let suffix = match args.get(1) {
+    def self."basename" cfunc (_recv, arg1, arg2?) {
+        let path = path_arg(arg1, "basename")?;
+        let suffix = match arg2 {
             None => None,
             Some(v) => Some(path_arg(v, "basename")?),
         };
         Ok(str_val(basename_of(&path, suffix.as_deref())))
     }
-    def self."dirname" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let mut path = path_arg(&args[0], "dirname")?;
+    def self."dirname" cfunc (_recv, arg1, arg2?) {
+        let mut path = path_arg(arg1, "dirname")?;
         // `File.dirname(path, level)` strips `level` trailing components.
-        let level = match args.get(1) {
+        let level = match arg2 {
             Some(RubyValue::Int(n)) => *n,
             _ => 1,
         };
@@ -1156,13 +1111,11 @@ ruby_class! {
         }
         Ok(str_val(path))
     }
-    def self."extname" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(str_val(extname_of(&path_arg(&args[0], "extname")?)))
+    def self."extname" (_recv, arg) {
+        Ok(str_val(extname_of(&path_arg(arg, "extname")?)))
     }
-    def self."split" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let p = path_arg(&args[0], "split")?;
+    def self."split" (_recv, arg) {
+        let p = path_arg(arg, "split")?;
         Ok(RubyValue::Array(crate::collections::array_new(vec![
             str_val(dirname_of(&p)),
             str_val(basename_of(&p, None)),
@@ -1195,22 +1148,19 @@ ruby_class! {
         }
         Ok(str_val(out))
     }
-    def self."expand_path" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let p = path_arg(&args[0], "expand_path")?;
-        let base = match args.get(1) {
+    def self."expand_path" cfunc (_recv, arg1, arg2?) {
+        let p = path_arg(arg1, "expand_path")?;
+        let base = match arg2 {
             None => None,
             Some(v) => Some(path_arg(v, "expand_path")?),
         };
         Ok(str_val(expand_path_of(&p, base.as_deref())?))
     }
-    def self."absolute_path?" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(path_arg(&args[0], "absolute_path?")?.starts_with('/')))
+    def self."absolute_path?" (_recv, arg) {
+        Ok(RubyValue::Bool(path_arg(arg, "absolute_path?")?.starts_with('/')))
     }
-    def self."mtime" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let path = path_arg(&args[0], "mtime")?;
+    def self."mtime" (_recv, arg) {
+        let path = path_arg(arg, "mtime")?;
         let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "rb_file_s_mtime", &path))?;
         let t = m
             .modified()

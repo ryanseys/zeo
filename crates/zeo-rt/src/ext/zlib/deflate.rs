@@ -16,14 +16,13 @@ ruby_class! {
     // `Deflate.new(level, window_bits, mem_level, strategy)`. `mem_level` is
     // accepted and ignored -- it sizes zlib's internal tables, which the
     // pure-Rust backend fixes.
-    def self."new" arity -1 (_recv, *args, &_block) {
-        arity!(args, 0..=4);
-        let level = super::level_of(args.first());
-        let wrap = match args.get(1) {
+    def self."new" (_recv, arg1?, arg2?, _arg3?, arg4?) {
+        let level = super::level_of(arg1);
+        let wrap = match arg2 {
             None | Some(RubyValue::Nil) => Wrap::Zlib,
             Some(v) => wrap_of(convert::to_index(v)?, false)?,
         };
-        let strategy = match args.get(3) {
+        let strategy = match arg4 {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => convert::to_index(v)?,
         };
@@ -31,14 +30,14 @@ ruby_class! {
     }
 
     // `Deflate.deflate(string, level)` -- a whole stream in one call.
-    def self."deflate" arity -1 (_recv, *args, &_block) {
+    def self."deflate" (_recv, *args, &_block) {
         arity!(args, 1..=2);
         codec::one_shot_deflate(&bytes_of(args.first())?, super::level_of(args.get(1)), Wrap::Zlib)
     }
 
     // `#deflate(string, flush = NO_FLUSH)` -- feed input, take back whatever
     // has been flushed so far (with NO_FLUSH, usually nothing).
-    def "deflate" arity -1 (recv, *args, &block) {
+    def "deflate" (recv, *args, &block) {
         arity!(args, 1..=2);
         let flush = flush_of(args.get(1))?;
         let out = run_and_maybe_detach(recv, &bytes_of(args.first())?, Flush::Compress(flush), true)?;
@@ -52,9 +51,8 @@ ruby_class! {
         )
     }
     // `#flush(flush = SYNC_FLUSH)` -- flush without ending the stream.
-    def "flush" arity -1 (recv, *args, &block) {
-        arity!(args, 0..=1);
-        let flush = match args.first() {
+    def "flush" (recv, arg?, &block) {
+        let flush = match arg {
             None => FlushCompress::Sync,
             other => flush_of(other)?,
         };
@@ -87,8 +85,7 @@ ruby_class! {
     // A preset dictionary needs `deflateSetDictionary`, likewise absent.
     // Naming the missing capability beats a silent no-op, which would produce
     // a stream that decodes to the wrong bytes rather than failing.
-    def "set_dictionary" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "set_dictionary" (_recv, _arg) {
         Err(not_impl_error!(
             "Zlib::Deflate#set_dictionary needs deflateSetDictionary, which zeo's pure-Rust deflate backend does not provide"
         ))

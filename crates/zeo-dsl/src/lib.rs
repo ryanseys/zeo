@@ -225,17 +225,23 @@ impl MethodDef {
     /// arity = (min == max) ? min : -min-1
     /// ```
     ///
-    /// CRuby applies this to C methods too, but C can only declare `argc = N`
-    /// (min = max = N) or `argc = -1` (min = 0, max = unbounded). It cannot say
-    /// "1 required plus 1 optional", so such a method reports -1 -- and no C
-    /// method can report below -1. `cfunc` records that lost precision, and is
-    /// the only thing a human writes: it collapses a ranged signature back to
-    /// the -1 CRuby would have reported.
+    /// CRuby applies this to C methods too, but a C function declares only an
+    /// argument COUNT, so `min` and `max` are either both `N` or `0` and
+    /// unbounded. It cannot say "1 required plus 1 optional".
+    ///
+    /// `cfunc` marks a method CRuby declares `argc = -1` and then checks by
+    /// hand with `rb_scan_args`. Such a method reports -1 whatever its real
+    /// shape -- `Dir#entries` accepts exactly zero arguments and still reports
+    /// -1 -- so the marker overrides the equation rather than refining it. This
+    /// is the one arity fact the signature cannot supply, and it is a bit
+    /// rather than a number.
     pub fn derived_arity(&self) -> i64 {
+        if self.cfunc {
+            return -1;
+        }
         let min = self.min_args();
         match self.max_args() {
             Some(max) if max == min => min as i64,
-            _ if self.cfunc => -1,
             _ => -(min as i64) - 1,
         }
     }
@@ -452,16 +458,6 @@ fn parse_def(
         }
     }
 
-    // `cfunc`: CRuby implements this one as a signature-less C function, so it
-    // reports a coarser arity than the parameter list describes. Per-def, after
-    // all `|`-joined names.
-    let cfunc = if peek_ident(input, "cfunc") {
-        input.parse::<Ident>()?;
-        true
-    } else {
-        false
-    };
-
     // Optional `as X`: bind a callable Rust fn name (for direct in-file sibling
     // calls). Comes after all `|`-joined names, before the params.
     let bound_name = if input.peek(Token![as]) {
@@ -469,6 +465,16 @@ fn parse_def(
         Some(input.parse::<Ident>()?)
     } else {
         None
+    };
+
+    // `cfunc`: CRuby declares this one `argc = -1`, so it reports -1 whatever
+    // the parameter list says. Per-def, and always immediately before the
+    // parameters it qualifies.
+    let cfunc = if peek_ident(input, "cfunc") {
+        input.parse::<Ident>()?;
+        true
+    } else {
+        false
     };
 
     let buf;
@@ -813,6 +819,7 @@ mod tests {
             def "each"(_recv, &blk) { }
             def "sub" cfunc (_recv, pattern, replacement?) { }
             def "kill" cfunc (_recv, sig, *pids) { }
+            def "entries" cfunc (_recv) { }
         });
         let arity = |i: usize| spec.methods[i].derived_arity();
         assert_eq!(arity(0), 0, "()");
@@ -826,6 +833,10 @@ mod tests {
         assert_eq!(arity(8), 0, "a block never counts");
         assert_eq!(arity(9), -1, "cfunc collapses the range C could not express");
         assert_eq!(arity(10), -1, "cfunc collapses the unbounded case too");
+        assert_eq!(
+            arity(11), -1,
+            "a -1 cfunc reports -1 even when it accepts exactly none"
+        );
     }
 
     /// A `|`-joined def whose names genuinely differ keeps the override, and it

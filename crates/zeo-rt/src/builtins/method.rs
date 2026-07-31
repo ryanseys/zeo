@@ -396,8 +396,7 @@ ruby_class! {
     // `Method#box` -- the namespace this method was defined in. zeo has no
     // namespaces, so every method it can hand back belongs to none: nil, the
     // same answer ruby gives for a method defined outside any.
-    def "box"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "box"(recv) {
         let _ = recv;
         Ok(RubyValue::Nil)
     }

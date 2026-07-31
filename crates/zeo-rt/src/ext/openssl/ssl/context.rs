@@ -4,7 +4,7 @@
 //! keep adjusting a context right up to the handshake, as CRuby's does.
 
 use super::{CtxState, RSslContext};
-use crate::builtins::{arity, convert};
+use crate::builtins::convert;
 use crate::dispatch::{RObj, RubyObject};
 use crate::ext::openssl::str;
 use crate::{ClassId, RubyValue};
@@ -96,17 +96,15 @@ ruby_class! {
 
     // The optional argument is CRuby's protocol-version shorthand
     // (`SSLContext.new(:TLSv1_2)`), accepted and left to min/max_version.
-    def self."new" arity -1 (_recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def self."new" (_recv, _arg?) {
         Ok(new_context())
     }
 
     // `set_params(params = {})` -- CRuby's DEFAULT_PARAMS merge: verify the
     // peer against the system trust store and check the hostname, then
     // apply the caller's overrides.
-    def "set_params" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let params = args.first().cloned();
+    def "set_params" (recv, arg?) {
+        let params = arg.cloned();
         let mut st = ctx_of(recv).st.lock();
         st.verify_mode = 1;
         st.verify_hostname = true;
@@ -130,84 +128,70 @@ ruby_class! {
         Ok(params.unwrap_or(RubyValue::Nil))
     }
 
-    def "verify_mode" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "verify_mode" (recv) {
         Ok(RubyValue::Int(ctx_of(recv).st.lock().verify_mode))
     }
-    def "verify_mode=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().verify_mode = convert::to_index(&args[0])?;
-        Ok(args[0].clone())
+    def "verify_mode=" (recv, arg) {
+        ctx_of(recv).st.lock().verify_mode = convert::to_index(arg)?;
+        Ok((*arg).clone())
     }
-    def "verify_hostname" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "verify_hostname" (recv) {
         Ok(RubyValue::Bool(ctx_of(recv).st.lock().verify_hostname))
     }
-    def "verify_hostname=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().verify_hostname = args[0].truthy();
-        Ok(args[0].clone())
+    def "verify_hostname=" (recv, arg) {
+        ctx_of(recv).st.lock().verify_hostname = (*arg).truthy();
+        Ok((*arg).clone())
     }
-    def "ca_file" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "ca_file" (recv) {
         Ok(match &ctx_of(recv).st.lock().ca_file {
             Some(f) => str(f.clone()),
             None => RubyValue::Nil,
         })
     }
-    def "ca_file=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().ca_file = path_arg(&args[0])?;
-        Ok(args[0].clone())
+    def "ca_file=" (recv, arg) {
+        ctx_of(recv).st.lock().ca_file = path_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def "ca_path" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "ca_path" (recv) {
         Ok(match &ctx_of(recv).st.lock().ca_path {
             Some(f) => str(f.clone()),
             None => RubyValue::Nil,
         })
     }
-    def "ca_path=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().ca_path = path_arg(&args[0])?;
-        Ok(args[0].clone())
+    def "ca_path=" (recv, arg) {
+        ctx_of(recv).st.lock().ca_path = path_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def "min_version=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().min_version = match &args[0] {
+    def "min_version=" (recv, arg) {
+        ctx_of(recv).st.lock().min_version = match arg {
             RubyValue::Nil => None,
             v => Some(convert::to_index(v)?),
         };
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def "max_version=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().max_version = match &args[0] {
+    def "max_version=" (recv, arg) {
+        ctx_of(recv).st.lock().max_version = match arg {
             RubyValue::Nil => None,
             v => Some(convert::to_index(v)?),
         };
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
     // libssl owns session caching; the mode is carried so a reader sees
     // what was written (net/http sets it before connecting).
-    def "session_cache_mode" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "session_cache_mode" (recv) {
         Ok(RubyValue::Int(ctx_of(recv).st.lock().session_cache_mode))
     }
-    def "session_cache_mode=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ctx_of(recv).st.lock().session_cache_mode = convert::to_index(&args[0])?;
-        Ok(args[0].clone())
+    def "session_cache_mode=" (recv, arg) {
+        ctx_of(recv).st.lock().session_cache_mode = convert::to_index(arg)?;
+        Ok((*arg).clone())
     }
     // The trust store is libssl's own; the accessor answers a Store value
     // so `ctx.cert_store.set_default_paths` style code runs.
-    def "cert_store" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "cert_store" (_recv) {
         Ok(super::store::new_store())
     }
-    def "cert_store=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(args[0].clone())
+    def "cert_store=" (_recv, arg) {
+        Ok((*arg).clone())
     }
 }
 

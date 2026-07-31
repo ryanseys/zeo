@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use super::{RPointer, memptr_elem_size, new_memory, str_bytes};
-use crate::builtins::arity;
 use crate::{RubyValue, Symbol};
 use zeo_macros::ruby_class;
 
@@ -18,10 +17,9 @@ ruby_class! {
     // form yields the pointer and returns the block's value (the gem also
     // auto-frees afterward; our pointer is GC-managed, so the buffer simply
     // lives as long as it is referenced).
-    def self."new"(_recv, *args, &block) {
-        arity!(args, 1..=3);
-        let elem = memptr_elem_size(&args[0])?;
-        let count = match args.get(1) {
+    def self."new"(_recv, arg1, arg2?, _arg3?, &block) {
+        let elem = memptr_elem_size(arg1)?;
+        let count = match arg2 {
             None | Some(RubyValue::Nil) => 1,
             Some(v) => crate::ffi::to_i64(v)? as usize,
         };
@@ -34,9 +32,8 @@ ruby_class! {
         }
     }
     // `MemoryPointer.from_string(str)` -- an owned buffer holding the bytes + NUL.
-    def self."from_string"(_recv, *args, &_b) {
-        arity!(args, 1);
-        let bytes = str_bytes(&args[0])?;
+    def self."from_string"(_recv, arg) {
+        let bytes = str_bytes(arg)?;
         Ok(RubyValue::Object(Arc::new(RPointer::from_bytes_nul(&bytes))))
     }
 }

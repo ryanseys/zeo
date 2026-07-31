@@ -15,9 +15,8 @@ ruby_class! {
     // `Inflate.new(window_bits)`. Unlike `Deflate`, this accepts the +32
     // auto-detect form -- which is how `Net::HTTP` decodes a response body
     // before it has decided whether the encoding was gzip or deflate.
-    def self."new" arity -1 (_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let wrap = match args.first() {
+    def self."new" (_recv, arg?) {
+        let wrap = match arg {
             None | Some(RubyValue::Nil) => Wrap::Zlib,
             Some(v) => wrap_of(convert::to_index(v)?, true)?,
         };
@@ -32,9 +31,8 @@ ruby_class! {
 
     // `#inflate(string)` -- feed input, take back what it decompressed to. A
     // nil argument means "no more input", i.e. finish.
-    def "inflate" arity -1 (recv, *args, &block) {
-        arity!(args, 0..=1);
-        if matches!(args.first(), None | Some(RubyValue::Nil)) {
+    def "inflate" (recv, arg?, &block) {
+        if matches!(arg, None | Some(RubyValue::Nil)) {
             // Finishing a stream nothing was ever fed is CRuby's documented
             // way to close out an EMPTY member, and answers "" rather than
             // the buffer error a TRUNCATED one gets.
@@ -46,7 +44,7 @@ ruby_class! {
             return yield_or_return(out, block);
         }
         let out = run_and_maybe_detach(
-            recv, &bytes_of(args.first())?, Flush::Decompress(FlushDecompress::None), true,
+            recv, &bytes_of(arg)?, Flush::Decompress(FlushDecompress::None), true,
         )?;
         yield_or_return(out, block)
     }
@@ -62,25 +60,21 @@ ruby_class! {
     // entry points flate2's pure-Rust backend does not compile. `sync_point?`
     // still answers, because `false` is what a caller who never called `sync`
     // would see from CRuby too.
-    def "sync" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "sync" (_recv, _arg) {
         Err(not_impl_error!(
             "Zlib::Inflate#sync needs inflateSync, which zeo's pure-Rust inflate backend does not provide"
         ))
     }
-    def "sync_point?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "sync_point?" (recv) {
         drop(codec::ready(recv)?);
         Ok(RubyValue::Bool(false))
     }
-    def "set_dictionary" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "set_dictionary" (_recv, _arg) {
         Err(not_impl_error!(
             "Zlib::Inflate#set_dictionary needs inflateSetDictionary, which zeo's pure-Rust inflate backend does not provide"
         ))
     }
-    def "add_dictionary" (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "add_dictionary" (_recv, _arg) {
         Err(not_impl_error!(
             "Zlib::Inflate#add_dictionary needs inflateSetDictionary, which zeo's pure-Rust inflate backend does not provide"
         ))

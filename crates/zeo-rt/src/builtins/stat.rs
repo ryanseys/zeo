@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use crate::Signal;
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ClassId, FILE_STAT_CLASS};
@@ -121,78 +121,61 @@ ruby_class! {
     Stat = zeo_abi::FILE_STAT_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "size"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "size"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_size))
     }
     // `size?` is nil for an empty file (the "is there content" predicate).
-    def "size?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "size?"(recv) {
         let n = recv_stat(recv)?.st.st_size;
         Ok(if n > 0 { RubyValue::Int(n) } else { RubyValue::Nil })
     }
-    def "zero?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "zero?"(recv) {
         Ok(RubyValue::Bool(recv_stat(recv)?.st.st_size == 0))
     }
-    def "mtime"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "mtime"(recv) {
         let st = &recv_stat(recv)?.st;
         Ok(stat_time(st.st_mtime, st.st_mtime_nsec))
     }
-    def "atime"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "atime"(recv) {
         let st = &recv_stat(recv)?.st;
         Ok(stat_time(st.st_atime, st.st_atime_nsec))
     }
-    def "ctime"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "ctime"(recv) {
         let st = &recv_stat(recv)?.st;
         Ok(stat_time(st.st_ctime, st.st_ctime_nsec))
     }
-    def "birthtime"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "birthtime"(recv) {
         let st = &recv_stat(recv)?.st;
         Ok(stat_time(st.st_birthtime, st.st_birthtime_nsec))
     }
-    def "mode"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "mode"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_mode as i64))
     }
-    def "uid"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "uid"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_uid as i64))
     }
-    def "gid"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "gid"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_gid as i64))
     }
-    def "ino"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "ino"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_ino as i64))
     }
-    def "dev"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "dev"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_dev as i64))
     }
-    def "rdev"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "rdev"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_rdev as i64))
     }
-    def "nlink"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "nlink"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_nlink as i64))
     }
-    def "blksize"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "blksize"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_blksize as i64))
     }
-    def "blocks"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "blocks"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_blocks))
     }
-    def "ftype"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "ftype"(recv) {
         let t = fmt(&recv_stat(recv)?.st);
         let s = match t {
             libc::S_IFREG => "file",
@@ -206,87 +189,68 @@ ruby_class! {
         };
         Ok(RubyValue::Str(crate::collections::string_new(s.to_string())))
     }
-    def "file?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "file?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFREG))
     }
-    def "directory?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "directory?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFDIR))
     }
-    def "symlink?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "symlink?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFLNK))
     }
-    def "pipe?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "pipe?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFIFO))
     }
-    def "socket?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "socket?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFSOCK))
     }
-    def "blockdev?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "blockdev?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFBLK))
     }
-    def "chardev?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "chardev?"(recv) {
         Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFCHR))
     }
-    def "setuid?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "setuid?"(recv) {
         Ok(RubyValue::Bool(mode_has(&recv_stat(recv)?.st, libc::S_ISUID)))
     }
-    def "setgid?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "setgid?"(recv) {
         Ok(RubyValue::Bool(mode_has(&recv_stat(recv)?.st, libc::S_ISGID)))
     }
-    def "sticky?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "sticky?"(recv) {
         Ok(RubyValue::Bool(mode_has(&recv_stat(recv)?.st, libc::S_ISVTX)))
     }
-    def "owned?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "owned?"(recv) {
         Ok(RubyValue::Bool(recv_stat(recv)?.st.st_uid == unsafe { libc::geteuid() }))
     }
-    def "grpowned?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "grpowned?"(recv) {
         Ok(RubyValue::Bool(recv_stat(recv)?.st.st_gid == unsafe { libc::getegid() }))
     }
     // Access predicates read the mode bits against the effective uid/gid --
     // owner bits when we own it, group bits when we share the group, else
     // other bits (the same rule CRuby's `Stat` uses, distinct from `access(2)`).
-    def "readable?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "readable?"(recv) {
         Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o400, 0o040, 0o004)))
     }
-    def "writable?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "writable?"(recv) {
         Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o200, 0o020, 0o002)))
     }
-    def "executable?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "executable?"(recv) {
         Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o100, 0o010, 0o001)))
     }
-    def "world_readable?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "world_readable?"(recv) {
         Ok(world_perm(&recv_stat(recv)?.st, 0o004))
     }
-    def "world_writable?"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "world_writable?"(recv) {
         Ok(world_perm(&recv_stat(recv)?.st, 0o002))
     }
     // Ordered by mtime -- what `Comparable` drives `<`/`>`/`between?` from.
-    def "<=>"(recv, *args, &_blk) {
-        arity!(args, 1);
+    def "<=>"(recv, other) {
         let a = recv_stat(recv)?.st.st_mtime;
-        let RubyValue::Object(o) = &args[0] else { return Ok(RubyValue::Nil) };
+        let RubyValue::Object(o) = other else { return Ok(RubyValue::Nil) };
         let Some(other) = o.as_any().downcast_ref::<RStat>() else { return Ok(RubyValue::Nil) };
         Ok(RubyValue::Int(a.cmp(&other.st.st_mtime) as i64))
     }
-    def "inspect" | "to_s"(recv, *args, &_blk) {
-        arity!(args, 0);
+    def "inspect" | "to_s"(recv) {
         let st = &recv_stat(recv)?.st;
         Ok(RubyValue::Str(crate::collections::string_new(format!(
             "#<File::Stat dev=0x{:x}, ino={}, mode=0{:o}, nlink={}, uid={}, gid={}, size={}>",

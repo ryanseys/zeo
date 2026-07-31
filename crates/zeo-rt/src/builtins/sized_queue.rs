@@ -4,7 +4,7 @@
 //! `SizedQueue`'s superclass is `Queue`. Instances are the same
 //! `RubyValue::Queue` values, whose runtime payload carries the bound.
 
-use crate::builtins::{arg_int, arity};
+use crate::builtins::arg_int;
 use crate::thread::sized_queue_new;
 use zeo_macros::ruby_class;
 
@@ -12,9 +12,8 @@ ruby_class! {
     SizedQueue = zeo_abi::SIZED_QUEUE_CLASS < zeo_abi::QUEUE_CLASS;
 
     // `SizedQueue.new(n)` -- the bounded constructor.
-    def self."new"(_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(sized_queue_new(arg_int!(args, 0)))
+    def self."new" cfunc (_recv, arg) {
+        Ok(sized_queue_new(arg_int!(arg)))
     }
 }
 

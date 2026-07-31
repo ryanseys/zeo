@@ -18,7 +18,7 @@
 
 use crate::RubyValue;
 use crate::builtins::encoding::encoding_value;
-use crate::builtins::{arg_error, arity, convert};
+use crate::builtins::{arg_error, convert};
 use crate::enc::{self, EncodingId, Unit};
 use zeo_macros::ruby_module;
 
@@ -451,14 +451,13 @@ ruby_module! {
     // `NKF.nkf(opt, str)`: the filter. The option string picks the output
     // (mandatory) and optionally the input encoding; without `-J/-E/-S/-W`
     // or `--ic=` the input is guessed per `guess`.
-    def self."nkf" (_recv, *args, &_block) {
-        arity!(args, 2);
-        let opt = convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
+    def self."nkf" (_recv, arg1, arg2) {
+        let opt = convert::to_rstr(arg1)?.lock().to_utf8_lossy().into_owned();
         let o = parse_opts(&opt);
         let Some(out_id) = o.output else {
             return Err(arg_error!("no output encoding given"));
         };
-        let bytes = convert::to_rstr(&args[1])?.lock().bytes().to_vec();
+        let bytes = convert::to_rstr(arg2)?.lock().bytes().to_vec();
         let in_id = o.input.unwrap_or_else(|| guess_id(&bytes));
         let mut text = decode_lossy(&bytes, in_id);
         if o.mime_decode {
@@ -477,9 +476,8 @@ ruby_module! {
     }
 
     // `NKF.guess(str)`: the detected Encoding object (see `guess_id`).
-    def self."guess" (_recv, *args, &_block) {
-        arity!(args, 1);
-        let bytes = convert::to_rstr(&args[0])?.lock().bytes().to_vec();
+    def self."guess" (_recv, arg) {
+        let bytes = convert::to_rstr(arg)?.lock().bytes().to_vec();
         Ok(encoding_value(guess_id(&bytes)))
     }
 }

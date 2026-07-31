@@ -138,16 +138,14 @@ ruby_class! {
     include zeo_abi::ENUMERABLE_CLASS;
 
     // The whole buffer as a String, independent of position.
-    def "string" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "string" (recv) {
         let s = io_of(recv).state.lock();
         Ok(bytes_to_str(&s.bytes, s.enc))
     }
     // The IO encoding pair, as `IO` answers it: the buffer's own encoding
     // outward, and no transcoding on the way in. csv's writer reads both to
     // decide whether it must convert what it is about to emit.
-    def "external_encoding" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "external_encoding" (recv) {
         crate::dispatch::send_value(
             &{ let s = io_of(recv).state.lock(); bytes_to_str(&s.bytes, s.enc) },
             crate::Symbol::intern("encoding"),
@@ -155,14 +153,12 @@ ruby_class! {
             None,
         )
     }
-    def "internal_encoding" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "internal_encoding" (_recv) {
         Ok(RubyValue::Nil)
     }
-    def "read" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "read" (recv, arg?) {
         let mut s = io_of(recv).state.lock();
-        match args.first() {
+        match arg {
             None | Some(RubyValue::Nil) => {
                 let out = s.bytes[s.pos.min(s.bytes.len())..].to_vec();
                 s.pos = s.bytes.len();
@@ -194,10 +190,9 @@ ruby_class! {
         }
         Ok(RubyValue::Int(written as i64))
     }
-    def "<<" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "<<" (recv, other) {
         let mut s = io_of(recv).state.lock();
-        write_at(&mut s, &arg_bytes(&args[0]));
+        write_at(&mut s, &arg_bytes(other));
         Ok(recv.clone())
     }
     def "print" (recv, *args, &_block) {
@@ -217,9 +212,8 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "gets" as gets (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let sep = match args.first() {
+    def "gets" as gets (recv, arg?) {
+        let sep = match arg {
             None | Some(RubyValue::Nil) => "\n".to_string(),
             Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
             Some(other) => other.to_display_string(),
@@ -236,8 +230,7 @@ ruby_class! {
         s.pos = end;
         Ok(bytes_to_str(&line, s.enc))
     }
-    def "each_line" | "each" (recv, *args, &block) {
-        arity!(args, 0);
+    def "each_line" | "each" cfunc (recv, &block) {
         // Blockless, this is an Enumerator over the same lines -- Ruby's rule
         // for every `each_*`, and what `each_line.to_a` (csv's reader) needs.
         let Some(RubyValue::Proc(p)) = block else {
@@ -252,46 +245,38 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "eof?" | "eof" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "eof?" | "eof" (recv) {
         let s = io_of(recv).state.lock();
         Ok(RubyValue::Bool(s.pos >= s.bytes.len()))
     }
-    def "rewind" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "rewind" (recv) {
         io_of(recv).state.lock().pos = 0;
         Ok(RubyValue::Int(0))
     }
-    def "pos" | "tell" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "pos" | "tell" (recv) {
         Ok(RubyValue::Int(io_of(recv).state.lock().pos as i64))
     }
-    def "pos=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let n = &crate::builtins::convert::to_index(&args[0])?;
+    def "pos=" (recv, arg) {
+        let n = &crate::builtins::convert::to_index(arg)?;
         io_of(recv).state.lock().pos = (*n).max(0) as usize;
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def "size" | "length" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "size" | "length" (recv) {
         Ok(RubyValue::Int(io_of(recv).state.lock().bytes.len() as i64))
     }
-    def "close" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "close" (recv) {
         io_of(recv).state.lock().closed = true;
         Ok(RubyValue::Nil)
     }
-    def "closed?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "closed?" (recv) {
         Ok(RubyValue::Bool(io_of(recv).state.lock().closed))
     }
 
     // `seek(offset, whence = SEEK_SET)` -- reposition; whence 0/1/2 =
     // absolute/relative/from-end. Returns 0, like CRuby's IO#seek.
-    def "seek" (recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let off = &crate::builtins::convert::to_index(&args[0])?;
-        let whence = match args.get(1) {
+    def "seek" cfunc (recv, arg1, arg2?) {
+        let off = &crate::builtins::convert::to_index(arg1)?;
+        let whence = match arg2 {
             None => 0,
             Some(w) => crate::builtins::convert::to_index(w)?,
         };
@@ -310,8 +295,7 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
     // `getc` -- one character (the next whole UTF-8 char), or nil at EOF.
-    def "getc" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getc" (recv) {
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
@@ -324,8 +308,7 @@ ruby_class! {
     // `getbyte` -- one BYTE as an Integer, `nil` at end. Byte-wise, not
     // character-wise like `getc`: prism's deserializer reads its buffer this
     // way, and a multi-byte encoding must not make it skip.
-    def "getbyte" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getbyte" (recv) {
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
@@ -336,8 +319,7 @@ ruby_class! {
     }
     // `readbyte` -- `getbyte`, but raising `EOFError` at end rather than
     // answering nil (the same pairing `getc`/`readchar` have).
-    def "readbyte" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "readbyte" (recv) {
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Err(eof_error!("end of file reached"));
@@ -368,9 +350,8 @@ ruby_class! {
     }
     // `truncate(len)` -- resize the buffer, zero-padding when it grows.
     // Returns 0 (CRuby's IO#truncate result).
-    def "truncate" (recv, *args, &_block) {
-        arity!(args, 1);
-        let len = &crate::builtins::convert::to_index(&args[0])?;
+    def "truncate" (recv, arg) {
+        let len = &crate::builtins::convert::to_index(arg)?;
         if *len < 0 {
             return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
         }

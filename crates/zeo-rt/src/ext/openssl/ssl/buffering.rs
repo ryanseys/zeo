@@ -170,14 +170,12 @@ ruby_module! {
 
     // Writes go straight to the session, so sync is always true; the setter
     // records what it was given without changing that.
-    def "sync" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "sync" (recv) {
         Ok(match ivar_get(recv, "sync") { RubyValue::Nil => RubyValue::Bool(true), v => v })
     }
-    def "sync=" (recv, *args, &_block) {
-        arity!(args, 1);
-        ivar_set(recv, "sync", args[0].clone());
-        Ok(args[0].clone())
+    def "sync=" (recv, arg) {
+        ivar_set(recv, "sync", (*arg).clone());
+        Ok((*arg).clone())
     }
 
     def "write" | "write_nonblock" arity -1 (recv, *args, &_block) {
@@ -189,7 +187,7 @@ ruby_module! {
         Ok(recv.clone())
     }
     // `print`/`printf`/`puts` answer nil, unlike `write`'s byte count.
-    def "print" arity -1 (recv, *args, &_block) {
+    def "print" (recv, *args, &_block) {
         write_args(recv, args)?;
         Ok(RubyValue::Nil)
     }
@@ -204,7 +202,7 @@ ruby_module! {
         send(recv, "syswrite", &[crate::ext::openssl::str(text)])?;
         Ok(RubyValue::Nil)
     }
-    def "puts" arity -1 (recv, *args, &_block) {
+    def "puts" (recv, *args, &_block) {
         let mut out = Vec::new();
         if args.is_empty() {
             out.push(b'\n');
@@ -220,17 +218,15 @@ ruby_module! {
         Ok(RubyValue::Nil)
     }
     // Nothing is held back, so there is nothing to push out.
-    def "flush" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "flush" (recv) {
         Ok(recv.clone())
     }
 
     // `read(len = nil)` -- to the end of the stream without a length, exactly
     // `len` bytes (short at the end) with one, `nil` at the end for a positive
     // length.
-    def "read" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let want = match args.first() {
+    def "read" (recv, arg1?, _arg2?) {
+        let want = match arg1 {
             None | Some(RubyValue::Nil) => None,
             Some(v) => Some(convert::to_index(v)? as usize),
         };
@@ -241,9 +237,8 @@ ruby_module! {
         Ok(bin_str(out))
     }
     // Whatever is buffered, or one `sysread`'s worth; EOFError at the end.
-    def "readpartial" | "read_nonblock" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=3);
-        let want = match args.first() {
+    def "readpartial" | "read_nonblock" arity -1 (recv, arg1?, _arg2?, _arg3?) {
+        let want = match arg1 {
             None | Some(RubyValue::Nil) => BLOCK_SIZE as usize,
             Some(v) => convert::to_index(v)? as usize,
         };
@@ -253,25 +248,22 @@ ruby_module! {
         Ok(bin_str(take(recv, Some(want))?))
     }
 
-    def "gets" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let sep = separator(args.first())?;
+    def "gets" (recv, arg1?, _arg2?) {
+        let sep = separator(arg1)?;
         Ok(match read_line(recv, sep)? {
             Some(line) => bin_str(line),
             None => RubyValue::Nil,
         })
     }
-    def "readline" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let sep = separator(args.first())?;
+    def "readline" (recv, arg1?, _arg2?) {
+        let sep = separator(arg1)?;
         match read_line(recv, sep)? {
             Some(line) => Ok(bin_str(line)),
             None => Err(eof_error!("end of file reached")),
         }
     }
-    def "readlines" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let sep = separator(args.first())?;
+    def "readlines" (recv, arg1?, _arg2?) {
+        let sep = separator(arg1)?;
         let mut lines = Vec::new();
         while let Some(line) = read_line(recv, sep)? {
             lines.push(bin_str(line));
@@ -288,16 +280,14 @@ ruby_module! {
         Ok(recv.clone())
     }
 
-    def "getbyte" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getbyte" (recv) {
         let b = take(recv, Some(1))?;
         Ok(match b.first() {
             Some(&b) => RubyValue::Int(i64::from(b)),
             None => RubyValue::Nil,
         })
     }
-    def "readbyte" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "readbyte" (recv) {
         let b = take(recv, Some(1))?;
         match b.first() {
             Some(&b) => Ok(RubyValue::Int(i64::from(b))),
@@ -306,23 +296,20 @@ ruby_module! {
     }
     // One CHARACTER: the buffer holds bytes, so a multi-byte lead byte pulls
     // in the rest of its sequence before answering.
-    def "getc" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getc" (recv) {
         Ok(match read_char(recv)? {
             Some(c) => c,
             None => RubyValue::Nil,
         })
     }
-    def "readchar" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "readchar" (recv) {
         match read_char(recv)? {
             Some(c) => Ok(c),
             None => Err(eof_error!("end of file reached")),
         }
     }
-    def "each_byte" (recv, *args, &block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "each_byte", args, block);
+    def "each_byte" (recv, &block) {
+        let p = block_or_enum!(recv, "each_byte", &[], block);
         loop {
             let b = take(recv, Some(1))?;
             let Some(&b) = b.first() else { break };
@@ -334,22 +321,19 @@ ruby_module! {
     // Push a character back onto the front of the read buffer, so the next
     // read sees it again. This is the one method that needs the receiver to
     // hold state of its own.
-    def "ungetc" (recv, *args, &_block) {
-        arity!(args, 1);
-        let mut back = str_bytes(&args[0])?;
+    def "ungetc" (recv, arg) {
+        let mut back = str_bytes(arg)?;
         back.extend_from_slice(&rbuffer(recv)?);
         set_rbuffer(recv, back);
         Ok(RubyValue::Nil)
     }
 
-    def "eof?" | "eof" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "eof?" | "eof" (recv) {
         Ok(RubyValue::Bool(at_eof(recv)?))
     }
 
     // Upstream answers whatever `sysclose` did, which for an SSLSocket is nil.
-    def "close" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "close" (recv) {
         send(recv, "sysclose", &[])
     }
 }

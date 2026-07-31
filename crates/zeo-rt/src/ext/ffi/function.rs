@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::types::{is_varargs_type, kind_of_type_value};
 use super::{RPointer, address_of, ptr_of};
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::ffi::{
     CallbackHandle, FfiKind, call_fixed, call_variadic, make_callback, marshal_fixed,
@@ -69,11 +69,10 @@ ruby_class! {
 
     // `FFI::Function.new(return_type, arg_types, pointer_or_proc, options?)`.
     // The options (`convention:`) name ABIs this platform doesn't distinguish.
-    def self."new"(_recv, *args, &_b) {
-        arity!(args, 3..=4);
-        let ret = kind_of_type_value(&args[0])?;
-        let arg_kinds = arg_kinds_of(&args[1])?;
-        let (base, closure) = match &args[2] {
+    def self."new"(_recv, arg1, arg2, arg3, _arg4?) {
+        let ret = kind_of_type_value(arg1)?;
+        let arg_kinds = arg_kinds_of(arg2)?;
+        let (base, closure) = match arg3 {
             p @ RubyValue::Proc(_) => {
                 let handle = make_callback(p, &arg_kinds, ret)?;
                 (handle.code_ptr() as *mut u8, Some(handle))
@@ -114,8 +113,7 @@ ruby_class! {
 
     // The gem frees the libffi closure eagerly; ours lives as long as the
     // object (freed-state bookkeeping is the Ruby `Fiddle::Closure`'s).
-    def "free"(_recv, *args, &_b) {
-        arity!(args, 0);
+    def "free"(_recv) {
         Ok(RubyValue::Nil)
     }
 }
@@ -184,13 +182,12 @@ mod invoker {
     // `FFI::VariadicInvoker.new(pointer, arg_types, return_type, options?)`.
     // `arg_types` ends with the `VARARGS` marker; everything before it is the
     // fixed prototype.
-    def self."new"(_recv, *args, &_b) {
-        arity!(args, 3..=4);
-        let addr = target_address(&args[0])?;
-        let RubyValue::Array(a) = &args[1] else {
+    def self."new"(_recv, arg1, arg2, arg3, _arg4?) {
+        let addr = target_address(arg1)?;
+        let RubyValue::Array(a) = arg2 else {
             return Err(type_error!(
                 "wrong argument type {} (expected Array)",
-                crate::builtins::class_name_of(&args[1])
+                crate::builtins::class_name_of(arg2)
             ));
         };
         let types: Vec<RubyValue> = a.lock().iter().cloned().collect();
@@ -199,7 +196,7 @@ mod invoker {
             .filter(|t| !is_varargs_type(t))
             .map(kind_of_type_value)
             .collect::<Result<Vec<_>, _>>()?;
-        let ret = kind_of_type_value(&args[2])?;
+        let ret = kind_of_type_value(arg3)?;
         Ok(RubyValue::Object(Arc::new(RVarInvoker {
             addr,
             fixed,

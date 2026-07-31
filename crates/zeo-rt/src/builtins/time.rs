@@ -917,8 +917,7 @@ ruby_class! {
     Time = zeo_abi::TIME_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def self."now" as time_now (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."now" as time_now cfunc (_recv) {
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before the Unix epoch");
@@ -979,7 +978,7 @@ ruby_class! {
     // ArgumentError ("mon out of range"). Needs a range check per field
     // before the call. Also unsupported: the string-month form
     // (`Time.utc(2023, "nov", 1)`).
-    def self."utc" arity 0 | "gm"(_recv, *args, &_block) {
+    def self."utc" | "gm"(_recv, *args, &_block) {
         arity!(args, 1..=10);
         let norm = normalize_civil_args(args);
         let args = norm.as_slice();
@@ -1071,32 +1070,27 @@ ruby_class! {
         }
     }
 
-    def "to_i" arity 0 | "tv_sec" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_i" | "tv_sec" arity 0 (recv) {
         Ok(RubyValue::Int(recv_time(recv).sec()))
     }
-    def "to_f" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_f" (recv) {
         let t = recv_time(recv);
         // From the exact rational, not from `sec + nsec/1e9`: that rounds
         // twice and can't round-trip a Float epoch (`Time.at(1.25).to_f`).
         let (n, d) = (t.num.clone(), t.den.clone());
         Ok(RubyValue::Float(bigint_to_f64(&n) / bigint_to_f64(&d)))
     }
-    def "nsec" arity 0 | "tv_nsec" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "nsec" | "tv_nsec" arity 0 (recv) {
         Ok(RubyValue::Int(recv_time(recv).nsec() as i64))
     }
-    def "usec" arity 0 | "tv_usec" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "usec" | "tv_usec" arity 0 (recv) {
         Ok(RubyValue::Int((recv_time(recv).nsec() / 1000) as i64))
     }
     // The fraction of a second, EXACTLY: a Rational (`Time.at(0.5).subsec`
     // is `(1/2)`, not 0.5), or Integer 0 for a whole second -- oracle-
     // verified. `rational_new` reduces, which is what turns 500000000/1e9
     // into 1/2.
-    def "subsec" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "subsec" (recv) {
         // The EXACT fraction, whatever its denominator -- `Time.at(10.8).subsec`
         // is `(225179981368525/281474976710656)`, the double's true value, not
         // a nanosecond approximation of it (oracle-verified).
@@ -1106,44 +1100,34 @@ ruby_class! {
         }
         crate::builtins::rational::rational_new(n, d)
     }
-    def "year" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "year" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_year as i64 + 1900))
     }
-    def "month" arity 0 | "mon" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "month" | "mon" arity 0 (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_mon as i64 + 1))
     }
-    def "day" arity 0 | "mday" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "day" | "mday" arity 0 (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_mday as i64))
     }
-    def "hour" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "hour" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_hour as i64))
     }
-    def "min" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "min" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_min as i64))
     }
-    def "sec" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "sec" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_sec as i64))
     }
-    def "wday" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "wday" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_wday as i64))
     }
-    def "yday" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "yday" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_yday as i64 + 1))
     }
-    def "utc_offset" arity 0 | "gmt_offset" arity 0 | "gmtoff" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "utc_offset" | "gmt_offset" arity 0 | "gmtoff" arity 0 (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).offset as i64))
     }
-    def "zone" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "zone" (recv) {
         let z = civil(recv_time(recv)).zone;
         // A fixed-offset (non-UTC) Time has no zone NAME -- nil, not "".
         if z.is_empty() {
@@ -1154,78 +1138,66 @@ ruby_class! {
     // `tm_isdst` is tri-state in C (>0 in effect, 0 not, <0 unknown); Ruby
     // reports a plain bool, so anything that isn't a positive answer is
     // false -- the same `> 0` test `to_a`/`strftime` already use above.
-    def "isdst" arity 0 | "dst?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "isdst" | "dst?" arity 0 (recv) {
         Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_isdst > 0))
     }
-    def "utc?" arity 0 | "gmt?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "utc?" | "gmt?" arity 0 (recv) {
         Ok(RubyValue::Bool(recv_time(recv).is_utc()))
     }
     // The MUTATING converters: they change which zone the receiver RENDERS
     // in and answer self, leaving the instant alone. Callers observe the
     // mutation (`t.utc; t.to_s` renders UTC), which is why `offset` is
     // interior-mutable -- see `RTime`.
-    def "utc" arity 0 | "gmtime" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "utc" | "gmtime" arity 0 (recv) {
         *recv_time(recv).offset.lock() = Some(RTime::UTC);
         Ok(recv.clone())
     }
-    def "localtime"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "localtime"(recv, arg?) {
         // No arg -> system-local (offset None); an Integer/String arg fixes it.
-        *recv_time(recv).offset.lock() = offset_arg(args.first())?;
+        *recv_time(recv).offset.lock() = offset_arg(arg)?;
         Ok(recv.clone())
     }
     // ...and their non-mutating counterparts, which answer a fresh Time.
-    def "getutc" arity 0 | "getgm" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getutc" | "getgm" arity 0 (recv) {
         let t = recv_time(recv);
         Ok(time_value(t.sec(), t.nsec(), Some(RTime::UTC)))
     }
-    def "getlocal"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "getlocal"(recv, arg?) {
         let t = recv_time(recv);
         // No arg -> system-local; an Integer/String arg fixes the utc_offset.
-        Ok(time_value(t.sec(), t.nsec(), offset_arg(args.first())?))
+        Ok(time_value(t.sec(), t.nsec(), offset_arg(arg)?))
     }
-    def "to_s" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_s" (recv) {
         Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv), false))))
     }
-    def "inspect" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect" (recv) {
         Ok(RubyValue::Str(crate::collections::string_new(render(recv_time(recv), true))))
     }
-    def "strftime" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let f = &crate::builtins::convert::to_rstr(&args[0])?;
+    def "strftime" (recv, arg) {
+        let f = &crate::builtins::convert::to_rstr(arg)?;
         let fmt = f.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv), &fmt))))
     }
     // `t + n` -> a Time n seconds later; `t - other_time` -> a Float count of
     // seconds BETWEEN them, but `t - n` -> a Time. The argument's type picks.
-    def "+" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        shift(recv_time(recv), &args[0], 1)
+    def "+" (recv, other) {
+        shift(recv_time(recv), other, 1)
     }
-    def "-" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "-" (recv, other) {
         let t = recv_time(recv);
-        if let RubyValue::Object(o) = &args[0] {
+        if let RubyValue::Object(o) = other {
             if let Some(other) = o.as_any().downcast_ref::<RTime>() {
                 let a = t.sec() as f64 + t.nsec() as f64 / 1e9;
                 let b = other.sec() as f64 + other.nsec() as f64 / 1e9;
                 return Ok(RubyValue::Float(a - b));
             }
         }
-        shift(t, &args[0], -1)
+        shift(t, other, -1)
     }
     // Drives Comparable (`<`, `between?`, `clamp`) -- see the module docs.
-    def "<=>" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "<=>" (recv, other) {
         let t = recv_time(recv);
-        let RubyValue::Object(o) = &args[0] else {
+        let RubyValue::Object(o) = other else {
             return Ok(RubyValue::Nil);
         };
         let Some(other) = o.as_any().downcast_ref::<RTime>() else {
@@ -1242,10 +1214,9 @@ ruby_class! {
             },
         ))
     }
-    def "==" arity 1 | "eql?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "==" | "eql?" arity 1 (recv, other) {
         let t = recv_time(recv);
-        if let RubyValue::Object(o) = &args[0] {
+        if let RubyValue::Object(o) = other {
             if let Some(other) = o.as_any().downcast_ref::<RTime>() {
                 // The canonical (reduced) fields compare directly -- see
                 // `time_exact`.
@@ -1254,8 +1225,7 @@ ruby_class! {
         }
         Ok(RubyValue::Bool(false))
     }
-    def "hash" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "hash" (recv) {
         let t = recv_time(recv);
         // Must agree with `==` above: derived from the canonical instant
         // alone, never from the rendering offset (`t == t.getutc` is true, so
@@ -1266,24 +1236,22 @@ ruby_class! {
         t.den.hash(&mut h);
         Ok(RubyValue::Int(h.finish() as i64))
     }
-    def "sunday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 0)) }
-    def "monday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 1)) }
-    def "tuesday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 2)) }
-    def "wednesday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 3)) }
-    def "thursday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 4)) }
-    def "friday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 5)) }
-    def "saturday?" arity 0 (recv, *args, &_block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 6)) }
+    def "sunday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 0)) }
+    def "monday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 1)) }
+    def "tuesday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 2)) }
+    def "wednesday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 3)) }
+    def "thursday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 4)) }
+    def "friday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 5)) }
+    def "saturday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 6)) }
 
     // `asctime`/`ctime`: the fixed C `ctime` shape, in the Time's own zone.
-    def "asctime" arity 0 | "ctime" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "asctime" | "ctime" arity 0 (recv) {
         Ok(RubyValue::Str(crate::collections::string_new(
             strftime(recv_time(recv), "%a %b %e %H:%M:%S %Y"),
         )))
     }
     // `[sec, min, hour, mday, mon, year, wday, yday, isdst, zone]`.
-    def "to_a" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_a" (recv) {
         let c = civil(recv_time(recv));
         let zone = if c.zone.is_empty() {
             RubyValue::Nil
@@ -1305,8 +1273,7 @@ ruby_class! {
     }
     // The exact instant as `Rational` seconds since the epoch (always a
     // Rational, even for a whole second: `Time.at(100).to_r == (100/1)`).
-    def "to_r" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_r" (recv) {
         let t = recv_time(recv);
         crate::builtins::rational::rational_new(t.num.clone(), t.den.clone())
     }
@@ -1348,10 +1315,9 @@ ruby_class! {
     }
     // A pattern-matching view: `nil` -> every field, an Array -> only the
     // requested keys (in the requested order), CRuby's shape.
-    def "deconstruct_keys" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "deconstruct_keys" (recv, arg) {
         let all = time_field_pairs(recv_time(recv));
-        let pairs: Vec<(RubyValue, RubyValue)> = match &args[0] {
+        let pairs: Vec<(RubyValue, RubyValue)> = match arg {
             RubyValue::Nil => all
                 .into_iter()
                 .map(|(k, v)| (RubyValue::Symbol(crate::Symbol::intern(k)), v))

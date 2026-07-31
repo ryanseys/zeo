@@ -521,6 +521,14 @@ macro_rules! arg_int {
             other => crate::builtins::convert::to_index(other)?,
         }
     };
+    // The same, for a parameter the def named rather than an index into the
+    // raw slice.
+    ($v:expr_2021) => {
+        match $v {
+            crate::RubyValue::Int(v) => *v,
+            other => crate::builtins::convert::to_index(other)?,
+        }
+    };
 }
 pub(crate) use arg_int;
 
@@ -530,6 +538,14 @@ pub(crate) use arg_int;
 macro_rules! arg_str {
     ($args:expr_2021, $i:literal) => {
         match &$args[$i] {
+            crate::RubyValue::Str(s) => s.clone(),
+            other => crate::builtins::convert::to_rstr(other)?,
+        }
+    };
+    // The same, for a parameter the def named rather than an index into the
+    // raw slice.
+    ($v:expr_2021) => {
+        match $v {
             crate::RubyValue::Str(s) => s.clone(),
             other => crate::builtins::convert::to_rstr(other)?,
         }

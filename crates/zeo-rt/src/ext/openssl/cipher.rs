@@ -11,7 +11,7 @@
 //! algorithm out (`Cipher.new("aes-256-cbc")`); see docs/COMPATIBILITY.md.
 
 use super::{bin_str, fill_random, md_from_value, str, str_bytes};
-use crate::builtins::{arg_error, arity, convert};
+use crate::builtins::{arg_error, convert};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal};
 use openssl::cipher::Cipher;
@@ -390,9 +390,8 @@ ruby_class! {
 
     // `Cipher.new("aes-256-cbc")` -- any case; `#name` reports the EVP
     // canonical spelling. An unfetchable algorithm raises here.
-    def self."new" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let requested = crate::builtins::convert::to_rstr(&args[0])?
+    def self."new" cfunc (_recv, arg) {
+        let requested = crate::builtins::convert::to_rstr(arg)?
             .lock()
             .to_utf8_lossy()
             .into_owned();
@@ -420,33 +419,27 @@ ruby_class! {
         })))
     }
     // The EVP name table (see CIPHER_NAMES).
-    def self."ciphers" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."ciphers" (_recv) {
         Ok(RubyValue::Array(crate::array_new(
             CIPHER_NAMES.iter().map(|n| str((*n).to_string())).collect(),
         )))
     }
 
-    def "encrypt" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "encrypt" (recv) {
         set_dir(recv, true)
     }
-    def "decrypt" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "decrypt" (recv) {
         set_dir(recv, false)
     }
-    def "key=" (recv, *args, &_block) {
-        arity!(args, 1);
-        set_param(recv, &args[0], true)
+    def "key=" (recv, arg) {
+        set_param(recv, arg, true)
     }
-    def "iv=" (recv, *args, &_block) {
-        arity!(args, 1);
-        set_param(recv, &args[0], false)
+    def "iv=" (recv, arg) {
+        set_param(recv, arg, false)
     }
     // AEAD nonce-length override; must precede `iv=`.
-    def "iv_len=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let n = convert::to_index(&args[0])?;
+    def "iv_len=" (recv, arg) {
+        let n = convert::to_index(arg)?;
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         if !st.aead {
@@ -456,12 +449,11 @@ ruby_class! {
         if st.ctx.is_some() {
             rebuild(&mut st)?;
         }
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
     // `random_key`/`random_iv` -- upstream's `cipher.rb`: draw CSPRNG bytes
     // of the right length, assign, answer them.
-    def "random_key" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "random_key" (recv) {
         let want = {
             let st = cipher_of(recv).st.lock();
             fetch(&st.fetch_name)?.key_length()
@@ -470,8 +462,7 @@ ruby_class! {
         fill_random(&mut buf)?;
         set_param(recv, &bin_str(buf), true)
     }
-    def "random_iv" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "random_iv" (recv) {
         let want = {
             let st = cipher_of(recv).st.lock();
             let n = st.iv_len;
@@ -483,10 +474,9 @@ ruby_class! {
     }
     // `pkcs5_keyivgen(pass, salt = nil, iterations = 2048, digest = "MD5")`
     // -- EVP_BytesToKey, the legacy PBE derivation.
-    def "pkcs5_keyivgen" arity -1 (recv, *args, &_block) {
-        arity!(args, 1..=4);
-        let pass = str_bytes(&args[0])?;
-        let salt = match args.get(1) {
+    def "pkcs5_keyivgen" arity -1 (recv, arg1, arg2?, arg3?, arg4?) {
+        let pass = str_bytes(arg1)?;
+        let salt = match arg2 {
             None | Some(RubyValue::Nil) => None,
             Some(v) => {
                 let s = str_bytes(v)?;
@@ -496,11 +486,11 @@ ruby_class! {
                 Some(s)
             }
         };
-        let iterations = match args.get(2) {
+        let iterations = match arg3 {
             None | Some(RubyValue::Nil) => 2048,
             Some(v) => convert::to_index(v)? as i32,
         };
-        let (md, _) = match args.get(3) {
+        let (md, _) = match arg4 {
             None | Some(RubyValue::Nil) => super::md_by_name("MD5")?,
             Some(v) => md_from_value(v)?,
         };
@@ -519,9 +509,8 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
 
-    def "update" (recv, *args, &_block) {
-        arity!(args, 1);
-        let data = str_bytes(&args[0])?;
+    def "update" cfunc (recv, arg) {
+        let data = str_bytes(arg)?;
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         let ctx = ready(&mut st)?;
@@ -531,9 +520,8 @@ ruby_class! {
         Ok(bin_str(out))
     }
     // AAD for an AEAD mode -- an update with no output.
-    def "auth_data=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let data = str_bytes(&args[0])?;
+    def "auth_data=" (recv, arg) {
+        let data = str_bytes(arg)?;
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         if !st.aead {
@@ -542,10 +530,9 @@ ruby_class! {
         let ctx = ready(&mut st)?;
         ctx.cipher_update(&data, None)
             .map_err(|e| cipher_error(format!("cipher update failed: {}", stack_reason(&e))))?;
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def "final" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "final" (recv) {
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         // Any AEAD final failure is a tag-verification failure, which is
@@ -568,9 +555,8 @@ ruby_class! {
     }
     // The tag an AEAD encryption produced (after `final`), 16 bytes unless
     // narrowed.
-    def "auth_tag" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let len = match args.first() {
+    def "auth_tag" (recv, arg?) {
+        let len = match arg {
             None => 16,
             Some(v) => convert::to_index(v)? as usize,
         };
@@ -586,9 +572,8 @@ ruby_class! {
         Ok(bin_str(tag))
     }
     // The tag an AEAD decryption must verify against (before `final`).
-    def "auth_tag=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let tag = str_bytes(&args[0])?;
+    def "auth_tag=" (recv, arg) {
+        let tag = str_bytes(arg)?;
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         if !st.aead {
@@ -597,23 +582,21 @@ ruby_class! {
         let ctx = ready(&mut st)?;
         ctx.set_tag(&tag)
             .map_err(|e| cipher_error(format!("setting the authentication tag failed: {}", stack_reason(&e))))?;
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def "padding=" (recv, *args, &_block) {
-        arity!(args, 1);
-        let pad = convert::to_index(&args[0])? != 0;
+    def "padding=" (recv, arg) {
+        let pad = convert::to_index(arg)? != 0;
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         st.padding = pad;
         if let Some(ctx) = st.ctx.as_mut() {
             ctx.set_padding(pad);
         }
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
     // Restart from the stored parameters -- EVP_CipherInit's re-init, so
     // direction, key and the ORIGINAL iv survive; fed data does not.
-    def "reset" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "reset" (recv) {
         let c = cipher_of(recv);
         let mut st = c.st.lock();
         if st.ctx.is_some() {
@@ -622,28 +605,23 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "name" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "name" (recv) {
         Ok(str(cipher_of(recv).st.lock().name.clone()))
     }
-    def "key_len" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "key_len" (recv) {
         let st = cipher_of(recv).st.lock();
         Ok(RubyValue::Int(fetch(&st.fetch_name)?.key_length() as i64))
     }
-    def "iv_len" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "iv_len" (recv) {
         let st = cipher_of(recv).st.lock();
         let n = st.iv_len.unwrap_or(fetch(&st.fetch_name)?.iv_length());
         Ok(RubyValue::Int(n as i64))
     }
-    def "block_size" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "block_size" (recv) {
         let st = cipher_of(recv).st.lock();
         Ok(RubyValue::Int(fetch(&st.fetch_name)?.block_size() as i64))
     }
-    def "authenticated?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "authenticated?" (recv) {
         Ok(RubyValue::Bool(cipher_of(recv).st.lock().aead))
     }
 }

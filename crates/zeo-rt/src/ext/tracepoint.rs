@@ -28,7 +28,7 @@
 //! (CRuby's own reentrancy rule, which is what keeps a `:line` handler
 //! from tracing itself forever).
 
-use crate::builtins::{arg_error, arity, class_name_of, runtime_error, type_error};
+use crate::builtins::{arg_error, class_name_of, runtime_error, type_error};
 use crate::collections::string_new;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, Symbol};
@@ -415,8 +415,7 @@ ruby_class! {
     // `enable`/`disable` answer the PREVIOUS state (oracle-verified: a
     // fresh `enable` is false). The block forms restore that state on the
     // way out -- also past a raise -- and answer the block's value.
-    def "enable" (recv, *args, &block) {
-        arity!(args, 0);
+    def "enable" cfunc (recv, &block) {
         let prev = tp_of(recv).enabled.load(Ordering::Relaxed);
         match &block {
             Some(RubyValue::Proc(p)) => {
@@ -438,8 +437,7 @@ ruby_class! {
             }
         }
     }
-    def "disable" (recv, *args, &block) {
-        arity!(args, 0);
+    def "disable" (recv, &block) {
         let prev = tp_of(recv).enabled.load(Ordering::Relaxed);
         match &block {
             Some(RubyValue::Proc(p)) => {
@@ -461,40 +459,33 @@ ruby_class! {
             }
         }
     }
-    def "enabled?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "enabled?" (recv) {
         Ok(RubyValue::Bool(tp_of(recv).enabled.load(Ordering::Relaxed)))
     }
 
-    def "event" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "event" (recv) {
         let _ = tp_of(recv);
         Ok(RubyValue::Symbol(Symbol::intern(event_name(snapshot()?.bit))))
     }
-    def "lineno" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "lineno" (recv) {
         let _ = tp_of(recv);
         Ok(RubyValue::Int(i64::from(snapshot()?.lineno)))
     }
-    def "path" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "path" (recv) {
         let _ = tp_of(recv);
         Ok(RubyValue::Str(string_new(snapshot()?.path.to_string())))
     }
     // `callee_id` is `method_id` here: zeo's frame labels carry the
     // defining name, and an aliased call is not distinguished.
-    def "method_id" | "callee_id" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "method_id" | "callee_id" (recv) {
         let _ = tp_of(recv);
         Ok(method_symbol(snapshot()?.label))
     }
-    def "defined_class" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "defined_class" (recv) {
         let _ = tp_of(recv);
         Ok(resolve_defined_class(snapshot()?.label))
     }
-    def "raised_exception" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "raised_exception" (recv) {
         let _ = tp_of(recv);
         let snap = snapshot()?;
         if snap.bit != RAISE {
@@ -506,8 +497,7 @@ ruby_class! {
     // Outside a handler: `#<TracePoint:enabled>`/`#<TracePoint:disabled>`
     // (no address -- CRuby's own shape). Inside one, the current event:
     // `#<TracePoint:call 'volume' f.rb:9>`.
-    def "inspect" | "to_s" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect" | "to_s" (recv) {
         let s = match CURRENT.with(|c| c.borrow().clone()) {
             Some(snap) => match label_parts(snap.label) {
                 Some((_, _, name)) => format!(

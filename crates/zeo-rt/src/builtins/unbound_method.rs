@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::builtins::method::{method_value, resolve_method_name};
-use crate::builtins::{arg_error, arity, name_error, type_error};
+use crate::builtins::{arg_error, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::method_meta::MethodKind;
 use crate::signal::Signal;
@@ -125,9 +125,8 @@ ruby_class! {
         Ok(crate::method_meta::parameters(None, um.home, um.kind, um.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
     }
-    def "bind"(recv, *args, &_b) {
-        arity!(args, 1);
-        bind_target(recv_unbound(recv), &args[0])
+    def "bind"(recv, arg) {
+        bind_target(recv_unbound(recv), arg)
     }
     def "bind_call"(recv, *args, &blk) {
         if args.is_empty() {

@@ -9,7 +9,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::builtins::{arity, type_error};
+use crate::builtins::type_error;
 use crate::dispatch::{RObj, RubyObject};
 use crate::ffi::FfiKind;
 use crate::{ClassId, RubyValue, Signal};
@@ -166,17 +166,14 @@ ruby_class! {
     const DOUBLE = type_value(TypeKind::Scalar(FfiKind::F64));
     const FLOAT64 = type_value(TypeKind::Scalar(FfiKind::F64));
 
-    def "size"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "size"(recv) {
         Ok(RubyValue::Int(t_of(recv).layout().0 as i64))
     }
-    def "alignment"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "alignment"(recv) {
         Ok(RubyValue::Int(t_of(recv).layout().1 as i64))
     }
-    def "==" | "eql?"(recv, *args, &_b) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(matches!(rtype_of(&args[0]), Some(o) if o.kind == t_of(recv).kind)))
+    def "==" | "eql?"(recv, other) {
+        Ok(RubyValue::Bool(matches!(rtype_of(other), Some(o) if o.kind == t_of(recv).kind)))
     }
 }
 

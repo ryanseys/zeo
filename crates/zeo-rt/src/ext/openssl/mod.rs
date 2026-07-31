@@ -34,7 +34,7 @@ pub(crate) mod kdf;
 pub(crate) mod random;
 pub(crate) mod ssl;
 
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
@@ -185,9 +185,8 @@ ruby_module! {
 
     // `OpenSSL.fixed_length_secure_compare(a, b)` -- constant-time equality;
     // raises ArgumentError when the lengths differ.
-    def self."fixed_length_secure_compare" arity 2 (_recv, *args, &_block) {
-        arity!(args, 2);
-        let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
+    def self."fixed_length_secure_compare" (_recv, arg1, arg2) {
+        let (a, b) = (str_bytes(arg1)?, str_bytes(arg2)?);
         if a.len() != b.len() {
             return Err(arg_error!("inputs must be of equal length"));
         }
@@ -195,9 +194,8 @@ ruby_module! {
     }
     // `OpenSSL.secure_compare(a, b)` -- length-independent constant-time
     // equality (true iff the strings are equal).
-    def self."secure_compare" arity 2 (_recv, *args, &_block) {
-        arity!(args, 2);
-        let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
+    def self."secure_compare" (_recv, arg1, arg2) {
+        let (a, b) = (str_bytes(arg1)?, str_bytes(arg2)?);
         Ok(RubyValue::Bool(constant_time_eq(&a, &b)))
     }
 }

@@ -12,7 +12,7 @@
 
 pub(crate) mod history;
 
-use crate::builtins::{arity, convert};
+use crate::builtins::convert;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 
@@ -189,13 +189,12 @@ ruby_module! {
     // `Readline.readline(prompt = "", add_hist = false)` -- one line, chomped;
     // nil at EOF. A non-empty line is appended to HISTORY when asked (an empty
     // one never is, CRuby's rule).
-    def self."readline" arity -1 (_recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let prompt = match args.first() {
+    def self."readline" (_recv, arg1?, arg2?) {
+        let prompt = match arg1 {
             None | Some(RubyValue::Nil) => String::new(),
             Some(v) => str_arg(v)?,
         };
-        let add_hist = !matches!(args.get(1), None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)));
+        let add_hist = !matches!(arg2, None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)));
         let input = STATE.lock().input.clone();
         // SAFETY: plain isatty on fd 0.
         let line = if input.is_some() || unsafe { libc::isatty(0) } == 0 {
@@ -220,47 +219,41 @@ ruby_module! {
     // Where lines come from and where the editor renders -- assignable IOs,
     // the classic API's redirection points. Stored; a set input switches
     // `readline` to the plain-read leg.
-    def self."input=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().input = match &args[0] {
+    def self."input=" cfunc (_recv, arg) {
+        STATE.lock().input = match arg {
             RubyValue::Nil => None,
             v => Some(v.clone()),
         };
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def self."output=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().output = match &args[0] {
+    def self."output=" cfunc (_recv, arg) {
+        STATE.lock().output = match arg {
             RubyValue::Nil => None,
             v => Some(v.clone()),
         };
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
 
     // The completion knobs. The proc is consulted by the terminal editor's
     // completer; append character and case fold are stored state.
-    def self."completion_proc" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."completion_proc" cfunc (_recv) {
         Ok(STATE.lock().completion_proc.clone())
     }
-    def self."completion_proc=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        if !matches!(&args[0], RubyValue::Nil | RubyValue::Proc(_)) {
+    def self."completion_proc=" cfunc (_recv, arg) {
+        if !matches!(arg, RubyValue::Nil | RubyValue::Proc(_)) {
             return Err(crate::builtins::type_error!("argument must respond to `call'"));
         }
-        STATE.lock().completion_proc = args[0].clone();
-        Ok(args[0].clone())
+        STATE.lock().completion_proc = (*arg).clone();
+        Ok((*arg).clone())
     }
-    def self."completion_append_character" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."completion_append_character" cfunc (_recv) {
         Ok(match &STATE.lock().completion_append_character {
             Some(c) => str_value(c),
             None => RubyValue::Nil,
         })
     }
-    def self."completion_append_character=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().completion_append_character = match &args[0] {
+    def self."completion_append_character=" cfunc (_recv, arg) {
+        STATE.lock().completion_append_character = match arg {
             RubyValue::Nil => None,
             v => {
                 // Only the FIRST character survives, as in CRuby.
@@ -268,101 +261,81 @@ ruby_module! {
                 s.chars().next().map(|c| c.to_string())
             }
         };
-        Ok(args[0].clone())
+        Ok((*arg).clone())
     }
-    def self."completion_case_fold" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."completion_case_fold" cfunc (_recv) {
         Ok(STATE.lock().completion_case_fold.clone())
     }
-    def self."completion_case_fold=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().completion_case_fold = args[0].clone();
-        Ok(args[0].clone())
+    def self."completion_case_fold=" cfunc (_recv, arg) {
+        STATE.lock().completion_case_fold = (*arg).clone();
+        Ok((*arg).clone())
     }
-    def self."pre_input_hook" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."pre_input_hook" cfunc (_recv) {
         Ok(STATE.lock().pre_input_hook.clone())
     }
-    def self."pre_input_hook=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().pre_input_hook = args[0].clone();
-        Ok(args[0].clone())
+    def self."pre_input_hook=" cfunc (_recv, arg) {
+        STATE.lock().pre_input_hook = (*arg).clone();
+        Ok((*arg).clone())
     }
 
     // The character-set attributes, stored and read back verbatim.
-    def self."basic_word_break_characters" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."basic_word_break_characters" cfunc (_recv) {
         Ok(str_value(&STATE.lock().basic_word_break_characters))
     }
-    def self."basic_word_break_characters=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().basic_word_break_characters = str_arg(&args[0])?;
-        Ok(args[0].clone())
+    def self."basic_word_break_characters=" cfunc (_recv, arg) {
+        STATE.lock().basic_word_break_characters = str_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def self."completer_word_break_characters" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."completer_word_break_characters" cfunc (_recv) {
         Ok(str_value(&STATE.lock().completer_word_break_characters))
     }
-    def self."completer_word_break_characters=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().completer_word_break_characters = str_arg(&args[0])?;
-        Ok(args[0].clone())
+    def self."completer_word_break_characters=" cfunc (_recv, arg) {
+        STATE.lock().completer_word_break_characters = str_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def self."basic_quote_characters" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."basic_quote_characters" cfunc (_recv) {
         Ok(str_value(&STATE.lock().basic_quote_characters))
     }
-    def self."basic_quote_characters=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().basic_quote_characters = str_arg(&args[0])?;
-        Ok(args[0].clone())
+    def self."basic_quote_characters=" cfunc (_recv, arg) {
+        STATE.lock().basic_quote_characters = str_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def self."completer_quote_characters" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."completer_quote_characters" cfunc (_recv) {
         Ok(str_value(&STATE.lock().completer_quote_characters))
     }
-    def self."completer_quote_characters=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().completer_quote_characters = str_arg(&args[0])?;
-        Ok(args[0].clone())
+    def self."completer_quote_characters=" cfunc (_recv, arg) {
+        STATE.lock().completer_quote_characters = str_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def self."filename_quote_characters" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."filename_quote_characters" cfunc (_recv) {
         Ok(str_value(&STATE.lock().filename_quote_characters))
     }
-    def self."filename_quote_characters=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().filename_quote_characters = str_arg(&args[0])?;
-        Ok(args[0].clone())
+    def self."filename_quote_characters=" cfunc (_recv, arg) {
+        STATE.lock().filename_quote_characters = str_arg(arg)?;
+        Ok((*arg).clone())
     }
-    def self."special_prefixes" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."special_prefixes" cfunc (_recv) {
         Ok(str_value(&STATE.lock().special_prefixes))
     }
-    def self."special_prefixes=" (_recv, *args, &_block) {
-        arity!(args, 1);
-        STATE.lock().special_prefixes = str_arg(&args[0])?;
-        Ok(args[0].clone())
+    def self."special_prefixes=" cfunc (_recv, arg) {
+        STATE.lock().special_prefixes = str_arg(arg)?;
+        Ok((*arg).clone())
     }
 
     // Editing modes -- a stored flag; rustyline's own edit mode is configured
     // per editor, so the terminal leg honors it at first creation only.
-    def self."vi_editing_mode" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."vi_editing_mode" cfunc (_recv) {
         STATE.lock().vi_mode = true;
         Ok(RubyValue::Nil)
     }
-    def self."vi_editing_mode?" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."vi_editing_mode?" cfunc (_recv) {
         Ok(RubyValue::Bool(STATE.lock().vi_mode))
     }
-    def self."emacs_editing_mode" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."emacs_editing_mode" cfunc (_recv) {
         STATE.lock().vi_mode = false;
         Ok(RubyValue::Nil)
     }
-    def self."emacs_editing_mode?" (_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."emacs_editing_mode?" cfunc (_recv) {
         Ok(RubyValue::Bool(!STATE.lock().vi_mode))
     }
 }

@@ -3,64 +3,51 @@
 //! object.c.
 
 use crate::RubyValue;
-use crate::builtins::arity;
 use zeo_macros::ruby_class;
 
 ruby_class! {
     NilClass = zeo_abi::NIL_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "&" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "&" (_recv, _other) {
         Ok(RubyValue::Bool(false))
     }
-    def "|" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(args[0].truthy()))
+    def "|" (_recv, other) {
+        Ok(RubyValue::Bool((*other).truthy()))
     }
-    def "^" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(args[0].truthy()))
+    def "^" (_recv, other) {
+        Ok(RubyValue::Bool((*other).truthy()))
     }
-    def "to_a" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_a" (_recv) {
         Ok(RubyValue::Array(crate::array_new(Vec::new())))
     }
-    def "to_h" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_h" (_recv) {
         Ok(RubyValue::Hash(crate::hash_new(Vec::new())))
     }
-    def "to_i" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_i" (_recv) {
         Ok(RubyValue::Int(0))
     }
-    def "to_f" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_f" (_recv) {
         Ok(RubyValue::Float(0.0))
     }
     // `nil` converts to the zero of each numeric tower.
-    def "to_r" arity 0 | "rationalize" (_recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "to_r" arity 0 | "rationalize" (_recv, _arg?) {
         crate::builtins::rational::rational_new(0.into(), 1.into())
     }
-    def "to_c" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_c" (_recv) {
         crate::builtins::complex::complex_new(RubyValue::Int(0), RubyValue::Int(0))
     }
     // Renderings Kernel's own rows already produce -- but declared HERE, where
     // CRuby declares them, because a caller can ask WHERE a method comes from:
     // pp's fallback reads `obj.method(:inspect).owner != Kernel` to decide
     // whether an object has its own rendering, and answered `Kernel` for nil.
-    def "to_s" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_s" (_recv) {
         Ok(RubyValue::Str(crate::string_new(String::new())))
     }
-    def "inspect" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect" (_recv) {
         Ok(RubyValue::Str(crate::string_new("nil".to_string())))
     }
     // `nil =~ anything` is always nil (nil matches no pattern).
-    def "=~" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
+    def "=~" (_recv, _other) {
         Ok(RubyValue::Nil)
     }
 }

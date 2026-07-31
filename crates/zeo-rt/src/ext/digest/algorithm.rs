@@ -8,7 +8,6 @@ use super::{
     algo_of_class, base64, block_length_of, digest_bubblebabble, digest_eq, digest_length_of,
     finalize, hex, in_bytes, new_digest, push_bytes, reset_buf, str,
 };
-use crate::builtins::arity;
 use crate::encoding::ASCII_8BIT;
 use crate::{RubyValue, string_from_bytes};
 use zeo_macros::ruby_class;
@@ -24,27 +23,22 @@ ruby_class! {
     Digest = zeo_abi::DIGEST_MD5_CLASS < zeo_abi::OBJECT_CLASS;
 
     // -- class methods (Digest::SHA256.hexdigest(str), .new, ...) --
-    def self."new"(recv, *args, &_block) {
-        arity!(args, 0);
+    def self."new" cfunc (recv) {
         Ok(new_digest(algo_of_class(recv)))
     }
-    def self."hexdigest"(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(str(hex(&class_raw(recv, &args[0])?)))
+    def self."hexdigest"(recv, arg) {
+        Ok(str(hex(&class_raw(recv, arg)?)))
     }
-    def self."digest"(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Str(string_from_bytes(class_raw(recv, &args[0])?, ASCII_8BIT)))
+    def self."digest"(recv, arg) {
+        Ok(RubyValue::Str(string_from_bytes(class_raw(recv, arg)?, ASCII_8BIT)))
     }
-    def self."base64digest"(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(str(base64(&class_raw(recv, &args[0])?)))
+    def self."base64digest"(recv, arg) {
+        Ok(str(base64(&class_raw(recv, arg)?)))
     }
 
     // -- streaming instance API --
-    def "update" | "<<"(recv, *args, &_block) {
-        arity!(args, 1);
-        push_bytes(recv, &in_bytes(&args[0])?);
+    def "update" | "<<"(recv, other) {
+        push_bytes(recv, &in_bytes(other)?);
         Ok(recv.clone())
     }
     def "hexdigest" | "to_s"(recv, *args, &_block) {
@@ -56,28 +50,23 @@ ruby_class! {
     def "base64digest"(recv, *args, &_block) {
         Ok(str(base64(&finalize(recv, args)?)))
     }
-    def "reset"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "reset"(recv) {
         reset_buf(recv);
         Ok(recv.clone())
     }
-    def "digest_length" | "length" | "size"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "digest_length" | "length" | "size"(recv) {
         Ok(RubyValue::Int(digest_length_of(recv)))
     }
-    def "block_length"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "block_length"(recv) {
         Ok(RubyValue::Int(block_length_of(recv)))
     }
     // `d == other`: another Digest compares by raw digest; anything else is
     // compared to `d`'s hexdigest (CRuby's `to_str` path).
-    def "=="(recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Bool(digest_eq(recv, &args[0])))
+    def "=="(recv, other) {
+        Ok(RubyValue::Bool(digest_eq(recv, other)))
     }
     // The bubble babble of this object's current digest.
-    def "bubblebabble"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "bubblebabble"(recv) {
         Ok(str(digest_bubblebabble(recv)))
     }
 }

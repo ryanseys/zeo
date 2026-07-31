@@ -472,18 +472,16 @@ ruby_class! {
     // `Integer.try_convert(obj)`: `obj` if it is already an Integer, its
     // `to_int` if it defines one, else nil. Never raises for a value that
     // simply cannot convert, unlike `Integer(obj)`.
-    def self."try_convert" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(crate::builtins::convert::try_convert_value(&args[0], "Integer", "to_int")?
+    def self."try_convert" (_recv, arg) {
+        Ok(crate::builtins::convert::try_convert_value(arg, "Integer", "to_int")?
             .unwrap_or(RubyValue::Nil))
     }
     // `Integer.sqrt(n)` -- the exact integer square root (floor of the real
     // square root, no floating-point rounding: correct for bignums too). A
     // negative argument is a `Math::DomainError`, like CRuby.
-    def self."sqrt"(_recv, *args, &_block) {
-        arity!(args, 1);
-        let n = match &args[0] {
-            RubyValue::Int(_) | RubyValue::BigInt(_) => to_bigint(&args[0]),
+    def self."sqrt"(_recv, arg) {
+        let n = match arg {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => to_bigint(arg),
             RubyValue::Float(f) => {
                 if !f.is_finite() {
                     return Err(crate::dispatch::raise_error(
@@ -513,54 +511,46 @@ ruby_class! {
     def "/" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_div, "/") }
     def "%" arity 1 | "modulo" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mod, "%") }
     def "**" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_pow, "**") }
-    def "&" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
-            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_band(recv, &args[0])),
+    def "&" (recv, other) {
+        match other {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_band(recv, other)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "|" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
-            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_bor(recv, &args[0])),
+    def "|" (recv, other) {
+        match other {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_bor(recv, other)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "^" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
-            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_bxor(recv, &args[0])),
+    def "^" (recv, other) {
+        match other {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_bxor(recv, other)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "<<" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
-            RubyValue::Int(_) | RubyValue::BigInt(_) => int_shl(recv, &args[0]),
+    def "<<" (recv, other) {
+        match other {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => int_shl(recv, other),
             // A Float count is truncated toward zero (CRuby's `to_int`).
             RubyValue::Float(f) => int_shl(recv, &RubyValue::Int(f.trunc() as i64)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def ">>" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
-            RubyValue::Int(_) | RubyValue::BigInt(_) => int_shr(recv, &args[0]),
+    def ">>" (recv, other) {
+        match other {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => int_shr(recv, other),
             RubyValue::Float(f) => int_shr(recv, &RubyValue::Int(f.trunc() as i64)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "-@" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "-@" (recv) {
         Ok(int_neg(recv))
     }
-    def "+@" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "+@" (recv) {
         Ok(int_pos(recv))
     }
-    def "~" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "~" (recv) {
         Ok(int_bnot(recv))
     }
     // `Integer#[]` -- bit reference, LSB = index 0, two's-complement sign
@@ -574,53 +564,46 @@ ruby_class! {
     // Bit-mask predicates: `allbits?` (every mask bit set), `anybits?` (at
     // least one), `nobits?` (none). All via `self & mask` over the BigInt
     // two's-complement view, so they work for fixnums and bignums alike.
-    def "allbits?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let mask = int_mask_arg(&args[0])?;
+    def "allbits?" (recv, arg) {
+        let mask = int_mask_arg(arg)?;
         Ok(RubyValue::Bool((to_bigint(recv) & &mask) == mask))
     }
-    def "anybits?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let mask = int_mask_arg(&args[0])?;
+    def "anybits?" (recv, arg) {
+        let mask = int_mask_arg(arg)?;
         Ok(RubyValue::Bool((to_bigint(recv) & mask) != BigInt::from(0)))
     }
-    def "nobits?" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let mask = int_mask_arg(&args[0])?;
+    def "nobits?" (recv, arg) {
+        let mask = int_mask_arg(arg)?;
         Ok(RubyValue::Bool((to_bigint(recv) & mask) == BigInt::from(0)))
     }
     // Every Integer is finite and never infinite (the Float predicates,
     // answered here so the numeric protocol is uniform).
-    def "finite?" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "finite?" (_recv) {
         Ok(RubyValue::Bool(true))
     }
-    def "infinite?" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "infinite?" (_recv) {
         Ok(RubyValue::Nil)
     }
     // `n.i` is the pure-imaginary Complex `0 + n*i`.
-    def "i" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "i" (recv) {
         crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
     }
     // Ceiling division: the smallest integer >= self/other. `-floor(-a / b)`
     // gives the exact result for either sign.
-    def "ceildiv" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "ceildiv" (recv, arg) {
         // `ceildiv(other)` == `-((-self).div(other))`; a Float/Rational divisor
         // rides the floored-division tower, still answering an Integer.
-        if matches!(&args[0], RubyValue::Float(_) | RubyValue::Rational(_)) {
+        if matches!(arg, RubyValue::Float(_) | RubyValue::Rational(_)) {
             let neg_self = int_neg(recv);
             let floored = crate::dispatch::send_value(
                 &neg_self,
                 crate::Symbol::intern("div"),
-                std::slice::from_ref(&args[0]),
+                std::slice::from_ref(arg),
                 None,
             )?;
             return Ok(int_neg(&floored));
         }
-        let b = int_mask_arg(&args[0])?;
+        let b = int_mask_arg(arg)?;
         if b.is_zero() {
             return Err(crate::dispatch::raise_error(
                 "ZeroDivisionError",
@@ -633,14 +616,13 @@ ruby_class! {
     // `coerce(other)`: the numeric-protocol pair. A Float partner promotes
     // both to Float; an Integer partner keeps both integral. Answered as a
     // two-element Array (`other`-first, CRuby's order).
-    def "coerce" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let pair = match &args[0] {
+    def "coerce" (recv, arg) {
+        let pair = match arg {
             RubyValue::Float(f) => vec![
                 RubyValue::Float(*f),
                 RubyValue::Float(to_bigint(recv).to_f64().unwrap_or(f64::NAN)),
             ],
-            RubyValue::Int(_) | RubyValue::BigInt(_) => vec![args[0].clone(), recv.clone()],
+            RubyValue::Int(_) | RubyValue::BigInt(_) => vec![(*arg).clone(), recv.clone()],
             other => {
                 return Err(type_error!("can't coerce {} into Integer", crate::builtins::class_name_of(other)))
             }
@@ -651,44 +633,41 @@ ruby_class! {
     // `coerce` compares as nil (real Ruby: `5 <=> "a"` is nil, never an
     // error), while one that does (BigDecimal) compares through the
     // coerced pair. Comparable's operators drive this row.
-    def "<=>" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(match crate::builtins::numeric::num_cmp(recv, &args[0]) {
+    def "<=>" (recv, other) {
+        Ok(match crate::builtins::numeric::num_cmp(recv, other) {
             Some(Some(c)) => RubyValue::Int(c),
             Some(None) => RubyValue::Nil,
-            None => crate::builtins::numeric::coerce_cmp(recv, &args[0])?,
+            None => crate::builtins::numeric::coerce_cmp(recv, other)?,
         })
     }
     // Integer's own `==` (cross-tower: `1 == 1.0` is true) -- resolving
     // before `Comparable#==` in the chain. A non-tower operand answers for
     // itself (`y == x`, CRuby's num_equal).
-    def "==" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        if recv.rb_eq(&args[0]) {
+    def "==" (recv, other) {
+        if recv.rb_eq(other) {
             return Ok(RubyValue::Bool(true));
         }
-        crate::builtins::numeric::reverse_eq(recv, &args[0])
+        crate::builtins::numeric::reverse_eq(recv, other)
     }
     // `div` -- floored integer division (what `/` already does for Ints);
     // `fdiv` -- float division regardless of operand kinds.
-    def "div" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
+    def "div" (recv, arg) {
+        match arg {
             RubyValue::Int(0) => Err(crate::dispatch::raise_error(
                 "ZeroDivisionError",
                 "divided by 0".to_string(),
             )),
-            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_div(recv, &args[0])),
+            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_div(recv, arg)),
             RubyValue::Float(f) => {
                 let a = match recv {
                     RubyValue::Int(i) => *i as f64,
-                    _ => return Ok(int_div(recv, &args[0])),
+                    _ => return Ok(int_div(recv, arg)),
                 };
                 Ok(RubyValue::Int((a / f).floor() as i64))
             }
             // A Rational divisor: `(self / other).floor` stays exact.
             RubyValue::Rational(_) => {
-                let q = crate::builtins::numeric::num_div(recv, &args[0])
+                let q = crate::builtins::numeric::num_div(recv, arg)
                     .expect("Integer / Rational is defined")?;
                 match q {
                     RubyValue::Rational(r) => Ok(int_value(r.num.div_floor(&r.den))),
@@ -698,8 +677,7 @@ ruby_class! {
             other => Err(type_error!("{} can't be coerced into Integer", crate::builtins::class_name_of(other))),
         }
     }
-    def "fdiv" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
+    def "fdiv" (recv, arg) {
         let to_f = |v: &RubyValue| -> Option<f64> {
             match v {
                 RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
@@ -708,13 +686,12 @@ ruby_class! {
                 _ => None,
             }
         };
-        match (to_f(recv), to_f(&args[0])) {
+        match (to_f(recv), to_f(arg)) {
             (Some(a), Some(b)) => Ok(RubyValue::Float(a / b)),
-            _ => Err(type_error!("{} can't be coerced into Integer", crate::builtins::class_name_of(&args[0]))),
+            _ => Err(type_error!("{} can't be coerced into Integer", crate::builtins::class_name_of(arg))),
         }
     }
-    def "abs" arity 0 | "magnitude" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "abs" | "magnitude" arity 0 (recv) {
         Ok(match recv {
             RubyValue::Int(i) if *i >= 0 => recv.clone(),
             _ => {
@@ -723,20 +700,16 @@ ruby_class! {
             }
         })
     }
-    def "even?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "even?" (recv) {
         Ok(RubyValue::Bool(to_bigint(recv).is_even()))
     }
-    def "odd?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "odd?" (recv) {
         Ok(RubyValue::Bool(to_bigint(recv).is_odd()))
     }
-    def "succ" arity 0 | "next" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "succ" | "next" arity 0 (recv) {
         Ok(int_add(recv, &RubyValue::Int(1)))
     }
-    def "pred" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "pred" (recv) {
         Ok(int_sub(recv, &RubyValue::Int(1)))
     }
     // ASCII only: our strings are UTF-8, so a 128..=255 chr would change
@@ -746,8 +719,7 @@ ruby_class! {
     // byte, US-ASCII for 0..=127 and ASCII-8BIT for 128..=255. With an
     // Encoding: the codepoint encoded in it (UTF-8 multibyte, or a single byte
     // for the byte encodings). Out-of-range is a RangeError.
-    def "chr"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "chr"(recv, arg?) {
         let RubyValue::Int(i) = recv else {
             return Err(range_error!("{} out of char range", recv.to_display_string()));
         };
@@ -755,7 +727,7 @@ ruby_class! {
         let range_err = || {
             range_error!("{i} out of char range")
         };
-        let (bytes, enc) = match args.first() {
+        let (bytes, enc) = match arg {
             None => {
                 if !(0..=255).contains(&i) {
                     return Err(range_err());
@@ -780,32 +752,26 @@ ruby_class! {
         };
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))
     }
-    def "ord" arity 0 | "to_i" arity 0 | "to_int" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "ord" | "to_i" arity 0 | "to_int" arity 0 (recv) {
         Ok(recv.clone())
     }
-    def "to_f" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_f" (recv) {
         Ok(RubyValue::Float(crate::builtins::numeric::num_to_f64_unchecked(recv)))
     }
     // An Integer is already exact, so `rationalize([eps])` ignores its
     // optional precision argument and equals `to_r`.
-    def "to_r" arity 0 | "rationalize"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "to_r" arity 0 | "rationalize"(recv, _arg?) {
         crate::builtins::rational::rational_new(to_bigint(recv), BigInt::from(1))
     }
-    def "numerator" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "numerator" (recv) {
         Ok(recv.clone())
     }
-    def "denominator" arity 0 (_recv, *args, &_block) {
-        arity!(args, 0);
+    def "denominator" (_recv) {
         Ok(RubyValue::Int(1))
     }
     // `to_s(base)` / bare `to_s`; `inspect` is the same rendering.
-    def "to_s" | "inspect"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let base = match args.first() {
+    def "to_s" | "inspect"(recv, arg?) {
+        let base = match arg {
             Some(RubyValue::Int(b)) if (2..=36).contains(b) => *b as u32,
             Some(RubyValue::Int(b)) => {
                 return Err(arg_error!("invalid radix {b}"))
@@ -819,9 +785,8 @@ ruby_class! {
             to_bigint(recv).to_str_radix(base),
         )))
     }
-    def "digits"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let base = match args.first() {
+    def "digits"(recv, arg?) {
+        let base = match arg {
             // Any Integer base is valid (a bignum base too, e.g. `255.digits(2**70)`);
             // only radix < 2 is rejected, and the error echoes the raw value.
             Some(v @ (RubyValue::Int(_) | RubyValue::BigInt(_))) => {
@@ -857,29 +822,26 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "gcd" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
+    def "gcd" (recv, arg) {
+        match arg {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
-                Ok(int_value(to_bigint(recv).gcd(&to_bigint(&args[0]))))
+                Ok(int_value(to_bigint(recv).gcd(&to_bigint(arg))))
             }
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "lcm" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
+    def "lcm" (recv, arg) {
+        match arg {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
-                Ok(int_value(to_bigint(recv).lcm(&to_bigint(&args[0]))))
+                Ok(int_value(to_bigint(recv).lcm(&to_bigint(arg))))
             }
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "gcdlcm" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        match &args[0] {
+    def "gcdlcm" (recv, arg) {
+        match arg {
             RubyValue::Int(_) | RubyValue::BigInt(_) => {
-                let (a, b) = (to_bigint(recv), to_bigint(&args[0]));
+                let (a, b) = (to_bigint(recv), to_bigint(arg));
                 Ok(RubyValue::Array(crate::array_new(vec![
                     int_value(a.gcd(&b)),
                     int_value(a.lcm(&b)),
@@ -888,15 +850,13 @@ ruby_class! {
             other => Err(coerce_error(other, "Integer")),
         }
     }
-    def "bit_length" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "bit_length" (recv) {
         let n = to_bigint(recv);
         // CRuby: bits needed excluding the sign (negative x measures ~x).
         let measured = if n.is_negative() { !n } else { n };
         Ok(RubyValue::Int(measured.bits() as i64))
     }
-    def "size" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "size" (recv) {
         // A value in the machine-word range answers `sizeof(long)` (8 here,
         // like CRuby's `fix_size`); a bignum reports its magnitude's byte
         // width, `ceil(bit_length(|n|) / 8)` (CRuby's `BIGSIZE`).
@@ -950,9 +910,8 @@ ruby_class! {
     }
     // Iteration primitives; blockless forms return Enumerators (Phase
     // 17.2). Counts beyond i64 are physically unrunnable -- loud.
-    def "times" arity 0 (recv, *args, &block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "times", args, block);
+    def "times" (recv, &block) {
+        let p = block_or_enum!(recv, "times", &[], block);
         let RubyValue::Int(n) = recv else {
             panic!("Integer#times receiver exceeds i64 (unrunnable iteration count)");
         };

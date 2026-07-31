@@ -139,29 +139,24 @@ ruby_module! {
 
     // CRuby exposes these as `CGI.escape` etc. (singleton methods on the module),
     // so they migrate as `def self.`. Arities match ruby 4.0.6.
-    def self."escape" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(out(percent_encode(&in_bytes(&args[0]), true)))
+    def self."escape" arity 1 (_recv, arg) {
+        Ok(out(percent_encode(&in_bytes(arg), true)))
     }
     def self."unescape" arity -1 (_recv, *args, &_block) {
         arity!(args, 1..=2); // (str[, encoding]) -- encoding ignored
         Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(&args[0]), true)).into_owned()))
     }
-    def self."escapeURIComponent" arity 1 | "escape_uri_component" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(out(percent_encode(&in_bytes(&args[0]), false)))
+    def self."escapeURIComponent" arity 1 | "escape_uri_component" arity 1 (_recv, arg) {
+        Ok(out(percent_encode(&in_bytes(arg), false)))
     }
-    def self."unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(&args[0]), false)).into_owned()))
+    def self."unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, arg1, _arg2?) {
+        Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(arg1), false)).into_owned()))
     }
-    def self."escapeHTML" arity 1 | "escape_html" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(out(html_escape(&in_bytes(&args[0]))))
+    def self."escapeHTML" arity 1 | "escape_html" arity 1 (_recv, arg) {
+        Ok(out(html_escape(&in_bytes(arg))))
     }
-    def self."unescapeHTML" arity 1 | "unescape_html" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let text = match &args[0] {
+    def self."unescapeHTML" arity 1 | "unescape_html" arity 1 (_recv, arg) {
+        let text = match arg {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => other.to_display_string(),
         };

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::wrap_address;
-use crate::builtins::{arg_error, arity, convert::to_rstr};
+use crate::builtins::{arg_error, convert::to_rstr};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue};
 use zeo_abi::FFI_DYNAMIC_LIBRARY_CLASS;
@@ -94,13 +94,12 @@ ruby_class! {
 
     // `open(libname, flags)` -- `nil` opens the process image. A failure is a
     // `LoadError` whose message is the raw `dlerror` text.
-    def self."open"(_recv, *args, &_b) {
-        arity!(args, 2);
-        let name = match &args[0] {
+    def self."open"(_recv, arg1, arg2) {
+        let name = match arg1 {
             RubyValue::Nil => None,
             v => Some(to_rstr(v)?.lock().to_string()),
         };
-        let flags = match &args[1] {
+        let flags = match arg2 {
             RubyValue::Int(i) => *i as libc::c_int,
             RubyValue::Nil => libc::RTLD_LAZY,
             _ => return Err(arg_error!("dlopen flags must be an Integer")),
@@ -129,17 +128,15 @@ ruby_class! {
 
     // `dlsym` the name; a missing symbol answers a NULL `Pointer` (the gem's
     // callers test `#null?`).
-    def "find_function" | "find_variable"(recv, *args, &_b) {
-        arity!(args, 1);
-        let name = to_rstr(&args[0])?.lock().to_string();
+    def "find_function" | "find_variable"(recv, arg) {
+        let name = to_rstr(arg)?.lock().to_string();
         let cname =
             CString::new(name).map_err(|_| arg_error!("string contains null byte"))?;
         let addr = unsafe { libc::dlsym(lib_of(recv).handle, cname.as_ptr()) };
         Ok(wrap_address(addr as usize))
     }
 
-    def "name"(recv, *args, &_b) {
-        arity!(args, 0);
+    def "name"(recv) {
         Ok(match &lib_of(recv).name {
             Some(n) => RubyValue::Str(crate::string_new(n.clone())),
             None => RubyValue::Nil,

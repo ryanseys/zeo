@@ -27,7 +27,7 @@ use crate::collections::array_new;
 use crate::{RubyValue, Symbol};
 
 use super::weak::{FINALIZERS, Finalizer, WeakTarget, object_id_i64, same_object};
-use super::{arg_error, arity, not_impl_error};
+use super::{arg_error, not_impl_error};
 use zeo_macros::ruby_module;
 
 /// The footprint of one `RubyValue` -- zeo's counterpart to CRuby's 40-byte
@@ -138,10 +138,9 @@ ruby_module! {
     // `define_finalizer(obj, callable)` or `define_finalizer(obj) { |id| }` --
     // best-effort: the callback runs when `obj` is seen collected (`GC.start`)
     // and unconditionally at program exit, receiving obj's id.
-    def self."define_finalizer"(_recv, *args, &block) {
-        arity!(args, 1..=2);
-        let obj = &args[0];
-        let callback = match (args.get(1), block) {
+    def self."define_finalizer" cfunc (_recv, arg1, arg2?, &block) {
+        let obj = arg1;
+        let callback = match (arg2, block) {
             (Some(cb), _) => {
                 if !crate::dispatch::responds_to(cb.class_id(), Symbol::intern("call"), false) {
                     return Err(arg_error!(
@@ -166,9 +165,8 @@ ruby_module! {
         Ok(RubyValue::Array(array_new(vec![RubyValue::Int(0), obj.clone()])))
     }
     // Remove every finalizer registered for `obj` (by identity). Returns obj.
-    def self."undefine_finalizer"(_recv, *args, &_block) {
-        arity!(args, 1);
-        let obj = &args[0];
+    def self."undefine_finalizer"(_recv, arg) {
+        let obj = arg;
         FINALIZERS.lock().retain(|f| match f.target.upgrade() {
             Some(t) => !same_object(&t, obj),
             None => true,
@@ -197,18 +195,16 @@ ruby_module! {
 
     // -- ext/objspace's introspection half ------------------------------
 
-    def self."memsize_of"(_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(RubyValue::Int(memsize_of(&args[0])))
+    def self."memsize_of"(_recv, arg) {
+        Ok(RubyValue::Int(memsize_of(arg)))
     }
     // Summing every live object's size needs the heap walk zeo can't do --
     // unlike `memsize_of`, whose answer is per-value and computable.
     def self."memsize_of_all"(_recv, *_args, &_block) {
         Err(not_impl_error!("ObjectSpace.memsize_of_all is not available (zeo has no heap enumeration)"))
     }
-    def self."reachable_objects_from"(_recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(reachable_objects_from(&args[0]))
+    def self."reachable_objects_from"(_recv, arg) {
+        Ok(reachable_objects_from(arg))
     }
     // The root set is CRuby's own VM state (machine stack, global table,
     // frame chain); zeo's roots are Rust locals a program can't enumerate.
@@ -262,24 +258,19 @@ ruby_module! {
     // for an object allocated outside a trace -- and since tracing can never
     // be on here, that is the whole truth rather than a stub. A program that
     // tries to turn tracing on hits the errors above first.
-    def self."allocation_sourcefile"(_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."allocation_sourcefile"(_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    def self."allocation_sourceline"(_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."allocation_sourceline"(_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    def self."allocation_class_path"(_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."allocation_class_path"(_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    def self."allocation_method_id"(_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."allocation_method_id"(_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    def self."allocation_generation"(_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."allocation_generation"(_recv, _arg) {
         Ok(RubyValue::Nil)
     }
     // `dump`'s whole output is a serialization of CRuby's object header --

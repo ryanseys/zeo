@@ -11,7 +11,7 @@
 use std::sync::{Arc, LazyLock};
 use zeo_macros::ruby_class;
 
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use crate::dispatch::{RObj, RubyObject};
 use crate::encoding::{self, EncodingId};
 use crate::{RubyValue, Signal};
@@ -122,23 +122,20 @@ fn resolve_name(name: &str) -> Result<EncodingId, Signal> {
 ruby_class! {
     Encoding = zeo_abi::ENCODING_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."list"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."list"(_recv) {
         let all = encoding::all().map(encoding_value).collect();
         Ok(RubyValue::Array(crate::array_new(all)))
     }
-    def self."name_list"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."name_list"(_recv) {
         let names = encoding::all()
             .flat_map(|id| id.names())
             .map(|n| RubyValue::Str(crate::string_new(n.to_string())))
             .collect();
         Ok(RubyValue::Array(crate::array_new(names)))
     }
-    def self."find"(_recv, *args, &_block) {
-        arity!(args, 1);
+    def self."find"(_recv, arg) {
         // `Encoding.find("internal")` returns nil when unset rather than raising.
-        if let RubyValue::Str(s) = &args[0] {
+        if let RubyValue::Str(s) = arg {
             if s.lock().to_utf8_lossy().eq_ignore_ascii_case("internal") {
                 return Ok(match encoding::default_internal() {
                     Some(id) => encoding_value(id),
@@ -146,53 +143,45 @@ ruby_class! {
                 });
             }
         }
-        Ok(encoding_value(arg_encoding(&args[0])?))
+        Ok(encoding_value(arg_encoding(arg)?))
     }
-    def self."compatible?"(_recv, *args, &_block) {
-        arity!(args, 2);
-        Ok(match compat_of(&args[0], &args[1]) {
+    def self."compatible?"(_recv, arg1, arg2) {
+        Ok(match compat_of(arg1, arg2) {
             Some(id) => encoding_value(id),
             None => RubyValue::Nil,
         })
     }
-    def self."default_external"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."default_external"(_recv) {
         Ok(encoding_value(encoding::default_external()))
     }
-    def self."default_external="(_recv, *args, &_block) {
-        arity!(args, 1);
-        let id = arg_encoding(&args[0])?;
+    def self."default_external="(_recv, arg) {
+        let id = arg_encoding(arg)?;
         encoding::set_default_external(id);
         Ok(encoding_value(id))
     }
-    def self."default_internal"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."default_internal"(_recv) {
         Ok(match encoding::default_internal() {
             Some(id) => encoding_value(id),
             None => RubyValue::Nil,
         })
     }
-    def self."default_internal="(_recv, *args, &_block) {
-        arity!(args, 1);
-        if matches!(args[0], RubyValue::Nil) {
+    def self."default_internal="(_recv, arg) {
+        if matches!( *arg, RubyValue::Nil) {
             encoding::set_default_internal(None);
             return Ok(RubyValue::Nil);
         }
-        let id = arg_encoding(&args[0])?;
+        let id = arg_encoding(arg)?;
         encoding::set_default_internal(Some(id));
         Ok(encoding_value(id))
     }
 
-    def "name" | "to_s"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "name" | "to_s"(recv) {
         Ok(RubyValue::Str(crate::string_new(recv_encoding(recv).name().to_string())))
     }
-    def "inspect"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect"(recv) {
         Ok(RubyValue::Str(crate::string_new(format!("#<Encoding:{}>", recv_encoding(recv).inspect_name()))))
     }
-    def "names"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "names"(recv) {
         let names = recv_encoding(recv)
             .names()
             .into_iter()
@@ -200,22 +189,18 @@ ruby_class! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(names)))
     }
-    def "ascii_compatible?"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "ascii_compatible?"(recv) {
         Ok(RubyValue::Bool(recv_encoding(recv).ascii_compatible()))
     }
-    def "dummy?"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "dummy?"(recv) {
         Ok(RubyValue::Bool(recv_encoding(recv).is_dummy()))
     }
-    def "==" | "eql?"(recv, *args, &_block) {
-        arity!(args, 1);
-        let same = matches!(&args[0], RubyValue::Object(o) if o.class_id() == ENCODING_CLASS)
-            && recv_encoding(recv) == recv_encoding(&args[0]);
+    def "==" | "eql?"(recv, other) {
+        let same = matches!(other, RubyValue::Object(o) if o.class_id() == ENCODING_CLASS)
+            && recv_encoding(recv) == recv_encoding(other);
         Ok(RubyValue::Bool(same))
     }
-    def "hash"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "hash"(recv) {
         Ok(RubyValue::Int(recv_encoding(recv).0 as i64))
     }
 }

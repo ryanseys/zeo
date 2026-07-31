@@ -444,17 +444,15 @@ ruby_class! {
     const EXCEPTION_OVERFLOW = RubyValue::Int(EXCEPTION_OVERFLOW as i64);
     const EXCEPTION_ZERODIVIDE = RubyValue::Int(EXCEPTION_ZERODIVIDE as i64);
 
-    def self."double_fig"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def self."double_fig"(_recv) {
         Ok(RubyValue::Int(DOUBLE_FIG))
     }
 
     // `BigDecimal.limit([n])`: reads (and optionally sets) the global
     // significant-digit cap; answers the PREVIOUS value on set.
-    def self."limit" arity -1 (_recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def self."limit" (_recv, arg?) {
         let current = arith::prec_limit();
-        match args.first() {
+        match arg {
             None | Some(RubyValue::Nil) => Ok(RubyValue::Int(current)),
             Some(v) => {
                 let n = convert::to_index(v)?;
@@ -470,11 +468,10 @@ ruby_class! {
     // `BigDecimal.mode(flag[, setting])`: ROUND_MODE (256) reads/sets the
     // rounding mode; an EXCEPTION_* mask reads/sets those bits, answering
     // the full flag set.
-    def self."mode" arity -1 (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let flag = convert::to_index(&args[0])?;
+    def self."mode" arity -1 (_recv, arg1, arg2?) {
+        let flag = convert::to_index(arg1)?;
         if flag == 256 {
-            match args.get(1) {
+            match arg2 {
                 None | Some(RubyValue::Nil) => Ok(RubyValue::Int(arith::round_mode() as i64)),
                 Some(v) => {
                     let m = rounding_mode_arg(v)?;
@@ -484,7 +481,7 @@ ruby_class! {
             }
         } else {
             let mask = flag as u32 & EXCEPTION_ALL;
-            match args.get(1) {
+            match arg2 {
                 None | Some(RubyValue::Nil) => Ok(RubyValue::Int(arith::exception_flags() as i64)),
                 Some(RubyValue::Bool(on)) => {
                     let flags = arith::exception_flags();
@@ -497,61 +494,52 @@ ruby_class! {
         }
     }
 
-    def self."save_exception_mode"(_recv, *args, &block) {
-        arity!(args, 0);
+    def self."save_exception_mode"(_recv, &block) {
         with_restored(
             || arith::exception_flags() as i64,
             |v| arith::set_exception_flags(v as u32),
             block.as_ref(),
         )
     }
-    def self."save_rounding_mode"(_recv, *args, &block) {
-        arity!(args, 0);
+    def self."save_rounding_mode"(_recv, &block) {
         with_restored(
             || arith::round_mode() as i64,
             |v| arith::set_round_mode(v as u32),
             block.as_ref(),
         )
     }
-    def self."save_limit"(_recv, *args, &block) {
-        arity!(args, 0);
+    def self."save_limit"(_recv, &block) {
         with_restored(arith::prec_limit, arith::set_prec_limit, block.as_ref())
     }
 
-    def self."interpret_loosely"(_recv, *args, &_block) {
-        arity!(args, 1);
-        let text = convert::to_rstr(&args[0])?.lock().to_utf8_lossy().into_owned();
+    def self."interpret_loosely"(_recv, arg) {
+        let text = convert::to_rstr(arg)?.lock().to_utf8_lossy().into_owned();
         Ok(wrap(value::parse(&text, false).expect("loose parsing is total")))
     }
 
-    def "+" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "+" (recv, other) {
         let a = recv_bd(recv);
-        checked(arith::limit_round(&arith::add(a, &rhs_bd(a, &args[0])?)))
+        checked(arith::limit_round(&arith::add(a, &rhs_bd(a, other)?)))
     }
-    def "-" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "-" (recv, other) {
         let a = recv_bd(recv);
-        checked(arith::limit_round(&arith::sub(a, &rhs_bd(a, &args[0])?)))
+        checked(arith::limit_round(&arith::sub(a, &rhs_bd(a, other)?)))
     }
-    def "*" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "*" (recv, other) {
         let a = recv_bd(recv);
-        checked(arith::limit_round(&arith::mult(a, &rhs_bd(a, &args[0])?)))
+        checked(arith::limit_round(&arith::mult(a, &rhs_bd(a, other)?)))
     }
-    def "/" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "/" (recv, other) {
         let a = recv_bd(recv);
-        div2(a, &rhs_bd(a, &args[0])?, 0)
+        div2(a, &rhs_bd(a, other)?, 0)
     }
 
     // `add`/`sub`/`mult`: the operator plus a REQUIRED result precision
     // (`0` keeps the exact/limit behaviour).
-    def "add" (recv, *args, &_block) {
-        arity!(args, 2);
+    def "add" (recv, arg1, arg2) {
         let a = recv_bd(recv);
-        let prec = precision_arg(&args[1])?;
-        let b = operand_bd(&args[0], coerce_prec(a, prec))?.ok_or_else(|| coerce_error(&args[0]))?;
+        let prec = precision_arg(arg2)?;
+        let b = operand_bd(arg1, coerce_prec(a, prec))?.ok_or_else(|| coerce_error(arg1))?;
         let sum = arith::add(a, &b);
         checked(if prec > 0 {
             arith::left_round(&sum, arith::round_mode(), prec)
@@ -559,11 +547,10 @@ ruby_class! {
             arith::limit_round(&sum)
         })
     }
-    def "sub" (recv, *args, &_block) {
-        arity!(args, 2);
+    def "sub" (recv, arg1, arg2) {
         let a = recv_bd(recv);
-        let prec = precision_arg(&args[1])?;
-        let b = operand_bd(&args[0], coerce_prec(a, prec))?.ok_or_else(|| coerce_error(&args[0]))?;
+        let prec = precision_arg(arg2)?;
+        let b = operand_bd(arg1, coerce_prec(a, prec))?.ok_or_else(|| coerce_error(arg1))?;
         let diff = arith::sub(a, &b);
         checked(if prec > 0 {
             arith::left_round(&diff, arith::round_mode(), prec)
@@ -571,11 +558,10 @@ ruby_class! {
             arith::limit_round(&diff)
         })
     }
-    def "mult" (recv, *args, &_block) {
-        arity!(args, 2);
+    def "mult" (recv, arg1, arg2) {
         let a = recv_bd(recv);
-        let prec = precision_arg(&args[1])?;
-        let b = operand_bd(&args[0], coerce_prec(a, prec))?.ok_or_else(|| coerce_error(&args[0]))?;
+        let prec = precision_arg(arg2)?;
+        let b = operand_bd(arg1, coerce_prec(a, prec))?.ok_or_else(|| coerce_error(arg1))?;
         let prod = arith::mult(a, &b);
         checked(if prec > 0 {
             arith::left_round(&prod, arith::round_mode(), prec)
@@ -586,52 +572,47 @@ ruby_class! {
 
     // `div(b)` is the Integer floor quotient; `div(b, prec)` divides to
     // `prec` digits (0 = the `/` rule).
-    def "div" arity -1 (recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "div" arity -1 (recv, arg1, arg2?) {
         let a = recv_bd(recv);
-        match args.get(1) {
+        match arg2 {
             None => {
-                let b = rhs_bd(a, &args[0])?;
+                let b = rhs_bd(a, arg1)?;
                 let (q, _) = do_divmod(a, &b, false)?;
                 to_integer(&q)
             }
             Some(p) => {
                 let prec = precision_arg(p)?;
-                let b = operand_bd(&args[0], coerce_prec(a, prec))?
-                    .ok_or_else(|| coerce_error(&args[0]))?;
+                let b = operand_bd(arg1, coerce_prec(a, prec))?
+                    .ok_or_else(|| coerce_error(arg1))?;
                 div2(a, &b, prec)
             }
         }
     }
-    def "quo" arity -1 (recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "quo" arity -1 (recv, arg1, arg2?) {
         let a = recv_bd(recv);
-        let prec = match args.get(1) {
+        let prec = match arg2 {
             None => 0,
             Some(p) => precision_arg(p)?,
         };
-        let b = operand_bd(&args[0], coerce_prec(a, prec))?
-            .ok_or_else(|| coerce_error(&args[0]))?;
+        let b = operand_bd(arg1, coerce_prec(a, prec))?
+            .ok_or_else(|| coerce_error(arg1))?;
         div2(a, &b, prec)
     }
-    def "%" | "modulo" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "%" | "modulo" (recv, other) {
         let a = recv_bd(recv);
-        let b = rhs_bd(a, &args[0])?;
+        let b = rhs_bd(a, other)?;
         let (_, m) = do_divmod(a, &b, false)?;
         checked(m)
     }
-    def "remainder" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "remainder" (recv, arg) {
         let a = recv_bd(recv);
-        let b = rhs_bd(a, &args[0])?;
+        let b = rhs_bd(a, arg)?;
         let (_, m) = do_divmod(a, &b, true)?;
         checked(m)
     }
-    def "divmod" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "divmod" (recv, arg) {
         let a = recv_bd(recv);
-        let b = rhs_bd(a, &args[0])?;
+        let b = rhs_bd(a, arg)?;
         let (q, m) = do_divmod(a, &b, false)?;
         let q = match q {
             BD::NaN | BD::Inf(_) => wrap(q),
@@ -640,43 +621,38 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(vec![q, checked(m)?])))
     }
 
-    def "-@" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "-@" (recv) {
         checked(recv_bd(recv).neg())
     }
-    def "+@" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "+@" (recv) {
         Ok(recv.clone())
     }
-    def "abs" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "abs" (recv) {
         checked(recv_bd(recv).abs())
     }
 
     // `fix`/`frac`: the integer and fraction parts, both BigDecimal.
-    def "fix" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "fix" (recv) {
         checked(arith::mid_round(recv_bd(recv), ROUND_DOWN, 0))
     }
-    def "frac" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "frac" (recv) {
         let bd = recv_bd(recv);
         let fix = arith::mid_round(bd, ROUND_DOWN, 0);
         checked(arith::sub(bd, &fix))
     }
 
-    def "floor" arity -1 (recv, *args, &_block) {
+    def "floor" (recv, *args, &_block) {
         positional(recv, args, ROUND_FLOOR)
     }
-    def "ceil" arity -1 (recv, *args, &_block) {
+    def "ceil" (recv, *args, &_block) {
         positional(recv, args, ROUND_CEILING)
     }
-    def "truncate" arity -1 (recv, *args, &_block) {
+    def "truncate" (recv, *args, &_block) {
         positional(recv, args, ROUND_DOWN)
     }
     // `round`: `()` and `(n < 1)` answer Integers; a `half:` hash or a
     // trailing mode symbol/flag overrides the global mode.
-    def "round" arity -1 (recv, *args, &_block) {
+    def "round" (recv, *args, &_block) {
         arity!(args, 0..=2);
         let bd = recv_bd(recv);
         let mut mode = arith::round_mode();
@@ -704,10 +680,9 @@ ruby_class! {
         }
     }
 
-    def "<=>" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "<=>" (recv, other) {
         let a = recv_bd(recv);
-        let Some(b) = operand_bd(&args[0], coerce_prec(a, 0))? else {
+        let Some(b) = operand_bd(other, coerce_prec(a, 0))? else {
             return Ok(RubyValue::Nil);
         };
         Ok(match arith::cmp(a, &b) {
@@ -715,10 +690,9 @@ ruby_class! {
             Some(o) => RubyValue::Int(o as i64),
         })
     }
-    def "==" | "===" | "eql?" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "==" | "===" | "eql?" (recv, other) {
         let a = recv_bd(recv);
-        let b = operand_bd(&args[0], coerce_prec(a, 0))?;
+        let b = operand_bd(other, coerce_prec(a, 0))?;
         Ok(RubyValue::Bool(matches!(
             b.and_then(|b| arith::cmp(a, &b)),
             Some(std::cmp::Ordering::Equal)
@@ -737,15 +711,13 @@ ruby_class! {
         compare(recv, args, |o| o != std::cmp::Ordering::Less)
     }
 
-    def "coerce" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "coerce" (recv, arg) {
         let a = recv_bd(recv);
-        let b = rhs_bd(a, &args[0])?;
+        let b = rhs_bd(a, arg)?;
         Ok(RubyValue::Array(crate::array_new(vec![wrap(b), recv.clone()])))
     }
 
-    def "hash" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "hash" (recv) {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         match recv_bd(recv) {
@@ -758,67 +730,53 @@ ruby_class! {
         Ok(RubyValue::Int(h.finish() as i64))
     }
 
-    def "zero?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "zero?" (recv) {
         Ok(RubyValue::Bool(recv_bd(recv).is_zero()))
     }
-    def "nonzero?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "nonzero?" (recv) {
         Ok(if recv_bd(recv).is_zero() { RubyValue::Nil } else { recv.clone() })
     }
-    def "positive?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "positive?" (recv) {
         Ok(RubyValue::Bool(matches!(recv_bd(recv), BD::Fin { sign: 1, .. } | BD::Inf(1))))
     }
-    def "negative?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "negative?" (recv) {
         Ok(RubyValue::Bool(matches!(recv_bd(recv), BD::Fin { sign: -1, .. } | BD::Inf(-1))))
     }
-    def "finite?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "finite?" (recv) {
         Ok(RubyValue::Bool(matches!(recv_bd(recv), BD::Fin { .. } | BD::Zero(_))))
     }
-    def "infinite?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "infinite?" (recv) {
         Ok(match recv_bd(recv) {
             BD::Inf(s) => RubyValue::Int(*s as i64),
             _ => RubyValue::Nil,
         })
     }
-    def "nan?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "nan?" (recv) {
         Ok(RubyValue::Bool(matches!(recv_bd(recv), BD::NaN)))
     }
-    def "sign" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "sign" (recv) {
         Ok(RubyValue::Int(recv_bd(recv).sign_code()))
     }
-    def "exponent" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "exponent" (recv) {
         Ok(RubyValue::Int(recv_bd(recv).exponent()))
     }
-    def "precision" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "precision" (recv) {
         Ok(RubyValue::Int(recv_bd(recv).precision()))
     }
-    def "scale" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "scale" (recv) {
         Ok(RubyValue::Int(recv_bd(recv).scale()))
     }
-    def "precision_scale" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "precision_scale" (recv) {
         let bd = recv_bd(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Int(bd.precision()),
             RubyValue::Int(bd.scale()),
         ])))
     }
-    def "n_significant_digits" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "n_significant_digits" (recv) {
         Ok(RubyValue::Int(recv_bd(recv).nsd() as i64))
     }
-    def "split" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "split" (recv) {
         let bd = recv_bd(recv);
         let (sign, digits, exp) = match bd {
             BD::NaN => (0i64, "NaN".to_string(), 0),
@@ -834,21 +792,17 @@ ruby_class! {
         ])))
     }
 
-    def "_decimal_shift" (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(wrap(recv_bd(recv).decimal_shift(convert::to_index(&args[0])?)))
+    def "_decimal_shift" (recv, arg) {
+        Ok(wrap(recv_bd(recv).decimal_shift(convert::to_index(arg)?)))
     }
 
-    def "to_i" | "to_int" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_i" | "to_int" (recv) {
         to_integer(recv_bd(recv))
     }
-    def "to_f" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_f" (recv) {
         Ok(RubyValue::Float(to_float(recv_bd(recv))))
     }
-    def "to_r" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_r" (recv) {
         match recv_bd(recv) {
             BD::Fin { sign, coeff, exp } => {
                 let l = value::ndigits(coeff) as i64;
@@ -870,22 +824,19 @@ ruby_class! {
             _ => Err(raise_error("FloatDomainError", value::to_s(recv_bd(recv), "").to_string())),
         }
     }
-    def "to_s" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let fmt = match args.first() {
+    def "to_s" (recv, arg?) {
+        let fmt = match arg {
             None => String::new(),
             Some(RubyValue::Int(n)) => n.to_string(),
             Some(v) => convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned(),
         };
         Ok(RubyValue::Str(crate::string_new(value::to_s(recv_bd(recv), &fmt))))
     }
-    def "inspect" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "inspect" (recv) {
         Ok(RubyValue::Str(crate::string_new(value::to_s(recv_bd(recv), ""))))
     }
 
-    def "clone" | "dup" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "clone" | "dup" (recv) {
         // Frozen value semantics: a copy IS the value.
         Ok(recv.clone())
     }

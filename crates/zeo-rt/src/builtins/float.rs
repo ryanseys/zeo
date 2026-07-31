@@ -43,51 +43,43 @@ ruby_class! {
     def "/" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_div, "/") }
     def "%" arity 1 | "modulo" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mod, "%") }
     def "**" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_pow, "**") }
-    def "-@" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "-@" (recv) {
         match recv {
             RubyValue::Float(f) => Ok(RubyValue::Float(-f)),
             _ => unreachable!("Float table row dispatched on a non-Float receiver"),
         }
     }
-    def "+@" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "+@" (recv) {
         Ok(recv.clone())
     }
-    def "<=>" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        Ok(match crate::builtins::numeric::num_cmp(recv, &args[0]) {
+    def "<=>" (recv, other) {
+        Ok(match crate::builtins::numeric::num_cmp(recv, other) {
             Some(Some(c)) => RubyValue::Int(c),
             Some(None) => RubyValue::Nil,
             // Outside the native tower: the coerce protocol decides
             // (`1.5 <=> BigDecimal("2")`), CRuby's rb_num_coerce_cmp.
-            None => crate::builtins::numeric::coerce_cmp(recv, &args[0])?,
+            None => crate::builtins::numeric::coerce_cmp(recv, other)?,
         })
     }
-    def "==" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        if recv.rb_eq(&args[0]) {
+    def "==" (recv, other) {
+        if recv.rb_eq(other) {
             return Ok(RubyValue::Bool(true));
         }
         // A non-tower operand answers for itself (`y == x`), CRuby's
         // num_equal -- how `1.5 == BigDecimal("1.5")` holds.
-        crate::builtins::numeric::reverse_eq(recv, &args[0])
+        crate::builtins::numeric::reverse_eq(recv, other)
     }
-    def "abs" arity 0 | "magnitude" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "abs" | "magnitude" arity 0 (recv) {
         Ok(RubyValue::Float(recv_f64(recv).abs()))
     }
-    def "nan?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "nan?" (recv) {
         Ok(RubyValue::Bool(recv_f64(recv).is_nan()))
     }
-    def "finite?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "finite?" (recv) {
         Ok(RubyValue::Bool(recv_f64(recv).is_finite()))
     }
     // 1 / -1 / nil, real Ruby's exact shape.
-    def "infinite?" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "infinite?" (recv) {
         let f = recv_f64(recv);
         Ok(if f == f64::INFINITY {
             RubyValue::Int(1)
@@ -98,56 +90,46 @@ ruby_class! {
         })
     }
     // The adjacent representable doubles toward +/-infinity.
-    def "next_float" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "next_float" (recv) {
         Ok(RubyValue::Float(recv_f64(recv).next_up()))
     }
-    def "prev_float" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "prev_float" (recv) {
         Ok(RubyValue::Float(recv_f64(recv).next_down()))
     }
     // `coerce(other)` promotes both operands to Float (`[Float(other), self]`).
-    def "coerce" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let other = numeric_f64_arg(&args[0], "can't coerce")?;
+    def "coerce" (recv, arg) {
+        let other = numeric_f64_arg(arg, "can't coerce")?;
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Float(other),
             recv.clone(),
         ])))
     }
     // `div` -- floored division returning an Integer (`7.0.div(2) == 3`).
-    def "div" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let d = numeric_f64_arg(&args[0], "can't coerce")?;
+    def "div" (recv, arg) {
+        let d = numeric_f64_arg(arg, "can't coerce")?;
         float_to_integer((recv_f64(recv) / d).floor())
     }
     // `n.i` -- the pure-imaginary Complex `0 + n*i`.
-    def "i" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "i" (recv) {
         crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
     }
-    def "to_f" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_f" (recv) {
         Ok(recv.clone())
     }
-    def "to_i" arity 0 | "to_int" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_i" | "to_int" arity 0 (recv) {
         float_to_integer(recv_f64(recv).trunc())
     }
     // EXACT: every finite double is a dyadic rational (mantissa * 2^exp).
-    def "to_r" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_r" (recv) {
         float_to_rational(recv_f64(recv))
     }
     // `rationalize([eps])` -- the SIMPLEST rational within half a ULP of this
     // double (no arg), or within `eps` (with arg). Port of CRuby's
     // `float_rationalize` (numeric.c) + `nurat_rationalize_internal`.
-    def "rationalize" (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        float_rationalize(recv_f64(recv), args.first())
+    def "rationalize" (recv, arg?) {
+        float_rationalize(recv_f64(recv), arg)
     }
-    def "numerator" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "numerator" (recv) {
         let f = recv_f64(recv);
         // Infinity/NaN have no rational form, so CRuby skips the conversion
         // and returns the float itself (its denominator is 1) rather than
@@ -160,8 +142,7 @@ ruby_class! {
             other => Ok(other),
         }
     }
-    def "denominator" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "denominator" (recv) {
         let f = recv_f64(recv);
         if !f.is_finite() {
             return Ok(RubyValue::Int(1));

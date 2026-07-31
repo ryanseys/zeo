@@ -2,7 +2,7 @@
 //! Ruby half, nested here by reopening this module.
 
 use super::{bin_str, fill_random};
-use crate::builtins::{arg_error, arity};
+use crate::builtins::arg_error;
 use zeo_macros::ruby_module;
 
 ruby_module! {
@@ -10,9 +10,8 @@ ruby_module! {
 
     // `OpenSSL::Random.random_bytes(n)` -- n cryptographically random bytes
     // (ASCII-8BIT), drawn from the OS CSPRNG.
-    def self."random_bytes" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        let n = &crate::builtins::convert::to_index(&args[0])?;
+    def self."random_bytes" (_recv, arg) {
+        let n = &crate::builtins::convert::to_index(arg)?;
         if *n < 0 {
             return Err(arg_error!("negative string size (or size too big)"));
         }

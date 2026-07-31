@@ -36,8 +36,7 @@ ruby_class! {
     // `#accept` -- block for a client, answering a connected `TCPSocket`. The
     // blocking accept(2) is Gvl-released so a peer about to connect isn't
     // stalled by an armed Gvl holder parked here.
-    def "accept"(recv, *args, &_block) {
-        arity!(args, 0);
+    def "accept"(recv) {
         let fd = fd_of(recv)?;
         // SAFETY: accept(2) on an owned listening fd; the peer address is
         // discarded here (available via the returned socket's #peeraddr).
@@ -64,10 +63,9 @@ ruby_class! {
     }
     // `#listen(backlog)` -- a std-bound listener already listens, so this
     // re-applies the backlog and answers 0.
-    def "listen"(recv, *args, &_block) {
-        arity!(args, 1);
+    def "listen"(recv, arg) {
         let fd = fd_of(recv)?;
-        let backlog = crate::builtins::convert::to_index(&args[0])? as libc::c_int;
+        let backlog = crate::builtins::convert::to_index(arg)? as libc::c_int;
         // SAFETY: listen(2) on an owned fd.
         if unsafe { libc::listen(fd, backlog) } != 0 {
             return Err(errno_error("listen(2)"));

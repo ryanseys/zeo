@@ -7,7 +7,7 @@
 //! decide whether the answer is data or the end of the member.
 
 use super::gzip::{RGzipFile, gz_error, gz_of, open};
-use crate::builtins::{arity, convert};
+use crate::builtins::convert;
 use crate::dispatch::send_value;
 use crate::{RubyValue, Signal, Symbol};
 use std::sync::Arc;
@@ -16,37 +16,33 @@ use zeo_macros::ruby_class;
 ruby_class! {
     GzipReader = zeo_abi::ZLIB_GZIP_READER_CLASS < zeo_abi::ZLIB_GZIP_FILE_CLASS;
 
-    def self."new" arity -1 (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        reader(args[0].clone(), false)
+    def self."new" arity -1 (_recv, arg1, _arg2?) {
+        reader((*arg1).clone(), false)
     }
 
     // `GzipReader.open(path) { |gz| … }` -- opens the file itself, so `#close`
     // closes it, and closes it even if the block raises.
-    def self."open" arity -1 (_recv, *args, &block) {
-        arity!(args, 1..=2);
+    def self."open" arity -1 (_recv, arg1, _arg2?, &block) {
         let file = send_value(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
             Symbol::intern("new"),
-            &[args[0].clone(), RubyValue::Str(crate::string_new("rb".to_string()))],
+            &[(*arg1).clone(), RubyValue::Str(crate::string_new("rb".to_string()))],
             None,
         )?;
         let gz = reader(file, true)?;
         with_block(gz, block)
     }
-    def self."wrap" arity -1 (_recv, *args, &block) {
-        arity!(args, 1..=2);
-        let gz = reader(args[0].clone(), false)?;
+    def self."wrap" arity -1 (_recv, arg1, _arg2?, &block) {
+        let gz = reader((*arg1).clone(), false)?;
         with_block(gz, block)
     }
 
     // `GzipReader.zcat(io)` -- every member in the stream, concatenated.
     // Where `read` stops at the first footer, this picks the next member up
     // out of what followed it.
-    def self."zcat" arity -1 (_recv, *args, &block) {
-        arity!(args, 1..=2);
+    def self."zcat" arity -1 (_recv, arg1, _arg2?, &block) {
         let mut all = Vec::new();
-        let mut rest = read_everything(&args[0])?;
+        let mut rest = read_everything(arg1)?;
         loop {
             let (bytes, _, unused) = super::codec::gunzip_bytes(&rest)?;
             all.extend_from_slice(&bytes);
@@ -62,13 +58,12 @@ ruby_class! {
     // `#read` with no length answers the rest of the member as TEXT (the
     // external encoding); with one it answers raw bytes, and nil at the end.
     // That split is CRuby's, not an oversight.
-    def "read" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
+    def "read" (recv, arg1?, arg2?) {
         let st = &mut *open(recv)?;
-        match args.first() {
+        match arg1 {
             None | Some(RubyValue::Nil) => {
                 let bytes = st.read_all()?.unwrap_or_default();
-                Ok(into_buffer(args.get(1), super::text_str(bytes)))
+                Ok(into_buffer(arg2, super::text_str(bytes)))
             }
             Some(v) => {
                 let want = convert::to_index(v)?.max(0) as usize;
@@ -78,71 +73,60 @@ ruby_class! {
                 }
                 match st.read_n(want)? {
                     None => Ok(RubyValue::Nil),
-                    Some(bytes) => Ok(into_buffer(args.get(1), super::bin_str(bytes))),
+                    Some(bytes) => Ok(into_buffer(arg2, super::bin_str(bytes))),
                 }
             }
         }
     }
     // `#readpartial` hands back whatever is already decoded rather than
     // waiting for `len` bytes, and reports the end of the member as EOFError.
-    def "readpartial" arity -1 (recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let want = convert::to_index(&args[0])?.max(0) as usize;
+    def "readpartial" arity -1 (recv, arg1, arg2?) {
+        let want = convert::to_index(arg1)?.max(0) as usize;
         let st = &mut *open(recv)?;
         match st.read_partial(want)? {
             None => Err(crate::builtins::eof_error!("end of file reached")),
-            Some(bytes) => Ok(into_buffer(args.get(1), super::bin_str(bytes))),
+            Some(bytes) => Ok(into_buffer(arg2, super::bin_str(bytes))),
         }
     }
 
     // The line surface. `gets` answers nil at the end, `readline` raises.
-    def "gets" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
-        Ok(read_line(recv, args.first())?.unwrap_or(RubyValue::Nil))
+    def "gets" (recv, arg1?, _arg2?) {
+        Ok(read_line(recv, arg1)?.unwrap_or(RubyValue::Nil))
     }
-    def "readline" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
-        read_line(recv, args.first())?
+    def "readline" (recv, arg1?, _arg2?) {
+        read_line(recv, arg1)?
             .ok_or_else(|| crate::builtins::eof_error!("end of file reached"))
     }
-    def "readlines" arity -1 (recv, *args, &_block) {
-        arity!(args, 0..=2);
+    def "readlines" (recv, arg1?, _arg2?) {
         let mut lines = Vec::new();
-        while let Some(line) = read_line(recv, args.first())? {
+        while let Some(line) = read_line(recv, arg1)? {
             lines.push(line);
         }
         Ok(RubyValue::Array(crate::array_new(lines)))
     }
     // `each`/`each_line` are the same method, and are what `Enumerable` walks.
-    def "each" arity -1 (recv, *args, &block) {
-        arity!(args, 0..=2);
-        each_line(recv, args.first(), block)
+    def "each" (recv, arg1?, _arg2?, &block) {
+        each_line(recv, arg1, block)
     }
-    def "each_line" arity -1 (recv, *args, &block) {
-        arity!(args, 0..=2);
-        each_line(recv, args.first(), block)
+    def "each_line" (recv, arg1?, _arg2?, &block) {
+        each_line(recv, arg1, block)
     }
 
     // Single characters and bytes. `getc`/`getbyte` answer nil at the end,
     // `readchar`/`readbyte` raise.
-    def "getc" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getc" (recv) {
         Ok(next_char(recv)?.unwrap_or(RubyValue::Nil))
     }
-    def "readchar" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "readchar" (recv) {
         next_char(recv)?.ok_or_else(|| crate::builtins::eof_error!("end of file reached"))
     }
-    def "getbyte" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "getbyte" (recv) {
         Ok(next_byte(recv)?.unwrap_or(RubyValue::Nil))
     }
-    def "readbyte" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "readbyte" (recv) {
         next_byte(recv)?.ok_or_else(|| crate::builtins::eof_error!("end of file reached"))
     }
-    def "each_byte" (recv, *args, &block) {
-        arity!(args, 0);
+    def "each_byte" (recv, &block) {
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_byte", &[]));
         };
@@ -151,8 +135,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "each_char" (recv, *args, &block) {
-        arity!(args, 0);
+    def "each_char" (recv, &block) {
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_char", &[]));
         };
@@ -161,14 +144,12 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "ungetc" (recv, *args, &_block) {
-        arity!(args, 1);
-        open(recv)?.unread(&to_bytes(&args[0])?)?;
+    def "ungetc" (recv, arg) {
+        open(recv)?.unread(&to_bytes(arg)?)?;
         Ok(RubyValue::Nil)
     }
-    def "ungetbyte" (recv, *args, &_block) {
-        arity!(args, 1);
-        let byte = match &args[0] {
+    def "ungetbyte" (recv, arg) {
+        let byte = match arg {
             RubyValue::Int(n) => vec![*n as u8],
             other => to_bytes(other)?,
         };
@@ -177,34 +158,27 @@ ruby_class! {
     }
 
     // Position and state.
-    def "pos" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "pos" (recv) {
         Ok(RubyValue::Int(open(recv)?.position()?))
     }
-    def "tell" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "tell" (recv) {
         Ok(RubyValue::Int(open(recv)?.position()?))
     }
-    def "eof?" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "eof?" (recv) {
         Ok(RubyValue::Bool(open(recv)?.at_eof()?))
     }
-    def "eof" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "eof" (recv) {
         Ok(RubyValue::Bool(open(recv)?.at_eof()?))
     }
-    def "lineno" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "lineno" (recv) {
         Ok(RubyValue::Int(open(recv)?.read_state()?.lineno))
     }
-    def "lineno=" (recv, *args, &_block) {
-        arity!(args, 1);
-        open(recv)?.read_state()?.lineno = convert::to_index(&args[0])?;
-        Ok(args[0].clone())
+    def "lineno=" (recv, arg) {
+        open(recv)?.read_state()?.lineno = convert::to_index(arg)?;
+        Ok((*arg).clone())
     }
     // Bytes that followed the member's footer -- nil until it has been read.
-    def "unused" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "unused" (recv) {
         Ok(match open(recv)?.unused()? {
             None => RubyValue::Nil,
             Some(bytes) => super::bin_str(bytes),
@@ -212,16 +186,14 @@ ruby_class! {
     }
     // What `read`/`gets` tag their answers with -- the process's external
     // encoding, as CRuby's does.
-    def "external_encoding" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "external_encoding" (recv) {
         drop(open(recv)?);
         Ok(crate::builtins::encoding::encoding_value(crate::encoding::UTF_8))
     }
 
     // Start the member over. Only a seekable IO can do this, since it means
     // rewinding the compressed stream and re-reading the header.
-    def "rewind" (recv, *args, &_block) {
-        arity!(args, 0);
+    def "rewind" (recv) {
         open(recv)?.rewind()?;
         Ok(RubyValue::Int(0))
     }

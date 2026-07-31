@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::builtins::{arity, type_error};
+use crate::builtins::type_error;
 use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ClassId, THREAD_GROUP_CLASS};
@@ -55,26 +55,23 @@ ruby_class! {
     const Default = default_group();
 
     // Nothing ever encloses the default group.
-    def "enclosed?"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def "enclosed?"(_recv) {
         Ok(RubyValue::Bool(false))
     }
     // `ThreadGroup::Default.add(thread)` -- every thread is in Default
     // already, so a valid call is a no-op answering the group; a non-Thread
     // argument is CRuby's TypeError, with its odd internal "VM/thread"
     // phrasing kept verbatim (oracle-verified).
-    def "add"(recv, *args, &_block) {
-        arity!(args, 1);
-        if !matches!(&args[0], RubyValue::Thread(_)) {
+    def "add"(recv, arg) {
+        if !matches!(arg, RubyValue::Thread(_)) {
             return Err(type_error!(
                 "wrong argument type {} (expected VM/thread)",
-                crate::builtins::class_name_of(&args[0])
+                crate::builtins::class_name_of(arg)
             ));
         }
         Ok(recv.clone())
     }
-    def "list"(_recv, *args, &_block) {
-        arity!(args, 0);
+    def "list"(_recv) {
         crate::builtins::thread::lookup_class("list").expect("Thread.list is registered")(
             &RubyValue::Class(zeo_abi::THREAD_CLASS),
             &[],

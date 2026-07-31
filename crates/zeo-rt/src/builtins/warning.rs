@@ -37,28 +37,25 @@ fn category_flag(v: &RubyValue) -> Result<&'static AtomicBool, Signal> {
 ruby_module! {
     Warning = zeo_abi::WARNING_MODULE;
 
-    def self."[]"(_recv, *args, &_blk) {
-        crate::builtins::arity!(args, 1);
-        Ok(RubyValue::Bool(category_flag(&args[0])?.load(Ordering::Relaxed)))
+    def self."[]"(_recv, arg) {
+        Ok(RubyValue::Bool(category_flag(arg)?.load(Ordering::Relaxed)))
     }
-    def self."[]="(_recv, *args, &_blk) {
-        crate::builtins::arity!(args, 2);
-        let on = args[1].truthy();
-        category_flag(&args[0])?.store(on, Ordering::Relaxed);
-        Ok(args[1].clone())
+    def self."[]="(_recv, arg1, arg2) {
+        let on = (*arg2).truthy();
+        category_flag(arg1)?.store(on, Ordering::Relaxed);
+        Ok((*arg2).clone())
     }
     // `Warning.warn(msg)` -- writes `msg` to stderr AS-IS (no added newline;
     // `Kernel#warn` is the one that appends). The optional `category:`
     // keyword arrives as a trailing Hash and only gates on its flag.
-    def self."warn"(_recv, *args, &_blk) {
-        crate::builtins::arity!(args, 1..=2);
-        if let Some(RubyValue::Hash(h)) = args.get(1) {
+    def self."warn" cfunc (_recv, arg1, arg2?) {
+        if let Some(RubyValue::Hash(h)) = arg2 {
             let cat = crate::hash_get(h, &RubyValue::Symbol(Symbol::intern("category")));
             if !matches!(cat, RubyValue::Nil) && !category_flag(&cat)?.load(Ordering::Relaxed) {
                 return Ok(RubyValue::Nil);
             }
         }
-        let msg = args[0].try_display_string()?;
+        let msg = (*arg1).try_display_string()?;
         eprint!("{msg}");
         Ok(RubyValue::Nil)
     }
