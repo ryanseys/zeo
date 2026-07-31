@@ -399,6 +399,9 @@ macro_rules! ruby_class {
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 self.__ivars.remove_named(Self::__IVAR_NAMES, name)
             }
+            fn take_linked_ivars(&self, out: &mut Vec<$crate::RubyValue>) {
+                self.__ivars.take_linked(out);
+            }
             // `Kernel#dup`/`#clone`'s shallow copy (see the trait method's
             // docs): fresh struct, each ivar's CURRENT value cloned (a
             // handle clone -- nested objects stay shared), frozen flag

@@ -111,6 +111,15 @@ pub trait RubyObject: Any + Send + Sync {
         None
     }
 
+    /// Move every ivar holding another OBJECT into `out`, leaving `nil` behind.
+    ///
+    /// Only [`crate::IvarCell`]'s release path calls this, and only on an
+    /// object it is about to drop as the last reference: taking the links
+    /// first is what lets a long chain be released iteratively instead of one
+    /// stack frame per link. The default keeps the trait total for the
+    /// runtime's own hand-written objects, which hold no user ivars.
+    fn take_linked_ivars(&self, _out: &mut Vec<RubyValue>) {}
+
     /// `Kernel#dup`/`#clone`'s per-class shallow copy: a fresh
     /// instance of the same concrete struct with every ivar's CURRENT value
     /// cloned into it (a `RubyValue` clone is a handle clone, so nested

@@ -63,6 +63,7 @@ impl<const N: usize> Inner<N> {
     /// wrap. Renumbering preserves relative order, so what callers observe
     /// never changes -- an object would need 255 assignments to DISTINCT ivars
     /// to reach this at all.
+    #[inline(always)]
     fn stamp(&mut self) -> Seq {
         if self.next_seq == Seq::MAX {
             self.compact();
@@ -72,6 +73,8 @@ impl<const N: usize> Inner<N> {
         s
     }
 
+    #[cold]
+    #[inline(never)]
     fn compact(&mut self) {
         let mut live: Vec<Seq> = self.seq.iter().copied().filter(|s| *s != 0).collect();
         if let Some(inv) = &self.invented {
@@ -146,7 +149,60 @@ impl<const N: usize> Drop for Held<'_, N> {
     }
 }
 
+/// Releasing a long chain of objects ITERATIVELY, so its length costs heap
+/// rather than stack.
+///
+/// Dropping the head of a 100,000-node linked list drops its `@nxt`, which
+/// drops the next node, which drops ITS `@nxt` -- one stack frame per node, and
+/// the thread's stack runs out long before the list does.
+///
+/// The fix is for the FIRST object released to do all the work. It moves its
+/// object-valued ivars into a worklist and drains it; before releasing each
+/// entry it takes THAT object's links too, so by the time the entry is dropped
+/// it has nothing left to chain through and its own release does nothing. The
+/// recursion is two frames deep no matter how long the chain is, and the whole
+/// chain shares one worklist allocation.
+///
+/// An object holding no other object -- the overwhelmingly common one -- pays a
+/// scan of its slots and nothing else.
+impl<const N: usize> Drop for IvarCell<N> {
+    #[inline]
+    fn drop(&mut self) {
+        let inner = self.inner.get_mut();
+        if inner.invented.is_none() && !inner.vals.iter().any(|v| v.links_to_object()) {
+            return;
+        }
+        self.release_chain();
+    }
+}
+
 impl<const N: usize> IvarCell<N> {
+    #[cold]
+    #[inline(never)]
+    fn release_chain(&mut self) {
+        let inner = self.inner.get_mut();
+        let mut work: Vec<RubyValue> = Vec::new();
+        for v in inner.vals.iter_mut() {
+            if v.links_to_object() {
+                work.push(std::mem::replace(v, RubyValue::Nil));
+            }
+        }
+        if let Some(invented) = inner.invented.take() {
+            work.extend(invented.into_iter().map(|i| i.value));
+        }
+        while let Some(v) = work.pop() {
+            if let RubyValue::Object(o) = &v {
+                // Sole owner: dropping `v` is what frees the object, so take
+                // its links first and its own release becomes the cheap scan.
+                if std::sync::Arc::strong_count(o) == 1 {
+                    o.take_linked_ivars(&mut work);
+                }
+            }
+            drop(v);
+        }
+    }
+
+    #[inline]
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Inner {
@@ -186,32 +242,52 @@ impl<const N: usize> IvarCell<N> {
     }
 
     #[cfg(not(debug_assertions))]
-    #[inline]
+    #[inline(always)]
     fn held(&self) -> parking_lot::MutexGuard<'_, Inner<N>> {
         self.inner.lock()
     }
 
+    /// Move every slot holding another object into `out`, leaving `nil` --
+    /// [`crate::RubyObject::take_linked_ivars`]' storage half.
+    pub fn take_linked(&self, out: &mut Vec<RubyValue>) {
+        let mut inner = self.held();
+        for v in inner.vals.iter_mut() {
+            if v.links_to_object() {
+                out.push(std::mem::replace(v, RubyValue::Nil));
+            }
+        }
+        if let Some(invented) = inner.invented.take() {
+            out.extend(invented.into_iter().map(|i| i.value));
+        }
+    }
+
     /// A declared slot's value -- `nil` for one never assigned, as in Ruby.
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, index: usize) -> RubyValue {
         self.held().vals[index].clone()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn set(&self, index: usize, value: RubyValue) {
         let mut inner = self.held();
         if inner.seq[index] == 0 {
             inner.seq[index] = inner.stamp();
         }
-        let old = std::mem::replace(&mut inner.vals[index], value);
-        // Released before the replaced value drops. No zeo `Drop` runs Ruby
-        // code today -- finalizers are queued and run at `GC.start`/exit -- and
-        // ordering it this way keeps that from being load-bearing.
-        drop(inner);
-        drop(old);
+        inner.vals[index] = value;
     }
 
+    /// The first assignment to every slot at once, as `initialize` makes it:
+    /// one lock instead of one per ivar, and no per-slot "has this been
+    /// assigned yet" branch, because a fresh object's answer is always no.
     #[inline]
+    pub fn init(&self, values: [RubyValue; N]) {
+        let mut inner = self.held();
+        inner.vals = values;
+        inner.seq = std::array::from_fn(|i| i as Seq + 1);
+        inner.next_seq = N as Seq + 1;
+    }
+
+    #[inline(always)]
     pub fn defined(&self, index: usize) -> bool {
         self.held().seq[index] != 0
     }

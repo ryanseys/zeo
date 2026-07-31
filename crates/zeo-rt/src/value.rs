@@ -212,6 +212,13 @@ pub(crate) fn default_object_repr(
 }
 
 impl RubyValue {
+    /// Whether this value is another object, and so a link a release can chain
+    /// through -- see [`crate::IvarCell`]'s `Drop`.
+    #[inline]
+    pub(crate) fn links_to_object(&self) -> bool {
+        matches!(self, RubyValue::Object(_))
+    }
+
     /// Mirrors `sp_*_to_s`/CRuby's `Kernel#puts` argument stringification.
     ///
     /// INFALLIBLE wrapper over [`Self::try_display_string`] for the paths
