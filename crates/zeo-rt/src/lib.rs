@@ -91,7 +91,7 @@ pub use dispatch::{
     RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn,
     YIELDER_CLASS, bind_dynamic_kwargs, call_singleton_super_target, class_is_module, class_name,
     coerce_raise_arg, coerce_raise_arg_with_message, construct_by_class_id, describe_receiver,
-    downcast_robj, downcast_robj_ref, ivar_frozen_error,
+    CallSite, downcast_robj, downcast_robj_ref, ivar_frozen_error, send_value_cached,
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
     rescue_matches_any,
     ivar_defined, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,

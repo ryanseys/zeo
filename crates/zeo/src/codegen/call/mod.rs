@@ -3550,13 +3550,31 @@ fn dispatch(
         // Keyword args ride as one trailing Hash (the G2 convention).
         let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
         let block_value = emit_block_option(cx, block, block_arg);
-        let dyn_call = quote! {
-            zeo_rt::send_value_in(#__bx,
-                &(#recv_expr),
-                #name_expr,
-                &[#(#arg_exprs,)* #(#kw_hash,)*],
-                #block_value,
-            )
+        // THE Path-2 site: a `Poly` receiver -- an untyped local, a method
+        // parameter, an ancestor's return -- is what `bm_rbtree`, `bm_splay`
+        // and `bm_linked_list` actually hold, and a third of their time was
+        // resolving the same class to the same method on every call. Per-site
+        // inline cache; see `zeo_rt::CallSite`. A SHARED body gets none -- see
+        // `Ctx::shared_body`.
+        let dyn_call = if cx.shared_body {
+            quote! {
+                zeo_rt::send_value_in(#__bx,
+                    &(#recv_expr),
+                    #name_expr,
+                    &[#(#arg_exprs,)* #(#kw_hash,)*],
+                    #block_value,
+                )
+            }
+        } else {
+            let site = crate::codegen::pooled_call_site();
+            quote! {
+                zeo_rt::send_value_cached(#site, #__bx,
+                    &(#recv_expr),
+                    #name_expr,
+                    &[#(#arg_exprs,)* #(#kw_hash,)*],
+                    #block_value,
+                )
+            }
         };
         return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
     }
@@ -3623,8 +3641,12 @@ fn dispatch(
     // Keyword args ride as one trailing Hash (the G2 convention).
     let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
     let block_value = emit_block_option(cx, block, block_arg);
+    // The general dynamic dispatch, and the one the object-graph benchmarks
+    // spend a third of their time in -- so it carries a per-site inline cache
+    // (`zeo_rt::CallSite`). Every other dynamic entry point stays uncached.
+    let site = crate::codegen::pooled_call_site();
     quote! {
-        zeo_rt::catch_break(zeo_rt::send_value_in(#__bx,
+        zeo_rt::catch_break(zeo_rt::send_value_cached(#site, #__bx,
             &#recv_boxed,
             #name_expr,
             &[#(#arg_exprs,)* #(#kw_hash,)*],

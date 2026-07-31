@@ -209,12 +209,23 @@ struct Ctx<'a> {
     /// class that lays `current_class`'s ivars out at the SAME slots -- true
     /// only for a body `codegen::share` emits once for a whole hierarchy.
     ///
+    /// [`Ctx::shared_body`] says the same thing more directly; this one is
+    /// about where the ivars live.
+    ///
     /// Without it a dynamic self reaches ivars by name, a linear scan of the
     /// class's name list. With it the emitted index is the same compile-time
     /// constant the class's own body would have used, because
     /// `analyze::mro` lays slots out parent-first and `share` shares nothing
     /// whose members disagree on the number.
     self_slots: bool,
+    /// Whether this body is emitted ONCE for a whole group of classes
+    /// (`codegen::share`) rather than per class.
+    ///
+    /// Two things turn off inside one. A per-site inline cache would serve
+    /// every class in the group from one slot and thrash, and -- worse -- the
+    /// site INDEX differs between two members, so the group's emissions would
+    /// no longer be token-identical and nothing would share at all.
+    shared_body: bool,
     /// `Some` exactly while emitting the body of a RUNTIME-defined method -- a
     /// `def`/`define_method` installed inside a `Class.new`/`Struct.new`/
     /// `Data.define` block, whose class is minted at runtime and so has no
@@ -385,6 +396,10 @@ impl<'a> Ctx<'a> {
             // receiver, so no slot layout is known here even when the
             // enclosing shared body had one.
             self_slots: false,
+            // A block INSIDE a shared body is still emitted once for the whole
+            // group, so it must stay cache-free too or the group's emissions
+            // stop matching.
+            shared_body: self.shared_body,
             captured_locals: shadow(self.captured_locals.clone()),
             local_types,
             block_depth: self.block_depth + 1,
@@ -686,6 +701,10 @@ struct PoolBuilder {
     vm_rows: Vec<TokenStream>,
     /// `define_class_method` rows (`__CM_ROWS`), same shape minus the box.
     cm_rows: Vec<TokenStream>,
+    /// One `CallSite` inline cache per dynamic call SITE -- never deduped,
+    /// because sharing one between two sites is what makes a cache
+    /// megamorphic. See `zeo_rt::CallSite`.
+    call_sites: usize,
     /// `mark_private`/`mark_protected`/`mark_public` rows (`__VIS_ROWS`,
     /// verb 0/1/2) -- ONE ordered stream for all three verbs, because a
     /// `public :m` promotion must stay AFTER the private stamp it clears.
@@ -730,6 +749,20 @@ pub(crate) fn pooled_frozen_str(text: &str) -> TokenStream {
     });
     let i = proc_macro2::Literal::usize_unsuffixed(i);
     quote! { crate::__LITS.s(#i) }
+}
+
+/// A fresh `crate::__CS_N` inline cache for one dynamic call site.
+///
+/// Deliberately NOT deduped by name: the whole point is that one site tends to
+/// see one receiver class, and two sites sharing a cache would each evict the
+/// other's answer.
+pub(crate) fn pooled_call_site() -> TokenStream {
+    let i = POOLS.with_borrow_mut(|p| {
+        p.call_sites += 1;
+        p.call_sites - 1
+    });
+    let i = proc_macro2::Literal::usize_unsuffixed(i);
+    quote! { &crate::__CS[#i] }
 }
 
 /// `crate::__PP_N` for one proc signature's `ProcParamMeta` table, deduped
@@ -1859,6 +1892,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         in_real_proc: false,
         self_is_dynamic: false,
         self_slots: false,
+        shared_body: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: false,
@@ -2094,6 +2128,15 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let texts = &pools.lits;
         quote! { static __LITS: zeo_rt::LitPool = zeo_rt::LitPool::new(&[#(#texts),*]); }
     });
+    // ONE array, not one static per site: a `static` item each cost rustc
+    // 155% on uri and 26% more emitted lines, for storage that is identical
+    // either way.
+    let call_sites = (pools.call_sites > 0).then(|| {
+        let n = pools.call_sites;
+        quote! {
+            static __CS: [zeo_rt::CallSite; #n] = [const { zeo_rt::CallSite::new() }; #n];
+        }
+    });
     let pps = &pools.pps;
     let metas = &pools.metas;
     let vm_rows = (!pools.vm_rows.is_empty()).then(|| {
@@ -2115,7 +2158,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
     });
     quote! {
-        #program #syms #lits #(#pps)*
+        #program #syms #lits #call_sites #(#pps)*
         static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
         #vm_rows #cm_rows #vis_rows
     }
@@ -2208,6 +2251,7 @@ pub(crate) fn emit_class_body_site(
         in_real_proc: false,
         self_is_dynamic: false,
         self_slots: false,
+        shared_body: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: false,
@@ -2440,6 +2484,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         in_real_proc: false,
         self_is_dynamic: false,
         self_slots: false,
+        shared_body: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -2699,6 +2744,7 @@ fn emit_value_self_method_fn(
         // ivars are name-keyed with storage in `dispatch::Object`.
         self_is_dynamic: true,
         self_slots,
+        shared_body: self_slots,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -2785,6 +2831,7 @@ pub(crate) fn emit_instance_method_body(
         in_real_proc: false,
         self_is_dynamic: false,
         self_slots: false,
+        shared_body: false,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,

@@ -3826,6 +3826,124 @@ fn send_value_in_reason(
     Err(raise_method_missing(recv, &name.to_string(), args, reason))
 }
 
+/// What one call site remembered: the receiver class, and the method that
+/// class resolved to in whichever of the two dispatch shapes served it.
+#[derive(Clone, Copy)]
+enum Cached {
+    /// A generated object -- resolved through the registry's own method table.
+    Obj(MethodFn),
+    /// A builtin value (`Int`, `Str`, `Array`, ...) -- resolved through the
+    /// flattened one-probe walk.
+    Value(ValueMethodFn),
+}
+
+/// One dynamic call site's monomorphic inline cache.
+///
+/// Neither resolution shape is walking anything on the hot path -- `lookup_mro`
+/// finds the method on the receiver's own class because materialization put it
+/// there, and `flat_value_hit` is a prebuilt map -- but both are two hash
+/// probes per call, and that was a third of `bm_rbtree`. A site that keeps
+/// seeing one receiver class remembers the answer and compares a `u32`.
+///
+/// Filled ONCE and never replaced. A site that sees a second class simply
+/// misses forever and pays what it paid before, which is the trade that keeps
+/// this a plain `OnceLock` -- no tearing to reason about, no `unsafe`, and no
+/// write traffic on the hot path.
+/// Two plain function pointers and a class id, so one site costs 24 bytes of
+/// BSS. A `MethodImpl::Dynamic` -- the `Arc<dyn Fn>` a user MODULE's bridged
+/// method registers as -- is deliberately not cacheable: storing one would put
+/// a fat pointer in every site in the program to serve a minority of them.
+pub struct CallSite {
+    hit: std::sync::OnceLock<(u32, Cached)>,
+}
+
+impl Default for CallSite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CallSite {
+    pub const fn new() -> CallSite {
+        CallSite {
+            hit: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+/// [`send_value_in`] with a call-site cache in front of it.
+///
+/// The cache is consulted only where resolution is a pure function of the
+/// receiver's CLASS: box 0 with a dormant overlay, the same gate
+/// `flat_value_hit` already uses. Once anything is defined at runtime -- a
+/// singleton, a `define_method`, a spliced ancestry, a tombstone -- `is_live`
+/// turns it off wholesale, so no invalidation edge has to be maintained.
+///
+/// Two receiver shapes never cache. `Object` the CLASS, because `ENV` is an
+/// ordinary object whose class IS `Object` and its own methods are probed by
+/// identity ahead of the registry, so a class-keyed answer would serve
+/// `ENV.dup` the wrong body. And a `Class` receiver, whose class methods and
+/// reflection set are resolved by an arm of their own further down.
+///
+/// NOT `#[inline]`: a generated program has tens of thousands of dynamic call
+/// sites, and inlining this body into each cost uri 153% more rustc time for
+/// no runtime gain -- the work it saves is two hash probes, not a call.
+pub fn send_value_cached(
+    site: &'static CallSite,
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // A `Class` receiver is ruled out FIRST, before the class id is computed
+    // or the cache is even read: it resolves through a class-method arm of its
+    // own further down, so a site that only ever sees one (`Math.sin`) would
+    // otherwise pay the lookup on every call and never fill.
+    if !matches!(recv, RubyValue::Class(_)) && box_id == 0 && !crate::runtime_meta::is_live() {
+        let id = recv.class_id();
+        if let Some((cached, target)) = site.hit.get() {
+            if *cached == id.0 {
+                note_dispatch(name);
+                return match (target, recv) {
+                    (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
+                    (Cached::Value(f), _) => f(recv, args, block),
+                    // A class id cannot be both shapes, so this is unreachable
+                    // in practice; falling through is still the right answer.
+                    _ => send_value_in(box_id, recv, name, args, block),
+                };
+            }
+        } else {
+            // Empty. Resolve once and remember, BEFORE the call, so a
+            // recursive method hits its own site on the way down rather than
+            // only after the outermost frame returns -- which is the shape
+            // `bm_rbtree` and `bm_splay` actually have.
+            match recv {
+                RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {
+                    if let Some(MethodImpl::Static(f)) =
+                        REGISTRY.get().and_then(|r| r.lookup_mro(id, name))
+                    {
+                        note_dispatch(name);
+                        let _ = site.hit.set((id.0, Cached::Obj(*f)));
+                        return f(o, args, block);
+                    }
+                }
+                RubyValue::Object(_) => {}
+                _ => {
+                    if let Some(Some(hit)) =
+                        REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
+                    {
+                        note_dispatch(name);
+                        let _ = site.hit.set((id.0, Cached::Value(hit.f)));
+                        return (hit.f)(recv, args, block);
+                    }
+                }
+            }
+        }
+    }
+    send_value_in(box_id, recv, name, args, block)
+}
+
 pub fn send(
     recv: &RObj,
     name: Symbol,
