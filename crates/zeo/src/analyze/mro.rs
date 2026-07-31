@@ -365,8 +365,20 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // builtin in the program and trip the builtin-ivar rejection below --
     // a top-level `def` touching any ivar failed the whole compile, blaming
     // `Integer`. The two loops must agree on what belongs to this class.
+    //
+    // Ancestors are walked FURTHEST-FIRST here, the reverse of the method loop
+    // above, which makes each class's slot list start with its parent's list
+    // verbatim: `ivars(C) == ivars(parent(C)) ++ C's own new names`. Since a
+    // parent's `ancestors` is a suffix of its child's (MRO keeps the relative
+    // order of everything it inherits), reversing is all the property needs.
+    // `analyze::share` depends on it -- one body shared by a base and 151
+    // descendants indexes a slot by a compile-time constant, which is only the
+    // same constant everywhere if the base's names sit at the same indices on
+    // every descendant. Slot ORDER is otherwise unobservable: `instance_
+    // variables` and `inspect` report FIRST-ASSIGNMENT order, which
+    // `IvarCell`'s per-slot stamp carries independently of the layout.
     let mut ivars = Vec::new();
-    for &anc_id in &ancestors {
+    for &anc_id in ancestors.iter().rev() {
         if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
             continue;
         }
