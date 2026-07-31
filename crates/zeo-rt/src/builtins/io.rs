@@ -97,6 +97,10 @@ pub struct RIo {
     /// Bytes pushed back by `#ungetbyte`/`#ungetc`, read out (LIFO) before the
     /// stream itself. The next byte read drains this first.
     unget: parking_lot::Mutex<Vec<u8>>,
+    /// Bytes read AHEAD of what Ruby has consumed -- see [`ReadBuf`]. Only the
+    /// line/char/byte readers fill it; `with_file` gives every other row a
+    /// descriptor positioned exactly where Ruby thinks it is.
+    rbuf: parking_lot::Mutex<ReadBuf>,
     /// A socket reports `TCPSocket`/`TCPServer` (not `IO`) for `#class`, while
     /// still using a `Pipe`-shaped fd for read/write. `None` for ordinary
     /// files, pipes, and std streams (their class comes from the backend).
@@ -109,6 +113,35 @@ pub struct RIo {
     /// a write-only one reports nil -- CRuby's rule, and why this cannot just
     /// default to the process encoding.
     encodings: parking_lot::Mutex<(Option<crate::encoding::EncodingId>, Option<crate::encoding::EncodingId>)>,
+}
+
+/// The read-ahead buffer behind `gets`/`each_line`/`getc`/`getbyte`.
+///
+/// Reading a line one `read(2)` at a time costs a syscall PER BYTE:
+/// `bm_io_wordcount` spent 86% of its wall clock inside `read`, against a
+/// CRuby that refills a buffer in chunks. Buffering here is the same trade,
+/// with one rule that keeps it invisible: the descriptor sits AHEAD of the
+/// position Ruby believes in by exactly `data.len() - pos` bytes, and
+/// [`with_file`] seeks that difference back before handing the descriptor to
+/// anything else. So `#read`, `#seek`, `#pos`, `#eof?`, `#sysread` and every
+/// other row see precisely the file they saw before this existed, and the
+/// buffer can only ever be filled where it can also be given back.
+#[derive(Default)]
+struct ReadBuf {
+    data: Vec<u8>,
+    /// How much of `data` the caller has already consumed.
+    pos: usize,
+    /// Whether the descriptor can seek, so the unconsumed tail can be
+    /// returned. `None` until probed once; a pipe, socket or std stream
+    /// answers `false` and never buffers at all.
+    seekable: Option<bool>,
+}
+
+impl ReadBuf {
+    /// Bytes read but not yet handed out -- how far the descriptor sits ahead.
+    fn pending(&self) -> usize {
+        self.data.len() - self.pos
+    }
 }
 
 impl RubyObject for RIo {
@@ -164,6 +197,7 @@ impl RIo {
             binmode: std::sync::atomic::AtomicBool::new(false),
             autoclose: std::sync::atomic::AtomicBool::new(true),
             unget: parking_lot::Mutex::new(Vec::new()),
+            rbuf: parking_lot::Mutex::new(ReadBuf::default()),
             class_override: None,
             child_pid: std::sync::atomic::AtomicI64::new(0),
             encodings: parking_lot::Mutex::new((None, None)),
@@ -986,10 +1020,91 @@ fn with_file<T>(
     };
     let path = io.path.clone().unwrap_or_default();
     crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
-        IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(file, &path),
+        IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => {
+            // Give back whatever the line readers read ahead, so this closure
+            // sees the descriptor at the position Ruby believes in. A no-op --
+            // and syscall-free -- for any program that never buffered.
+            unread(&io, file);
+            f(file, &path)
+        }
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
         IoBackend::Std(_) => Err(io_error!("not a file")),
     })
+}
+
+/// [`with_file`] for the rows that READ THROUGH the buffer rather than around
+/// it: same locking and Gvl release, but no `unread` on the way in, and the
+/// `RIo` is passed along so the closure can reach the buffer.
+fn with_buffered_file<T>(
+    recv: &RubyValue,
+    f: impl FnOnce(&RIo, &mut std::fs::File, &str) -> Result<T, Signal>,
+) -> Result<T, Signal> {
+    let Some(io) = as_rio(recv) else {
+        return Err(io_error!("not a file"));
+    };
+    let path = io.path.clone().unwrap_or_default();
+    crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
+        IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(&io, file, &path),
+        IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
+        IoBackend::Std(_) => Err(io_error!("not a file")),
+    })
+}
+
+/// Rewind the descriptor over bytes [`ReadBuf`] read ahead, and drop them.
+///
+/// Infallible by construction: the buffer is only ever filled after `fill`
+/// proved the descriptor seeks, so the seek back cannot be the first one to
+/// fail. Should it fail anyway the buffer is still cleared, which loses the
+/// read-ahead rather than serving it at a position it no longer matches.
+fn unread(io: &RIo, f: &mut std::fs::File) {
+    let mut buf = io.rbuf.lock();
+    let pending = buf.pending();
+    if pending > 0 {
+        use std::io::Seek;
+        let _ = f.seek(std::io::SeekFrom::Current(-(pending as i64)));
+    }
+    buf.data.clear();
+    buf.pos = 0;
+}
+
+/// How much the buffer reads ahead. One page-ish chunk, matching CRuby's own
+/// `IO` buffer size.
+const READ_BUF: usize = 8192;
+
+/// The next byte Ruby should see, drawing from [`ReadBuf`] and refilling it in
+/// `READ_BUF` chunks. `None` at end of file.
+///
+/// The only place the buffer is filled, and it refuses to fill a descriptor
+/// that cannot seek -- a pipe, socket or std stream keeps the byte-at-a-time
+/// reads, where read-ahead could not be given back and `#readpartial`'s
+/// arrival-shaped semantics would change.
+fn buffered_byte(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<u8>> {
+    let mut buf = io.rbuf.lock();
+    if buf.pos == buf.data.len() {
+        let seekable = match buf.seekable {
+            Some(s) => s,
+            None => {
+                use std::io::Seek;
+                let s = f.stream_position().is_ok();
+                buf.seekable = Some(s);
+                s
+            }
+        };
+        if !seekable {
+            let mut one = [0u8; 1];
+            return Ok((blocking_read(f, &mut one)? == 1).then_some(one[0]));
+        }
+        buf.data.resize(READ_BUF, 0);
+        let got = blocking_read(f, &mut buf.data)?;
+        buf.data.truncate(got);
+        buf.pos = 0;
+        if got == 0 {
+            return Ok(None);
+        }
+    }
+    let b = buf.data[buf.pos];
+    buf.pos += 1;
+    Ok(Some(b))
 }
 
 /// Park until `fd` is ready for `events`, the way CRuby's `rb_io_wait_readable`
@@ -1255,6 +1370,12 @@ fn io_close(
         // `autoclose = false` keeps the descriptor open for its owner; the
         // handle still becomes closed either way.
         let mut backend = io.backend.lock();
+        // `release_file` hands the descriptor back to its owner, so it must be
+        // handed back at the position Ruby consumed to, not wherever the read
+        // buffer left it.
+        if let IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) = &mut *backend {
+            unread(&io, f);
+        }
         if io.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
             backend.close_file();
         } else {
@@ -1328,19 +1449,22 @@ fn line_opts(args: &[RubyValue]) -> LineOpts {
 /// Read the next line's bytes: up to and including the separator, or `limit`
 /// bytes, or EOF. An empty result means EOF. Byte-at-a-time so the position
 /// lands exactly after the line (a buffered read would desync `tell`).
-fn read_line_bytes(f: &mut std::fs::File, opts: &LineOpts) -> std::io::Result<Vec<u8>> {
+fn read_line_bytes(
+    io: &RIo,
+    f: &mut std::fs::File,
+    opts: &LineOpts,
+) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
-    let mut byte = [0u8; 1];
     loop {
         if let Some(lim) = opts.limit {
             if out.len() >= lim {
                 break;
             }
         }
-        match blocking_read(f, &mut byte)? {
-            0 => break,
-            _ => {
-                out.push(byte[0]);
+        match buffered_byte(io, f)? {
+            None => break,
+            Some(b) => {
+                out.push(b);
                 if let Some(s) = &opts.sep {
                     if !s.is_empty() && out.ends_with(s) {
                         break;
@@ -1395,8 +1519,9 @@ fn io_gets(
         bump_lineno(recv);
         return Ok(line_string(line.into_bytes(), &opts));
     }
-    let line = with_file(recv, |f, path| {
-        read_line_bytes(f, &opts).map_err(|e| crate::builtins::file::raise_errno(&e, "gets", path))
+    let line = with_buffered_file(recv, |io, f, path| {
+        read_line_bytes(io, f, &opts)
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "gets", path))
     })?;
     if line.is_empty() {
         return Ok(RubyValue::Nil);
@@ -1440,12 +1565,10 @@ fn io_lineno_set(
 
 /// Read the next whole UTF-8 char from `f` (1-4 bytes by the lead byte), or
 /// `None` at EOF.
-fn read_one_char(f: &mut std::fs::File) -> std::io::Result<Option<String>> {
-    let mut first = [0u8; 1];
-    if blocking_read(f, &mut first)? == 0 {
+fn read_one_char(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<String>> {
+    let Some(b0) = buffered_byte(io, f)? else {
         return Ok(None);
-    }
-    let b0 = first[0];
+    };
     let n = if b0 < 0x80 {
         1
     } else if b0 >> 5 == 0b110 {
@@ -1459,11 +1582,8 @@ fn read_one_char(f: &mut std::fs::File) -> std::io::Result<Option<String>> {
     };
     let mut buf = vec![b0];
     for _ in 1..n {
-        let mut b = [0u8; 1];
-        if blocking_read(f, &mut b)? == 0 {
-            break;
-        }
-        buf.push(b[0]);
+        let Some(b) = buffered_byte(io, f)? else { break };
+        buf.push(b);
     }
     Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
@@ -1473,8 +1593,8 @@ fn io_getc(
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let ch = with_file(recv, |f, path| {
-        read_one_char(f).map_err(|e| crate::builtins::file::raise_errno(&e, "getc", path))
+    let ch = with_buffered_file(recv, |io, f, path| {
+        read_one_char(io, f).map_err(|e| crate::builtins::file::raise_errno(&e, "getc", path))
     })?;
     Ok(match ch {
         Some(s) => RubyValue::Str(crate::collections::string_new(s)),
@@ -1504,14 +1624,8 @@ fn io_getbyte(
             return Ok(RubyValue::Int(byte as i64));
         }
     }
-    let b = with_file(recv, |f, path| {
-        let mut byte = [0u8; 1];
-        match blocking_read(f, &mut byte)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))?
-        {
-            0 => Ok(None),
-            _ => Ok(Some(byte[0])),
-        }
+    let b = with_buffered_file(recv, |io, f, path| {
+        buffered_byte(io, f).map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))
     })?;
     Ok(match b {
         Some(byte) => RubyValue::Int(byte as i64),
@@ -1875,6 +1989,9 @@ fn io_reopen(
     if let Some(io) = as_rio(recv) {
         *io.backend.lock() = IoBackend::File(Some(f));
         io.unget.lock().clear();
+        // A fresh descriptor at position 0 -- read-ahead from the old one
+        // describes a file this IO no longer refers to.
+        *io.rbuf.lock() = ReadBuf::default();
     }
     Ok(recv.clone())
 }
@@ -2110,8 +2227,9 @@ fn io_each_char(
         return Err(crate::dispatch::raise_no_block_yield());
     };
     loop {
-        let ch = with_file(recv, |f, path| {
-            read_one_char(f).map_err(|e| crate::builtins::file::raise_errno(&e, "each_char", path))
+        let ch = with_buffered_file(recv, |io, f, path| {
+            read_one_char(io, f)
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "each_char", path))
         })?;
         match ch {
             Some(s) => p.call(&[RubyValue::Str(crate::collections::string_new(s))])?,
