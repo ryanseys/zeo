@@ -336,32 +336,34 @@ that a user gets.
 
 Before it measures a program, the tool compares the output of that program with
 the correct output, byte for byte. A speed number only helps you if the program
-gives the correct answer. The tool then measures the time three times and keeps
-the smallest value. It measures CRuby 4.0.6 in the same run.
+gives the correct answer. The tool then measures the time more than one time
+and keeps the smallest value. It measures CRuby 4.0.6 in the same run.
 
 zeo gives two different results, and you must read them together:
 
 | Programs | Geometric mean |
 |---|---|
-| all 58 programs | **1.29 times faster than CRuby** |
-| the 37 programs where CRuby needs 0.10 s or more | **0.86 times: approximately 16% slower** |
+| all 58 programs | **1.78 times faster than CRuby** |
+| the 37 programs where CRuby needs 0.10 s or more | **1.23 times faster** |
 
 The difference between the two results is the start time. For 13 programs,
 CRuby needs less than 50 ms. A native binary starts immediately, but the
 interpreter needs approximately 35 ms to start. This is a real advantage of a
-binary, but it does not tell you about the quality of the generated code. For
-programs that calculate, zeo is a little slower than CRuby. zeo is faster for
-32 programs, and slower for 26 programs.
+binary, but it does not tell you about the quality of the generated code. The
+second result tells you about the generated code. zeo is faster for 47
+programs, and slower for 11 programs.
 
-The largest advantages are `pidigits` (9.5), `sinatra_mini` (9.3),
-`micro_lisp` and `bigint_fib` (9.0), and `jekyll_lite` (7.6). The start time
-controls all of these. For programs that calculate, the largest advantages are
-`so_mandelbrot` (3.1), `range_each` (3.0) and `nested_loop` (2.2).
+The largest advantages are `bigint_fib`, `jekyll_lite` and `str_concat` (8.8),
+`pidigits` and `poly_cells` (8.5), and `micro_lisp` and `sinatra_mini` (8.3).
+The start time controls all of these. For programs that calculate, the largest
+advantages are `so_mandelbrot` (3.4), `range_each` (3.1), `nested_loop` (2.5)
+and `object_new` (2.2).
 
-The largest disadvantages are `io_wordcount` (0.20), `structaset` (0.30),
-`structaref` (0.34) and `template` (0.43). [`docs/TODO.md`](docs/TODO.md) gives
-planned work for the `Struct` and string paths. Nobody has found the cause of
-the `io_wordcount` result yet.
+The largest disadvantages are `life` (0.52), `rbtree` (0.66), `linked_list`
+(0.70), `splay` (0.74) and `so_lists` (0.74). These programs make and release
+many objects. Their time goes into the reference counts and the memory
+allocation, and not into the method calls or the instance variables.
+[`docs/TODO.md`](docs/TODO.md) gives the measurements and the planned work.
 
 [`bench/README.md`](bench/README.md) gives the full table, the method and the
 limits of these measurements.
@@ -547,8 +549,8 @@ zeo is experimental. Here are the known limits:
   limit, and zeo accepts it. `GC.start` runs the finalizers that it can.
 - **Four extensions give only a part of their methods.** These are `coverage`,
   `nkf`, `openssl` and `TracePoint`. Read the extension section above.
-- **CRuby is faster for programs that calculate**, by approximately 16%. Read
-  the benchmark section above.
+- **CRuby is faster for 11 of the 58 benchmark programs.** These programs make
+  and release many objects. Read the benchmark section above.
 - **A dynamic `eval` and `Ruby::Box` isolation are not complete.** Read
   `docs/`.
 - **zeo cannot use a gem with a C extension.** Use the `ffi` gem API instead.

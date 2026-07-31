@@ -141,68 +141,68 @@ compensating notes from `tests/e2e/gems_vendored.rs`.
 
 ## Performance
 
-The four-session overhaul is complete; its cumulative result — bench geomean
-≈ −60% against zeo's own pre-overhaul baseline — is banked in
-`bench/baseline.tsv` and `bench/compile-baseline.tsv`.
+Measured against CRuby 4.0.6 on 2026-07-31, both timed in the same run:
+**1.78× faster over all 58 benchmarks, and 1.23× over the 37 where CRuby takes
+0.10 s or more.** 47 of 58 are faster, 11 slower. The difference between the
+two aggregates is process startup on 13 sub-50 ms benchmarks. Full table and
+method: [`bench/README.md`](../bench/README.md); `bench/baseline.tsv` and
+`bench/compile-baseline.tsv` are the banked records.
 
-Measured against CRuby 4.0.6 rather than against zeo's past, the standing is
-more sober: **1.29× faster over all 58 benchmarks, but 0.86× — about 16%
-slower — over the 37 where CRuby takes more than 100 ms.** The difference is
-process startup on 13 sub-50 ms benchmarks. 32 of 58 are faster, 26 slower.
-Levers 1 and 2 below are aimed squarely at that compute-bound deficit. Full
-table and method: [`bench/README.md`](../bench/README.md).
+The staged overhaul that produced this is complete. It took the
+compute-bound geomean from 0.86× to 1.23× by replacing the per-call frame
+push/pop with a bump pointer, devirtualizing accessors, narrowing the
+process-wide deopt latch to four class-keyed flags, compiling a literal
+`Struct.new` to a real class, interning the class-ivar and constant sites,
+collapsing the per-ivar mutexes into one cell per object and giving it a
+single-threaded fast path, sharing duplicate materialized method bodies, and
+caching what each dynamic call site resolved to. Compile time fell with it:
+`uri_parse_and_build` rustc went 54.9 s → 19.4 s, which closed the rustc-time
+lever that used to sit in this list.
 
-Six levers, ordered by expected value. Evidence cites the banked baselines;
-anything not yet root-caused says so.
+### The 11 remaining losses
 
-### 1. Object & ivar fast paths (biggest lever)
+`life` 0.52×, `rbtree` 0.66×, `linked_list` 0.70×, `splay` 0.74×, `so_lists`
+0.74×, `structaset` 0.75×, `inline` 0.83×, `getivar_module` 0.91×, `ao_render`
+0.93×, `ruby_xor` 0.95×, `attr_accessor` 0.99×.
 
-**Evidence:** ao_render is still ~3.0s after the float arms — its ops are
-`Vec#+`/`Vec#*` user methods, each allocating a fresh `Vec` and doing 3 ivar
-writes through the per-object ivar hash map. structaref/structaset are ~2×
-CRuby (Struct accessors dispatch dynamically). splay, gcbench and rbtree are
-allocation-heavy.
+**What is measured about them:** they build and tear down object graphs, so
+their profiles are dominated by `RubyValue` clone and drop — `so_lists` spends
+43% of its samples in `RubyValue::clone` plus `drop_glue` — and by allocation.
+The dispatch lever is spent: the inline caches moved this set by 13–16% and did
+not carry any of it past 1.00×.
 
-**Sketch:**
+Four levers remain, ordered by expected value. Evidence cites the banked
+baselines; anything not yet root-caused says so.
 
-- **Ivar slot tables** — the compiler already knows every `@name` a class uses;
-  give each class a compile-time slot index and store ivars in a fixed slot
-  array instead of a hash map. Dynamically-named ivars fall back to an overflow
-  map.
-- **Registry-free construction** — for a compile-time-known class with a
-  generated struct, `new` should allocate, init slots and call `initialize`
-  with no registry probe. Audit what Path-1 construction still pays per
-  allocation (Arc, table init, header).
-- **attr_accessor devirtualization** — slot read/write when the receiver's class
-  is exact and un-reopened, guarded like the collection fast paths.
-- **Struct classes** — compile `Struct.new(:a, :b)` literals to real generated
-  slot classes so accessors take the static path.
+### 1. Tier C: an 8-byte tagged `RubyValue` (largest, deferred)
 
-**Verify:** bench ao_render / splay / structaref / structaset / gcbench /
-binary_trees / object_new\* / setivar\*; ivar-reflection goldens
-(`instance_variables` must keep first-write ORDER — slots need an order
-record), `instance_variable_get/set` of unknown names, singleton-class ivars,
-frozen-object writes, the Marshal/inspect corpus.
+**Measured payoff** — a tagged word with manual refcounting against today's
+24-byte enum, best-of-five on one Apple-silicon laptop:
 
-### 2. String & template pipeline
+| operation | 24 B | 8 B | |
+|---|---:|---:|---|
+| clone + drop, `Arc` arm | 4.019 ns | 3.977 ns | **−1%** |
+| clone + drop, `Int` arm | 2.448 ns | 0.344 ns | −86% |
+| traverse a 4M-element array | 0.564 ns | 0.189 ns | −66% |
+| call returning `Result<V, Signal>` | 4.479 ns | 0.880 ns | −80% |
 
-**Evidence:** template is ~2× CRuby, the largest absolute gap after ao_render;
-csv_process and io_wordcount are the other string-heavy laggards, and
-io_wordcount is the worst ratio in the whole suite. NOT root-caused — the first
-step is a profile of the `-O2` static bm_template binary.
+Two facts decide the sequencing. The reference-count traffic that dominates the
+remaining losses does **not** get cheaper — the `Arc` atomic pair survives the
+shrink unchanged, so the headline reason to want this is wrong. What does get
+cheaper is immediates, array density, and the call return: −3.6 ns on every
+Ruby method call, which nothing else can buy, because
+`Result<RubyValue, Signal>` has to reach 16 bytes to return in registers and
+boxing `Signal` alone measured *worse* (4.91 → 5.15 ns).
 
-**Candidates, post-profile:** interpolation segments dispatch `to_s`
-dynamically → direct display for un-reopened builtins (the display-reopen
-bitset from the send-path work already exists, reuse it); capacity-hinted
-buffers for multi-segment interpolation; literal-pattern `gsub`/`split`/`tr`
-fast paths over memmem that skip the regex engine; check whether `String#<<`
-still round-trips through dynamic dispatch (the collection fast-path family
-only covered `Array#push`).
+**Cost:** manual reference counting in `unsafe` across 91k lines of `zeo-rt`,
+where a miscount is a use-after-free rather than a wrong answer. Deferred on
+that basis, not abandoned.
 
-**Verify:** encoding-edge oracle scratches; bench template / csv_process /
-io_wordcount / wordfreq; the string golden family.
+**Verify:** the whole corpus, plus the concurrency suite under Miri; the
+`ObjectSpace`/`Marshal`/finalizer families are where a miscount would surface
+as a wrong answer instead of a crash.
 
-### 3. Iterator inlining wave 3
+### 2. Iterator inlining wave 3
 
 **Evidence:** waves 1–2 are proven machinery — analyze-mark
 (`inline_iter_sites`), guarded splice, the `zeo_rt::iter_inline_ok` runtime
@@ -222,7 +222,7 @@ also a correctness alignment with the live-view decision.
 the in-place forms); the enumerable golden family; bench sudoku / nqueens /
 life / sort_by.
 
-### 4. Outline the dynamic numeric match arms
+### 3. Outline the dynamic numeric match arms
 
 **Evidence:** the float arms cost about +5% emitted lines at gem scale (uri
 +5.1%, rubygems +5.5%; bm_fib +36% at small-program scale) and the recursion
@@ -239,38 +239,33 @@ also kills the arm-vs-row drift risk.
 wall clock and a hot golden subset do not regress before banking. compile-bench
 lines/bytes is the success metric.
 
-### 5. uri-scale rustc time
-
-**Evidence:** the uri front end is 253 ms but rustc `-O2` is 54.9 s
-(`compile-baseline.tsv`) — compile latency is now entirely rustc's.
-
-**Candidates:** a codegen-units bump for the CLI `-O2` path (measure bench
-geomean first — CU splitting can cost runtime; possibly only for non-`-o`
-runs); `#[cold]`/`#[inline(never)]` on registration and `main`; split the giant
-top-level fns so LLVM parallelizes. First step is an honest phase breakdown on
-stable (cargo build timings; `-Zself-profile` needs nightly).
-
-**Success:** uri rustc under ~30 s with no bench geomean regression.
-
-### 6. Emission diet round 2
+### 4. Emission diet round 2
 
 **Candidates:** hash literals still emit per-entry inserts — batch them into
 one `zeo_rt::hash_from_pairs(&[…])`, keeping key/value evaluation order
 left-to-right and duplicate-key last-wins semantics with its existing parse
-warning; coalesce consecutive `set_line` calls sharing a line (true duplicates
-only — backtrace semantics are load-bearing). Remaining match-scaffolding
-dedupe is mostly covered by lever 4.
+warning; pool non-frozen string literals, which allocate twice per evaluation
+today (the pool holds the template and each evaluation clones from it).
+Remaining match-scaffolding dedupe is mostly covered by lever 3.
+
+Two candidates from this family are **retired, both by measurement**. Coalescing
+consecutive `set_line` calls is worth 0.6% of a method call once the frame stack
+is a bump pointer, against a real backtrace-correctness risk. Interning the
+frame string literals was implemented and reverted: the shared method bodies
+removed the duplication it targeted, and it cost +6.6% rustc on uri and +52.9%
+on rubygems, because a large `static [Frame; N]` is not free to const-evaluate.
 
 **Metric:** compile-bench lines/bytes down, with no `-S` semantic diffs beyond
 the intended shapes.
 
 ### Considered, not scheduled
 
-- **Block & proc call overhead** — send_cfunc_block and send_rubyfunc_block are
-  the worst remaining call-path ratios. A leaner block-invoke path (no per-call
-  boxing, a direct call for statically-known blocks) could close them.
-  Deferred deliberately: it touches the call ABI everywhere. Revisit after
-  levers 1–3.
+- **Block & proc call overhead** — send_cfunc_block (1.21×) and
+  send_rubyfunc_block (1.68×) are no longer losses, but they are the weakest
+  call-path ratios that are not object-graph bound. A leaner block-invoke path
+  (no per-call boxing, a direct call for statically-known blocks) would close
+  them. Deferred deliberately: it touches the call ABI everywhere, and Tier C
+  would rewrite that ABI anyway.
 - **Mixed Integer↔Float comparison exactness** — a pre-existing divergence:
   `num_cmp`'s Flo lane converts via `as f64`, lossy past 2^53
   (`9007199254740993 == 9007199254740992.0` answers true; CRuby compares

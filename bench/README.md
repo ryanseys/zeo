@@ -59,7 +59,7 @@ rather than once at the end, so an interrupted run keeps what it finished;
 
 ## Results
 
-Measured 2026-07-30 on one Apple-silicon laptop, zeo and CRuby 4.0.6 timed in
+Measured 2026-07-31 on one Apple-silicon laptop, zeo and CRuby 4.0.6 timed in
 the **same run** under the same conditions. Read them as a shape, not a
 portable claim.
 
@@ -67,22 +67,25 @@ portable claim.
 
 | | geomean |
 |---|---|
-| all 58 benchmarks | **1.29× faster than CRuby** |
-| the 37 where CRuby takes ≥ 0.10 s | **0.86×** — i.e. ~16% *slower* |
+| all 58 benchmarks | **1.78× faster than CRuby** |
+| the 37 where CRuby takes ≥ 0.10 s | **1.23× faster** |
 
 The gap between those two numbers is process startup. 13 benchmarks finish in
 under 50 ms of CRuby time, where zeo's native binary starts instantly and the
 interpreter pays ~35 ms of boot — that is a real advantage of shipping a
-binary, but it is not a claim about generated code. On compute-bound work zeo
-currently trails CRuby by a little, and the object/ivar and string levers in
-[`docs/TODO.md`](../docs/TODO.md) are aimed squarely at that.
+binary, but it is not a claim about generated code. The second row is the row
+that describes generated code, and it is the one to watch.
 
-Split by outcome: **32 of 58 faster, 26 slower.**
+Split by outcome: **47 of 58 faster, 11 slower.**
 
-Worst ratios, all of them known and tracked: `io_wordcount` 0.20×,
-`structaset` 0.30×, `structaref` 0.34×, `life` 0.40×, `rbtree` 0.41×,
-`template` 0.43×. The Struct pair and `template` are named levers; the IO one
-is not yet root-caused.
+The 11 that still lose: `life` 0.52×, `rbtree` 0.66×, `linked_list` 0.70×,
+`splay` 0.74×, `so_lists` 0.74×, `structaset` 0.75×, `inline` 0.83×,
+`getivar_module` 0.91×, `ao_render` 0.93×, `ruby_xor` 0.95×, `attr_accessor`
+0.99×. These build and tear down object graphs, so their time goes into
+reference-count traffic and allocation rather than into dispatch or ivar
+access, which the completed work already addressed.
+[`docs/TODO.md`](../docs/TODO.md) records what is measured about them and what
+the next lever would be.
 
 The separate figure sometimes quoted — **geomean ≈ −60%** — is zeo against
 zeo's OWN pre-overhaul baseline across four optimization sessions. It is a real
@@ -90,63 +93,63 @@ number and a different claim; it says nothing about CRuby.
 
 | benchmark | zeo (s) | ruby 4.0.6 (s) | ratio |
 |---|---|---|---|
-| `ackermann` | 0.355 | 0.342 | 0.96× |
-| `ao_render` | 2.978 | 1.731 | 0.58× |
-| `attr_accessor` | 1.687 | 0.854 | 0.51× |
-| `bigint_fib` | 0.004 | 0.036 | 9.00× |
-| `binary_trees` | 0.032 | 0.054 | 1.69× |
-| `csv_process` | 0.597 | 0.514 | 0.86× |
-| `fannkuch` | 0.009 | 0.045 | 5.00× |
-| `fasta` | 0.010 | 0.039 | 3.90× |
-| `fib` | 0.359 | 0.424 | 1.18× |
-| `gcbench` | 2.524 | 2.208 | 0.87× |
-| `getivar` | 0.113 | 0.097 | 0.86× |
-| `getivar_module` | 1.376 | 0.675 | 0.49× |
-| `huffman` | 0.090 | 0.072 | 0.80× |
-| `inline` | 1.731 | 0.966 | 0.56× |
-| `io_wordcount` | 0.400 | 0.082 | 0.20× |
-| `jekyll_lite` | 0.005 | 0.038 | 7.60× |
-| `json_parse` | 0.576 | 0.256 | 0.44× |
-| `keyword_args` | 0.106 | 0.163 | 1.54× |
-| `life` | 1.394 | 0.554 | 0.40× |
-| `linked_list` | 0.425 | 0.229 | 0.54× |
-| `loops_times` | 0.568 | 0.600 | 1.06× |
-| `mandel_term` | 0.019 | 0.049 | 2.58× |
-| `matmul` | 0.361 | 0.325 | 0.90× |
-| `micro_lisp` | 0.004 | 0.036 | 9.00× |
-| `nbody` | 0.018 | 0.041 | 2.28× |
-| `nested_loop` | 0.189 | 0.417 | 2.21× |
-| `nqueens` | 0.166 | 0.196 | 1.18× |
-| `object_new` | 0.074 | 0.110 | 1.49× |
-| `object_new_init` | 0.103 | 0.153 | 1.49× |
-| `object_new_no_escape` | 0.167 | 0.212 | 1.27× |
-| `partial_sums` | 0.501 | 0.733 | 1.46× |
-| `pidigits` | 0.004 | 0.038 | 9.50× |
-| `poly_cells` | 0.004 | 0.035 | 8.75× |
-| `range_each` | 4.933 | 14.666 | 2.97× |
-| `rbtree` | 0.856 | 0.354 | 0.41× |
-| `ruby_xor` | 1.631 | 0.953 | 0.58× |
-| `send_bmethod` | 0.129 | 0.175 | 1.36× |
-| `send_cfunc_block` | 0.645 | 0.759 | 1.18× |
-| `send_rubyfunc_block` | 0.503 | 0.519 | 1.03× |
-| `setivar` | 0.109 | 0.068 | 0.62× |
-| `setivar_object` | 0.107 | 0.068 | 0.64× |
-| `setivar_young` | 0.108 | 0.067 | 0.62× |
-| `sieve` | 0.522 | 0.438 | 0.84× |
-| `sinatra_mini` | 0.004 | 0.037 | 9.25× |
-| `so_lists` | 0.366 | 0.271 | 0.74× |
-| `so_mandelbrot` | 0.318 | 0.983 | 3.09× |
-| `sort_by` | 0.017 | 0.044 | 2.59× |
-| `spectral_norm` | 0.033 | 0.062 | 1.88× |
-| `splay` | 0.331 | 0.145 | 0.44× |
-| `str_concat` | 0.005 | 0.037 | 7.40× |
-| `structaref` | 0.518 | 0.175 | 0.34× |
-| `structaset` | 0.530 | 0.159 | 0.30× |
-| `sudoku` | 0.148 | 0.113 | 0.76× |
-| `tak` | 0.345 | 0.394 | 1.14× |
-| `tarai` | 0.288 | 0.294 | 1.02× |
-| `template` | 1.327 | 0.568 | 0.43× |
-| `throw` | 0.181 | 0.184 | 1.02× |
-| `wordfreq` | 0.006 | 0.035 | 5.83× |
+| `ackermann` | 0.211 | 0.329 | 1.56× |
+| `ao_render` | 1.817 | 1.683 | 0.93× |
+| `attr_accessor` | 0.856 | 0.846 | 0.99× |
+| `bigint_fib` | 0.004 | 0.035 | 8.75× |
+| `binary_trees` | 0.026 | 0.052 | 2.00× |
+| `csv_process` | 0.499 | 0.503 | 1.01× |
+| `fannkuch` | 0.009 | 0.038 | 4.22× |
+| `fasta` | 0.007 | 0.037 | 5.29× |
+| `fib` | 0.262 | 0.419 | 1.60× |
+| `gcbench` | 1.917 | 2.178 | 1.14× |
+| `getivar` | 0.058 | 0.096 | 1.66× |
+| `getivar_module` | 0.746 | 0.677 | 0.91× |
+| `huffman` | 0.057 | 0.070 | 1.23× |
+| `inline` | 1.144 | 0.954 | 0.83× |
+| `io_wordcount` | 0.072 | 0.086 | 1.19× |
+| `jekyll_lite` | 0.004 | 0.035 | 8.75× |
+| `json_parse` | 0.234 | 0.258 | 1.10× |
+| `keyword_args` | 0.084 | 0.161 | 1.92× |
+| `life` | 1.043 | 0.546 | 0.52× |
+| `linked_list` | 0.339 | 0.237 | 0.70× |
+| `loops_times` | 0.547 | 0.597 | 1.09× |
+| `mandel_term` | 0.018 | 0.045 | 2.50× |
+| `matmul` | 0.272 | 0.314 | 1.15× |
+| `micro_lisp` | 0.004 | 0.033 | 8.25× |
+| `nbody` | 0.010 | 0.038 | 3.80× |
+| `nested_loop` | 0.163 | 0.412 | 2.53× |
+| `nqueens` | 0.160 | 0.192 | 1.20× |
+| `object_new` | 0.047 | 0.103 | 2.19× |
+| `object_new_init` | 0.084 | 0.145 | 1.73× |
+| `object_new_no_escape` | 0.101 | 0.204 | 2.02× |
+| `partial_sums` | 0.442 | 0.728 | 1.65× |
+| `pidigits` | 0.004 | 0.034 | 8.50× |
+| `poly_cells` | 0.004 | 0.034 | 8.50× |
+| `range_each` | 4.573 | 14.230 | 3.11× |
+| `rbtree` | 0.520 | 0.343 | 0.66× |
+| `ruby_xor` | 0.979 | 0.934 | 0.95× |
+| `send_bmethod` | 0.090 | 0.175 | 1.94× |
+| `send_cfunc_block` | 0.622 | 0.752 | 1.21× |
+| `send_rubyfunc_block` | 0.303 | 0.508 | 1.68× |
+| `setivar` | 0.060 | 0.064 | 1.07× |
+| `setivar_object` | 0.060 | 0.065 | 1.08× |
+| `setivar_young` | 0.059 | 0.064 | 1.08× |
+| `sieve` | 0.403 | 0.436 | 1.08× |
+| `sinatra_mini` | 0.004 | 0.033 | 8.25× |
+| `so_lists` | 0.355 | 0.263 | 0.74× |
+| `so_mandelbrot` | 0.285 | 0.965 | 3.39× |
+| `sort_by` | 0.016 | 0.041 | 2.56× |
+| `spectral_norm` | 0.028 | 0.061 | 2.18× |
+| `splay` | 0.192 | 0.142 | 0.74× |
+| `str_concat` | 0.004 | 0.035 | 8.75× |
+| `structaref` | 0.165 | 0.170 | 1.03× |
+| `structaset` | 0.204 | 0.153 | 0.75× |
+| `sudoku` | 0.109 | 0.110 | 1.01× |
+| `tak` | 0.268 | 0.387 | 1.44× |
+| `tarai` | 0.238 | 0.286 | 1.20× |
+| `template` | 0.542 | 0.562 | 1.04× |
+| `throw` | 0.149 | 0.179 | 1.20× |
+| `wordfreq` | 0.006 | 0.037 | 6.17× |
 
 Ratio is `ruby ÷ zeo`: above 1.00× zeo is faster, below it CRuby is.
