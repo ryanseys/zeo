@@ -15,10 +15,9 @@ $ ./hello
 12
 ```
 
-zeo has one compatibility rule: **compare each behaviour with real Ruby, and
-write down each difference**. zeo permits an approximation. zeo does not permit
-a wrong answer that nobody wrote down. The goal is to compile **rubygems and
-bundler** without changes.
+zeo compares each behaviour with real Ruby, and it writes down each difference
+that it finds. If zeo does something differently, you can read about it. The
+goal is to compile **rubygems and bundler** without changes.
 
 [Prism]: https://github.com/ruby/prism
 
@@ -54,7 +53,7 @@ dispatch reads it.
 
 ## Quick start
 
-You must build zeo from source. There is no `gem install zeo`. Build the
+For now, you build zeo from source. There is no `gem install zeo` yet. Build the
 compiler one time, then compile your Ruby programs with it.
 
 ```console
@@ -75,10 +74,10 @@ $ target/release/zeo -e 'puts "hello, world"'
 $ target/release/zeo hello.rb -S
 ```
 
-**Caution:** `zeo foo.rb` compiles the program, but it does not run the
-program. You must run the binary yourself. Only `-e` compiles and runs. There
-are no subcommands, and there is no `zeo run`. The command line agrees with
-Ruby's: `zeo <file>` or `zeo -e <code>`.
+**Note:** `zeo foo.rb` compiles the program, but it does not run the program.
+Run the binary yourself. Only `-e` compiles and runs. There are no subcommands,
+and there is no `zeo run`. The command line agrees with Ruby's: `zeo <file>` or
+`zeo -e <code>`.
 
 ## Command-line options
 
@@ -158,8 +157,8 @@ zeo targets **CRuby 4.0.6**. The version has one source, `zeo-abi`. Therefore
 the compiler's version tests and the runtime's `RUBY_VERSION` always agree.
 
 zeo gives compatibility as text, not as a percentage. A green corpus run is the
-record. A statement such as "zeo's `json` is not the `json` gem" is a fact. You
-cannot calculate it from a score.
+record. A statement such as "zeo's `json` is not the `json` gem" tells you more
+than a score can.
 
 - **The conformance suite** in `tests/spinel/` compiles approximately 2,509
   programs. It compares stdout and stderr with real Ruby, byte for byte, as
@@ -315,7 +314,7 @@ from CRuby's, the compile writes one warning and records it in
 | zlib | `zlib` | `ext-zlib` | `flate2` |
 
 Four extensions give only a part of the methods that CRuby gives. At the limit,
-they raise `NoMethodError`. They do not give a wrong answer.
+they raise `NoMethodError`, so you see the limit immediately.
 
 - `openssl` — no PKey generation, no X509 issue, no PKCS#7, no ASN1, no
   `SSLServer`.
@@ -337,11 +336,11 @@ the release runtime and makes a static binary. This is the same configuration
 that a user gets.
 
 Before it measures a program, the tool compares the output of that program with
-the correct output, byte for byte. To measure a program that gives a wrong
-answer has no value. The tool then measures the time three times and keeps the
-smallest value. It measures CRuby 4.0.6 in the same run.
+the correct output, byte for byte. A speed number only helps you if the program
+gives the correct answer. The tool then measures the time three times and keeps
+the smallest value. It measures CRuby 4.0.6 in the same run.
 
-zeo gives two different results, and one result alone can cause an error:
+zeo gives two different results, and you must read them together:
 
 | Programs | Geometric mean |
 |---|---|
@@ -477,7 +476,7 @@ target of a compiled program. It is not an API to call Ruby from Rust.
 
 ## Build from source
 
-You need these items:
+You need only three items:
 
 - **Rust 1.87 or later**, because zeo uses edition 2024. Read `rust-version`.
 - **A C compiler**, for Prism and Oniguruma.
@@ -542,7 +541,7 @@ scripts/   corpus import, gap promotion, Ruby-against-zeo comparison
 
 ## Limits
 
-zeo is experimental. These are the known limits:
+zeo is experimental, and we tell you the known limits before you find them:
 
 - **There is no tracing garbage collector.** Memory management uses `Arc`
   reference counts, so a cycle of references leaks its memory. This is a known
@@ -561,9 +560,8 @@ from Ruby is a test in [`tests/gaps/`](tests/gaps) that must fail.
 
 ## How to contribute
 
-Issues and contributions are welcome. zeo has one rule: **zeo permits an
-approximation, but zeo does not permit a wrong answer that nobody wrote
-down**. Therefore:
+Issues and contributions are welcome. Please help us keep the differences from
+Ruby visible:
 
 1. Compare each new behaviour with real Ruby.
 2. Write a comment at the code location for each difference that you accept.
