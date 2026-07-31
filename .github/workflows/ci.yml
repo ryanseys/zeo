@@ -23,9 +23,9 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # No `cargo fmt --check` gate: the tree's layout is hand-written and
-      # rustfmt rewrites most of it. Contributors match the surrounding style
-      # instead -- see CONTRIBUTING.md.
+      # No `cargo fmt --check` gate, deliberately. The tree IS rustfmt-clean
+      # (a5fc1ca0), but holding it clean is not worth failing a build over --
+      # style drift is a review comment, not a red X. See CONTRIBUTING.md.
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # The lossy-UTF-8 ratchet: `to_utf8_lossy` in the runtime is a
       # DISPLAY-path convenience that silently corrupts non-UTF-8 semantic
