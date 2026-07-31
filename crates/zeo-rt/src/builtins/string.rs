@@ -283,7 +283,12 @@ fn str_value(s: String) -> RubyValue {
 /// answer rather than inventing a byte -- that only happens when the text did
 /// not come from `src` to begin with.
 fn str_value_like(src: &StrBuf, text: &str) -> RubyValue {
-    let enc = src.encoding();
+    str_value_in(src.encoding(), text)
+}
+
+/// [`str_value_like`] for a caller that has already released the receiver's
+/// lock and kept only its encoding.
+fn str_value_in(enc: crate::encoding::EncodingId, text: &str) -> RubyValue {
     if enc == crate::encoding::UTF_8 {
         return str_value(text.to_string());
     }
@@ -304,6 +309,35 @@ fn str_value_like(src: &StrBuf, text: &str) -> RubyValue {
         }
     }
     RubyValue::Str(crate::string_from_bytes(bytes, enc))
+}
+
+/// Rebuild every String inside a freshly-built result in `enc`.
+///
+/// The shared exit for `split`/`scan`, whose fields all come from the
+/// receiver's own text but are built as UTF-8 by the splitter and by the
+/// regexp engine (which takes a `&str` and so cannot know the encoding). The
+/// nesting handles `scan` with groups, which answers an Array of Arrays.
+///
+/// Snapshots each Array before mapping rather than holding its guard across
+/// the recursion -- the value is freshly built and cannot be self-referential
+/// today, and this keeps that from being load-bearing.
+fn reencode_strs(v: &RubyValue, enc: crate::encoding::EncodingId) -> RubyValue {
+    if enc == crate::encoding::UTF_8 {
+        return v.clone();
+    }
+    match v {
+        RubyValue::Str(s) => {
+            let text = s.lock().to_utf8_lossy().into_owned();
+            str_value_in(enc, &text)
+        }
+        RubyValue::Array(a) => {
+            let items: Vec<RubyValue> = a.lock().iter().cloned().collect();
+            RubyValue::Array(crate::array_new(
+                items.iter().map(|e| reencode_strs(e, enc)).collect(),
+            ))
+        }
+        other => other.clone(),
+    }
 }
 
 /// Each character as its own String, in the receiver's encoding.
@@ -1885,7 +1919,11 @@ ruby_class! {
     // them (`0`/omitted).
     def "split"(recv, args, block) {
         arity!(args, 0..=2);
-        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let (text, enc) = {
+            let s = recv_str!(recv);
+            let g = s.lock();
+            (g.to_utf8_lossy().into_owned(), g.encoding())
+        };
         // An explicit nil limit RAISES in CRuby (`NUM2LONG(nil)`), unlike the
         // nil separator, which selects awk mode.
         let limit = match args.get(1) {
@@ -1942,6 +1980,10 @@ ruby_class! {
             Some(RubyValue::Regexp(re)) => crate::regexp_split(re, &text, limit),
             Some(_) => unreachable!("split separator normalized to Str/Regexp above"),
         };
+        // Every field is a slice of the receiver's own text, so it carries the
+        // receiver's encoding -- the splitter and the regexp engine both work
+        // in decoded UTF-8 and cannot know that.
+        let result = reencode_strs(&result, enc);
         // The block form yields each field and answers the RECEIVER, not the
         // array (CRuby's `rb_str_split_m`).
         if let Some(blk) = &block {
@@ -2792,7 +2834,11 @@ ruby_class! {
     }
     def "scan" arity 1 (recv, args, block) {
         arity!(args, 1);
-        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let (text, enc) = {
+            let s = recv_str!(recv);
+            let g = s.lock();
+            (g.to_utf8_lossy().into_owned(), g.encoding())
+        };
         // The matched substrings, in order. A Regexp defers to the engine; a
         // String pattern matches LITERALLY (its characters are never
         // metacharacters), non-overlapping and left to right -- and an empty
@@ -2826,6 +2872,10 @@ ruby_class! {
         // With a block, yield each match and return the receiver; without one,
         // return the array of matches (never an Enumerator -- CRuby's `scan`
         // has no block-less lazy form).
+        // Every match is a slice of the receiver's own text, so it carries the
+        // receiver's encoding; the engine works in decoded UTF-8.
+        let matches: Vec<RubyValue> =
+            matches.iter().map(|m| reencode_strs(m, enc)).collect();
         match &block {
             Some(RubyValue::Proc(p)) => {
                 for m in matches {
@@ -3180,8 +3230,14 @@ fn sub_gsub(
     block: Option<RubyValue>,
     global: bool,
 ) -> Result<RubyValue, Signal> {
-    let text = match recv {
-        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+    // The engine works on the decoded text; `enc` carries the receiver's
+    // encoding across so every result below is rebuilt in it rather than
+    // being retagged UTF-8.
+    let (text, enc) = match recv {
+        RubyValue::Str(s) => {
+            let g = s.lock();
+            (g.to_utf8_lossy().into_owned(), g.encoding())
+        }
         _ => unreachable!("String table row dispatched on a non-String receiver"),
     };
     let block_proc = match &block {
@@ -3217,7 +3273,10 @@ fn sub_gsub(
             }
         },
     };
-    match (&pattern_arg, block_proc) {
+    // Re-encoded at the single exit rather than per arm: the Regexp arms hand
+    // back whatever the engine built, and it works in decoded UTF-8. The
+    // String arms already build in `enc`, and re-encoding those is a no-op.
+    let result = match (&pattern_arg, block_proc) {
         (RubyValue::Regexp(re), None) => match &args[1] {
             // A Hash replacement maps each matched substring to `hash[match]`
             // (a missing key stringifies to ""), exactly a block that looks the
@@ -3254,13 +3313,16 @@ fn sub_gsub(
             // always the pattern itself. A Hash replacement looks that up (a
             // missing key stringifies to "") and is inserted literally.
             if let RubyValue::Hash(h) = &args[1] {
-                let key = RubyValue::Str(crate::string_new(pattern.clone()));
+                let key = str_value_in(enc, &pattern);
                 let replacement = crate::hash_get(h, &key).to_display_string();
-                return Ok(RubyValue::Str(crate::string_new(if global {
-                    text.replace(&pattern, &replacement)
-                } else {
-                    text.replacen(&pattern, &replacement, 1)
-                })));
+                return Ok(str_value_in(
+                    enc,
+                    &if global {
+                        text.replace(&pattern, &replacement)
+                    } else {
+                        text.replacen(&pattern, &replacement, 1)
+                    },
+                ));
             }
             // A String replacement still processes replacement escapes (`\\`,
             // `\&`/`\0`, `\``, `\'`) per match, exactly like the Regexp form;
@@ -3287,7 +3349,7 @@ fn sub_gsub(
                         out.push(ch);
                     }
                 }
-                return Ok(RubyValue::Str(crate::string_new(out)));
+                return Ok(str_value_in(enc, &out));
             }
             let mut out = String::new();
             let mut rest = text.as_str();
@@ -3314,7 +3376,7 @@ fn sub_gsub(
                 }
             }
             out.push_str(rest);
-            Ok(RubyValue::Str(crate::string_new(out)))
+            Ok(str_value_in(enc, &out))
         }
         (RubyValue::Str(pattern), Some(p)) => {
             let pattern = pattern.lock().to_utf8_lossy().into_owned();
@@ -3323,14 +3385,14 @@ fn sub_gsub(
                 for (k, (_, ch)) in char_boundaries(&text).enumerate() {
                     if global || k == 0 {
                         let replaced =
-                            p.call(&[RubyValue::Str(crate::string_new(String::new()))])?;
+                            p.call(&[str_value_in(enc, "")])?;
                         out.push_str(&replaced.to_display_string());
                     }
                     if let Some(ch) = ch {
                         out.push(ch);
                     }
                 }
-                return Ok(RubyValue::Str(crate::string_new(out)));
+                return Ok(str_value_in(enc, &out));
             }
             let mut out = String::new();
             let mut rest = text.as_str();
@@ -3339,7 +3401,7 @@ fn sub_gsub(
                     Some(pos) if !pattern.is_empty() => {
                         out.push_str(&rest[..pos]);
                         let replaced =
-                            p.call(&[RubyValue::Str(crate::string_new(pattern.clone()))])?;
+                            p.call(&[str_value_in(enc, &pattern)])?;
                         out.push_str(&replaced.to_display_string());
                         rest = &rest[pos + pattern.len()..];
                         if !global {
@@ -3350,10 +3412,11 @@ fn sub_gsub(
                 }
             }
             out.push_str(rest);
-            Ok(RubyValue::Str(crate::string_new(out)))
+            Ok(str_value_in(enc, &out))
         }
         (_, _) => unreachable!("sub/gsub pattern normalized to Str/Regexp above"),
-    }
+    };
+    result.map(|v| reencode_strs(&v, enc))
 }
 
 enum Pad {

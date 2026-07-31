@@ -35,3 +35,20 @@ end
   puts "#{k}/chars\t#{s.chars.map { |c| "#{c.encoding} #{c.bytes.inspect}" }}"
   puts "#{k}/codepoints\t#{s.codepoints}"
 end
+
+# The regexp-backed family: every field and every match is a slice of the
+# receiver's own text, so it carries the receiver's encoding even though the
+# splitter and the regexp engine both work in decoded UTF-8.
+{
+  "latin1" => "caf\xE9 x".dup.force_encoding("ISO-8859-1"),
+  "binary" => "caf\xE9 x".dup.force_encoding("ASCII-8BIT"),
+  "koi8"   => "\xC1\xC2 x".dup.force_encoding("KOI8-R"),
+  "eucjp"  => "\xA4\xA2\xA4\xA4 x".dup.force_encoding("EUC-JP"),
+}.each do |k, s|
+  show("#{k}/sub")   { s.sub("x", "y") }
+  show("#{k}/gsub")  { s.gsub("x", "y") }
+  show("#{k}/sub_re") { s.sub(/x/, "y") }
+  puts "#{k}/split_sp\t#{s.split(" ").map { |f| "#{f.encoding} #{f.bytes.inspect}" }}"
+  puts "#{k}/split_empty\t#{s.split("").map { |f| "#{f.encoding} #{f.bytes.inspect}" }}"
+  puts "#{k}/scan\t#{s.scan(/x/).map { |f| "#{f.encoding} #{f.bytes.inspect}" }}"
+end
