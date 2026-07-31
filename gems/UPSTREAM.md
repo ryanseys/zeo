@@ -15,7 +15,8 @@ each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,
 `tempfile`, `time`, `tmpdir`, `un`, `uri`.
 
 **Faithful vendored copies** of the default/bundled gems shipping with the
-oracle Ruby (4.0.5) -- copied verbatim from its installation, versions below,
+oracle Ruby at the time of vendoring (4.0.5; the oracle now pins 4.0.6 in
+`mise.toml`) -- copied verbatim from its installation, versions below,
 upstream licenses kept where the gem ships one (all are Ruby-license/2-clause
 BSD, compatible with zeo's MIT OR Apache-2.0):
 
