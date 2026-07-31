@@ -18,6 +18,23 @@
 //! permanent hang; under `debug_assertions` this module turns it into a named
 //! panic instead (see [`IvarCell::held`]).
 //!
+//! **The lock is skipped entirely while one Ruby thread exists**, which is
+//! nearly every program -- see [`crate::gvl::sole_thread`] for why the guard is
+//! a thread-local byte rather than a compiler-hoisted check. That path is
+//! `unsafe`, so it is checked three ways: a debug-only record of which thread
+//! took it (asserted never to change, live across the whole golden corpus,
+//! which builds the Debug runtime), a `tests/spinel` golden driving one object
+//! from both sides of a spawn, and Miri:
+//!
+//! ```text
+//! MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-preemption-rate=0.9" \
+//!   cargo +nightly miri test -p zeo-rt --lib -- ivars:: civars:: gvl::
+//! ```
+//!
+//! ThreadSanitizer would be the fourth, and is not runnable on this host: a
+//! dependency-free probe crate built with `-Zsanitizer=thread` segfaults before
+//! its first test, so the failure is the toolchain's rather than anything here.
+//!
 //! Assignment ORDER is recorded, which the old `Option`-per-slot could not do.
 //! `Option` distinguished "never assigned" from "assigned nil" -- and it was
 //! free, because the niche made it the same 24 bytes -- but Ruby reports
@@ -624,6 +641,67 @@ mod tests {
         assert_eq!(names_of(&cell), vec!["@b", "@a"]);
         cell.set(2, RubyValue::Int(3));
         assert_eq!(names_of(&cell), vec!["@b", "@a", "@c"]);
+    }
+
+    /// The lock-free path's own coverage. Every test above takes the LOCKED
+    /// path, because `sole_thread` defaults to the safe answer and only the
+    /// generated `main` opts in -- so without these the `unsafe` in `get`/
+    /// `set`/`defined` is never executed here, and Miri would have nothing to
+    /// check.
+    #[test]
+    fn sole_thread_path_answers_the_same_as_the_locked_one() {
+        // The spawn test below sets a process-wide flag `mark_sole_thread`
+        // then refuses, and a harness that shares one process (`cargo miri
+        // test`, plain `cargo test`) would silently downgrade this to the
+        // locked path -- checking nothing. Reset, then assert it took.
+        crate::gvl::reset_thread_flags_for_test();
+        crate::gvl::mark_sole_thread();
+        assert!(
+            crate::gvl::sole_thread(),
+            "this test must actually take the lock-free path, or it checks nothing"
+        );
+        let cell = IvarCell::<3>::new();
+        assert!(!cell.defined(0));
+        cell.set(0, RubyValue::Int(1));
+        cell.set(2, RubyValue::Int(3));
+        assert_eq!(int(&cell.get(0)), Some(1));
+        assert!(cell.defined(0) && !cell.defined(1));
+        assert_eq!(names_of(&cell), vec!["@a", "@c"]);
+        // Replacing a slot drops the old value while the borrow is live.
+        cell.set(0, RubyValue::Int(9));
+        assert_eq!(int(&cell.get(0)), Some(9));
+        // The by-name paths still lock, and must see the same storage.
+        assert_eq!(int(&cell.get_named(NAMES, "a").unwrap()), Some(9));
+        cell.set_named(NAMES, "z", RubyValue::Int(26));
+        assert_eq!(names_of(&cell), vec!["@a", "@c", "@z"]);
+        assert_eq!(int(&cell.take(0).unwrap()), Some(9));
+    }
+
+    /// Spawning takes the fast path away from the spawner BEFORE the child can
+    /// run, so one cell reached from both threads is locked on both sides.
+    /// This is the invariant `gvl::note_thread_spawn` exists to hold, and the
+    /// shape a data-race detector has to see clean.
+    #[test]
+    fn a_spawn_takes_the_fast_path_away_from_both_sides() {
+        crate::gvl::mark_sole_thread();
+        let cell = std::sync::Arc::new(IvarCell::<3>::new());
+        cell.set(0, RubyValue::Int(0));
+        crate::gvl::note_thread_spawn();
+        assert!(!crate::gvl::sole_thread(), "the spawner gives it up first");
+        let mine = cell.clone();
+        let child = std::thread::spawn(move || {
+            assert!(!crate::gvl::sole_thread(), "a spawned thread never has it");
+            for i in 0..64 {
+                mine.set(1, RubyValue::Int(i));
+                let _ = mine.get(0);
+            }
+        });
+        for i in 0..64 {
+            cell.set(2, RubyValue::Int(i));
+            let _ = cell.get(1);
+        }
+        child.join().unwrap();
+        assert_eq!(int(&cell.get(2)), Some(63));
     }
 
     #[test]

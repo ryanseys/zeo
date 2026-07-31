@@ -82,6 +82,20 @@ pub fn note_thread_spawn() {
     MULTI_THREADED.store(true, Ordering::Release);
 }
 
+/// Put this process back to "no Ruby thread has ever been spawned", so a test
+/// that needs the sole-thread path can claim it whatever ran before.
+///
+/// `MULTI_THREADED` is deliberately monotone in production -- a program that
+/// joins all its threads does not go back to claiming it is alone -- but a test
+/// harness runs many programs in one process. `cargo nextest` gives each test
+/// its own, so the gate never needs this; `cargo miri test` and plain
+/// `cargo test` share one, and there the flag leaks between tests.
+#[cfg(test)]
+pub(crate) fn reset_thread_flags_for_test() {
+    MULTI_THREADED.store(false, Ordering::Release);
+    SOLE.with(|s| s.set(false));
+}
+
 /// The fast-path read: nonzero means SOME thread (possibly not the caller)
 /// has an undelivered interrupt and the caller should run the slow path.
 #[inline]
