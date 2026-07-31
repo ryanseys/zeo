@@ -36,8 +36,11 @@ $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
   XPASS — promote it into `tests/spinel/`.
 - Perf-sensitive changes report their `xtask bench` delta; intentional shifts
   are banked by committing `--update-baseline`'s diff.
-- `cargo fmt --all` and `cargo clippy --workspace --all-targets` (zero
-  warnings) gate CI. Don't add `#[allow]`s to dodge lints — fix or discuss.
+- `cargo clippy --workspace --all-targets` at zero warnings gates CI. Don't
+  add `#[allow]`s to dodge lints — fix or discuss.
+- **Don't run `cargo fmt`.** The layout here is hand-written and rustfmt
+  rewrites most of the tree, so there is no format gate. Match the style of
+  the code around your change.
 
 ## Code conventions
 
