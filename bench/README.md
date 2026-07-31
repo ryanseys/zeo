@@ -73,8 +73,8 @@ portable claim.
 The gap between those two numbers is process startup. 13 benchmarks finish in
 under 50 ms of CRuby time, where zeo's native binary starts instantly and the
 interpreter pays ~35 ms of boot — that is a real advantage of shipping a
-binary, but it is not a claim about generated code. The second row is the row
-that describes generated code, and it is the one to watch.
+binary, but it is not a claim about generated code. The second row is the one
+that describes generated code.
 
 Split by outcome: **47 of 58 faster, 11 slower.**
 

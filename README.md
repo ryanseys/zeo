@@ -74,9 +74,8 @@ $ target/release/zeo hello.rb -S
 ```
 
 **Note:** `zeo foo.rb` compiles the program, but it does not run the program.
-Run the binary yourself. Only `-e` compiles and runs. There are no subcommands,
-and there is no `zeo run`. The command line agrees with Ruby's: `zeo <file>` or
-`zeo -e <code>`.
+Only `-e` compiles and runs. There are no subcommands, and there is no
+`zeo run`. The command line agrees with Ruby's: `zeo <file>` or `zeo -e <code>`.
 
 ## Command-line options
 
@@ -110,8 +109,7 @@ Environment variables:
 
 ## Ruby features
 
-zeo is for real programs, not for a small part of the language. These features
-work today:
+zeo aims at the full language. These features work today:
 
 - **The numeric tower.** `Integer` and `Bignum` have unlimited precision, and
   `Integer` becomes `Bignum` when necessary. `Float`, `Rational` and `Complex`
@@ -147,23 +145,23 @@ work today:
   feature controls that interpreter, and zeo links it only into a program that
   can get to it.
 
-zeo is experimental, and some parts are not complete. This list is a summary.
-The conformance corpus below is the correct source for what agrees with Ruby.
+zeo is experimental, and some parts are not complete. This list is a summary,
+and the conformance corpus below is the record of what agrees with Ruby.
 
 ## Compatibility
 
 zeo targets **CRuby 4.0.6**. The version has one source, `zeo-abi`. Therefore
 the compiler's version tests and the runtime's `RUBY_VERSION` always agree.
 
-zeo gives compatibility as text, not as a percentage. A green corpus run is the
-record. A statement such as "zeo's `json` is not the `json` gem" tells you more
-than a score can.
+zeo reports compatibility as text, and not as a percentage. A green corpus run
+is the record. A note such as "zeo's `json` is not the `json` gem" carries more
+information than a score.
 
 - **The conformance suite** in `tests/spinel/` compiles approximately 2,509
   programs. It compares stdout and stderr with real Ruby, byte for byte, as
   `cargo nextest` cases. `tests/gaps/` holds the programs that do not agree
   yet. Each of these must fail. If one starts to agree with Ruby, the suite
-  fails, and you must move that program into the corpus.
+  fails, and that program then moves into the corpus.
 - **zeo declares each substitution.** For some libraries, zeo supplies its own
   code: `json` uses serde_json, `psych` and `yaml` use yaml-rust2, `zlib` uses
   flate2, `digest` uses RustCrypto, and `openssl` uses a vendored OpenSSL 3.
@@ -263,9 +261,9 @@ If a gem needs a C extension that zeo has no built-in for, the `require` fails
 and the error gives the name of the gem. The function `is_known_native_gem` in
 `crates/zeo/src/parse/loader.rs` holds 14 such names: `sqlite3`, `nokogiri`,
 `pg`, `mysql2`, `bcrypt`, `nio4r`, `puma`, `grpc`, `protobuf`, `oj`, `msgpack`,
-`eventmachine`, `sass` and `rmagick`. The list is not complete, and this is
-correct. For all other names, zeo gives CRuby's usual message, `cannot load
-such file`. The list does not include `ffi`, because zeo supplies `ffi`.
+`eventmachine`, `sass` and `rmagick`. The list is deliberately not complete.
+For all other names, zeo gives CRuby's usual message, `cannot load such file`.
+The list does not include `ffi`, because zeo supplies `ffi`.
 
 ## Standard-library extensions
 
@@ -313,7 +311,7 @@ from CRuby's, the compile writes one warning and records it in
 | zlib | `zlib` | `ext-zlib` | `flate2` |
 
 Four extensions give only a part of the methods that CRuby gives. At the limit,
-they raise `NoMethodError`, so you see the limit immediately.
+they raise `NoMethodError`, so the limit appears immediately.
 
 - `openssl` — no PKey generation, no X509 issue, no PKCS#7, no ASN1, no
   `SSLServer`.
@@ -335,11 +333,11 @@ the release runtime and makes a static binary. This is the same configuration
 that a user gets.
 
 Before it measures a program, the tool compares the output of that program with
-the correct output, byte for byte. A speed number only helps you if the program
-gives the correct answer. The tool then measures the time more than one time
-and keeps the smallest value. It measures CRuby 4.0.6 in the same run.
+the correct output, byte for byte. A speed number is meaningless if the answer
+is wrong. The tool then measures the time more than one time and keeps the
+smallest value. It measures CRuby 4.0.6 in the same run.
 
-zeo gives two different results, and you must read them together:
+zeo gives two results:
 
 | Programs | Geometric mean |
 |---|---|
@@ -349,9 +347,9 @@ zeo gives two different results, and you must read them together:
 The difference between the two results is the start time. For 13 programs,
 CRuby needs less than 50 ms. A native binary starts immediately, but the
 interpreter needs approximately 35 ms to start. This is a real advantage of a
-binary, but it does not tell you about the quality of the generated code. The
-second result tells you about the generated code. zeo is faster for 47
-programs, and slower for 11 programs.
+binary, but it says nothing about the quality of the generated code. The second
+result covers the programs that run long enough for the generated code to
+control the time. zeo is faster for 47 programs, and slower for 11 programs.
 
 The largest advantages are `bigint_fib`, `jekyll_lite` and `str_concat` (8.8),
 `pidigits` and `poly_cells` (8.5), and `micro_lisp` and `sinatra_mini` (8.3).
@@ -395,10 +393,9 @@ crates/
   is an `Arc<Freezable<…>>`, which makes `freeze` and structural sharing cheap.
   A user object is an `Arc<dyn RubyObject>`. Memory management uses `Arc`
   reference counts, and there is **no tracing collector**. Therefore a cycle of
-  references leaks its memory. This is a known limit, and zeo accepts it. Each
-  Ruby core class has one Rust module in `builtins/`. The `linkme` crate
-  collects the method tables at link time into one slice, and the `ClassId` is
-  the index.
+  references leaks its memory. This is a known limit. Each Ruby core class has
+  one Rust module in `builtins/`. The `linkme` crate collects the method tables
+  at link time into one slice, and the `ClassId` is the index.
 - **`zeo-abi`** is a leaf crate with no dependencies. It sets the numeric
   `ClassId` of each built-in class. It holds the `BUILTINS` table, which gives
   the superclass and the included modules of each class. Real Ruby supplies
@@ -519,8 +516,8 @@ $ cargo run -p xtask -- bench                     # the performance suite
   output.
 - **`gaps`** holds the programs that do not agree with Ruby yet. The comment at
   the top of each file gives the cause. Each of these tests must fail. If one
-  starts to agree with Ruby, the suite fails, and you must move the file with
-  `scripts/promote-gap.sh`.
+  starts to agree with Ruby, the suite fails, and `scripts/promote-gap.sh`
+  moves the file.
 
 `ZEO_BLESS=1` is the only way to write the expected output. It runs real Ruby
 with `--disable-error_highlight` and `--disable-did_you_mean`, and it records
@@ -546,7 +543,7 @@ zeo is experimental. Here are the known limits:
 
 - **There is no tracing garbage collector.** Memory management uses `Arc`
   reference counts, so a cycle of references leaks its memory. This is a known
-  limit, and zeo accepts it. `GC.start` runs the finalizers that it can.
+  limit. `GC.start` runs the finalizers that it can.
 - **Four extensions give only a part of their methods.** These are `coverage`,
   `nkf`, `openssl` and `TracePoint`. Read the extension section above.
 - **CRuby is faster for 11 of the 58 benchmark programs.** These programs make
