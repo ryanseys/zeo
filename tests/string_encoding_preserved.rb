@@ -52,3 +52,15 @@ end
   puts "#{k}/split_empty\t#{s.split("").map { |f| "#{f.encoding} #{f.bytes.inspect}" }}"
   puts "#{k}/scan\t#{s.scan(/x/).map { |f| "#{f.encoding} #{f.bytes.inspect}" }}"
 end
+
+# Match groups are slices of the receiver's own text, so they carry the
+# receiver's encoding: the engine decodes to UTF-8 and MatchData remembers
+# what it decoded FROM.
+{
+  "latin1" => "caf\xE9 x".dup.force_encoding("ISO-8859-1"),
+  "koi8"   => "\xC1\xC2 x".dup.force_encoding("KOI8-R"),
+  "eucjp"  => "\xA4\xA2\xA4\xA4 x".dup.force_encoding("EUC-JP"),
+}.each do |k, s|
+  show("#{k}/match0")   { s.match(/x/)[0] }
+  show("#{k}/match_pre") { s.match(/x/).pre_match }
+end

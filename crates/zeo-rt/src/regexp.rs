@@ -284,6 +284,12 @@ impl Engine {
 /// directly, needing no conversion).
 pub struct MatchDataInner {
     pub haystack: String,
+    /// The encoding the haystack CAME FROM. The engine works on decoded
+    /// UTF-8 text, so every group sliced out of `haystack` has to be put
+    /// back into this to answer with the receiver's own bytes -- see
+    /// `matchdata_group`. UTF-8 for a match whose source encoding is not
+    /// threaded through yet, which is what every path did before.
+    pub enc: crate::encoding::EncodingId,
     pub groups: Vec<Option<(usize, usize)>>,
     pub names: Vec<(String, usize)>,
     /// The `Regexp` that produced this match -- `MatchData#regexp`.
@@ -312,6 +318,7 @@ impl MatchDataInner {
     pub fn dup_data(&self, frozen: bool) -> RMatchData {
         Arc::new(MatchDataInner {
             haystack: self.haystack.clone(),
+            enc: self.enc,
             groups: self.groups.clone(),
             names: self.names.clone(),
             regexp: self.regexp.clone(),
@@ -1025,9 +1032,15 @@ pub(crate) fn named_group_positions(pattern: &str) -> Vec<(String, usize)> {
     out
 }
 
-fn build_match_data(re: &RRegexp, haystack: &str, caps: &Caps) -> RMatchData {
+fn build_match_data(
+    re: &RRegexp,
+    haystack: &str,
+    caps: &Caps,
+    enc: crate::encoding::EncodingId,
+) -> RMatchData {
     Arc::new(MatchDataInner {
         haystack: haystack.to_string(),
+        enc,
         groups: caps.spans.clone(),
         names: re.engine.capture_names(),
         regexp: re.clone(),
@@ -1095,9 +1108,20 @@ pub fn matchdata_regexp(md: &RMatchData) -> RubyValue {
 /// `Regexp#match`/`String#match` -- a real `MatchData`, or `nil` if the
 /// pattern doesn't match at all.
 pub fn regexp_match(re: &RRegexp, haystack: &str) -> RubyValue {
+    regexp_match_in(re, haystack, crate::encoding::UTF_8)
+}
+
+/// [`regexp_match`] told what encoding the haystack was decoded FROM, so the
+/// groups can be handed back in it. `String#match` knows this; a bare
+/// `Regexp#match` against an already-decoded haystack does not.
+pub fn regexp_match_in(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+) -> RubyValue {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
-            let m = build_match_data(re, haystack, &caps);
+            let m = build_match_data(re, haystack, &caps, enc);
             crate::lastmatch::set_last_match(Some(m.clone()));
             RubyValue::MatchData(m)
         }
@@ -1214,7 +1238,7 @@ pub fn scanner_match(
 pub fn regexp_case_eq(re: &RRegexp, haystack: &str) -> bool {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
             true
         }
         None => {
@@ -1239,7 +1263,7 @@ pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let start = caps.get(0).expect("group 0 always exists on a match").0;
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
             RubyValue::Int(char_index(haystack, start))
         }
         None => {
@@ -1268,7 +1292,7 @@ pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> Rub
     match regexp_byterindex(re, haystack, byte_limit) {
         Some(byte_start) => {
             if let Some(caps) = anchored_caps_at(re, haystack, byte_start) {
-                crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+                crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
             }
             RubyValue::Int(char_index(haystack, byte_start))
         }
@@ -1437,7 +1461,7 @@ pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<()
         };
         // `$~` tracks the CURRENT match inside the block, as it does in
         // `sub`/`gsub`'s block form.
-        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
         blk.call(&[yielded])?;
     }
     Ok(())
@@ -1626,7 +1650,7 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
         out.push_str(&haystack[last_end..m_start]);
         // Each iteration sets `$~`/`$1..` so the block can read the capture
         // groups of the CURRENT match (CRuby updates the frame's backref).
-        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
         let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
         let replaced = blk.call(&[matched])?;
         out.push_str(&replaced.to_display_string());
@@ -1642,7 +1666,7 @@ pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Rub
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
             let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
             let replaced = blk.call(&[matched])?;
             let mut out = String::new();
@@ -1665,7 +1689,7 @@ pub fn matchdata_group(m: &RMatchData, index: i64) -> RubyValue {
         return RubyValue::Nil;
     }
     match m.groups[i as usize] {
-        Some((s, e)) => RubyValue::Str(string_new(m.haystack[s..e].to_string())),
+        Some((s, e)) => crate::builtins::string::str_value_in_enc(m.enc, &m.haystack[s..e]),
         None => RubyValue::Nil,
     }
 }
@@ -1712,12 +1736,12 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signa
 
 pub fn matchdata_pre_match(m: &RMatchData) -> RubyValue {
     let (start, _) = m.groups[0].expect("group 0 (the whole match) always participates");
-    RubyValue::Str(string_new(m.haystack[..start].to_string()))
+    crate::builtins::string::str_value_in_enc(m.enc, &m.haystack[..start])
 }
 
 pub fn matchdata_post_match(m: &RMatchData) -> RubyValue {
     let (_, end) = m.groups[0].expect("group 0 (the whole match) always participates");
-    RubyValue::Str(string_new(m.haystack[end..].to_string()))
+    crate::builtins::string::str_value_in_enc(m.enc, &m.haystack[end..])
 }
 
 /// `MatchData#to_a` -- the whole match (`[0]`) followed by every capture.
@@ -1752,7 +1776,7 @@ pub fn matchdata_named_captures(m: &RMatchData) -> RubyValue {
 }
 
 pub fn matchdata_string(m: &RMatchData) -> RubyValue {
-    RubyValue::Str(string_new(m.haystack.clone()))
+    crate::builtins::string::str_value_in_enc(m.enc, &m.haystack)
 }
 
 /// `MatchData#to_s` -- the whole matched substring (distinct from
@@ -1780,7 +1804,7 @@ pub fn matchdata_inspect(m: &RMatchData) -> String {
             .unwrap_or_else(|| i.to_string());
         let value = match m.groups[i] {
             Some((s, e)) => {
-                RubyValue::Str(string_new(m.haystack[s..e].to_string())).inspect_string()
+                crate::builtins::string::str_value_in_enc(m.enc, &m.haystack[s..e]).inspect_string()
             }
             None => "nil".to_string(),
         };

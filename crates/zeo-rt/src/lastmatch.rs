@@ -119,6 +119,7 @@ mod tests {
     fn matched(haystack: &str) -> RMatchData {
         std::sync::Arc::new(crate::regexp::MatchDataInner {
             haystack: haystack.to_string(),
+            enc: crate::encoding::UTF_8,
             // "ell" of "hello", with one capture group over "ll".
             groups: vec![Some((1, 4)), Some((2, 4))],
             names: Vec::new(),

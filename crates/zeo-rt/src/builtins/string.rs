@@ -286,6 +286,13 @@ fn str_value_like(src: &StrBuf, text: &str) -> RubyValue {
     str_value_in(src.encoding(), text)
 }
 
+/// [`str_value_in`] for callers outside this module -- `regexp.rs` builds
+/// match groups by slicing a decoded haystack and has to put them back into
+/// the encoding the haystack came from.
+pub fn str_value_in_enc(enc: crate::encoding::EncodingId, text: &str) -> RubyValue {
+    str_value_in(enc, text)
+}
+
 /// [`str_value_like`] for a caller that has already released the receiver's
 /// lock and kept only its encoding.
 fn str_value_in(enc: crate::encoding::EncodingId, text: &str) -> RubyValue {
@@ -364,12 +371,11 @@ fn char_values(s: &crate::collections::RStr) -> Vec<RubyValue> {
 /// UTF-8 the two agree, so the Unicode scalar is used there.
 fn char_codepoint(buf: &StrBuf, r: std::ops::Range<usize>) -> i64 {
     let seq = &buf.bytes()[r];
-    if buf.encoding() == crate::encoding::UTF_8 {
-        if let Ok(s) = std::str::from_utf8(seq)
-            && let Some(c) = s.chars().next()
-        {
-            return c as i64;
-        }
+    if buf.encoding() == crate::encoding::UTF_8
+        && let Ok(s) = std::str::from_utf8(seq)
+        && let Some(c) = s.chars().next()
+    {
+        return c as i64;
     }
     seq.iter().fold(0i64, |acc, b| (acc << 8) | *b as i64)
 }
@@ -1784,7 +1790,7 @@ ruby_class! {
         let RubyValue::Str(other) = &args[0] else {
             return Ok(RubyValue::Nil);
         };
-        Ok(RubyValue::Int(str_byte_cmp(recv_str!(recv), &other)))
+        Ok(RubyValue::Int(str_byte_cmp(recv_str!(recv), other)))
     }
     def "==" arity 1 | "eql?" arity 1 (recv, args, _block) {
         arity!(args, 1);
@@ -2809,9 +2815,15 @@ ruby_class! {
     def "match"(recv, args, block) {
         arity!(args, 1..=2);
         let re = to_regexp(&args[0])?;
-        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let (text, enc) = {
+            let s = recv_str!(recv);
+            let g = s.lock();
+            (g.to_utf8_lossy().into_owned(), g.encoding())
+        };
         let md = match match_haystack(&text, args.get(1))? {
-            Some(h) => crate::regexp_match(&re, &h),
+            // The groups are slices of the receiver's own text, so they come
+            // back in the receiver's encoding.
+            Some(h) => crate::regexp::regexp_match_in(&re, &h, enc),
             None => RubyValue::Nil,
         };
         // The block form runs on a match, answering the block's value; a miss
