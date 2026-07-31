@@ -34,6 +34,9 @@ proc-macro2.workspace = true
 [dev-dependencies]
 insta.workspace = true
 datatest-stable.workspace = true
+# The arity drift test re-parses the runtime's DSL declarations with the same
+# grammar the macro expands, so what it checks is what the runtime registers.
+zeo-dsl = { workspace = true, features = ["spans"] }
 
 [lib]
 name = "zeo"

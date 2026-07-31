@@ -19,6 +19,7 @@
 //! (The golden-file conformance corpus, examples, and gaps all run as
 //! `cargo test`/nextest -- see `crates/zeo/tests/`.)
 
+mod arity_oracle;
 mod bench;
 mod compile_bench;
 mod exec;
@@ -44,10 +45,12 @@ fn main() -> ExitCode {
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
+        Some("arity-oracle") => arity_oracle::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
-                 <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem>"
+                 <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
+                 arity-oracle>"
             );
             ExitCode::FAILURE
         }
