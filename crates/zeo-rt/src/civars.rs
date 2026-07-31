@@ -39,16 +39,95 @@
 //! that module's docs): a class-level `@count` bumped by one `Thread` must
 //! be visible to another.
 
+use crate::FMap;
 use crate::RubyValue;
 use parking_lot::Mutex;
-use crate::FMap;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
-/// Two-level (class -> name -> value), so reads probe with their borrowed
-/// `&str` instead of allocating a `(u32, String)` key per access -- the
-/// dominant cost of a module-level `@ivar` read loop.
-static CIVARS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
+/// One class-level `@x`'s storage, shaped exactly like an instance ivar's
+/// field in a `ruby_class!` struct: `Option` so `instance_variables` can tell
+/// "never assigned" from "assigned nil", behind its own lock so a write
+/// contends with nothing but the same name on the same class.
+///
+/// Slots are LEAKED (see [`intern`]) and therefore `&'static`. Nothing ever
+/// removes a class-level ivar -- `remove_instance_variable` on a class writes
+/// `nil` rather than unbinding -- so the leak is bounded by the number of
+/// distinct `(class, name)` pairs the program mentions.
+pub struct CivarSlot(Mutex<Option<RubyValue>>);
+
+impl CivarSlot {
+    #[inline]
+    pub fn get(&self) -> RubyValue {
+        self.0.lock().clone().unwrap_or(RubyValue::Nil)
+    }
+
+    #[inline]
+    fn put(&self, value: RubyValue) {
+        *self.0.lock() = Some(value);
+    }
+
+    fn assigned(&self) -> bool {
+        self.0.lock().is_some()
+    }
+}
+
+/// Two-level (class -> name -> slot). Consulted once per emitted site, then
+/// never again: the site caches the `&'static CivarSlot` it resolved.
+static CIVARS: LazyLock<Mutex<crate::ScopedMap<&'static CivarSlot>>> =
     LazyLock::new(|| Mutex::new(FMap::default()));
+
+fn intern(class_id: u32, name: &str) -> &'static CivarSlot {
+    let mut table = CIVARS.lock();
+    if let Some(slot) = table.get(&class_id).and_then(|m| m.get(name)) {
+        return slot;
+    }
+    let slot: &'static CivarSlot = Box::leak(Box::new(CivarSlot(Mutex::new(None))));
+    table
+        .entry(class_id)
+        .or_default()
+        .insert(Box::from(name), slot);
+    slot
+}
+
+/// One emitted `@x` reference inside a class-method or class body, holding the
+/// slot it resolves to. The compiler emits one `static` of this per site, so a
+/// read costs a `OnceLock` load and the slot's own lock -- no global table, no
+/// hashing, and no contention with an unrelated class's ivars.
+pub struct CivarSite {
+    slot: OnceLock<&'static CivarSlot>,
+    class_id: u32,
+    name: &'static str,
+}
+
+impl CivarSite {
+    pub const fn new(class_id: u32, name: &'static str) -> Self {
+        Self {
+            slot: OnceLock::new(),
+            class_id,
+            name,
+        }
+    }
+
+    #[inline]
+    fn slot(&self) -> &'static CivarSlot {
+        self.slot.get_or_init(|| intern(self.class_id, self.name))
+    }
+
+    #[inline]
+    pub fn get(&self) -> RubyValue {
+        self.slot().get()
+    }
+
+    #[inline]
+    pub fn set(&self, value: RubyValue) -> Result<(), crate::Signal> {
+        let class = crate::ClassId(self.class_id);
+        if crate::dispatch::class_frozen(class) {
+            return Err(crate::dispatch::frozen_class_error(class));
+        }
+        self.slot().put(value);
+        Ok(())
+    }
+}
 
 /// `nil` for a class-level `@x` never yet written -- and here that is real
 /// Ruby's ACTUAL behavior, not this runtime's usual approximation of it:
@@ -57,12 +136,12 @@ static CIVARS: LazyLock<Mutex<crate::ScopedMap<RubyValue>>> =
 /// Oracle-checked: `class C; def self.probe = @never_written; end; C.probe`
 /// is `nil`.
 pub fn class_ivar_get(class_id: u32, name: &str) -> RubyValue {
-    CIVARS
+    let slot = CIVARS
         .lock()
         .get(&class_id)
         .and_then(|m| m.get(name))
-        .cloned()
-        .unwrap_or(RubyValue::Nil)
+        .copied();
+    slot.map_or(RubyValue::Nil, |slot| slot.get())
 }
 
 /// Fallible because a FROZEN class refuses the write (`can't modify frozen
@@ -74,11 +153,7 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
             class_id,
         )));
     }
-    CIVARS
-        .lock()
-        .entry(class_id)
-        .or_default()
-        .insert(Box::from(name), value);
+    intern(class_id, name).put(value);
     Ok(())
 }
 
@@ -89,11 +164,20 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
 /// class assigning `@b` before `@a` reports `[:@b, :@a]` where this reports
 /// `[:@a, :@b]` -- a documented divergence, not worth a second side table
 /// until something needs it.
+///
+/// Filtered on the slot actually holding a value: a name is interned the first
+/// time any emitted site MENTIONS it, which for a read-only `@x` happens before
+/// -- possibly instead of -- a write, and Ruby reports only assigned names.
 pub fn class_ivar_names(class_id: u32) -> Vec<String> {
     let mut names: Vec<String> = CIVARS
         .lock()
         .get(&class_id)
-        .map(|m| m.keys().map(|n| n.to_string()).collect())
+        .map(|m| {
+            m.iter()
+                .filter(|(_, slot)| slot.assigned())
+                .map(|(name, _)| name.to_string())
+                .collect()
+        })
         .unwrap_or_default();
     names.sort();
     names

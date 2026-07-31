@@ -841,9 +841,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // its own runtime table. A direct table hit, no `ivar_get_dyn`
             // match to walk.
             if let Some(cid) = cx.class_self {
-                let id = cid.0;
-                let key = ident.to_string();
-                return quote! { zeo_rt::class_ivar_get(#id, #key) };
+                return civar_site(cid, &ident.to_string(), |site| quote! { #site.get() });
             }
             // The TOP LEVEL: `self` is `main` -- see the matching arm in
             // `emit_ivar_write_stmt`.
@@ -1881,6 +1879,35 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
         .0
 }
 
+/// Wraps one class-level `@x` reference in a block holding its own `static`
+/// [`zeo_rt::CivarSite`], which resolves the storage slot once and then holds
+/// it. The global name-keyed table stays the source of truth -- reflection
+/// (`Class#instance_variable_get`, `#instance_variables`) still reaches the
+/// same slots -- but a read in a loop no longer takes a process-wide lock and
+/// hashes a class id and a name to find storage it already found.
+///
+/// The `static` sits INSIDE the block, so two references to the same name in
+/// one expression each get their own, and a nested reference (the read in
+/// `@a = @b`) shadows rather than collides.
+fn civar_site(
+    class: ClassId,
+    ivar: &str,
+    body: impl FnOnce(&proc_macro2::Ident) -> TokenStream,
+) -> TokenStream {
+    // Upper-cased only to satisfy `non_upper_case_globals` -- the emission must
+    // stay warning-free. Two names differing solely in case (`@a` and `@A` are
+    // distinct ivars) cannot collide: every site gets its own block.
+    let site = quote::format_ident!("__CIV_{}_{}", class.0, ivar.to_uppercase());
+    let id = class.0;
+    let inner = body(&site);
+    quote! {
+        {
+            static #site: zeo_rt::CivarSite = zeo_rt::CivarSite::new(#id, #ivar);
+            #inner
+        }
+    }
+}
+
 /// An ivar WRITE as a bare Rust STATEMENT (no read-back) -- factored out of
 /// `emit_expr`'s `IvarWrite` arm so `codegen::loops::emit_target_write` (a
 /// multi-assignment/`for`-loop ivar target) can reuse the identical
@@ -1906,9 +1933,10 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     // frozen-class guard lives inside `class_ivar_set` itself (a frozen
     // class raises `can't modify frozen Class: Foo`), hence the `?`.
     if let Some(cid) = cx.class_self {
-        let id = cid.0;
-        let key = ident.to_string();
-        return quote! { zeo_rt::class_ivar_set(#id, #key, #value)?; };
+        let store = civar_site(cid, &ident.to_string(), |site| {
+            quote! { #site.set(#value)?; }
+        });
+        return quote! { #store; };
     }
     // The TOP LEVEL: `self` is `main`, a runtime `Object` whose ivars are a
     // name-keyed map rather than struct fields (no compile-time class exists

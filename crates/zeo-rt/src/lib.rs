@@ -75,7 +75,7 @@ pub use builtins::weak::run_finalizers;
 // program declares under the backend's `zeo_static_alloc` cfg -- see
 // `backend::build_binary` and codegen's main assembly.
 pub use mimalloc::MiMalloc;
-pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
+pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set, CivarSite};
 pub use collections::*;
 pub use constants::{const_get, const_get_master, const_get_scoped, const_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
