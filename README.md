@@ -175,7 +175,7 @@ information than a score.
 For the full list of substitutions and differences, read
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md). For the extension model, read
 [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md). For the remaining work, read
-[`docs/TODO.md`](docs/TODO.md).
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Bundled gems
 
@@ -206,7 +206,7 @@ gem. For the full source information and the licences, read
 | abbrev | 0.1.2 | git-pinned | `issue_abbrev_missing.rb` | — |
 | benchmark | 0.4.1 | git-pinned | `issue_benchmark_missing.rb` | — |
 | bigdecimal | 4.1.2 | upstream +zeo | `bigdecimal.rb` | zeo supplies the native part ([compat](docs/COMPATIBILITY.md)) |
-| bundler | 4.0.16 | git-pinned | `gem_bundler.rb` | the test starts at `bundler/version` ([todo](docs/TODO.md)) |
+| bundler | 4.0.16 | git-pinned | `gem_bundler.rb` | the test starts at `bundler/version` ([roadmap](docs/ROADMAP.md)) |
 | csv | 3.3.6 | git-pinned | `gem_csv.rb` | — |
 | delegate | 0.6.1 | upstream | `issue_require_delegate_crashes.rb` | — |
 | drb | 2.2.3 | git-pinned | `gem_drb.rb` | — |
@@ -241,7 +241,7 @@ gem. For the full source information and the licences, read
 | racc | 1.8.1 | git-pinned | `issue_racc_parser_missing.rb` | — |
 | reline | 0.6.3 | upstream +zeo | `reline_line_editor.rb` | one `zeo:` change in `io.rb` |
 | resolv | 0.7.1 | git-pinned | `issue_resolv_missing.rb` | — |
-| rubygems | 4.0.16 | git-pinned | `gem_rubygems.rb` | the test starts below the top-level require ([todo](docs/TODO.md)) |
+| rubygems | 4.0.16 | git-pinned | `gem_rubygems.rb` | the test starts below the top-level require ([roadmap](docs/ROADMAP.md)) |
 | shellwords | 0.2.2 | upstream | `shellwords.rb` | — |
 | singleton | 0.3.0 | upstream | — | `singleton_class.include?` ([gap](tests/gaps/issue_singleton_class_include_after_extend.rb)) |
 | strscan | 3.1.6 | zeo Ruby half | `strscan_capture_surface.rb` | zeo supplies its own code ([compat](docs/COMPATIBILITY.md)) |
@@ -361,7 +361,7 @@ The largest disadvantages are `life` (0.52), `rbtree` (0.66), `linked_list`
 (0.70), `splay` (0.74) and `so_lists` (0.74). These programs make and release
 many objects. Their time goes into the reference counts and the memory
 allocation, and not into the method calls or the instance variables.
-[`docs/TODO.md`](docs/TODO.md) gives the measurements and the planned work.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) gives the measurements and the planned work.
 
 [`bench/README.md`](bench/README.md) gives the full table, the method and the
 limits of these measurements.
@@ -553,7 +553,7 @@ zeo is experimental. Here are the known limits:
 - **zeo cannot use a gem with a C extension.** Use the `ffi` gem API instead.
   zeo compiles it ahead of time. Read `docs/EXTENSIONS.md`.
 
-[`docs/TODO.md`](docs/TODO.md) gives the remaining work. Each known difference
+[`docs/ROADMAP.md`](docs/ROADMAP.md) gives the remaining work. Each known difference
 from Ruby is a test in [`tests/gaps/`](tests/gaps) that must fail.
 
 ## How to contribute

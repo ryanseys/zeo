@@ -1,13 +1,23 @@
-# TODO
+# Roadmap
 
-Everything zeo still owes, in one file. Replaces the former `docs/todo/`
-directory.
+Everything zeo still owes, in one file.
 
 The rule this file lives by: a **divergence** — a program where zeo answers
 differently from ruby — does not belong here. It belongs in
 [`tests/gaps/`](../tests/gaps) as an executable XFAIL, so the suite fails the
 day someone fixes it. This file holds only **work**: things to build, measure,
 or decide.
+
+Each item states what is measured and what is only suspected. An item that
+says "not yet root-caused" means exactly that — start by measuring it, not by
+writing the fix.
+
+**Good places to start**, roughly by size: a `to_utf8_lossy` site in
+[Correctness](#correctness) (one judgment each, no design work); an iterator
+kind in [lever 2](#2-iterator-inlining-wave-3) (the machinery exists, each
+kind is self-contained); a row for `irb`, `minitest` or `openssl` in
+[`gems/UPSTREAM.md`](../gems/UPSTREAM.md). [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+gives the house rule for all of them: oracle-verified, divergence-documented.
 
 ## Divergences (tracked as executable gaps)
 

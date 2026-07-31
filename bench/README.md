@@ -84,8 +84,8 @@ The 11 that still lose: `life` 0.52×, `rbtree` 0.66×, `linked_list` 0.70×,
 0.99×. These build and tear down object graphs, so their time goes into
 reference-count traffic and allocation rather than into dispatch or ivar
 access, which the completed work already addressed.
-[`docs/TODO.md`](../docs/TODO.md) records what is measured about them and what
-the next lever would be.
+[`docs/ROADMAP.md`](../docs/ROADMAP.md) records what is measured about them
+and what the next lever would be.
 
 The separate figure sometimes quoted — **geomean ≈ −60%** — is zeo against
 zeo's OWN pre-overhaul baseline across four optimization sessions. It is a real

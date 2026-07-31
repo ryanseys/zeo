@@ -32,7 +32,7 @@ NO Unicode mapping -- are exact. Known divergences:
   error messages name the BE row (`UTF-16BE`) where CRuby says `UTF-16`.
 - **String literals with raw high `\xNN` escapes** are not yet
   byte-faithful through the compiler's lowering (see
-  [`docs/TODO.md`](TODO.md)); runtime-constructed bytes (`chr`, IO reads,
+  [`docs/ROADMAP.md`](ROADMAP.md)); runtime-constructed bytes (`chr`, IO reads,
   `force_encoding`) are exact.
 
 How zeo satisfies a `require`, and where its answer is **not** the upstream
