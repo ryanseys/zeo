@@ -44,8 +44,10 @@ pub struct Decl {
     pub class_const: String,
     pub kind: Kind,
     pub name: String,
-    /// The `arity N` written on this name, if any.
-    pub declared: Option<i64>,
+    /// What `Method#arity` will report: the same
+    /// `name.arity.unwrap_or(def.derived_arity())` the proc-macro emits, so a
+    /// tool reading this sees exactly what the runtime registers.
+    pub arity: i64,
     /// Repo-relative, so the output is machine-independent.
     pub file: String,
     pub line: usize,
@@ -147,6 +149,7 @@ fn collect_spec(spec: &ClassSpec, rel: &str, out: &mut Vec<Decl>) {
 
     for method in &spec.methods {
         let cfg = render_cfg(&method.attrs);
+        let derived = method.derived_arity();
         // The receiver ident is the one token every def has that carries a
         // usable span today. Names gain their own spans when the annotator
         // needs byte ranges.
@@ -166,7 +169,7 @@ fn collect_spec(spec: &ClassSpec, rel: &str, out: &mut Vec<Decl>) {
                     class_const: class_const.clone(),
                     kind,
                     name: name.ruby.clone(),
-                    declared: name.arity,
+                    arity: name.arity.unwrap_or(derived),
                     file: rel.to_owned(),
                     line,
                     cfg: cfg.clone(),

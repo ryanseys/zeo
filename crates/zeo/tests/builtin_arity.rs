@@ -223,8 +223,7 @@ fn builtin_arity_matches_the_oracle() {
             // build.rs consistency check is what makes this an error.
             continue;
         };
-        // The macro's default when no `arity N` is written.
-        let declared = decl.declared.unwrap_or(-1);
+        let declared = decl.arity;
 
         let (tag, reason) = if oracle.unavailable.contains(&class.ruby_name) {
             (

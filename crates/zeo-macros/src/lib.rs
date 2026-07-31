@@ -64,7 +64,9 @@ pub fn ruby_module(input: TokenStream) -> TokenStream {
 struct Entry {
     ruby: String,
     fn_ident: Ident,
-    arity: Option<i64>,
+    /// What `Method#arity` reports: the def's parameter list, unless this name
+    /// carries an explicit override.
+    arity: i64,
     /// Outer attributes (`#[cfg(...)]`) gating this entry -- shared with the
     /// impl fn so a cfg'd-out method drops its fn AND its table rows together.
     attrs: Vec<syn::Attribute>,
@@ -88,26 +90,29 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
             Some(bound) => bound.clone(),
             None => mangle(&method.names[0].ruby, idx),
         };
-        let (recv, args, block) = (&method.recv, &method.args, &method.block);
+        let recv = &method.recv;
         let body = &method.body;
         let attrs = &method.attrs;
+        let preamble = gen_preamble(method);
         fn_items.push(quote! {
             #( #attrs )*
             pub(crate) fn #fn_ident(
                 #recv: &crate::RubyValue,
-                #args: &[crate::RubyValue],
-                #block: Option<crate::RubyValue>,
+                __args: &[crate::RubyValue],
+                __block: Option<crate::RubyValue>,
             ) -> Result<crate::RubyValue, crate::Signal> {
+                #preamble
                 #body
             }
         });
         // A `module_function` lands in BOTH tables (instance + class); an
         // ordinary method lands in exactly one, chosen by `def` vs `def self.`.
+        let derived = method.derived_arity();
         for name in &method.names {
             let entry = Entry {
                 ruby: name.ruby.clone(),
                 fn_ident: fn_ident.clone(),
-                arity: name.arity,
+                arity: name.arity.unwrap_or(derived),
                 attrs: method.attrs.clone(),
             };
             if method.is_module_function {
@@ -228,6 +233,93 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
     }
 }
 
+/// The argument-count guard and the parameter bindings a `def`'s signature
+/// implies, emitted ahead of the body.
+///
+/// The guard is the runtime half of what the signature declares; the reported
+/// arity (`MethodDef::derived_arity`) is the reflection half. Both come from the
+/// one parameter list, so they cannot disagree.
+fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
+    use zeo_dsl::ParamKind;
+
+    let min = method.min_args();
+    let max = method.max_args();
+
+    // `**kwrest` peels the trailing options Hash off before anything is
+    // counted, so `[1].pack()` reports `given 0`, not `given 1`.
+    let (slice, kw_binding) = match &method.kwrest {
+        Some(name) => (
+            quote! { __pos },
+            quote! {
+                let (#name, __pos): (Option<&crate::RubyValue>, &[crate::RubyValue]) =
+                    match __args.last() {
+                        Some(h @ crate::RubyValue::Hash(_)) => (Some(h), &__args[..__args.len() - 1]),
+                        _ => (None, __args),
+                    };
+            },
+        ),
+        None => (quote! { __args }, quote! {}),
+    };
+
+    // A wide-open signature accepts everything, so there is nothing to check --
+    // this is what makes `(recv, *args, &block)` byte-for-byte today's code.
+    let guard = if min == 0 && max.is_none() {
+        quote! {}
+    } else {
+        let max_tokens = match max {
+            Some(n) => quote! { Some(#n) },
+            None => quote! { None },
+        };
+        quote! { crate::builtins::check_arity(#slice.len(), #min, #max_tokens)?; }
+    };
+
+    let bindings = method.params.iter().enumerate().map(|(i, p)| {
+        let name = &p.name;
+        match &p.kind {
+            ParamKind::Required => quote! {
+                let #name: &crate::RubyValue = &#slice[#i];
+            },
+            // The default lands in a deferred `let`, so it is evaluated only on
+            // the branch that needs it and still yields a borrow.
+            ParamKind::Optional(default) => {
+                let slot = format_ident!("__default_{i}");
+                quote! {
+                    let #slot;
+                    let #name: &crate::RubyValue = match #slice.get(#i) {
+                        Some(v) => v,
+                        None => {
+                            #slot = { #default };
+                            &#slot
+                        }
+                    };
+                }
+            }
+            ParamKind::Maybe => quote! {
+                let #name: Option<&crate::RubyValue> = #slice.get(#i);
+            },
+        }
+    });
+
+    let rest = method.rest.as_ref().map(|name| {
+        let from = method.params.len();
+        quote! { let #name: &[crate::RubyValue] = &#slice[#from..]; }
+    });
+    let block = match &method.block {
+        Some(name) => quote! { let #name = __block; },
+        // The parameter is part of the fixed ABI, so it must look used even
+        // when this method ignores the block.
+        None => quote! { let _ = &__block; },
+    };
+
+    quote! {
+        #kw_binding
+        #guard
+        #( #bindings )*
+        #rest
+        #block
+    }
+}
+
 /// Generate the `(lookup, names, arity)` trio for one bucket of entries and the
 /// `Option<MethodTable>` that points at them. Empty bucket -> no items, `None`.
 fn gen_method_table(
@@ -252,9 +344,7 @@ fn gen_method_table(
         quote! { #( #attrs )* #ruby }
     });
     let arity_arms = entries.iter().map(|e| {
-        let ruby = &e.ruby;
-        let a = e.arity.unwrap_or(-1);
-        let attrs = &e.attrs;
+        let (ruby, a, attrs) = (&e.ruby, e.arity, &e.attrs);
         quote! { #( #attrs )* #ruby => Some(#a), }
     });
 

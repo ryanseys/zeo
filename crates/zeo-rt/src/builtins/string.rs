@@ -1290,19 +1290,16 @@ ruby_class! {
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc_override.unwrap_or(enc))))
     }
 
-    def "length" arity 0 | "size" arity 0 (recv, args, _block) {
-        arity!(args, 0);
+    def "length" | "size" (recv) {
         Ok(RubyValue::Int(crate::string_len(recv_str!(recv))))
     }
-    def "empty?" arity 0 (recv, args, _block) {
-        arity!(args, 0);
+    def "empty?" (recv) {
         Ok(RubyValue::Bool(crate::string_len(recv_str!(recv)) == 0))
     }
     // Byte-level accessors, honoring the string's real encoding (`bytes`
     // yields the raw bytes; `bytesize` counts them, distinct from the
     // char-counting `length`).
-    def "bytesize" arity 0 (recv, args, _block) {
-        arity!(args, 0);
+    def "bytesize" (recv) {
         Ok(RubyValue::Int(recv_str!(recv).lock().bytesize() as i64))
     }
     // `String#-@` / `#dedup`: an already-frozen receiver is returned as-is

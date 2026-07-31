@@ -127,16 +127,88 @@ pub struct MethodDef {
     /// affects the Rust symbol -- Ruby dispatch (`send`, `respond_to?`) always
     /// resolves by the Ruby name through the lookup table, bound or not.
     pub bound_name: Option<Ident>,
-    /// The three body parameters, spelled by the author (`recv`/`_recv`, ...).
+    /// The receiver slot, spelled by the author (`recv`/`_recv`). Not a Ruby
+    /// parameter -- Ruby's own `def` does not list `self` either.
     pub recv: Ident,
-    pub args: Ident,
-    pub block: Ident,
+    /// Positional parameters in source order: required first, then optional.
+    pub params: Vec<Param>,
+    /// `*rest` -- makes the accepted count unbounded.
+    pub rest: Option<Ident>,
+    /// `**kwrest` -- the trailing options Hash, which CRuby counts as exactly
+    /// one extra positional slot.
+    pub kwrest: Option<Ident>,
+    /// `&block`. A block never affects arity.
+    pub block: Option<Ident>,
+    /// CRuby implements this method as a C function that threw its signature
+    /// away (`rb_define_method(..., -1)` plus `rb_scan_args` inside). See
+    /// [`MethodDef::derived_arity`].
+    pub cfunc: bool,
     /// The `{ ... }` body -- real Rust, kept verbatim for the proc-macro.
     pub body: TokenStream,
 }
 
-/// One Ruby method name plus its declared `Method#arity` (defaulting to CRuby's
-/// variadic `-1` when omitted).
+/// One positional parameter of a `def`.
+pub struct Param {
+    pub name: Ident,
+    pub kind: ParamKind,
+}
+
+/// Required, or optional in one of two flavours.
+pub enum ParamKind {
+    /// `x` -- binds `&RubyValue`.
+    Required,
+    /// `x = EXPR` -- binds `&RubyValue`; the default is evaluated ONLY when the
+    /// caller omitted the argument. Boxed because a `syn::Expr` is 240 bytes
+    /// and the other variants carry nothing.
+    Optional(Box<Expr>),
+    /// `x?` -- binds `Option<&RubyValue>`, for the methods that must tell an
+    /// absent argument from an explicit `nil`.
+    Maybe,
+}
+
+impl MethodDef {
+    /// The fewest arguments this method accepts.
+    pub fn min_args(&self) -> usize {
+        self.params
+            .iter()
+            .filter(|p| matches!(p.kind, ParamKind::Required))
+            .count()
+    }
+
+    /// The most it accepts; `None` when a `*rest` makes that unbounded.
+    pub fn max_args(&self) -> Option<usize> {
+        if self.rest.is_some() {
+            return None;
+        }
+        Some(self.params.len() + usize::from(self.kwrest.is_some()))
+    }
+
+    /// What `Method#arity` reports, by CRuby's own equation
+    /// (`proc.c:1655`, `proc.c:3452`):
+    ///
+    /// ```text
+    /// arity = (min == max) ? min : -min-1
+    /// ```
+    ///
+    /// CRuby applies this to C methods too, but C can only declare `argc = N`
+    /// (min = max = N) or `argc = -1` (min = 0, max = unbounded). It cannot say
+    /// "1 required plus 1 optional", so such a method reports -1 -- and no C
+    /// method can report below -1. `cfunc` records that lost precision, and is
+    /// the only thing a human writes: it collapses a ranged signature back to
+    /// the -1 CRuby would have reported.
+    pub fn derived_arity(&self) -> i64 {
+        let min = self.min_args();
+        match self.max_args() {
+            Some(max) if max == min => min as i64,
+            _ if self.cfunc => -1,
+            _ => -(min as i64) - 1,
+        }
+    }
+}
+
+/// One Ruby method name plus an explicit `Method#arity` override. Normally
+/// `None`: the number comes from the parameter list. It exists for a def whose
+/// `|`-joined names genuinely differ (`"<<"` is 1 where `push` is variadic).
 pub struct MethodName {
     pub ruby: String,
     pub arity: Option<i64>,
@@ -345,6 +417,16 @@ fn parse_def(
         }
     }
 
+    // `cfunc`: CRuby implements this one as a signature-less C function, so it
+    // reports a coarser arity than the parameter list describes. Per-def, after
+    // all `|`-joined names.
+    let cfunc = if peek_ident(input, "cfunc") {
+        input.parse::<Ident>()?;
+        true
+    } else {
+        false
+    };
+
     // Optional `as X`: bind a callable Rust fn name (for direct in-file sibling
     // calls). Comes after all `|`-joined names, before the params.
     let bound_name = if input.peek(Token![as]) {
@@ -354,14 +436,10 @@ fn parse_def(
         None
     };
 
-    // `(recv, args, block)`.
-    let params;
-    parenthesized!(params in input);
-    let recv: Ident = params.parse()?;
-    params.parse::<Token![,]>()?;
-    let args: Ident = params.parse()?;
-    params.parse::<Token![,]>()?;
-    let block: Ident = params.parse()?;
+    let buf;
+    parenthesized!(buf in input);
+    let recv: Ident = buf.parse()?;
+    let (params, rest, kwrest, block) = parse_params(&buf)?;
 
     // The body block, captured verbatim (braces stripped) as real Rust.
     let body_buf;
@@ -376,10 +454,110 @@ fn parse_def(
         names,
         bound_name,
         recv,
-        args,
+        params,
+        rest,
+        kwrest,
         block,
+        cfunc,
         body,
     })
+}
+
+/// Parse the parameters after the receiver slot:
+/// `required* optional* [*rest] [**kwrest] [&block]`.
+///
+/// Order is enforced here rather than left to the reader, because the order is
+/// what makes the argument-count guard and the reported arity derivable at all.
+/// Post-required parameters (`(a, *r, b)`) are rejected: no builtin needs them,
+/// and they would make the guard a two-sided split for no gain.
+#[allow(clippy::type_complexity)]
+fn parse_params(
+    input: ParseStream,
+) -> syn::Result<(Vec<Param>, Option<Ident>, Option<Ident>, Option<Ident>)> {
+    let mut params: Vec<Param> = Vec::new();
+    let mut rest = None;
+    let mut kwrest = None;
+    let mut block = None;
+
+    while input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+        if input.is_empty() {
+            break;
+        }
+
+        if input.peek(Token![&]) {
+            input.parse::<Token![&]>()?;
+            let name: Ident = input.parse()?;
+            if block.replace(name).is_some() {
+                return Err(input.error("a def takes at most one `&block`"));
+            }
+            continue;
+        }
+        if input.peek(Token![*]) && input.peek2(Token![*]) {
+            input.parse::<Token![*]>()?;
+            input.parse::<Token![*]>()?;
+            let name: Ident = input.parse()?;
+            if kwrest.replace(name).is_some() {
+                return Err(input.error("a def takes at most one `**kwrest`"));
+            }
+            continue;
+        }
+        if input.peek(Token![*]) {
+            input.parse::<Token![*]>()?;
+            let name: Ident = input.parse()?;
+            if rest.replace(name).is_some() {
+                return Err(input.error("a def takes at most one `*rest`"));
+            }
+            continue;
+        }
+
+        if block.is_some() || kwrest.is_some() || rest.is_some() {
+            return Err(input.error(
+                "positional parameters must come before `*rest`, `**kwrest` and `&block`",
+            ));
+        }
+
+        let name: Ident = input.parse()?;
+        let kind = if input.peek(Token![=]) {
+            input.parse::<Token![=]>()?;
+            ParamKind::Optional(Box::new(input.parse()?))
+        } else if input.peek(Token![?]) {
+            input.parse::<Token![?]>()?;
+            ParamKind::Maybe
+        } else {
+            if params
+                .iter()
+                .any(|p| !matches!(p.kind, ParamKind::Required))
+            {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "a required parameter cannot follow an optional one",
+                ));
+            }
+            ParamKind::Required
+        };
+        params.push(Param { name, kind });
+    }
+
+    // TRANSITIONAL: the legacy `(recv, args, block)` triple, which means
+    // exactly `(recv, *args, &block)` -- no guard, arity -1. Two bare required
+    // parameters is not yet a shape any def uses, so the reading is
+    // unambiguous; the sweep that rewrites every header deletes this branch.
+    if params.len() == 2
+        && rest.is_none()
+        && kwrest.is_none()
+        && block.is_none()
+        && params
+            .iter()
+            .all(|p| matches!(p.kind, ParamKind::Required))
+    {
+        let mut it = params.into_iter();
+        let args = it.next().expect("checked len").name;
+        let blk = it.next().expect("checked len").name;
+        return Ok((Vec::new(), Some(args), None, Some(blk)));
+    }
+
+    Ok((params, rest, kwrest, block))
 }
 
 /// A Ruby method/alias name: either a string literal (operators, `?`/`!`
@@ -583,5 +761,102 @@ mod tests {
             def "sqrt"(_recv, _args, _block) { Ok(RubyValue::Nil) }
         });
         assert_eq!(spec.methods[0].names[0].arity, None);
+    }
+
+    /// The legacy triple means exactly `(recv, *args, &block)`: no guard, no
+    /// bound parameters, arity -1. Delete with the transitional branch.
+    #[test]
+    fn the_legacy_triple_reads_as_rest_plus_block() {
+        let spec = parse_module(quote! {
+            M = MATH_CLASS;
+            def "sqrt"(_recv, args, block) { Ok(RubyValue::Nil) }
+        });
+        let m = &spec.methods[0];
+        assert!(m.params.is_empty());
+        assert_eq!(m.rest.as_ref().unwrap(), "args");
+        assert_eq!(m.block.as_ref().unwrap(), "block");
+        assert_eq!(m.min_args(), 0);
+        assert_eq!(m.max_args(), None);
+        assert_eq!(m.derived_arity(), -1);
+    }
+
+    /// The one shape the transitional legacy branch takes from us: two bare
+    /// required parameters. No def spells that yet -- the ones that will
+    /// (`arity!(args, 2)`) are converted only after the sweep deletes the
+    /// branch. Pinned so the collision is a recorded fact rather than a
+    /// surprise, and so removing the branch visibly flips this test.
+    #[test]
+    fn two_bare_parameters_still_read_as_the_legacy_triple() {
+        let spec = parse_module(quote! {
+            M = M_CLASS;
+            def "insert"(_recv, at, other) { }
+        });
+        let m = &spec.methods[0];
+        assert!(m.params.is_empty(), "read as (recv, *at, &other), not (a, b)");
+        assert_eq!(m.derived_arity(), -1);
+    }
+
+    /// CRuby's `arity = (min == max) ? min : -min-1`, over every shape the
+    /// grammar can express. `cfunc` is the one bit a human writes, and it only
+    /// matters when min != max.
+    #[test]
+    fn arity_follows_crubys_equation() {
+        let spec = parse_module(quote! {
+            M = MATH_CLASS;
+            def "length"(_recv) { }
+            def "index"(_recv, needle) { }
+            // Spelled with a block so it is not read as the legacy triple --
+            // see `two_bare_parameters_still_read_as_the_legacy_triple`.
+            def "insert"(_recv, at, other, &blk) { }
+            def "first"(_recv, n = RubyValue::Nil) { }
+            def "slice"(_recv, from, to?) { }
+            def "push"(_recv, *items) { }
+            def "unshift"(_recv, at, *rest) { }
+            def "unpack"(_recv, fmt, **opts) { }
+            def "each"(_recv, &blk) { }
+            def "sub" cfunc (_recv, pattern, replacement?) { }
+            def "kill" cfunc (_recv, sig, *pids) { }
+        });
+        let arity = |i: usize| spec.methods[i].derived_arity();
+        assert_eq!(arity(0), 0, "()");
+        assert_eq!(arity(1), 1, "(a)");
+        assert_eq!(arity(2), 2, "(a, b)");
+        assert_eq!(arity(3), -1, "(a = default) is min 0, max 1");
+        assert_eq!(arity(4), -2, "(a, b?) is min 1, max 2");
+        assert_eq!(arity(5), -1, "(*rest) is min 0, unbounded");
+        assert_eq!(arity(6), -2, "(a, *rest) is min 1, unbounded");
+        assert_eq!(arity(7), -2, "kwargs count as one extra slot: min 1, max 2");
+        assert_eq!(arity(8), 0, "a block never counts");
+        assert_eq!(arity(9), -1, "cfunc collapses the range C could not express");
+        assert_eq!(arity(10), -1, "cfunc collapses the unbounded case too");
+    }
+
+    /// A `|`-joined def whose names genuinely differ keeps the override, and it
+    /// wins over the derived value.
+    #[test]
+    fn an_explicit_arity_overrides_the_signature() {
+        let spec = parse_module(quote! {
+            M = ARRAY_CLASS;
+            def "<<" arity 1 | "push" | "append"(_recv, *items) { }
+        });
+        let m = &spec.methods[0];
+        assert_eq!(m.derived_arity(), -1);
+        assert_eq!(m.names[0].arity, Some(1));
+        assert_eq!(m.names[1].arity, None);
+    }
+
+    #[test]
+    fn parameters_must_be_ordered() {
+        let bad = [
+            quote! { M = M_CLASS; def "x"(_recv, *rest, tail) { } },
+            quote! { M = M_CLASS; def "x"(_recv, a = RubyValue::Nil, b) { } },
+            quote! { M = M_CLASS; def "x"(_recv, &blk, a) { } },
+        ];
+        for ts in bad {
+            assert!(
+                ClassSpec::parse_module.parse2(ts).is_err(),
+                "an out-of-order parameter list must be rejected"
+            );
+        }
     }
 }

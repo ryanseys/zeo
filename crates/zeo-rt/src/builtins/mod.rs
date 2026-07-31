@@ -446,6 +446,38 @@ macro_rules! arity {
 }
 pub(crate) use arity;
 
+/// The argument-count guard the `ruby_class!` macro emits from a def's
+/// parameter list. `max: None` means a `*rest` accepts any number.
+///
+/// One shared helper rather than an inlined `format!` per call site: the
+/// message is only ever built on the failing path, and LLVM otherwise lays that
+/// path ahead of the hot body, so a four-line builtin spends its first cache
+/// line on error construction.
+#[inline(always)]
+pub(crate) fn check_arity(given: usize, min: usize, max: Option<usize>) -> Result<(), Signal> {
+    if given < min || max.is_some_and(|hi| given > hi) {
+        return Err(arity_err(given, min, max));
+    }
+    Ok(())
+}
+
+/// CRuby's exact wording, oracle-verified against 4.0.6: `expected 2` for a
+/// fixed count, `expected 1..2` for a range, `expected 2+` when a splat leaves
+/// the maximum open.
+#[cold]
+#[inline(never)]
+pub(crate) fn arity_err(given: usize, min: usize, max: Option<usize>) -> Signal {
+    let expected = match max {
+        Some(hi) if hi == min => format!("{min}"),
+        Some(hi) => format!("{min}..{hi}"),
+        None => format!("{min}+"),
+    };
+    crate::dispatch::raise_error(
+        "ArgumentError",
+        format!("wrong number of arguments (given {given}, expected {expected})"),
+    )
+}
+
 /// Receiver unwrappers -- the table's ClassId keying guarantees the
 /// variant, so a mismatch is a dispatch bug, not a user error.
 macro_rules! recv_str {
