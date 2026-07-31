@@ -107,6 +107,7 @@ pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use flipflop::{flip_flop_on, flip_flop_set};
+pub use gvl::mark_sole_thread;
 pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match,

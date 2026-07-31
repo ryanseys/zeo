@@ -109,6 +109,11 @@ pub struct IvarCell<const N: usize> {
     /// its keep -- the whole golden corpus runs against a Debug runtime.
     #[cfg(debug_assertions)]
     holder: std::sync::atomic::AtomicU64,
+    /// The one thread that has taken the lock-free path on this cell, or `0`.
+    /// A diagnostic for the sole-thread invariant -- see
+    /// [`IvarCell::note_fast_thread`]. Debug builds only.
+    #[cfg(debug_assertions)]
+    fast_owner: std::sync::atomic::AtomicU64,
 }
 
 impl<const N: usize> Default for IvarCell<N> {
@@ -213,6 +218,8 @@ impl<const N: usize> IvarCell<N> {
             }),
             #[cfg(debug_assertions)]
             holder: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(debug_assertions)]
+            fast_owner: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -247,6 +254,41 @@ impl<const N: usize> IvarCell<N> {
         self.inner.lock()
     }
 
+    /// Whether this access may skip the lock entirely -- see the module docs.
+    ///
+    /// In a debug build it also records which thread took the fast path and
+    /// asserts that answer never changes for a given cell, so a cell reached
+    /// from two threads while either believed itself alone fails loudly here
+    /// rather than corrupting a slot in a release build. The whole golden
+    /// corpus runs against a Debug runtime, so this sees every program.
+    #[inline(always)]
+    fn unlocked(&self) -> bool {
+        if !crate::gvl::sole_thread() {
+            return false;
+        }
+        #[cfg(debug_assertions)]
+        self.note_fast_thread();
+        true
+    }
+
+    #[cfg(debug_assertions)]
+    #[cold]
+    fn note_fast_thread(&self) {
+        use std::hash::{Hash, Hasher};
+        use std::sync::atomic::Ordering;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::thread::current().id().hash(&mut h);
+        let me = h.finish() | 1;
+        let seen = self.fast_owner.swap(me, Ordering::AcqRel);
+        assert!(
+            seen == 0 || seen == me,
+            "two threads took the sole-thread instance-variable path on one \
+             object. `gvl::note_thread_spawn` must run BEFORE every Ruby thread \
+             or Ractor spawn; in a release build this is a data race, not an \
+             assertion."
+        );
+    }
+
     /// Move every slot holding another object into `out`, leaving `nil` --
     /// [`crate::RubyObject::take_linked_ivars`]' storage half.
     pub fn take_linked(&self, out: &mut Vec<RubyValue>) {
@@ -264,11 +306,29 @@ impl<const N: usize> IvarCell<N> {
     /// A declared slot's value -- `nil` for one never assigned, as in Ruby.
     #[inline(always)]
     pub fn get(&self, index: usize) -> RubyValue {
+        if self.unlocked() {
+            // SAFETY: see the module docs. No other thread can reach this cell
+            // while `sole_thread` holds, and this borrow ends before the clone
+            // returns -- nothing here calls Ruby, so nothing can re-enter.
+            return unsafe { (*self.inner.data_ptr()).vals[index].clone() };
+        }
         self.held().vals[index].clone()
     }
 
     #[inline(always)]
     pub fn set(&self, index: usize, value: RubyValue) {
+        if self.unlocked() {
+            // SAFETY: as in `get`. The replaced value is dropped while the
+            // borrow is live, exactly as the locked path drops it under the
+            // guard -- releasing an object graph reaches other cells, never
+            // this one, which the caller is holding a reference to.
+            let inner = unsafe { &mut *self.inner.data_ptr() };
+            if inner.seq[index] == 0 {
+                inner.seq[index] = inner.stamp();
+            }
+            inner.vals[index] = value;
+            return;
+        }
         let mut inner = self.held();
         if inner.seq[index] == 0 {
             inner.seq[index] = inner.stamp();
@@ -289,6 +349,10 @@ impl<const N: usize> IvarCell<N> {
 
     #[inline(always)]
     pub fn defined(&self, index: usize) -> bool {
+        if self.unlocked() {
+            // SAFETY: as in `get`.
+            return unsafe { (*self.inner.data_ptr()).seq[index] != 0 };
+        }
         self.held().seq[index] != 0
     }
 
@@ -421,6 +485,8 @@ impl<const N: usize> IvarCell<N> {
             inner: Mutex::new(copy),
             #[cfg(debug_assertions)]
             holder: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(debug_assertions)]
+            fast_owner: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }

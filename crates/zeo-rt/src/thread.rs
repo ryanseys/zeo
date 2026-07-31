@@ -265,6 +265,9 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     // A real OS thread: CRuby-sized 8MiB stack, its own scheduling ctx
     // attached to the process Gvl, the (usually disabled, hence free) Gvl
     // held for the body's duration -- released even on panic via the guard.
+    // BEFORE the spawn -- see `gvl::note_thread_spawn`. From here on nothing
+    // may take the sole-thread ivar path.
+    crate::gvl::note_thread_spawn();
     let handle = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {

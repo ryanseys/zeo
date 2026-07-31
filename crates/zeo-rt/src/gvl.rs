@@ -34,6 +34,54 @@ use std::time::{Duration, Instant};
 /// thread's fast path can skip the slow path with one relaxed load.
 static PENDING_GLOBAL: AtomicU32 = AtomicU32::new(0);
 
+/// Whether any Ruby thread or Ractor has ever been spawned. Monotone in the
+/// SAFE direction: it is only ever set, never cleared, so a program that
+/// joins all its threads does not go back to claiming it is alone.
+static MULTI_THREADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+thread_local! {
+    /// Whether THIS thread is the only Ruby thread in the process, so an
+    /// instance-variable access can read its slot directly instead of locking
+    /// (see [`crate::IvarCell`]).
+    ///
+    /// The default is the SAFE answer, so a thread that never opts in --
+    /// every spawned Ruby thread, and any thread this runtime does not know
+    /// about -- keeps locking. Only the generated `main` opts in, at a point
+    /// where exactly one Ruby thread exists and it is this one.
+    static SOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The generated `main` prologue: at this point one Ruby thread exists.
+#[inline]
+pub fn mark_sole_thread() {
+    SOLE.with(|s| s.set(!MULTI_THREADED.load(Ordering::Acquire)));
+}
+
+/// Whether the caller may take a lock-free path over data only Ruby threads
+/// reach. One thread-local byte; LLVM must reload it after any call it cannot
+/// see through, which is exactly the condition under which the answer could
+/// have changed.
+#[inline(always)]
+pub fn sole_thread() -> bool {
+    SOLE.with(|s| s.get())
+}
+
+/// Called BEFORE spawning a Ruby thread or Ractor, never after.
+///
+/// Two happens-before edges close the invariant, and the second is the one a
+/// naive design misses. Parent to CHILD: `thread::spawn` is itself a
+/// synchronization point, so the child cannot start before the store. Parent
+/// to its OWN later accesses: clearing `SOLE` is a plain write to a slot only
+/// this thread reads, so being sequenced-before is all it needs. Since there
+/// is exactly one Ruby thread before the first spawn, and it is the thread
+/// calling this, no thread can be running with `SOLE` set once a second one
+/// exists.
+#[cold]
+pub fn note_thread_spawn() {
+    SOLE.with(|s| s.set(false));
+    MULTI_THREADED.store(true, Ordering::Release);
+}
+
 /// The fast-path read: nonzero means SOME thread (possibly not the caller)
 /// has an undelivered interrupt and the caller should run the slow path.
 #[inline]
@@ -561,5 +609,50 @@ mod tests {
         parallel.attach(&d);
         parallel.timer_tick();
         assert!(!c.pending(INT_TIMER) && !d.pending(INT_TIMER));
+    }
+
+    /// The sole-thread ivar path is only sound while every RUBY thread spawn
+    /// is preceded by `note_thread_spawn`. That is a two-line discipline no
+    /// type can enforce, so it is checked against the source.
+    ///
+    /// The runtime's other spawn is the GVL preemption timer, whose body reads
+    /// a clock and posts a bit -- it touches no Ruby object and so needs no
+    /// mark. Anything NEW that spawns has to be classified here deliberately.
+    #[test]
+    fn every_ruby_thread_spawn_is_marked() {
+        let mut unmarked = Vec::new();
+        for (file, src) in [
+            ("thread.rs", include_str!("thread.rs")),
+            ("ractor.rs", include_str!("ractor.rs")),
+            ("gvl.rs", include_str!("gvl.rs")),
+            ("fiber.rs", include_str!("fiber.rs")),
+            ("coroutine.rs", include_str!("coroutine.rs")),
+        ] {
+            let lines: Vec<&str> = src.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !line.contains("thread::spawn(") && !line.contains("thread::Builder::new()") {
+                    continue;
+                }
+                // Test-only spawns live under a `#[cfg(test)] mod tests`, which
+                // is always the tail of these files.
+                if src[..src.find(line).unwrap_or(0)].contains("mod tests {") {
+                    continue;
+                }
+                let window = lines[i.saturating_sub(6)..i].join("\n");
+                if window.contains("note_thread_spawn()") {
+                    continue;
+                }
+                // The preemption timer: classified, not forgotten.
+                if window.contains("zeo-timer") || lines[i..(i + 4).min(lines.len())].join("\n").contains("zeo-timer") {
+                    continue;
+                }
+                unmarked.push(format!("{file}:{}", i + 1));
+            }
+        }
+        assert!(
+            unmarked.is_empty(),
+            "these spawn a thread without `gvl::note_thread_spawn()` first: {unmarked:?}. \
+             If the new thread cannot reach a Ruby object, say so here; otherwise mark it."
+        );
     }
 }

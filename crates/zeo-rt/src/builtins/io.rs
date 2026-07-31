@@ -1024,7 +1024,7 @@ fn with_file<T>(
             // Give back whatever the line readers read ahead, so this closure
             // sees the descriptor at the position Ruby believes in. A no-op --
             // and syscall-free -- for any program that never buffered.
-            unread(&io, file);
+            unread(io, file);
             f(file, &path)
         }
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
@@ -1044,7 +1044,7 @@ fn with_buffered_file<T>(
     };
     let path = io.path.clone().unwrap_or_default();
     crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
-        IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(&io, file, &path),
+        IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(io, file, &path),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
         IoBackend::Std(_) => Err(io_error!("not a file")),
     })
@@ -1374,7 +1374,7 @@ fn io_close(
         // handed back at the position Ruby consumed to, not wherever the read
         // buffer left it.
         if let IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) = &mut *backend {
-            unread(&io, f);
+            unread(io, f);
         }
         if io.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
             backend.close_file();

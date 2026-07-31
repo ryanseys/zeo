@@ -1960,6 +1960,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#sst_containers)*
 
         fn main() {
+            // This thread is the only Ruby thread until the program spawns
+            // one, which is what lets an instance-variable access reach its
+            // slot without locking (`zeo_rt::IvarCell`). Every spawn site in
+            // the runtime clears it first, and no other thread ever sets it.
+            zeo_rt::mark_sole_thread();
             // A registry pre-populated with the CORE world -- the always-on
             // builtin classes/modules AND the built-in exception hierarchy,
             // installed once from `zeo-rt`. Their ids are the ones `zeo-abi`

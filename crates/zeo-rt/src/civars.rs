@@ -58,11 +58,23 @@ pub struct CivarSlot(Mutex<Option<RubyValue>>);
 impl CivarSlot {
     #[inline]
     pub fn get(&self) -> RubyValue {
+        if crate::gvl::sole_thread() {
+            // SAFETY: the same argument [`crate::IvarCell`] makes for an
+            // instance's slots. No other thread can reach this one while
+            // `sole_thread` holds, and the borrow ends before the clone
+            // returns -- nothing here calls Ruby, so nothing re-enters.
+            return unsafe { (*self.0.data_ptr()).clone().unwrap_or(RubyValue::Nil) };
+        }
         self.0.lock().clone().unwrap_or(RubyValue::Nil)
     }
 
     #[inline]
     fn put(&self, value: RubyValue) {
+        if crate::gvl::sole_thread() {
+            // SAFETY: as in `get`.
+            unsafe { *self.0.data_ptr() = Some(value) };
+            return;
+        }
         *self.0.lock() = Some(value);
     }
 

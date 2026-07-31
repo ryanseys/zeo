@@ -86,6 +86,8 @@ pub fn ractor_new(block: RubyValue, args: Vec<RubyValue>) -> Result<RubyValue, S
     let body = block.as_proc_unchecked();
     let crossed: Vec<RubyValue> = args.iter().map(cross_boundary).collect::<Result<_, _>>()?;
     let (tx, rx) = mpsc::channel();
+    // BEFORE the spawn -- see `gvl::note_thread_spawn`.
+    crate::gvl::note_thread_spawn();
     let handle = std::thread::spawn(move || {
         CURRENT_INCOMING.with(|c| *c.borrow_mut() = Some(rx));
         body.call(&crossed)
