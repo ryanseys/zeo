@@ -84,6 +84,11 @@ pub struct ClassInfo {
     /// `include`d modules, in source order (same reverse-expansion rule as
     /// `prepends`).
     pub includes: Vec<ClassId>,
+    /// The constants this class's body marked with `private_constant`, minus
+    /// any a later `public_constant` restored. A qualified `M::A` naming one
+    /// of these from OUTSIDE `M`'s lexical scope is a NameError, and
+    /// `M.constants` omits it.
+    pub private_constants: std::collections::BTreeSet<String>,
     /// `extend`ed modules, in source order -- NOT part of `ancestors()` at
     /// all, which linearizes INSTANCE-method resolution. An extended module
     /// joins this class's SINGLETON chain instead, so it drives
@@ -548,6 +553,7 @@ impl Compiler {
                 parent: None,
                 prepends: Vec::new(),
                 includes: Vec::new(),
+                private_constants: Default::default(),
                 extends: Vec::new(),
                 class_method_prepends: Vec::new(),
                 undefined: std::collections::HashSet::new(),
@@ -1038,6 +1044,7 @@ impl Compiler {
             parent,
             prepends: Vec::new(),
             includes: Vec::new(),
+            private_constants: Default::default(),
             extends: Vec::new(),
             class_method_prepends: Vec::new(),
             undefined: std::collections::HashSet::new(),

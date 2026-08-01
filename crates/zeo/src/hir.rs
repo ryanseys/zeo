@@ -2104,6 +2104,17 @@ pub enum HirNode {
     /// (the mixin half of `module_function`), and a module method is added
     /// alongside it.
     ModuleFunction(String),
+    /// `private_constant :A, :B` / `public_constant :A` in a class body.
+    ///
+    /// Recognized at LOWERING time rather than left as a runtime call, because
+    /// the reference it has to reject -- a qualified `M::A` from outside `M` --
+    /// is one zeo resolves statically. Codegen compares the reading scope's
+    /// cref against the owner and raises there; the runtime half only has to
+    /// keep `Module#constants` and `defined?` honest.
+    ConstantVisibility {
+        names: Vec<String>,
+        private: bool,
+    },
     /// The last-match specials: `$~`, `$1`..`$9`, `$&`, `` $` ``, `$'`.
     ///
     /// NOT `GlobalRead`, even though they are spelled like globals: nothing
@@ -2184,6 +2195,7 @@ impl HirNode {
             | HirNode::AliasMethod { .. }
             | HirNode::MethodVisibility { .. }
             | HirNode::ClassMethodVisibility { .. }
+            | HirNode::ConstantVisibility { .. }
             | HirNode::ModuleFunction(_) => true,
 
             // `ClassDef` and `DefMethod` are class-body shapes too, but both
@@ -2536,7 +2548,8 @@ impl HirNode {
                 name: _,
                 visibility: _,
             }
-            | HirNode::ModuleFunction(_) => {}
+            | HirNode::ModuleFunction(_)
+            | HirNode::ConstantVisibility { .. } => {}
         }
     }
 }

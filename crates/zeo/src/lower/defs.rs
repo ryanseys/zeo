@@ -313,7 +313,15 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // would wrongly raise. It is a documented best-effort NO-OP
             // (fileutils' Verbose/NoWrite/DryRun are load-time convenience
             // wrappers; the singleton-visibility nuance is bundler-irrelevant).
-            HirNode::MethodVisibility { .. } | HirNode::Call { .. } => Item::Skip,
+            // `private_constant` here names a constant of the SINGLETON class,
+            // which zeo hoists into the enclosing class along with the
+            // constant itself -- so honoring it would privatize a name on the
+            // wrong owner. Skipped for the same reason the visibility
+            // directives are, and with the same best-effort posture (csv's
+            // `class << self; ON_WINDOWS = ...; private_constant :ON_WINDOWS`).
+            HirNode::MethodVisibility { .. }
+            | HirNode::ConstantVisibility { .. }
+            | HirNode::Call { .. } => Item::Skip,
             _ => Item::Reject,
         };
         match item {
@@ -1666,6 +1674,35 @@ fn lower_class_body_statement(
                             })),
                         }
                     }
+                    return Ok(());
+                }
+            }
+            // `private_constant :A, :B` / `public_constant :A` -- a class-body
+            // directive, not a call. The reference it must reject is a
+            // qualified `M::A` from outside `M`, which zeo resolves at compile
+            // time, so the names are carried to the compiler rather than left
+            // for a runtime flag nothing could consult. A dynamic argument
+            // falls through to the generic `Call` (still validated + recorded
+            // at run time, just not enforced statically).
+            if name == "private_constant" || name == "public_constant" {
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                    let names = arg_list
+                        .iter()
+                        .map(|n| {
+                            String::from_utf8_lossy(
+                                n.as_symbol_node().expect("checked above").unescaped(),
+                            )
+                            .into_owned()
+                        })
+                        .collect();
+                    out.push(hir.push(HirNode::ConstantVisibility {
+                        names,
+                        private: name == "private_constant",
+                    }));
                     return Ok(());
                 }
             }

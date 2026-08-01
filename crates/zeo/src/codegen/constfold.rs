@@ -64,6 +64,21 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
         // constant that doesn't name a class. Resolved through the lexical
         // chain and then `Object`, which is where a top-level one lands.
         HirNode::ClassRef(name) => {
+            // A path spelled as one name (`M::Hidden`) is still an explicit
+            // scope, so the private-constant rule applies to it too.
+            let path = crate::constpath::ConstPath::parse(name);
+            if let Some(scope) = path.scope() {
+                if let Some(sid) = cx.resolve_class(scope) {
+                    if cx
+                        .compiler
+                        .class(sid)
+                        .private_constants
+                        .contains(path.base())
+                    {
+                        return Some(false);
+                    }
+                }
+            }
             let mut scopes = cx.cref_chain().to_vec();
             scopes.push(OBJECT_CLASS);
             if defined_only_later(cx, id, &scopes, name) {
@@ -83,6 +98,11 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             let Some(scope_id) = cx.resolve_class(scope) else {
                 return Some(false);
             };
+            // `defined?(M::S)` is nil for a private constant -- the same
+            // rejection of the scope operator the read itself gets.
+            if cx.compiler.class(scope_id).private_constants.contains(name) {
+                return Some(false);
+            }
             if defined_only_later(cx, id, &[scope_id], name) {
                 return Some(false);
             }

@@ -78,7 +78,10 @@ pub use builtins::weak::run_finalizers;
 // `backend::build_binary` and codegen's main assembly.
 pub use civars::{CivarSite, class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
-pub use constants::{ConstSite, const_get, const_get_master, const_get_scoped, const_set};
+pub use constants::{
+    ConstSite, const_get, const_get_master, const_get_scoped, const_is_private, const_set,
+    const_set_private,
+};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,

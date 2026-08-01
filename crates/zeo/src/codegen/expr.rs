@@ -293,8 +293,14 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             if let Some(scope_id) = cx.resolve_class(scope) {
                 let scope_id = scope_id.0;
                 let name = name.as_str();
+                // A `private_constant` is nil to `defined?`, even though
+                // `const_defined?` still answers true for it -- two different
+                // questions, and this is the one the scope operator gates.
+                // Checked at run time so a later `public_constant` restores it.
                 return quote! {
-                    if zeo_rt::const_defined_in(zeo_rt::ClassId(#scope_id), #name) {
+                    if zeo_rt::const_is_private(#scope_id, #name) {
+                        zeo_rt::RubyValue::Nil
+                    } else if zeo_rt::const_defined_in(zeo_rt::ClassId(#scope_id), #name) {
                         zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
                     } else {
                         zeo_rt::RubyValue::Nil
@@ -472,7 +478,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ModuleFunction(_) => None,
+        | HirNode::ModuleFunction(_)
+        | HirNode::ConstantVisibility { .. } => None,
     };
     match classification {
         Some(s) => quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(#s.to_string())) },
@@ -926,7 +933,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::ClassRef(name) => match cx.resolve_class(name) {
             Some(cid) => {
                 let id = cid.0;
-                quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
+                // A nested class is a constant of its parent, so a
+                // `private_constant :Hidden` hides `M::Hidden` exactly as it
+                // hides a value constant -- and this arm resolves the class
+                // statically, never reaching `emit_const_read`'s own guard.
+                let path = crate::constpath::ConstPath::parse(name);
+                let guard = private_const_guard(cx, path.scope(), path.base());
+                quote! { { #guard zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
             }
             // Not a statically known class. A JOINED name (`NS::Item`, the
             // form `constant_path_name` produces) has to read as `Item`
@@ -944,7 +957,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let id = qualified_const_class(cx, scope, name)
                 .expect("guarded above")
                 .0;
-            quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
+            let guard = private_const_guard(cx, Some(scope), name);
+            quote! { { #guard zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
         }
         HirNode::New {
             class_name,
@@ -1433,7 +1447,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
-        | HirNode::ModuleFunction(_) => {
+        | HirNode::ModuleFunction(_)
+        | HirNode::ConstantVisibility { .. } => {
             let loc = crate::codegen::source_location(cx.compiler, id);
             crate::codegen::unsupported(format!(
                 "a definition-level construct used as a VALUE isn't supported yet (zeo limitation): {loc:?}"
@@ -2145,6 +2160,45 @@ pub(super) fn split_const_path(path: &str) -> (Option<&str>, &str) {
     }
 }
 
+/// The guard a `Scope::NAME` naming a `private_constant` carries. `None` for a
+/// public name, and for a BARE name -- `private_constant` rejects the scope
+/// OPERATOR, not the reader: `M::S` is a NameError everywhere, even inside
+/// `M`'s own body, while a bare `S` resolved through the cref is fine
+/// (oracle-verified). So there is no cref comparison to make.
+///
+/// A guard rather than the raise itself, because a later
+/// `M.public_constant :S` restores the name and only the runtime flag knows.
+/// It costs one probe, and only where the compiler already saw a
+/// `private_constant` -- every ordinary constant read is untouched.
+pub(super) fn private_const_guard(
+    cx: &Ctx,
+    scope: Option<&str>,
+    name: &str,
+) -> Option<TokenStream> {
+    let scope = scope?;
+    let owner = const_owner_id_opt(cx, Some(scope), name)?;
+    if !cx
+        .compiler
+        .class(ClassId(owner))
+        .private_constants
+        .contains(name)
+    {
+        return None;
+    }
+    let path = format!("{}::{name}", cx.compiler.fq_name(ClassId(owner)));
+    Some(quote! {
+        if zeo_rt::const_is_private(#owner, #name) {
+            return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(
+                zeo_rt::make_name_error(
+                    format!("private constant {} referenced", #path),
+                    #name,
+                    zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
+                ),
+            )));
+        }
+    })
+}
+
 pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
     // An explicit `Scope::NAME` whose scope class isn't registered is a
     // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),
@@ -2198,6 +2252,7 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
             quote! { zeo_rt::RubyValue },
         );
     };
+    let private_guard = private_const_guard(cx, scope, name);
     // The `NameError` message mirrors real Ruby's: an explicit path prints
     // as written (`uninitialized constant Store::MISSING`); a bare miss
     // inside a class/module body is qualified by the cref head's
@@ -2245,6 +2300,7 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     let site = quote::format_ident!("__CONST_{}_{}", owner, name.to_uppercase());
     quote! {
         {
+            #private_guard
             static #site: zeo_rt::ConstSite = zeo_rt::ConstSite::new();
             match #site.get(|| #lookup) {
                 Some(__v) => __v,

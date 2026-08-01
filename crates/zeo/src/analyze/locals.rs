@@ -466,6 +466,7 @@ fn track_node(
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
+        | HirNode::ConstantVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

@@ -17,14 +17,20 @@ pub(crate) fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     }
 }
 
-/// The shared body of `private_constant`/`public_constant` (see their table
-/// rows): validate every name against the receiver's OWN constants -- a value
-/// constant in the runtime map, or a nested class/module registered under the
-/// receiver's namespace -- and answer the module. The visibility flag itself
-/// is a documented no-op.
-fn constant_visibility_no_op(
+/// The shared body of `private_constant`/`public_constant`: validate every
+/// name against the receiver's OWN constants -- a value constant in the
+/// runtime map, or a nested class/module registered under the receiver's
+/// namespace -- record the mark, and answer the module.
+///
+/// The mark drives reflection (`Module#constants`, `defined?`) and the guard
+/// codegen plants on a qualified `M::A`. Codegen already applied every
+/// class-body `private_constant` at compile time; this row is what a
+/// `public_constant` sent later, or a `send(:private_constant, ...)`, goes
+/// through -- so the two halves write the same table.
+fn constant_visibility(
     recv: &RubyValue,
     args: &[RubyValue],
+    private: bool,
 ) -> Result<RubyValue, crate::Signal> {
     let cid = recv_cid(recv);
     let owner = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
@@ -44,6 +50,7 @@ fn constant_visibility_no_op(
         if !defined {
             return Err(name_error!("constant {owner}::{name} not defined"));
         }
+        crate::constants::const_set_private(cid.0, &[&name], private);
     }
     Ok(recv.clone())
 }
@@ -204,16 +211,14 @@ ruby_class! {
     // `Module#private_constant(:A, ...)` / `Module#public_constant(:A, ...)` --
     // argument-validated like CRuby (each name must be an OWN constant of the
     // receiver, else "constant M::A not defined"), answering the module.
-    // DIVERGENCE: the visibility itself is not enforced -- a privatized
-    // constant stays reachable (compile-time constant resolution binds
-    // references statically, so a runtime-only flag could not be honored
-    // consistently anyway). Gems call this to hide internals (timeout's
-    // `private_constant :GET_TIME`); accepting-without-enforcing loads them.
+    // What the mark HIDES is the scope operator: `M::A` raises while a bare
+    // `A` resolved through the cref, and `M.const_get(:A)`, both still answer
+    // -- CRuby's rule exactly. See `constant_visibility`.
     def "private_constant" (recv, *args, &_block) {
-        constant_visibility_no_op(recv, args)
+        constant_visibility(recv, args, true)
     }
     def "public_constant" (recv, *args, &_block) {
-        constant_visibility_no_op(recv, args)
+        constant_visibility(recv, args, false)
     }
     // `Module#deprecate_constant(:A, ...)` -- same argument validation, same
     // reason for not enforcing: CRuby warns on ACCESS, and zeo binds constant
@@ -222,11 +227,35 @@ ruby_class! {
     // by default -- so the common case agrees exactly.) net/http deprecates its
     // legacy response-class aliases at load time.
     def "deprecate_constant" (recv, *args, &_block) {
-        constant_visibility_no_op(recv, args)
+        // Validation only -- `false` leaves the private mark alone, since
+        // deprecating a constant does not hide it.
+        constant_visibility(recv, args, false)
     }
     def "const_get" cfunc (recv, name, inherit?) {
         let cid = recv_cid(recv);
         let name = const_name_arg(name)?;
+        // `const_get("A::B::C")` walks the path, each segment resolved on what
+        // the previous one answered (CRuby's own rule). Privacy is deliberately
+        // NOT consulted: `const_get` reaches a `private_constant`, and only the
+        // scope OPERATOR is gated.
+        if let Some((head, rest)) = name.split_once("::") {
+            let inherit = inherit_flag(inherit);
+            let mut cur = const_lookup(cid, head, inherit)
+                .ok_or_else(|| name_error!("uninitialized constant {head}"))?;
+            // A miss past the head is reported qualified by the scope that
+            // failed to answer, not by the bare segment -- CRuby's wording.
+            for seg in rest.split("::") {
+                let RubyValue::Class(scope) = cur else {
+                    return Err(type_error!("{} is not a class/module", cur.inspect_string()));
+                };
+                cur = const_lookup(scope, seg, inherit).ok_or_else(|| {
+                    let owner = crate::dispatch::class_name(scope)
+                        .unwrap_or_else(|| "Object".to_string());
+                    name_error!("uninitialized constant {owner}::{seg}")
+                })?;
+            }
+            return Ok(cur);
+        }
         const_lookup(cid, &name, inherit_flag(inherit)).ok_or_else(|| {
             // Qualified by the RECEIVER, which is what tells a miss on
             // `Foo.const_get(:X)` apart from one on a bare `X`.
@@ -261,6 +290,12 @@ ruby_class! {
             // constants of `Foo` as far as Ruby is concerned.
             let named = crate::constants::const_names_of(owner.0);
             for name in named.into_iter().chain(crate::dispatch::nested_class_names(owner)) {
+                // `private_constant` hides the name from the listing without
+                // removing the binding -- `const_get` still answers for it,
+                // exactly as in CRuby.
+                if crate::constants::const_is_private(owner.0, &name) {
+                    continue;
+                }
                 if seen.insert(name.clone()) {
                     out.push(RubyValue::Symbol(crate::Symbol::intern(&name)));
                 }

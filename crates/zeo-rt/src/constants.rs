@@ -210,6 +210,39 @@ pub fn const_get_scoped(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     None
 }
 
+/// `(owner, name)` pairs marked `private_constant`. Kept here rather than on
+/// the frozen `ClassEntry` because `public_constant` can clear a mark at RUN
+/// time and the registry is immutable after install.
+///
+/// Reflection is all this drives: `Module#constants` and `defined?` filter on
+/// it, and a qualified `M::A` guards on it (codegen only emits that guard where
+/// the compiler already saw a `private_constant`, so an ordinary read is
+/// untouched). `const_get` deliberately ignores it -- CRuby lets `const_get`
+/// through, and rejects only the scope operator.
+static PRIVATE_CONSTANTS: LazyLock<Mutex<FMap<u32, std::collections::HashSet<Box<str>>>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
+
+/// Mark `names` private on `owner`, or (with `private` false) restore them.
+pub fn const_set_private(owner_class_id: u32, names: &[&str], private: bool) {
+    let mut map = PRIVATE_CONSTANTS.lock();
+    let set = map.entry(owner_class_id).or_default();
+    for name in names {
+        if private {
+            set.insert((*name).into());
+        } else {
+            set.remove(*name);
+        }
+    }
+}
+
+/// Whether `owner` marks constant `name` private.
+pub fn const_is_private(owner_class_id: u32, name: &str) -> bool {
+    PRIVATE_CONSTANTS
+        .lock()
+        .get(&owner_class_id)
+        .is_some_and(|s| s.contains(name))
+}
+
 /// The constant names owned DIRECTLY by `owner_class_id` (not its ancestors)
 /// -- the per-class half of `Module#constants`. Order is unspecified (a
 /// `HashMap` iteration), matching CRuby's own id-table nondeterminism; callers

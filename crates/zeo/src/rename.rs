@@ -440,6 +440,7 @@ impl Walker {
                 visibility: _,
             }
             | HirNode::ModuleFunction(_)
+            | HirNode::ConstantVisibility { .. }
             | HirNode::AliasGlobal(_, _)
             | HirNode::QualifiedConstRead(_, _)
             | HirNode::ConstReadOrNil(_, _)

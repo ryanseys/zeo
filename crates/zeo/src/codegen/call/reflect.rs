@@ -88,6 +88,11 @@ pub(super) fn try_const_reflection(
     };
     let cname = literal_name_arg(cx, *arg)?;
 
+    // `const_get("A::B")` walks the path, which this flat fold cannot do --
+    // hand it to the runtime row, where the walk lives.
+    if cname.contains("::") {
+        return None;
+    }
     if !is_valid_const_name(&cname) {
         let msg = format!("wrong constant name {cname}");
         let err = crate::codegen::expr::emit_boxed_new(
