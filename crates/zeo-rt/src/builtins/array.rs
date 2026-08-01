@@ -595,7 +595,7 @@ ruby_class! {
         join_into(&mut out, &elems, sep.as_ref())?;
         Ok(RubyValue::Str(crate::collections::string_wrap(out)))
     }
-    def "index" | "find_index" cfunc (recv, arg, &block) {
+    def "index" | "find_index" cfunc (recv, arg?, &block) {
         // Live per-element probes: neither the block nor `rb_eq` (a user
         // `==`) ever runs under the receiver's lock.
         let arr = recv_array!(recv);
@@ -615,6 +615,10 @@ ruby_class! {
                 i += 1;
             }
         }
+        // Without a block the value is required -- the block IS the test.
+        let Some(needle) = arg else {
+            return Err(crate::builtins::arity_err(0, 1, Some(1)));
+        };
         let mut i = 0usize;
         loop {
             let e = {
@@ -624,7 +628,7 @@ ruby_class! {
                     None => return Ok(RubyValue::Nil),
                 }
             };
-            if e.rb_eq(arg) {
+            if e.rb_eq(needle) {
                 return Ok(RubyValue::Int(i as i64));
             }
             i += 1;
@@ -632,7 +636,7 @@ ruby_class! {
     }
     // `rindex(obj)` matches by `==` from the right; `rindex { |e| }` finds
     // the last element the block answers truthy for.
-    def "rindex" cfunc (recv, arg, &block) {
+    def "rindex" cfunc (recv, arg?, &block) {
         // Right-to-left with per-element lock round-trips (an index the
         // block/`rb_eq` shrank away just skips); neither re-entrant call
         // ever runs under the receiver's lock.
@@ -650,12 +654,15 @@ ruby_class! {
             }
             return Ok(RubyValue::Nil);
         }
+        let Some(needle) = arg else {
+            return Err(crate::builtins::arity_err(0, 1, Some(1)));
+        };
         for i in (0..len).rev() {
             let e = match arr.lock().get(i).cloned() {
                 Some(e) => e,
                 None => continue,
             };
-            if e.rb_eq(arg) {
+            if e.rb_eq(needle) {
                 return Ok(RubyValue::Int(i as i64));
             }
         }

@@ -76,6 +76,12 @@
 //! differently for each. That was equally true of the hand-written guards this
 //! replaced.
 //!
+//! A body may also read `__args`, the full argument slice, for the few rows
+//! that forward their arguments on verbatim -- an `Enumerator` that re-invokes
+//! the method it came from, or a delegator that hands the list to another
+//! object. The parameter list still declares the shape; `__args` only avoids
+//! rebuilding a slice the caller already passed.
+//!
 //! Superclass and `include` targets are written as `ClassId` CONSTS (the one
 //! hard-ABI token), not names -- so the build.rs projection can emit them
 //! symbolically (`zeo_abi::OBJECT_CLASS`) and let rustc resolve them, never
