@@ -23,6 +23,7 @@
 //!     Comparable = COMPARABLE_CLASS;
 //!
 //!     include ENUMERABLE_CLASS;                          // 0+ mixins (ClassId consts)
+//!     receiver rstr = crate::RubyValue::Str;             // the unwrapped receiver
 //!
 //!     const INFINITY = f64::INFINITY;                    // 0+ constants (RHS is a Rust expr)
 //!
@@ -76,6 +77,12 @@
 //! differently for each. That was equally true of the hand-written guards this
 //! replaced.
 //!
+//! A class may declare `receiver NAME = VARIANT;`. Its table is keyed by
+//! `ClassId`, so a row's receiver is ALWAYS that `RubyValue` variant -- and
+//! unwrapping it was 234 identical `recv_str!(recv)` calls across String, Array
+//! and Hash. The header says it once and every body may name `NAME` directly;
+//! the untyped receiver slot is still there for the rows that need it.
+//!
 //! A body may also read `__args`, the full argument slice, for the few rows
 //! that forward their arguments on verbatim -- an `Enumerator` that re-invokes
 //! the method it came from, or a delegator that hands the list to another
@@ -113,6 +120,12 @@ pub struct ClassSpec {
     /// and (recursively) nesting -- that the proc-macro emits into a private
     /// submodule so sibling classes never collide.
     pub nested: Vec<ClassSpec>,
+    /// `receiver NAME = VARIANT;` -- the unwrapped receiver every def in this
+    /// class may name directly. A table row is keyed by `ClassId`, so its
+    /// receiver is ALWAYS the matching `RubyValue` variant; unwrapping it was
+    /// 234 identical `recv_str!(recv)` calls before this. Bodies that need the
+    /// untyped value still have the receiver slot itself.
+    pub receiver: Option<(Ident, Path)>,
 }
 
 /// Module vs class -- a class additionally carries its superclass `ClassId`,
@@ -309,6 +322,7 @@ impl ClassSpec {
             methods: Vec::new(),
             aliases: Vec::new(),
             nested: Vec::new(),
+            receiver: None,
         };
         while !input.is_empty() {
             parse_item(input, &mut spec)?;
@@ -379,6 +393,23 @@ fn parse_item(input: ParseStream, spec: &mut ClassSpec) -> syn::Result<()> {
             input.parse::<Ident>()?; // `include`
             spec.includes.push(Path::parse_mod_style(input)?);
             input.parse::<Token![;]>()?;
+        }
+        "receiver" => {
+            if !attrs.is_empty() {
+                return Err(attrs_forbidden(input));
+            }
+            input.parse::<Ident>()?; // `receiver`
+            let name: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            let variant = Path::parse_mod_style(input)?;
+            input.parse::<Token![;]>()?;
+            if spec.receiver.is_some() {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "a class declares at most one `receiver`",
+                ));
+            }
+            spec.receiver = Some((name, variant));
         }
         "alias" => {
             if !attrs.is_empty() {

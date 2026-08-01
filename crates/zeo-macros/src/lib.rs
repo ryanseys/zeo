@@ -103,6 +103,23 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         // restate it as a literal beside the def that owns it -- pure
         // repetition, and a typo there yields an enumerator over the WRONG
         // method. Bind it here instead, only for the bodies that ask.
+        // The unwrapped receiver the class header declares, bound only where a
+        // body names it -- the rest keep the untyped slot alone.
+        let recv_binding = match &spec.receiver {
+            Some((name, variant)) if mentions(&method.body, &name.to_string()) => {
+                let msg = format!(
+                    "{} table row dispatched on a non-{} receiver",
+                    spec.name, spec.name
+                );
+                quote! {
+                    let #name = match #recv {
+                        #variant(v) => v,
+                        _ => unreachable!(#msg),
+                    };
+                }
+            }
+            _ => quote! {},
+        };
         let method_name = if mentions(&method.body, "block_or_enum") {
             let primary = &method.names[0].ruby;
             quote! { const __RUBY_METHOD: &str = #primary; }
@@ -116,6 +133,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 __args: &[crate::RubyValue],
                 __block: Option<crate::RubyValue>,
             ) -> Result<crate::RubyValue, crate::Signal> {
+                #recv_binding
                 #method_name
                 #preamble
                 #body

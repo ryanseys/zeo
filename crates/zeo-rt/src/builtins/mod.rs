@@ -501,8 +501,13 @@ pub(crate) fn arity_err(given: usize, min: usize, max: Option<usize>) -> Signal 
     )
 }
 
-/// Receiver unwrappers -- the table's ClassId keying guarantees the
-/// variant, so a mismatch is a dispatch bug, not a user error.
+/// Receiver unwrappers for the HELPER fns that take a raw `&RubyValue` and so
+/// have no class header to unwrap it for them. A `ruby_class!` def names the
+/// unwrapped receiver directly instead -- see the `receiver` header line, which
+/// replaced 234 of these calls.
+///
+/// The table's ClassId keying guarantees the variant either way, so a mismatch
+/// is a dispatch bug, not a user error.
 macro_rules! recv_str {
     ($recv:expr_2021) => {
         match $recv {
@@ -512,16 +517,6 @@ macro_rules! recv_str {
     };
 }
 pub(crate) use recv_str;
-
-macro_rules! recv_array {
-    ($recv:expr_2021) => {
-        match $recv {
-            crate::RubyValue::Array(a) => a,
-            _ => unreachable!("Array table row dispatched on a non-Array receiver"),
-        }
-    };
-}
-pub(crate) use recv_array;
 
 macro_rules! recv_hash {
     ($recv:expr_2021) => {

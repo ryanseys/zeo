@@ -20,6 +20,7 @@ fn guard_hash_frozen(recv: &RubyValue) -> Result<(), crate::Signal> {
 
 ruby_class! {
     Hash = zeo_abi::HASH_CLASS < zeo_abi::OBJECT_CLASS;
+    receiver rhash = crate::RubyValue::Hash;
     include zeo_abi::ENUMERABLE_CLASS;
 
     // `Hash.new` / `Hash.new(default)` / `Hash.new { |hash, key| ... }`. The
@@ -77,12 +78,12 @@ ruby_class! {
     }
 
     def "[]" (recv, arg) {
-        crate::hash_index(recv_hash!(recv), arg)
+        crate::hash_index(rhash, arg)
     }
     // The per-instance default set by `Hash.new(default)` / `Hash.new { }`.
     // `#default(key)` optionally runs a default proc for `key`, matching CRuby.
     def "default"(recv, arg?) {
-        let h = recv_hash!(recv);
+        let h = rhash;
         let (default, proc) = {
             let g = h.lock();
             (g.default.clone(), g.default_proc.clone())
@@ -99,16 +100,16 @@ ruby_class! {
     }
     def "default=" (recv, arg) {
         guard_hash_frozen(recv)?;
-        let mut g = recv_hash!(recv).lock();
+        let mut g = rhash.lock();
         g.default = (*arg).clone();
         g.default_proc = None;
         Ok((*arg).clone())
     }
     def "default_proc" (recv) {
-        Ok(recv_hash!(recv).lock().default_proc.clone().unwrap_or(RubyValue::Nil))
+        Ok(rhash.lock().default_proc.clone().unwrap_or(RubyValue::Nil))
     }
     def "default_proc=" (recv, arg) {
-        let mut g = recv_hash!(recv).lock();
+        let mut g = rhash.lock();
         match arg {
             RubyValue::Nil => g.default_proc = None,
             p @ RubyValue::Proc(_) => g.default_proc = Some(p.clone()),
@@ -138,7 +139,7 @@ ruby_class! {
     // Switch to identity keying (`equal?`/`object_id` instead of `eql?`/`hash`);
     // re-projects existing entries so keys stay reachable by their own object.
     def "compare_by_identity" (recv) {
-        let h = recv_hash!(recv);
+        let h = rhash;
         if h.is_frozen() {
             return Err(frozen_error!("can't modify frozen Hash: {}", recv.inspect_string()));
         }
@@ -146,10 +147,10 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "compare_by_identity?" (recv) {
-        Ok(RubyValue::Bool(recv_hash!(recv).lock().compare_by_identity))
+        Ok(RubyValue::Bool(rhash.lock().compare_by_identity))
     }
     def "[]=" | "store" arity 2 (recv, arg1, arg2) {
-        let h = recv_hash!(recv);
+        let h = rhash;
         // CRuby's `rb_hash_aset` checks modifiability first, so `h[k] = v` (and
         // the `h[k] += v` opassign desugaring) on a frozen Hash raises.
         if h.is_frozen() {
@@ -162,7 +163,7 @@ ruby_class! {
         Ok(crate::hash_set(h, (*arg1).clone(), (*arg2).clone()))
     }
     def "delete" (recv, arg, &block) {
-        let h = recv_hash!(recv);
+        let h = rhash;
         if h.is_frozen() {
             return Err(crate::dispatch::raise_error_details(
                 "FrozenError",
@@ -180,26 +181,26 @@ ruby_class! {
         Ok(crate::hash_delete(h, arg))
     }
     def "key?" | "has_key?" arity 1 | "include?" arity 1 | "member?" arity 1 (recv, arg) {
-        Ok(RubyValue::Bool(crate::hash_has_key(recv_hash!(recv), arg)))
+        Ok(RubyValue::Bool(crate::hash_has_key(rhash, arg)))
     }
     def "keys" (recv) {
-        Ok(crate::hash_keys(recv_hash!(recv)))
+        Ok(crate::hash_keys(rhash))
     }
     def "values" (recv) {
-        Ok(crate::hash_values(recv_hash!(recv)))
+        Ok(crate::hash_values(rhash))
     }
     def "length" | "size" arity 0 (recv) {
-        Ok(RubyValue::Int(crate::hash_len(recv_hash!(recv))))
+        Ok(RubyValue::Int(crate::hash_len(rhash)))
     }
     def "empty?" (recv) {
-        Ok(RubyValue::Bool(crate::hash_len(recv_hash!(recv)) == 0))
+        Ok(RubyValue::Bool(crate::hash_len(rhash) == 0))
     }
     def "==" (recv, other) {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
     def "fetch" cfunc (recv, arg1, arg2?, &block) {
-        if crate::hash_has_key(recv_hash!(recv), arg1) {
-            return Ok(crate::hash_get(recv_hash!(recv), arg1));
+        if crate::hash_has_key(rhash, arg1) {
+            return Ok(crate::hash_get(rhash, arg1));
         }
         if let Some(default) = arg2 {
             return Ok(default.clone());
@@ -217,7 +218,7 @@ ruby_class! {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
-        let cur = crate::hash_get(recv_hash!(recv), &args[0]);
+        let cur = crate::hash_get(rhash, &args[0]);
         if args.len() == 1 {
             return Ok(cur);
         }
@@ -228,7 +229,7 @@ ruby_class! {
     // `merge` (fresh hash) with an optional conflict block;
     // `merge!`/`update` write into the receiver.
     def "merge"(recv, *args, &block) {
-        let base = recv_hash!(recv);
+        let base = rhash;
         let fresh = crate::hash_new(base.lock().values().cloned().collect());
         crate::collections::copy_hash_meta(base, &fresh); // inherit the receiver's default
         let out = RubyValue::Hash(fresh);
@@ -241,7 +242,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "to_a" (recv) {
-        let out = recv_hash!(recv)
+        let out = rhash
             .lock()
             .values()
             .map(|(k, v)| RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])))
@@ -251,7 +252,7 @@ ruby_class! {
     // `slice(*keys)` / `except(*keys)`: a new Hash keeping (resp. dropping)
     // the named keys, preserving the receiver's insertion order.
     def "slice"(recv, *args, &_block) {
-        let src = recv_hash!(recv);
+        let src = rhash;
         let pairs = src
             .lock()
             .values()
@@ -261,7 +262,7 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "except"(recv, *args, &_block) {
-        let src = recv_hash!(recv);
+        let src = rhash;
         let pairs = src
             .lock()
             .values()
@@ -274,7 +275,7 @@ ruby_class! {
     // yields the block's value if a block is given, else raises KeyError --
     // exactly `fetch`'s rule applied to each key.
     def "fetch_values"(recv, *args, &block) {
-        let src = recv_hash!(recv);
+        let src = rhash;
         let mut out = Vec::with_capacity(args.len());
         for key in args {
             if crate::hash_has_key(src, key) {
@@ -302,7 +303,7 @@ ruby_class! {
             None => 1,
             Some(v) => crate::builtins::arg_int!(v),
         };
-        let pairs: Vec<RubyValue> = recv_hash!(recv)
+        let pairs: Vec<RubyValue> = rhash
             .lock()
             .values()
             .map(|(k, v)| RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])))
@@ -313,7 +314,7 @@ ruby_class! {
     // `compact` drops nil-valued entries into a new Hash; `compact!` does it
     // in place, answering nil when there was nothing to drop.
     def "compact" (recv) {
-        let pairs = recv_hash!(recv)
+        let pairs = rhash
             .lock()
             .values()
             .filter(|(_, v)| !matches!(v, RubyValue::Nil))
@@ -324,7 +325,7 @@ ruby_class! {
     def "compact!" (recv) {
         // CRuby's modify check runs before the nothing-to-do nil answer.
         guard_hash_frozen(recv)?;
-        let h = recv_hash!(recv);
+        let h = rhash;
         let nil_keys: Vec<RubyValue> = h
             .lock()
             .values()
@@ -344,7 +345,7 @@ ruby_class! {
     def "values_at"(recv, *args, &_block) {
         // Each key goes through `[]`, so a missing key yields the hash's
         // DEFAULT (`Hash.new(0).values_at(:x) == [0]`), not a bare nil.
-        let h = recv_hash!(recv);
+        let h = rhash;
         let mut out = Vec::with_capacity(args.len());
         for k in args {
             out.push(crate::hash_index(h, k)?);
@@ -354,7 +355,7 @@ ruby_class! {
     // `assoc(key)` / `rassoc(value)`: the `[key, value]` pair matched by key
     // (resp. value), or nil.
     def "assoc" (recv, arg) {
-        for (k, v) in recv_hash!(recv).lock().values() {
+        for (k, v) in rhash.lock().values() {
             if k.rb_eq(arg) {
                 return Ok(RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])));
             }
@@ -362,7 +363,7 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
     def "rassoc" (recv, arg) {
-        for (k, v) in recv_hash!(recv).lock().values() {
+        for (k, v) in rhash.lock().values() {
             if v.rb_eq(arg) {
                 return Ok(RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])));
             }
@@ -373,7 +374,7 @@ ruby_class! {
     // order), or nil on an empty hash.
     def "shift" (recv) {
         guard_hash_frozen(recv)?;
-        let h = recv_hash!(recv);
+        let h = rhash;
         let first = h.lock().values().next().map(|(k, v)| (k.clone(), v.clone()));
         match first {
             Some((k, v)) => {
@@ -393,7 +394,7 @@ ruby_class! {
     def "replace" (recv, arg) {
         guard_hash_frozen(recv)?;
         let other = &convert::to_rhash(arg)?;
-        let h = recv_hash!(recv);
+        let h = rhash;
         let old_keys: Vec<RubyValue> = h.lock().values().map(|(k, _)| k.clone()).collect();
         for k in &old_keys {
             crate::hash_delete(h, k);
@@ -445,7 +446,7 @@ ruby_class! {
         // After the enumerator return -- CRuby's own order (frozen raises
         // only once a block makes this a real mutation).
         guard_hash_frozen(recv)?;
-        let h = recv_hash!(recv);
+        let h = rhash;
         let pairs: Vec<(RubyValue, RubyValue)> =
             h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
         for (k, v) in pairs {
@@ -463,7 +464,7 @@ ruby_class! {
         };
         // Each entry yields TWO raw values (`{ |k, v| }`), so `raw` is the
         // pair itself and the packed element is the same `[k, v]` Array.
-        let raws: Vec<Vec<RubyValue>> = recv_hash!(recv)
+        let raws: Vec<Vec<RubyValue>> = rhash
             .lock()
             .values()
             .map(|(k, v)| vec![k.clone(), v.clone()])
@@ -479,7 +480,7 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "invert" (recv) {
-        let pairs = recv_hash!(recv)
+        let pairs = rhash
             .lock()
             .values()
             .map(|(k, v)| (v.clone(), k.clone()))
@@ -487,7 +488,7 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "key" (recv, arg) {
-        for (k, v) in recv_hash!(recv).lock().values() {
+        for (k, v) in rhash.lock().values() {
             if v.rb_eq(arg) {
                 return Ok(k.clone());
             }
@@ -495,7 +496,7 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
     def "value?" | "has_value?" arity 1 (recv, arg) {
-        let found = recv_hash!(recv)
+        let found = rhash
             .lock()
             .values()
             .any(|(_, v)| v.rb_eq(arg));
@@ -504,7 +505,7 @@ ruby_class! {
     def "each_key" (recv, &block) {
         let p = block_or_enum!(recv, &[], block);
         let keys: Vec<RubyValue> =
-            recv_hash!(recv).lock().values().map(|(k, _)| k.clone()).collect();
+            rhash.lock().values().map(|(k, _)| k.clone()).collect();
         for k in keys {
             p.call(&[k])?;
         }
@@ -513,7 +514,7 @@ ruby_class! {
     def "each_value" (recv, &block) {
         let p = block_or_enum!(recv, &[], block);
         let vals: Vec<RubyValue> =
-            recv_hash!(recv).lock().values().map(|(_, v)| v.clone()).collect();
+            rhash.lock().values().map(|(_, v)| v.clone()).collect();
         for v in vals {
             p.call(&[v])?;
         }
@@ -529,7 +530,7 @@ ruby_class! {
     }
     def "transform_values" (recv, &block) {
         let p = block_or_enum!(recv, &[], block);
-        let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
+        let pairs = crate::collections::hash_pairs_snapshot(rhash);
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
             out.push((k, p.call(&[v])?));
@@ -548,7 +549,7 @@ ruby_class! {
         if mapping.is_none() && blk.is_none() {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys", __args));
         }
-        let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
+        let pairs = crate::collections::hash_pairs_snapshot(rhash);
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
             out.push((map_transform_key(&mapping, &blk, k)?, v));
@@ -568,7 +569,7 @@ ruby_class! {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys!", __args));
         }
         guard_hash_frozen(recv)?;
-        let h = recv_hash!(recv);
+        let h = rhash;
         let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
@@ -584,7 +585,7 @@ ruby_class! {
     // is `->(k) { h[k] }`); the hash is captured by identity, so later
     // mutations are visible through the proc.
     def "to_proc"(recv) {
-        let h = recv_hash!(recv).clone();
+        let h = rhash.clone();
         let p = crate::RProc::with_meta(
             move |args: &[RubyValue]| {
                 let key = args.first().cloned().unwrap_or(RubyValue::Nil);
@@ -603,7 +604,7 @@ ruby_class! {
     }
     def "clear" (recv) {
         guard_hash_frozen(recv)?;
-        recv_hash!(recv).lock().clear();
+        rhash.lock().clear();
         Ok(recv.clone())
     }
     def "each" | "each_pair" arity 0 (recv, &block) {
@@ -611,7 +612,7 @@ ruby_class! {
         // A block-raised exception shows a 'Hash#each' C-frame between the
         // block and the caller in CRuby's backtrace.
         let _frame = crate::frames::synthetic_c_frame("Hash#each");
-        let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
+        let pairs = crate::collections::hash_pairs_snapshot(rhash);
         for (k, v) in pairs {
             // CRuby yields the pair as ONE array, so `{ |pair| }` and a
             // forwarded 1-arg callable (`&method(:m)`) get it whole while
