@@ -4,13 +4,29 @@
 //! `thread_outcome` directly and never reaches here; these rows mirror it,
 //! so both paths agree on join/value semantics. The reflection/state rows
 //! (name/status/`[]`/thread-variables) live only here.
+//!
+//! Three rows report less than CRuby's, all for the same reason -- one OS
+//! thread cannot read another's execution state:
+//!
+//! - `#backtrace`/`#backtrace_locations` answer real frames for the CURRENT
+//!   thread and `nil` for a dead one (both as CRuby does), but `[]` for
+//!   another live thread.
+//! - `#priority=` records the number and nothing acts on it. CRuby's is
+//!   advisory on the same platforms.
+//! - `#set_trace_func`/`#add_trace_func` accept `nil` (there is no hook to
+//!   clear) and REFUSE a Proc, rather than accepting one that would silently
+//!   never fire -- the rule `TracePoint.new` already follows for the events
+//!   zeo cannot raise.
 
 use crate::builtins::type_error;
+use crate::dispatch::raise_error;
 use crate::thread::{
-    self, thread_alive, thread_kill, thread_list, thread_outcome, thread_raise, thread_status,
+    self, RThread, thread_alive, thread_kill, thread_list, thread_outcome, thread_raise,
+    thread_status,
 };
 use crate::value::RubyValue;
 use crate::{Signal, Symbol};
+use zeo_macros::ruby_class;
 
 /// A Symbol/String storage-key argument as a `Symbol`.
 fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
@@ -24,460 +40,346 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
-// `Thread#join(limit = nil)` -- block until the thread finishes, re-raising a
-// stored exception in the caller, then answer the thread itself. A timeout
-// argument is accepted and ignored; the join always waits for completion.
-fn t_join(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread_outcome(&recv.as_thread_unchecked())?;
-    Ok(recv.clone())
+/// The calling thread's own handle -- what the `Thread.exit`/`.stop`/
+/// `.pending_interrupt?` class rows operate on.
+fn current() -> RThread {
+    thread::thread_current().as_thread_unchecked()
 }
 
-// `Thread#value` -- join, then answer the BLOCK's result (vs `join`'s thread).
-fn t_value(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread_outcome(&recv.as_thread_unchecked())
+/// Whether `t` is the thread asking, which is the only one whose frames this
+/// process can walk.
+fn is_current(t: &RThread) -> bool {
+    std::sync::Arc::ptr_eq(t, &current())
 }
 
-// `Thread#alive?` -- true until the thread has finished (a non-joining peek).
-fn t_alive_p(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread_alive(&recv.as_thread_unchecked())))
-}
-
-fn t_status(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread_status(&recv.as_thread_unchecked()))
-}
-
-/// `Thread#inspect`/`#to_s` -- `#<Thread:0xADDR STATUS>`, where a finished
-/// thread reports `dead` (not the `false`/`nil` that `#status` answers).
-fn t_inspect(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let t = recv.as_thread_unchecked();
-    let status = if thread_alive(&t) { "run" } else { "dead" };
-    Ok(RubyValue::Str(crate::string_new(thread::thread_inspect(
-        &t, status,
-    ))))
-}
-
-fn t_name(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread::thread_name(&recv.as_thread_unchecked()))
-}
-
-/// `Thread#group` -- always `ThreadGroup::Default` (the only group this
-/// runtime models; see `builtins::thread_group`).
-fn t_group(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(crate::builtins::thread_group::default_group())
-}
-
-fn t_set_name(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let name = match &args[0] {
-        RubyValue::Nil => None,
-        other => Some(
-            crate::builtins::convert::to_rstr(other)?
-                .lock()
-                .to_utf8_lossy()
-                .into_owned(),
-        ),
-    };
-    thread::thread_set_name(&recv.as_thread_unchecked(), name);
-    Ok(args[0].clone())
-}
-
-fn t_report_on_exception(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread::thread_report_on_exception(
-        &recv.as_thread_unchecked(),
-    )))
-}
-
-fn t_set_report_on_exception(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread::thread_set_report_on_exception(&recv.as_thread_unchecked(), args[0].truthy());
-    Ok(args[0].clone())
-}
-
-fn t_abort_on_exception(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread::thread_abort_on_exception(
-        &recv.as_thread_unchecked(),
-    )))
-}
-
-fn t_set_abort_on_exception(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread::thread_set_abort_on_exception(&recv.as_thread_unchecked(), args[0].truthy());
-    Ok(args[0].clone())
-}
-
-fn t_aref(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread::thread_local_get(
-        &recv.as_thread_unchecked(),
-        key_sym(&args[0])?,
-    ))
-}
-
-fn t_aset(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread::thread_local_set(
-        &recv.as_thread_unchecked(),
-        key_sym(&args[0])?,
-        args[1].clone(),
-    );
-    Ok(args[1].clone())
-}
-
-fn t_key_p(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread::thread_local_key(
-        &recv.as_thread_unchecked(),
-        key_sym(&args[0])?,
-    )))
-}
-
-fn t_keys(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Array(crate::array_new(
-        thread::thread_local_keys(&recv.as_thread_unchecked()),
-    )))
-}
-
-fn t_tvar_get(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread::thread_variable_get(
-        &recv.as_thread_unchecked(),
-        key_sym(&args[0])?,
-    ))
-}
-
-fn t_tvar_set(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread::thread_variable_set(
-        &recv.as_thread_unchecked(),
-        key_sym(&args[0])?,
-        args[1].clone(),
-    );
-    Ok(args[1].clone())
-}
-
-fn t_tvar_p(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread::thread_variable_key(
-        &recv.as_thread_unchecked(),
-        key_sym(&args[0])?,
-    )))
-}
-
-fn t_tvars(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Array(crate::array_new(
-        thread::thread_variable_keys(&recv.as_thread_unchecked()),
-    )))
-}
-
-// `Thread#kill`/`#exit`/`#terminate` -- request termination, running the
-// thread's `ensure` blocks; answers the thread itself.
-fn t_kill(
-    recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread_kill(&recv.as_thread_unchecked());
-    Ok(recv.clone())
-}
-
-// `Thread#raise(exc = RuntimeError)` -- inject an exception into the thread,
-// caught by its next `rescue`. A String becomes a RuntimeError; an exception
-// class/instance raises as itself (the shared `raise` coercion). A two-argument
-// `raise(Class, message)` builds `Class` with that message.
-fn t_raise(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let exc = match args {
-        [] => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(String::new())))?,
-        [one] => crate::dispatch::coerce_raise_arg(one.clone())?,
-        [class, msg, ..] => {
-            // `Class.exception(message)` -- the CRuby two-arg form.
-            crate::dispatch::send_value(
-                class,
-                crate::Symbol::intern("exception"),
-                std::slice::from_ref(msg),
-                None,
-            )?
-        }
-    };
-    thread_raise(&recv.as_thread_unchecked(), exc);
-    Ok(RubyValue::Nil)
-}
-
-// Two Thread objects are equal iff they are the same thread (identity).
-fn t_eq(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let same = matches!(&args[0], RubyValue::Thread(o) if std::sync::Arc::ptr_eq(&recv.as_thread_unchecked(), o));
-    Ok(RubyValue::Bool(same))
-}
-
-/// `Method#arity` twin of `lookup` -- this hand-rolled table declares no
-/// per-method argc, so every method it defines reports CRuby's
-/// variadic-cfunc default (`-1`).
-pub fn lookup_arity(name: &str) -> Option<i64> {
-    lookup(name).map(|_| -1)
-}
-
-pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
-    Some(match name {
-        "join" => t_join,
-        "value" => t_value,
-        "kill" | "exit" | "terminate" => t_kill,
-        "raise" => t_raise,
-        "alive?" => t_alive_p,
-        "status" => t_status,
-        "name" => t_name,
-        "name=" => t_set_name,
-        "group" => t_group,
-        "report_on_exception" => t_report_on_exception,
-        "report_on_exception=" => t_set_report_on_exception,
-        "abort_on_exception" => t_abort_on_exception,
-        "abort_on_exception=" => t_set_abort_on_exception,
-        "[]" => t_aref,
-        "[]=" => t_aset,
-        "key?" => t_key_p,
-        "keys" => t_keys,
-        "thread_variable_get" => t_tvar_get,
-        "thread_variable_set" => t_tvar_set,
-        "thread_variable?" => t_tvar_p,
-        "thread_variables" => t_tvars,
-        "==" | "eql?" | "equal?" => t_eq,
-        "inspect" | "to_s" => t_inspect,
-        _ => return None,
-    })
-}
-
-/// Reflection companion to `lookup` (hand-written table).
-pub fn lookup_names() -> &'static [&'static str] {
-    &[
-        "join",
-        "value",
-        "kill",
-        "exit",
-        "terminate",
-        "raise",
-        "alive?",
-        "status",
-        "name",
-        "name=",
-        "group",
-        "report_on_exception",
-        "report_on_exception=",
-        "abort_on_exception",
-        "abort_on_exception=",
-        "abort_on_exception",
-        "abort_on_exception=",
-        "[]",
-        "[]=",
-        "key?",
-        "keys",
-        "thread_variable_get",
-        "thread_variable_set",
-        "thread_variable?",
-        "thread_variables",
-        "==",
-        "eql?",
-        "equal?",
-        "inspect",
-        "to_s",
-    ]
-}
-
-// --- Class methods (`Thread.current`/`.main`/`.pass`) -----------------------
-
-fn c_current(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread::thread_current())
-}
-
-fn c_main(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread::thread_main())
-}
-
-fn c_pass(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(thread::thread_pass())
-}
-
-/// `Thread.report_on_exception` -- the process-wide default a new thread
-/// copies at spawn; setting it false silences the at-termination stderr
-/// report for threads spawned AFTERWARDS (already-running ones keep the
-/// value they were born with, as in CRuby).
-fn c_report_on_exception(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread::report_on_exception_default()))
-}
-
-fn c_set_report_on_exception(
-    _recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread::set_report_on_exception_default(args[0].truthy());
-    Ok(args[0].clone())
-}
-
-fn c_abort_on_exception(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(thread::abort_on_exception_default()))
-}
-
-fn c_set_abort_on_exception(
-    _recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    thread::set_abort_on_exception_default(args[0].truthy());
-    Ok(args[0].clone())
-}
-
-/// `Thread.handle_interrupt(hash) { ... }` -- CRuby defers/unmasks async
-/// interrupt (`Thread#raise`/`#kill`) delivery inside the block per the
-/// `ExceptionClass => :immediate/:on_blocking/:never` mask. Async interrupts
-/// here only ever deliver at an interruption checkpoint the target itself
-/// reaches, which is `:on_blocking` behavior already -- so the mask is a
-/// no-op and the block just runs. Argument shapes are validated like CRuby
-/// (a Hash, and the block is mandatory).
-fn c_handle_interrupt(
-    _recv: &RubyValue,
-    args: &[RubyValue],
-    blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    crate::builtins::check_arity(args.len(), 1, Some(1))?;
-    if !matches!(&args[0], RubyValue::Hash(_)) {
-        return Err(crate::builtins::arg_error!("unknown mask signature"));
+/// `#set_trace_func`/`#add_trace_func`: `nil` clears a hook that was never
+/// installed, so it succeeds; anything else would be accepted and then never
+/// called, so it is refused instead.
+fn no_trace_func(arg: &RubyValue) -> Result<RubyValue, Signal> {
+    if matches!(arg, RubyValue::Nil) {
+        return Ok(RubyValue::Nil);
     }
-    let Some(b) = blk else {
-        return Err(crate::builtins::arg_error!("block is needed"));
-    };
-    b.as_proc_unchecked().call(&[])
+    Err(raise_error(
+        "NotImplementedError",
+        "Thread#set_trace_func is not supported; use TracePoint".to_string(),
+    ))
 }
 
-pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
-    Some(match name {
-        "current" => c_current,
-        "main" => c_main,
-        "list" => c_list,
-        "pass" => c_pass,
-        "handle_interrupt" => c_handle_interrupt,
-        "report_on_exception" => c_report_on_exception,
-        "report_on_exception=" => c_set_report_on_exception,
-        "abort_on_exception" => c_abort_on_exception,
-        "abort_on_exception=" => c_set_abort_on_exception,
-        _ => return None,
-    })
-}
+ruby_class! {
+    Thread = zeo_abi::THREAD_CLASS < zeo_abi::OBJECT_CLASS;
 
-pub fn lookup_class_names() -> &'static [&'static str] {
-    &[
-        "current",
-        "main",
-        "list",
-        "pass",
-        "handle_interrupt",
-        "report_on_exception",
-        "report_on_exception=",
-    ]
-}
+    receiver t = crate::RubyValue::Thread;
 
-/// `Thread.list` -- main plus every still-running spawned thread, from the
-/// process-wide live registry (finished/joined threads are pruned out).
-fn c_list(
-    _recv: &RubyValue,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Array(crate::array_new(thread_list())))
+    // `Thread.new`/`.start`/`.fork(*args) { |*params| }` -- CRuby's three
+    // spellings of one constructor. Codegen intercepts the literal
+    // `Thread.new` form; this row serves the rest and is what makes all
+    // three appear in `Thread.singleton_methods`.
+    def self."new" | "start" | "fork" (_recv, *args, &block) {
+        let Some(block) = block else {
+            return Err(raise_error("ThreadError", "must be called with a block".to_string()));
+        };
+        Ok(thread::thread_new(block, args.to_vec()))
+    }
+
+    def self."current"(_recv) {
+        Ok(thread::thread_current())
+    }
+    def self."main"(_recv) {
+        Ok(thread::thread_main())
+    }
+    def self."pass"(_recv) {
+        Ok(thread::thread_pass())
+    }
+    // `Thread.list` -- main plus every still-running spawned thread, from the
+    // process-wide live registry (finished/joined threads are pruned out).
+    def self."list"(_recv) {
+        Ok(RubyValue::Array(crate::array_new(thread_list())))
+    }
+    // `Thread.kill(thr)` and `Thread.exit` -- the class spellings of `#kill`,
+    // aimed at a named thread and at the caller.
+    def self."kill"(_recv, target) {
+        let RubyValue::Thread(target) = target else {
+            return Err(type_error!(
+                "wrong argument type {} (expected VM/thread)",
+                crate::builtins::class_name_of(target)
+            ));
+        };
+        thread_kill(target);
+        Ok(RubyValue::Thread(target.clone()))
+    }
+    def self."exit"(_recv) {
+        let me = current();
+        thread_kill(&me);
+        Ok(RubyValue::Thread(me))
+    }
+    // `Thread.stop` -- park the caller until another thread wakes it. The park
+    // is the same interruptible sleep `Kernel#sleep` uses, so `#kill`/`#raise`
+    // still reach a stopped thread.
+    def self."stop"(_recv) {
+        thread::thread_stop_current()
+    }
+
+    // `Thread.report_on_exception` -- the process-wide default a new thread
+    // copies at spawn; setting it false silences the at-termination stderr
+    // report for threads spawned AFTERWARDS (already-running ones keep the
+    // value they were born with, as in CRuby).
+    def self."report_on_exception"(_recv) {
+        Ok(RubyValue::Bool(thread::report_on_exception_default()))
+    }
+    def self."report_on_exception="(_recv, on) {
+        thread::set_report_on_exception_default(on.truthy());
+        Ok(on.clone())
+    }
+    def self."abort_on_exception"(_recv) {
+        Ok(RubyValue::Bool(thread::abort_on_exception_default()))
+    }
+    def self."abort_on_exception="(_recv, on) {
+        thread::set_abort_on_exception_default(on.truthy());
+        Ok(on.clone())
+    }
+    // `Thread.ignore_deadlock` -- stored and read back. There is no deadlock
+    // detector here to switch off: threads are real OS threads, so a program
+    // that sets this gets exactly the behavior it asked for.
+    def self."ignore_deadlock"(_recv) {
+        Ok(RubyValue::Bool(thread::ignore_deadlock()))
+    }
+    def self."ignore_deadlock="(_recv, on) {
+        thread::set_ignore_deadlock(on.truthy());
+        Ok(on.clone())
+    }
+    def self."pending_interrupt?" cfunc (_recv, _error?) {
+        Ok(RubyValue::Bool(thread::current_pending_interrupt()))
+    }
+    // `Thread.each_caller_location { |loc| }` -- the caller's frames as
+    // `Thread::Backtrace::Location` objects, yielded rather than collected.
+    def self."each_caller_location" cfunc (_recv, *_args, &block) {
+        let Some(block) = block else {
+            return Err(crate::builtins::arg_error!("no block given (yield)"));
+        };
+        let block = block.as_proc_unchecked();
+        for (f, l, m) in crate::frames::caller_frames(1) {
+            block.call(&[crate::builtins::backtrace_location::location_new(f, l, m)])?;
+        }
+        Ok(RubyValue::Nil)
+    }
+
+    // `Thread.handle_interrupt(hash) { ... }` -- CRuby defers/unmasks async
+    // interrupt (`Thread#raise`/`#kill`) delivery inside the block per the
+    // `ExceptionClass => :immediate/:on_blocking/:never` mask. Async interrupts
+    // here only ever deliver at an interruption checkpoint the target itself
+    // reaches, which is `:on_blocking` behavior already -- so the mask is a
+    // no-op and the block just runs. Argument shapes are validated like CRuby
+    // (a Hash, and the block is mandatory).
+    def self."handle_interrupt"(_recv, mask, &block) {
+        if !matches!(mask, RubyValue::Hash(_)) {
+            return Err(crate::builtins::arg_error!("unknown mask signature"));
+        }
+        let Some(b) = block else {
+            return Err(crate::builtins::arg_error!("block is needed"));
+        };
+        b.as_proc_unchecked().call(&[])
+    }
+
+    // `Thread#join(limit = nil)` -- block until the thread finishes, re-raising
+    // a stored exception in the caller, then answer the thread itself. A
+    // timeout argument is accepted and ignored; the join always waits for
+    // completion.
+    def "join" cfunc (recv, _limit?) {
+        thread_outcome(t)?;
+        Ok(recv.clone())
+    }
+    // `Thread#value` -- join, then answer the BLOCK's result (vs `join`'s thread).
+    def "value"(_recv) {
+        thread_outcome(t)
+    }
+    // `Thread#alive?` -- true until the thread has finished (a non-joining peek).
+    def "alive?"(_recv) {
+        Ok(RubyValue::Bool(thread_alive(t)))
+    }
+    def "status"(_recv) {
+        Ok(thread_status(t))
+    }
+    // `Thread#inspect`/`#to_s` -- `#<Thread:0xADDR STATUS>`, where a finished
+    // thread reports `dead` (not the `false`/`nil` that `#status` answers).
+    def "inspect" | "to_s"(_recv) {
+        let status = if thread_alive(t) { "run" } else { "dead" };
+        Ok(RubyValue::Str(crate::string_new(thread::thread_inspect(t, status))))
+    }
+    def "name"(_recv) {
+        Ok(thread::thread_name(t))
+    }
+    def "name="(_recv, name) {
+        let text = match name {
+            RubyValue::Nil => None,
+            other => Some(
+                crate::builtins::convert::to_rstr(other)?
+                    .lock()
+                    .to_utf8_lossy()
+                    .into_owned(),
+            ),
+        };
+        thread::thread_set_name(t, text);
+        Ok(name.clone())
+    }
+    // `Thread#group` -- always `ThreadGroup::Default` (the only group this
+    // runtime models; see `builtins::thread_group`).
+    def "group"(_recv) {
+        Ok(crate::builtins::thread_group::default_group())
+    }
+    def "report_on_exception"(_recv) {
+        Ok(RubyValue::Bool(thread::thread_report_on_exception(t)))
+    }
+    def "report_on_exception="(_recv, on) {
+        thread::thread_set_report_on_exception(t, on.truthy());
+        Ok(on.clone())
+    }
+    def "abort_on_exception"(_recv) {
+        Ok(RubyValue::Bool(thread::thread_abort_on_exception(t)))
+    }
+    def "abort_on_exception="(_recv, on) {
+        thread::thread_set_abort_on_exception(t, on.truthy());
+        Ok(on.clone())
+    }
+
+    def "[]"(_recv, key) {
+        Ok(thread::thread_local_get(t, key_sym(key)?))
+    }
+    def "[]="(_recv, key, value) {
+        thread::thread_local_set(t, key_sym(key)?, value.clone());
+        Ok(value.clone())
+    }
+    def "key?"(_recv, key) {
+        Ok(RubyValue::Bool(thread::thread_local_key(t, key_sym(key)?)))
+    }
+    def "keys"(_recv) {
+        Ok(RubyValue::Array(crate::array_new(thread::thread_local_keys(t))))
+    }
+    // `Thread#fetch(key, default = nil)` -- the `#[]` read with CRuby's
+    // three-way miss: the block, then the default, then a KeyError.
+    def "fetch" cfunc (_recv, key, default?, &block) {
+        let sym = key_sym(key)?;
+        if let Some(v) = thread::thread_local_fetch(t, sym) {
+            return Ok(v);
+        }
+        if let Some(b) = block {
+            return b.as_proc_unchecked().call(std::slice::from_ref(key));
+        }
+        match default {
+            Some(v) => Ok(v.clone()),
+            None => Err(raise_error(
+                "KeyError",
+                format!("key not found: {}", key.inspect_string()),
+            )),
+        }
+    }
+    def "thread_variable_get"(_recv, key) {
+        Ok(thread::thread_variable_get(t, key_sym(key)?))
+    }
+    def "thread_variable_set"(_recv, key, value) {
+        thread::thread_variable_set(t, key_sym(key)?, value.clone());
+        Ok(value.clone())
+    }
+    def "thread_variable?"(_recv, key) {
+        Ok(RubyValue::Bool(thread::thread_variable_key(t, key_sym(key)?)))
+    }
+    def "thread_variables"(_recv) {
+        Ok(RubyValue::Array(crate::array_new(thread::thread_variable_keys(t))))
+    }
+
+    // `Thread#kill`/`#exit`/`#terminate` -- request termination, running the
+    // thread's `ensure` blocks; answers the thread itself.
+    def "kill" | "exit" | "terminate" (recv) {
+        thread_kill(t);
+        Ok(recv.clone())
+    }
+    // `Thread#raise(exc = RuntimeError)` -- inject an exception into the thread,
+    // caught by its next `rescue`. A String becomes a RuntimeError; an exception
+    // class/instance raises as itself (the shared `raise` coercion). A two-argument
+    // `raise(Class, message)` builds `Class` with that message.
+    def "raise"(_recv, *args) {
+        let exc = match args {
+            [] => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(String::new())))?,
+            [one] => crate::dispatch::coerce_raise_arg(one.clone())?,
+            [class, msg, ..] => {
+                // `Class.exception(message)` -- the CRuby two-arg form.
+                crate::dispatch::send_value(
+                    class,
+                    crate::Symbol::intern("exception"),
+                    std::slice::from_ref(msg),
+                    None,
+                )?
+            }
+        };
+        thread_raise(t, exc);
+        Ok(RubyValue::Nil)
+    }
+    // `Thread#wakeup` -- clear the stop flag and wake the target; `#run` also
+    // gives up the caller's quantum so the woken thread can make progress.
+    def "wakeup"(recv) {
+        match thread::thread_wakeup(t) {
+            Ok(()) => Ok(recv.clone()),
+            Err(msg) => Err(raise_error("ThreadError", msg.to_string())),
+        }
+    }
+    def "run"(recv) {
+        match thread::thread_wakeup(t) {
+            Ok(()) => {
+                thread::thread_pass();
+                Ok(recv.clone())
+            }
+            Err(msg) => Err(raise_error("ThreadError", msg.to_string())),
+        }
+    }
+    def "stop?"(_recv) {
+        Ok(RubyValue::Bool(thread::thread_is_stopped(t)))
+    }
+    def "priority"(_recv) {
+        Ok(RubyValue::Int(thread::thread_priority(t)))
+    }
+    def "priority="(_recv, level) {
+        thread::thread_set_priority(t, level.as_int_unchecked());
+        Ok(level.clone())
+    }
+    def "native_thread_id"(_recv) {
+        Ok(match thread::thread_native_id(t) {
+            Some(id) => RubyValue::Int(id as i64),
+            None => RubyValue::Nil,
+        })
+    }
+    def "pending_interrupt?" cfunc (_recv, _error?) {
+        Ok(RubyValue::Bool(thread::thread_pending_interrupt(t)))
+    }
+    def "set_trace_func" | "add_trace_func" (_recv, func) {
+        no_trace_func(func)
+    }
+    // A dead thread has no stack left to read, which is CRuby's nil; a live
+    // one that is not the caller has a stack no other OS thread can walk.
+    def "backtrace" cfunc (_recv, *_args) {
+        if !thread_alive(t) {
+            return Ok(RubyValue::Nil);
+        }
+        let lines = if is_current(t) { crate::frames::caller_lines(0) } else { Vec::new() };
+        let lines = lines
+            .into_iter()
+            .map(|l| RubyValue::Str(crate::string_new(l)))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(lines)))
+    }
+    def "backtrace_locations" cfunc (_recv, *_args) {
+        if !thread_alive(t) {
+            return Ok(RubyValue::Nil);
+        }
+        let frames = if is_current(t) { crate::frames::caller_frames(0) } else { Vec::new() };
+        let locations = frames
+            .iter()
+            .map(|(f, l, m)| crate::builtins::backtrace_location::location_new(f, *l, m))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(locations)))
+    }
+
+    // Two Thread objects are equal iff they are the same thread (identity).
+    def "==" | "eql?" | "equal?" (_recv, other) {
+        let same = matches!(other, RubyValue::Thread(o) if std::sync::Arc::ptr_eq(t, o));
+        Ok(RubyValue::Bool(same))
+    }
 }

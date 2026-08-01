@@ -157,7 +157,6 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
     }
     Some(match id {
         zeo_abi::FIBER_CLASS => fiber::lookup,
-        zeo_abi::THREAD_CLASS => thread::lookup,
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup,
         _ => return None,
@@ -174,7 +173,6 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
     }
     Some(match id {
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
-        zeo_abi::THREAD_CLASS => thread::lookup_arity,
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
         _ => return None,
@@ -201,7 +199,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         return t.class.as_ref().map(|m| m.lookup);
     }
     Some(match id {
-        zeo_abi::THREAD_CLASS => thread::lookup_class,
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
         // In-tree `ext/` extensions, each behind its `ext-<name>` cargo feature.
         #[cfg(feature = "ext-date")]
@@ -260,7 +257,6 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
     }
     match id {
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
-        zeo_abi::THREAD_CLASS => thread::lookup_names(),
         #[cfg(feature = "ext-date")]
         zeo_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
         _ => &[],
@@ -275,7 +271,6 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
     }
     match id {
         zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
-        zeo_abi::THREAD_CLASS => thread::lookup_class_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),
         _ => &[],
     }

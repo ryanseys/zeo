@@ -3,8 +3,8 @@
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 41
 # constant: 198
-# owner: 183
-# unreachable: 192
+# owner: 182
+# unreachable: 169
 absent-module	Encoding::Converter	-	-
 absent-module	Enumerator::ArithmeticSequence	-	-
 absent-module	Enumerator::Generator	-	-
@@ -409,7 +409,6 @@ owner	SystemCallError	i	errno
 owner	SystemCallError	s	===
 owner	SystemExit	i	status
 owner	SystemExit	i	success?
-owner	Thread	s	new
 owner	Thread::Queue	i	freeze
 owner	Thread::SizedQueue	i	<<
 owner	Thread::SizedQueue	i	close
@@ -577,30 +576,7 @@ unreachable	Set	i	compare_by_identity?
 unreachable	String	i	unicode_normalize!
 unreachable	Symbol	s	all_symbols
 unreachable	SyntaxError	i	path
-unreachable	Thread	i	add_trace_func
-unreachable	Thread	i	backtrace
-unreachable	Thread	i	backtrace_locations
-unreachable	Thread	i	fetch
-unreachable	Thread	i	native_thread_id
-unreachable	Thread	i	pending_interrupt?
-unreachable	Thread	i	priority
-unreachable	Thread	i	priority=
 unreachable	Thread	i	raise
-unreachable	Thread	i	run
-unreachable	Thread	i	set_trace_func
-unreachable	Thread	i	stop?
-unreachable	Thread	i	wakeup
-unreachable	Thread	s	abort_on_exception
-unreachable	Thread	s	abort_on_exception=
-unreachable	Thread	s	each_caller_location
-unreachable	Thread	s	exit
-unreachable	Thread	s	fork
-unreachable	Thread	s	ignore_deadlock
-unreachable	Thread	s	ignore_deadlock=
-unreachable	Thread	s	kill
-unreachable	Thread	s	pending_interrupt?
-unreachable	Thread	s	start
-unreachable	Thread	s	stop
 unreachable	Thread::ConditionVariable	i	marshal_dump
 unreachable	Thread::Mutex	i	sleep
 unreachable	Thread::Queue	i	clear

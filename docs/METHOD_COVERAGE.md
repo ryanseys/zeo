@@ -293,10 +293,17 @@ The rows, by what they need:
 - **Honest stubs**: `Thread.stop` sleeps until woken; `#backtrace` and
   `#backtrace_locations` answer the CURRENT thread's real frames and `nil` for
   a dead thread, matching CRuby, but `[]` for another live thread, which
-  `crate::frames` cannot reach across threads. `#add_trace_func`/
-  `.set_trace_func` route into the existing `TracePoint` hooks where they can
-  and are otherwise no-ops.
+  `crate::frames` cannot reach across threads. `#set_trace_func`/
+  `#add_trace_func` accept `nil` and refuse a Proc.
 - `Thread.each_caller_location` over the same frame walk as `#backtrace`.
+
+**Status: done.** All 24 rows closed (`unreachable` 192 → 169, `owner` 183 →
+182), and the migration paid for itself twice over: the 57 rows now declare
+their shape, and `conformance/builtin-arity.tsv` — regenerated so it covers
+`Thread` for the first time — accepts every one with NO divergence row. The
+`lookup_names` drift is structurally gone, since one parameter list now feeds
+the guard, the arity and the listing. `tests/thread_surface.rb` matches the
+oracle byte for byte; the four narrowings are in `docs/COMPATIBILITY.md`.
 
 ### 2.3 `Module` reflection (12)
 

@@ -72,11 +72,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "list"(_recv) {
-        crate::builtins::thread::lookup_class("list").expect("Thread.list is registered")(
-            &RubyValue::Class(zeo_abi::THREAD_CLASS),
-            &[],
-            None,
-        )
+        Ok(RubyValue::Array(crate::array_new(crate::thread::thread_list())))
     }
 }
 

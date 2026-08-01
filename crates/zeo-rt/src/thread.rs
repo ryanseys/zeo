@@ -32,7 +32,7 @@
 use crate::{RubyValue, Signal, Symbol};
 use parking_lot::Mutex as PlMutex;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
@@ -106,6 +106,17 @@ pub struct ThreadData {
     /// `file:line` where `Thread.new` was called -- shown in `#inspect`
     /// (`#<Thread:0xADDR file:line status>`). `None` for the main thread.
     origin: Option<String>,
+    /// `Thread#priority`/`#priority=` -- stored and read back, never acted on.
+    /// CRuby's is advisory too: on the platforms where `setpriority` needs
+    /// privileges it also only records the number.
+    priority: AtomicI64,
+    /// Set while this thread is parked inside `Thread.stop`, cleared by
+    /// `#wakeup`/`#run` -- what `#stop?` reports for a live thread.
+    stopped: AtomicBool,
+    /// The OS thread id, recorded by the thread ITSELF at start (no other
+    /// thread can read it). Zero until then, which is what makes
+    /// `#native_thread_id` answer nil for a thread that never ran.
+    native_id: AtomicU64,
 }
 
 pub type RThread = Arc<ThreadData>;
@@ -152,6 +163,9 @@ impl ThreadData {
             was_killed: AtomicBool::new(false),
             frozen: AtomicBool::new(false),
             origin,
+            priority: AtomicI64::new(0),
+            stopped: AtomicBool::new(false),
+            native_id: AtomicU64::new(0),
         })
     }
 
@@ -249,6 +263,7 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         // Record identity so `Thread.current` inside the body finds THIS
         // thread rather than falling through to main.
         CURRENT.with(|c| *c.lock() = Some(for_thread.clone()));
+        for_thread.native_id.store(native_id(), Ordering::Relaxed);
         // The frame stack needs no management here: this closure runs on
         // a brand-new OS thread whose `frames` TLS starts empty.
         let result = body.call(&args);
@@ -364,6 +379,124 @@ fn interrupt_pending() -> bool {
         .with(|c| c.lock().clone())
         .unwrap_or_else(main_thread);
     t.interrupt.lock().is_some()
+}
+
+/// `Thread#pending_interrupt?` -- whether an asynchronous `#raise`/`#kill` is
+/// queued for `t` and has not reached a checkpoint yet.
+pub fn thread_pending_interrupt(t: &RThread) -> bool {
+    t.interrupt.lock().is_some()
+}
+
+/// `Thread.pending_interrupt?` -- the same question about the caller.
+pub fn current_pending_interrupt() -> bool {
+    interrupt_pending()
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling state (`#priority`, `Thread.stop`/`#wakeup`/`#run`)
+// ---------------------------------------------------------------------------
+
+pub fn thread_priority(t: &RThread) -> i64 {
+    t.priority.load(Ordering::Relaxed)
+}
+
+/// `Thread#priority=` -- stored, never acted on. Every thread here is a real
+/// OS thread scheduled by the kernel, and CRuby's own priority is advisory on
+/// the same platforms, so recording the number is the whole honest behavior.
+pub fn thread_set_priority(t: &RThread, v: i64) {
+    t.priority.store(v, Ordering::Relaxed);
+}
+
+/// `Thread.stop` -- park the caller until someone calls `#wakeup`/`#run` on
+/// it. The park is the same interruptible sleep `Kernel#sleep` uses, so a
+/// `#kill`/`#raise` still reaches a stopped thread.
+pub fn thread_stop_current() -> Result<RubyValue, Signal> {
+    let t = CURRENT
+        .with(|c| c.lock().clone())
+        .unwrap_or_else(main_thread);
+    let ctx = crate::gvl::install_ctx();
+    register_current_ctx(&ctx);
+    t.stopped.store(true, Ordering::Relaxed);
+    // A wake can arrive before the park starts (the flag inside `ThreadCtx`
+    // is what keeps it from being lost), so loop on our own flag rather than
+    // on the sleep's return.
+    while t.stopped.load(Ordering::Relaxed) {
+        crate::gvl::process_gvl().without(|| ctx.sleep(None));
+        crate::check_ints()?;
+    }
+    Ok(RubyValue::Nil)
+}
+
+/// `Thread#wakeup` -- clear the stop flag and wake the target. `Err` when the
+/// thread is already dead, which CRuby reports as a `ThreadError`.
+pub fn thread_wakeup(t: &RThread) -> Result<(), &'static str> {
+    if !thread_alive(t) {
+        return Err("killed thread");
+    }
+    t.stopped.store(false, Ordering::Relaxed);
+    wake_target(t);
+    Ok(())
+}
+
+/// `Thread#stop?` -- true while parked in `Thread.stop`, and always true for a
+/// thread that has finished (CRuby counts dead as stopped).
+pub fn thread_is_stopped(t: &RThread) -> bool {
+    !thread_alive(t) || t.stopped.load(Ordering::Relaxed)
+}
+
+/// `Thread#native_thread_id` -- the OS-level id, which only the thread itself
+/// can read, so it is recorded at start. `None` before that and for a thread
+/// that has finished, matching CRuby's nil.
+pub fn thread_native_id(t: &RThread) -> Option<u64> {
+    if t.is_main {
+        // Main never runs `thread_new`'s prologue; fill it in on first ask,
+        // which is necessarily from main itself when it is the live thread.
+        let _ = t
+            .native_id
+            .compare_exchange(0, native_id(), Ordering::Relaxed, Ordering::Relaxed);
+    }
+    if !thread_alive(t) {
+        return None;
+    }
+    match t.native_id.load(Ordering::Relaxed) {
+        0 => None,
+        id => Some(id),
+    }
+}
+
+/// This OS thread's kernel-visible id.
+fn native_id() -> u64 {
+    #[cfg(target_vendor = "apple")]
+    {
+        let mut id: u64 = 0;
+        // SAFETY: the null pthread_t means "this thread"; `id` is a live u64.
+        unsafe { libc::pthread_threadid_np(0, &mut id) };
+        id
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        // SAFETY: `gettid` takes no arguments and cannot fail.
+        (unsafe { libc::gettid() }) as u64
+    }
+}
+
+/// `Thread.ignore_deadlock` -- stored, and nothing reads it: zeo runs real OS
+/// threads with no deadlock detector to switch off, so a program that sets it
+/// gets exactly the behavior it asked for.
+static IGNORE_DEADLOCK: AtomicBool = AtomicBool::new(false);
+
+pub fn ignore_deadlock() -> bool {
+    IGNORE_DEADLOCK.load(Ordering::Relaxed)
+}
+
+pub fn set_ignore_deadlock(on: bool) {
+    IGNORE_DEADLOCK.store(on, Ordering::Relaxed);
+}
+
+/// `Thread#[]`'s `fetch` twin -- the stored value, or `None` for a miss (the
+/// caller supplies CRuby's default/block/`KeyError` handling).
+pub fn thread_local_fetch(t: &RThread, key: Symbol) -> Option<RubyValue> {
+    t.locals.lock().get(&key).cloned()
 }
 
 /// `Thread#status` -- "run" while alive, `false` after a clean finish, `nil`

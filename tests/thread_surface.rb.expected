@@ -1,0 +1,25 @@
+priority default: 0
+priority set: 3
+stop?: true
+alive?: true
+native id: true
+pending?: false
+after join alive?: false
+dead backtrace: nil
+dead native id: nil
+wakeup dead: killed thread
+fetch hit: 1
+fetch default: fallback
+fetch block: no nope
+fetch miss: key not found: :nope
+start: 8
+fork: 6
+killed: false
+ignore_deadlock: false
+ignore_deadlock set: true
+abort_on_exception: false
+pending_interrupt?: false
+each_caller_location: []
+current backtrace: true
+current locations: Thread::Backtrace::Location
+set_trace_func nil: nil

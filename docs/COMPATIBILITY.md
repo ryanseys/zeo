@@ -447,6 +447,28 @@ CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
 is pay-per-use; see `docs/EVAL_VM.md`).
 
+### `Thread`
+
+A zeo `Thread` is a REAL OS thread, so the whole scheduling and storage surface
+answers for itself: `#join`/`#value`, `#kill`/`#raise` and their checkpoints,
+`Thread.stop`/`#run`/`#wakeup`/`#stop?`, `#priority`, `#fetch`, the
+thread-variable pair, `#native_thread_id`, `Thread.list` and
+`.handle_interrupt` are oracle-matched live (`tests/thread_surface.rb`). Four
+rows report less than CRuby's, and all four have the same cause — one OS thread
+cannot read another's execution state:
+
+- **`#backtrace`/`#backtrace_locations` answer `[]` for another LIVE thread.**
+  The current thread's own frames are real, and a dead thread answers `nil`,
+  both as CRuby does; only the cross-thread read is empty.
+- **`#priority=` records the number and nothing acts on it.** The kernel
+  schedules these threads. CRuby's priority is advisory on the same platforms.
+- **`Thread.ignore_deadlock` is stored and read back.** There is no deadlock
+  detector here to switch off.
+- **`#set_trace_func`/`#add_trace_func` refuse a Proc** with
+  `NotImplementedError`, and accept `nil` (there is no hook to clear). This is
+  the rule `TracePoint.new` already follows for the events zeo cannot raise:
+  refuse loudly rather than accept a handler that never runs.
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream
