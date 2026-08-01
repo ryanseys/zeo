@@ -5,10 +5,14 @@
 #! that simply disagrees with the oracle is a BUG in the parameter list --
 #! it fails the test and cannot be recorded here. Regenerate with
 #! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.
+#!
+#! `zeo-only` is currently EMPTY, and every method zeo declares on a class
+#! ruby also has now resolves. A new `zeo-only` row means a method landed
+#! on the wrong class, or was invented -- check before accepting it.
 #! tag	class	kind	name	reason
-oracle-missing	Prism::Zeo	s	parse_success?	Prism::Zeo is absent from the pinned oracle
-oracle-missing	Prism::Zeo	s	serialize_lex	Prism::Zeo is absent from the pinned oracle
-oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo is absent from the pinned oracle
-oracle-missing	Prism::Zeo	s	serialize_parse_comments	Prism::Zeo is absent from the pinned oracle
-oracle-missing	Prism::Zeo	s	serialize_parse_lex	Prism::Zeo is absent from the pinned oracle
-oracle-missing	Prism::Zeo	s	version	Prism::Zeo is absent from the pinned oracle
+oracle-missing	Prism::Zeo	s	parse_success?	Prism::Zeo: ruby defines no such constant
+oracle-missing	Prism::Zeo	s	serialize_lex	Prism::Zeo: ruby defines no such constant
+oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo: ruby defines no such constant
+oracle-missing	Prism::Zeo	s	serialize_parse_comments	Prism::Zeo: ruby defines no such constant
+oracle-missing	Prism::Zeo	s	serialize_parse_lex	Prism::Zeo: ruby defines no such constant
+oracle-missing	Prism::Zeo	s	version	Prism::Zeo: ruby defines no such constant

@@ -16,6 +16,14 @@
 //! arity that simply disagrees with the oracle is a BUG, not a row: it fails
 //! here and cannot be blessed away. `ZEO_BLESS=1` rewrites the file from the
 //! current state, the same convention the golden corpus uses.
+//!
+//! Both categories are now near-empty, which is what makes a NEW row worth
+//! reading rather than routine. `zeo-only` holds nothing at all: the last of
+//! them were methods sitting on the wrong class (`IO#flock`, `Module#superclass`)
+//! or invented outright, and the tag caught every one. `oracle-missing` holds
+//! only `Prism::Zeo`, a namespace zeo invented for the vendored gem's native
+//! half -- ruby loads `prism` and still has no such constant, so those rows are
+//! permanent rather than an environment gap.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -46,9 +54,12 @@ struct Oracle {
     /// order, so resolution mirrors CRuby's `instance_method` and zeo's own
     /// `method_meta::builtin_arity` ancestry walk.
     ancestry: BTreeMap<(String, String), Vec<String>>,
-    /// Classes the oracle could not produce at all (a gem, or a platform the
-    /// dump was not taken on). Distinct from zeo having invented the method.
-    unavailable: BTreeSet<String>,
+    /// Class -> why the oracle could not produce it. `const-missing` means
+    /// ruby has no such constant, so zeo invented the whole namespace;
+    /// `require-failed` means its feature would not load, which is an
+    /// environment gap. Either way the class's methods cannot be checked --
+    /// but only the first is a permanent, reviewable fact.
+    unavailable: BTreeMap<String, String>,
 }
 
 fn load_oracle(root: &Path) -> Oracle {
@@ -62,8 +73,8 @@ fn load_oracle(root: &Path) -> Oracle {
         }
         let f: Vec<&str> = line.split('\t').collect();
         match f.first().copied() {
-            Some("!") if f.len() >= 2 => {
-                oracle.unavailable.insert(f[1].to_owned());
+            Some("!") if f.len() >= 3 => {
+                oracle.unavailable.insert(f[1].to_owned(), f[2].to_owned());
             }
             Some("A") if f.len() >= 3 => {
                 oracle.ancestry.insert(
@@ -181,6 +192,10 @@ fn write_divergences(root: &Path, rows: &[Divergence]) {
     out.push_str("#! that simply disagrees with the oracle is a BUG in the parameter list --\n");
     out.push_str("#! it fails the test and cannot be recorded here. Regenerate with\n");
     out.push_str("#! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.\n");
+    out.push_str("#!\n");
+    out.push_str("#! `zeo-only` is currently EMPTY, and every method zeo declares on a class\n");
+    out.push_str("#! ruby also has now resolves. A new `zeo-only` row means a method landed\n");
+    out.push_str("#! on the wrong class, or was invented -- check before accepting it.\n");
     out.push_str("#! tag\tclass\tkind\tname\treason\n");
     for d in rows {
         out.push_str(&format!(
@@ -220,11 +235,17 @@ fn builtin_arity_matches_the_oracle() {
         };
         let declared = decl.arity;
 
-        let (tag, reason) = if oracle.unavailable.contains(&class.ruby_name) {
+        let (tag, reason) = if let Some(why) = oracle.unavailable.get(&class.ruby_name) {
+            let why = match why.as_str() {
+                // The feature loaded and still had no such constant, so the
+                // namespace is one zeo invented -- permanent, not a gap.
+                "const-missing" => "ruby defines no such constant".to_owned(),
+                other => format!("the oracle could not produce it ({other})"),
+            };
             (
                 Tag::OracleMissing,
                 format!(
-                    "{} is absent from the pinned oracle{}",
+                    "{}: {why}{}",
                     class.ruby_name,
                     decl.cfg
                         .as_deref()
