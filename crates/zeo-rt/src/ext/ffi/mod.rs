@@ -32,7 +32,7 @@ mod memory_pointer;
 mod pointer;
 mod types;
 
-use crate::builtins::{arg_error, arity, index_error, type_error};
+use crate::builtins::{arg_error, index_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
@@ -323,22 +323,14 @@ fn off_arg(offset: Option<&RubyValue>) -> Result<usize, Signal> {
     }
 }
 
-/// `read_*` (offset 0) / `get_*(offset)` share this: `with_off` picks whether
-/// the offset comes from an argument or is 0.
+/// `read_*` (offset 0) and `get_*(offset)` share this; the two differ only in
+/// where `off` comes from, which each def's parameter list now says.
 fn read_int_m(
     recv: &RubyValue,
-    args: &[RubyValue],
+    off: usize,
     bytes: usize,
     signed: bool,
-    with_off: bool,
 ) -> Result<RubyValue, Signal> {
-    let off = if with_off {
-        arity!(args, 1);
-        crate::ffi::to_i64(&args[0])? as usize
-    } else {
-        arity!(args, 0);
-        0
-    };
     let p = ptr_of(recv);
     p.check_bounds(off, bytes)?;
     Ok(RubyValue::Int(unsafe { p.read_int(off, bytes, signed) }))
@@ -347,39 +339,18 @@ fn read_int_m(
 /// `write_*(value)` (offset 0) / `put_*(offset, value)`.
 fn write_int_m(
     recv: &RubyValue,
-    args: &[RubyValue],
+    off: usize,
+    value: &RubyValue,
     bytes: usize,
-    with_off: bool,
 ) -> Result<RubyValue, Signal> {
-    let (off, v) = if with_off {
-        arity!(args, 2);
-        (
-            crate::ffi::to_i64(&args[0])? as usize,
-            crate::ffi::to_i64(&args[1])?,
-        )
-    } else {
-        arity!(args, 1);
-        (0, crate::ffi::to_i64(&args[0])?)
-    };
+    let v = crate::ffi::to_i64(value)?;
     let p = ptr_of(recv);
     p.check_bounds(off, bytes)?;
     unsafe { p.write_int(off, bytes, v) };
     Ok(recv.clone())
 }
 
-fn read_float_m(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    bytes: usize,
-    with_off: bool,
-) -> Result<RubyValue, Signal> {
-    let off = if with_off {
-        arity!(args, 1);
-        crate::ffi::to_i64(&args[0])? as usize
-    } else {
-        arity!(args, 0);
-        0
-    };
+fn read_float_m(recv: &RubyValue, off: usize, bytes: usize) -> Result<RubyValue, Signal> {
     let p = ptr_of(recv);
     p.check_bounds(off, bytes)?;
     Ok(RubyValue::Float(unsafe { p.read_float(off, bytes) }))
@@ -387,20 +358,11 @@ fn read_float_m(
 
 fn write_float_m(
     recv: &RubyValue,
-    args: &[RubyValue],
+    off: usize,
+    value: &RubyValue,
     bytes: usize,
-    with_off: bool,
 ) -> Result<RubyValue, Signal> {
-    let (off, v) = if with_off {
-        arity!(args, 2);
-        (
-            crate::ffi::to_i64(&args[0])? as usize,
-            crate::ffi::to_f64(&args[1])?,
-        )
-    } else {
-        arity!(args, 1);
-        (0, crate::ffi::to_f64(&args[0])?)
-    };
+    let v = crate::ffi::to_f64(value)?;
     let p = ptr_of(recv);
     p.check_bounds(off, bytes)?;
     unsafe { p.write_float(off, bytes, v) };
@@ -425,12 +387,11 @@ fn bytes_to_str(bytes: Vec<u8>) -> RubyValue {
 /// `read_array_of_<int>(count)` -> an `Array` of `count` integers.
 fn read_int_array(
     recv: &RubyValue,
-    args: &[RubyValue],
+    count: &RubyValue,
     bytes: usize,
     signed: bool,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    let n = crate::ffi::to_i64(&args[0])? as usize;
+    let n = crate::ffi::to_i64(count)? as usize;
     let p = ptr_of(recv);
     p.check_bounds(0, n * bytes)?;
     let out: Vec<RubyValue> = (0..n)
@@ -442,11 +403,10 @@ fn read_int_array(
 /// `write_array_of_<int>(array)` -- writes each element sequentially.
 fn write_int_array(
     recv: &RubyValue,
-    args: &[RubyValue],
+    ary: &RubyValue,
     bytes: usize,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    let elems = array_elems(&args[0])?;
+    let elems = array_elems(ary)?;
     let p = ptr_of(recv);
     p.check_bounds(0, elems.len() * bytes)?;
     for (i, e) in elems.iter().enumerate() {
@@ -457,11 +417,10 @@ fn write_int_array(
 
 fn read_float_array(
     recv: &RubyValue,
-    args: &[RubyValue],
+    count: &RubyValue,
     bytes: usize,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    let n = crate::ffi::to_i64(&args[0])? as usize;
+    let n = crate::ffi::to_i64(count)? as usize;
     let p = ptr_of(recv);
     p.check_bounds(0, n * bytes)?;
     let out: Vec<RubyValue> = (0..n)
@@ -472,11 +431,10 @@ fn read_float_array(
 
 fn write_float_array(
     recv: &RubyValue,
-    args: &[RubyValue],
+    ary: &RubyValue,
     bytes: usize,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    let elems = array_elems(&args[0])?;
+    let elems = array_elems(ary)?;
     let p = ptr_of(recv);
     p.check_bounds(0, elems.len() * bytes)?;
     for (i, e) in elems.iter().enumerate() {

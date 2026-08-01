@@ -32,54 +32,54 @@ ruby_class! {
     }
 
     // -- signed/unsigned integer reads (offset 0) --
-    def "read_int8" | "read_char"(r, *a, &_b) { read_int_m(r, a, 1, true, false) }
-    def "read_uint8" | "read_uchar"(r, *a, &_b) { read_int_m(r, a, 1, false, false) }
-    def "read_int16" | "read_short"(r, *a, &_b) { read_int_m(r, a, 2, true, false) }
-    def "read_uint16" | "read_ushort"(r, *a, &_b) { read_int_m(r, a, 2, false, false) }
-    def "read_int32" | "read_int"(r, *a, &_b) { read_int_m(r, a, 4, true, false) }
-    def "read_uint32" | "read_uint"(r, *a, &_b) { read_int_m(r, a, 4, false, false) }
-    def "read_int64" | "read_long" | "read_long_long"(r, *a, &_b) { read_int_m(r, a, 8, true, false) }
-    def "read_uint64" | "read_ulong" | "read_ulong_long"(r, *a, &_b) { read_int_m(r, a, 8, false, false) }
+    def "read_int8" | "read_char"(r) { read_int_m(r, 0, 1, true) }
+    def "read_uint8" | "read_uchar"(r) { read_int_m(r, 0, 1, false) }
+    def "read_int16" | "read_short"(r) { read_int_m(r, 0, 2, true) }
+    def "read_uint16" | "read_ushort"(r) { read_int_m(r, 0, 2, false) }
+    def "read_int32" | "read_int"(r) { read_int_m(r, 0, 4, true) }
+    def "read_uint32" | "read_uint"(r) { read_int_m(r, 0, 4, false) }
+    def "read_int64" | "read_long" | "read_long_long"(r) { read_int_m(r, 0, 8, true) }
+    def "read_uint64" | "read_ulong" | "read_ulong_long"(r) { read_int_m(r, 0, 8, false) }
 
     // -- integer reads at an offset --
-    def "get_int8" | "get_char"(r, *a, &_b) { read_int_m(r, a, 1, true, true) }
-    def "get_uint8" | "get_uchar"(r, *a, &_b) { read_int_m(r, a, 1, false, true) }
-    def "get_int16" | "get_short"(r, *a, &_b) { read_int_m(r, a, 2, true, true) }
-    def "get_uint16" | "get_ushort"(r, *a, &_b) { read_int_m(r, a, 2, false, true) }
-    def "get_int32" | "get_int"(r, *a, &_b) { read_int_m(r, a, 4, true, true) }
-    def "get_uint32" | "get_uint"(r, *a, &_b) { read_int_m(r, a, 4, false, true) }
-    def "get_int64" | "get_long" | "get_long_long"(r, *a, &_b) { read_int_m(r, a, 8, true, true) }
-    def "get_uint64" | "get_ulong" | "get_ulong_long"(r, *a, &_b) { read_int_m(r, a, 8, false, true) }
+    def "get_int8" | "get_char"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 1, true) }
+    def "get_uint8" | "get_uchar"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 1, false) }
+    def "get_int16" | "get_short"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 2, true) }
+    def "get_uint16" | "get_ushort"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 2, false) }
+    def "get_int32" | "get_int"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 4, true) }
+    def "get_uint32" | "get_uint"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 4, false) }
+    def "get_int64" | "get_long" | "get_long_long"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 8, true) }
+    def "get_uint64" | "get_ulong" | "get_ulong_long"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 8, false) }
 
     // -- integer writes (offset 0) --
-    def "write_int8" | "write_char"(r, *a, &_b) { write_int_m(r, a, 1, false) }
-    def "write_uint8" | "write_uchar"(r, *a, &_b) { write_int_m(r, a, 1, false) }
-    def "write_int16" | "write_short"(r, *a, &_b) { write_int_m(r, a, 2, false) }
-    def "write_uint16" | "write_ushort"(r, *a, &_b) { write_int_m(r, a, 2, false) }
-    def "write_int32" | "write_int"(r, *a, &_b) { write_int_m(r, a, 4, false) }
-    def "write_uint32" | "write_uint"(r, *a, &_b) { write_int_m(r, a, 4, false) }
-    def "write_int64" | "write_long" | "write_long_long"(r, *a, &_b) { write_int_m(r, a, 8, false) }
-    def "write_uint64" | "write_ulong" | "write_ulong_long"(r, *a, &_b) { write_int_m(r, a, 8, false) }
+    def "write_int8" | "write_char"(r, value) { write_int_m(r, 0, value, 1) }
+    def "write_uint8" | "write_uchar"(r, value) { write_int_m(r, 0, value, 1) }
+    def "write_int16" | "write_short"(r, value) { write_int_m(r, 0, value, 2) }
+    def "write_uint16" | "write_ushort"(r, value) { write_int_m(r, 0, value, 2) }
+    def "write_int32" | "write_int"(r, value) { write_int_m(r, 0, value, 4) }
+    def "write_uint32" | "write_uint"(r, value) { write_int_m(r, 0, value, 4) }
+    def "write_int64" | "write_long" | "write_long_long"(r, value) { write_int_m(r, 0, value, 8) }
+    def "write_uint64" | "write_ulong" | "write_ulong_long"(r, value) { write_int_m(r, 0, value, 8) }
 
     // -- integer writes at an offset --
-    def "put_int8" | "put_char"(r, *a, &_b) { write_int_m(r, a, 1, true) }
-    def "put_uint8" | "put_uchar"(r, *a, &_b) { write_int_m(r, a, 1, true) }
-    def "put_int16" | "put_short"(r, *a, &_b) { write_int_m(r, a, 2, true) }
-    def "put_uint16" | "put_ushort"(r, *a, &_b) { write_int_m(r, a, 2, true) }
-    def "put_int32" | "put_int"(r, *a, &_b) { write_int_m(r, a, 4, true) }
-    def "put_uint32" | "put_uint"(r, *a, &_b) { write_int_m(r, a, 4, true) }
-    def "put_int64" | "put_long" | "put_long_long"(r, *a, &_b) { write_int_m(r, a, 8, true) }
-    def "put_uint64" | "put_ulong" | "put_ulong_long"(r, *a, &_b) { write_int_m(r, a, 8, true) }
+    def "put_int8" | "put_char"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1) }
+    def "put_uint8" | "put_uchar"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1) }
+    def "put_int16" | "put_short"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2) }
+    def "put_uint16" | "put_ushort"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2) }
+    def "put_int32" | "put_int"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4) }
+    def "put_uint32" | "put_uint"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4) }
+    def "put_int64" | "put_long" | "put_long_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8) }
+    def "put_uint64" | "put_ulong" | "put_ulong_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8) }
 
     // -- floats --
-    def "read_float"(r, *a, &_b) { read_float_m(r, a, 4, false) }
-    def "read_double"(r, *a, &_b) { read_float_m(r, a, 8, false) }
-    def "get_float32" | "get_float"(r, *a, &_b) { read_float_m(r, a, 4, true) }
-    def "get_float64" | "get_double"(r, *a, &_b) { read_float_m(r, a, 8, true) }
-    def "write_float"(r, *a, &_b) { write_float_m(r, a, 4, false) }
-    def "write_double"(r, *a, &_b) { write_float_m(r, a, 8, false) }
-    def "put_float32" | "put_float"(r, *a, &_b) { write_float_m(r, a, 4, true) }
-    def "put_float64" | "put_double"(r, *a, &_b) { write_float_m(r, a, 8, true) }
+    def "read_float"(r) { read_float_m(r, 0, 4) }
+    def "read_double"(r) { read_float_m(r, 0, 8) }
+    def "get_float32" | "get_float"(r, offset) { read_float_m(r, off_arg(Some(offset))?, 4) }
+    def "get_float64" | "get_double"(r, offset) { read_float_m(r, off_arg(Some(offset))?, 8) }
+    def "write_float"(r, value) { write_float_m(r, 0, value, 4) }
+    def "write_double"(r, value) { write_float_m(r, 0, value, 8) }
+    def "put_float32" | "put_float"(r, offset, value) { write_float_m(r, off_arg(Some(offset))?, value, 4) }
+    def "put_float64" | "put_double"(r, offset, value) { write_float_m(r, off_arg(Some(offset))?, value, 8) }
 
     // -- pointers (read/write an address-sized word, wrapped as a Pointer) --
     def "read_pointer" | "get_pointer"(recv, offset?) {
@@ -200,20 +200,20 @@ ruby_class! {
     }
 
     // -- typed arrays --
-    def "read_array_of_int8"(r, *a, &_b) { read_int_array(r, a, 1, true) }
-    def "read_array_of_uint8"(r, *a, &_b) { read_int_array(r, a, 1, false) }
-    def "read_array_of_int16"(r, *a, &_b) { read_int_array(r, a, 2, true) }
-    def "read_array_of_int32" | "read_array_of_int"(r, *a, &_b) { read_int_array(r, a, 4, true) }
-    def "read_array_of_uint32" | "read_array_of_uint"(r, *a, &_b) { read_int_array(r, a, 4, false) }
-    def "read_array_of_int64" | "read_array_of_long"(r, *a, &_b) { read_int_array(r, a, 8, true) }
-    def "write_array_of_int8"(r, *a, &_b) { write_int_array(r, a, 1) }
-    def "write_array_of_int16"(r, *a, &_b) { write_int_array(r, a, 2) }
-    def "write_array_of_int32" | "write_array_of_int"(r, *a, &_b) { write_int_array(r, a, 4) }
-    def "write_array_of_int64" | "write_array_of_long"(r, *a, &_b) { write_int_array(r, a, 8) }
-    def "read_array_of_double"(r, *a, &_b) { read_float_array(r, a, 8) }
-    def "read_array_of_float"(r, *a, &_b) { read_float_array(r, a, 4) }
-    def "write_array_of_double"(r, *a, &_b) { write_float_array(r, a, 8) }
-    def "write_array_of_float"(r, *a, &_b) { write_float_array(r, a, 4) }
+    def "read_array_of_int8"(r, count) { read_int_array(r, count, 1, true) }
+    def "read_array_of_uint8"(r, count) { read_int_array(r, count, 1, false) }
+    def "read_array_of_int16"(r, count) { read_int_array(r, count, 2, true) }
+    def "read_array_of_int32" | "read_array_of_int"(r, count) { read_int_array(r, count, 4, true) }
+    def "read_array_of_uint32" | "read_array_of_uint"(r, count) { read_int_array(r, count, 4, false) }
+    def "read_array_of_int64" | "read_array_of_long"(r, count) { read_int_array(r, count, 8, true) }
+    def "write_array_of_int8"(r, ary) { write_int_array(r, ary, 1) }
+    def "write_array_of_int16"(r, ary) { write_int_array(r, ary, 2) }
+    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, ary, 4) }
+    def "write_array_of_int64" | "write_array_of_long"(r, ary) { write_int_array(r, ary, 8) }
+    def "read_array_of_double"(r, count) { read_float_array(r, count, 8) }
+    def "read_array_of_float"(r, count) { read_float_array(r, count, 4) }
+    def "write_array_of_double"(r, ary) { write_float_array(r, ary, 8) }
+    def "write_array_of_float"(r, ary) { write_float_array(r, ary, 4) }
 
     // -- identity / arithmetic --
     def "null?"(recv) {
