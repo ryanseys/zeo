@@ -1,0 +1,50 @@
+-- Class, not Module
+Class
+Class
+Class
+Comparable.superclass: NoMethodError
+Comparable.subclasses: NoMethodError
+-- BasicObject, not Kernel
+BasicObject
+Kernel
+true
+-- File, not IO
+File
+File
+IO#size: NoMethodError
+IO#chmod: NoMethodError
+IO#chown: NoMethodError
+IO#flock: NoMethodError
+IO#lstat: NoMethodError
+IO#mtime: NoMethodError
+IO#truncate: NoMethodError
+IO#pipe?: NoMethodError
+11
+0
+0
+0
+File::Stat
+Time
+0
+5
+"hello"
+-- SizedQueue, not Queue
+Queue#max: NoMethodError
+Queue#max=: NoMethodError
+2
+5
+-- not methods at all
+Regexp#linear_time?: NoMethodError
+Set#contain?: NoMethodError
+Set#merge_new: NoMethodError
+Pathname#to_str: NoMethodError
+Pathname#mkdir_p: NoMethodError
+Pathname#rm_rf: NoMethodError
+Proc#(): NoMethodError
+Struct[]: NoMethodError
+true
+"/tmp"
+6
+1
+true
+[1, 2]

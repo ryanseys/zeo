@@ -190,7 +190,7 @@ ruby_class! {
     Pathname = zeo_abi::PATHNAME_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "to_s" | "to_path" | "to_str" (recv) { Ok(str_val(recv_path(recv).to_string())) }
+    def "to_s" | "to_path" (recv) { Ok(str_val(recv_path(recv).to_string())) }
     def "inspect" (recv) { Ok(str_val(format!("#<Pathname:{}>", recv_path(recv)))) }
     def "freeze" (recv) { Ok(recv.clone()) }
     def "frozen?" (_recv) { Ok(RubyValue::Bool(true)) }
@@ -303,7 +303,7 @@ ruby_class! {
         let with_dir = !matches!(arg, Some(RubyValue::Bool(false)));
         children(recv_path(recv), with_dir)
     }
-    def "mkpath" | "mkdir_p" (recv, _arg?) {
+    def "mkpath" (recv, _arg?) {
         let p = recv_path(recv);
         std::fs::create_dir_all(p).map_err(|e| io_err(p, &e))?;
         Ok(RubyValue::Int(0))
@@ -313,7 +313,7 @@ ruby_class! {
         std::fs::create_dir(p).map_err(|e| io_err(p, &e))?;
         Ok(RubyValue::Int(0))
     }
-    def "rmtree" | "rm_rf" (recv, _arg?) {
+    def "rmtree" (recv, _arg?) {
         let p = recv_path(recv);
         let _ = std::fs::remove_dir_all(p);
         Ok(recv.clone())

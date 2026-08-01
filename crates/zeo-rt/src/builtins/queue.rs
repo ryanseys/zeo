@@ -7,15 +7,12 @@
 //! agree. `Queue` has a dedicated `RubyValue::Queue` variant (like
 //! Thread/Fiber), unwrapped with `as_queue_unchecked`. `SizedQueue` (a
 //! sibling file) inherits every instance row here through the ancestry walk,
-//! since `SizedQueue < Queue`.
+//! since `SizedQueue < Queue`, and adds the bound (`max`/`max=`) that only a
+//! bounded queue answers.
 
 use crate::RubyValue;
-use crate::builtins::arg_int;
 use crate::dispatch::raise_error;
-use crate::thread::{
-    queue_close, queue_closed, queue_len, queue_max, queue_new, queue_pop, queue_push,
-    queue_set_max,
-};
+use crate::thread::{queue_close, queue_closed, queue_len, queue_new, queue_pop, queue_push};
 use zeo_macros::ruby_class;
 
 ruby_class! {
@@ -52,18 +49,6 @@ ruby_class! {
     }
     def "empty?"(recv) {
         Ok(RubyValue::Bool(queue_len(&recv.as_queue_unchecked()) == 0))
-    }
-    // `SizedQueue#max`/`max=` -- the bound. `max` on an unbounded `Queue`
-    // answers `nil` (a documented divergence: CRuby has no `Queue#max`).
-    def "max"(recv) {
-        Ok(match queue_max(&recv.as_queue_unchecked()) {
-            Some(n) => RubyValue::Int(n),
-            None => RubyValue::Nil,
-        })
-    }
-    def "max="(recv, arg) {
-        queue_set_max(&recv.as_queue_unchecked(), arg_int!(arg));
-        Ok((*arg).clone())
     }
 }
 

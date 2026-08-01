@@ -6,32 +6,6 @@
 #! it fails the test and cannot be recorded here. Regenerate with
 #! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.
 #! tag	class	kind	name	reason
-zeo-only	IO	i	bytes	no bytes in CRuby's chain
-zeo-only	IO	i	chars	no chars in CRuby's chain
-zeo-only	IO	i	chmod	no chmod in CRuby's chain
-zeo-only	IO	i	chown	no chown in CRuby's chain
-zeo-only	IO	i	codepoints	no codepoints in CRuby's chain
-zeo-only	IO	i	flock	no flock in CRuby's chain
-zeo-only	IO	i	lstat	no lstat in CRuby's chain
-zeo-only	IO	i	mtime	no mtime in CRuby's chain
-zeo-only	IO	i	pipe?	no pipe? in CRuby's chain
-zeo-only	IO	i	size	no size in CRuby's chain
-zeo-only	IO	i	truncate	no truncate in CRuby's chain
-zeo-only	Kernel	i	__id__	no __id__ in CRuby's chain
-zeo-only	Method	i	()	no () in CRuby's chain
-zeo-only	Module	i	inherited	no inherited in CRuby's chain
-zeo-only	Module	i	subclasses	no subclasses in CRuby's chain
-zeo-only	Module	i	superclass	no superclass in CRuby's chain
-zeo-only	Pathname	i	mkdir_p	no mkdir_p in CRuby's chain
-zeo-only	Pathname	i	rm_rf	no rm_rf in CRuby's chain
-zeo-only	Pathname	i	to_str	no to_str in CRuby's chain
-zeo-only	Proc	i	()	no () in CRuby's chain
-zeo-only	Regexp	i	linear_time?	no linear_time? in CRuby's chain
-zeo-only	Set	i	contain?	no contain? in CRuby's chain
-zeo-only	Set	i	merge_new	no merge_new in CRuby's chain
-zeo-only	Struct	s	[]	no [] in CRuby's chain
-zeo-only	Thread::Queue	i	max	no max in CRuby's chain
-zeo-only	Thread::Queue	i	max=	no max= in CRuby's chain
 oracle-missing	Prism::Zeo	s	parse_success?	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	serialize_lex	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo is absent from the pinned oracle

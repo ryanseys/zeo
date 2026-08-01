@@ -723,7 +723,7 @@ fn select_ready(
 /// siblings behind it. The whole lock-op-unlock section releases as one
 /// unit; contention on the SAME IO still serializes on its backend lock
 /// (CRuby serializes per-fd operations too).
-fn with_file<T>(
+pub(crate) fn with_file<T>(
     recv: &RubyValue,
     f: impl FnOnce(&mut std::fs::File, &str) -> Result<T, Signal>,
 ) -> Result<T, Signal> {
@@ -1072,7 +1072,7 @@ use std::sync::atomic::Ordering::Relaxed;
 /// An integer argument (`pread`/`pwrite` counts, `fcntl`/`chmod` operands)
 /// through the `to_int` protocol -- unlike the offset sites, a nil here is
 /// the generic "of nil into Integer" (oracle-verified).
-fn int_of(v: &RubyValue) -> Result<i64, Signal> {
+pub(crate) fn int_of(v: &RubyValue) -> Result<i64, Signal> {
     match v {
         RubyValue::Nil => Err(type_error!("no implicit conversion of nil into Integer")),
         v => convert::to_index(v),
@@ -1082,7 +1082,7 @@ fn int_of(v: &RubyValue) -> Result<i64, Signal> {
 /// A byte-offset argument (`seek`/`sysseek`/`pos=`/`truncate`, `pread`'s
 /// offset): CRuby's NUM2OFFT, whose nil TypeError is the bare
 /// "no implicit conversion from nil" (no "to integer" -- oracle-verified).
-fn offset_of(v: &RubyValue) -> Result<i64, Signal> {
+pub(crate) fn offset_of(v: &RubyValue) -> Result<i64, Signal> {
     match v {
         RubyValue::Nil => Err(type_error!("no implicit conversion from nil")),
         v => convert::to_index(v),
@@ -1296,7 +1296,7 @@ fn getbyte_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
 
 /// An `fstat(2)` snapshot of the open descriptor, as a `File::Stat` --
 /// what `#stat`, `#mtime` and `#size` all read.
-fn stat_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
+pub(crate) fn stat_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
     use std::os::fd::AsRawFd;
     with_file(recv, |f, _path| {
         crate::builtins::stat::stat_from_fd(f.as_raw_fd())
@@ -1686,7 +1686,7 @@ ruby_class! {
     }
 
     // `each_char` -- yield each UTF-8 char.
-    def "each_char" | "chars" (recv, &blk) {
+    def "each_char" (recv, &blk) {
         let p = crate::builtins::block_or_enum!(recv, __args, blk);
         loop {
             let ch = with_buffered_file(recv, |io, f, path| {
@@ -1702,7 +1702,7 @@ ruby_class! {
     }
 
     // `each_byte` -- yield each byte as an Integer.
-    def "each_byte" | "bytes" (recv, &blk) {
+    def "each_byte" (recv, &blk) {
         let p = crate::builtins::block_or_enum!(recv, __args, blk);
         let text = io_read_val(recv, &[], None)?;
         let RubyValue::Str(s) = &text else {
@@ -1895,23 +1895,6 @@ ruby_class! {
         })
     }
 
-    // `flock(op)` -- advisory whole-file lock via `flock(2)`; answers 0.
-    def "flock" (recv, operation, &_blk) {
-        use std::os::fd::AsRawFd;
-        let op = convert::to_index(operation)?;
-        with_file(recv, |f, path| {
-            // SAFETY: `f` owns a valid fd for the call's duration.
-            if unsafe { libc::flock(f.as_raw_fd(), op as libc::c_int) } != 0 {
-                return Err(crate::builtins::file::raise_errno(
-                    &std::io::Error::last_os_error(),
-                    "flock",
-                    path,
-                ));
-            }
-            Ok(RubyValue::Int(0))
-        })
-    }
-
     def "tell" | "pos" (recv, &_blk) {
         with_file(recv, |f, path| {
             use std::io::Seek;
@@ -1977,15 +1960,6 @@ ruby_class! {
         stat_value(recv)
     }
 
-    // `File#lstat` -- stat the open file's path WITHOUT following a final symlink.
-    // Unlike `#stat` (which `fstat`s the fd), this must go through the stored path,
-    // since the fd already resolved the link at open time.
-    def "lstat" (recv, &_blk) {
-        with_file(recv, |_f, path| {
-            crate::builtins::stat::stat_from_path(path, false)
-        })
-    }
-
     // `#fcntl(cmd[, arg])` -- the raw `fcntl(2)`; answers its integer result
     // (e.g. `fcntl(F_GETFD)` reads the close-on-exec flag). `arg` defaults to 0.
     def "fcntl" cfunc (recv, _cmd, _arg?, &_blk) {
@@ -2007,79 +1981,6 @@ ruby_class! {
             }
             Ok(RubyValue::Int(r as i64))
         })
-    }
-
-    // `#chown(uid, gid)` -- `fchown(2)`; a nil arg leaves that id unchanged
-    // (`-1` to the syscall). Answers 0.
-    def "chown" (recv, owner, group, &_blk) {
-        use std::os::fd::AsRawFd;
-        let id = |v: Option<&RubyValue>| -> libc::uid_t {
-            match v {
-                Some(RubyValue::Int(i)) => *i as libc::uid_t,
-                _ => u32::MAX, // -1: leave unchanged
-            }
-        };
-        let uid = id(Some(owner));
-        let gid = id(Some(group));
-        with_file(recv, |f, path| {
-            // SAFETY: `f` owns a valid fd for the call's duration.
-            if unsafe { libc::fchown(f.as_raw_fd(), uid, gid) } != 0 {
-                return Err(crate::builtins::file::raise_errno(
-                    &std::io::Error::last_os_error(),
-                    "chown",
-                    path,
-                ));
-            }
-            Ok(RubyValue::Int(0))
-        })
-    }
-
-    // `#chmod(mode)` -- set the open file's permission bits; answers 0.
-    def "chmod" (recv, mode_arg, &_blk) {
-        use std::os::fd::AsRawFd;
-        let mode = int_of(mode_arg)?;
-        with_file(recv, |f, path| {
-            // SAFETY: `f` owns a valid fd for the call's duration.
-            if unsafe { libc::fchmod(f.as_raw_fd(), mode as libc::mode_t) } != 0 {
-                return Err(crate::builtins::file::raise_errno(
-                    &std::io::Error::last_os_error(),
-                    "chmod",
-                    path,
-                ));
-            }
-            Ok(RubyValue::Int(0))
-        })
-    }
-
-    // `#truncate(len)` -- resize the open file to `len` bytes; answers 0.
-    def "truncate" (recv, length, &_blk) {
-        let len = offset_of(length)?;
-        with_file(recv, |f, path| {
-            f.set_len(len.max(0) as u64)
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "truncate", path))?;
-            Ok(RubyValue::Int(0))
-        })
-    }
-
-    // `#mtime` -- the open file's modification time, via `fstat`.
-    def "mtime" (recv, &_blk) {
-        let st = stat_value(recv)?;
-        crate::dispatch::send_value(&st, crate::Symbol::intern("mtime"), &[], None)
-    }
-
-    // `#size` -- the open file's byte length, via `fstat`.
-    def "size" (recv, &_blk) {
-        let st = stat_value(recv)?;
-        crate::dispatch::send_value(&st, crate::Symbol::intern("size"), &[], None)
-    }
-
-    // `#pipe?` -- whether this IO is a pipe end.
-    def "pipe?" (recv, &_blk) {
-        let is_pipe = matches!(
-            as_rio(recv).map(|io| matches!(&*io.backend.lock(), IoBackend::Pipe(_))),
-            Some(true)
-        );
-        Ok(RubyValue::Bool(is_pipe))
     }
 
     // `pid` -- the child an `IO.popen` handle is connected to, `nil` for every
@@ -2402,7 +2303,7 @@ ruby_class! {
 
     // `#each_codepoint { |cp| ... }` -- yield each remaining character's codepoint;
     // answers self.
-    def "each_codepoint" | "codepoints" (recv, &blk) {
+    def "each_codepoint" (recv, &blk) {
         let p = crate::builtins::block_or_enum!(recv, __args, blk);
         let content = with_file(recv, |f, path| {
             let mut buf = Vec::new();

@@ -29,6 +29,31 @@ fn dedup_syms(names: Vec<Symbol>) -> Vec<Symbol> {
     names.into_iter().filter(|s| seen.insert(*s)).collect()
 }
 
+/// A stable per-identity Integer. Objects use their `Arc` pointer; immediates
+/// use CRuby's fixed/derived shapes (Integers `2n+1`, nil/true/false their
+/// reserved slots). Strings/Arrays/Hashes use their cell pointer -- identity,
+/// not content.
+///
+/// Shared, because CRuby splits the two names across two classes:
+/// `Kernel#object_id` and `BasicObject#__id__`.
+pub(crate) fn object_id_of(recv: &RubyValue) -> RubyValue {
+    RubyValue::Int(match recv {
+        RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
+        // CRuby 4.0.6's fixed immediate ids: nil 4, true 20, false 0.
+        RubyValue::Nil => 4,
+        RubyValue::Bool(true) => 20,
+        RubyValue::Bool(false) => 0,
+        RubyValue::Object(o) => std::sync::Arc::as_ptr(o) as *const () as i64,
+        RubyValue::Str(s) => std::sync::Arc::as_ptr(s) as i64,
+        RubyValue::Array(a) => std::sync::Arc::as_ptr(a) as i64,
+        RubyValue::Hash(h) => std::sync::Arc::as_ptr(h) as i64,
+        RubyValue::Symbol(s) => 0x1000_0000_0000 + i64::from(s.to_u32()),
+        // The remaining kinds get a per-call address-ish value -- a documented
+        // approximation (identity comparison via object_id on them is rare).
+        _ => recv as *const _ as i64,
+    })
+}
+
 ruby_module! {
     Kernel = zeo_abi::KERNEL_CLASS;
 
@@ -307,27 +332,10 @@ ruby_module! {
     def "class"(recv) {
         Ok(RubyValue::Class(recv.class_id()))
     }
-    // `object_id` -- a stable per-identity Integer. Objects use their `Arc`
-    // pointer; immediates use CRuby's fixed/derived shapes (Integers
-    // `2n+1`, nil/true/false their reserved slots). Strings/Arrays/Hashes
-    // use their cell pointer -- identity, not content.
-    def "object_id" | "__id__"(recv) {
-        Ok(RubyValue::Int(match recv {
-            RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
-            // CRuby 4.0.6's fixed immediate ids: nil 4, true 20, false 0.
-            RubyValue::Nil => 4,
-            RubyValue::Bool(true) => 20,
-            RubyValue::Bool(false) => 0,
-            RubyValue::Object(o) => std::sync::Arc::as_ptr(o) as *const () as i64,
-            RubyValue::Str(s) => std::sync::Arc::as_ptr(s) as i64,
-            RubyValue::Array(a) => std::sync::Arc::as_ptr(a) as i64,
-            RubyValue::Hash(h) => std::sync::Arc::as_ptr(h) as i64,
-            RubyValue::Symbol(s) => 0x1000_0000_0000 + i64::from(s.to_u32()),
-            // The remaining kinds get a per-call address-ish value -- a
-            // documented approximation (identity comparison via object_id
-            // on them is rare).
-            _ => recv as *const _ as i64,
-        }))
+    // `object_id`. Its `__id__` twin is BasicObject's, which is where CRuby
+    // owns it, so both rows share `object_id_of`.
+    def "object_id"(recv) {
+        Ok(object_id_of(recv))
     }
     def "nil?" (recv) {
         Ok(RubyValue::Bool(recv.is_nil()))

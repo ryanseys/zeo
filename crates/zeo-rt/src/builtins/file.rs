@@ -1159,6 +1159,86 @@ ruby_class! {
             t.subsec_nanos(),
         ))
     }
+
+    // -- the open-descriptor surface CRuby puts on File, not IO. Each one
+    // needs a path or a real file behind the fd, which is exactly why a pipe
+    // or a socket does not answer them. The bodies reach io.rs's `with_file`,
+    // since the receiver is still an `RIo`.
+
+    // `#flock(op)` -- advisory whole-file lock via `flock(2)`; answers 0.
+    def "flock" (recv, operation, &_blk) {
+        use std::os::fd::AsRawFd;
+        let op = crate::builtins::convert::to_index(operation)?;
+        crate::builtins::io::with_file(recv, |f, path| {
+            // SAFETY: `f` owns a valid fd for the call's duration.
+            if unsafe { libc::flock(f.as_raw_fd(), op as libc::c_int) } != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "flock", path));
+            }
+            Ok(RubyValue::Int(0))
+        })
+    }
+
+    // `#lstat` -- stat the open file's path WITHOUT following a final symlink.
+    // Unlike `#stat` (which `fstat`s the fd), this must go through the stored
+    // path, since the fd already resolved the link at open time.
+    def "lstat" (recv, &_blk) {
+        crate::builtins::io::with_file(recv, |_f, path| {
+            crate::builtins::stat::stat_from_path(path, false)
+        })
+    }
+
+    // `#chown(uid, gid)` -- `fchown(2)`; a nil arg leaves that id unchanged
+    // (`-1` to the syscall). Answers 0.
+    def "chown" (recv, owner, group, &_blk) {
+        use std::os::fd::AsRawFd;
+        let id = |v: &RubyValue| -> libc::uid_t {
+            match v {
+                RubyValue::Int(i) => *i as libc::uid_t,
+                _ => u32::MAX, // -1: leave unchanged
+            }
+        };
+        let (uid, gid) = (id(owner), id(group));
+        crate::builtins::io::with_file(recv, |f, path| {
+            // SAFETY: `f` owns a valid fd for the call's duration.
+            if unsafe { libc::fchown(f.as_raw_fd(), uid, gid) } != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "chown", path));
+            }
+            Ok(RubyValue::Int(0))
+        })
+    }
+
+    // `#chmod(mode)` -- set the open file's permission bits; answers 0.
+    def "chmod" (recv, mode_arg, &_blk) {
+        use std::os::fd::AsRawFd;
+        let mode = crate::builtins::io::int_of(mode_arg)?;
+        crate::builtins::io::with_file(recv, |f, path| {
+            // SAFETY: `f` owns a valid fd for the call's duration.
+            if unsafe { libc::fchmod(f.as_raw_fd(), mode as libc::mode_t) } != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "chmod", path));
+            }
+            Ok(RubyValue::Int(0))
+        })
+    }
+
+    // `#truncate(len)` -- resize the open file to `len` bytes; answers 0.
+    def "truncate" (recv, length, &_blk) {
+        let len = crate::builtins::io::offset_of(length)?;
+        crate::builtins::io::with_file(recv, |f, path| {
+            f.set_len(len.max(0) as u64)
+                .map_err(|e| raise_errno(&e, "truncate", path))?;
+            Ok(RubyValue::Int(0))
+        })
+    }
+
+    // `#mtime` / `#size` -- read off the same `fstat` snapshot `#stat` answers.
+    def "mtime" (recv, &_blk) {
+        let st = crate::builtins::io::stat_value(recv)?;
+        crate::dispatch::send_value(&st, crate::Symbol::intern("mtime"), &[], None)
+    }
+    def "size" (recv, &_blk) {
+        let st = crate::builtins::io::stat_value(recv)?;
+        crate::dispatch::send_value(&st, crate::Symbol::intern("size"), &[], None)
+    }
 }
 
 /// `access(2)` -- the real permission question, rather than inferring from

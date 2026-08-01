@@ -311,7 +311,7 @@ ruby_class! {
             Ok(RubyValue::Nil)
         }
     }
-    def "include?" | "member?" | "===" | "contain?"(recv, other) {
+    def "include?" | "member?" | "==="(recv, other) {
         Ok(RubyValue::Bool(set_of(recv).contains(other)))
     }
     def "delete" (recv, arg) {
@@ -487,7 +487,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "|" | "union" | "+" | "merge_new"(recv, other) {
+    def "|" | "union" | "+"(recv, other) {
         let mut out = set_of(recv).elements();
         out.extend(arg_elements(other)?);
         Ok(set_from(out))

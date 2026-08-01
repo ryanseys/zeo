@@ -248,7 +248,7 @@ ruby_class! {
     // An ordinary Method dispatches like any other call. One re-seated by
     // `#super_method` must resume the walk AT its home instead, or it would
     // find the override it was reached through and recurse.
-    def "call" | "()" | "[]" | "===" (recv, *args, &blk) {
+    def "call" | "[]" | "===" (recv, *args, &blk) {
         let m = recv_method(recv);
         if m.home == m.chain() {
             return crate::dispatch::send_value(&m.recv, m.name, args, blk);

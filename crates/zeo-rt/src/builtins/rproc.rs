@@ -35,7 +35,7 @@ ruby_class! {
         Ok(RubyValue::Bool(eq))
     }
 
-    def "call" | "()" | "[]" | "yield" | "==="(recv, *args, &block) {
+    def "call" | "[]" | "yield" | "==="(recv, *args, &block) {
         let p = recv_proc(recv);
         // Forward the call-site block to the proc's own `&block` param
         // (`->(&b) { b.call }.call { ... }`); `None` when no block, exactly
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn brackets_are_a_call_alias() {
         assert!(lookup("[]").is_some());
-        assert!(lookup("()").is_some());
+        assert!(lookup("yield").is_some());
         assert!(lookup("yield").is_some());
         let r = imethod("call")(&adder3(), &[RubyValue::Int(1), RubyValue::Int(2)], None).unwrap();
         assert!(matches!(r, RubyValue::Int(3)));

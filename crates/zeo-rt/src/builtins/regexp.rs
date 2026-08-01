@@ -98,7 +98,10 @@ ruby_class! {
             .unwrap_or(RubyValue::Nil))
     }
 
-    // `Regexp.linear_time?(re_or_str, flags = nil)` -- see the instance method.
+    // `Regexp.linear_time?(re_or_str, flags = nil)` -- whether matching the
+    // pattern is guaranteed linear-time. True unless it uses a backreference
+    // (lookaround and nested quantifiers stay linear); oracle-verified. A
+    // CLASS method only: CRuby has no `Regexp#linear_time?`.
     def self."linear_time?" cfunc (_recv, arg1, _arg2?) {
         let source = match arg1 {
             RubyValue::Regexp(re) => re.source.clone(),
@@ -211,12 +214,6 @@ ruby_class! {
             + (re.extended as i64) * EXTENDED
             + (re.multiline as i64) * MULTILINE;
         Ok(RubyValue::Int(bits))
-    }
-    // `#linear_time?` -- whether matching is guaranteed linear-time. True
-    // unless the pattern uses a backreference (lookaround and nested
-    // quantifiers stay linear); oracle-verified.
-    def "linear_time?"(recv) {
-        Ok(RubyValue::Bool(!has_backreference(&re_of(recv).source)))
     }
 }
 

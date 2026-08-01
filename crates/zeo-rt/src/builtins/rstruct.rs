@@ -450,8 +450,10 @@ ruby_class! {
     include zeo_abi::ENUMERABLE_CLASS;
 
     // `Struct.new(:a, :b)` / `Struct.new("Name", :a, :b, keyword_init: true)`
-    // MINTS a real subclass at runtime; `Struct[...]` is the same constructor.
-    def self."new" | "[]" (_recv, *args, &block) {
+    // MINTS a real subclass at runtime. No `[]` twin: `Struct[:a]` is a
+    // NoMethodError in CRuby, because `[]` is an alias of `new` installed on
+    // each MINTED subclass (`class_lookup` below), not on `Struct` itself.
+    def self."new" (_recv, *args, &block) {
         define_value_class(STRUCT_CLASS, false, args, block)
     }
 

@@ -101,4 +101,37 @@ ruby_class! {
             }
         }
     }
+
+    // `Class#superclass` -- the first non-module entry after self in the
+    // linearized ancestors (prepends/includes are modules, so this lands on
+    // the real parent class); `nil` at the root (`BasicObject`). Declaring it
+    // HERE is what makes `Enumerable.superclass` the NoMethodError CRuby
+    // raises: a module receiver never reaches this table.
+    def "superclass" (recv) {
+        let cid = recv_cid(recv);
+        let ancestors = crate::dispatch::ancestors_of_value(cid);
+        for &anc in ancestors.iter().skip_while(|&&a| a != cid).skip(1) {
+            if !crate::dispatch::class_is_module(anc).unwrap_or(false) {
+                return Ok(RubyValue::Class(anc));
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
+
+    // `Class#subclasses`: the DIRECT, currently-registered subclasses. Order
+    // is unspecified in CRuby (a hash-set walk), so this returns them in the
+    // registry's iteration order -- tests that assert a listing sort it.
+    def "subclasses" (recv) {
+        let kids = crate::dispatch::direct_subclasses(recv_cid(recv))
+            .into_iter()
+            .map(RubyValue::Class)
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(kids)))
+    }
+
+    // `Class#inherited`'s default -- the no-op hook a user override's `super`
+    // reaches, the `Module#included`/`extended`/`prepended` trio's sibling.
+    def "inherited" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
 }

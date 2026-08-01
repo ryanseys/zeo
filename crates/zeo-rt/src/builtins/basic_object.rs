@@ -39,6 +39,12 @@ ruby_class! {
     def "equal?" (recv, arg) {
         Ok(RubyValue::Bool(value_identity(recv, arg)))
     }
+    // `__id__` is the ROOT's name for the identity integer; `object_id` is
+    // Kernel's, so a blank-slate receiver keeps the one and loses the other
+    // (`object.c`). One body, in `kernel::object_id_of`.
+    def "__id__" (recv) {
+        Ok(crate::builtins::kernel::object_id_of(recv))
+    }
     // The root `initialize`: private, takes NO arguments, does nothing
     // (`rb_obj_dummy`, `object.c`; registered with arity 0 at
     // `object.c`'s BasicObject setup). It exists so that `super` from ANY

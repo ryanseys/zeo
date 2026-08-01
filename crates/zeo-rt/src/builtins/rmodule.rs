@@ -136,35 +136,6 @@ ruby_class! {
     def "included" | "extended" | "prepended" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    // `Class#inherited`'s default, for the same reason. It lives on Module
-    // rather than Class because that is where zeo's class-method `super`
-    // chain looks, and no module is ever inherited from.
-    def "inherited" (_recv, _arg) {
-        Ok(RubyValue::Nil)
-    }
-    // `Class#superclass` -- the first non-module entry after self in the
-    // linearized ancestors (prepends/includes are modules, so this lands on
-    // the real parent class); `nil` at the root (`BasicObject`).
-    def "superclass" (recv) {
-        let cid = recv_cid(recv);
-        // `superclass` is a `Class` method; a Module receiver has none
-        // (`Enumerable.superclass` raises NoMethodError, not nil).
-        if crate::dispatch::class_is_module(cid).unwrap_or(false) {
-            return Err(crate::dispatch::raise_method_missing(
-                recv,
-                "superclass",
-                &[],
-                crate::dispatch::MissingReason::NoEntry,
-            ));
-        }
-        let ancestors = crate::dispatch::ancestors_of_value(cid);
-        for &anc in ancestors.iter().skip_while(|&&a| a != cid).skip(1) {
-            if !crate::dispatch::class_is_module(anc).unwrap_or(false) {
-                return Ok(RubyValue::Class(anc));
-            }
-        }
-        Ok(RubyValue::Nil)
-    }
     def "ancestors" (recv) {
         let chain = crate::dispatch::ancestors_of_value(recv_cid(recv))
             .iter()
@@ -341,16 +312,6 @@ ruby_class! {
             ),
             _ => Ok(RubyValue::Nil),
         }
-    }
-    // `Class#subclasses`: the DIRECT, currently-registered subclasses. Order
-    // is unspecified in CRuby (a hash-set walk), so this returns them in the
-    // registry's iteration order -- tests that assert a listing sort it.
-    def "subclasses" (recv) {
-        let kids = crate::dispatch::direct_subclasses(recv_cid(recv))
-            .into_iter()
-            .map(RubyValue::Class)
-            .collect();
-        Ok(RubyValue::Array(crate::array_new(kids)))
     }
     // Named classes/modules are never singleton (metaclass) classes; zeo
     // doesn't model per-object singleton classes as first-class ids, so this
