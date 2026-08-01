@@ -527,6 +527,39 @@ span backwards, and **a step of exactly 1 routes through the ordinary Range
 slice instead** — which is why `a[(11..12).step(1)]` is nil while
 `a[(11..12).step(2)]` raises.
 
+### 3.2 `Process::Sys` / `Process::UID` / `Process::GID` (68)
+
+**Status: done** — `absent-module` 40 → 37, `constant` 189 → 186, no new row.
+`tests/process_identity_rows.rb` is byte-identical to the oracle, and nothing
+in it can change an id: an unprivileged process may only re-assert the ids it
+already holds, so every reader, every re-assertion and every refusal is
+exercised without needing (or being able to gain) privilege.
+
+`Process::UID` and `Process::GID` are the same ten names over two families of
+syscalls, so both modules' rows call one set of helpers with an `IdKind`
+saying which. That is the whole reason the pair costs almost nothing beyond
+the one.
+
+Two details the oracle settled, and neither was guessable:
+
+- **The id conversion is `rb_num2ulong`, not `rb_num2long`.** `nil` therefore
+  takes the ordinary `to_int` refusal (`no implicit conversion of nil into
+  Integer`), NOT the lowercase `from nil to integer` that every other
+  integer-argument site in zeo raises, and a bignum names `'unsigned long'`.
+  A String is a passwd or group NAME first, and only a failed lookup is an
+  error (`can't find user for x`).
+- **The failure message is bare.** `rb_sys_fail(0)` raises `Errno::EPERM`
+  with `Operation not permitted` and nothing appended — no ` @ syscall -
+  path` suffix, which is what `file.rs`'s `raise_errno` would have produced.
+
+One deliberate narrowing: `Process::Sys.setresuid`/`setresgid` are the
+not-implemented stubs on every platform. CRuby installs those wherever the
+syscall is absent, and the stub reports **arity 0** while accepting any
+arguments — so the real three-argument form cannot share a declaration with
+it, and the arity ledger is single-platform. Recorded in
+`docs/COMPATIBILITY.md`; `Process::Sys.setreuid` and
+`Process::UID.change_privilege` reach the same capability by another name.
+
 ### 3.5 `Pathname` (96 own methods)
 
 Vendored under `gems/pathname/`, the way the other 40 gems are, and

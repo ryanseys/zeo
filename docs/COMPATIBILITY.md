@@ -557,6 +557,24 @@ cannot read another's execution state:
   the rule `TracePoint.new` already follows for the events zeo cannot raise:
   refuse loudly rather than accept a handler that never runs.
 
+### `Process::Sys.setresuid` / `.setresgid`
+
+Both are the not-implemented stub everywhere: they take any arguments,
+report arity 0, and raise `NotImplementedError: setresuid() function is
+unimplemented on this machine`. That is exactly CRuby's own behavior on a
+platform without the syscall (macOS among them), and a narrowing on the ones
+that have it (Linux, the BSDs), because the stub's arity is 0 while the real
+call's is 3 — one declaration cannot report both, and zeo's arity ledger is
+generated on one machine. `Process::Sys.setreuid` and
+`Process::UID.change_privilege` reach the same capability.
+
+The rest of `Process::Sys`, `Process::UID` and `Process::GID` is
+oracle-matched live in `tests/process_identity_rows.rb`, including every
+refusal. `Process::UID.switch`'s saved-id fallback reads an id zeo seeds on
+first use rather than at startup, so a program that moved its effective id
+through `Process::Sys` BEFORE ever touching `Process::UID`/`GID` would find
+the newer id saved where CRuby kept the original.
+
 ### `Range#step` over a non-numeric range
 
 A blockless `("a".."e").step(2)` answers the right Enumerator, but WALKING it

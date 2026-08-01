@@ -601,6 +601,16 @@ pub const FILE_CONSTANTS_MODULE: ClassId = ClassId(147);
 /// can slice with a stride.
 pub const ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS: ClassId = ClassId(148);
 
+/// `Process::Sys` -- the raw `set*id` syscalls, one module function apiece,
+/// each failing with the matching `Errno::*`.
+pub const PROCESS_SYS_MODULE: ClassId = ClassId(149);
+
+/// `Process::UID` and `Process::GID` -- the privilege API CRuby layers over
+/// `Process::Sys`, where the same ten names read and switch the user's and
+/// the group's ids.
+pub const PROCESS_UID_MODULE: ClassId = ClassId(150);
+pub const PROCESS_GID_MODULE: ClassId = ClassId(151);
+
 /// `Refinement` -- what `M.refinements` holds and what a refined method's
 /// `Method#owner` reports. A `Module` subclass with no instances of its
 /// own here: the compiler mints one hidden module per `refine` block and
@@ -1834,6 +1844,30 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "Enumerator::ArithmeticSequence",
         is_module: false,
         superclass: Some(ENUMERATOR_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: PROCESS_SYS_MODULE,
+        name: "Process::Sys",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: PROCESS_UID_MODULE,
+        name: "Process::UID",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: PROCESS_GID_MODULE,
+        name: "Process::GID",
+        is_module: true,
+        superclass: None,
         includes: &[],
         feature: None,
     },

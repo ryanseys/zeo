@@ -1,8 +1,8 @@
 # Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
-# absent-module: 40
-# constant: 189
+# absent-module: 37
+# constant: 186
 # owner: 156
 # unreachable: 41
 absent-module	Encoding::Converter	-	-
@@ -17,9 +17,6 @@ absent-module	IO::Buffer::LockedError	-	-
 absent-module	IO::Buffer::MaskError	-	-
 absent-module	ObjectSpace::WeakKeyMap	-	-
 absent-module	Pathname	-	-
-absent-module	Process::GID	-	-
-absent-module	Process::Sys	-	-
-absent-module	Process::UID	-	-
 absent-module	Process::Waiter	-	-
 absent-module	Ractor::ClosedError	-	-
 absent-module	Ractor::Error	-	-
@@ -218,9 +215,6 @@ constant	Object	c	RubyVM
 constant	Object	c	TOPLEVEL_BINDING
 constant	Object	c	UnicodeNormalize
 constant	ObjectSpace	c	WeakKeyMap
-constant	Process	c	GID
-constant	Process	c	Sys
-constant	Process	c	UID
 constant	Process	c	Waiter
 constant	Ractor	c	ClosedError
 constant	Ractor	c	Error

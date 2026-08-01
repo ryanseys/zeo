@@ -1,0 +1,68 @@
+Process::Sys class: Module
+Process::Sys singleton: [:getegid, :geteuid, :getgid, :getuid, :issetugid, :setegid, :seteuid, :setgid, :setregid, :setresgid, :setresuid, :setreuid, :setrgid, :setruid, :setuid]
+Process::Sys private: [:getegid, :geteuid, :getgid, :getuid, :issetugid, :setegid, :seteuid, :setgid, :setregid, :setresgid, :setresuid, :setreuid, :setrgid, :setruid, :setuid]
+Process::Sys public instance: []
+Process::UID class: Module
+Process::UID singleton: [:change_privilege, :eid, :eid=, :from_name, :grant_privilege, :re_exchange, :re_exchangeable?, :rid, :sid_available?, :switch]
+Process::UID private: [:change_privilege, :eid, :from_name, :grant_privilege, :re_exchange, :re_exchangeable?, :rid, :sid_available?, :switch]
+Process::UID public instance: []
+Process::GID class: Module
+Process::GID singleton: [:change_privilege, :eid, :eid=, :from_name, :grant_privilege, :re_exchange, :re_exchangeable?, :rid, :sid_available?, :switch]
+Process::GID private: [:change_privilege, :eid, :from_name, :grant_privilege, :re_exchange, :re_exchangeable?, :rid, :sid_available?, :switch]
+Process::GID public instance: []
+Sys respond_to?: true
+Sys included: true
+Sys.getuid: true
+Sys.geteuid: true
+Sys.getgid: true
+Sys.getegid: true
+Sys.issetugid: false
+UID.rid: true
+UID.eid: true
+GID.rid: true
+GID.eid: true
+UID.sid_available?: true
+GID.sid_available?: true
+UID.from_name root: 0
+UID.from_name self: true
+GID.from_name self: true
+UID.from_name float: 1
+UID.from_name negative: 4294967295
+UID.from_name to_int: 7
+UID.from_name bignum: RangeError: bignum too big to convert into 'unsigned long'
+UID.from_name nil: TypeError: no implicit conversion of nil into Integer
+UID.from_name symbol: TypeError: no implicit conversion of Symbol into Integer
+UID.from_name missing: ArgumentError: can't find user for nosuchuser__
+GID.from_name missing: ArgumentError: can't find group for nosuchgroup__
+Sys.setuid self: nil
+Sys.setgid self: nil
+Sys.seteuid self: nil
+Sys.setegid self: nil
+Sys.setruid self: nil
+Sys.setrgid self: nil
+Sys.setreuid self: nil
+Sys.setregid self: nil
+UID.change_privilege self: true
+GID.change_privilege self: true
+UID.grant_privilege self: true
+GID.grant_privilege self: true
+UID.eid= self: true
+GID.eid= self: true
+Sys.setuid root: Errno::EPERM: Operation not permitted
+Sys.setgid wheel: Errno::EPERM: Operation not permitted
+Sys.seteuid root: Errno::EPERM: Operation not permitted
+Sys.setreuid root: Errno::EPERM: Operation not permitted
+UID.change_privilege root: Errno::EPERM: Operation not permitted
+UID.grant_privilege root: Errno::EPERM: Operation not permitted
+UID.eid= root: Errno::EPERM: Operation not permitted
+UID.switch: Errno::EPERM: Operation not permitted
+UID.switch block: Errno::EPERM: Operation not permitted
+GID.switch: Errno::EPERM: Operation not permitted
+Sys.setuid by name: Errno::EPERM: Operation not permitted
+Sys.setuid bad name: ArgumentError: can't find user for nosuchuser__
+Sys.setgid bad name: ArgumentError: can't find group for nosuchgroup__
+Sys.setresuid: NotImplementedError: setresuid() function is unimplemented on this machine
+Sys.setresgid: NotImplementedError: setresgid() function is unimplemented on this machine
+setresuid arity: 0
+Process::UID re_exchange agrees: true
+Process::GID re_exchange agrees: true

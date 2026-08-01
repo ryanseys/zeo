@@ -660,6 +660,377 @@ ruby_module! {
             ))))
         }
     }
+
+    // ----------------------------------------------------------------------
+    // `Process::Sys` -- the raw `set*id` syscalls, one module function each.
+    // Every setter answers nil and fails with the BARE `Errno::*` CRuby's
+    // `rb_sys_fail(0)` raises: the strerror text and nothing appended.
+    // ----------------------------------------------------------------------
+    module Sys = zeo_abi::PROCESS_SYS_MODULE {
+        module_function def getuid(_recv) {
+            Ok(RubyValue::Int(unsafe { libc::getuid() } as i64))
+        }
+        module_function def geteuid(_recv) {
+            Ok(RubyValue::Int(unsafe { libc::geteuid() } as i64))
+        }
+        module_function def getgid(_recv) {
+            Ok(RubyValue::Int(unsafe { libc::getgid() } as i64))
+        }
+        module_function def getegid(_recv) {
+            Ok(RubyValue::Int(unsafe { libc::getegid() } as i64))
+        }
+        // Whether the process was started set-uid or set-gid.
+        module_function def issetugid(_recv) {
+            Ok(RubyValue::Bool(issetugid_now()))
+        }
+
+        module_function def setuid(_recv, id) {
+            sys_result(unsafe { libc::setuid(uid_arg(id)?) })
+        }
+        module_function def setgid(_recv, id) {
+            sys_result(unsafe { libc::setgid(gid_arg(id)?) })
+        }
+        module_function def seteuid(_recv, id) {
+            sys_result(unsafe { libc::seteuid(uid_arg(id)?) })
+        }
+        module_function def setegid(_recv, id) {
+            sys_result(unsafe { libc::setegid(gid_arg(id)?) })
+        }
+        // `setruid`/`setrgid` ARE the two-argument call with the effective id
+        // left alone -- that is how the platforms that publish them define
+        // them, so there is nothing else to reach for on the ones that do not.
+        module_function def setruid(_recv, id) {
+            sys_result(unsafe { libc::setreuid(uid_arg(id)?, libc::uid_t::MAX) })
+        }
+        module_function def setrgid(_recv, id) {
+            sys_result(unsafe { libc::setregid(gid_arg(id)?, libc::gid_t::MAX) })
+        }
+        module_function def setreuid(_recv, rid, eid) {
+            sys_result(unsafe { libc::setreuid(uid_arg(rid)?, uid_arg(eid)?) })
+        }
+        module_function def setregid(_recv, rid, eid) {
+            sys_result(unsafe { libc::setregid(gid_arg(rid)?, gid_arg(eid)?) })
+        }
+        // No `setresuid`/`setresgid` here. CRuby installs its
+        // not-implemented stub on any platform that lacks them -- and that
+        // stub reports arity 0, not 3, so the real three-argument form
+        // cannot share a declaration with it (see docs/COMPATIBILITY.md).
+        // The stub takes ANY arguments while reporting arity 0, which is
+        // exactly what a `rb_f_notimplement` registration does -- so the
+        // parameter list and the declared arity have to disagree here.
+        module_function def "setresuid" arity 0 (_recv, *_args) {
+            Err(unimplemented_syscall("setresuid"))
+        }
+        module_function def "setresgid" arity 0 (_recv, *_args) {
+            Err(unimplemented_syscall("setresgid"))
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // `Process::UID` and `Process::GID` -- the privilege API CRuby layers
+    // over `Process::Sys`. The ten names are identical either way, so both
+    // modules' rows call the same helpers with an `IdKind` telling them
+    // which family of syscalls to use.
+    // ----------------------------------------------------------------------
+    module UID = zeo_abi::PROCESS_UID_MODULE {
+        module_function def rid(_recv) { Ok(RubyValue::Int(IdKind::User.rid() as i64)) }
+        module_function def eid(_recv) { Ok(RubyValue::Int(IdKind::User.eid() as i64)) }
+        module_function def from_name(_recv, name) { id_from_name(IdKind::User, name) }
+        module_function def grant_privilege(_recv, id) { id_grant(IdKind::User, id) }
+        module_function def change_privilege(_recv, id) { id_change(IdKind::User, id) }
+        module_function def re_exchange(_recv) { id_re_exchange(IdKind::User) }
+        module_function def "re_exchangeable?"(_recv) { Ok(RubyValue::Bool(RE_EXCHANGEABLE)) }
+        module_function def "sid_available?"(_recv) { Ok(RubyValue::Bool(true)) }
+        module_function def switch(_recv, &block) { id_switch(IdKind::User, block) }
+        // The writer is a singleton method ALONE -- CRuby never mirrors it
+        // into the private instance half the way `module_function` does.
+        def self."eid="(_recv, id) { id_grant(IdKind::User, id) }
+    }
+
+    module GID = zeo_abi::PROCESS_GID_MODULE {
+        module_function def rid(_recv) { Ok(RubyValue::Int(IdKind::Group.rid() as i64)) }
+        module_function def eid(_recv) { Ok(RubyValue::Int(IdKind::Group.eid() as i64)) }
+        module_function def from_name(_recv, name) { id_from_name(IdKind::Group, name) }
+        module_function def grant_privilege(_recv, id) { id_grant(IdKind::Group, id) }
+        module_function def change_privilege(_recv, id) { id_change(IdKind::Group, id) }
+        module_function def re_exchange(_recv) { id_re_exchange(IdKind::Group) }
+        module_function def "re_exchangeable?"(_recv) { Ok(RubyValue::Bool(RE_EXCHANGEABLE)) }
+        module_function def "sid_available?"(_recv) { Ok(RubyValue::Bool(true)) }
+        module_function def switch(_recv, &block) { id_switch(IdKind::Group, block) }
+        def self."eid="(_recv, id) { id_grant(IdKind::Group, id) }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `Process::Sys` / `Process::UID` / `Process::GID` -- the identity surface.
+// ---------------------------------------------------------------------------
+
+/// Whether `re_exchange` can swap the real and effective ids here. CRuby
+/// answers false wherever `setreuid` is present but flagged obsolete, which
+/// is every Darwin -- and there `re_exchange` raises rather than swapping.
+const RE_EXCHANGEABLE: bool = !cfg!(target_vendor = "apple");
+
+/// A syscall's `0`/`-1` result as the row's answer: `nil`, or the bare
+/// `Errno::*` CRuby's `rb_sys_fail(0)` raises -- the strerror text alone,
+/// with no ` @ syscall - path` suffix.
+fn sys_result(rc: libc::c_int) -> Result<RubyValue, Signal> {
+    if rc == 0 {
+        return Ok(RubyValue::Nil);
+    }
+    Err(sys_fail())
+}
+
+/// The current `errno` as its `Errno::*` exception, message-bare.
+fn sys_fail() -> Signal {
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error().and_then(zeo_abi::errno_class) {
+        Some((_, row)) => raise_error(row.name, crate::builtins::exception::strerror(row.errno)),
+        None => raise_error("SystemCallError", "Unknown error".to_string()),
+    }
+}
+
+/// CRuby's `rb_f_notimplement` message for a syscall this platform lacks.
+fn unimplemented_syscall(name: &str) -> Signal {
+    raise_error(
+        "NotImplementedError",
+        format!("{name}() function is unimplemented on this machine"),
+    )
+}
+
+fn issetugid_now() -> bool {
+    #[cfg(target_vendor = "apple")]
+    unsafe {
+        libc::issetugid() != 0
+    }
+    // Linux publishes no `issetugid`, and CRuby therefore defines no such
+    // method there. zeo keeps the name and answers the question it asks --
+    // whether either id pair was raised at exec.
+    #[cfg(not(target_vendor = "apple"))]
+    unsafe {
+        libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid()
+    }
+}
+
+/// A user id argument -- CRuby's `OBJ2UID`: a String is a NAME to look up,
+/// and anything else goes through the ordinary Integer conversion (so a
+/// Symbol fails with "no implicit conversion of Symbol into Integer").
+fn uid_arg(v: &RubyValue) -> Result<libc::uid_t, Signal> {
+    if let RubyValue::Str(s) = v {
+        let name = s.lock().to_utf8_lossy().into_owned();
+        let entry = with_cstr(&name, |p| unsafe { libc::getpwnam(p) });
+        return match entry {
+            Some(pw) if !pw.is_null() => Ok(unsafe { (*pw).pw_uid }),
+            _ => Err(arg_error!("can't find user for {name}")),
+        };
+    }
+    id_num(v)
+}
+
+/// CRuby's `NUM2UIDT`, which is `rb_num2ulong` -- close to the ordinary
+/// index conversion but with the UNSIGNED shapes: `nil` takes the plain
+/// `to_int` refusal rather than `rb_num2long`'s lowercase one, and a bignum
+/// names 'unsigned long'. A Float truncates and a negative wraps, both of
+/// which real callers use (`-1` is the "leave this one alone" id).
+fn id_num(v: &RubyValue) -> Result<u32, Signal> {
+    let too_big = || {
+        raise_error(
+            "RangeError",
+            "bignum too big to convert into 'unsigned long'".to_string(),
+        )
+    };
+    let n = match v {
+        RubyValue::Int(i) => *i,
+        RubyValue::Float(f) => *f as i64,
+        RubyValue::BigInt(_) => return Err(too_big()),
+        other => match crate::builtins::convert::to_int(other)? {
+            RubyValue::Int(i) => i,
+            _ => return Err(too_big()),
+        },
+    };
+    Ok(n as u32)
+}
+
+/// The group half of [`uid_arg`], down to the message wording.
+fn gid_arg(v: &RubyValue) -> Result<libc::gid_t, Signal> {
+    if let RubyValue::Str(s) = v {
+        let name = s.lock().to_utf8_lossy().into_owned();
+        let entry = with_cstr(&name, |p| unsafe { libc::getgrnam(p) });
+        return match entry {
+            Some(gr) if !gr.is_null() => Ok(unsafe { (*gr).gr_gid }),
+            _ => Err(arg_error!("can't find group for {name}")),
+        };
+    }
+    id_num(v)
+}
+
+/// Call `f` with `name` as a C string; `None` when the name holds a NUL,
+/// which no passwd or group entry can match.
+fn with_cstr<T>(name: &str, f: impl FnOnce(*const libc::c_char) -> T) -> Option<T> {
+    let c = std::ffi::CString::new(name).ok()?;
+    Some(f(c.as_ptr()))
+}
+
+/// Which identity family a `Process::UID`/`Process::GID` row works on. The
+/// ten names are identical either way; only the syscalls behind them differ.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IdKind {
+    User,
+    Group,
+}
+
+/// CRuby's `SAVED_USER_ID`/`SAVED_GROUP_ID` -- the id `switch` returns to.
+/// CRuby seeds them from the effective ids at startup; zeo seeds them on the
+/// first read, which differs only for a program that moved its effective id
+/// through `Process::Sys` BEFORE ever touching `Process::UID`/`GID`.
+static SAVED_IDS: std::sync::LazyLock<[AtomicI64; 2]> = std::sync::LazyLock::new(|| {
+    [
+        AtomicI64::new(unsafe { libc::geteuid() } as i64),
+        AtomicI64::new(unsafe { libc::getegid() } as i64),
+    ]
+});
+
+impl IdKind {
+    fn rid(self) -> u32 {
+        match self {
+            IdKind::User => unsafe { libc::getuid() },
+            IdKind::Group => unsafe { libc::getgid() },
+        }
+    }
+
+    fn eid(self) -> u32 {
+        match self {
+            IdKind::User => unsafe { libc::geteuid() },
+            IdKind::Group => unsafe { libc::getegid() },
+        }
+    }
+
+    /// The argument conversion, which is where a name is resolved.
+    fn arg(self, v: &RubyValue) -> Result<u32, Signal> {
+        match self {
+            IdKind::User => uid_arg(v),
+            IdKind::Group => gid_arg(v),
+        }
+    }
+
+    /// Set the effective id alone (`setre*id(-1, id)`, CRuby's
+    /// `grant_privilege` on a platform without `setres*id`).
+    fn set_effective(self, id: u32) -> libc::c_int {
+        match self {
+            IdKind::User => unsafe { libc::setreuid(libc::uid_t::MAX, id) },
+            IdKind::Group => unsafe { libc::setregid(libc::gid_t::MAX, id) },
+        }
+    }
+
+    /// Set the real, effective and saved ids together -- what a privileged
+    /// process's `change_privilege` uses.
+    fn set_all(self, id: u32) -> libc::c_int {
+        match self {
+            IdKind::User => unsafe { libc::setuid(id) },
+            IdKind::Group => unsafe { libc::setgid(id) },
+        }
+    }
+
+    fn swap(self, rid: u32, eid: u32) -> libc::c_int {
+        match self {
+            IdKind::User => unsafe { libc::setreuid(rid, eid) },
+            IdKind::Group => unsafe { libc::setregid(rid, eid) },
+        }
+    }
+
+    fn saved(self) -> u32 {
+        SAVED_IDS[self as usize].load(Ordering::Relaxed) as u32
+    }
+
+    fn set_saved(self, id: u32) {
+        SAVED_IDS[self as usize].store(id as i64, Ordering::Relaxed);
+    }
+}
+
+/// `Process::UID.from_name(name)` -- the id behind a passwd or group name.
+/// An Integer passes straight through, which is CRuby's own conversion.
+fn id_from_name(kind: IdKind, name: &RubyValue) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Int(kind.arg(name)? as i64))
+}
+
+/// `#grant_privilege(id)` / `#eid=(id)` -- raise the EFFECTIVE id only.
+/// Answers the argument as written, which is what CRuby returns.
+fn id_grant(kind: IdKind, id: &RubyValue) -> Result<RubyValue, Signal> {
+    let want = kind.arg(id)?;
+    if kind.set_effective(want) < 0 {
+        return Err(sys_fail());
+    }
+    Ok(id.clone())
+}
+
+/// `#change_privilege(id)` -- move the real, effective AND saved ids to
+/// `id`, so the change cannot be undone. A privileged process gets that from
+/// `set*id` alone; an unprivileged one may only re-assert the id it already
+/// holds, and CRuby reports anything else as `EPERM`.
+fn id_change(kind: IdKind, id: &RubyValue) -> Result<RubyValue, Signal> {
+    let want = kind.arg(id)?;
+    if kind.eid() == 0 {
+        if kind.set_all(want) < 0 {
+            return Err(sys_fail());
+        }
+    } else if want == kind.rid() && kind.saved() == want {
+        if kind.set_effective(want) < 0 {
+            return Err(sys_fail());
+        }
+    } else {
+        return Err(eperm());
+    }
+    kind.set_saved(want);
+    Ok(id.clone())
+}
+
+/// `#re_exchange` -- swap the real and effective ids, leaving the old
+/// effective id saved.
+fn id_re_exchange(kind: IdKind) -> Result<RubyValue, Signal> {
+    if !RE_EXCHANGEABLE {
+        return Err(unimplemented_syscall("re_exchange"));
+    }
+    let (rid, eid) = (kind.rid(), kind.eid());
+    if kind.swap(eid, rid) < 0 {
+        return Err(sys_fail());
+    }
+    kind.set_saved(rid);
+    Ok(RubyValue::Int(rid as i64))
+}
+
+/// `#switch` -- exchange the real and effective ids, or drop back to the
+/// saved one. With a block, the exchange is undone when the block ends,
+/// however it ends; without one, the previous effective id is answered.
+fn id_switch(kind: IdKind, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let (rid, eid) = (kind.rid(), kind.eid());
+    let (restore, answer) = if rid != eid {
+        if kind.set_effective(rid) < 0 {
+            return Err(sys_fail());
+        }
+        (kind.saved(), eid)
+    } else if eid != kind.saved() {
+        if kind.set_effective(kind.saved()) < 0 {
+            return Err(sys_fail());
+        }
+        (rid, rid)
+    } else {
+        // Nothing to exchange and nothing saved to fall back to.
+        return Err(eperm());
+    };
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(RubyValue::Int(answer as i64));
+    };
+    let out = p.call(&[]);
+    kind.set_effective(restore);
+    out
+}
+
+/// `EPERM` with CRuby's bare message, for the refusals it decides itself
+/// rather than reading back from a syscall.
+fn eperm() -> Signal {
+    raise_error(
+        "Errno::EPERM",
+        crate::builtins::exception::strerror(libc::EPERM),
+    )
 }
 
 /// The stored `Process.maxgroups` bound. Defaults to CRuby's `RB_MAX_GROUPS`;
