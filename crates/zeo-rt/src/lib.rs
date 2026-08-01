@@ -91,8 +91,8 @@ pub use dispatch::{
     call_singleton_super_target, class_is_module, class_name, coerce_raise_arg,
     coerce_raise_arg_with_message, construct_by_class_id, define_in_default_definee,
     describe_receiver, downcast_robj, downcast_robj_ref, install_class_registry,
-    instance_variable_get, instance_variable_set, instance_variables, is_a, ivar_defined,
-    ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
+    instance_variable_get, instance_variable_set, instance_variables, is_a, is_a_value,
+    ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
     ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol, raise_error,
     raise_error_details, raise_method_missing, raise_no_block_yield, raise_stop_iteration,
     raise_with_cause, refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
@@ -145,6 +145,7 @@ pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_ha
 pub use runtime_meta::{
     class_maybe_patched, iter_inline_ok, iter_inline_ok_for, name_runtime_class_if_anonymous,
     runtime_class_new, runtime_define_method, runtime_define_singleton_method, send_super_dynamic,
+    value_extends,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
 pub use symbol::Symbol;

@@ -1300,6 +1300,24 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // name out of this class's table. See `ClassEntry::undefined_methods`.
         // Sorted: a HashSet has no stable order, and generated source should
         // not vary between compiles of the same program.
+        // `class C; extend M; end` puts M on C's SINGLETON chain, which the
+        // linearized `ancestors` above deliberately excludes -- so it is
+        // registered separately, and answers `C.is_a?(M)` and
+        // `C.singleton_class.ancestors`.
+        let extend_ids: Vec<u32> = compiler
+            .class(ClassId(id))
+            .extends
+            .iter()
+            .map(|m| m.0)
+            .collect();
+        if !extend_ids.is_empty() {
+            registrations.push(quote! {
+                __registry.register_extends(
+                    zeo_rt::ClassId(#id),
+                    vec![#(zeo_rt::ClassId(#extend_ids)),*],
+                );
+            });
+        }
         // A `refine` holder is a module in every respect but one: its own
         // `.class` is `Refinement`, which is what a refined `Method#owner`
         // reports.
@@ -1779,6 +1797,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         if !own_cm.is_empty() {
             registrations.push(quote! {
                 __registry.mark_own_class_method_rows(zeo_rt::ClassId(#id), &[#(#own_cm),*]);
+            });
+        }
+        // A reopened builtin's own `extend M`, same singleton-chain fact the
+        // user-class loop records (`class Array; extend M; end`).
+        let extend_ids: Vec<u32> = class.extends.iter().map(|m| m.0).collect();
+        if !extend_ids.is_empty() {
+            registrations.push(quote! {
+                __registry.register_extends(
+                    zeo_rt::ClassId(#id),
+                    vec![#(zeo_rt::ClassId(#extend_ids)),*],
+                );
             });
         }
         builtin_class_bodies.extend(hoisted_sites_for(ClassId(id)));

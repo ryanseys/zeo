@@ -264,22 +264,45 @@ fn emit_class_check(
         // list `is_a?`/`super` already consult (see `analyze::mro`), exactly
         // mirroring `codegen::call::dispatch`'s own `is_a?` handling.
         TyKind::Object(recv_cid) => {
-            let result = cx.compiler.class(recv_cid).ancestors.contains(&cid);
-            quote! { #result }
+            let id = cid.0;
+            let class_ident = super::ident::class_ident(cx.compiler, recv_cid);
+            if cx.compiler.class(recv_cid).ancestors.contains(&cid) {
+                return quote! { true };
+            }
+            // Statically false, but not finally so when the pattern names a
+            // MODULE: `obj.extend(M)` files M on one object and leaves its
+            // class alone, so no compile-time ancestry can see it. Mirrors
+            // `codegen::call::dispatch`'s own `is_a?` fallback, and costs one
+            // relaxed load in a program that never extends anything.
+            if !cx.compiler.class(cid).is_module {
+                return quote! { false };
+            }
+            quote! {
+                zeo_rt::value_extends(
+                    &zeo_rt::RubyValue::Object(#class_ident::new_handle(#scrutinee)),
+                    zeo_rt::ClassId(#id),
+                )
+            }
         }
         TyKind::Poly => {
-            // The raw baked id, and `RubyValue::class_id()` (total over
-            // every variant) rather than `as_object_unchecked()`: the
-            // pattern may name a BUILTIN class/module with no generated
-            // container (`in Float`, `in Comparable`), and a Poly
-            // scrutinee may hold a primitive at runtime.
+            // The raw baked id, and a value-aware check (total over every
+            // variant) rather than `as_object_unchecked()`: the pattern may
+            // name a BUILTIN class/module with no generated container
+            // (`in Float`, `in Comparable`), and a Poly scrutinee may hold a
+            // primitive at runtime.
             let id = cid.0;
             quote! {
-                zeo_rt::is_a((#scrutinee).class_id(), zeo_rt::ClassId(#id))
+                zeo_rt::is_a_value(&(#scrutinee), zeo_rt::ClassId(#id))
             }
         }
         // A statically-known BUILT-IN-typed scrutinee (Int/Str/Symbol/Array/
-        // Hash/Range/Proc) can never be an instance of a user-defined class.
+        // Hash/Range/Proc) is never an instance of a user-defined CLASS. It
+        // can still have been `extend`ed with a module, so a module pattern
+        // asks the runtime.
+        _ if cx.compiler.class(cid).is_module => {
+            let id = cid.0;
+            quote! { zeo_rt::value_extends(&(#scrutinee), zeo_rt::ClassId(#id)) }
+        }
         _ => quote! { false },
     }
 }

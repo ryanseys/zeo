@@ -632,10 +632,15 @@ class-level slot, the same one a `def self.x` reads. The singleton gem depends
 on exactly this (`klass.extend SingletonClassMethods`, then
 `klass.instance_eval { set_mutex(Thread::Mutex.new) }`).
 
-What does **not** follow is the ancestry: zeo installs the methods rather than
-splicing `M` into the class's singleton chain, so `Klass.singleton_class.
-include?(M)` answers false where real Ruby answers true. Dispatch,
-`respond_to?`, and the method's own behaviour are unaffected.
+The ancestry follows too: `M` is recorded on the receiver's singleton chain, so
+`Klass.is_a?(M)` and `Klass.singleton_class.ancestors` both report it, and a
+repeat `extend` leaves the module at the rank its first one gave it. The same
+holds for a per-object `obj.extend(M)`: `obj.is_a?(M)` is true while
+`obj.class` and every other instance of that class stay untouched.
+
+What zeo does not carry is the extension across `clone`. Real Ruby's `clone`
+copies the singleton class and `dup` drops it; zeo drops it either way, for an
+extended module exactly as for a `def obj.method` singleton.
 
 ## Compiling against an installed gem store
 

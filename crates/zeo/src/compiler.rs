@@ -85,8 +85,12 @@ pub struct ClassInfo {
     /// `prepends`).
     pub includes: Vec<ClassId>,
     /// `extend`ed modules, in source order -- NOT part of `ancestors()` at
-    /// all (extend only affects this class's own `class_methods`
-    /// materialization, never instance-method resolution or `is_a?`).
+    /// all, which linearizes INSTANCE-method resolution. An extended module
+    /// joins this class's SINGLETON chain instead, so it drives
+    /// `class_methods` materialization here and is baked into the registry
+    /// (`ClassEntry::extends`) for the two things that observe that chain at
+    /// run time: `C.is_a?(M)` and `C.singleton_class.ancestors`. An INSTANCE
+    /// of the class is unaffected -- `C.new.is_a?(M)` stays false.
     pub extends: Vec<ClassId>,
     /// Modules `prepend`ed onto this class's SINGLETON class
     /// (`C.singleton_class.prepend(M)` / `class << self; prepend M; end`) --

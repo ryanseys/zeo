@@ -136,6 +136,12 @@ struct OverlayMaps {
     /// Holding the owner makes the address un-reusable, which is the only
     /// thing that makes the key sound.
     pinned: RwLock<FMap<usize, RubyValue>>,
+    /// The modules `recv.extend(M)` mixed into one receiver, newest LAST,
+    /// keyed by [`extend_key`]. Separate from the method tables above because
+    /// `extend` changes what the receiver IS, not only what it answers:
+    /// `o.is_a?(M)` and `o.singleton_class.ancestors` both read this, and
+    /// neither can be recovered from a copied method table.
+    extended: RwLock<FMap<usize, Vec<ClassId>>>,
     /// `obj.singleton_class`'s cache: object identity -> the runtime class id
     /// minted for its singleton class (so a second call answers the same id,
     /// matching Ruby's identity).
@@ -156,6 +162,7 @@ fn maps() -> &'static OverlayMaps {
         classes: RwLock::new(FMap::default()),
         singletons: RwLock::new(FMap::default()),
         value_singletons: RwLock::new(FMap::default()),
+        extended: RwLock::new(FMap::default()),
         pinned: RwLock::new(FMap::default()),
         singleton_classes: RwLock::new(FMap::default()),
         singleton_owner: RwLock::new(FMap::default()),
@@ -235,6 +242,12 @@ static ANY_SINGLETONS: AtomicBool = AtomicBool::new(false);
 /// A frozen class's ancestry was spliced at runtime, so INV-1's precondition
 /// no longer holds for anyone.
 static ANCESTRY_MUTATED: AtomicBool = AtomicBool::new(false);
+
+/// Some receiver somewhere has been `extend`ed. This gate is what lets codegen
+/// keep folding `x.is_a?(SomeModule)` to a literal: the static ancestry can
+/// only be made WRONG by an `extend`, so a program that never calls one pays a
+/// single relaxed load for the answer it already knew. See [`value_extends`].
+static ANY_EXTENDED: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
 pub fn class_maybe_patched(id: ClassId) -> bool {
@@ -321,6 +334,151 @@ pub(crate) fn pin_identity(v: &RubyValue) -> Option<usize> {
             .or_insert_with(|| v.clone());
     }
     Some(key)
+}
+
+/// A Class's key in the identity-keyed maps. A class has no `Arc` address to
+/// stand for it, so its id is lifted past the address space -- `1 << 48` is
+/// above every user-space pointer on the platforms this runs on, so a class
+/// and an object can never collide.
+fn class_identity(cid: ClassId) -> usize {
+    cid.0 as usize | (1usize << 48)
+}
+
+/// The key a receiver's extended-module list is filed under. `extend` accepts
+/// more receiver kinds than [`value_identity`] answers for, so a Class takes
+/// [`class_identity`] instead.
+fn extend_key(recv: &RubyValue) -> Option<usize> {
+    match recv {
+        RubyValue::Class(cid) => Some(class_identity(*cid)),
+        other => value_identity(other),
+    }
+}
+
+/// The identity `singleton_classes` caches a minted singleton class under, or
+/// `None` for a receiver that gets a fresh one each time (see
+/// [`runtime_singleton_class`]).
+fn singleton_class_key(recv: &RubyValue) -> Option<usize> {
+    match recv {
+        RubyValue::Object(o) => Some(obj_identity(o)),
+        RubyValue::Class(cid) => Some(class_identity(*cid)),
+        _ => None,
+    }
+}
+
+/// File `module_id` as mixed into `recv`'s singleton.
+fn record_extended(recv: &RubyValue, module_id: ClassId) {
+    let Some(key) = extend_key(recv) else { return };
+    {
+        let mut w = maps().extended.write().unwrap();
+        let list = w.entry(key).or_default();
+        // Extending twice is a no-op in CRuby -- the module keeps the rank its
+        // FIRST `extend` gave it -- so an already-present id is left alone.
+        if !list.contains(&module_id) {
+            list.push(module_id);
+        }
+    }
+    ANY_EXTENDED.store(true, Ordering::Release);
+}
+
+/// The modules `extend` mixed into `recv`, in the order they were mixed in.
+/// A CLASS carries two lists: the one its own body wrote, baked into the
+/// registry at compile time, and any `SomeClass.extend(M)` a later runtime
+/// call added.
+pub(crate) fn extended_modules(recv: &RubyValue) -> Vec<ClassId> {
+    let mut mods: Vec<ClassId> = match recv {
+        RubyValue::Class(cid) => crate::dispatch::class_extends(*cid).to_vec(),
+        _ => Vec::new(),
+    };
+    if !ANY_EXTENDED.load(Ordering::Acquire) {
+        return mods;
+    }
+    let Some(key) = extend_key(recv) else {
+        return mods;
+    };
+    if let Some(dynamic) = maps().extended.read().unwrap().get(&key) {
+        for &m in dynamic {
+            if !mods.contains(&m) {
+                mods.push(m);
+            }
+        }
+    }
+    mods
+}
+
+/// Was `recv` `extend`ed with `target`, or with a module that itself includes
+/// it? This is the half of `is_a?` that no class id can answer, since `extend`
+/// changes ONE object's ancestry and leaves its class alone.
+///
+/// The [`ANY_EXTENDED`] gate is load-bearing, not an optimization: codegen
+/// folds a statically-false `x.is_a?(SomeModule)` down to this call, so a
+/// program that never extends anything answers from a single relaxed load.
+pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
+    let reaches =
+        |m: ClassId| m == target || crate::dispatch::ancestors_of_value(m).contains(&target);
+    // A class body's own `extend M` is compile-time known and lives in the
+    // registry, so it answers without the gate -- the gate only covers the
+    // runtime map below.
+    if let RubyValue::Class(cid) = recv {
+        if crate::dispatch::class_extends(*cid)
+            .iter()
+            .copied()
+            .any(reaches)
+        {
+            return true;
+        }
+    }
+    if !ANY_EXTENDED.load(Ordering::Acquire) {
+        return false;
+    }
+    let Some(key) = extend_key(recv) else {
+        return false;
+    };
+    let r = maps().extended.read().unwrap();
+    let Some(list) = r.get(&key) else {
+        return false;
+    };
+    list.iter().copied().any(reaches)
+}
+
+/// The chain BELOW a receiver's singleton class: each extended module (newest
+/// first, carrying its own ancestors) ahead of the receiver class's own chain.
+/// That is CRuby's `obj.singleton_class.ancestors` without the singleton head.
+fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
+    let mut chain: Vec<ClassId> = Vec::new();
+    fn push(id: ClassId, chain: &mut Vec<ClassId>) {
+        if !chain.contains(&id) {
+            chain.push(id);
+        }
+    }
+    // Reversed: the LAST `extend` sits closest to the singleton, so it wins a
+    // name collision -- the same order `runtime_extend` gives the method table.
+    for m in extended_modules(recv).into_iter().rev() {
+        for &a in crate::dispatch::ancestors_of_value(m) {
+            push(a, &mut chain);
+        }
+    }
+    for &a in crate::dispatch::ancestors_of_value(recv.class_id()) {
+        push(a, &mut chain);
+    }
+    chain
+}
+
+/// Rebuild an ALREADY-MINTED singleton class's ancestry after an `extend`.
+/// Without this, `o.singleton_class` before the extend and after it would
+/// answer the same cached id with two different chains.
+fn refresh_singleton_ancestors(recv: &RubyValue) {
+    let Some(key) = singleton_class_key(recv) else {
+        return;
+    };
+    let Some(sid) = maps().singleton_classes.read().unwrap().get(&key).copied() else {
+        return;
+    };
+    let mut anc = vec![sid];
+    anc.extend(singleton_super_chain(recv));
+    let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
+    if let Some(entry) = maps().classes.write().unwrap().get_mut(&sid.0) {
+        entry.ancestors = leaked;
+    }
 }
 
 /// Every method installed directly on `recv` -- `Object#singleton_methods` for
@@ -1264,6 +1422,14 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             crate::builtins::class_name_of(module_val)
         ));
     };
+    // A repeat `extend` re-ranks nothing: the module keeps the position its
+    // FIRST one gave it, so re-copying its methods would wrongly promote it
+    // over a module extended in between. The `extended` hook still fires each
+    // time (both oracle-verified).
+    if extended_modules(recv).contains(mid) {
+        fire_mixin_hook(module_val, "extended", recv)?;
+        return Ok(recv.clone());
+    }
     let names = module_extendable_method_names(*mid);
     match recv {
         RubyValue::Object(o) => {
@@ -1332,6 +1498,11 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             }
         }
     }
+    // The method copies above make the module ANSWER on `recv`; this is what
+    // makes `recv` BE one -- `is_a?`, `===` and `singleton_class.ancestors`
+    // all read it, and none of them can see a copied method table.
+    record_extended(recv, *mid);
+    refresh_singleton_ancestors(recv);
     mark_singletons();
     mark_ancestry_mutated();
     mark_live();
@@ -1637,21 +1808,20 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     // owner (`singleton_owner`); other heap values (String/Array/...) get a fresh
     // singleton class good for `.class`/`.superclass`/reflection (defining on one
     // isn't supported, matching this runtime's singleton-storage limits).
-    let cache_key: Option<usize> = match recv {
-        RubyValue::Object(o) => Some(obj_identity(o)),
-        RubyValue::Class(cid) => Some(cid.0 as usize | (1usize << 48)),
+    if matches!(
+        recv,
         RubyValue::Nil
-        | RubyValue::Bool(_)
-        | RubyValue::Int(_)
-        | RubyValue::BigInt(_)
-        | RubyValue::Float(_)
-        | RubyValue::Rational(_)
-        | RubyValue::Complex(_)
-        | RubyValue::Symbol(_) => {
-            return Err(type_error!("can't define singleton"));
-        }
-        _ => None,
-    };
+            | RubyValue::Bool(_)
+            | RubyValue::Int(_)
+            | RubyValue::BigInt(_)
+            | RubyValue::Float(_)
+            | RubyValue::Rational(_)
+            | RubyValue::Complex(_)
+            | RubyValue::Symbol(_)
+    ) {
+        return Err(type_error!("can't define singleton"));
+    }
+    let cache_key = singleton_class_key(recv);
     let real = recv.class_id();
     let owner = recv.clone();
     if let Some(k) = cache_key {
@@ -1661,10 +1831,11 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     }
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
     let new_id = ClassId(id_num);
-    let super_chain = ancestors_of_value(real);
-    let mut anc = Vec::with_capacity(super_chain.len() + 1);
-    anc.push(new_id);
-    anc.extend_from_slice(super_chain);
+    // The chain carries every module `extend` mixed in, ahead of the receiver
+    // class's own -- CRuby files an extended module between the singleton and
+    // the class, which is what makes `o.extend(M)` show up here.
+    let mut anc = vec![new_id];
+    anc.extend(singleton_super_chain(recv));
     let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
     // A CLASS receiver's singleton is named after the class itself --
     // CRuby's `#<Class:Melody>` -- not after `real` (the class of a Class

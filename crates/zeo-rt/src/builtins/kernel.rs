@@ -531,7 +531,7 @@ ruby_module! {
         let RubyValue::Class(target) = arg else {
             return Err(type_error!("class or module required"));
         };
-        Ok(RubyValue::Bool(crate::dispatch::is_a(recv.class_id(), *target)))
+        Ok(RubyValue::Bool(crate::dispatch::is_a_value(recv, *target)))
     }
     def "instance_of?"(recv, arg) {
         let RubyValue::Class(target) = arg else {

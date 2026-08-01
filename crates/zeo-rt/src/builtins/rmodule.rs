@@ -311,8 +311,8 @@ ruby_class! {
     // `Module#===`: instance-of-ancestry, the check `case`/`when` class
     // candidates desugar to.
     def "===" (recv, other) {
-        Ok(RubyValue::Bool(crate::dispatch::is_a(
-            (*other).class_id(),
+        Ok(RubyValue::Bool(crate::dispatch::is_a_value(
+            other,
             recv_cid(recv),
         )))
     }

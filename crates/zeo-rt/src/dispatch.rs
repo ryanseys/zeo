@@ -643,6 +643,16 @@ struct ClassEntry {
     /// already MATERIALIZED directly onto this class -- see the plan's Part
     /// 6), but `is_a`/rescue-by-class matching does.
     ancestors: Vec<ClassId>,
+    /// The modules this class's BODY `extend`ed (`module M; extend self; end`,
+    /// `class C; extend Forwardable; end`). Deliberately absent from
+    /// `ancestors`, which linearizes instance-method resolution: an extended
+    /// module joins the class's SINGLETON chain instead, so it answers
+    /// `C.is_a?(M)` and shows up in `C.singleton_class.ancestors` while
+    /// leaving `C.new.is_a?(M)` false. The per-OBJECT form of the same fact
+    /// lives in `runtime_meta`'s identity-keyed map; this half is compile-time
+    /// known, so it is baked in beside the ancestry it deliberately is not
+    /// part of.
+    extends: Vec<ClassId>,
     methods: FMap<Symbol, MethodImpl>,
     /// Methods added by reopening a BUILTIN class -- keyed off
     /// the receiver's `class_id()` with no ancestor walk needed (the only
@@ -826,6 +836,7 @@ impl ClassRegistry {
                 is_module,
                 is_refinement: false,
                 ancestors,
+                extends: Vec::new(),
                 methods: FMap::default(),
                 own_impls: FMap::default(),
                 value_methods: FMap::default(),
@@ -986,6 +997,15 @@ impl ClassRegistry {
     }
 
     /// [`mark_own_class_method`](Self::mark_own_class_method)'s batch form.
+    /// Record the modules `id`'s class body `extend`ed -- see
+    /// [`ClassEntry::extends`]. Emitted only for a class that extends
+    /// something, so the common program registers nothing.
+    pub fn register_extends(&mut self, id: ClassId, mods: Vec<ClassId>) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.extends = mods;
+        }
+    }
+
     pub fn mark_own_class_method_rows(&mut self, id: ClassId, names: &[&str]) {
         if let Some(e) = self.entries.get_mut(&id.0) {
             e.own_class_methods
@@ -1435,6 +1455,28 @@ pub(crate) fn classes_with_ancestor(id: ClassId) -> Vec<u32> {
 /// class id ancestor-compatible with that one" check.
 pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
     ancestors_of_value(recv_class).contains(&target)
+}
+
+/// The modules `cid`'s class body `extend`ed, or empty for a class that
+/// extended nothing (and for one born at runtime -- `Class.new { extend M }`
+/// records into `runtime_meta`'s map instead).
+pub(crate) fn class_extends(cid: ClassId) -> &'static [ClassId] {
+    REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&cid.0))
+        .map_or(&[], |e| &e.extends)
+}
+
+/// `is_a?` over a VALUE rather than a class id -- the ancestry check plus the
+/// modules `obj.extend(M)` mixed into this one object. A class id cannot
+/// express those: `extend` leaves the class alone and files the module on the
+/// receiver's singleton, so two objects of the same class disagree.
+///
+/// Every observable `is_a?` (`Kernel#is_a?`, `Module#===`, `case`/`when`, a
+/// `ClassCheck` pattern) goes through here. `is_a` itself stays for the
+/// internal checks that hold a class id and nothing else.
+pub fn is_a_value(recv: &RubyValue, target: ClassId) -> bool {
+    is_a(recv.class_id(), target) || crate::runtime_meta::value_extends(recv, target)
 }
 
 /// `rescue *list => e` matching: does the raised `exc` match any class in the

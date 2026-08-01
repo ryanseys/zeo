@@ -2234,7 +2234,7 @@ fn dispatch(
                         let __rtc = #read;
                         match __rtc {
                             zeo_rt::RubyValue::Class(__tid) => zeo_rt::RubyValue::Bool(
-                                zeo_rt::is_a((#recv_boxed).class_id(), __tid)),
+                                zeo_rt::is_a_value(&(#recv_boxed), __tid)),
                             _ => return Err(zeo_rt::raise_error("TypeError", "class or module required".to_string())),
                         }
                     }
@@ -2249,9 +2249,25 @@ fn dispatch(
             // (see the universal `RubyValue::class_id`), but the static
             // fold is strictly cheaper and matches every other statically-
             // known-class case in this function.
+            let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
             return match infer_any_class(cx, recv_id) {
                 Some(recv_class) => {
                     let result = cx.compiler.class(recv_class).ancestors.contains(&target);
+                    // A statically-FALSE verdict against a MODULE is not final:
+                    // `obj.extend(M)` files M on one object's singleton and
+                    // leaves its class alone, so the compile-time ancestry
+                    // cannot see it. Only that one case falls back, and
+                    // `value_extends` answers it from a relaxed load in a
+                    // program that never extends anything. A class target
+                    // needs no fallback -- `extend` refuses a Class.
+                    if !result && cx.compiler.class(target).is_module {
+                        return quote! {
+                            zeo_rt::RubyValue::Bool(zeo_rt::value_extends(
+                                &(#recv_boxed),
+                                zeo_rt::ClassId(#target_id),
+                            ))
+                        };
+                    }
                     // The `true`/`false` verdict is fully compile-time-known
                     // here, but `recv_expr` itself must still be EVALUATED --
                     // it may be an arbitrary expression with side effects
@@ -2266,8 +2282,8 @@ fn dispatch(
                     quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Bool(#result) } }
                 }
                 None => quote! {
-                    zeo_rt::RubyValue::Bool(zeo_rt::is_a(
-                        (#recv_expr).class_id(),
+                    zeo_rt::RubyValue::Bool(zeo_rt::is_a_value(
+                        &(#recv_boxed),
                         zeo_rt::ClassId(#target_id),
                     ))
                 },

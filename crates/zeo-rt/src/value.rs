@@ -1339,7 +1339,7 @@ impl RubyValue {
         // itself). Registry-backed; only reachable in generated programs,
         // which always install one.
         if let RubyValue::Class(cid) = self {
-            return crate::dispatch::is_a(subject.class_id(), *cid);
+            return crate::dispatch::is_a_value(subject, *cid);
         }
         self.rb_eq(subject)
     }
