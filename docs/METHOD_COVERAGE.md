@@ -355,6 +355,22 @@ the ones `file.rs` already makes. `Stat#dev_major`/`#dev_minor`/`#rdev_major`/
 `#rdev_minor` are bit arithmetic on fields `stat.rs` already holds, and the
 `*_real?` trio is `access(2)` with the real rather than effective uid.
 
+**Status: done**, `unreachable` 155 → 132 — 23 rows for 21 named, because two
+of them were never missing at all.
+
+`IO#puts` and `IO#print` HAD table rows the whole time. They were dropped by
+`dispatch::is_hidden_builtin_private`, a name-only list that hid `puts`,
+`print`, `raise`, `warn` and friends from reflection **on every class**,
+because they are private on `Kernel`. So `IO#puts`, `StringIO#print`,
+`Thread#raise` and `Fiber#raise` all vanished from their own listings. The list
+is now keyed on the OWNER, and the names it does cover are CLASSIFIED private
+rather than skipped — `Kernel.private_instance_methods(false)` was missing them
+too, since dropping a name removes it from both halves at once.
+
+`File.open(path, "rb")` did not set binmode, so `#binmode?` was wrong and
+`#set_encoding_by_bom` had nothing to gate on. The `b` in a mode string now
+sets it.
+
 ### 2.5 `GC`, `Fiber`, `Binding`, `TracePoint` (35)
 
 Decision 1 governs this wave. `GC` gets the 13 rows as honest stubs plus its

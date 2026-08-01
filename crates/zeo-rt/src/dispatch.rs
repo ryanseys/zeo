@@ -1948,7 +1948,7 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
                 // through the table -- but `respond_to?`'s default ignores
                 // privates, so it answers false unless `include_all`.
                 if !include_all
-                    && (is_hidden_builtin_private(n)
+                    && (is_hidden_builtin_private(anc, n)
                         || crate::builtins::class_method_is_private(anc, n))
                 {
                     continue;
@@ -2103,29 +2103,28 @@ impl VisFilter {
 /// `initialize` (`BasicObject`'s, `object.c`'s `rb_obj_dummy`) is the load-
 /// bearing case: `super` from any `initialize` must reach it, but
 /// `obj.initialize` must raise. Kernel's print family is the same shape.
-fn is_hidden_builtin_private(name: &str) -> bool {
-    matches!(
+fn is_hidden_builtin_private(owner: ClassId, name: &str) -> bool {
+    // Private on EVERY class, wherever a table defines one.
+    if matches!(
         name,
-        "initialize"
-            | "puts"
-            | "print"
-            | "p"
-            | "pp"
-            | "warn"
-            | "system"
-            | "spawn"
-            | "`"
-            | "raise"
-            | "fail"
-            | "method_missing"
-            | "respond_to_missing?"
-            // Module's mix-in primitives: `include`/`Object#extend` call
-            // them, an override policing how a module is mixed in reaches
-            // them through `super`, but they are not part of a module's
-            // public surface.
-            | "append_features"
-            | "extend_object"
-    )
+        "initialize" | "method_missing" | "respond_to_missing?"
+    ) {
+        return true;
+    }
+    // Private on `Kernel` ALONE. `IO#puts`, `StringIO#print` and
+    // `Thread#raise` are ordinary public methods of their own classes, so
+    // hiding these by name regardless of owner dropped them from every
+    // listing -- which is what made `IO#puts` read as missing.
+    if owner == zeo_abi::KERNEL_CLASS {
+        return matches!(
+            name,
+            "puts" | "print" | "p" | "pp" | "warn" | "system" | "spawn" | "`" | "raise" | "fail"
+        );
+    }
+    // Module's mix-in primitives: `include`/`Object#extend` call them, an
+    // override policing how a module is mixed in reaches them through
+    // `super`, but they are not part of a module's public surface.
+    owner == zeo_abi::MODULE_CLASS && matches!(name, "append_features" | "extend_object")
 }
 
 /// The instance-method names of `class` and -- when `inherit` -- its
@@ -2189,12 +2188,13 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         // defines the instance copy private, CRuby's rule), so the filter reads
         // it per name rather than assuming public.
         for &n in crate::builtins::class_table_names(anc) {
-            // Hidden builtin privates (Kernel's print family, BasicObject's
-            // `initialize`) are reflection-invisible, exactly as in CRuby.
-            if is_hidden_builtin_private(n) {
-                continue;
-            }
-            let vis = if crate::builtins::class_method_is_private(anc, n) {
+            // A builtin private (Kernel's print family, BasicObject's
+            // `initialize`) is CLASSIFIED private, not skipped: CRuby keeps it
+            // out of `instance_methods` and inside `private_instance_methods`,
+            // and dropping it entirely lost the second half.
+            let vis = if crate::builtins::class_method_is_private(anc, n)
+                || is_hidden_builtin_private(anc, n)
+            {
                 MethodVisibility::Private
             } else {
                 MethodVisibility::Public
@@ -2280,7 +2280,7 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         // IS defined, so `private_method_defined?` must say so, and the walk
         // must not keep looking for a public copy farther up.
         if crate::builtins::class_table_names(*anc).contains(&name_str.as_str()) {
-            let private = is_hidden_builtin_private(&name_str)
+            let private = is_hidden_builtin_private(*anc, &name_str)
                 || crate::builtins::class_method_is_private(*anc, &name_str);
             return Some(match private {
                 true => MethodVisibility::Private,

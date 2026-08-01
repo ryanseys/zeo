@@ -43,7 +43,7 @@ pub use table::{
 };
 pub use transcode::{
     NewlineMode, TranscodeError, TranscodeFallback, TranscodeOptions, XmlMode, encode_scalar,
-    transcode,
+    self_describing_bom, transcode,
 };
 pub(crate) use transcode::{Unit, decode};
 

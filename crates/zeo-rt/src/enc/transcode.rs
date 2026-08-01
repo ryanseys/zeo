@@ -55,6 +55,31 @@ pub(crate) enum Unit {
     Unmapped(Vec<u8>),
 }
 
+const UTF_16_BOMS: &[(&[u8], EncodingId)] = &[
+    (b"\xFE\xFF", crate::enc::table::UTF_16BE),
+    (b"\xFF\xFE", crate::enc::table::UTF_16LE),
+];
+
+const UTF_32_BOMS: &[(&[u8], EncodingId)] = &[
+    (b"\x00\x00\xFE\xFF", crate::enc::table::UTF_32BE),
+    (b"\xFF\xFE\x00\x00", crate::enc::table::UTF_32LE),
+];
+
+/// The encoding a leading byte-order mark names, and how many bytes it takes.
+/// UTF-32's marks are tested FIRST: `FF FE 00 00` opens with UTF-16LE's own
+/// mark, so the shorter one would otherwise always win. UTF-8's mark is
+/// included, which `IO#set_encoding_by_bom` needs and the UTF-16/32 decoders
+/// above never see.
+pub fn self_describing_bom(bytes: &[u8]) -> Option<(EncodingId, usize)> {
+    let utf8: &[(&[u8], EncodingId)] = &[(b"\xEF\xBB\xBF", crate::enc::table::UTF_8)];
+    UTF_32_BOMS
+        .iter()
+        .chain(utf8)
+        .chain(UTF_16_BOMS)
+        .find(|(mark, _)| bytes.starts_with(mark))
+        .map(|(mark, id)| (*id, mark.len()))
+}
+
 /// Decodes `bytes` under `from` into a sequence of units.
 pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
     // The dummy rows have no per-character structure (kind `Binary`), but
@@ -67,15 +92,9 @@ pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
     }
     if from == crate::enc::table::UTF_16 || from == crate::enc::table::UTF_32 {
         let bom: &[(&[u8], EncodingId)] = if from == crate::enc::table::UTF_16 {
-            &[
-                (b"\xFE\xFF", crate::enc::table::UTF_16BE),
-                (b"\xFF\xFE", crate::enc::table::UTF_16LE),
-            ]
+            UTF_16_BOMS
         } else {
-            &[
-                (b"\x00\x00\xFE\xFF", crate::enc::table::UTF_32BE),
-                (b"\xFF\xFE\x00\x00", crate::enc::table::UTF_32LE),
-            ]
+            UTF_32_BOMS
         };
         if bytes.is_empty() {
             return Vec::new();

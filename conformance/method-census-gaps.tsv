@@ -4,7 +4,7 @@
 # absent-module: 41
 # constant: 198
 # owner: 184
-# unreachable: 155
+# unreachable: 132
 absent-module	Encoding::Converter	-	-
 absent-module	Enumerator::ArithmeticSequence	-	-
 absent-module	Enumerator::Generator	-	-
@@ -457,7 +457,6 @@ unreachable	Exception	i	backtrace_locations
 unreachable	Fiber	i	backtrace
 unreachable	Fiber	i	backtrace_locations
 unreachable	Fiber	i	blocking?
-unreachable	Fiber	i	raise
 unreachable	Fiber	s	blocking
 unreachable	Fiber	s	blocking?
 unreachable	Fiber	s	current_scheduler
@@ -465,20 +464,6 @@ unreachable	Fiber	s	schedule
 unreachable	Fiber	s	scheduler
 unreachable	Fiber	s	set_scheduler
 unreachable	Fiber	s	yield
-unreachable	File	i	atime
-unreachable	File	i	birthtime
-unreachable	File	i	ctime
-unreachable	File	s	chown
-unreachable	File	s	lchmod
-unreachable	File	s	lchown
-unreachable	File	s	lutime
-unreachable	File::Stat	i	dev_major
-unreachable	File::Stat	i	dev_minor
-unreachable	File::Stat	i	executable_real?
-unreachable	File::Stat	i	rdev_major
-unreachable	File::Stat	i	rdev_minor
-unreachable	File::Stat	i	readable_real?
-unreachable	File::Stat	i	writable_real?
 unreachable	GC	i	garbage_collect
 unreachable	GC	s	auto_compact
 unreachable	GC	s	auto_compact=
@@ -494,13 +479,6 @@ unreachable	GC	s	verify_compaction_references
 unreachable	GC	s	verify_internal_consistency
 unreachable	Hash	s	ruby2_keywords_hash
 unreachable	Hash	s	ruby2_keywords_hash?
-unreachable	IO	i	ioctl
-unreachable	IO	i	print
-unreachable	IO	i	puts
-unreachable	IO	i	set_encoding_by_bom
-unreachable	IO	i	syswrite
-unreachable	IO	i	timeout
-unreachable	IO	i	timeout=
 unreachable	Kernel	s	Pathname
 unreachable	Kernel	s	__callee__
 unreachable	Kernel	s	__dir__
@@ -564,7 +542,6 @@ unreachable	Set	i	compare_by_identity?
 unreachable	String	i	unicode_normalize!
 unreachable	Symbol	s	all_symbols
 unreachable	SyntaxError	i	path
-unreachable	Thread	i	raise
 unreachable	Thread::ConditionVariable	i	marshal_dump
 unreachable	Thread::Mutex	i	sleep
 unreachable	Thread::Queue	i	clear

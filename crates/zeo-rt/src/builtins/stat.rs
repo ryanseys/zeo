@@ -237,6 +237,31 @@ ruby_class! {
     def "executable?"(recv) {
         Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o100, 0o010, 0o001)))
     }
+    // The `*_real?` trio asks the same question of the REAL uid/gid rather than
+    // the effective one. They differ only under set-uid, which is exactly what
+    // they exist to test.
+    def "readable_real?"(recv) {
+        Ok(RubyValue::Bool(real_access_bits(&recv_stat(recv)?.st, 0o400, 0o040, 0o004)))
+    }
+    def "writable_real?"(recv) {
+        Ok(RubyValue::Bool(real_access_bits(&recv_stat(recv)?.st, 0o200, 0o020, 0o002)))
+    }
+    def "executable_real?"(recv) {
+        Ok(RubyValue::Bool(real_access_bits(&recv_stat(recv)?.st, 0o100, 0o010, 0o001)))
+    }
+    // `st_dev`/`st_rdev` split into their major and minor halves.
+    def "dev_major"(recv) {
+        Ok(RubyValue::Int(dev_major(recv_stat(recv)?.st.st_dev)))
+    }
+    def "dev_minor"(recv) {
+        Ok(RubyValue::Int(dev_minor(recv_stat(recv)?.st.st_dev)))
+    }
+    def "rdev_major"(recv) {
+        Ok(RubyValue::Int(dev_major(recv_stat(recv)?.st.st_rdev)))
+    }
+    def "rdev_minor"(recv) {
+        Ok(RubyValue::Int(dev_minor(recv_stat(recv)?.st.st_rdev)))
+    }
     def "world_readable?"(recv) {
         Ok(world_perm(&recv_stat(recv)?.st, 0o004))
     }
@@ -263,8 +288,27 @@ ruby_class! {
 /// owner bits when the euid owns it, group bits when the egid matches, else
 /// other bits. (Root -- euid 0 -- always reads/writes, mirroring the kernel.)
 fn access_bits(st: &libc::stat, owner: u32, group: u32, other: u32) -> bool {
-    let euid = unsafe { libc::geteuid() };
-    let egid = unsafe { libc::getegid() };
+    // SAFETY: neither call takes an argument and neither can fail.
+    let (euid, egid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    access_bits_for(st, euid, egid, owner, group, other)
+}
+
+/// The `*_real?` twin of [`access_bits`]: the same rule asked of the REAL
+/// uid/gid, which differ from the effective pair only under set-uid.
+fn real_access_bits(st: &libc::stat, owner: u32, group: u32, other: u32) -> bool {
+    // SAFETY: neither call takes an argument and neither can fail.
+    let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+    access_bits_for(st, uid, gid, owner, group, other)
+}
+
+fn access_bits_for(
+    st: &libc::stat,
+    euid: libc::uid_t,
+    egid: libc::gid_t,
+    owner: u32,
+    group: u32,
+    other: u32,
+) -> bool {
     let mode = st.st_mode as u32;
     if euid == 0 {
         // Root bypasses read/write checks; execute still needs some x bit.
@@ -278,6 +322,33 @@ fn access_bits(st: &libc::stat, owner: u32, group: u32, other: u32) -> bool {
         other
     };
     (mode & bit) != 0
+}
+
+/// The major/minor split of a `dev_t`. The encoding is the platform's, not
+/// Ruby's: macOS packs `major:minor` as 8+24 bits, Linux uses glibc's split
+/// (12 bits of major around a 20-bit minor).
+fn dev_major(dev: libc::dev_t) -> i64 {
+    let dev = dev as u64;
+    #[cfg(target_vendor = "apple")]
+    {
+        ((dev >> 24) & 0xff) as i64
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        (((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfffu64)) as i64
+    }
+}
+
+fn dev_minor(dev: libc::dev_t) -> i64 {
+    let dev = dev as u64;
+    #[cfg(target_vendor = "apple")]
+    {
+        (dev & 0x00ff_ffff) as i64
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        ((dev & 0xff) | ((dev >> 12) & !0xffu64)) as i64
+    }
 }
 
 /// `world_readable?`/`world_writable?`: the low permission bits (`mode & 0777`)

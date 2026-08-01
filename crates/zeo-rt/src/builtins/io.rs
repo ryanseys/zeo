@@ -117,6 +117,30 @@ pub struct RIo {
         Option<crate::encoding::EncodingId>,
         Option<crate::encoding::EncodingId>,
     )>,
+    /// `#timeout`/`#timeout=` -- recorded and read back, nil by default. zeo's
+    /// reads block, so nothing enforces it; see COMPATIBILITY.md.
+    timeout: parking_lot::Mutex<RubyValue>,
+}
+
+/// The byte-order mark a stream opens with, if any: the encoding it names and
+/// how many bytes it occupies. UTF-32's marks are checked before UTF-16's,
+/// since `FF FE 00 00` starts with UTF-16LE's own mark.
+fn read_bom(recv: &RubyValue) -> Result<Option<(crate::encoding::EncodingId, usize)>, Signal> {
+    let head = with_file(recv, |f, path| {
+        use std::io::{Read, Seek};
+        let at = f
+            .stream_position()
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "seek", path))?;
+        let mut buf = [0u8; 4];
+        let got = f
+            .read(&mut buf)
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
+        f.seek(std::io::SeekFrom::Start(at))
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "seek", path))?;
+        Ok(buf[..got].to_vec())
+    })?;
+    let enc = crate::encoding::self_describing_bom(&head);
+    Ok(enc)
 }
 
 /// The read-ahead buffer behind `gets`/`each_line`/`getc`/`getbyte`.
@@ -205,6 +229,7 @@ impl RIo {
             class_override: None,
             child_pid: std::sync::atomic::AtomicI64::new(0),
             encodings: parking_lot::Mutex::new((None, None)),
+            timeout: parking_lot::Mutex::new(RubyValue::Nil),
         }
     }
 }
@@ -1399,6 +1424,93 @@ ruby_class! {
     def "<<" (recv, value, &_blk) {
         write_value(recv_io(recv)?, value)?;
         Ok(recv.clone())
+    }
+
+    // `#syswrite(str)` -- one unbuffered write, answering the byte count.
+    // Every write here already reaches the descriptor at once, so this is
+    // `#write` narrowed to a single argument, which is what CRuby's takes.
+    def "syswrite" (recv, value, &_blk) {
+        Ok(RubyValue::Int(write_value(recv_io(recv)?, value)?))
+    }
+
+    // `#ioctl(cmd, arg = 0)` -- the raw `ioctl(2)`. An Integer `arg` passes by
+    // value; a String passes its buffer, which the call may WRITE THROUGH (the
+    // whole point of the String form: the answer comes back in the buffer).
+    def "ioctl" cfunc (recv, cmd, arg?) {
+        let request = crate::builtins::convert::to_index(cmd)? as libc::c_ulong;
+        let RubyValue::Int(fd) = fileno_value(recv)? else {
+            return Err(io_error!("closed stream"));
+        };
+        let fd = fd as libc::c_int;
+        let rc = match arg {
+            Some(RubyValue::Str(s)) => {
+                let mut buf = s.lock().bytes().to_vec();
+                // SAFETY: `buf` is a live, writable allocation for the call.
+                let rc = unsafe { libc::ioctl(fd, request, buf.as_mut_ptr()) };
+                if rc >= 0 {
+                    let mut g = s.lock();
+                    let enc = g.encoding();
+                    g.replace_bytes(buf, enc);
+                }
+                rc
+            }
+            Some(v) if !v.is_nil() => {
+                let n = crate::builtins::convert::to_index(v)? as libc::c_int;
+                // SAFETY: the by-value form passes an integer, not a pointer.
+                unsafe { libc::ioctl(fd, request, n) }
+            }
+            // SAFETY: as above, with CRuby's default argument.
+            _ => unsafe { libc::ioctl(fd, request, 0 as libc::c_int) },
+        };
+        if rc < 0 {
+            let path = as_rio(recv).and_then(|io| io.path.clone()).unwrap_or_default();
+            return Err(crate::builtins::file::raise_errno(
+                &std::io::Error::last_os_error(), "ioctl", &path));
+        }
+        Ok(RubyValue::Int(rc as i64))
+    }
+
+    // `#timeout`/`#timeout=` -- recorded and read back. CRuby raises
+    // `IO::TimeoutError` when a blocking read outlives the value; zeo's reads
+    // block, so nothing enforces it (documented in COMPATIBILITY.md). nil,
+    // the default, means no timeout in CRuby either.
+    def "timeout" (recv, &_blk) {
+        Ok(match as_rio(recv) {
+            Some(io) => io.timeout.lock().clone(),
+            None => RubyValue::Nil,
+        })
+    }
+    def "timeout=" (recv, seconds, &_blk) {
+        if let Some(io) = as_rio(recv) {
+            *io.timeout.lock() = seconds.clone();
+        }
+        Ok(seconds.clone())
+    }
+
+    // `#set_encoding_by_bom` -- if the stream STARTS with a byte-order mark,
+    // consume it, make that the external encoding and answer it; otherwise
+    // touch nothing and answer nil.
+    def "set_encoding_by_bom" (recv, &_blk) {
+        let Some(io) = as_rio(recv) else {
+            return Ok(RubyValue::Nil);
+        };
+        if io.encodings.lock().0.is_some() {
+            return Err(arg_error!("encoding is set to UTF-8 already"));
+        }
+        let Some((id, len)) = read_bom(recv)? else {
+            return Ok(RubyValue::Nil);
+        };
+        // Only the BOM's own bytes are consumed; `with_file` left the
+        // descriptor at the position Ruby believes in, so seeking forward by
+        // the mark's length is what "skip it" means.
+        with_file(recv, |f, path| {
+            use std::io::Seek;
+            f.seek(std::io::SeekFrom::Start(len as u64))
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "seek", path))?;
+            Ok(())
+        })?;
+        io.encodings.lock().0 = Some(id);
+        Ok(crate::builtins::encoding::encoding_value(id))
     }
 
     def "flush" (recv, &_blk) {

@@ -455,6 +455,63 @@ fn mode_has(path: &str, mask: libc::mode_t) -> bool {
 
 /// Coerce a `File.utime` time argument (an Integer/Float of epoch seconds, or a
 /// Time) to whole epoch seconds.
+/// Whether an open MODE argument asks for binary mode -- a `b` in the mode
+/// string, positional or under the `mode:` key. An Integer `O_*` bitmask has
+/// no binary bit on Unix, and neither has an absent mode.
+fn mode_has_binary(mode: Option<&RubyValue>) -> bool {
+    let spec = match mode {
+        Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+        Some(v @ RubyValue::Hash(_)) => match kwarg_str(Some(v), "mode") {
+            Some(s) => s,
+            None => return false,
+        },
+        _ => return false,
+    };
+    spec.contains('b')
+}
+
+/// A whole-second `timespec` -- what `utimensat` takes where `utimes` takes a
+/// `timeval`.
+fn timespec_secs(secs: libc::time_t) -> libc::timespec {
+    libc::timespec {
+        tv_sec: secs,
+        tv_nsec: 0,
+    }
+}
+
+/// A `chown`/`lchown` uid or gid argument. `nil` means "leave this half
+/// alone", which the kernel spells as `-1`.
+fn owner_id(v: &RubyValue, who: &str) -> Result<libc::uid_t, Signal> {
+    match v {
+        RubyValue::Nil => Ok(libc::uid_t::MAX),
+        other => Ok(crate::builtins::convert::to_index(other)
+            .map_err(|_| type_error!("no implicit conversion into Integer for {who}"))?
+            as libc::uid_t),
+    }
+}
+
+/// `lchmod(2)` where the platform has it. macOS does; Linux does not, and
+/// CRuby raises `NotImplementedError` there, so the caller reports the same by
+/// way of the `false` this answers with `ENOSYS` set.
+fn lchmod_at(path: &std::ffi::CStr, mode: libc::mode_t) -> bool {
+    #[cfg(target_vendor = "apple")]
+    {
+        // The `libc` crate has no binding for it, so declare the one symbol.
+        unsafe extern "C" {
+            fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
+        }
+        // SAFETY: `path` is a valid NUL-terminated C string.
+        unsafe { lchmod(path.as_ptr(), mode) == 0 }
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        let _ = (path, mode);
+        // SAFETY: `__errno_location` returns a live per-thread errno slot.
+        unsafe { *libc::__errno_location() = libc::ENOSYS };
+        false
+    }
+}
+
 fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
     match v {
         RubyValue::Int(i) => Ok(*i as libc::time_t),
@@ -641,6 +698,11 @@ ruby_class! {
         let f = crate::gvl::without_gvl(|| opts.open(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         let io = crate::builtins::io::file_value(f, Some(path));
+        // A `b` in the mode string IS binmode, which `#binmode?` reports and
+        // `#set_encoding_by_bom` requires.
+        if mode_has_binary(mode) {
+            crate::dispatch::send_value(&io, crate::Symbol::intern("binmode"), &[], None)?;
+        }
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(io);
         };
@@ -1035,6 +1097,73 @@ ruby_class! {
         }
         Ok(RubyValue::Int(paths.len() as i64))
     }
+    // `File.lutime(atime, mtime, *paths)` -- `utime` that does NOT follow a
+    // final symlink, so it stamps the link itself.
+    def self."lutime" cfunc (_recv, atime, mtime, *paths, &_block) {
+        let tv = [
+            timespec_secs(time_secs(atime)?),
+            timespec_secs(time_secs(mtime)?),
+        ];
+        for p in paths {
+            let path = path_arg(p, "lutime")?;
+            let c = std::ffi::CString::new(path.clone())
+                .map_err(|_| arg_error!("string contains null byte"))?;
+            // SAFETY: `c` is a valid NUL-terminated path, `tv` a 2-element array.
+            // `AT_FDCWD` resolves it relative to the cwd, as `utimes` does.
+            let rc = unsafe {
+                libc::utimensat(libc::AT_FDCWD, c.as_ptr(), tv.as_ptr(), libc::AT_SYMLINK_NOFOLLOW)
+            };
+            if rc != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "lutime", &path));
+            }
+        }
+        Ok(RubyValue::Int(paths.len() as i64))
+    }
+    // `File.chown(uid, gid, *paths)` -- set each file's owner and group;
+    // answers the number of files changed. A nil uid or gid leaves that half
+    // alone, which the kernel spells as -1.
+    def self."chown" cfunc (_recv, uid, gid, *paths, &_block) {
+        let (uid, gid) = (owner_id(uid, "uid")?, owner_id(gid, "gid")?);
+        for p in paths {
+            let path = path_arg(p, "chown")?;
+            let c = std::ffi::CString::new(path.clone())
+                .map_err(|_| arg_error!("string contains null byte"))?;
+            // SAFETY: `c` is a valid NUL-terminated path.
+            if unsafe { libc::chown(c.as_ptr(), uid, gid) } != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "chown", &path));
+            }
+        }
+        Ok(RubyValue::Int(paths.len() as i64))
+    }
+    // `File.lchown` -- `chown` on the LINK rather than its target.
+    def self."lchown" cfunc (_recv, uid, gid, *paths, &_block) {
+        let (uid, gid) = (owner_id(uid, "uid")?, owner_id(gid, "gid")?);
+        for p in paths {
+            let path = path_arg(p, "lchown")?;
+            let c = std::ffi::CString::new(path.clone())
+                .map_err(|_| arg_error!("string contains null byte"))?;
+            // SAFETY: `c` is a valid NUL-terminated path.
+            if unsafe { libc::lchown(c.as_ptr(), uid, gid) } != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "lchown", &path));
+            }
+        }
+        Ok(RubyValue::Int(paths.len() as i64))
+    }
+    // `File.lchmod` -- `chmod` on the LINK. Not every platform has the
+    // syscall; where it is absent CRuby raises NotImplementedError, and so
+    // does this.
+    def self."lchmod" cfunc (_recv, mode, *paths, &_block) {
+        let mode = crate::builtins::convert::to_index(mode)? as libc::mode_t;
+        for p in paths {
+            let path = path_arg(p, "lchmod")?;
+            let c = std::ffi::CString::new(path.clone())
+                .map_err(|_| arg_error!("string contains null byte"))?;
+            if !lchmod_at(&c, mode) {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "lchmod", &path));
+            }
+        }
+        Ok(RubyValue::Int(paths.len() as i64))
+    }
     // `File.umask` -- the current file-creation mask; `File.umask(mask)` sets it
     // and answers the previous value. Reading is non-destructive (set-then-restore).
     def self."umask" (_recv, arg?) {
@@ -1247,15 +1376,30 @@ ruby_class! {
         })
     }
 
-    // `#mtime` / `#size` -- read off the same `fstat` snapshot `#stat` answers.
+    // `#mtime`/`#atime`/`#ctime`/`#birthtime`/`#size` -- read off the same
+    // `fstat` snapshot `#stat` answers, so each costs one syscall and the
+    // family agrees with itself.
     def "mtime" (recv, &_blk) {
-        let st = crate::builtins::io::stat_value(recv)?;
-        crate::dispatch::send_value(&st, crate::Symbol::intern("mtime"), &[], None)
+        stat_field(recv, "mtime")
+    }
+    def "atime" (recv, &_blk) {
+        stat_field(recv, "atime")
+    }
+    def "ctime" (recv, &_blk) {
+        stat_field(recv, "ctime")
+    }
+    def "birthtime" (recv, &_blk) {
+        stat_field(recv, "birthtime")
     }
     def "size" (recv, &_blk) {
-        let st = crate::builtins::io::stat_value(recv)?;
-        crate::dispatch::send_value(&st, crate::Symbol::intern("size"), &[], None)
+        stat_field(recv, "size")
     }
+}
+
+/// One field of the open file's `fstat` snapshot, by its `File::Stat` name.
+fn stat_field(recv: &RubyValue, name: &str) -> Result<RubyValue, Signal> {
+    let st = crate::builtins::io::stat_value(recv)?;
+    crate::dispatch::send_value(&st, crate::Symbol::intern(name), &[], None)
 }
 
 /// `access(2)` -- the real permission question, rather than inferring from

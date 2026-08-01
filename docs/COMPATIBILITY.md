@@ -447,6 +447,13 @@ CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
 is pay-per-use; see `docs/EVAL_VM.md`).
 
+### `IO#timeout`
+
+`IO#timeout=` records the value and `#timeout` reads it back, but nothing
+enforces it: CRuby raises `IO::TimeoutError` when a blocking read outlives the
+value, and zeo's reads block. `nil`, the default, means no timeout in CRuby
+either, so a program that never sets one sees no difference.
+
 ### `Module` reflection
 
 The constant and method-reflection surface is faithful — `const_get`/`_set`/
