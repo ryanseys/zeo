@@ -173,8 +173,29 @@ fn seed_ruby_constants() {
         format!("ruby {VERSION} ({RELEASE_DATE} revision {short_rev}) +PRISM [{PLATFORM}]");
     const_set(object, "RUBY_DESCRIPTION", rb_str(&description));
 
+    // CRuby copyright line, verbatim from `version.c`.
+    const_set(
+        object,
+        "RUBY_COPYRIGHT",
+        rb_str("ruby - Copyright (C) 1993-2026 Yukihiro Matsumoto"),
+    );
+
+    // `Mutex`, `Queue`, `SizedQueue` and `ConditionVariable` are TOP-LEVEL
+    // spellings of the `Thread::*` classes -- the same class under two
+    // constants, which is why `Queue.equal?(Thread::Queue)` holds.
+    for (top, nested) in [
+        ("Mutex", zeo_abi::MUTEX_CLASS),
+        ("Queue", zeo_abi::QUEUE_CLASS),
+        ("SizedQueue", zeo_abi::SIZED_QUEUE_CLASS),
+        ("ConditionVariable", zeo_abi::CONDITION_VARIABLE_CLASS),
+    ] {
+        const_set(object, top, RubyValue::Class(nested));
+    }
+
     let file = zeo_abi::FILE_CLASS.0;
     const_set(file, "SEPARATOR", rb_str("/"));
+    // CRuby's own second spelling of `SEPARATOR`.
+    const_set(file, "Separator", rb_str("/"));
     const_set(file, "ALT_SEPARATOR", RubyValue::Nil);
     const_set(file, "PATH_SEPARATOR", rb_str(":"));
 }

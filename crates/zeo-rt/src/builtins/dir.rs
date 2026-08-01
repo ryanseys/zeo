@@ -503,6 +503,18 @@ ruby_class! {
         let d = std::env::current_dir().map_err(|e| raise_errno(&e, "getcwd", "."))?;
         Ok(str_val(d.to_string_lossy().into_owned()))
     }
+    // `Dir.chroot(path)` -- needs root, and reports the kernel's refusal
+    // (`EPERM`) verbatim when it does not have it.
+    def self."chroot"(_recv, arg) {
+        let path = path_arg(arg, "chroot")?;
+        let c = std::ffi::CString::new(path.clone())
+            .map_err(|_| crate::builtins::arg_error!("string contains null byte"))?;
+        // SAFETY: `c` is a valid NUL-terminated path.
+        if unsafe { libc::chroot(c.as_ptr()) } != 0 {
+            return Err(raise_errno(&std::io::Error::last_os_error(), "chroot", &path));
+        }
+        Ok(RubyValue::Int(0))
+    }
     def self."chdir"(_recv, arg?, &block) {
         let target = match arg {
             Some(v) => path_arg(v, "chdir")?,
@@ -702,6 +714,22 @@ ruby_class! {
     def "entries" cfunc (recv) {
         let out: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
+    }
+    // `Dir#chdir` -- change to the directory this handle was opened on. The
+    // block form restores the previous directory afterwards, as the class
+    // method's does.
+    def "chdir"(recv, &block) {
+        let Some(target) = recv_dir(recv)?.path.clone() else {
+            return Err(crate::builtins::io_error!("closed directory"));
+        };
+        let prev = std::env::current_dir().map_err(|e| raise_errno(&e, "getcwd", "."))?;
+        std::env::set_current_dir(&target).map_err(|e| raise_errno(&e, "chdir", &target))?;
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(RubyValue::Int(0));
+        };
+        let r = p.call(&[str_val(target)]);
+        let _ = std::env::set_current_dir(prev);
+        r
     }
     def "path" | "to_path"(recv) {
         Ok(match &recv_dir(recv)?.path {

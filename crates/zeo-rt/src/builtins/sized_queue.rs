@@ -30,6 +30,16 @@ ruby_class! {
         queue_set_max(&recv.as_queue_unchecked(), arg_int!(arg));
         Ok((*arg).clone())
     }
+    // CRuby defines `clear` and `num_waiting` on BOTH Queue and SizedQueue,
+    // so each is listed by its own class; the bodies are Queue's.
+    def "clear"(recv) {
+        let q = recv.as_queue_unchecked();
+        crate::thread::queue_clear(&q);
+        Ok(RubyValue::Queue(q))
+    }
+    def "num_waiting"(recv) {
+        Ok(RubyValue::Int(crate::thread::queue_num_waiting(&recv.as_queue_unchecked())))
+    }
 }
 
 #[cfg(test)]

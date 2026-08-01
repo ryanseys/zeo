@@ -1,9 +1,9 @@
 //! `ThreadGroup` -- the DEFAULT group only (see `zeo_abi::THREAD_GROUP_CLASS`'s
-//! docs): every thread reports `ThreadGroup::Default` as its group,
-//! `#list` answers the live thread list, `#enclosed?` is always false, and
-//! `#add` validates its argument and no-ops (the thread was in Default
-//! already). `ThreadGroup.new`/`#enclose` are honestly absent -- creating a
-//! second group has no representation here yet.
+//! docs): every thread reports `ThreadGroup::Default` as its group, `#list`
+//! answers the live thread list, and `#add` validates its argument and no-ops
+//! (the thread was in Default already). `ThreadGroup.new` mints a group object
+//! that no thread ever joins, so `#enclose`/`#enclosed?` are per-object and
+//! honest while membership stays single-group.
 
 use std::sync::Arc;
 
@@ -13,9 +13,15 @@ use crate::value::RubyValue;
 use zeo_abi::{ClassId, THREAD_GROUP_CLASS};
 use zeo_macros::ruby_class;
 
-/// The (only) `ThreadGroup` payload -- stateless: the default group's
-/// identity is the value itself.
-pub struct RThreadGroup;
+/// A `ThreadGroup` payload. The DEFAULT group is one shared instance; the only
+/// per-object state is the enclosure flag, since membership is single-group.
+#[derive(Default)]
+pub struct RThreadGroup {
+    /// `#enclose`/`#enclosed?` -- CRuby's "no thread may leave this group".
+    /// Nothing enforces it here: with one real group there is nowhere to move
+    /// a thread to, so the flag only ever reports itself.
+    enclosed: std::sync::atomic::AtomicBool,
+}
 
 impl RubyObject for RThreadGroup {
     fn class_id(&self) -> ClassId {
@@ -35,7 +41,7 @@ impl RubyObject for RThreadGroup {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RThreadGroup)
+        Arc::new(RThreadGroup::default())
     }
 }
 
@@ -44,8 +50,20 @@ impl RubyObject for RThreadGroup {
 pub fn default_group() -> RubyValue {
     static DEFAULT: std::sync::OnceLock<RubyValue> = std::sync::OnceLock::new();
     DEFAULT
-        .get_or_init(|| RubyValue::Object(Arc::new(RThreadGroup)))
+        .get_or_init(|| RubyValue::Object(Arc::new(RThreadGroup::default())))
         .clone()
+}
+
+/// The payload behind a `ThreadGroup` receiver -- the table only dispatches on
+/// one, so the downcast cannot fail.
+fn group_of(recv: &RubyValue) -> Result<&RThreadGroup, crate::Signal> {
+    match recv {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<RThreadGroup>()
+            .ok_or_else(|| type_error!("not a ThreadGroup")),
+        _ => Err(type_error!("not a ThreadGroup")),
+    }
 }
 
 ruby_class! {
@@ -54,9 +72,23 @@ ruby_class! {
     // `ThreadGroup::Default` -- the one shared group every thread reports.
     const Default = default_group();
 
-    // Nothing ever encloses the default group.
-    def "enclosed?"(_recv) {
-        Ok(RubyValue::Bool(false))
+    // `Class#new`'s C shape: variadic, since it forwards to `initialize`.
+    def self."new" cfunc (_recv, *_args, &_block) {
+        Ok(RubyValue::Object(Arc::new(RThreadGroup::default())))
+    }
+
+    // `#enclose` records the flag and answers the group. Nothing enforces it:
+    // with one real group there is nowhere for a thread to be moved from.
+    def "enclose"(recv) {
+        group_of(recv)?
+            .enclosed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(recv.clone())
+    }
+    def "enclosed?"(recv) {
+        Ok(RubyValue::Bool(
+            group_of(recv)?.enclosed.load(std::sync::atomic::Ordering::Relaxed),
+        ))
     }
     // `ThreadGroup::Default.add(thread)` -- every thread is in Default
     // already, so a valid call is a no-op answering the group; a non-Thread

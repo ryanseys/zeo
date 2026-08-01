@@ -1891,6 +1891,19 @@ pub const SYSTEM_CALL_ERROR_CLASS: ClassId = exc_id(31);
 pub const ERRNO_MODULE: ClassId = exc_id(32);
 
 /// `LocalJumpError` -- exposes `#reason`/`#exit_value`.
+/// `SyntaxError` -- carries `#path`, the file whose parse failed.
+pub const SYNTAX_ERROR_CLASS: ClassId = exc_id(34);
+/// `NoMatchingPatternKeyError` -- carries `#key` and `#matchee`, the Hash key
+/// a `=>`/`in` pattern asked for and the Hash it asked of.
+pub const NO_MATCHING_PATTERN_KEY_ERROR_CLASS: ClassId = exc_id(42);
+
+/// `Encoding::UndefinedConversionError` -- a valid source character with no
+/// representation in the target. Carries `#error_char` and the encoding pair.
+pub const UNDEFINED_CONVERSION_ERROR_CLASS: ClassId = exc_id(7);
+/// `Encoding::InvalidByteSequenceError` -- bytes the source encoding cannot
+/// decode. Carries `#error_bytes`/`#readagain_bytes` and the encoding pair.
+pub const INVALID_BYTE_SEQUENCE_ERROR_CLASS: ClassId = exc_id(8);
+
 pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
 
 /// `FrozenError` -- exposes `#receiver` (the frozen object).

@@ -1,0 +1,78 @@
+# The two conversion errors carry the encoding pair and the offending input on
+# the exception, not only inside the message.
+
+begin
+  "\xC2".dup.force_encoding("UTF-8").encode("Shift_JIS")
+rescue Encoding::InvalidByteSequenceError => e
+  puts "invalid class: #{e.class}"
+  puts "invalid source: #{e.source_encoding}"
+  puts "invalid source name: #{e.source_encoding_name}"
+  puts "invalid destination: #{e.destination_encoding}"
+  puts "invalid destination name: #{e.destination_encoding_name}"
+  puts "invalid bytes: #{e.error_bytes.inspect}"
+  puts "invalid incomplete?: #{e.incomplete_input?}"
+  puts "invalid readagain: #{e.readagain_bytes.inspect}"
+end
+
+begin
+  "é".encode("US-ASCII")
+rescue Encoding::UndefinedConversionError => e
+  puts "undef class: #{e.class}"
+  puts "undef source: #{e.source_encoding}"
+  puts "undef source name: #{e.source_encoding_name}"
+  puts "undef destination: #{e.destination_encoding}"
+  puts "undef destination name: #{e.destination_encoding_name}"
+  puts "undef char: #{e.error_char.inspect}"
+end
+
+# Reflection files each accessor on the class CRuby owns it on -- and an
+# ordinary subclass owns none of them.
+puts "invalid own: #{Encoding::InvalidByteSequenceError.instance_methods(false).sort.inspect}"
+puts "undef own: #{Encoding::UndefinedConversionError.instance_methods(false).sort.inspect}"
+# `respond_to?` is the one row zeo files on Kernel rather than Exception -- an
+# accepted owner divergence in the census, subtracted so the rest can be exact.
+puts "Exception own: #{(Exception.instance_methods(false).sort - [:respond_to?]).inspect}"
+# `#initialize` is Exception's and PRIVATE, so it appears here and in neither
+# public listing. (zeo files `method_missing`/`respond_to_missing?` on
+# BasicObject rather than restating them here, which reflection does not gate.)
+puts "Exception private initialize: #{Exception.private_instance_methods(false).include?(:initialize)}"
+puts "KeyError own: #{KeyError.instance_methods(false).sort.inspect}"
+puts "NameError own: #{NameError.instance_methods(false).sort.inspect}"
+
+class PlainError < StandardError; end
+puts "user subclass own: #{PlainError.instance_methods(false).inspect}"
+puts "StandardError own: #{StandardError.instance_methods(false).inspect}"
+
+# `Exception#backtrace_locations` is `#backtrace`'s object form.
+begin
+  raise "boom"
+rescue => e
+  puts "locations class: #{e.backtrace_locations.class}"
+  puts "locations first: #{e.backtrace_locations.first.class}"
+  puts "locations agree: #{e.backtrace_locations.size == e.backtrace.size}"
+  puts "location lineno: #{e.backtrace_locations.first.lineno.is_a?(Integer)}"
+end
+puts "unraised locations: #{RuntimeError.new('x').backtrace_locations.inspect}"
+
+# `NoMatchingPatternKeyError` carries the key and the Hash it was asked of.
+err = NoMatchingPatternKeyError.new(matchee: { a: 1 }, key: :b)
+puts "pattern key: #{err.key.inspect}"
+puts "pattern matchee: #{err.matchee.inspect}"
+puts "pattern message: #{err.message}"
+bare = NoMatchingPatternKeyError.new
+begin
+  bare.key
+rescue ArgumentError => e
+  puts "pattern bare key: #{e.message}"
+end
+begin
+  bare.matchee
+rescue ArgumentError => e
+  puts "pattern bare matchee: #{e.message}"
+end
+
+begin
+  nil.no_such_method
+rescue NameError => e
+  puts "name error locals: #{e.local_variables.class}"
+end

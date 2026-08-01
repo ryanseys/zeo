@@ -11,6 +11,12 @@ ruby_class! {
     receiver rary = crate::RubyValue::Array;
     include zeo_abi::ENUMERABLE_CLASS;
 
+    // `Array[1, 2, 3]` -- the literal-like constructor, which takes its
+    // arguments as the elements rather than as a size and a fill.
+    def self."[]" (_recv, *items, &_block) {
+        Ok(RubyValue::Array(crate::array_new(items.to_vec())))
+    }
+
     // `Array.new(size = 0, default = nil)` / `Array.new(size) { |i| ... }`.
     // Reached through `class_method_table` on a `RubyValue::Class` receiver
     // -- `Array` has no generated struct, so there is no constructor for

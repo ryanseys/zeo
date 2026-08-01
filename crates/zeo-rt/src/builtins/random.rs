@@ -276,6 +276,15 @@ ruby_class! {
     }
     // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),
     // suitable for `Random.new`. Drawn from the default generator.
+    // `Random.seed` -- the seed the DEFAULT generator is running from, the
+    // same value `Random.srand` answers when it replaces one.
+    def self."seed"(_recv) {
+        Ok(DEFAULT
+            .lock()
+            .as_ref()
+            .map(|r| r.seed.clone())
+            .unwrap_or(RubyValue::Int(0)))
+    }
     def self."new_seed"(_recv) {
         let r = default_state().state.lock().limited(u64::from(u32::MAX));
         Ok(RubyValue::Int(r as i64 | 1))

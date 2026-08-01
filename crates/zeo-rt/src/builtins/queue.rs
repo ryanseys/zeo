@@ -50,6 +50,23 @@ ruby_class! {
     def "empty?"(recv) {
         Ok(RubyValue::Bool(queue_len(&recv.as_queue_unchecked()) == 0))
     }
+    // `clear` drops every queued element and releases any back-pressured
+    // pusher; it answers the queue, as every Ruby `clear` does.
+    def "clear"(recv) {
+        let q = recv.as_queue_unchecked();
+        crate::thread::queue_clear(&q);
+        Ok(RubyValue::Queue(q))
+    }
+    def "num_waiting"(recv) {
+        Ok(RubyValue::Int(crate::thread::queue_num_waiting(&recv.as_queue_unchecked())))
+    }
+    // A Queue owns a condvar and a parked-thread count, neither of which
+    // survives a round trip, so CRuby refuses to dump one. Same for its
+    // sibling `ConditionVariable`.
+    def "marshal_dump"(recv) {
+        Err(crate::builtins::type_error!(
+            "can't dump {}", crate::builtins::class_name_of(recv)))
+    }
 }
 
 #[cfg(test)]

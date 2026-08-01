@@ -549,6 +549,20 @@ ruby_module! {
         def "signaled?"(recv) {
             Ok(RubyValue::Bool(recv_status(recv).termsig().is_some()))
         }
+        // `wait()` sets neither `WUNTRACED` nor `WCOREDUMP`, so a reaped child
+        // is never stopped and never reports a dump -- CRuby answers the same
+        // for a status obtained the same way.
+        def "coredump?"(_recv) {
+            Ok(RubyValue::Bool(false))
+        }
+        def "stopsig"(_recv) {
+            Ok(RubyValue::Nil)
+        }
+        // `Process::Status.wait(pid, flags = 0)` -- `Process.wait2`'s object
+        // form, which answers the Status without touching `$?`.
+        def self."wait" cfunc (_recv, *args, &_block) {
+            status_wait(args)
+        }
         def "termsig"(recv) {
             Ok(match recv_status(recv).termsig() {
                 Some(sig) => RubyValue::Int(sig as i64),
@@ -591,35 +605,58 @@ ruby_module! {
     class Tms = zeo_abi::PROCESS_TMS_CLASS < zeo_abi::OBJECT_CLASS {
         include zeo_abi::COMPARABLE_CLASS;
 
+        // `Process::Tms` is a `Struct` in CRuby, so it carries the class
+        // methods every Struct has and a writer per member.
+        def self."members"(_recv) {
+            Ok(tms_member_symbols())
+        }
+        // Never keyword-initialized: `Struct.new` built it positionally.
+        def self."keyword_init?"(_recv) {
+            Ok(RubyValue::Nil)
+        }
+        def self."[]" cfunc (_recv, *args, &_block) {
+            tms_construct(args)
+        }
+
         def "utime"(recv) {
-            Ok(RubyValue::Float(recv_tms(recv).utime))
+            Ok(recv_tms(recv).get(0))
         }
         def "stime"(recv) {
-            Ok(RubyValue::Float(recv_tms(recv).stime))
+            Ok(recv_tms(recv).get(1))
         }
         def "cutime"(recv) {
-            Ok(RubyValue::Float(recv_tms(recv).cutime))
+            Ok(recv_tms(recv).get(2))
         }
         def "cstime"(recv) {
-            Ok(RubyValue::Float(recv_tms(recv).cstime))
+            Ok(recv_tms(recv).get(3))
+        }
+        def "utime="(recv, v) {
+            tms_set(recv, 0, v)
+        }
+        def "stime="(recv, v) {
+            tms_set(recv, 1, v)
+        }
+        def "cutime="(recv, v) {
+            tms_set(recv, 2, v)
+        }
+        def "cstime="(recv, v) {
+            tms_set(recv, 3, v)
         }
         def "to_a" | "values"(recv) {
-            let t = recv_tms(recv);
-            Ok(RubyValue::Array(crate::array_new(vec![
-                RubyValue::Float(t.utime),
-                RubyValue::Float(t.stime),
-                RubyValue::Float(t.cutime),
-                RubyValue::Float(t.cstime),
-            ])))
+            Ok(RubyValue::Array(crate::array_new(
+                recv_tms(recv).members.lock().to_vec(),
+            )))
         }
         def "to_s" | "inspect"(recv) {
-            let t = recv_tms(recv);
             // Ruby renders a whole-valued Float as `1.0`; `inspect_string` on a
             // Float value is exactly that formatter, so the struct line matches.
-            let f = |v: f64| RubyValue::Float(v).inspect_string();
+            let fields: Vec<String> = TMS_MEMBERS
+                .iter()
+                .zip(recv_tms(recv).members.lock().iter())
+                .map(|(name, v)| format!("{name}={}", v.inspect_string()))
+                .collect();
             Ok(RubyValue::Str(crate::string_new(format!(
-                "#<struct Process::Tms utime={}, stime={}, cutime={}, cstime={}>",
-                f(t.utime), f(t.stime), f(t.cutime), f(t.cstime),
+                "#<struct Process::Tms {}>", fields.join(", ")
             ))))
         }
     }
@@ -799,6 +836,53 @@ pub(crate) fn new_status(pid: i64, raw: i32) -> RubyValue {
     RubyValue::Object(Arc::new(RProcessStatus { pid, raw }))
 }
 
+/// `Process::Status.wait(pid = -1, flags = 0)` -- reap a child and answer its
+/// Status. Unlike `Process.wait2` it leaves `$?` alone, which is the whole
+/// reason CRuby added it.
+fn status_wait(args: &[RubyValue]) -> Result<RubyValue, crate::Signal> {
+    let pid = args.first().map(int_arg).transpose()?.unwrap_or(-1);
+    let flags = args.get(1).map(int_arg).transpose()?.unwrap_or(0);
+    Ok(match raw_waitpid(pid, flags)? {
+        Some((reaped, raw)) => new_status(reaped, raw),
+        None => RubyValue::Nil,
+    })
+}
+
+/// `Process::Tms`'s member names as Symbols, in `Struct` order.
+fn tms_member_symbols() -> RubyValue {
+    RubyValue::Array(crate::array_new(
+        TMS_MEMBERS
+            .iter()
+            .map(|n| RubyValue::Symbol(crate::Symbol::intern(n)))
+            .collect(),
+    ))
+}
+
+/// `Process::Tms[a, b, c, d]` -- the `Struct` constructor. Fewer arguments than
+/// members leaves the rest nil, and the values are kept AS GIVEN: `Tms[1, 2]`
+/// holds Integers, like any Struct, even though `Process.times` fills Floats.
+fn tms_construct(args: &[RubyValue]) -> Result<RubyValue, crate::Signal> {
+    if args.len() > TMS_MEMBERS.len() {
+        return Err(crate::builtins::arg_error!("struct size differs"));
+    }
+    let mut members = [
+        RubyValue::Nil,
+        RubyValue::Nil,
+        RubyValue::Nil,
+        RubyValue::Nil,
+    ];
+    for (slot, arg) in members.iter_mut().zip(args) {
+        *slot = arg.clone();
+    }
+    Ok(tms_of(members))
+}
+
+/// A `Process::Tms` writer: store the value and answer what was assigned.
+fn tms_set(recv: &RubyValue, at: usize, v: &RubyValue) -> Result<RubyValue, crate::Signal> {
+    recv_tms(recv).members.lock()[at] = v.clone();
+    Ok(v.clone())
+}
+
 fn recv_status(recv: &RubyValue) -> &RProcessStatus {
     match recv {
         RubyValue::Object(o) => o
@@ -828,11 +912,21 @@ fn status_describe(s: &RProcessStatus) -> String {
 // ---------------------------------------------------------------------------
 
 pub struct RTms {
-    utime: f64,
-    stime: f64,
-    cutime: f64,
-    cstime: f64,
+    /// The four members in `Struct` order. Arbitrary values, not Floats:
+    /// `Process.times` fills them with Floats, but `Process::Tms[1, 2, 3, 4]`
+    /// keeps the Integers it was given, exactly as any Struct does. Mutable
+    /// behind the `Arc` every `RObj` lives in, because a Struct has writers.
+    members: parking_lot::Mutex<[RubyValue; 4]>,
 }
+
+impl RTms {
+    fn get(&self, at: usize) -> RubyValue {
+        self.members.lock()[at].clone()
+    }
+}
+
+/// `Process::Tms`'s `Struct` member names, in order.
+const TMS_MEMBERS: [&str; 4] = ["utime", "stime", "cutime", "cstime"];
 
 impl RubyObject for RTms {
     fn class_id(&self) -> ClassId {
@@ -853,20 +947,18 @@ impl RubyObject for RTms {
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         Arc::new(RTms {
-            utime: self.utime,
-            stime: self.stime,
-            cutime: self.cutime,
-            cstime: self.cstime,
+            members: parking_lot::Mutex::new(self.members.lock().clone()),
         })
     }
 }
 
 fn new_tms(utime: f64, stime: f64, cutime: f64, cstime: f64) -> RubyValue {
+    tms_of([utime, stime, cutime, cstime].map(RubyValue::Float))
+}
+
+fn tms_of(members: [RubyValue; 4]) -> RubyValue {
     RubyValue::Object(Arc::new(RTms {
-        utime,
-        stime,
-        cutime,
-        cstime,
+        members: parking_lot::Mutex::new(members),
     }))
 }
 

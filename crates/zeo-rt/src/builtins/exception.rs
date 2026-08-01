@@ -638,6 +638,284 @@ fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<
     }
 }
 
+/// Record a failed conversion's encoding pair and offending input on the
+/// exception it raises, so `Encoding::UndefinedConversionError#error_char` and
+/// `InvalidByteSequenceError#error_bytes` can read them back. Called from
+/// `encoding::transcode_signal`, the one place both errors are built.
+pub fn attach_transcode_detail(exc: &RubyValue, detail: &crate::enc::TranscodeDetail) {
+    let RubyValue::Object(o) = exc else { return };
+    let Some(e) = downcast_robj::<RubyException>(o) else {
+        return;
+    };
+    let enc = |id| crate::builtins::encoding::encoding_value(id);
+    e.set_detail("source_encoding", enc(detail.source));
+    e.set_detail("destination_encoding", enc(detail.destination));
+    e.set_detail(
+        "error_bytes",
+        RubyValue::Str(crate::string_from_bytes(
+            detail.error_bytes.clone(),
+            detail.source,
+        )),
+    );
+    e.set_detail(
+        "error_char",
+        match detail.error_char {
+            Some(c) => RubyValue::Str(crate::string_new(c.to_string())),
+            None => RubyValue::Nil,
+        },
+    );
+    e.set_detail("incomplete_input", RubyValue::Bool(detail.incomplete));
+}
+
+/// One of the two encoding slots as an `Encoding`, or as its NAME for the
+/// `*_name` twin. Both are nil when the exception came from anywhere but a
+/// transcode (a user `raise Encoding::UndefinedConversionError`).
+fn exc_encoding(recv: &RObj, key: &str, as_name: bool) -> Result<RubyValue, Signal> {
+    let v = exc(recv).detail(key);
+    if !as_name {
+        return Ok(v);
+    }
+    match v {
+        RubyValue::Nil => Ok(RubyValue::Nil),
+        enc => crate::dispatch::send_value(&enc, Symbol::intern("name"), &[], None),
+    }
+}
+
+fn exc_source_encoding(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    exc_encoding(recv, "source_encoding", false)
+}
+
+fn exc_source_encoding_name(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    exc_encoding(recv, "source_encoding", true)
+}
+
+fn exc_destination_encoding(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    exc_encoding(recv, "destination_encoding", false)
+}
+
+fn exc_destination_encoding_name(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    exc_encoding(recv, "destination_encoding", true)
+}
+
+fn exc_error_bytes(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("error_bytes"))
+}
+
+fn exc_error_char(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("error_char"))
+}
+
+fn exc_incomplete_input(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(
+        exc(recv).detail("incomplete_input").truthy(),
+    ))
+}
+
+/// `InvalidByteSequenceError#readagain_bytes` -- the bytes AFTER the bad
+/// sequence that a converter would re-feed. zeo's transcoder converts a whole
+/// string in one pass and never resumes, so there is nothing put back -- which
+/// is the nil CRuby answers for a one-shot `String#encode` too.
+fn exc_readagain_bytes(
+    _recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Nil)
+}
+
+/// `NoMatchingPatternKeyError#matchee` -- the Hash a `key:` pattern asked of.
+/// Unset is an `ArgumentError`, the shape `KeyError#key` already uses.
+fn exc_matchee(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    match exc(recv).detail_opt("matchee") {
+        Some(v) => Ok(v),
+        None => Err(arg_error!("no matchee is available")),
+    }
+}
+
+/// `NoMatchingPatternKeyError.new(matchee:, key:)` -- CRuby takes both as
+/// keywords and leaves the message the class name, so the pair travels on the
+/// exception rather than in its text.
+fn pattern_key_error_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    if let Some(RubyValue::Hash(h)) = args.first() {
+        let e = exc(recv);
+        for name in ["matchee", "key"] {
+            let v = crate::hash_get(h, &RubyValue::Symbol(Symbol::intern(name)));
+            if !matches!(v, RubyValue::Nil) {
+                e.set_detail(
+                    match name {
+                        "matchee" => "matchee",
+                        _ => "key",
+                    },
+                    v,
+                );
+            }
+        }
+        // The keyword Hash is not the message; CRuby leaves that the class name.
+        return exc_initialize(recv, &[], blk);
+    }
+    exc_initialize(recv, args, blk)
+}
+
+/// `Exception#backtrace_locations` -- `#backtrace`'s object form. The stored
+/// lines are the ones `frames::format_frame` wrote, so parsing them back is
+/// exact rather than a guess; storing the triples twice would cost every raise
+/// for the sake of a rarely-read accessor.
+fn exc_backtrace_locations(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let Some(lines) = exc(recv).backtrace.lock().clone() else {
+        return Ok(RubyValue::Nil);
+    };
+    let locations = lines
+        .iter()
+        .map(|line| {
+            // `<path>:<lineno>:in '<label>'`, and a path may itself contain a
+            // colon, so the split runs from the RIGHT.
+            let (head, label) = match line.split_once(":in '") {
+                Some((head, rest)) => (head, rest.trim_end_matches('\'')),
+                None => (line.as_str(), ""),
+            };
+            let (path, lineno) = match head.rsplit_once(':') {
+                Some((p, n)) => (p, n.parse::<u32>().unwrap_or(0)),
+                None => (head, 0),
+            };
+            crate::builtins::backtrace_location::location_new(path, lineno, label)
+        })
+        .collect();
+    Ok(RubyValue::Array(array_new(locations)))
+}
+
+/// Which exception class CRuby files each native on -- see the call site.
+/// Every other id carries the same rows for dispatch and lists none of them,
+/// exactly as a CRuby subclass with an empty body does.
+fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
+    /// One owning class and the names it declares. The id is a THUNK because a
+    /// `ClassId` const is not usable in a const initializer here.
+    type Owned = (fn() -> ClassId, &'static [&'static str]);
+    const BY_OWNER: &[Owned] = &[
+        (
+            || EXCEPTION_CLASS,
+            &[
+                "message",
+                "to_s",
+                "==",
+                "exception",
+                "backtrace",
+                "backtrace_locations",
+                "set_backtrace",
+                "cause",
+                "full_message",
+                "detailed_message",
+                "inspect",
+            ],
+        ),
+        (
+            || NAME_ERROR_CLASS,
+            &["name", "receiver", "local_variables"],
+        ),
+        (|| NO_METHOD_ERROR_CLASS, &["args", "private_call?"]),
+        (|| KEY_ERROR_CLASS, &["key", "receiver"]),
+        (|| FROZEN_ERROR_CLASS, &["receiver"]),
+        (|| LOAD_ERROR_CLASS, &["path"]),
+        (|| zeo_abi::SYNTAX_ERROR_CLASS, &["path"]),
+        (|| SYSTEM_CALL_ERROR_CLASS, &["errno"]),
+        (|| LOCAL_JUMP_ERROR_CLASS, &["reason", "exit_value"]),
+        (|| SYSTEM_EXIT_CLASS, &["status", "success?"]),
+        (|| UNCAUGHT_THROW_ERROR_CLASS, &["tag", "value"]),
+        (|| STOP_ITERATION_CLASS, &["result"]),
+        (
+            || zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
+            &["key", "matchee"],
+        ),
+        (
+            || zeo_abi::UNDEFINED_CONVERSION_ERROR_CLASS,
+            &[
+                "source_encoding",
+                "source_encoding_name",
+                "destination_encoding",
+                "destination_encoding_name",
+                "error_char",
+            ],
+        ),
+        (
+            || zeo_abi::INVALID_BYTE_SEQUENCE_ERROR_CLASS,
+            &[
+                "source_encoding",
+                "source_encoding_name",
+                "destination_encoding",
+                "destination_encoding_name",
+                "error_bytes",
+                "readagain_bytes",
+                "incomplete_input?",
+            ],
+        ),
+    ];
+    for (owner, names) in BY_OWNER {
+        if owner() != id {
+            continue;
+        }
+        for name in *names {
+            registry.mark_own(id, Symbol::intern(name));
+        }
+    }
+    // `#initialize` is owned by `Exception` and PRIVATE, as it is on every
+    // class -- listed by `private_instance_methods(false)` and by nothing else.
+    if id == EXCEPTION_CLASS {
+        let init = Symbol::intern("initialize");
+        registry.mark_own(id, init);
+        registry.mark_private(id, init);
+    }
+}
+
+/// `NameError#local_variables` -- CRuby fills this with the caller's locals at
+/// the point a bare name missed. zeo raises from native code, which has no Ruby
+/// scope to walk, so the list is empty.
+fn exc_local_variables(
+    _recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Array(crate::array_new(Vec::new())))
+}
+
 /// `NoMethodError#args` -- the arguments of the failed call, `nil` if the
 /// exception was constructed without them.
 fn exc_args(
@@ -1305,6 +1583,9 @@ pub fn register_exception_subclass(
     let is_load_error = ancestors.contains(&LOAD_ERROR_CLASS);
     let is_system_exit = ancestors.contains(&SYSTEM_EXIT_CLASS);
     let is_system_call_error = ancestors.contains(&SYSTEM_CALL_ERROR_CLASS);
+    let is_undefined_conversion = ancestors.contains(&zeo_abi::UNDEFINED_CONVERSION_ERROR_CLASS);
+    let is_pattern_key_error = ancestors.contains(&zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS);
+    let is_invalid_byte_sequence = ancestors.contains(&zeo_abi::INVALID_BYTE_SEQUENCE_ERROR_CLASS);
     registry.register(
         id,
         name,
@@ -1323,6 +1604,11 @@ pub fn register_exception_subclass(
     registry.define_method_own(id, Symbol::intern("eql?"), exc_eql);
     registry.define_method_own(id, Symbol::intern("exception"), exc_exception);
     registry.define_method_own(id, Symbol::intern("backtrace"), exc_backtrace);
+    registry.define_method_own(
+        id,
+        Symbol::intern("backtrace_locations"),
+        exc_backtrace_locations,
+    );
     registry.define_method_own(id, Symbol::intern("set_backtrace"), exc_set_backtrace);
     registry.define_method_own(id, Symbol::intern("cause"), exc_cause);
     registry.define_method_own(id, Symbol::intern("full_message"), exc_full_message);
@@ -1351,6 +1637,65 @@ pub fn register_exception_subclass(
     }
     if is_load_error {
         registry.define_method_own(id, Symbol::intern("path"), exc_path);
+    }
+    // `SyntaxError#path` reads the same slot `LoadError#path` does -- the file
+    // whose parse failed. The two are unrelated in CRuby's tree and share only
+    // the accessor's shape.
+    if id == zeo_abi::SYNTAX_ERROR_CLASS {
+        registry.define_method_own(id, Symbol::intern("path"), exc_path);
+    }
+    // The two conversion errors, whose accessors read the encoding pair and
+    // the offending input `transcode_signal` attached.
+    if is_undefined_conversion || is_invalid_byte_sequence {
+        registry.define_method_own(id, Symbol::intern("source_encoding"), exc_source_encoding);
+        registry.define_method_own(
+            id,
+            Symbol::intern("source_encoding_name"),
+            exc_source_encoding_name,
+        );
+        registry.define_method_own(
+            id,
+            Symbol::intern("destination_encoding"),
+            exc_destination_encoding,
+        );
+        registry.define_method_own(
+            id,
+            Symbol::intern("destination_encoding_name"),
+            exc_destination_encoding_name,
+        );
+    }
+    if is_undefined_conversion {
+        registry.define_method_own(id, Symbol::intern("error_char"), exc_error_char);
+    }
+    if is_invalid_byte_sequence {
+        registry.define_method_own(id, Symbol::intern("error_bytes"), exc_error_bytes);
+        registry.define_method_own(id, Symbol::intern("readagain_bytes"), exc_readagain_bytes);
+        registry.define_method_own(
+            id,
+            Symbol::intern("incomplete_input?"),
+            exc_incomplete_input,
+        );
+    }
+    // `NameError#local_variables` -- the caller's locals at the point of the
+    // miss, which CRuby fills in for a bare-name NameError. zeo raises from
+    // native code with no scope to walk, so the list is empty.
+    if is_name_error {
+        registry.define_method_own(id, Symbol::intern("local_variables"), exc_local_variables);
+    }
+    // Flat dispatch installs every native on EVERY exception id, which is what
+    // makes `super` and the ancestor walk work -- but reflection has to answer
+    // the class CRuby OWNS each one on, or `MyError.instance_methods(false)`
+    // would report Exception's twelve. So the listing is told separately, and
+    // only on the owning id.
+    mark_owned_names(registry, id);
+    if is_pattern_key_error {
+        registry.define_method_own(
+            id,
+            Symbol::intern("initialize"),
+            pattern_key_error_initialize,
+        );
+        registry.define_method_own(id, Symbol::intern("key"), exc_key);
+        registry.define_method_own(id, Symbol::intern("matchee"), exc_matchee);
     }
     if is_system_call_error {
         registry.define_method_own(id, Symbol::intern("initialize"), syscall_error_initialize);

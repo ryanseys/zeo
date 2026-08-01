@@ -151,6 +151,38 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
+    // `Encoding.aliases` -- every alternate spelling mapped to its canonical
+    // name, which is exactly the table minus each row's own first name.
+    def self."aliases"(_recv) {
+        let mut pairs = Vec::new();
+        for id in encoding::all() {
+            let names = id.names();
+            let Some((canonical, aliases)) = names.split_first() else { continue };
+            for a in aliases {
+                pairs.push((
+                    RubyValue::Str(crate::string_new((*a).to_string())),
+                    RubyValue::Str(crate::string_new((*canonical).to_string())),
+                ));
+            }
+        }
+        Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))
+    }
+    // `Encoding.locale_charmap` -- the encoding the LOCALE names, which is what
+    // `Encoding.default_external` is derived from.
+    def self."locale_charmap"(_recv) {
+        Ok(RubyValue::Str(crate::string_new(
+            encoding::default_external().name().to_string(),
+        )))
+    }
+    // Marshal's hook pair. `_dump` answers the encoding's NAME; `_load`
+    // answers what it was handed, which is CRuby's own behavior -- the name
+    // round-trips as a String, not back into the singleton.
+    def self."_load"(_recv, name) {
+        Ok(name.clone())
+    }
+    def "_dump" cfunc (recv, *_args) {
+        Ok(RubyValue::Str(crate::string_new(recv_encoding(recv).name().to_string())))
+    }
     def self."default_external"(_recv) {
         Ok(encoding_value(encoding::default_external()))
     }

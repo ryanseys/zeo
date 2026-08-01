@@ -2,9 +2,9 @@
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 41
-# constant: 196
-# owner: 182
-# unreachable: 98
+# constant: 190
+# owner: 156
+# unreachable: 41
 absent-module	Encoding::Converter	-	-
 absent-module	Enumerator::ArithmeticSequence	-	-
 absent-module	Enumerator::Generator	-	-
@@ -212,17 +212,11 @@ constant	Encoding	c	Windows_874
 constant	Enumerator	c	ArithmeticSequence
 constant	Enumerator	c	Generator
 constant	Enumerator	c	Producer
-constant	File	c	Separator
 constant	GC	c	Profiler
 constant	IO	c	Buffer
-constant	Object	c	ConditionVariable
-constant	Object	c	Mutex
 constant	Object	c	Pathname
-constant	Object	c	Queue
-constant	Object	c	RUBY_COPYRIGHT
 constant	Object	c	Ruby
 constant	Object	c	RubyVM
-constant	Object	c	SizedQueue
 constant	Object	c	TOPLEVEL_BINDING
 constant	Object	c	UnicodeNormalize
 constant	ObjectSpace	c	WeakKeyMap
@@ -291,17 +285,7 @@ owner	Enumerator::Product	i	each
 owner	Enumerator::Product	i	inspect
 owner	Enumerator::Product	i	rewind
 owner	Enumerator::Product	i	size
-owner	Exception	i	==
-owner	Exception	i	backtrace
-owner	Exception	i	cause
-owner	Exception	i	detailed_message
-owner	Exception	i	exception
-owner	Exception	i	full_message
-owner	Exception	i	inspect
-owner	Exception	i	message
 owner	Exception	i	respond_to?
-owner	Exception	i	set_backtrace
-owner	Exception	i	to_s
 owner	FalseClass	i	===
 owner	Float	i	<
 owner	Float	i	<=
@@ -321,7 +305,6 @@ owner	Float	i	positive?
 owner	Float	i	quo
 owner	Float	i	to_s
 owner	Float	i	zero?
-owner	FrozenError	i	receiver
 owner	Hash	i	any?
 owner	Hash	i	eql?
 owner	Hash	i	freeze
@@ -339,22 +322,13 @@ owner	Integer	i	remainder
 owner	Integer	i	zero?
 owner	Kernel	s	autoload
 owner	Kernel	s	autoload?
-owner	KeyError	i	key
-owner	KeyError	i	receiver
-owner	LoadError	i	path
-owner	LocalJumpError	i	exit_value
-owner	LocalJumpError	i	reason
 owner	MatchData	i	hash
 owner	Method	i	clone
 owner	Method	i	dup
 owner	Module	i	==
 owner	Module	i	freeze
-owner	NameError	i	name
-owner	NameError	i	receiver
 owner	NilClass	i	===
 owner	NilClass	i	nil?
-owner	NoMethodError	i	args
-owner	NoMethodError	i	private_call?
 owner	Numeric	i	<=>
 owner	Numeric	i	clone
 owner	Numeric	i	dup
@@ -394,7 +368,6 @@ owner	Regexp	i	to_s
 owner	Set	i	eql?
 owner	SignalException	i	signm
 owner	SignalException	i	signo
-owner	StopIteration	i	result
 owner	String	i	===
 owner	String	i	dup
 owner	String	i	freeze
@@ -403,10 +376,7 @@ owner	String	i	inspect
 owner	Struct	i	filter
 owner	Struct	i	select
 owner	Symbol	i	===
-owner	SystemCallError	i	errno
 owner	SystemCallError	s	===
-owner	SystemExit	i	status
-owner	SystemExit	i	success?
 owner	Thread::Queue	i	freeze
 owner	Thread::SizedQueue	i	<<
 owner	Thread::SizedQueue	i	close
@@ -421,34 +391,7 @@ owner	UnboundMethod	i	clone
 owner	UnboundMethod	i	dup
 owner	UnboundMethod	i	eql?
 owner	UnboundMethod	i	hash
-owner	UncaughtThrowError	i	tag
 owner	UncaughtThrowError	i	to_s
-owner	UncaughtThrowError	i	value
-unreachable	Array	s	[]
-unreachable	Class	i	attached_object
-unreachable	Dir	i	chdir
-unreachable	Dir	s	chroot
-unreachable	Encoding	i	_dump
-unreachable	Encoding	s	_load
-unreachable	Encoding	s	aliases
-unreachable	Encoding	s	locale_charmap
-unreachable	Encoding::InvalidByteSequenceError	i	destination_encoding
-unreachable	Encoding::InvalidByteSequenceError	i	destination_encoding_name
-unreachable	Encoding::InvalidByteSequenceError	i	error_bytes
-unreachable	Encoding::InvalidByteSequenceError	i	incomplete_input?
-unreachable	Encoding::InvalidByteSequenceError	i	readagain_bytes
-unreachable	Encoding::InvalidByteSequenceError	i	source_encoding
-unreachable	Encoding::InvalidByteSequenceError	i	source_encoding_name
-unreachable	Encoding::UndefinedConversionError	i	destination_encoding
-unreachable	Encoding::UndefinedConversionError	i	destination_encoding_name
-unreachable	Encoding::UndefinedConversionError	i	error_char
-unreachable	Encoding::UndefinedConversionError	i	source_encoding
-unreachable	Encoding::UndefinedConversionError	i	source_encoding_name
-unreachable	Enumerator::Lazy	i	eager
-unreachable	Exception	i	backtrace_locations
-unreachable	GC	i	garbage_collect
-unreachable	Hash	s	ruby2_keywords_hash
-unreachable	Hash	s	ruby2_keywords_hash?
 unreachable	Kernel	s	Pathname
 unreachable	Kernel	s	__callee__
 unreachable	Kernel	s	__dir__
@@ -466,20 +409,6 @@ unreachable	Kernel	s	local_variables
 unreachable	Kernel	s	printf
 unreachable	Kernel	s	set_trace_func
 unreachable	Kernel	s	syscall
-unreachable	Marshal	s	restore
-unreachable	NameError	i	local_variables
-unreachable	NoMatchingPatternKeyError	i	key
-unreachable	NoMatchingPatternKeyError	i	matchee
-unreachable	Process::Status	i	coredump?
-unreachable	Process::Status	i	stopsig
-unreachable	Process::Status	s	wait
-unreachable	Process::Tms	i	cstime=
-unreachable	Process::Tms	i	cutime=
-unreachable	Process::Tms	i	stime=
-unreachable	Process::Tms	i	utime=
-unreachable	Process::Tms	s	[]
-unreachable	Process::Tms	s	keyword_init?
-unreachable	Process::Tms	s	members
 unreachable	Ractor	i	<<
 unreachable	Ractor	i	[]
 unreachable	Ractor	i	[]=
@@ -503,22 +432,4 @@ unreachable	Ractor	s	select
 unreachable	Ractor	s	shareable_lambda
 unreachable	Ractor	s	shareable_proc
 unreachable	Ractor	s	store_if_absent
-unreachable	Random	s	seed
 unreachable	Refinement	i	target
-unreachable	Regexp	i	~
-unreachable	Regexp	s	timeout=
-unreachable	Set	i	compare_by_identity
-unreachable	Set	i	compare_by_identity?
-unreachable	String	i	unicode_normalize!
-unreachable	Symbol	s	all_symbols
-unreachable	SyntaxError	i	path
-unreachable	Thread::ConditionVariable	i	marshal_dump
-unreachable	Thread::Mutex	i	sleep
-unreachable	Thread::Queue	i	clear
-unreachable	Thread::Queue	i	marshal_dump
-unreachable	Thread::Queue	i	num_waiting
-unreachable	Thread::SizedQueue	i	clear
-unreachable	Thread::SizedQueue	i	num_waiting
-unreachable	ThreadGroup	i	enclose
-unreachable	Warning	i	warn
-unreachable	Warning	s	categories

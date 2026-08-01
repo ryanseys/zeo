@@ -431,6 +431,43 @@ themselves: `Object::Mutex`/`Queue`/`SizedQueue`/`ConditionVariable` are
 top-level constants CRuby aliases onto the `Thread::*` classes, and zeo
 registers only the nested spelling.
 
+**Status: done**, `unreachable` 98 → 41, `owner` 182 → 156, `constant` 196 →
+190. The 41 that remain are exactly the two deferred sets: `Ractor` (23) and
+`Kernel`'s compiler intrinsics (18).
+
+The wave paid for itself three times over, because closing rows meant fixing
+what was underneath them:
+
+- **Wave 4's enumeration bucket closed here, in nine lines.** Every exception
+  class registers all twelve `Exception` natives on its own id (flat dispatch),
+  but `define_method_own` never touched `own_methods`, which is what the
+  listing walks — so `Exception.instance_methods(false)` was empty. Marking
+  them is not enough on its own: it has to happen only on the class CRuby OWNS
+  each one on, or `MyError.instance_methods(false)` would report Exception's
+  twelve where CRuby reports none. One `mark_owned_names` table does it, and
+  `owner` fell by 26 rows at once.
+- **UTF-8 never reported an incomplete sequence.** `decode_utf8` used
+  `InvalidStyle::Plain` for every failure, so `"\xC2".encode(...)` said
+  `"\xC2" on UTF-8` where CRuby says `incomplete "\xC2" on UTF-8`. The
+  multibyte decoders already drew the distinction; `std::str::from_utf8`'s
+  `error_len() == None` is exactly it. That fixed the message AND gave
+  `#incomplete_input?` something true to report.
+- **`Process::Tms` was Float-only.** CRuby's is a `Struct`, so
+  `Process::Tms[1, 2, 3, 4]` keeps Integers. The four slots now hold arbitrary
+  values, which is what let the writers and `Struct.[]`/`.members`/
+  `.keyword_init?` land at all.
+
+Three rows read the oracle rather than the docs, and are worth recording:
+`Warning#warn` is a PUBLIC instance method (warning.c defines it on the module
+and then extends the module with itself), not a `module_function`;
+`Mutex#sleep` answers `nil`, not the elapsed seconds; and `Encoding._load`
+answers what it was handed rather than the encoding.
+
+`NoMatchingPatternKeyError`'s accessors match the oracle, but zeo's pattern
+matcher still raises the PARENT class — `codegen/patterns.rs` compiles a whole
+pattern to one boolean, so the raise arm cannot name the failing key. XFAIL in
+`tests/gaps/pattern_key_error_class.rb` with the fix shape.
+
 ## Wave 3 — classes zeo lacks (335, minus the out-of-scope 161)
 
 | class | n | why |

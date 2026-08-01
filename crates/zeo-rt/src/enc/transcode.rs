@@ -37,9 +37,40 @@ pub enum NewlineMode {
 #[derive(Debug)]
 pub enum TranscodeError {
     /// A malformed byte sequence in the SOURCE encoding.
-    InvalidByteSequence(String),
+    InvalidByteSequence(String, Box<TranscodeDetail>),
     /// A valid source character with no representation in the TARGET.
-    UndefinedConversion(String),
+    UndefinedConversion(String, Box<TranscodeDetail>),
+}
+
+/// What the raised exception exposes beyond its message: the encoding pair the
+/// conversion ran between, and the offending input. CRuby's
+/// `Encoding::InvalidByteSequenceError#error_bytes` and
+/// `UndefinedConversionError#error_char` read exactly this, which is why the
+/// raise site has to keep it rather than formatting it all into the message.
+#[derive(Debug)]
+pub struct TranscodeDetail {
+    pub source: EncodingId,
+    pub destination: EncodingId,
+    /// The offending bytes AS THEY APPEAR in the source encoding.
+    pub error_bytes: Vec<u8>,
+    /// The character with no target representation; `None` for an invalid
+    /// sequence, which never decoded to one.
+    pub error_char: Option<char>,
+    /// Whether the sequence was cut short rather than simply wrong -- what
+    /// `#incomplete_input?` reports.
+    pub incomplete: bool,
+}
+
+impl TranscodeDetail {
+    fn new(source: EncodingId, destination: EncodingId) -> Box<Self> {
+        Box::new(TranscodeDetail {
+            source,
+            destination,
+            error_bytes: Vec::new(),
+            error_char: None,
+            incomplete: false,
+        })
+    }
 }
 
 /// One decoded source unit on the way from `from` to `to`.
@@ -175,11 +206,17 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
                 // SAFETY: `good` is a validated UTF-8 boundary.
                 let valid = unsafe { std::str::from_utf8_unchecked(&rest[..good]) };
                 units.extend(valid.chars().map(Unit::Char));
+                // `error_len() == None` means the input ENDED mid-sequence,
+                // which is CRuby's `incomplete "..."` form (and what
+                // `#incomplete_input?` reports) rather than a plainly wrong
+                // byte. The multibyte decoders already draw this distinction;
+                // UTF-8 discarded it.
+                let style = match e.error_len() {
+                    Some(_) => crate::enc::mb::InvalidStyle::Plain,
+                    None => crate::enc::mb::InvalidStyle::Incomplete,
+                };
                 let bad_len = e.error_len().unwrap_or(rest.len() - good).max(1);
-                units.push(Unit::Invalid(
-                    rest[good..good + bad_len].to_vec(),
-                    crate::enc::mb::InvalidStyle::Plain,
-                ));
+                units.push(Unit::Invalid(rest[good..good + bad_len].to_vec(), style));
                 rest = &rest[good + bad_len..];
             }
         }
@@ -290,7 +327,10 @@ pub fn transcode(
                             )
                         }
                     };
-                    return Err(TranscodeError::InvalidByteSequence(msg));
+                    let mut detail = TranscodeDetail::new(from, to);
+                    detail.error_bytes = raw;
+                    detail.incomplete = matches!(style, crate::enc::mb::InvalidStyle::Incomplete);
+                    return Err(TranscodeError::InvalidByteSequence(msg, detail));
                 }
             }
             // A valid character with no Unicode mapping: `:undef` territory,
@@ -324,7 +364,9 @@ pub fn transcode(
                                 from.name()
                             )
                         };
-                    return Err(TranscodeError::UndefinedConversion(msg));
+                    let mut detail = TranscodeDetail::new(from, to);
+                    detail.error_bytes = raw;
+                    return Err(TranscodeError::UndefinedConversion(msg, detail));
                 }
             }
             Unit::Char(c) => {
@@ -369,9 +411,13 @@ pub fn transcode(
                         None => out.extend_from_slice(&replacement(opts, to)),
                     }
                 } else {
-                    return Err(TranscodeError::UndefinedConversion(undef_message(
-                        c, from, to,
-                    )));
+                    let mut detail = TranscodeDetail::new(from, to);
+                    detail.error_bytes = encode_char(c, from).unwrap_or_default();
+                    detail.error_char = Some(c);
+                    return Err(TranscodeError::UndefinedConversion(
+                        undef_message(c, from, to),
+                        detail,
+                    ));
                 }
             }
         }

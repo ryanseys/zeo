@@ -802,6 +802,9 @@ pub struct QueueData {
     /// Wakes a `push` back-pressured on a full `SizedQueue` after a `pop`
     /// frees a slot.
     not_full: parking_lot::Condvar,
+    /// How many threads are parked in `pop` (or, for a full `SizedQueue`, in
+    /// `push`) right now -- what `#num_waiting` reports.
+    waiting: std::sync::atomic::AtomicUsize,
     /// Whether this value is a `SizedQueue` (vs a plain `Queue`) -- fixed at
     /// construction, so `class_id` reads it lock-free. Distinct from `max`,
     /// which is the (mutable) bound: the class never changes even if `max=`
@@ -825,6 +828,7 @@ fn queue_with(max: Option<usize>, is_sized: bool) -> RubyValue {
         }),
         not_empty: parking_lot::Condvar::new(),
         not_full: parking_lot::Condvar::new(),
+        waiting: std::sync::atomic::AtomicUsize::new(0),
         is_sized,
     }))
 }
@@ -875,7 +879,9 @@ fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
         // slot; an unbounded `Queue` (`max` = None) never waits.
         match inner.max {
             Some(m) if inner.items.len() >= m => {
+                q.waiting.fetch_add(1, Ordering::Relaxed);
                 q.not_full.wait(&mut inner);
+                q.waiting.fetch_sub(1, Ordering::Relaxed);
             }
             _ => break,
         }
@@ -909,7 +915,9 @@ fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
         if inner.closed {
             return Ok(RubyValue::Nil);
         }
+        q.waiting.fetch_add(1, Ordering::Relaxed);
         let _ = q.not_empty.wait_for(&mut inner, Duration::from_millis(2));
+        q.waiting.fetch_sub(1, Ordering::Relaxed);
         // Deliver a pending kill/raise now that we're awake, dropping the lock
         // first so the unwinding thread isn't holding the queue mutex.
         if interrupt_pending() {
@@ -919,6 +927,19 @@ fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
             inner = q.inner.lock();
         }
     }
+}
+
+/// `Queue#num_waiting` -- how many threads are parked in `pop` (or, for a full
+/// `SizedQueue`, in `push`) right now.
+pub fn queue_num_waiting(q: &RQueue) -> i64 {
+    q.waiting.load(Ordering::Relaxed) as i64
+}
+
+/// `Queue#clear` -- drop every queued element and let any back-pressured
+/// pusher through. Answers nothing; the caller returns the queue.
+pub fn queue_clear(q: &RQueue) {
+    q.inner.lock().items.clear();
+    q.not_full.notify_all();
 }
 
 pub fn queue_close(q: &RQueue) {

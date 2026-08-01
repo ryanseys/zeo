@@ -297,6 +297,15 @@ ruby_class! {
         Ok(set_from(args.iter().cloned()))
     }
 
+    // A Set IS its backing Hash's key set, so both rows are that Hash's,
+    // which is what makes `Set#compare_by_identity` change membership.
+    def "compare_by_identity"(recv) {
+        crate::hash_enable_compare_by_identity(&set_of(recv).hash);
+        Ok(recv.clone())
+    }
+    def "compare_by_identity?"(recv) {
+        Ok(RubyValue::Bool(set_of(recv).hash.lock().compare_by_identity))
+    }
     def "add" | "<<" (recv, other) {
         check_frozen(recv)?;
         set_of(recv).insert((*other).clone());

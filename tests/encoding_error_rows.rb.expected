@@ -1,0 +1,33 @@
+invalid class: Encoding::InvalidByteSequenceError
+invalid source: UTF-8
+invalid source name: UTF-8
+invalid destination: Shift_JIS
+invalid destination name: Shift_JIS
+invalid bytes: "\xC2"
+invalid incomplete?: true
+invalid readagain: nil
+undef class: Encoding::UndefinedConversionError
+undef source: UTF-8
+undef source name: UTF-8
+undef destination: US-ASCII
+undef destination name: US-ASCII
+undef char: "é"
+invalid own: [:destination_encoding, :destination_encoding_name, :error_bytes, :incomplete_input?, :readagain_bytes, :source_encoding, :source_encoding_name]
+undef own: [:destination_encoding, :destination_encoding_name, :error_char, :source_encoding, :source_encoding_name]
+Exception own: [:==, :backtrace, :backtrace_locations, :cause, :detailed_message, :exception, :full_message, :inspect, :message, :set_backtrace, :to_s]
+Exception private initialize: true
+KeyError own: [:key, :receiver]
+NameError own: [:local_variables, :name, :receiver]
+user subclass own: []
+StandardError own: []
+locations class: Array
+locations first: Thread::Backtrace::Location
+locations agree: true
+location lineno: true
+unraised locations: nil
+pattern key: :b
+pattern matchee: {a: 1}
+pattern message: NoMatchingPatternKeyError
+pattern bare key: no key is available
+pattern bare matchee: no matchee is available
+name error locals: Array

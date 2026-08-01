@@ -45,10 +45,34 @@ ruby_module! {
         category_flag(arg1)?.store(on, Ordering::Relaxed);
         Ok((*arg2).clone())
     }
-    // `Warning.warn(msg)` -- writes `msg` to stderr AS-IS (no added newline;
-    // `Kernel#warn` is the one that appends). The optional `category:`
-    // keyword arrives as a trailing Hash and only gates on its flag.
+    // `Warning.categories` -- every category `Warning[]` accepts, in CRuby's
+    // own order.
+    def self."categories"(_recv) {
+        let names = ["deprecated", "experimental", "performance", "strict_unused_block"]
+            .into_iter()
+            .map(|n| RubyValue::Symbol(Symbol::intern(n)))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(names)))
+    }
+    // `Warning#warn` is a PUBLIC instance method in CRuby, not a
+    // `module_function`: warning.c defines it on the module and then extends
+    // the module with itself, which is what makes `Warning.warn` resolve while
+    // `Warning.instance_methods(false)` still lists it. A program overrides it
+    // with `module Warning; def warn(msg, category: nil); ...; end`.
+    def "warn" cfunc (_recv, arg1, arg2?) {
+        warn_impl(arg1, arg2)
+    }
     def self."warn" cfunc (_recv, arg1, arg2?) {
+        warn_impl(arg1, arg2)
+    }
+}
+
+/// The shared body of `Warning#warn` and `Warning.warn`: write `msg` to stderr
+/// AS-IS (no added newline; `Kernel#warn` is the one that appends). The
+/// optional `category:` keyword arrives as a trailing Hash and only gates on
+/// its flag.
+fn warn_impl(arg1: &RubyValue, arg2: Option<&RubyValue>) -> Result<RubyValue, Signal> {
+    {
         if let Some(RubyValue::Hash(h)) = arg2 {
             let cat = crate::hash_get(h, &RubyValue::Symbol(Symbol::intern("category")));
             if !matches!(cat, RubyValue::Nil) && !category_flag(&cat)?.load(Ordering::Relaxed) {

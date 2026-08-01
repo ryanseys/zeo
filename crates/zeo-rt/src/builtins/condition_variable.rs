@@ -141,6 +141,11 @@ ruby_class! {
         cv.cond.notify_all();
         Ok(recv.clone())
     }
+    // A condition variable owns a condvar and its parked waiters, none of
+    // which survives a round trip, so CRuby refuses to dump one.
+    def "marshal_dump"(recv) {
+        Err(type_error!("can't dump {}", crate::builtins::class_name_of(recv)))
+    }
 }
 
 #[cfg(test)]

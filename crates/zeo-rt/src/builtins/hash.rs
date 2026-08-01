@@ -39,6 +39,25 @@ ruby_class! {
     // `Hash[]` class constructor -- distinct from the INSTANCE `Hash#[]` (key
     // lookup). Three shapes: a single Hash to copy, a single Array of `[k, v]`
     // pairs, or an even-length flat `k1, v1, k2, v2, ...` list.
+    // `Hash.ruby2_keywords_hash(h)` flags a copy as the keyword-splat marker
+    // `ruby2_keywords` uses. zeo resolves keyword forwarding at COMPILE time
+    // and carries no such flag at run time, so the copy is a plain Hash and
+    // the predicate is false for every one -- which is what CRuby answers for
+    // any hash that was not marked.
+    def self."ruby2_keywords_hash" (_recv, hash) {
+        let RubyValue::Hash(h) = hash else {
+            return Err(type_error!("wrong argument type {} (expected Hash)",
+                crate::builtins::class_name_of(hash)));
+        };
+        Ok(RubyValue::Hash(crate::hash_new(h.lock().values().cloned().collect())))
+    }
+    def self."ruby2_keywords_hash?" (_recv, hash) {
+        if !matches!(hash, RubyValue::Hash(_)) {
+            return Err(type_error!("wrong argument type {} (expected Hash)",
+                crate::builtins::class_name_of(hash)));
+        }
+        Ok(RubyValue::Bool(false))
+    }
     def self."[]" (_recv, *args, &_block) {
         if args.len() == 1 {
             match &args[0] {

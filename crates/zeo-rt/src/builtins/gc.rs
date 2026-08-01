@@ -64,9 +64,9 @@ ruby_module! {
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }
-    // `GC#garbage_collect` -- the private instance twin of `GC.start`, which a
-    // class gets by `include GC`.
-    private def "garbage_collect" (_recv, *_args, &_block) {
+    // `GC#garbage_collect` -- the instance twin of `GC.start`, which a class
+    // gets by `include GC`. Public, as CRuby lists it.
+    def "garbage_collect" (_recv, *_args, &_block) {
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }

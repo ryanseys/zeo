@@ -62,6 +62,12 @@ impl Symbol {
         INTERNER.lock().names.len()
     }
 
+    /// The Symbol with interner id `id` -- the inverse of [`Symbol::to_u32`],
+    /// and what lets `Symbol.all_symbols` walk the table by index.
+    pub fn from_u32(id: u32) -> Symbol {
+        Symbol(id)
+    }
+
     pub fn name(&self) -> String {
         self.name_str().to_string()
     }

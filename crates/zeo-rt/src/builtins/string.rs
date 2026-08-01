@@ -1865,6 +1865,15 @@ ruby_class! {
         let text = rstr.lock().to_utf8_lossy().into_owned();
         Ok(str_value(normalize_form(&text, arg)?))
     }
+    // The `!` twin normalizes IN PLACE and answers the receiver.
+    def "unicode_normalize!"(recv, arg?) {
+        let text = rstr.lock().to_utf8_lossy().into_owned();
+        let out = normalize_form(&text, arg)?;
+        let mut g = rstr.lock();
+        g.replace_bytes(out.into_bytes(), crate::encoding::UTF_8);
+        drop(g);
+        Ok(recv.clone())
+    }
     def "unicode_normalized?"(recv, arg?) {
         let text = rstr.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Bool(text == normalize_form(&text, arg)?))

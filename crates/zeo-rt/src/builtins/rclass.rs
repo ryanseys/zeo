@@ -27,6 +27,22 @@ fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
 ruby_class! {
     Class = zeo_abi::CLASS_CLASS < zeo_abi::MODULE_CLASS;
 
+    // `Class#attached_object` -- the object a SINGLETON class belongs to.
+    // Anything else is CRuby's TypeError, quoting the receiver's own inspect.
+    def "attached_object"(recv) {
+        let cid = crate::builtins::rmodule::recv_cid(recv);
+        match crate::runtime_meta::is_live()
+            .then(|| crate::runtime_meta::singleton_class_owner(cid))
+            .flatten()
+        {
+            Some(owner) => Ok(RubyValue::Class(owner)),
+            None => Err(crate::builtins::type_error!(
+                "'{}' is not a singleton class",
+                recv.inspect_string()
+            )),
+        }
+    }
+
     // `Class#new` -- the registry's dynamic constructor (`x = Widget;
     // x.new(...)`). A class with no allocator (builtins, exception-less
     // edge cases) raises real Ruby's NoMethodError shape for its kind.

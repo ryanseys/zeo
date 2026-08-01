@@ -220,7 +220,7 @@ fn transcode_undefined_raises_or_replaces() {
     let strict = TranscodeOptions::default();
     assert!(matches!(
         transcode("caf\u{e9}".as_bytes(), UTF_8, US_ASCII, &strict, None),
-        Err(TranscodeError::UndefinedConversion(_))
+        Err(TranscodeError::UndefinedConversion(..))
     ));
     let replace = TranscodeOptions {
         undef_replace: true,
@@ -320,7 +320,7 @@ fn unmapped_vendor_bytes_are_valid_characters_that_refuse_transcode() {
     // naming the pivot tail when the target isn't UTF-8.
     let err = transcode(&[0x81], WINDOWS_1252, UTF_8, &Default::default(), None).unwrap_err();
     match err {
-        TranscodeError::UndefinedConversion(m) => {
+        TranscodeError::UndefinedConversion(m, _) => {
             assert_eq!(
                 m,
                 "\"\\x81\" to UTF-8 in conversion from Windows-1252 to UTF-8"
@@ -330,7 +330,7 @@ fn unmapped_vendor_bytes_are_valid_characters_that_refuse_transcode() {
     }
     let err = transcode(&[0x81], WINDOWS_1252, KOI8_R, &Default::default(), None).unwrap_err();
     match err {
-        TranscodeError::UndefinedConversion(m) => {
+        TranscodeError::UndefinedConversion(m, _) => {
             assert_eq!(
                 m,
                 "\"\\x81\" to UTF-8 in conversion from Windows-1252 to UTF-8 to KOI8-R"
@@ -345,7 +345,7 @@ fn undefined_conversion_messages_match_crubys_three_shapes() {
     let msg = |bytes: &[u8], from, to| match transcode(bytes, from, to, &Default::default(), None)
         .unwrap_err()
     {
-        TranscodeError::UndefinedConversion(m) => m,
+        TranscodeError::UndefinedConversion(m, _) => m,
         other => panic!("wrong error: {other:?}"),
     };
     // Direct from UTF-8, plain target name: the short form.

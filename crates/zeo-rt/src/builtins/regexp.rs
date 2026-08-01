@@ -7,13 +7,38 @@ use crate::RubyValue;
 use crate::builtins::regexp_error;
 use zeo_macros::ruby_class;
 
+/// `Regexp.timeout`'s cell -- see the accessor rows.
+static TIMEOUT: std::sync::LazyLock<parking_lot::Mutex<Option<RubyValue>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
+
 ruby_class! {
     Regexp = zeo_abi::REGEXP_CLASS < zeo_abi::OBJECT_CLASS;
 
-    // `Regexp.timeout` -- the process-wide default match timeout; zeo
-    // enforces none, so it is always `nil`.
+    // `Regexp.timeout` -- the process-wide default match timeout. zeo enforces
+    // none, so the setter records the value and the getter reads it back
+    // (CRuby answers a Float or nil); a match never times out either way.
     def self."timeout" (_recv) {
-        Ok(RubyValue::Nil)
+        Ok(match TIMEOUT.lock().as_ref() {
+            Some(v) => v.clone(),
+            None => RubyValue::Nil,
+        })
+    }
+    def self."timeout=" (_recv, seconds) {
+        let stored = match seconds {
+            RubyValue::Nil => None,
+            v => Some(crate::builtins::kernel::float_impl(std::slice::from_ref(v))?),
+        };
+        *TIMEOUT.lock() = stored;
+        Ok(seconds.clone())
+    }
+    // `~re` -- match against `$_`, answering the match position or nil. The
+    // one operator that reads the last-read-line global rather than an operand.
+    def "~" (recv) {
+        let line = crate::globals::global_get(0, "$_");
+        if !matches!(line, RubyValue::Str(_)) {
+            return Ok(RubyValue::Nil);
+        }
+        crate::dispatch::send_value(recv, crate::Symbol::intern("=~"), &[line], None)
     }
 
     // `Regexp.last_match` / `Regexp.last_match(n)` -- the thread-local `$~`

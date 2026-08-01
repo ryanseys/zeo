@@ -147,6 +147,15 @@ ruby_class! {
     Symbol = zeo_abi::SYMBOL_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
+    // `Symbol.all_symbols` -- every symbol interned so far, in intern order.
+    // Nothing is ever removed from the interner, so this only grows.
+    def self."all_symbols"(_recv) {
+        let all = (0..crate::Symbol::count())
+            .map(|i| RubyValue::Symbol(crate::Symbol::from_u32(i as u32)))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(all)))
+    }
+
     def "to_s" | "id2name" (recv) {
         Ok(RubyValue::Str(crate::string_new(recv_sym(recv).name())))
     }

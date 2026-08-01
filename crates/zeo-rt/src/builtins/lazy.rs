@@ -606,6 +606,13 @@ ruby_class! {
             }
         }
     }
+    // `#eager` -- the same sequence as a NON-lazy Enumerator, so every later
+    // `map`/`select` evaluates at once. Forcing here and enumerating the array
+    // is what makes the rest of the chain eager.
+    def "eager"(recv) {
+        let forced = crate::dispatch::send_value(recv, crate::Symbol::intern("force"), &[], None)?;
+        crate::dispatch::send_value(&forced, crate::Symbol::intern("each"), &[], None)
+    }
     def "to_a" | "force" | "entries" cfunc (recv) {
         Ok(RubyValue::Array(array_new(collect(lazy_of(recv), None)?)))
     }

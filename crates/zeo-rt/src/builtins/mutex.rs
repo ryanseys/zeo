@@ -39,6 +39,19 @@ ruby_class! {
         mutex_unlock(&m).map_err(thread_error)?;
         Ok(RubyValue::Mutex(m))
     }
+    // `#sleep(timeout = nil)` -- release the lock, sleep, re-acquire. The
+    // answer is the whole-seconds count `Kernel#sleep` gives.
+    def "sleep" cfunc (recv, timeout?) {
+        let m = recv.as_mutex_unchecked();
+        mutex_unlock(&m).map_err(thread_error)?;
+        let slept = crate::builtins::kernel::sleep_impl(match timeout {
+            Some(v) if !v.is_nil() => std::slice::from_ref(v),
+            _ => &[],
+        });
+        mutex_lock(&m).map_err(thread_error)?;
+        // CRuby answers nil, not the elapsed seconds `Kernel#sleep` gives.
+        slept.map(|_| RubyValue::Nil)
+    }
     def "locked?"(recv) {
         Ok(RubyValue::Bool(mutex_locked(&recv.as_mutex_unchecked())))
     }

@@ -13,12 +13,16 @@ use crate::Signal;
 /// `From<_>` into `Signal` makes the generated programs' `Ok({...})?`
 /// blocks ambiguous (E0283 -- inference could no longer pick `E = Signal`).
 pub fn transcode_signal(err: TranscodeError) -> Signal {
-    match err {
-        TranscodeError::InvalidByteSequence(m) => {
-            crate::dispatch::raise_error("Encoding::InvalidByteSequenceError", m)
-        }
-        TranscodeError::UndefinedConversion(m) => {
-            crate::dispatch::raise_error("Encoding::UndefinedConversionError", m)
-        }
+    let (class, message, detail) = match err {
+        TranscodeError::InvalidByteSequence(m, d) => ("Encoding::InvalidByteSequenceError", m, d),
+        TranscodeError::UndefinedConversion(m, d) => ("Encoding::UndefinedConversionError", m, d),
+    };
+    let signal = crate::dispatch::raise_error(class, message);
+    // The encoding pair and the offending input travel on the exception, not
+    // only in its message -- which is what `#source_encoding`, `#error_bytes`
+    // and `#error_char` read back.
+    if let Signal::Raise(exc) = &signal {
+        crate::builtins::exception::attach_transcode_detail(exc, &detail);
     }
+    signal
 }

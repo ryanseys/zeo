@@ -42,8 +42,8 @@ pub use table::{
     WINDOWS_1253, WINDOWS_1254, WINDOWS_1255, WINDOWS_1256, WINDOWS_1257, all, find,
 };
 pub use transcode::{
-    NewlineMode, TranscodeError, TranscodeFallback, TranscodeOptions, XmlMode, encode_scalar,
-    self_describing_bom, transcode,
+    NewlineMode, TranscodeDetail, TranscodeError, TranscodeFallback, TranscodeOptions, XmlMode,
+    encode_scalar, self_describing_bom, transcode,
 };
 pub(crate) use transcode::{Unit, decode};
 

@@ -458,6 +458,22 @@ CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
 is pay-per-use; see `docs/EVAL_VM.md`).
 
+### Pattern matching
+
+A hash pattern that misses a KEY raises `NoMatchingPatternError` where CRuby
+raises its `NoMatchingPatternKeyError` subclass. The subclass exists and its
+`#key`/`#matchee` accessors match CRuby when it is constructed directly; what
+diverges is the raise site, since `codegen/patterns.rs` compiles a whole
+pattern to one boolean and the raise arm cannot name the failing key. Tracked
+in `tests/gaps/pattern_key_error_class.rb`.
+
+### `Hash.ruby2_keywords_hash`
+
+The marker flag does not exist at run time — zeo resolves keyword forwarding at
+COMPILE time — so `Hash.ruby2_keywords_hash(h)` answers a plain copy and
+`.ruby2_keywords_hash?` is false for every Hash, which is CRuby's answer for
+any hash that was not marked.
+
 ### `GC`
 
 zeo's heap is `Arc`-refcounted with no tracing collector, so `GC` reports what
