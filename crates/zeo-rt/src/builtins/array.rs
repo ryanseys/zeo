@@ -4,7 +4,7 @@
 
 use crate::RubyValue;
 use crate::builtins::{
-    arg_error, arg_int, arity, block_or_enum, convert, index_error, recv_array, type_error,
+    arg_error, arg_int, block_or_enum, convert, index_error, recv_array, type_error,
 };
 use zeo_macros::ruby_class;
 
@@ -910,13 +910,16 @@ ruby_class! {
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let cur_len = handle.lock().len() as i64;
+        // With a block the whole list is the span; without one the first
+        // argument is the fill VALUE and the rest is the span -- so the block
+        // shifts the minimum by one, which no single parameter list can say.
         let (value, span): (Option<RubyValue>, &[RubyValue]) = match &block {
             Some(RubyValue::Proc(_)) => {
-                arity!(args, 0..=2);
+                crate::builtins::check_arity(args.len(), 0, Some(2))?;
                 (None, args)
             }
             _ => {
-                arity!(args, 1..=3);
+                crate::builtins::check_arity(args.len(), 1, Some(3))?;
                 (Some(args[0].clone()), &args[1..])
             }
         };
@@ -1036,14 +1039,13 @@ ruby_class! {
     // `sample` answers ONE random element (nil when empty); `sample(n)` an
     // ARRAY of up to n DISTINCT elements (a partial Fisher-Yates shuffle).
     // Shares Kernel#rand's generator, which `srand` reseeds.
-    def "sample"(recv, *args, &_block) {
-        // A trailing `random:` keyword supplies the RNG (a Random-like object
-        // responding to `rand`); without it the shared PRNG is used.
-        let (args, random) = take_random_kwarg(args);
-        arity!(args, 0..=1);
+    // A `random:` keyword supplies the RNG (a Random-like object responding to
+    // `rand`); without it the shared PRNG is used.
+    def "sample"(recv, n?, **opts) {
+        let random = take_random_kwarg(opts);
         let items = recv_array!(recv).lock().clone();
         let len = items.len();
-        let Some(v) = args.first() else {
+        let Some(v) = n else {
             return Ok(if len == 0 {
                 RubyValue::Nil
             } else {
@@ -1093,9 +1095,8 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "shuffle"(recv, *args, &_block) {
-        let (args, random) = take_random_kwarg(args);
-        arity!(args, 0);
+    def "shuffle"(recv, **opts) {
+        let random = take_random_kwarg(opts);
         let mut items = recv_array!(recv).lock().to_vec();
         // Fisher-Yates, top down, exactly as ruby walks it.
         for i in (1..items.len()).rev() {
@@ -1167,27 +1168,25 @@ ruby_class! {
     //   [1,2,3].combination(0) => [[]]   -- ONE empty tuple, not none
     //   [1,2,3].combination(4) => []
     //   [1,2].permutation      => the FULL-length permutations (no arg)
-    def "combination" arity 1 (recv, *args, &block) {
-        arity!(args, 1);
-        let n = arg_int!(args, 0);
-        let p = block_or_enum!(recv, "combination", args, block);
+    def "combination"(recv, n, &block) {
+        let n = arg_int!(n);
+        let p = block_or_enum!(recv, "combination", __args, block);
         let items = recv_array!(recv).lock().clone();
         for tuple in combinations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
         }
         Ok(recv.clone())
     }
-    def "permutation"(recv, *args, &block) {
-        arity!(args, 0..=1);
+    def "permutation"(recv, n?, &block) {
         let items = recv_array!(recv).lock().clone();
         // No argument means the receiver's own length -- read BEFORE
         // `block_or_enum!`'s early return so the Enumerator it builds
         // re-invokes with the identical (empty) argument list.
-        let n = match args.first() {
-            Some(_) => arg_int!(args, 0),
+        let n = match n {
+            Some(v) => arg_int!(v),
             None => items.len() as i64,
         };
-        let p = block_or_enum!(recv, "permutation", args, block);
+        let p = block_or_enum!(recv, "permutation", __args, block);
         for tuple in permutations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
         }
@@ -1197,20 +1196,18 @@ ruby_class! {
     // (order matters, repeats allowed); `repeated_combination` is the
     // non-decreasing multisets. Both take a required length and yield tuples
     // (or return an Enumerator without a block).
-    def "repeated_permutation" arity 1 (recv, *args, &block) {
-        arity!(args, 1);
-        let n = arg_int!(args, 0);
-        let p = block_or_enum!(recv, "repeated_permutation", args, block);
+    def "repeated_permutation"(recv, n, &block) {
+        let n = arg_int!(n);
+        let p = block_or_enum!(recv, "repeated_permutation", __args, block);
         let items = recv_array!(recv).lock().clone();
         for tuple in repeated_permutations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
         }
         Ok(recv.clone())
     }
-    def "repeated_combination" arity 1 (recv, *args, &block) {
-        arity!(args, 1);
-        let n = arg_int!(args, 0);
-        let p = block_or_enum!(recv, "repeated_combination", args, block);
+    def "repeated_combination"(recv, n, &block) {
+        let n = arg_int!(n);
+        let p = block_or_enum!(recv, "repeated_combination", __args, block);
         let items = recv_array!(recv).lock().clone();
         for tuple in repeated_combinations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
@@ -1255,12 +1252,11 @@ ruby_class! {
         *handle.lock() = kept.into();
         Ok(recv.clone())
     }
-    def "rotate!"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "rotate!"(recv, count?) {
         check_frozen(recv_array!(recv), recv)?;
-        let n = match args.first() {
+        let n = match count {
             None => 1,
-            Some(_) => arg_int!(args, 0),
+            Some(v) => arg_int!(v),
         };
         let handle = recv_array!(recv);
         let mut items = handle.lock().clone();
@@ -1279,9 +1275,8 @@ ruby_class! {
     }
     // In-place Fisher-Yates shuffle (mirrors `shuffle` but writes back and
     // answers the receiver).
-    def "shuffle!"(recv, *args, &_block) {
-        let (args, random) = take_random_kwarg(args);
-        arity!(args, 0);
+    def "shuffle!"(recv, **opts) {
+        let random = take_random_kwarg(opts);
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let mut items = handle.lock().clone();
@@ -1296,13 +1291,12 @@ ruby_class! {
     // repeats FOREVER (so it only terminates via `break`) -- that infinite
     // form is why this can't just materialize the repeated array.
     // `cycle(0)`/`cycle(-1)` yield nothing at all.
-    def "cycle"(recv, *args, &block) {
-        arity!(args, 0..=1);
-        let count = match args.first() {
+    def "cycle"(recv, count?, &block) {
+        let count = match count {
             None | Some(RubyValue::Nil) => None,
-            Some(_) => Some(arg_int!(args, 0)),
+            Some(v) => Some(arg_int!(v)),
         };
-        let p = block_or_enum!(recv, "cycle", args, block);
+        let p = block_or_enum!(recv, "cycle", __args, block);
         let items = recv_array!(recv).lock().clone();
         // An empty receiver never yields, and would spin forever below.
         if items.is_empty() {
@@ -1342,11 +1336,10 @@ ruby_class! {
     // `flatten!`/`sort_by!`: the bang forms mutate in place. `flatten!`
     // answers nil when NOTHING changed (Ruby's convention for the
     // destructive forms); `sort_by!` always answers the receiver.
-    def "flatten!"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let depth = match args.first() {
+    def "flatten!"(recv, depth?) {
+        let depth = match depth {
             None | Some(RubyValue::Nil) => -1,
-            Some(_) => arg_int!(args, 0),
+            Some(v) => arg_int!(v),
         };
         let cell = recv_array!(recv);
         check_frozen(cell, recv)?;
@@ -1402,14 +1395,12 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
 
 /// Split off a trailing `random:` keyword argument (`sample` and `shuffle`
 /// both accept one).
-fn take_random_kwarg(args: &[RubyValue]) -> (&[RubyValue], Option<RubyValue>) {
-    if let Some(RubyValue::Hash(h)) = args.last() {
-        let key = RubyValue::Symbol(crate::Symbol::intern("random"));
-        if crate::hash_has_key(h, &key) {
-            return (&args[..args.len() - 1], Some(crate::hash_get(h, &key)));
-        }
-    }
-    (args, None)
+fn take_random_kwarg(opts: Option<&RubyValue>) -> Option<RubyValue> {
+    let RubyValue::Hash(h) = opts? else {
+        return None;
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern("random"));
+    crate::hash_has_key(h, &key).then(|| crate::hash_get(h, &key))
 }
 
 /// A random index in `0..bound`, from the supplied RNG (`random.rand(bound)`)
