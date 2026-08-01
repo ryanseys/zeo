@@ -232,7 +232,10 @@ ruby_module! {
     // `random_number(n = 0)` -- an integer in `[0, n)` for a positive Integer,
     // a float in `[0.0, n)` for a positive Float, a value inside a Range, and a
     // float in `[0.0, 1.0)` for `0`/absent/non-positive (CRuby's fallback).
-    def "random_number"(recv, n?) {
+    // `rand` is the SAME method under a second name here, which is why a
+    // `SecureRandom.rand` works. `Random::Base` defines its own `rand` below
+    // this module in the MRO, so a real generator's `rand` is unaffected.
+    def "random_number" | "rand"(recv, n?) {
         match n {
             None | Some(RubyValue::Nil) => Ok(RubyValue::Float(rand_float_unit(recv)?)),
             Some(RubyValue::Int(n)) if *n > 0 => {

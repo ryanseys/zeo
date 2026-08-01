@@ -19,6 +19,10 @@ use zeo_macros::ruby_module;
 static MEASURE_TOTAL_TIME: AtomicBool = AtomicBool::new(true);
 static AUTO_COMPACT: AtomicBool = AtomicBool::new(false);
 static STRESS: AtomicBool = AtomicBool::new(false);
+/// `GC::Profiler`'s switch. Nothing reads it but `enabled?` -- there is no
+/// tracing collector here to time -- but a program that turns profiling on
+/// and asks must be told what it asked for.
+static PROFILING: AtomicBool = AtomicBool::new(false);
 
 fn hash_of(pairs: Vec<(&str, RubyValue)>) -> RubyValue {
     RubyValue::Hash(crate::collections::hash_new(
@@ -139,6 +143,41 @@ ruby_module! {
     }
     def self."auto_compact="(_recv, on) {
         flag(&AUTO_COMPACT, on)
+    }
+
+    // `GC::Profiler` -- the switch is real (it remembers what it was told,
+    // and `enabled?` reads it back), and the readouts are honestly empty:
+    // there is no tracing collector here to time, so no run has ever been
+    // recorded. That is what CRuby answers before its first collection too.
+    module Profiler = zeo_abi::GC_PROFILER_MODULE {
+        def self."enable"(_recv) {
+            PROFILING.store(true, Ordering::Relaxed);
+            Ok(RubyValue::Nil)
+        }
+        def self."disable"(_recv) {
+            PROFILING.store(false, Ordering::Relaxed);
+            Ok(RubyValue::Nil)
+        }
+        def self."enabled?"(_recv) {
+            Ok(RubyValue::Bool(PROFILING.load(Ordering::Relaxed)))
+        }
+        def self."clear"(_recv) {
+            Ok(RubyValue::Nil)
+        }
+        def self."total_time"(_recv) {
+            Ok(RubyValue::Float(0.0))
+        }
+        def self."result"(_recv) {
+            Ok(RubyValue::Str(crate::string_new(String::new())))
+        }
+        // `report` PRINTS `result` and answers nil, so an empty result
+        // prints nothing.
+        def self."report"(_recv, *_args, &_block) {
+            Ok(RubyValue::Nil)
+        }
+        def self."raw_data"(_recv) {
+            Ok(RubyValue::Nil)
+        }
     }
 }
 

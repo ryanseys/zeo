@@ -611,6 +611,29 @@ pub const PROCESS_SYS_MODULE: ClassId = ClassId(149);
 pub const PROCESS_UID_MODULE: ClassId = ClassId(150);
 pub const PROCESS_GID_MODULE: ClassId = ClassId(151);
 
+/// `Thread::Backtrace` -- the namespace [`BACKTRACE_LOCATION_CLASS`] nests
+/// under, plus the one class method (`.limit`) CRuby puts on it. Its id is
+/// LATER than the location's, which the compiler's two-pass nesting handles.
+pub const BACKTRACE_CLASS: ClassId = ClassId(152);
+
+/// `GC::Profiler` -- the GC timing recorder's switch and readouts.
+pub const GC_PROFILER_MODULE: ClassId = ClassId(153);
+
+/// `ObjectSpace::WeakKeyMap` -- [`WEAKMAP_CLASS`]'s sibling, weak on the KEY
+/// side only, so a value may safely reference its own key's map.
+pub const WEAK_KEY_MAP_CLASS: ClassId = ClassId(154);
+
+/// `Random::Base` -- the rung between `Random` and `Object` that actually
+/// holds the generator (`#rand`/`#bytes`/`#seed` are ITS methods, not
+/// `Random`'s), and where [`RANDOM_FORMATTER_MODULE`] mixes in.
+pub const RANDOM_BASE_CLASS: ClassId = ClassId(155);
+
+/// `Enumerator::Generator` and `Enumerator::Producer` -- what
+/// `Enumerator.new { |y| ... }` and `Enumerator.produce` hold as their
+/// source. Each answers `#each` and nothing else.
+pub const ENUMERATOR_GENERATOR_CLASS: ClassId = ClassId(156);
+pub const ENUMERATOR_PRODUCER_CLASS: ClassId = ClassId(157);
+
 /// `Refinement` -- what `M.refinements` holds and what a refined method's
 /// `Method#owner` reports. A `Module` subclass with no instances of its
 /// own here: the compiler mints one hidden module per `refine` block and
@@ -1140,7 +1163,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: RANDOM_CLASS,
         name: "Random",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
+        superclass: Some(RANDOM_BASE_CLASS),
         includes: &[],
         feature: None,
     },
@@ -1322,12 +1345,16 @@ pub const BUILTINS: &[BuiltinClass] = &[
         feature: None,
     },
     BuiltinClass {
+        // Ungated: CRuby 4.0 has `Random::Formatter` in core, holding `#rand`
+        // and `#random_number`, and `require "random/formatter"` only REOPENS
+        // it to add the `hex`/`uuid`/`base64` family. zeo carries the whole
+        // module either way -- see docs/COMPATIBILITY.md.
         id: RANDOM_FORMATTER_MODULE,
         name: "Random::Formatter",
         is_module: true,
         superclass: None,
         includes: &[],
-        feature: Some("random/formatter"),
+        feature: None,
     },
     BuiltinClass {
         id: ETC_MODULE,
@@ -1871,6 +1898,54 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
+    BuiltinClass {
+        id: BACKTRACE_CLASS,
+        name: "Thread::Backtrace",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: GC_PROFILER_MODULE,
+        name: "GC::Profiler",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: WEAK_KEY_MAP_CLASS,
+        name: "ObjectSpace::WeakKeyMap",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RANDOM_BASE_CLASS,
+        name: "Random::Base",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[RANDOM_FORMATTER_MODULE],
+        feature: None,
+    },
+    BuiltinClass {
+        id: ENUMERATOR_GENERATOR_CLASS,
+        name: "Enumerator::Generator",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[ENUMERABLE_CLASS],
+        feature: None,
+    },
+    BuiltinClass {
+        id: ENUMERATOR_PRODUCER_CLASS,
+        name: "Enumerator::Producer",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
@@ -1945,6 +2020,9 @@ pub const SYNTAX_ERROR_CLASS: ClassId = exc_id(34);
 /// `NoMatchingPatternKeyError` -- carries `#key` and `#matchee`, the Hash key
 /// a `=>`/`in` pattern asked for and the Hash it asked of.
 pub const NO_MATCHING_PATTERN_KEY_ERROR_CLASS: ClassId = exc_id(42);
+/// `Ractor::RemoteError` -- the one class in the `Ractor` error tree with a
+/// method of its own (`#ractor`, the ractor whose failure it relays).
+pub const RACTOR_REMOTE_ERROR_CLASS: ClassId = exc_id(50);
 
 /// `Encoding::UndefinedConversionError` -- a valid source character with no
 /// representation in the target. Carries `#error_char` and the encoding pair.
@@ -2009,7 +2087,7 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &EXCEPTION_CLASS_ROWS;
 /// The rows written out by hand: every exception whose id does not depend on
 /// how many errnos the platform names. [`ERRNO_CLASSES`] follows this block,
 /// then [`WAIT_EXCEPTIONS`], which subclasses two of the `Errno` rows.
-const CORE_EXCEPTIONS: [ExceptionClass; 46] = [
+const CORE_EXCEPTIONS: [ExceptionClass; 52] = [
     ExceptionClass {
         id: exc_id(0),
         name: "Exception",
@@ -2300,6 +2378,47 @@ const CORE_EXCEPTIONS: [ExceptionClass; 46] = [
         id: exc_id(45),
         name: "WeakRef::RefError",
         superclass: Some(exc_id(4)),
+        is_module: false,
+    },
+    // The `Ractor` error tree. zeo runs no ractors, so nothing here is ever
+    // RAISED -- the classes exist so a `rescue Ractor::ClosedError` in
+    // portable code resolves its constant instead of dying at the rescue.
+    // `Ractor::ClosedError` descends from `StopIteration` rather than from
+    // `Ractor::Error`, which is what lets `Kernel#loop` swallow it.
+    ExceptionClass {
+        id: exc_id(46),
+        name: "Ractor::Error",
+        superclass: Some(exc_id(22)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(47),
+        name: "Ractor::ClosedError",
+        superclass: Some(exc_id(15)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(48),
+        name: "Ractor::IsolationError",
+        superclass: Some(exc_id(46)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(49),
+        name: "Ractor::MovedError",
+        superclass: Some(exc_id(46)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(50),
+        name: "Ractor::RemoteError",
+        superclass: Some(exc_id(46)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(51),
+        name: "Ractor::UnsafeError",
+        superclass: Some(exc_id(46)),
         is_module: false,
     },
 ];

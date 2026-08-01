@@ -79,6 +79,19 @@ fn rendered(loc: &BacktraceLocation) -> String {
 }
 
 ruby_class! {
+    // `Thread::Backtrace` -- the namespace `Location` nests under, and the
+    // one class method CRuby puts on it. It holds no instances: a backtrace
+    // is an Array of locations, not an object of this class.
+    Backtrace = zeo_abi::BACKTRACE_CLASS < zeo_abi::OBJECT_CLASS;
+
+    // `--backtrace-limit`, which zeo does not accept, so the answer is
+    // CRuby's own default: unlimited.
+    def self."limit"(_recv) {
+        Ok(RubyValue::Int(-1))
+    }
+}
+
+ruby_class! {
     Location = zeo_abi::BACKTRACE_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
 
     def "path"(recv) {

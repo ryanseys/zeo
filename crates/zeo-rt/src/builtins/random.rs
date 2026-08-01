@@ -248,7 +248,7 @@ fn new_random(seed_arg: Option<&RubyValue>) -> Result<RubyValue, Signal> {
 }
 
 ruby_class! {
-    Random = zeo_abi::RANDOM_CLASS < zeo_abi::OBJECT_CLASS;
+    Random = zeo_abi::RANDOM_CLASS < zeo_abi::RANDOM_BASE_CLASS;
 
     def self."new"(_recv, arg?) {
         new_random(arg)
@@ -299,19 +299,28 @@ ruby_class! {
         Ok(previous)
     }
 
-    def "rand"(recv, arg?) {
-        rand_with(&as_random(recv).state, arg)
-    }
-    def "bytes"(recv, arg) {
-        let n = &bytes_count(arg)?;
-        if *n < 0 {
-            return Err(arg_error!("negative string size (or size too big)"));
+    // The generator itself lives on `Random::Base`, not on `Random`: CRuby
+    // puts `#rand`/`#bytes`/`#seed` there so `Random::Formatter` can mix in
+    // BELOW them, which is what makes `Random#rand` win over the formatter's
+    // own `rand` while `#random_number` still resolves.
+    class Base = zeo_abi::RANDOM_BASE_CLASS < zeo_abi::OBJECT_CLASS {
+        include zeo_abi::RANDOM_FORMATTER_MODULE;
+
+        def "rand"(recv, arg?) {
+            rand_with(&as_random(recv).state, arg)
         }
-        Ok(random_bytes(&as_random(recv).state, *n as usize))
+        def "bytes"(recv, arg) {
+            let n = &bytes_count(arg)?;
+            if *n < 0 {
+                return Err(arg_error!("negative string size (or size too big)"));
+            }
+            Ok(random_bytes(&as_random(recv).state, *n as usize))
+        }
+        def "seed"(recv) {
+            Ok(as_random(recv).seed.clone())
+        }
     }
-    def "seed"(recv) {
-        Ok(as_random(recv).seed.clone())
-    }
+
     // `Random#==`: two generators are equal when their seed AND current stream
     // position match (so two fresh `Random.new(1)` are equal, but diverge once
     // either draws) -- CRuby compares state, not object identity.

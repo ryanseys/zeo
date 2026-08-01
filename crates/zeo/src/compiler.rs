@@ -612,35 +612,25 @@ impl Compiler {
                 id, b.id,
                 "zeo_abi::BUILTINS must stay contiguous from ClassId(1)"
             );
-            // A nested builtin name (`"Digest::SHA256"`, `"Enumerator::Lazy"`)
-            // is stored as its LEAF under a lexical parent, so a constant path
-            // (`Digest::SHA256`) descends into it like any user-nested class.
-            // The parent is an earlier BUILTINS row (already seeded) -- itself
-            // possibly nested (`"FFI::Type::Builtin"` descends FFI -> Type),
-            // so the prefix is resolved by the same leaf-under-parent walk.
-            let path = crate::constpath::ConstPath::parse(b.name);
-            let nested = path.scope().map(|parent| {
-                let mut pid: Option<ClassId> = None;
-                for seg in crate::constpath::ConstPath::parse(parent).segments() {
-                    pid = compiler
-                        .classes
-                        .iter()
-                        .position(|c| c.is_builtin && c.name == seg && c.lexical_parent == pid)
-                        .map(|i| ClassId(i as u32));
-                    if pid.is_none() {
-                        break;
-                    }
-                }
-                (path.base().to_string(), pid)
-            });
             let ci = &mut compiler.classes[id.0 as usize];
             ci.is_builtin = true;
             ci.includes = b.includes.to_vec();
             ci.feature_gate = b.feature;
-            if let Some((leaf, pid)) = nested {
-                ci.name = leaf;
-                ci.lexical_parent = pid;
-            }
+        }
+        // A nested builtin name (`"Digest::SHA256"`, `"Enumerator::Lazy"`) is
+        // stored as its LEAF under a lexical parent, so a constant path
+        // (`Digest::SHA256`) descends into it like any user-nested class.
+        // Resolved from the ABI names directly, in a second pass, so a parent
+        // declared at a LATER id still binds -- `Thread::Backtrace` is exactly
+        // that against `Thread::Backtrace::Location`, whose id predates it.
+        let by_abi_name: std::collections::HashMap<&str, ClassId> =
+            zeo_abi::BUILTINS.iter().map(|b| (b.name, b.id)).collect();
+        for b in zeo_abi::BUILTINS {
+            let path = crate::constpath::ConstPath::parse(b.name);
+            let Some(parent) = path.scope() else { continue };
+            let ci = &mut compiler.classes[b.id.0 as usize];
+            ci.name = path.base().to_string();
+            ci.lexical_parent = by_abi_name.get(parent).copied();
         }
         // Object's own slot in the chain (it isn't a BUILTINS row):
         // `Object < BasicObject`, `include Kernel` -- so EVERY chain ends

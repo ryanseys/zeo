@@ -65,6 +65,12 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // on: CRuby folded it into core long ago and keeps the name only so old
     // code still loads, answering `false` for the require -- which is what
     // zeo does now too (minitest/parallel.rb opens with it).
+    // `random/formatter` is the `time` shape again: ruby 4.0 keeps
+    // `Random::Formatter` in CORE with `#rand`/`#random_number`, and this
+    // require only REOPENS it to add the hex/uuid/base64 family. zeo gates
+    // whole classes rather than methods, so it carries all of them from the
+    // start and the require is ceremony -- it answers where ruby would raise
+    // NoMethodError, never the reverse.
     matches!(
         feature,
         "tmpdir"
@@ -77,5 +83,6 @@ pub fn is_builtin_feature(feature: &str) -> bool {
             | "objspace"
             | "fiber"
             | "thread"
+            | "random/formatter"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }

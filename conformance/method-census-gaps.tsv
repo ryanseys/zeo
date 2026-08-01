@@ -1,33 +1,21 @@
 # Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
-# absent-module: 37
-# constant: 186
+# absent-module: 23
+# constant: 173
 # owner: 156
 # unreachable: 41
 absent-module	Encoding::Converter	-	-
-absent-module	Enumerator::Generator	-	-
-absent-module	Enumerator::Producer	-	-
-absent-module	GC::Profiler	-	-
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
 absent-module	IO::Buffer::InvalidatedError	-	-
 absent-module	IO::Buffer::LockedError	-	-
 absent-module	IO::Buffer::MaskError	-	-
-absent-module	ObjectSpace::WeakKeyMap	-	-
 absent-module	Pathname	-	-
 absent-module	Process::Waiter	-	-
-absent-module	Ractor::ClosedError	-	-
-absent-module	Ractor::Error	-	-
-absent-module	Ractor::IsolationError	-	-
-absent-module	Ractor::MovedError	-	-
 absent-module	Ractor::MovedObject	-	-
 absent-module	Ractor::Port	-	-
-absent-module	Ractor::RemoteError	-	-
-absent-module	Ractor::UnsafeError	-	-
-absent-module	Random::Base	-	-
-absent-module	Random::Formatter	-	-
 absent-module	Ruby	-	-
 absent-module	Ruby::Box	-	-
 absent-module	Ruby::Box::Entry	-	-
@@ -39,8 +27,6 @@ absent-module	RubyVM::AbstractSyntaxTree::Node	-	-
 absent-module	RubyVM::InstructionSequence	-	-
 absent-module	RubyVM::YJIT	-	-
 absent-module	Set::CoreSet	-	-
-absent-module	Thread::Backtrace	-	-
-absent-module	Thread::Backtrace::Location	-	-
 absent-module	UnicodeNormalize	-	-
 constant	BasicObject	c	BasicObject
 constant	Encoding	c	BIG5
@@ -205,29 +191,16 @@ constant	Encoding	c	WINDOWS_31J
 constant	Encoding	c	WINDOWS_874
 constant	Encoding	c	Windows_1258
 constant	Encoding	c	Windows_874
-constant	Enumerator	c	Generator
-constant	Enumerator	c	Producer
-constant	GC	c	Profiler
 constant	IO	c	Buffer
 constant	Object	c	Pathname
 constant	Object	c	Ruby
 constant	Object	c	RubyVM
 constant	Object	c	TOPLEVEL_BINDING
 constant	Object	c	UnicodeNormalize
-constant	ObjectSpace	c	WeakKeyMap
 constant	Process	c	Waiter
-constant	Ractor	c	ClosedError
-constant	Ractor	c	Error
-constant	Ractor	c	IsolationError
-constant	Ractor	c	MovedError
 constant	Ractor	c	MovedObject
 constant	Ractor	c	Port
-constant	Ractor	c	RemoteError
-constant	Ractor	c	UnsafeError
-constant	Random	c	Base
-constant	Random	c	Formatter
 constant	Set	c	CoreSet
-constant	Thread	c	Backtrace
 owner	Array	i	all?
 owner	Array	i	any?
 owner	Array	i	collect

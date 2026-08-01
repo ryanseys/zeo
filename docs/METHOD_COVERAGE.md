@@ -560,6 +560,49 @@ it, and the arity ledger is single-platform. Recorded in
 `docs/COMPATIBILITY.md`; `Process::Sys.setreuid` and
 `Process::UID.change_privilege` reach the same capability by another name.
 
+### 3.3 The small absent classes (33, plus the 6 Ractor errors)
+
+**Status: done** — `absent-module` 37 → 23, `constant` 186 → 173, no new row.
+`tests/small_core_classes.rb` is byte-identical to the oracle.
+
+Landed: `GC::Profiler` (8), `Thread::Backtrace` (1), `ObjectSpace::WeakKeyMap`
+(7), `Random::Base` (3) + `Random::Formatter` (2), `Enumerator::Generator` (1)
++ `Enumerator::Producer` (1), and the six `Ractor` error classes.
+
+Three of these were structural rather than additive:
+
+- **`Thread::Backtrace::Location` was already there and still unreachable.**
+  The compiler seeds nested builtin names by looking the lexical parent up
+  among the classes seeded SO FAR, and `Thread::Backtrace` has to take a
+  higher id than the location it namespaces (ids are append-only). The fix is
+  a second pass that resolves every nested name against the ABI names
+  directly, so a parent declared later still binds — one class closed two
+  census rows.
+- **`Random`'s ancestry was two rungs short.** `#rand`/`#bytes`/`#seed` are
+  `Random::Base`'s methods in CRuby, not `Random`'s, and `Random::Formatter`
+  mixes in BELOW them — which is exactly what lets `Random#rand` win over the
+  formatter's own `rand` while `#random_number` still resolves. Moving the
+  three rows down a rung is a Wave 4 owner fix taken early, because the class
+  could not be added without it.
+- **`Enumerator::Generator`/`Producer` are the enumerator's SOURCE**, not
+  enumerators. `Enumerator.new { |y| }` now holds a real Generator and
+  delegates `each` to it, which is CRuby's own shape — and it means both new
+  `each` rows are load-bearing rather than decorative, and
+  `#<Enumerator: #<Enumerator::Generator:0x…>:each>` falls out of the ordinary
+  method-source rendering instead of being special-cased.
+
+One accepted **widening**: `Random::Formatter` had to be ungated (CRuby has it
+in core), and zeo gates whole classes rather than methods — so the nine
+`hex`/`uuid`/`base64` methods `require "random/formatter"` adds in CRuby are
+present from the start. Nine `zeo-only` rows in
+`conformance/builtin-arity-divergences.tsv`, whose header now says why. zeo
+answers where CRuby raises `NoMethodError`, never the reverse.
+
+The Ractor classes are classes only, per decision 3 — nothing here is ever
+raised. `Ractor::ClosedError` descends from `StopIteration`, not from
+`Ractor::Error`, which is what lets `Kernel#loop` swallow it;
+`Ractor::RemoteError#ractor` is the tree's one method and answers nil.
+
 ### 3.5 `Pathname` (96 own methods)
 
 Vendored under `gems/pathname/`, the way the other 40 gems are, and

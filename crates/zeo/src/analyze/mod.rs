@@ -1288,6 +1288,17 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         // `WeakRef::RefError` -- nests under the `WeakRef` builtin, a plain
         // `StandardError`.
         ("WeakRef::RefError", "StandardError"),
+        // The `Ractor` error tree. zeo runs no ractors, so none of these is
+        // ever raised; they exist so a `rescue Ractor::ClosedError` in
+        // portable code resolves its constant. `ClosedError` descends from
+        // `StopIteration`, not from `Ractor::Error`, which is what lets
+        // `Kernel#loop` swallow it.
+        ("Ractor::Error", "RuntimeError"),
+        ("Ractor::ClosedError", "StopIteration"),
+        ("Ractor::IsolationError", "Ractor::Error"),
+        ("Ractor::MovedError", "Ractor::Error"),
+        ("Ractor::RemoteError", "Ractor::Error"),
+        ("Ractor::UnsafeError", "Ractor::Error"),
     ] {
         register_class(
             compiler,

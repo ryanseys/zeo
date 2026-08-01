@@ -197,6 +197,12 @@ fn write_divergences(root: &Path, rows: &[Divergence]) {
     out.push_str("#! so a public `zeo-only` row means one landed on the wrong class or was\n");
     out.push_str("#! invented -- check before accepting it. A PRIVATE one is a seam nothing\n");
     out.push_str("#! can reach, and cannot make the observable surface differ.\n");
+    out.push_str("#!\n");
+    out.push_str("#! The `Random::Formatter` rows are the one accepted WIDENING: ruby keeps\n");
+    out.push_str("#! that module in core with `rand`/`random_number` and only ADDS the\n");
+    out.push_str("#! hex/uuid/base64 family when `random/formatter` is required. zeo gates\n");
+    out.push_str("#! whole classes rather than methods, so it carries all of them always --\n");
+    out.push_str("#! it answers where ruby raises NoMethodError, never the reverse.\n");
     out.push_str("#! tag\tclass\tkind\tname\treason\n");
     for d in rows {
         out.push_str(&format!(

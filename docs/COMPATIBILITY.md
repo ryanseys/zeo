@@ -557,6 +557,34 @@ cannot read another's execution state:
   the rule `TracePoint.new` already follows for the events zeo cannot raise:
   refuse loudly rather than accept a handler that never runs.
 
+### `Random::Formatter` carries its whole surface from the start
+
+ruby 4.0 keeps `Random::Formatter` in core with `#rand` and `#random_number`,
+and `require "random/formatter"` REOPENS it to add
+`hex`/`uuid`/`uuid_v4`/`base64`/`urlsafe_base64`/`random_bytes`/`alphanumeric`/
+`choose`/`gen_random`. zeo gates whole classes rather than individual methods,
+so it carries all of them unconditionally and the require is ceremony. A
+program that calls `Random.new.hex` WITHOUT the require works here and raises
+`NoMethodError` in ruby — the same shape of divergence `require "time"` and
+`require "io/console"` already have. Recorded as nine `zeo-only` rows in
+`conformance/builtin-arity-divergences.tsv`.
+
+### `Ractor`
+
+zeo runs no ractors. The six error classes exist so a `rescue
+Ractor::ClosedError` in portable code resolves its constant, with CRuby's
+exact ancestry (`ClosedError < StopIteration`, the rest under `Ractor::Error <
+RuntimeError`); nothing raises them, and `Ractor::RemoteError#ractor` answers
+nil. `Ractor`'s own 23 methods stay absent — see `docs/METHOD_COVERAGE.md`.
+
+### `GC::Profiler`
+
+The switch is real — `enable`/`disable` are remembered and `enabled?` reads
+them back — and the readouts are honestly empty: `total_time` is `0.0`,
+`result` is `""`, `raw_data` is nil, `report` prints nothing. There is no
+tracing collector here to time, so no run has ever been recorded, which is
+also what CRuby answers before its first collection.
+
 ### `Process::Sys.setresuid` / `.setresgid`
 
 Both are the not-implemented stub everywhere: they take any arguments,

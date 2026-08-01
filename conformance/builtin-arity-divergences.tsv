@@ -10,6 +10,12 @@
 #! so a public `zeo-only` row means one landed on the wrong class or was
 #! invented -- check before accepting it. A PRIVATE one is a seam nothing
 #! can reach, and cannot make the observable surface differ.
+#!
+#! The `Random::Formatter` rows are the one accepted WIDENING: ruby keeps
+#! that module in core with `rand`/`random_number` and only ADDS the
+#! hex/uuid/base64 family when `random/formatter` is required. zeo gates
+#! whole classes rather than methods, so it carries all of them always --
+#! it answers where ruby raises NoMethodError, never the reverse.
 #! tag	class	kind	name	reason
 zeo-only	Prism	s	native_parse_success?	private native_parse_success?, a backend seam CRuby has no name for
 zeo-only	Prism	s	serialize_lex	private serialize_lex, a backend seam CRuby has no name for
@@ -17,3 +23,12 @@ zeo-only	Prism	s	serialize_parse	private serialize_parse, a backend seam CRuby h
 zeo-only	Prism	s	serialize_parse_comments	private serialize_parse_comments, a backend seam CRuby has no name for
 zeo-only	Prism	s	serialize_parse_lex	private serialize_parse_lex, a backend seam CRuby has no name for
 zeo-only	Prism	s	version	private version, a backend seam CRuby has no name for
+zeo-only	Random::Formatter	i	alphanumeric	no alphanumeric in CRuby's chain
+zeo-only	Random::Formatter	i	base64	no base64 in CRuby's chain
+zeo-only	Random::Formatter	i	choose	no choose in CRuby's chain
+zeo-only	Random::Formatter	i	gen_random	no gen_random in CRuby's chain
+zeo-only	Random::Formatter	i	hex	no hex in CRuby's chain
+zeo-only	Random::Formatter	i	random_bytes	no random_bytes in CRuby's chain
+zeo-only	Random::Formatter	i	urlsafe_base64	no urlsafe_base64 in CRuby's chain
+zeo-only	Random::Formatter	i	uuid	no uuid in CRuby's chain
+zeo-only	Random::Formatter	i	uuid_v4	no uuid_v4 in CRuby's chain

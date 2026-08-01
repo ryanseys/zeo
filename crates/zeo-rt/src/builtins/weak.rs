@@ -360,6 +360,183 @@ fn wr_respond_to_missing(
     )))
 }
 
+/// `ObjectSpace::WeakKeyMap` -- weak on the KEY side ONLY, so a value may
+/// safely reference its own key without pinning it. Its other difference from
+/// `WeakMap` is that lookup compares by `==`, not by identity: a key equal to
+/// the one stored finds the entry, and `#getkey` hands back the one stored.
+pub struct WeakKeyMap {
+    class_id: ClassId,
+    frozen: AtomicBool,
+    entries: Mutex<Vec<(WeakTarget, RubyValue)>>,
+}
+
+impl WeakKeyMap {
+    fn new(class_id: ClassId) -> Arc<WeakKeyMap> {
+        Arc::new(WeakKeyMap {
+            class_id,
+            frozen: AtomicBool::new(false),
+            entries: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The entries whose key still lives, each as `(stored key, value)`.
+    fn live(&self) -> Vec<(RubyValue, RubyValue)> {
+        self.entries
+            .lock()
+            .iter()
+            .filter_map(|(k, v)| Some((k.upgrade()?, v.clone())))
+            .collect()
+    }
+
+    fn find(&self, key: &RubyValue) -> Option<(RubyValue, RubyValue)> {
+        self.live().into_iter().find(|(k, _)| k.rb_eq(key))
+    }
+
+    fn set(&self, key: &RubyValue, val: &RubyValue) {
+        let mut es = self.entries.lock();
+        es.retain(|(k, _)| match k.upgrade() {
+            Some(kv) => !kv.rb_eq(key),
+            None => false,
+        });
+        es.push((WeakTarget::downgrade(key), val.clone()));
+    }
+
+    fn delete(&self, key: &RubyValue) -> Option<RubyValue> {
+        let mut es = self.entries.lock();
+        let idx = es.iter().position(|(k, _)| match k.upgrade() {
+            Some(kv) => kv.rb_eq(key),
+            None => false,
+        })?;
+        Some(es.remove(idx).1)
+    }
+}
+
+impl RubyObject for WeakKeyMap {
+    fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+    fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Acquire)
+    }
+    fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Release);
+    }
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        self.entries.lock().iter().map(|(_, v)| v.clone()).collect()
+    }
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
+        let d = WeakKeyMap::new(self.class_id);
+        *d.entries.lock() = self
+            .live()
+            .iter()
+            .map(|(k, v)| (WeakTarget::downgrade(k), v.clone()))
+            .collect();
+        if copy_frozen && self.is_frozen() {
+            d.set_frozen();
+        }
+        d
+    }
+}
+
+fn as_weak_key_map(recv: &RubyValue) -> Result<&WeakKeyMap, Signal> {
+    let RubyValue::Object(o) = recv else {
+        return Err(type_error!("not an ObjectSpace::WeakKeyMap"));
+    };
+    o.as_any()
+        .downcast_ref::<WeakKeyMap>()
+        .ok_or_else(|| type_error!("not an ObjectSpace::WeakKeyMap"))
+}
+
+/// `ObjectSpace::WeakKeyMap.new` -- the registered constructor.
+fn weak_key_map_construct(
+    class: ClassId,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::check_arity(args.len(), 0, Some(0))?;
+    Ok(RubyValue::Object(WeakKeyMap::new(class)))
+}
+
+// The DSL emits one method table per block, so this third class in the
+// file lives in its own module too.
+mod weak_key_map_rows {
+    use super::*;
+
+    ruby_class! {
+        WeakKeyMap = zeo_abi::WEAK_KEY_MAP_CLASS < zeo_abi::OBJECT_CLASS;
+
+        def "[]"(recv, key) {
+            Ok(as_weak_key_map(recv)?.find(key).map(|(_, v)| v).unwrap_or(RubyValue::Nil))
+        }
+        // An immediate cannot be collected, so a map keyed on one would never
+        // shed the entry -- CRuby refuses the key rather than leak it. Note
+        // there is NO frozen check: CRuby lets a frozen WeakKeyMap be written.
+        def "[]="(recv, key, value) {
+            if !collectable(key) {
+                return Err(arg_error!("WeakKeyMap keys must be garbage collectable"));
+            }
+            as_weak_key_map(recv)?.set(key, value);
+            Ok(value.clone())
+        }
+        def "key?"(recv, key) {
+            Ok(RubyValue::Bool(as_weak_key_map(recv)?.find(key).is_some()))
+        }
+        // The key AS STORED, which is the point: an equal key finds the entry,
+        // and this hands back the object the map is actually holding.
+        def "getkey"(recv, key) {
+            Ok(as_weak_key_map(recv)?.find(key).map(|(k, _)| k).unwrap_or(RubyValue::Nil))
+        }
+        // `delete(key)` answers the removed value; a miss answers the block's
+        // value if one was given, else nil.
+        def "delete"(recv, key, &block) {
+            if let Some(v) = as_weak_key_map(recv)?.delete(key) {
+                return Ok(v);
+            }
+            match block {
+                Some(RubyValue::Proc(p)) => p.call(std::slice::from_ref(key)),
+                _ => Ok(RubyValue::Nil),
+            }
+        }
+        def "clear"(recv) {
+            as_weak_key_map(recv)?.entries.lock().clear();
+            Ok(recv.clone())
+        }
+        // CRuby prints the live entry COUNT here, unlike `WeakMap`'s inspect.
+        def "inspect"(recv) {
+            let map = as_weak_key_map(recv)?;
+            let RubyValue::Object(o) = recv else {
+                return Err(type_error!("not an ObjectSpace::WeakKeyMap"));
+            };
+            let addr = Arc::as_ptr(o) as *const () as usize;
+            Ok(RubyValue::Str(string_new(format!(
+                "#<ObjectSpace::WeakKeyMap:0x{addr:016x} size={}>",
+                map.live().len()
+            ))))
+        }
+    }
+}
+
+/// Whether a value can be collected at all. An immediate (nil, true/false,
+/// an Integer of either width, a Float, a Symbol) cannot, so it can never be
+/// a `WeakKeyMap` key.
+fn collectable(v: &RubyValue) -> bool {
+    !matches!(
+        v,
+        RubyValue::Nil
+            | RubyValue::Bool(_)
+            | RubyValue::Int(_)
+            | RubyValue::BigInt(_)
+            | RubyValue::Float(_)
+            | RubyValue::Symbol(_)
+    )
+}
+
 /// `ObjectSpace::WeakMap.new` -- the registered constructor.
 fn weakmap_construct(
     class: ClassId,
@@ -484,6 +661,15 @@ pub fn register_weak(registry: &mut ClassRegistry) {
         false,
         wm_ancestors,
         Some(weakmap_construct as crate::dispatch::ConstructorFn),
+    );
+
+    let wkm_ancestors = zeo_abi::declared_ancestors(zeo_abi::WEAK_KEY_MAP_CLASS);
+    registry.register(
+        zeo_abi::WEAK_KEY_MAP_CLASS,
+        "ObjectSpace::WeakKeyMap",
+        false,
+        wkm_ancestors,
+        Some(weak_key_map_construct as crate::dispatch::ConstructorFn),
     );
 
     let wr_ancestors = zeo_abi::declared_ancestors(WEAKREF_CLASS);

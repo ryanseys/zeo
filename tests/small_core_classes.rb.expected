@@ -1,0 +1,75 @@
+Profiler singleton: [:clear, :disable, :enable, :enabled?, :raw_data, :report, :result, :total_time]
+Profiler enabled?: false
+Profiler total_time: 0.0
+Profiler result: ""
+Profiler raw_data: nil
+Profiler clear: nil
+Profiler enable: nil
+Profiler enabled? after: true
+Profiler disable: nil
+Profiler report: nil
+Backtrace.limit: -1
+Backtrace singleton: [:limit]
+Backtrace constants: [:Location]
+Location own: [:absolute_path, :base_label, :inspect, :label, :lineno, :path, :to_s]
+caller_locations class: Thread::Backtrace::Location
+WKM own: [:[], :[]=, :clear, :delete, :getkey, :inspect, :key?]
+WKM arities: [1, 2, 0, 1, 1, 0, 1]
+WKM set: 1
+WKM get eq: 1
+WKM getkey: true
+WKM key?: true
+WKM getkey missing: nil
+WKM inspect: "#<ObjectSpace::WeakKeyMap:0xADDR size=1>"
+WKM int key: ArgumentError: WeakKeyMap keys must be garbage collectable
+WKM sym key: ArgumentError: WeakKeyMap keys must be garbage collectable
+WKM nil key: ArgumentError: WeakKeyMap keys must be garbage collectable
+WKM float key: ArgumentError: WeakKeyMap keys must be garbage collectable
+WKM bignum key: ArgumentError: WeakKeyMap keys must be garbage collectable
+WKM array key: 2
+WKM delete: 1
+WKM delete missing: nil
+WKM delete block: [:miss, "zz"]
+WKM clear: ObjectSpace::WeakKeyMap
+WKM after clear: nil
+WKM new arity: ArgumentError: wrong number of arguments (given 1, expected 0)
+WKM frozen write: 1
+Random.superclass: Random::Base
+Random ancestors: NoMethodError: undefined method 'firsshow' for an instance of Array
+Random own: [:==]
+Random::Base own: [:bytes, :rand, :seed]
+Random::Formatter own has rand: true
+rand owner: Random::Base
+random_number owner: Random::Formatter
+Random.new(42).rand class: Float
+Random.new(42).seed: 42
+Random.new(42).bytes: 4
+Random.new(42).random_number(10) class: Integer
+Ractor::Error ancestry: ["Ractor::Error", "RuntimeError", "StandardError", "Exception"]
+Ractor::ClosedError ancestry: ["Ractor::ClosedError", "StopIteration", "IndexError", "StandardError", "Exception"]
+Ractor::IsolationError ancestry: ["Ractor::IsolationError", "Ractor::Error", "RuntimeError", "StandardError", "Exception"]
+Ractor::MovedError ancestry: ["Ractor::MovedError", "Ractor::Error", "RuntimeError", "StandardError", "Exception"]
+Ractor::RemoteError ancestry: ["Ractor::RemoteError", "Ractor::Error", "RuntimeError", "StandardError", "Exception"]
+Ractor::UnsafeError ancestry: ["Ractor::UnsafeError", "Ractor::Error", "RuntimeError", "StandardError", "Exception"]
+rescue Ractor::ClosedError: [Ractor::ClosedError, "x"]
+Ractor::Error is StandardError: true
+Ractor constants: [:ClosedError, :Error, :IsolationError, :MovedError, :RemoteError, :UnsafeError]
+Generator to_a: [1, 2]
+Generator map: [3, 6]
+Generator ancestors: [Enumerator::Generator, Enumerable, Object]
+Generator own: [:each]
+Generator each arity: -1
+Generator inspect: "#<Enumerator::Generator:0xADDR>"
+Generator no block: LocalJumpError: no block given
+Producer own: [:each]
+Producer each arity: 0
+Enumerator.new inspect: "#<Enumerator: #<Enumerator::Generator:0xADDR>:each>"
+Enumerator.new to_a: [1, 2]
+Enumerator.new next: [1, 2]
+Enumerator.new size: 3
+Enumerator.new size proc: 7
+produce class: Enumerator
+produce first: [1, 2, 3]
+produce size: Infinity
+produce inspect: "#<Enumerator: #<Enumerator::Producer:0xADDR>:each>"
+Enumerator constants: [:ArithmeticSequence, :Chain, :Generator, :Lazy, :Producer, :Product, :Yielder]

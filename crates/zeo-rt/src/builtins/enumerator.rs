@@ -39,7 +39,7 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arg_error, arg_int, type_error};
+use crate::builtins::{arg_error, arg_int, need_block, type_error};
 use crate::collections::array_new;
 use crate::coroutine::CoroutineResult;
 use crate::dispatch::{raise_stop_iteration, send_value};
@@ -65,12 +65,15 @@ enum EnumSource {
         meth: String,
         args: Vec<RubyValue>,
     },
-    Generator {
-        block: RProc,
-    },
-    /// `Enumerator.produce(initial) { |prev| ... }` -- an infinite generator.
-    /// The first yielded value is `initial` (or, absent, `block.call(nil)`);
-    /// each subsequent value is `block` applied to the previous one.
+    /// `Enumerator::Generator` -- the object `Enumerator.new { |y| ... }`
+    /// holds as its source, and which `Enumerator::Generator.new` builds
+    /// directly. Not an Enumerator: it answers `#each` and what `Enumerable`
+    /// derives from it, and nothing else.
+    Generator { block: RProc },
+    /// `Enumerator::Producer` -- what `Enumerator.produce(initial) { |prev| }`
+    /// holds. The first yielded value is `initial` (or, absent,
+    /// `block.call(nil)`); each subsequent one is `block` applied to the
+    /// previous, forever.
     Produce {
         initial: Option<RubyValue>,
         block: RProc,
@@ -78,14 +81,10 @@ enum EnumSource {
     /// `Enumerator#+` / `Enumerable#chain` -- the sources iterated back to
     /// back. Carried as an ordinary Enumerator; `class_of` reports
     /// `Enumerator::Chain` off this variant.
-    Chain {
-        sources: Vec<RubyValue>,
-    },
+    Chain { sources: Vec<RubyValue> },
     /// `Enumerator.product(*enums)` -- the cartesian product, yielded as one
     /// Array per combination, rightmost source varying fastest.
-    Product {
-        sources: Vec<RubyValue>,
-    },
+    Product { sources: Vec<RubyValue> },
     /// `Enumerator::ArithmeticSequence` -- a blockless `Range#step`,
     /// `Range#%` or `Numeric#step` over a numeric receiver. It is an
     /// Enumerator that also KNOWS its quadruple, which is what lets `#size`
@@ -217,12 +216,7 @@ pub(crate) fn generator_of(values: Vec<RubyValue>) -> RubyValue {
         }
         Ok(RubyValue::Nil)
     });
-    RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::Generator { block: generator },
-        size_hint: None,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    }))
+    enumerator_over(generator_object(generator), None)
 }
 
 /// `Enumerator::Chain` over `sources`, iterated back to back. The public
@@ -299,8 +293,38 @@ pub fn enumerator_class_id(e: &REnumerator) -> crate::ClassId {
         EnumSource::Chain { .. } => zeo_abi::ENUMERATOR_CHAIN_CLASS,
         EnumSource::Product { .. } => zeo_abi::ENUMERATOR_PRODUCT_CLASS,
         EnumSource::ArithSeq { .. } => zeo_abi::ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS,
+        // A generator/producer is the enumerator's SOURCE, not an enumerator
+        // -- `Enumerator.new { }` holds one and delegates `each` to it.
+        EnumSource::Generator { .. } => zeo_abi::ENUMERATOR_GENERATOR_CLASS,
+        EnumSource::Produce { .. } => zeo_abi::ENUMERATOR_PRODUCER_CLASS,
         _ => zeo_abi::ENUMERATOR_CLASS,
     }
+}
+
+/// Wrap a generator/producer as the SOURCE of an ordinary Enumerator, which
+/// is the pairing CRuby builds: `Enumerator.new { }` answers an Enumerator
+/// whose `each` re-invokes the generator's.
+fn enumerator_over(source: RubyValue, size_hint: Option<RubyValue>) -> RubyValue {
+    RubyValue::Enumerator(Arc::new(EnumeratorData {
+        source: EnumSource::Method {
+            recv: source,
+            meth: "each".to_string(),
+            args: Vec::new(),
+        },
+        size_hint,
+        state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
+    }))
+}
+
+/// A bare `Enumerator::Generator` over `block`.
+fn generator_object(block: RProc) -> RubyValue {
+    RubyValue::Enumerator(Arc::new(EnumeratorData {
+        source: EnumSource::Generator { block },
+        size_hint: None,
+        state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
+    }))
 }
 
 /// `Enumerator.new([size]) { |y| ... }` -- reached through the dynamic
@@ -334,12 +358,7 @@ pub(crate) fn enumerator_new(
             ));
         }
     };
-    Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::Generator { block: generator },
-        size_hint,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    })))
+    Ok(enumerator_over(generator_object(generator), size_hint))
 }
 
 fn recv_enum(recv: &RubyValue) -> &REnumerator {
@@ -602,13 +621,19 @@ fn list(vals: &[RubyValue]) -> String {
 
 pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
     match &e.source {
-        // CRuby prints the generator with its address (the conformance test
-        // normalizes it to `0xADDR`), so this one carries one.
+        // A generator/producer is an object in its own right, and CRuby
+        // prints it with its address (the conformance test normalizes that to
+        // `0xADDR`). The enumerator WRAPPING one renders through the `Method`
+        // arm below, which is where `#<Enumerator: #<...Generator:0x..>:each>`
+        // comes from.
         EnumSource::Generator { .. } => format!(
-            "#<Enumerator: #<Enumerator::Generator:0x{:016x}>:each>",
+            "#<Enumerator::Generator:0x{:016x}>",
             e as *const EnumeratorData as usize
         ),
-        EnumSource::Produce { .. } => "#<Enumerator: #<Enumerator::Producer>:each>".to_string(),
+        EnumSource::Produce { .. } => format!(
+            "#<Enumerator::Producer:0x{:016x}>",
+            e as *const EnumeratorData as usize
+        ),
         // A chain/product prints its sources verbatim (CRuby renders the
         // held array, so `[1,2].chain([3])` shows the arrays themselves
         // while `a.each + b.each` shows the two enumerators).
@@ -696,14 +721,17 @@ fn render_kwargs(h: &crate::RHash) -> Option<String> {
 /// nil for everything else (a few shapes CRuby computes -- e.g.
 /// `each_slice` over an infinite range -- return nil here, documented).
 fn enum_size(e: &EnumeratorData) -> RubyValue {
+    // `Enumerator.new(size) { }`'s stored hint wins over anything derived
+    // from the source. A size CALLABLE is invoked lazily here, which is when
+    // CRuby calls it too.
+    if let Some(hint) = &e.size_hint {
+        return match hint {
+            RubyValue::Proc(p) => p.call(&[]).unwrap_or(RubyValue::Nil),
+            v => v.clone(),
+        };
+    }
     match &e.source {
-        // A stored size CALLABLE is invoked lazily here (CRuby calls it from
-        // `#size`); a plain Integer/Float hint answers directly; none -> nil.
-        EnumSource::Generator { .. } => match &e.size_hint {
-            Some(RubyValue::Proc(p)) => p.call(&[]).unwrap_or(RubyValue::Nil),
-            Some(v) => v.clone(),
-            None => RubyValue::Nil,
-        },
+        EnumSource::Generator { .. } => RubyValue::Nil,
         // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
         EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
         EnumSource::Method { recv, meth, args } => match meth.as_str() {
@@ -859,12 +887,13 @@ ruby_class! {
         let Some(RubyValue::Proc(generator)) = block else {
             return Err(arg_error!("tried to create Producer without a block"));
         };
-        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
+        let producer = RubyValue::Enumerator(Arc::new(EnumeratorData {
             source: EnumSource::Produce { initial: arg.cloned(), block: generator },
             size_hint: None,
             state: Mutex::new(ExternState::default()),
             frozen: std::sync::atomic::AtomicBool::new(false),
-        })))
+        }));
+        Ok(enumerator_over(producer, None))
     }
 
     // `Enumerator.product(*enums)` -- every combination as an Array, rightmost
@@ -988,6 +1017,43 @@ ruby_class! {
 
     def "each_with_object"(recv, obj, &block) {
         drive_with_object(recv, obj, block, "each_with_object")
+    }
+
+    // `Enumerator::Generator` -- what `Enumerator.new { |y| ... }` holds.
+    // Constructible in its own right, and `Enumerable` is all it inherits:
+    // it answers `#each` and what `Enumerable` derives from that, which is
+    // why `Enumerator::Generator.new { |y| y << 1 }.to_a` works but `#next`
+    // does not.
+    class Generator = zeo_abi::ENUMERATOR_GENERATOR_CLASS < zeo_abi::OBJECT_CLASS {
+        include zeo_abi::ENUMERABLE_CLASS;
+
+        // Not the bare-`yield` message: CRuby raises this one from the
+        // constructor itself, without the `(yield)` suffix.
+        def self."new"(_recv, *_args, &block) {
+            let Some(RubyValue::Proc(p)) = block else {
+                return Err(crate::dispatch::raise_error(
+                    "LocalJumpError",
+                    "no block given".to_string(),
+                ));
+            };
+            Ok(generator_object(p))
+        }
+        // Answers the generator block's OWN return value, not self -- CRuby
+        // hands back what `rb_proc_call` gave it.
+        def "each" cfunc (recv, *_args, &block) {
+            let consumer = need_block!(block);
+            internal_each(&recv_enum(recv).source, RubyValue::Proc(consumer))
+        }
+    }
+
+    // `Enumerator::Producer` -- what `Enumerator.produce` holds. Endless by
+    // construction, and NOT an Enumerable: only the enumerator wrapping it
+    // can be bounded (`first(n)`, `take(n)`).
+    class Producer = zeo_abi::ENUMERATOR_PRODUCER_CLASS < zeo_abi::OBJECT_CLASS {
+        def "each"(recv, &block) {
+            let consumer = need_block!(block);
+            internal_each(&recv_enum(recv).source, RubyValue::Proc(consumer))
+        }
     }
 
     // `Enumerator::ArithmeticSequence` -- a blockless `Range#step`,

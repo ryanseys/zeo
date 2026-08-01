@@ -638,6 +638,16 @@ fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<
     }
 }
 
+/// `Ractor::RemoteError#ractor` -- see the install site for why this is
+/// always nil here.
+fn exc_ractor(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail_opt("ractor").unwrap_or(RubyValue::Nil))
+}
+
 /// Record a failed conversion's encoding pair and offending input on the
 /// exception it raises, so `Encoding::UndefinedConversionError#error_char` and
 /// `InvalidByteSequenceError#error_bytes` can read them back. Called from
@@ -854,6 +864,7 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
         (|| NO_METHOD_ERROR_CLASS, &["args", "private_call?"]),
         (|| KEY_ERROR_CLASS, &["key", "receiver"]),
         (|| FROZEN_ERROR_CLASS, &["receiver"]),
+        (|| zeo_abi::RACTOR_REMOTE_ERROR_CLASS, &["ractor"]),
         (|| LOAD_ERROR_CLASS, &["path"]),
         (|| zeo_abi::SYNTAX_ERROR_CLASS, &["path"]),
         (|| SYSTEM_CALL_ERROR_CLASS, &["errno"]),
@@ -1634,6 +1645,13 @@ pub fn register_exception_subclass(
     }
     if is_frozen_error {
         registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
+    }
+    // `Ractor::RemoteError#ractor` -- the ractor whose failure was relayed.
+    // zeo runs no ractors, so this exception is never raised here and the
+    // slot is never filled; the reader answers nil, exactly as CRuby's does
+    // for a hand-constructed one.
+    if id == zeo_abi::RACTOR_REMOTE_ERROR_CLASS {
+        registry.define_method_own(id, Symbol::intern("ractor"), exc_ractor);
     }
     if is_load_error {
         registry.define_method_own(id, Symbol::intern("path"), exc_path);
