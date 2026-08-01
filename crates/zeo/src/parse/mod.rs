@@ -132,31 +132,10 @@ class ZeroDivisionError < StandardError
 end
 class SystemCallError < StandardError
 end
+# The namespace only. Its classes come from `zeo_abi::ERRNO_CLASSES`, which
+# names one per errno THIS platform defines -- a set no fixed Ruby source can
+# spell.
 module Errno
-  class ENOENT < SystemCallError
-  end
-  class EACCES < SystemCallError
-  end
-  class EEXIST < SystemCallError
-  end
-  class ENOTDIR < SystemCallError
-  end
-  class EISDIR < SystemCallError
-  end
-  class ENOTEMPTY < SystemCallError
-  end
-  class EPIPE < SystemCallError
-  end
-  class EINVAL < SystemCallError
-  end
-  class EAGAIN < SystemCallError
-  end
-  class EBADF < SystemCallError
-  end
-  class ESPIPE < SystemCallError
-  end
-  class EXDEV < SystemCallError
-  end
 end
 # Object's default copy hook: a no-op -- the runtime clone/dup already
 # performed the shallow ivar copy before this user-overridable hook runs. A

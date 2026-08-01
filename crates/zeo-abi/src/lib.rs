@@ -18,6 +18,10 @@
 //! Zero dependencies, on purpose: keeping the runtime's heavy deps out of
 //! every compiler build -- a dependency-free leaf has no such cost.
 
+mod errno;
+
+pub use errno::{ERRNO_ALIASES, ERRNO_CLASSES, ErrnoClass};
+
 /// Identifies a Ruby class at runtime AND at compile time -- the compiler
 /// mirrors of this id are baked into generated code as literals, so the two
 /// sides genuinely share one numbering (this type), not two synced copies.
@@ -1876,7 +1880,15 @@ pub const NAME_ERROR_CLASS: ClassId = exc_id(16);
 pub const NO_METHOD_ERROR_CLASS: ClassId = exc_id(17);
 
 /// `UncaughtThrowError` -- exposes `#tag`/`#value` from an uncaught `throw`.
-pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(47);
+pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(35);
+
+/// `SystemCallError` -- the parent every [`ERRNO_CLASSES`] row gets, and the
+/// class an unmapped errno falls back to.
+pub const SYSTEM_CALL_ERROR_CLASS: ClassId = exc_id(31);
+
+/// The `Errno` namespace module, which owns every [`ERRNO_CLASSES`] name and
+/// every [`ERRNO_ALIASES`] constant.
+pub const ERRNO_MODULE: ClassId = exc_id(32);
 
 /// `LocalJumpError` -- exposes `#reason`/`#exit_value`.
 pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
@@ -1888,17 +1900,18 @@ pub const FROZEN_ERROR_CLASS: ClassId = exc_id(23);
 pub const LOAD_ERROR_CLASS: ClassId = exc_id(3);
 
 /// `SystemExit` -- carries an exit status via `#status`/`#success?`.
-pub const SYSTEM_EXIT_CLASS: ClassId = exc_id(48);
+pub const SYSTEM_EXIT_CLASS: ClassId = exc_id(36);
 
 /// `SignalException` -- resolves a signal name/number in `initialize` and
 /// exposes `#signo`/`#signm`.
-pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(49);
+pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(37);
 
 /// `Interrupt` (a `SignalException`) -- fixed to `SIGINT` (signo 2).
-pub const INTERRUPT_CLASS: ClassId = exc_id(50);
+pub const INTERRUPT_CLASS: ClassId = exc_id(38);
 
 /// One row of the built-in exception hierarchy -- the shared source of truth
 /// for the ids both sides bake in.
+#[derive(Clone, Copy)]
 pub struct ExceptionClass {
     pub id: ClassId,
     /// Fully-qualified Ruby name (`"ArgumentError"`, `"Encoding::CompatibilityError"`).
@@ -1912,20 +1925,29 @@ pub struct ExceptionClass {
 }
 
 /// The built-in exception hierarchy, in the exact order the compiler registers
-/// it (the [`BUILTIN_EXCEPTIONS_RB`](../zeo/parse) Ruby source, then the
-/// pinned `Math::DomainError`). Ids are contiguous from [`FIRST_EXCEPTION_ID`]
-/// (asserted below), so row `i` has id [`exc_id`]`(i)` -- both the `id` and
-/// every `superclass` edge are written that way, so appending a builtin (which
-/// bumps `FIRST_EXCEPTION_ID`) relocates the whole block automatically. This is
-/// what lets
-/// `zeo-rt`'s `register_exceptions` install these classes at ids the compiler
+/// it: the [`BUILTIN_EXCEPTIONS_RB`](../zeo/parse) Ruby source, the pinned tail
+/// that starts at `Math::DomainError`, the whole [`ERRNO_CLASSES`] block, and
+/// finally the readiness rows that subclass an `Errno` class. Ids are
+/// contiguous from [`FIRST_EXCEPTION_ID`] (asserted below), so row `i` has id
+/// [`exc_id`]`(i)` -- both the `id` and every `superclass` edge are written
+/// that way, so appending a builtin (which bumps [`FIRST_EXCEPTION_ID`])
+/// relocates the whole block automatically. This is what lets `zeo-rt`'s
+/// `register_exceptions` install these classes at ids the compiler
 /// independently assigns the same way -- `zeo` asserts the agreement at
 /// analyze time.
 ///
-/// Superclass edges may point earlier in the table only (the source defines a
-/// parent before its children); [`declared_ancestors`] linearizes them by
-/// walking up to `Object`.
-pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
+/// Superclass edges point earlier in the table, except for the last six rows,
+/// whose parents live in the `Errno` block ahead of them -- the block's length
+/// is a platform fact, so it cannot be spelled as a literal id and the rows
+/// that need it must follow it. Nothing reads the table in order:
+/// [`declared_ancestors`] resolves each edge by id and linearizes up to
+/// `Object`.
+pub const EXCEPTION_CLASSES: &[ExceptionClass] = &EXCEPTION_CLASS_ROWS;
+
+/// The rows written out by hand: every exception whose id does not depend on
+/// how many errnos the platform names. [`ERRNO_CLASSES`] follows this block,
+/// then [`WAIT_EXCEPTIONS`], which subclasses two of the `Errno` rows.
+const CORE_EXCEPTIONS: [ExceptionClass; 46] = [
     ExceptionClass {
         id: exc_id(0),
         name: "Exception",
@@ -2126,78 +2148,6 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     },
     ExceptionClass {
         id: exc_id(33),
-        name: "Errno::ENOENT",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(34),
-        name: "Errno::EACCES",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(35),
-        name: "Errno::EEXIST",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(36),
-        name: "Errno::ENOTDIR",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(37),
-        name: "Errno::EISDIR",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(38),
-        name: "Errno::ENOTEMPTY",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(39),
-        name: "Errno::EPIPE",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(40),
-        name: "Errno::EINVAL",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(41),
-        name: "Errno::EAGAIN",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(42),
-        name: "Errno::EBADF",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(43),
-        name: "Errno::ESPIPE",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(44),
-        name: "Errno::EXDEV",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(45),
         name: "Math::DomainError",
         superclass: Some(exc_id(4)),
         is_module: false,
@@ -2209,13 +2159,13 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     // rather than in `BUILTIN_EXCEPTIONS_RB` (id-ordering, not a semantic
     // difference).
     ExceptionClass {
-        id: exc_id(46),
+        id: exc_id(34),
         name: "SyntaxError",
         superclass: Some(exc_id(1)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(47),
+        id: exc_id(35),
         name: "UncaughtThrowError",
         superclass: Some(exc_id(5)),
         is_module: false,
@@ -2225,21 +2175,21 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     // them explicitly. `Interrupt < SignalException` mirrors CRuby's SIGINT
     // class. Pinned here (see `analyze::pin_builtin_exceptions_tail`).
     ExceptionClass {
-        id: exc_id(48),
+        id: exc_id(36),
         name: "SystemExit",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(49),
+        id: exc_id(37),
         name: "SignalException",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(50),
+        id: exc_id(38),
         name: "Interrupt",
-        superclass: Some(exc_id(49)),
+        superclass: Some(exc_id(37)),
         is_module: false,
     },
     // The remaining core `Exception`-tree classes CRuby defines (gem- and
@@ -2247,176 +2197,194 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     // `SystemStackError` descend from `Exception` directly (uncaught by a bare
     // `rescue`); the rest refine an existing `StandardError` branch.
     ExceptionClass {
-        id: exc_id(51),
+        id: exc_id(39),
         name: "NoMemoryError",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(52),
+        id: exc_id(40),
         name: "SecurityError",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(53),
+        id: exc_id(41),
         name: "SystemStackError",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(54),
+        id: exc_id(42),
         name: "NoMatchingPatternKeyError",
         superclass: Some(exc_id(24)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(55),
+        id: exc_id(43),
         name: "Regexp::TimeoutError",
         superclass: Some(exc_id(21)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(56),
+        id: exc_id(44),
         name: "IO::TimeoutError",
         superclass: Some(exc_id(11)),
-        is_module: false,
-    },
-    // `Errno::EDOM` (a Numeric domain error, e.g. `rand(1..)`), a SystemCallError.
-    ExceptionClass {
-        id: exc_id(57),
-        name: "Errno::EDOM",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    // `Errno::ESRCH`/`Errno::EPERM` -- `Process.kill`'s no-such-process and
-    // not-permitted failures, SystemCallErrors like their siblings.
-    ExceptionClass {
-        id: exc_id(58),
-        name: "Errno::ESRCH",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(59),
-        name: "Errno::EPERM",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    // `Errno::ECONNREFUSED` -- a TCP connect to a dead port, a
-    // SystemCallError like its siblings.
-    ExceptionClass {
-        id: exc_id(60),
-        name: "Errno::ECONNREFUSED",
-        superclass: Some(exc_id(31)),
         is_module: false,
     },
     // `WeakRef::RefError` -- raised by a `WeakRef` whose referent has been
     // collected. CRuby makes it a plain `StandardError` (exc_id(4)).
     ExceptionClass {
-        id: exc_id(61),
+        id: exc_id(45),
         name: "WeakRef::RefError",
         superclass: Some(exc_id(4)),
         is_module: false,
     },
-    // `Errno::ECHILD` -- `Process.wait`/`waitpid` with no child left to reap, a
-    // SystemCallError like its Errno siblings.
+];
+
+/// How many rows precede the `Errno` block.
+const CORE_EXCEPTION_COUNT: usize = CORE_EXCEPTIONS.len();
+
+/// The id of the `Errno` class called `name`. The block's position depends on
+/// the platform's errno set, so this is the only way to name one; it fails the
+/// build for a name no [`ERRNO_CLASSES`] row carries.
+pub const fn errno_class_id(name: &str) -> ClassId {
+    let mut i = 0;
+    while i < ERRNO_CLASSES.len() {
+        if const_str_eq(ERRNO_CLASSES[i].name, name) {
+            return exc_id((CORE_EXCEPTION_COUNT + i) as u32);
+        }
+        i += 1;
+    }
+    panic!("no such Errno class");
+}
+
+/// `str::eq` is not callable in a const fn, and this crate takes no
+/// dependencies to borrow one from.
+const fn const_str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// The errno `class` stands for, or `None` when it is not an `Errno` class at
+/// all. The block is contiguous, so this is a range check, not a search.
+pub fn errno_of_class(class: ClassId) -> Option<i32> {
+    let first = exc_id(CORE_EXCEPTION_COUNT as u32).0;
+    let offset = class.0.checked_sub(first)? as usize;
+    ERRNO_CLASSES.get(offset).map(|row| row.errno)
+}
+
+/// The `Errno` class and value for `errno`, or `None` when this platform names
+/// no class for it -- an errno CRuby would leave as a bare `SystemCallError`.
+pub fn errno_class(errno: i32) -> Option<(ClassId, &'static ErrnoClass)> {
+    // Zero is `Errno::NOERROR`, a class no failure ever carries: an `errno` of
+    // zero means the call SUCCEEDED, so a lookup for it is a caller bug rather
+    // than the "no such class" the `None` arm reports.
+    ERRNO_CLASSES
+        .iter()
+        .position(|row| row.errno == errno && errno != 0)
+        .map(|i| (exc_id((CORE_EXCEPTION_COUNT + i) as u32), &ERRNO_CLASSES[i]))
+}
+
+/// The id of the readiness row at `offset`, which follows the whole `Errno`
+/// block.
+const fn wait_id(offset: usize) -> ClassId {
+    exc_id((CORE_EXCEPTION_COUNT + ERRNO_CLASSES.len() + offset) as u32)
+}
+
+/// The non-blocking readiness rows, last because two of them subclass an
+/// `Errno` class. `IO::WaitReadable`/`WaitWritable` are marker MODULES, so a
+/// would-block errno can be rescued by protocol rather than by errno.
+const WAIT_EXCEPTIONS: [ExceptionClass; 6] = [
     ExceptionClass {
-        id: exc_id(62),
-        name: "Errno::ECHILD",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    // `Errno::ENOTTY` -- what every `io/console` method raises for a stream
-    // that isn't a terminal (`IO#raw`, `#echo?`, `#winsize`, ...).
-    ExceptionClass {
-        id: exc_id(63),
-        name: "Errno::ENOTTY",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    // The connect/read failures a network client distinguishes -- net/http
-    // names all four in its rescue clauses.
-    ExceptionClass {
-        id: exc_id(64),
-        name: "Errno::ETIMEDOUT",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(65),
-        name: "Errno::ECONNRESET",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(66),
-        name: "Errno::ECONNABORTED",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(67),
-        name: "Errno::EHOSTUNREACH",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    // A connect(2) still in flight, and the non-blocking readiness markers
-    // built on it. `IO::WaitReadable`/`WaitWritable` are MODULES mixed into
-    // the errno subclasses below, so `rescue IO::WaitReadable` catches a
-    // would-block by protocol rather than by errno.
-    ExceptionClass {
-        id: exc_id(68),
-        name: "Errno::EINPROGRESS",
-        superclass: Some(exc_id(31)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(69),
+        id: wait_id(0),
         name: "IO::WaitReadable",
         superclass: None,
         is_module: true,
     },
     ExceptionClass {
-        id: exc_id(70),
+        id: wait_id(1),
         name: "IO::WaitWritable",
         superclass: None,
         is_module: true,
     },
     ExceptionClass {
-        id: exc_id(71),
+        id: wait_id(2),
         name: "IO::EAGAINWaitReadable",
-        superclass: Some(exc_id(41)),
+        superclass: Some(errno_class_id("Errno::EAGAIN")),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(72),
+        id: wait_id(3),
         name: "IO::EAGAINWaitWritable",
-        superclass: Some(exc_id(41)),
+        superclass: Some(errno_class_id("Errno::EAGAIN")),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(73),
+        id: wait_id(4),
         name: "IO::EINPROGRESSWaitReadable",
-        superclass: Some(exc_id(68)),
+        superclass: Some(errno_class_id("Errno::EINPROGRESS")),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(74),
+        id: wait_id(5),
         name: "IO::EINPROGRESSWaitWritable",
-        superclass: Some(exc_id(68)),
+        superclass: Some(errno_class_id("Errno::EINPROGRESS")),
         is_module: false,
     },
 ];
+
+const EXCEPTION_CLASS_COUNT: usize =
+    CORE_EXCEPTION_COUNT + ERRNO_CLASSES.len() + WAIT_EXCEPTIONS.len();
+
+const EXCEPTION_CLASS_ROWS: [ExceptionClass; EXCEPTION_CLASS_COUNT] = build_exception_classes();
+
+/// Splice the three blocks into one contiguously-numbered table. Every `Errno`
+/// class is a bare `SystemCallError` subclass, so the middle block needs no
+/// per-row source of its own -- [`ERRNO_CLASSES`] carries all of it.
+const fn build_exception_classes() -> [ExceptionClass; EXCEPTION_CLASS_COUNT] {
+    let mut out = [CORE_EXCEPTIONS[0]; EXCEPTION_CLASS_COUNT];
+    let mut i = 0;
+    while i < CORE_EXCEPTION_COUNT {
+        out[i] = CORE_EXCEPTIONS[i];
+        i += 1;
+    }
+    let mut j = 0;
+    while j < ERRNO_CLASSES.len() {
+        out[CORE_EXCEPTION_COUNT + j] = ExceptionClass {
+            id: exc_id((CORE_EXCEPTION_COUNT + j) as u32),
+            name: ERRNO_CLASSES[j].name,
+            superclass: Some(SYSTEM_CALL_ERROR_CLASS),
+            is_module: false,
+        };
+        j += 1;
+    }
+    let mut k = 0;
+    while k < WAIT_EXCEPTIONS.len() {
+        out[CORE_EXCEPTION_COUNT + ERRNO_CLASSES.len() + k] = WAIT_EXCEPTIONS[k];
+        k += 1;
+    }
+    out
+}
 
 /// The exception rows that INCLUDE a module. Only the non-blocking readiness
 /// classes do, so a side table beats an `includes` field every other row would
 /// have to spell as empty.
 const EXCEPTION_INCLUDES: &[(ClassId, &[ClassId])] = &[
-    (exc_id(71), &[exc_id(69)]),
-    (exc_id(72), &[exc_id(70)]),
-    (exc_id(73), &[exc_id(69)]),
-    (exc_id(74), &[exc_id(70)]),
+    (wait_id(2), &[wait_id(0)]),
+    (wait_id(3), &[wait_id(1)]),
+    (wait_id(4), &[wait_id(0)]),
+    (wait_id(5), &[wait_id(1)]),
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

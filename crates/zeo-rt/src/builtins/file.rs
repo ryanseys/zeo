@@ -20,27 +20,21 @@ use zeo_macros::ruby_class;
 /// opens, `dir_initialize` for Dir) -- it is part of the observable message,
 /// so callers pass the one their operation corresponds to.
 pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
-    use std::io::ErrorKind::*;
-    let (class, desc) = match e.kind() {
-        NotFound => ("Errno::ENOENT", "No such file or directory"),
-        PermissionDenied => ("Errno::EACCES", "Permission denied"),
-        AlreadyExists => ("Errno::EEXIST", "File exists"),
-        // `raw_os_error` catches the kinds `io::ErrorKind` doesn't name
-        // (ENOTDIR/ENOTEMPTY have no stable ErrorKind on every platform).
-        _ => match e.raw_os_error() {
-            Some(libc::ENOTDIR) => ("Errno::ENOTDIR", "Not a directory"),
-            Some(libc::EISDIR) => ("Errno::EISDIR", "Is a directory"),
-            Some(libc::ENOTEMPTY) => ("Errno::ENOTEMPTY", "Directory not empty"),
-            Some(libc::EXDEV) => ("Errno::EXDEV", "Invalid cross-device link"),
-            Some(libc::EINVAL) => ("Errno::EINVAL", "Invalid argument"),
-            Some(libc::EBADF) => ("Errno::EBADF", "Bad file descriptor"),
-            Some(libc::EAGAIN) => ("Errno::EAGAIN", "Resource temporarily unavailable"),
-            Some(libc::ESPIPE) => ("Errno::ESPIPE", "Illegal seek"),
-            Some(libc::EPIPE) => ("Errno::EPIPE", "Broken pipe"),
-            // An errno with no dedicated class: SystemCallError is its own
-            // parent and CRuby's own fallback for unmapped codes.
-            _ => ("SystemCallError", "Unknown error"),
-        },
+    // `raw_os_error` is the whole answer wherever the OS gave one, and
+    // `zeo_abi::ERRNO_CLASSES` names a class for every errno this platform
+    // defines. The `ErrorKind` arms below only have to cover an error Rust
+    // synthesised itself, which carries no OS code.
+    let errno = e.raw_os_error().or_else(|| match e.kind() {
+        std::io::ErrorKind::NotFound => Some(libc::ENOENT),
+        std::io::ErrorKind::PermissionDenied => Some(libc::EACCES),
+        std::io::ErrorKind::AlreadyExists => Some(libc::EEXIST),
+        _ => None,
+    });
+    let (class, desc) = match errno.and_then(zeo_abi::errno_class) {
+        Some((_, row)) => (row.name, crate::builtins::exception::strerror(row.errno)),
+        // An errno with no dedicated class: SystemCallError is its own
+        // parent and CRuby's own fallback for unmapped codes.
+        None => ("SystemCallError", "Unknown error".to_string()),
     };
     raise_error(class, format!("{desc} @ {syscall} - {path}"))
 }

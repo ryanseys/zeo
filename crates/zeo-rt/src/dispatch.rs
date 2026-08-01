@@ -943,6 +943,12 @@ impl ClassRegistry {
     /// `SomeError.new(msg)` uses. An unknown name is a zeo-rt bug (a `raise_error`
     /// site naming a class no exception defines). `Exception#initialize` only
     /// assigns `@message` and cannot signal, so a `Signal` here is a bug.
+    ///
+    /// `msg` is the WHOLE message, which matters for the `SystemCallError`
+    /// family: their `initialize` composes one out of `strerror` plus its
+    /// argument, and a raise site here has already composed the line CRuby
+    /// prints ("No such file or directory @ rb_sysopen - /nope"). CRuby splits
+    /// the same way -- `rb_syserr_fail_str` never runs `syserr_initialize`.
     pub fn construct_exception(&self, class_name: &str, msg: String) -> RubyValue {
         let id = self.by_name.get(class_name).copied();
         let ctor = id
@@ -950,8 +956,16 @@ impl ClassRegistry {
             .and_then(|entry| entry.constructor);
         match (id, ctor) {
             (Some(id), Some(ctor)) => {
-                ctor(ClassId(id), &[RubyValue::Str(crate::string_new(msg))], None)
-                    .expect("Exception#initialize can't signal")
+                let exc = ctor(
+                    ClassId(id),
+                    &[RubyValue::Str(crate::string_new(msg.clone()))],
+                    None,
+                )
+                .expect("Exception#initialize can't signal");
+                if class_name == "SystemCallError" || class_name.starts_with("Errno::") {
+                    crate::builtins::exception::set_verbatim_message(&exc, msg);
+                }
+                exc
             }
             // No such class registered: a `raise_error` site naming a class no
             // exception defines (a zeo-rt bug), or a partial test registry.

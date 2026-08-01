@@ -21,10 +21,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use zeo_abi::{
-    ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, FROZEN_ERROR_CLASS, INTERRUPT_CLASS,
-    KEY_ERROR_CLASS, LOAD_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS,
-    NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS, SYSTEM_EXIT_CLASS,
-    UNCAUGHT_THROW_ERROR_CLASS, declared_ancestors,
+    ClassId, ERRNO_ALIASES, ERRNO_CLASSES, ERRNO_MODULE, EXCEPTION_CLASS, EXCEPTION_CLASSES,
+    FROZEN_ERROR_CLASS, INTERRUPT_CLASS, KEY_ERROR_CLASS, LOAD_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS,
+    NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS,
+    SYSTEM_CALL_ERROR_CLASS, SYSTEM_EXIT_CLASS, UNCAUGHT_THROW_ERROR_CLASS, declared_ancestors,
+    errno_class,
 };
 
 use crate::builtins::{arg_error, type_error};
@@ -859,6 +860,119 @@ fn exc_success(
     )))
 }
 
+/// `SystemCallError#initialize(msg = nil, errno = nil)`, which composes the
+/// message rather than storing it: `strerror(errno)`, then `" - #{msg}"` when a
+/// message came in. The errno is the explicit argument, else the one the class
+/// itself names (`Errno::ENOENT::Errno`), else none -- and with none CRuby says
+/// "unknown error" rather than asking `strerror`.
+///
+/// `SystemCallError.new` also RETURNS a subclass when the errno names one; that
+/// half happens in [`exception_construct`], which picks the class before
+/// allocating.
+fn syscall_error_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    let (msg, errno) = syscall_error_args(e.class_id, args);
+    let mut text = match errno {
+        Some(n) => strerror(n),
+        None => "unknown error".to_string(),
+    };
+    if let Some(msg) = msg {
+        let msg = crate::builtins::convert::to_rstr(&msg)?;
+        text.push_str(" - ");
+        text.push_str(&msg.lock().to_utf8_lossy());
+    }
+    // Only a bare `SystemCallError` needs the slot: every `Errno::` class
+    // answers `#errno` from its own constant.
+    if let Some(n) = errno.filter(|_| e.class_id == SYSTEM_CALL_ERROR_CLASS) {
+        e.set_detail("errno", RubyValue::Int(i64::from(n)));
+    }
+    let message = RubyValue::Str(string_new(text));
+    *e.mesg.lock() = message.clone();
+    Ok(message)
+}
+
+/// Split `SystemCallError.new`'s arguments into `(message, errno)`. A lone
+/// Integer is the ERRNO on `SystemCallError` itself (`SystemCallError.new(2)`
+/// is an `Errno::ENOENT`) but a message on a subclass, whose errno is already
+/// settled -- CRuby raises TypeError for `Errno::ENOENT.new(2)`, which the
+/// `to_str` conversion in the caller reproduces.
+fn syscall_error_args(class: ClassId, args: &[RubyValue]) -> (Option<RubyValue>, Option<i32>) {
+    let own = zeo_abi::errno_of_class(class);
+    match (args.first(), args.get(1)) {
+        (Some(RubyValue::Int(n)), None) if own.is_none() => (None, Some(*n as i32)),
+        (first, second) => {
+            let msg = first.filter(|v| !matches!(v, RubyValue::Nil)).cloned();
+            let errno = match second {
+                Some(RubyValue::Int(n)) => Some(*n as i32),
+                _ => own,
+            };
+            (msg, errno)
+        }
+    }
+}
+
+/// The platform's own text for `errno` -- CRuby calls `strerror` too, so an
+/// unnamed value reads exactly as it does there ("Unknown error: 9999").
+pub(crate) fn strerror(errno: i32) -> String {
+    // SAFETY: `strerror` returns a pointer to a static (or thread-local)
+    // NUL-terminated string that stays valid until the next call on this
+    // thread; the copy happens before returning, so nothing outlives it.
+    unsafe {
+        let p = libc::strerror(errno);
+        if p.is_null() {
+            return format!("Unknown error: {errno}");
+        }
+        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+    }
+}
+
+/// `SystemCallError#errno` -- the value the class names, or the one a bare
+/// `SystemCallError.new(msg, n)` was handed. `nil` when neither applies.
+fn exc_errno(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    if let Some(n) = zeo_abi::errno_of_class(e.class_id) {
+        return Ok(RubyValue::Int(i64::from(n)));
+    }
+    Ok(e.detail("errno"))
+}
+
+/// Put `msg` in the message slot as given, past the `SystemCallError`
+/// initialize that would have prepended `strerror` to it. See
+/// `ClassRegistry::construct_exception`, its only caller.
+pub(crate) fn set_verbatim_message(exc: &RubyValue, msg: String) {
+    if let RubyValue::Object(o) = exc
+        && let Some(e) = downcast_robj::<RubyException>(o)
+    {
+        *e.mesg.lock() = RubyValue::Str(string_new(msg));
+    }
+}
+
+/// Seed each `Errno` class's own `Errno` constant (the value it stands for)
+/// and every second spelling `zeo-abi::ERRNO_ALIASES` names. The aliases are
+/// CONSTANTS rather than classes: the compiler resolves `Errno::EWOULDBLOCK` to
+/// `Errno::EAGAIN` statically, so without these the name would answer a
+/// `rescue` but never appear in `Errno.constants`.
+pub fn seed_errno_constants() {
+    for row in ERRNO_CLASSES {
+        let id = zeo_abi::errno_class_id(row.name);
+        crate::constants::const_set(id.0, "Errno", RubyValue::Int(i64::from(row.errno)));
+    }
+    for (alias, target) in ERRNO_ALIASES {
+        let bare = alias.rsplit("::").next().unwrap_or(alias);
+        let id = zeo_abi::errno_class_id(target);
+        crate::constants::const_set(ERRNO_MODULE.0, bare, RubyValue::Class(id));
+    }
+}
+
 /// `LocalJumpError#reason` -- the jump kind (`:noreason`/`:break`/`:return`/...);
 /// `#exit_value` the value carried by the jump.
 fn exc_reason(
@@ -1068,11 +1182,38 @@ fn stop_result(
 /// The one `ConstructorFn` behind every exception class: allocate a
 /// `RubyException` tagged with the class the `Class#new`/factory call named, and
 /// run `initialize` through the ordinary trampoline.
+///
+/// `SystemCallError` is the one class that does not get the class it was asked
+/// for: an errno argument picks the matching `Errno::` subclass, so
+/// `SystemCallError.new("x", 2)` IS an `Errno::ENOENT`, as in CRuby. The class
+/// has to be decided here rather than in `initialize`, since a
+/// `RubyException`'s class is fixed at allocation.
 pub(crate) fn exception_construct(
     class: ClassId,
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    // Normalized to `(message, errno)` so the subclass reads the errno out of
+    // the second slot: `SystemCallError.new(2)` and `SystemCallError.new(nil, 2)`
+    // are the same call, and `Errno::ENOENT.new(2)` -- where the lone Integer IS
+    // a message, and a bad one -- must keep raising TypeError.
+    let mut redirected = None;
+    if class == SYSTEM_CALL_ERROR_CLASS {
+        let (msg, errno) = syscall_error_args(class, args);
+        if let Some((id, row)) = errno.and_then(errno_class) {
+            redirected = Some((
+                id,
+                [
+                    msg.unwrap_or(RubyValue::Nil),
+                    RubyValue::Int(i64::from(row.errno)),
+                ],
+            ));
+        }
+    }
+    let (class, args) = match &redirected {
+        Some((id, args)) => (*id, args.as_slice()),
+        None => (class, args),
+    };
     let handle: RObj = RubyException::new(class);
     run_initialize(class, &handle, args, block)?;
     Ok(RubyValue::Object(handle))
@@ -1152,6 +1293,7 @@ pub fn register_exception_subclass(
     let is_frozen_error = ancestors.contains(&FROZEN_ERROR_CLASS);
     let is_load_error = ancestors.contains(&LOAD_ERROR_CLASS);
     let is_system_exit = ancestors.contains(&SYSTEM_EXIT_CLASS);
+    let is_system_call_error = ancestors.contains(&SYSTEM_CALL_ERROR_CLASS);
     registry.register(
         id,
         name,
@@ -1198,6 +1340,10 @@ pub fn register_exception_subclass(
     }
     if is_load_error {
         registry.define_method_own(id, Symbol::intern("path"), exc_path);
+    }
+    if is_system_call_error {
+        registry.define_method_own(id, Symbol::intern("initialize"), syscall_error_initialize);
+        registry.define_method_own(id, Symbol::intern("errno"), exc_errno);
     }
     if is_local_jump {
         registry.define_method_own(id, Symbol::intern("reason"), exc_reason);

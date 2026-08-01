@@ -67,6 +67,7 @@ pub fn install_core_constants() {
     #[cfg(feature = "ext-socket")]
     crate::ext::socket::seed_socket();
     crate::builtins::argf::seed_argf();
+    crate::builtins::exception::seed_errno_constants();
     crate::globals::seed_default_globals();
     // `ThreadGroup::Default` now seeds itself via thread_group's ruby_class!
     // `const Default` row (installed by the BUILTIN_TABLES loop below).

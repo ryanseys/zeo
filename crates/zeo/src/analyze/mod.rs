@@ -1276,8 +1276,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         0,
         None,
     )?;
-    // The remaining core `Exception`-tree classes, ids matching
-    // `zeo-abi::EXCEPTION_CLASSES` exc_id(51..56). Each parent is already
+    // The remaining core `Exception`-tree classes. Each parent is already
     // registered (a builtin exception or, for the nested names, a core class).
     for (name, superclass) in [
         ("NoMemoryError", "Exception"),
@@ -1286,33 +1285,30 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("NoMatchingPatternKeyError", "NoMatchingPatternError"),
         ("Regexp::TimeoutError", "RegexpError"),
         ("IO::TimeoutError", "IOError"),
-        ("Errno::EDOM", "SystemCallError"),
-        ("Errno::ESRCH", "SystemCallError"),
-        ("Errno::EPERM", "SystemCallError"),
-        ("Errno::ECONNREFUSED", "SystemCallError"),
         // `WeakRef::RefError` -- nests under the `WeakRef` builtin, a plain
-        // `StandardError` (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(61)).
+        // `StandardError`.
         ("WeakRef::RefError", "StandardError"),
-        // `Errno::ECHILD` -- `Process.wait` with no children (matches
-        // `zeo-abi::EXCEPTION_CLASSES` exc_id(62)).
-        ("Errno::ECHILD", "SystemCallError"),
-        // `Errno::ENOTTY` -- every `io/console` method on a stream that isn't
-        // a terminal (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(63)).
-        ("Errno::ENOTTY", "SystemCallError"),
-        // The connect/read failures a network client distinguishes; net/http
-        // names all four in rescue clauses (exc_id(64..67)).
-        ("Errno::ETIMEDOUT", "SystemCallError"),
-        ("Errno::ECONNRESET", "SystemCallError"),
-        ("Errno::ECONNABORTED", "SystemCallError"),
-        ("Errno::EHOSTUNREACH", "SystemCallError"),
-        // A connect(2) still in flight, then the non-blocking readiness
-        // family built on it (exc_id(68..74)).
-        ("Errno::EINPROGRESS", "SystemCallError"),
     ] {
         register_class(
             compiler,
             name.to_string(),
             Some(superclass.to_string()),
+            false,
+            &[],
+            &[],
+            0,
+            None,
+        )?;
+    }
+    // Every `Errno` class the platform names, in `zeo-abi::ERRNO_CLASSES`
+    // order -- one contiguous block, so the ids follow from the table's length
+    // and no name has to be restated here. The readiness classes below
+    // subclass two of them, hence the block goes first.
+    for row in zeo_abi::ERRNO_CLASSES {
+        register_class(
+            compiler,
+            row.name.to_string(),
+            Some("SystemCallError".to_string()),
             false,
             &[],
             &[],
@@ -1369,17 +1365,24 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         };
         compiler.classes[cls.0 as usize].includes.push(module);
     }
-    // The EWOULDBLOCK spellings. On every platform zeo targets EWOULDBLOCK and
-    // EAGAIN are ONE errno, so CRuby gives them one class under two names --
-    // which is why `rescue Errno::EWOULDBLOCK` catches an EAGAIN. Registered as
-    // aliases (`builtin_overlay`), so each name resolves to the class it
-    // duplicates and nothing extra reaches the runtime. These take no
+    // The second spellings. `zeo-abi::ERRNO_ALIASES` holds the `Errno` half:
+    // a name the platform gives the same value as an earlier one
+    // (`EWOULDBLOCK` is `EAGAIN`, which is why `rescue Errno::EWOULDBLOCK`
+    // catches an EAGAIN), or a name it does not define at all, which CRuby
+    // binds to `Errno::NOERROR`. The `IO::` pair follows the same errno.
+    // Registered as aliases (`builtin_overlay`), so each name resolves to the
+    // class it duplicates and nothing extra reaches the runtime. These take no
     // `zeo-abi::EXCEPTION_CLASSES` id, so they come after every pinned row.
-    for (alias, target) in [
-        ("Errno::EWOULDBLOCK", "Errno::EAGAIN"),
+    let io_aliases = [
         ("IO::EWOULDBLOCKWaitReadable", "IO::EAGAINWaitReadable"),
         ("IO::EWOULDBLOCKWaitWritable", "IO::EAGAINWaitWritable"),
-    ] {
+    ];
+    for (alias, target) in zeo_abi::ERRNO_ALIASES
+        .iter()
+        .copied()
+        .chain(io_aliases)
+        .collect::<Vec<_>>()
+    {
         let Some(target) = compiler.resolve_class(target, &[], 0) else {
             return Err(format!("{target} went missing right after registration"));
         };

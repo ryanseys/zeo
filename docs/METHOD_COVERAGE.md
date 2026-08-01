@@ -133,6 +133,36 @@ Also needs: `Errno::EXXX::Errno` (the integer constant on each class),
 `Errno::EWOULDBLOCK` is the *same class* as `Errno::EAGAIN` in CRuby, not a
 subclass, which is why the census sees 158 constants but fewer distinct classes.
 
+**Status: done.** The one table is `crates/zeo-abi/src/errno.rs`
+(`ERRNO_CLASSES` + `ERRNO_ALIASES`), carrying `(name, errno)` only — the message
+comes from `strerror` at run time, as CRuby's does, so 107 message strings never
+had to be written down. `EXCEPTION_CLASSES` splices the block in with a const
+fn, the compiler registers it in one loop, and `raise_errno` is a lookup on
+`raw_os_error`.
+
+The two facts that shaped it:
+
+- **The alias half is bigger than the class half suggests.** 51 of macOS's 158
+  names are second spellings, and 50 of those name an errno macOS does not
+  define at all, which CRuby binds to `Errno::NOERROR`. They are registered as
+  compiler aliases plus runtime *constants*, since a constant is what makes them
+  appear in `Errno.constants` — a `builtin_overlay` alone answers `rescue` and
+  `const_get` but lists nowhere.
+- **The message is composed, not stored.** `SystemCallError#initialize` builds
+  `"#{strerror(errno)} - #{msg}"`, but every internal `raise_error` site has
+  already composed the whole line CRuby prints
+  (`"No such file or directory @ rb_sysopen - /nope"`). `construct_exception`
+  therefore puts the message back verbatim for the `SystemCallError` family.
+  CRuby splits the same way: `rb_syserr_fail_str` never runs
+  `syserr_initialize`.
+
+The block moved to the END of `EXCEPTION_CLASSES` (its length is a platform
+fact, so no later id can be a literal), which renumbered every exception id
+after `SystemCallError`. `tests/errno_full_surface.rb` matches the oracle
+byte for byte. Linux gets a second table derived from `libc`'s `asm-generic`
+values; it is not oracle-verified, and the architectures that renumber errno
+(mips, sparc, parisc, alpha) would need one of their own.
+
 ### 1.3 `object_id` on classes and modules
 
 `Array.object_id == Hash.object_id` today. Derive it from the `ClassId` the way
