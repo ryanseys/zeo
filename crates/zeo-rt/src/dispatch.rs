@@ -2828,13 +2828,26 @@ pub fn class_id_by_name(name: &str) -> Option<ClassId> {
 /// is where the difference becomes visible, and this is what it consults --
 /// the same shape as `class_id_by_name`, read the other way round.
 pub fn nested_class_names(id: ClassId) -> Vec<String> {
+    let Some(registry) = REGISTRY.get() else {
+        return Vec::new();
+    };
+    // `Object` is the lexical parent of every TOP-LEVEL class, which the
+    // registry files under a bare name rather than a `Prefix::` one -- so
+    // `Object.constants` has to match the names with no separator at all.
+    // Without this it listed `RUBY_VERSION` and the other seeded constants
+    // while omitting `Array`, `String` and ~104 more.
+    if id == crate::ClassId(0) {
+        return registry
+            .by_name
+            .keys()
+            .filter(|name| !name.contains("::") && !name.contains('#') && !name.contains('.'))
+            .map(String::clone)
+            .collect();
+    }
     let Some(prefix) = class_name(id) else {
         return Vec::new();
     };
     let prefix = format!("{prefix}::");
-    let Some(registry) = REGISTRY.get() else {
-        return Vec::new();
-    };
     registry
         .by_name
         .keys()

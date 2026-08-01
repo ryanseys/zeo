@@ -1,0 +1,40 @@
+-- const_get with a computed name
+Array -> Array
+String -> String
+Comparable -> Comparable
+Float -> Float
+Struct -> Struct
+Enumerator -> Enumerator
+Math -> Math
+Zlib -> Zlib
+RUBY_VERSION -> 4.0.6
+-- nested, also computed
+Zlib::Error -> Zlib::Error
+Zlib::GzipFile -> Zlib::GzipFile
+-- const_defined? agrees with const_get
+Array: defined?=true get=true
+Zlib: defined?=true get=true
+RUBY_VERSION: defined?=true get=true
+Nope: defined?=false get=false
+-- a class sees a top-level constant through its ancestry
+Comparable
+Array
+Object
+-- and misses report the receiver
+uninitialized constant Nope
+uninitialized constant Zlib::Nope
+-- listing
+true
+true
+true
+true
+true
+[]
+[]
+[:INNER, :Nested]
+Holder::Nested
+1
+-- Module.constants is the singleton form, not Module#constants
+true
+true
+true

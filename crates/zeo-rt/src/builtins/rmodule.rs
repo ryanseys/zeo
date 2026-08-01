@@ -73,6 +73,20 @@ fn const_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
     }
 }
 
+/// A class or module that IS `owner`'s constant `name` but was never written
+/// to the constant table: codegen resolves `Zlib::Error` and a bare `Array`
+/// statically, so nothing ever `const_set`s either. The registry files both
+/// under their qualified name, which is what this reads -- the same source
+/// `Module#constants` lists from, so the two cannot disagree.
+fn class_constant(owner: crate::ClassId, name: &str) -> Option<RubyValue> {
+    let path = if owner.0 == 0 {
+        name.to_owned()
+    } else {
+        format!("{}::{name}", crate::dispatch::class_name(owner)?)
+    };
+    crate::dispatch::class_id_by_name(&path).map(RubyValue::Class)
+}
+
 /// `cid`'s own constant table first, then its ancestry when `inherit`. Shared
 /// by `const_get` and `const_defined?` so the two can't disagree.
 fn const_lookup(cid: crate::ClassId, name: &str, inherit: bool) -> Option<RubyValue> {
@@ -80,15 +94,30 @@ fn const_lookup(cid: crate::ClassId, name: &str, inherit: bool) -> Option<RubyVa
     // ask for the OWN binding explicitly -- otherwise every class answers for
     // every top-level constant, `Object` being an ancestor of them all.
     if !inherit {
-        return crate::constants::const_get_own(cid.0, name);
+        return crate::constants::const_get_own(cid.0, name).or_else(|| class_constant(cid, name));
     }
-    crate::constants::const_get(cid.0, name).or_else(|| {
-        // A MODULE's ancestry does not pass through `Object`, but the
-        // inheriting form consults it anyway -- CRuby's rule, and the only way
-        // a module sees a top-level constant.
-        let is_module = cid.0 != 0 && crate::dispatch::class_is_module(cid).unwrap_or(false);
-        is_module.then(|| crate::constants::const_get_own(0, name))?
-    })
+    crate::constants::const_get(cid.0, name)
+        .or_else(|| class_constant(cid, name))
+        .or_else(|| {
+            // A MODULE's ancestry does not pass through `Object`, but the
+            // inheriting form consults it anyway -- CRuby's rule, and the only
+            // way a module sees a top-level constant.
+            let is_module = cid.0 != 0 && crate::dispatch::class_is_module(cid).unwrap_or(false);
+            is_module.then(|| crate::constants::const_get_own(0, name))?
+        })
+        .or_else(|| {
+            // The ancestry walk again, for a class constant an ANCESTOR owns
+            // (`StringIO::SEEK_SET` through `IO`). `const_get` above covers the
+            // table half; this covers the registered-by-name half.
+            crate::dispatch::ancestors_of_value(cid)
+                .iter()
+                .skip(1)
+                .find_map(|&anc| class_constant(anc, name))
+        })
+        // A top-level class is a constant of `Object`, so every class sees it
+        // through the ancestry -- but a MODULE's chain never reaches `Object`,
+        // and `Object` itself is already covered above.
+        .or_else(|| (cid.0 != 0).then(|| class_constant(crate::ClassId(0), name))?)
 }
 
 /// `defined?(Scope::NAME)`'s membership test, for a scope codegen resolved but
@@ -251,6 +280,28 @@ ruby_class! {
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    // `Module.constants` is a SINGLETON method, not the instance one above
+    // (`rb_mod_s_constants`): it answers the constants visible in the CALLER's
+    // lexical scope. Without this row the call fell through to `Module#constants`
+    // with `Module` as the receiver, which answered Module's own few.
+    //
+    // APPROXIMATION: it answers the TOP-LEVEL scope. zeo resolves lexical scope
+    // at compile time and a builtin row has no view of its caller's, so a call
+    // from inside `module Foo` misses Foo's own constants. Top-level is where
+    // this is written (`Module.constants.include?(:Rails)` guards), and
+    // answering Object's set is strictly closer than answering Module's.
+    def self."constants" (_recv, *_args) {
+        let names = crate::constants::const_names_of(0)
+            .into_iter()
+            .chain(crate::dispatch::nested_class_names(zeo_abi::OBJECT_CLASS));
+        let mut seen = std::collections::HashSet::new();
+        Ok(RubyValue::Array(crate::array_new(
+            names
+                .filter(|n| seen.insert(n.clone()))
+                .map(|n| RubyValue::Symbol(crate::Symbol::intern(&n)))
+                .collect(),
+        )))
     }
     // `Module#include?(mod)`: true when `mod` is a MODULE mixed into `recv` or
     // one of its ancestors (never `recv` itself, and never a superclass --
