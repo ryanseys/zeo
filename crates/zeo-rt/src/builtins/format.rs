@@ -57,20 +57,20 @@ fn arg_error(msg: String) -> Signal {
 /// `"%d" % "x"` is `invalid value for Integer(): "x"`, `to_int` ducks
 /// convert, nil is "can't convert nil into Integer" -- oracle-verified).
 fn to_int_for_format(v: &RubyValue) -> Result<num_bigint::BigInt, Signal> {
-    match crate::builtins::kernel::kernel_integer(std::slice::from_ref(v))? {
+    match crate::builtins::kernel::integer_impl(std::slice::from_ref(v))? {
         n @ (RubyValue::Int(_) | RubyValue::BigInt(_)) => {
             Ok(crate::builtins::integer::to_bigint(&n))
         }
-        _ => unreachable!("kernel_integer answers an Integer"),
+        _ => unreachable!("integer_impl answers an Integer"),
     }
 }
 
 /// `%f`-family conversion: CRuby's `rb_Float` (`"%f" % "x"` is
 /// `invalid value for Float(): "x"` -- oracle-verified).
 fn to_f64_for_format(v: &RubyValue) -> Result<f64, Signal> {
-    match crate::builtins::kernel::kernel_float(std::slice::from_ref(v))? {
+    match crate::builtins::kernel::float_impl(std::slice::from_ref(v))? {
         RubyValue::Float(f) => Ok(f),
-        _ => unreachable!("kernel_float answers a Float"),
+        _ => unreachable!("float_impl answers a Float"),
     }
 }
 

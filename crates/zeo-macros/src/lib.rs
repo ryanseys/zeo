@@ -90,9 +90,14 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
     for (idx, method) in spec.methods.iter().enumerate() {
         // An explicit `as X` gives the impl a callable Rust name (so sibling
         // bodies can call it directly); otherwise a mangled, unreachable ident.
-        let fn_ident = match &method.bound_name {
-            Some(bound) => bound.clone(),
-            None => mangle(&method.names[0].ruby, idx),
+        // A named fn is `pub`, not `pub(crate)`: naming it is a request to call
+        // it from elsewhere, and codegen's Kernel fast path reaches
+        // `zeo_rt::kernel_integer` and friends by exactly this route -- which
+        // is what keeps the fast path and the dispatch row one function, so
+        // they cannot disagree about the argument count.
+        let (fn_ident, fn_vis) = match &method.bound_name {
+            Some(bound) => (bound.clone(), quote! { pub }),
+            None => (mangle(&method.names[0].ruby, idx), quote! { pub(crate) }),
         };
         let recv = &method.recv;
         let body = &method.body;
@@ -128,7 +133,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         };
         fn_items.push(quote! {
             #( #attrs )*
-            pub(crate) fn #fn_ident(
+            #fn_vis fn #fn_ident(
                 #recv: &crate::RubyValue,
                 __args: &[crate::RubyValue],
                 __block: Option<crate::RubyValue>,

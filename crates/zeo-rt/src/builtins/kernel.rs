@@ -237,8 +237,8 @@ ruby_module! {
         })?;
         crate::kernel_catch(tag, blk)
     }
-    def "throw"(_recv, *args, &_block) {
-        crate::kernel_throw(args)
+    def "throw" as kernel_throw cfunc (_recv, _tag, _value?) {
+        throw_impl(__args)
     }
     // `Kernel#raise`/`#fail` as REAL dispatch rows -- reached by
     // `send(:raise, ...)` and by builtin-alias rewrites (`alias_method
@@ -304,8 +304,8 @@ ruby_module! {
         };
         Err(Signal::Raise(crate::dispatch::raise_with_cause(exc)))
     }
-    def "sleep"(_recv, *args, &_block) {
-        crate::kernel_sleep(args)
+    def "sleep" as kernel_sleep (_recv, _seconds?) {
+        sleep_impl(__args)
     }
     def "class"(recv) {
         Ok(RubyValue::Class(recv.class_id()))
@@ -379,28 +379,29 @@ ruby_module! {
     // The private `Kernel` conversion and formatting functions, as real methods
     // so they resolve through EVERY dispatch path -- a splat call (`format(*a)`),
     // `method(:Integer)`, `send`, a curry -- not only the codegen fast-path that
-    // intercepts a direct literal call. Each delegates to the same runtime
-    // routine that fast-path emits, so behavior is identical however it's reached.
+    // intercepts a direct literal call. The `as` name IS what codegen emits
+    // (`zeo_rt::kernel_integer`), so the fast path and the dispatch row are one
+    // function and cannot disagree about the argument count.
     def "format" | "sprintf"(_recv, *args, &_block) {
         kernel_format(args)
     }
-    def "Integer"(_recv, *args, &_block) {
-        kernel_integer(args)
+    def "Integer" as kernel_integer (_recv, _arg, _base?, **_opts) {
+        integer_impl(__args)
     }
-    def "Float"(_recv, *args, &_block) {
-        kernel_float(args)
+    def "Float" as kernel_float (_recv, _arg, **_opts) {
+        float_impl(__args)
     }
-    def "String"(_recv, *args, &_block) {
-        kernel_string(args)
+    def "String" as kernel_string (_recv, _arg) {
+        string_impl(__args)
     }
-    def "Array"(_recv, *args, &_block) {
-        kernel_array(args)
+    def "Array" as kernel_array (_recv, _arg) {
+        array_impl(__args)
     }
-    def "Hash"(_recv, *args, &_block) {
-        kernel_hash(args)
+    def "Hash" as kernel_hash (_recv, _arg) {
+        hash_impl(__args)
     }
-    def "Rational"(_recv, *args, &_block) {
-        kernel_rational(args)
+    def "Rational" as kernel_rational cfunc (_recv, _numerator, _denominator?) {
+        rational_impl(__args)
     }
     // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
     // removed). Present whenever the extension is compiled in; like `Time`'s
@@ -409,8 +410,19 @@ ruby_module! {
     def "BigDecimal" cfunc (_recv, _initial, _digits?) {
         crate::ext::bigdecimal::kernel_big_decimal(__args)
     }
-    def "Complex"(_recv, *args, &_block) {
-        kernel_complex(args)
+    def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
+        complex_impl(__args)
+    }
+    // `rand`/`srand` as real rows: without them the argument-count guard would
+    // have to live in the runtime routine, where the codegen fast path is the
+    // only caller that reaches it -- the double declaration this whole DSL
+    // removes. They answer through dispatch now too (`send(:rand)`), which they
+    // did not before.
+    def "rand" as kernel_rand (_recv, _max?) {
+        rand_impl(__args)
+    }
+    def "srand" as kernel_srand (_recv, _seed?) {
+        srand_impl(__args)
     }
     // Private `Kernel#trap` -- the receiverless spelling of `Signal.trap`, same
     // validated no-op that records the action and returns the prior one.
@@ -859,8 +871,7 @@ fn copy_with_hook(original: &RubyValue, copy: RubyValue) -> Result<RubyValue, Si
 /// radix prefixes (`0x`/`0o`/`0b`, or a leading `0` octal when no base is
 /// given); floats/rationals TRUNCATE toward zero; nil and everything else
 /// is a TypeError. Message shapes oracle-verified.
-pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1..=2);
+pub(crate) fn integer_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let base = match args.get(1) {
         None => None,
         Some(v) => Some(crate::builtins::convert::to_index(v)? as u32),
@@ -956,8 +967,7 @@ pub(crate) fn parse_integer_strict(text: &str, base: Option<u32>) -> Option<Ruby
 /// `Kernel#Float(arg)` -- strict string parse (Rust's `f64::from_str`
 /// covers Ruby's accepted forms incl. exponents; underscores stripped),
 /// numerics via the tower's f64 view.
-pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
+pub(crate) fn float_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match &args[0] {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
             Ok(RubyValue::Float(
@@ -1057,8 +1067,7 @@ fn parse_hex_float(s: &str) -> Option<f64> {
 
 /// `Kernel#Rational(num, den = 1)` -- exact components only (string forms
 /// are a documented scope-cut).
-pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1..=2);
+pub(crate) fn rational_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let exact = |v: &RubyValue| -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
         match v {
             RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
@@ -1088,8 +1097,7 @@ pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 
 /// `Kernel#Complex(real, imag = 0)`. A single String argument is parsed as a
 /// complex literal (`"2+3i"`, `"3"`, `"-i"`).
-pub fn kernel_complex(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1..=2);
+pub(crate) fn complex_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if let (RubyValue::Str(s), None) = (&args[0], args.get(1)) {
         let (real, imag) = parse_complex_string(&s.lock().to_utf8_lossy())?;
         return crate::builtins::complex::complex_new(real, imag);
@@ -1183,8 +1191,7 @@ fn parse_complex_string(s: &str) -> Result<(RubyValue, RubyValue), Signal> {
 
 /// `Kernel#String(arg)` -- `to_s` (the `to_str`-first nuance is invisible
 /// for builtin receivers).
-pub fn kernel_string(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
+pub(crate) fn string_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Str(crate::string_new(
         args[0].to_display_string(),
     )))
@@ -1194,8 +1201,7 @@ pub fn kernel_string(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// Range -> to_a, anything else -> [arg]. (`to_ary`/`to_a` protocol probes
 /// on user objects are a documented scope-cut, beyond the value-subclass
 /// case below, which IS an Array.)
-pub fn kernel_array(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
+pub(crate) fn array_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if let Some(a) = crate::builtins::convert::check_to_ary(&args[0])? {
         return Ok(a);
     }
@@ -1217,8 +1223,7 @@ pub fn kernel_array(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 }
 
 /// `Kernel#Hash(arg)`: nil/[] -> {}, Hash -> itself, else TypeError.
-pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
+pub(crate) fn hash_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match &args[0] {
         RubyValue::Nil => Ok(RubyValue::Hash(crate::hash_new(Vec::new()))),
         RubyValue::Array(a) if a.lock().is_empty() => {
@@ -1459,8 +1464,7 @@ pub(crate) fn prng_real() -> f64 {
 
 /// `Kernel#rand`: no arg -> Float in [0, 1); positive Integer n -> Integer
 /// in [0, n); Float x -> Float in [0, x).
-pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 0..=1);
+pub(crate) fn rand_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(match args.first() {
         None | Some(RubyValue::Nil) | Some(RubyValue::Int(0)) => RubyValue::Float(prng_real()),
         Some(RubyValue::Int(n)) if *n > 0 => RubyValue::Int(prng_limited(*n as u64 - 1) as i64),
@@ -1564,8 +1568,7 @@ fn num_to_f64(v: &RubyValue) -> Option<f64> {
 }
 
 /// `Kernel#srand(seed)`: reseeds, returns the PREVIOUS seed.
-pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 0..=1);
+pub(crate) fn srand_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let new_seed = match args.first() {
         Some(RubyValue::Int(n)) => *n as u64,
         _ => std::time::SystemTime::now()
@@ -1614,8 +1617,7 @@ pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signa
     }
 }
 
-pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1..=2);
+pub(crate) fn throw_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let tag = args[0].clone();
     // Only a tag with a live `catch` frame may unwind; otherwise it is an
     // `UncaughtThrowError` right here, catchable by an ordinary `rescue`.
@@ -1638,8 +1640,7 @@ pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// immediately, delivered by the `check_ints` on the wake path); returns
 /// the rounded seconds ACTUALLY slept. `sleep` with NO duration parks
 /// until an interrupt arrives.
-pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 0..=1);
+pub(crate) fn sleep_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let secs = match args.first() {
         Some(RubyValue::Int(n)) if *n >= 0 => Some(*n as f64),
         Some(RubyValue::Float(f)) if *f >= 0.0 => Some(*f),

@@ -34,6 +34,18 @@ pub struct ClassId(pub u32);
 /// walking resolution instead of the frozen flat-table fast path).
 pub const RUNTIME_CLASS_ID_BASE: u32 = 1 << 30;
 
+/// The id `ENV`'s method table is filed under -- a table key, NOT a class.
+///
+/// `ENV.class` is `Object` (oracle-verified: ENV is a lone singleton carrying
+/// Hash-shaped methods, not a Hash instance), so its rows cannot be keyed by
+/// its real class -- they would answer for every plain Object in the program.
+/// Dispatch reaches them by IDENTITY instead (`builtins::env::is_env_obj`), and
+/// this id exists only so the rows can live in the same `ruby_class!` DSL as
+/// every other builtin rather than in a hand-rolled lookup. Nothing ever
+/// REPORTS this id as its class, and it sits past both the compiler's dense low
+/// ids and the runtime block above, so it collides with nothing.
+pub const ENV_SINGLETON_CLASS: ClassId = ClassId(u32::MAX);
+
 /// The Ruby language/library level zeo targets, single-sourced here so the
 /// runtime's `RUBY_VERSION`/`RUBY_ENGINE_VERSION` seeding (`zeo-rt`'s
 /// `bootstrap`) and the compiler's compile-time version-gate folding

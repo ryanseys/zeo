@@ -23,8 +23,9 @@ use crate::dispatch::{ClassRegistry, RObj, RubyObject};
 use crate::encoding::StrBuf;
 use crate::{RubyValue, Signal, Symbol};
 use zeo_abi::{ClassId, WEAKMAP_CLASS, WEAKREF_CLASS};
+use zeo_macros::ruby_class;
 
-use super::{arg_error, arity, local_jump_error, type_error};
+use super::{arg_error, local_jump_error, type_error};
 
 /// A weak handle to a Ruby value's liveness. The heap kinds carry a real
 /// `Weak` to their backing `Arc`; everything else is kept alive strongly
@@ -185,10 +186,15 @@ impl RubyObject for WeakMap {
     }
 }
 
-/// Downcast a receiver handle to `&WeakMap`, or a `TypeError` if it isn't one
-/// (only reachable via a deliberately mis-dispatched call).
-fn as_weakmap(recv: &RObj) -> Result<&WeakMap, Signal> {
-    recv.as_any()
+/// Downcast a receiver to `&WeakMap`, or a `TypeError` if it isn't one (only
+/// reachable via a deliberately mis-dispatched call). Takes the untyped value
+/// because that is what a table row receives; `WeakMap` has no `RubyValue`
+/// variant of its own, so the class header cannot unwrap it.
+fn as_weakmap(recv: &RubyValue) -> Result<&WeakMap, Signal> {
+    let RubyValue::Object(o) = recv else {
+        return Err(type_error!("not an ObjectSpace::WeakMap"));
+    };
+    o.as_any()
         .downcast_ref::<WeakMap>()
         .ok_or_else(|| type_error!("not an ObjectSpace::WeakMap"))
 }
@@ -246,15 +252,18 @@ impl RubyObject for WeakRef {
     }
 }
 
-fn as_weakref(recv: &RObj) -> Result<&WeakRef, Signal> {
-    recv.as_any()
+fn as_weakref(recv: &RubyValue) -> Result<&WeakRef, Signal> {
+    let RubyValue::Object(o) = recv else {
+        return Err(type_error!("not a WeakRef"));
+    };
+    o.as_any()
         .downcast_ref::<WeakRef>()
         .ok_or_else(|| type_error!("not a WeakRef"))
 }
 
 /// The referent if still alive, else the `WeakRef::RefError` every delegated
 /// call raises on a recycled reference.
-fn wr_referent(recv: &RObj) -> Result<RubyValue, Signal> {
+fn wr_referent(recv: &RubyValue) -> Result<RubyValue, Signal> {
     as_weakref(recv)?.target.lock().upgrade().ok_or_else(|| {
         crate::dispatch::raise_error(
             "WeakRef::RefError",
@@ -281,37 +290,34 @@ fn weakref_construct(
     Ok(RubyValue::Object(WeakRef::new(class, referent)))
 }
 
-fn wr_getobj(
-    recv: &RObj,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    wr_referent(recv)
-}
+// The DSL emits one method table per block, so the second class in this file
+// lives in its own module.
+mod weakref_rows {
+    use super::*;
 
-fn wr_setobj(
-    recv: &RObj,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    *as_weakref(recv)?.target.lock() = WeakTarget::downgrade(&args[0]);
-    Ok(args[0].clone())
-}
+    ruby_class! {
+        WeakRef = zeo_abi::WEAKREF_CLASS < zeo_abi::OBJECT_CLASS;
 
-fn wr_alive(
-    recv: &RObj,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(
-        as_weakref(recv)?.target.lock().upgrade().is_some(),
-    ))
+        def "__getobj__"(recv, &_block) {
+            wr_referent(recv)
+        }
+        def "__setobj__"(recv, obj) {
+            *as_weakref(recv)?.target.lock() = WeakTarget::downgrade(obj);
+            Ok(obj.clone())
+        }
+        def "weakref_alive?"(recv) {
+            Ok(RubyValue::Bool(
+                as_weakref(recv)?.target.lock().upgrade().is_some(),
+            ))
+        }
+    }
 }
 
 /// Delegate an otherwise-unhandled call to the referent (raising `RefError`
 /// if it's gone). Reached via the send-miss `method_missing` fallback, so
-/// `args` is `[method_name_symbol, original_args...]`.
+/// `args` is `[method_name_symbol, original_args...]`. Stays a REGISTRY row
+/// (not a table row) because only `registry().lookup_mro` serves that
+/// fallback -- see `register_weak`.
 fn wr_method_missing(
     recv: &RObj,
     args: &[RubyValue],
@@ -323,7 +329,7 @@ fn wr_method_missing(
     let RubyValue::Symbol(sym) = name else {
         return Err(type_error!("method name must be a Symbol"));
     };
-    let referent = wr_referent(recv)?;
+    let referent = wr_referent(&RubyValue::Object(recv.clone()))?;
     crate::dispatch::send_value(&referent, *sym, rest, block)
 }
 
@@ -340,7 +346,11 @@ fn wr_respond_to_missing(
         None => return Err(arg_error!("no id given")),
     };
     let include_all = args.get(1).is_some_and(RubyValue::truthy);
-    let Some(referent) = as_weakref(recv)?.target.lock().upgrade() else {
+    let Some(referent) = as_weakref(&RubyValue::Object(recv.clone()))?
+        .target
+        .lock()
+        .upgrade()
+    else {
         return Ok(RubyValue::Bool(false));
     };
     Ok(RubyValue::Bool(crate::dispatch::responds_to(
@@ -359,117 +369,83 @@ fn weakmap_construct(
     Ok(RubyValue::Object(WeakMap::new(class)))
 }
 
-fn wm_aref(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    Ok(as_weakmap(recv)?.get(&args[0]).unwrap_or(RubyValue::Nil))
-}
+ruby_class! {
+    WeakMap = zeo_abi::WEAKMAP_CLASS < zeo_abi::OBJECT_CLASS;
 
-fn wm_aset(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    arity!(args, 2);
-    as_weakmap(recv)?.set(&args[0], &args[1]);
-    Ok(args[1].clone())
-}
-
-fn wm_delete(
-    recv: &RObj,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    Ok(as_weakmap(recv)?.delete(&args[0]).unwrap_or(RubyValue::Nil))
-}
-
-fn wm_key_p(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
-    Ok(RubyValue::Bool(as_weakmap(recv)?.get(&args[0]).is_some()))
-}
-
-fn wm_keys(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    let keys = as_weakmap(recv)?
-        .live_pairs()
-        .into_iter()
-        .map(|(k, _)| k)
-        .collect();
-    Ok(RubyValue::Array(array_new(keys)))
-}
-
-fn wm_values(
-    recv: &RObj,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let vals = as_weakmap(recv)?
-        .live_pairs()
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect();
-    Ok(RubyValue::Array(array_new(vals)))
-}
-
-fn wm_length(
-    recv: &RObj,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let wm = as_weakmap(recv)?;
-    wm.prune();
-    Ok(RubyValue::Int(wm.entries.lock().len() as i64))
-}
-
-/// `each`/`each_pair` -- yields `[key, value]`; `each_key`/`each_value` yield
-/// one side. Returns the map. A missing block would need an Enumerator; that
-/// shape is uncommon on WeakMap and not modeled (a `LocalJumpError` surfaces
-/// from the yield attempt otherwise).
-fn wm_each_pair(
-    recv: &RObj,
-    _args: &[RubyValue],
-    blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    for (k, v) in as_weakmap(recv)?.live_pairs() {
-        // A pair yield (`{ |k, v| }` binds both; `{ |x| }` binds `[k, v]`),
-        // like `Hash#each` -- yield_tuple's array-wrap is exactly that shape.
-        yield_pair(&blk, k, v)?;
+    def "[]"(recv, key) {
+        Ok(as_weakmap(recv)?.get(key).unwrap_or(RubyValue::Nil))
     }
-    Ok(RubyValue::Object(recv.clone()))
-}
-
-fn wm_each_key(
-    recv: &RObj,
-    _args: &[RubyValue],
-    blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    for (k, _) in as_weakmap(recv)?.live_pairs() {
-        yield_one(&blk, k)?;
+    def "[]="(recv, key, value) {
+        as_weakmap(recv)?.set(key, value);
+        Ok(value.clone())
     }
-    Ok(RubyValue::Object(recv.clone()))
-}
-
-fn wm_each_value(
-    recv: &RObj,
-    _args: &[RubyValue],
-    blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    for (_, v) in as_weakmap(recv)?.live_pairs() {
-        yield_one(&blk, v)?;
+    def "delete"(recv, key) {
+        Ok(as_weakmap(recv)?.delete(key).unwrap_or(RubyValue::Nil))
     }
-    Ok(RubyValue::Object(recv.clone()))
-}
-
-fn wm_inspect(
-    recv: &RObj,
-    _args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    // The empty form is byte-exact with CRuby (`#<ObjectSpace::WeakMap:0xADDR>`).
-    // CRuby's NON-empty form appends address-based entry info
-    // (`: #<Object:0x..> => #<String:0x..>`) which is non-deterministic and
-    // deliberately never calls the entries' own `inspect`; reproducing that is
-    // pointless (no test could pin an address), so the address-only form stands
-    // in for non-empty maps too -- a documented, cosmetic simplification.
-    let addr = Arc::as_ptr(recv) as *const () as usize;
-    Ok(RubyValue::Str(string_new(format!(
-        "#<ObjectSpace::WeakMap:0x{addr:016x}>"
-    ))))
+    def "key?" | "include?" | "member?"(recv, key) {
+        Ok(RubyValue::Bool(as_weakmap(recv)?.get(key).is_some()))
+    }
+    def "keys"(recv) {
+        let keys = as_weakmap(recv)?
+            .live_pairs()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        Ok(RubyValue::Array(array_new(keys)))
+    }
+    def "values"(recv) {
+        let vals = as_weakmap(recv)?
+            .live_pairs()
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect();
+        Ok(RubyValue::Array(array_new(vals)))
+    }
+    def "length" | "size"(recv) {
+        let wm = as_weakmap(recv)?;
+        wm.prune();
+        Ok(RubyValue::Int(wm.entries.lock().len() as i64))
+    }
+    // `each`/`each_pair` -- yields `[key, value]`; `each_key`/`each_value`
+    // yield one side. Returns the map. A missing block would need an
+    // Enumerator; that shape is uncommon on WeakMap and not modeled (a
+    // `LocalJumpError` surfaces from the yield attempt otherwise).
+    def "each" | "each_pair"(recv, &block) {
+        for (k, v) in as_weakmap(recv)?.live_pairs() {
+            // A pair yield (`{ |k, v| }` binds both; `{ |x| }` binds `[k, v]`),
+            // like `Hash#each` -- yield_tuple's array-wrap is exactly that shape.
+            yield_pair(&block, k, v)?;
+        }
+        Ok(recv.clone())
+    }
+    def "each_key"(recv, &block) {
+        for (k, _) in as_weakmap(recv)?.live_pairs() {
+            yield_one(&block, k)?;
+        }
+        Ok(recv.clone())
+    }
+    def "each_value"(recv, &block) {
+        for (_, v) in as_weakmap(recv)?.live_pairs() {
+            yield_one(&block, v)?;
+        }
+        Ok(recv.clone())
+    }
+    def "inspect"(recv) {
+        // The empty form is byte-exact with CRuby
+        // (`#<ObjectSpace::WeakMap:0xADDR>`). CRuby's NON-empty form appends
+        // address-based entry info (`: #<Object:0x..> => #<String:0x..>`)
+        // which is non-deterministic and deliberately never calls the
+        // entries' own `inspect`; reproducing that is pointless (no test
+        // could pin an address), so the address-only form stands in for
+        // non-empty maps too -- a documented, cosmetic simplification.
+        let RubyValue::Object(o) = recv else {
+            return Err(type_error!("not an ObjectSpace::WeakMap"));
+        };
+        let addr = Arc::as_ptr(o) as *const () as usize;
+        Ok(RubyValue::Str(string_new(format!(
+            "#<ObjectSpace::WeakMap:0x{addr:016x}>"
+        ))))
+    }
 }
 
 /// Yield a `[key, value]` PAIR to the block -- `{ |k, v| }` binds both,
@@ -491,9 +467,15 @@ fn yield_one(blk: &Option<RubyValue>, v: RubyValue) -> Result<RubyValue, Signal>
 }
 
 /// Install `ObjectSpace::WeakMap` and `WeakRef` with their native
-/// constructors and instance methods. Called from `ClassRegistry::with_core`
-/// AFTER `register_builtins` has seeded their ancestor rows (this overrides
-/// those rows to attach the constructor + methods).
+/// constructors. Called from `ClassRegistry::with_core` AFTER
+/// `register_builtins` has seeded their ancestor rows (this overrides those
+/// rows to attach the constructor).
+///
+/// The ordinary instance methods are `ruby_class!` table rows above; only what
+/// the tables CANNOT serve stays here -- the constructors (no table slot) and
+/// `WeakRef`'s `method_missing`/`respond_to_missing?` (the send-miss fallback
+/// consults only `registry().lookup`, never the builtin class table, so
+/// delegation to the referent would never fire from a table row).
 pub fn register_weak(registry: &mut ClassRegistry) {
     let wm_ancestors = zeo_abi::declared_ancestors(WEAKMAP_CLASS);
     registry.register(
@@ -503,24 +485,6 @@ pub fn register_weak(registry: &mut ClassRegistry) {
         wm_ancestors,
         Some(weakmap_construct as crate::dispatch::ConstructorFn),
     );
-    let m = |registry: &mut ClassRegistry, name: &str, f: crate::dispatch::MethodFn| {
-        registry.define_method_own(WEAKMAP_CLASS, Symbol::intern(name), f);
-    };
-    m(registry, "[]", wm_aref);
-    m(registry, "[]=", wm_aset);
-    m(registry, "delete", wm_delete);
-    m(registry, "key?", wm_key_p);
-    m(registry, "include?", wm_key_p);
-    m(registry, "member?", wm_key_p);
-    m(registry, "keys", wm_keys);
-    m(registry, "values", wm_values);
-    m(registry, "length", wm_length);
-    m(registry, "size", wm_length);
-    m(registry, "each", wm_each_pair);
-    m(registry, "each_pair", wm_each_pair);
-    m(registry, "each_key", wm_each_key);
-    m(registry, "each_value", wm_each_value);
-    m(registry, "inspect", wm_inspect);
 
     let wr_ancestors = zeo_abi::declared_ancestors(WEAKREF_CLASS);
     registry.register(
@@ -530,9 +494,6 @@ pub fn register_weak(registry: &mut ClassRegistry) {
         wr_ancestors,
         Some(weakref_construct as crate::dispatch::ConstructorFn),
     );
-    // `method_missing`/`respond_to_missing?` MUST go through the registry (the
-    // send-miss fallback consults only `registry().lookup`, never the builtin
-    // class table) -- that's what makes delegation to the referent fire.
     registry.define_method_own(
         WEAKREF_CLASS,
         Symbol::intern("method_missing"),
@@ -543,9 +504,6 @@ pub fn register_weak(registry: &mut ClassRegistry) {
         Symbol::intern("respond_to_missing?"),
         wr_respond_to_missing,
     );
-    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("__getobj__"), wr_getobj);
-    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("__setobj__"), wr_setobj);
-    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("weakref_alive?"), wr_alive);
 }
 
 /// One registered `ObjectSpace.define_finalizer` callback. `object_id` is

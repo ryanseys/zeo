@@ -127,6 +127,15 @@ fn emit_kernel_function(
         "pp" => Some("kernel_pp"),
         "print" => Some("kernel_print"),
         "warn" => Some("kernel_warn"),
+        "format" | "sprintf" => Some("kernel_format"),
+        "printf" => Some("kernel_printf"),
+        _ => None,
+    };
+    // These are `ruby_class!` rows bound with `as`, so the fast path calls the
+    // very function dispatch calls -- one argument-count guard, derived from the
+    // def's parameter list, for both. That costs the builtin-method ABI
+    // (receiver, args, block) instead of the bare slice the routines above take.
+    let row_fn = match name {
         "Integer" if !args.is_empty() => Some("kernel_integer"),
         "Float" if !args.is_empty() => Some("kernel_float"),
         "Rational" if !args.is_empty() => Some("kernel_rational"),
@@ -134,8 +143,6 @@ fn emit_kernel_function(
         "String" if !args.is_empty() => Some("kernel_string"),
         "Array" if !args.is_empty() => Some("kernel_array"),
         "Hash" if !args.is_empty() => Some("kernel_hash"),
-        "format" | "sprintf" => Some("kernel_format"),
-        "printf" => Some("kernel_printf"),
         "rand" => Some("kernel_rand"),
         "srand" => Some("kernel_srand"),
         "throw" if !args.is_empty() => Some("kernel_throw"),
@@ -155,7 +162,12 @@ fn emit_kernel_function(
         "exit!" => Some("kernel_exit_bang"),
         _ => None,
     };
-    if plain_fn.is_none() && fallible_fn.is_none() && never_fn.is_none() && raise_fn.is_none() {
+    if plain_fn.is_none()
+        && fallible_fn.is_none()
+        && row_fn.is_none()
+        && never_fn.is_none()
+        && raise_fn.is_none()
+    {
         return None;
     }
     let mut arg_exprs: Vec<TokenStream> = args
@@ -184,6 +196,11 @@ fn emit_kernel_function(
     if let Some(f) = fallible_fn {
         let func = format_ident!("{f}");
         return Some(quote! { zeo_rt::#func(&[#(#arg_exprs),*])? });
+    }
+    if let Some(f) = row_fn {
+        let func = format_ident!("{f}");
+        // The receiver is the implicit `self` these rows all ignore.
+        return Some(quote! { zeo_rt::#func(&zeo_rt::RubyValue::Nil, &[#(#arg_exprs),*], None)? });
     }
     if let Some(f) = raise_fn {
         let func = format_ident!("{f}");

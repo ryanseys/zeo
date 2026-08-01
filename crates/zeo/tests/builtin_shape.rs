@@ -139,7 +139,12 @@ fn every_header_agrees_with_the_abi_row_it_restates() {
 #[test]
 fn every_header_class_id_has_an_abi_row() {
     /// Header name -> why it has no `BUILTINS` row.
-    const ROWLESS: &[(&str, &str)] = &[];
+    const ROWLESS: &[(&str, &str)] = &[(
+        "Env",
+        "ENV is not a class: `ENV.class` is Object, so its rows hang off the \
+         reserved ENV_SINGLETON_CLASS table key that dispatch reaches by \
+         identity. Nothing reports that id, so it has nothing to describe.",
+    )];
 
     let rows = abi_rows();
     let missing: Vec<&str> = CLASS_SURFACE
