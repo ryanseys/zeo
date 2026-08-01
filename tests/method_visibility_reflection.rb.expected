@@ -1,0 +1,31 @@
+-- Module's own directives are private methods of Module
+[:extended, :included, :module_function, :prepended, :private, :protected, :public, :remove_const, :ruby2_keywords]
+[:inherited]
+C.private: NoMethodError
+C.public: NoMethodError
+C.protected: NoMethodError
+C.module_function: NoMethodError
+C.remove_const: NoMethodError
+C.ruby2_keywords: NoMethodError
+C.inherited: NoMethodError
+-- a singleton class sees them with Module's visibility
+false
+true
+true
+-- while the class-body directives still work (implicit self)
+[1, 3]
+D#b is private
+-- private inside `class << self`, on a user module
+false
+[:pub]
+[:hid]
+UserMod.hid: NoMethodError
+-- and on a REOPENED BUILTIN, which recorded nothing at all
+false
+true
+1
+Comparable.cmp_hid: NoMethodError
+-- private_class_method, both spellings
+[:pub]
+false
+[:mk]

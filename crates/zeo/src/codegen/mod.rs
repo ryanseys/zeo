@@ -1799,6 +1799,24 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 __registry.mark_own_class_method_rows(zeo_rt::ClassId(#id), &[#(#own_cm),*]);
             });
         }
+        // The CLASS-method visibility half (verbs 3/4), the same rows the
+        // user-class loop emits. Without it a `private` inside `class << self`
+        // on a REOPENED BUILTIN was enforced on the call (codegen knows the
+        // def is private) but recorded nowhere, so `respond_to?` and
+        // `singleton_methods` both reported the method as public.
+        for &sid in &class.class_methods {
+            if compiler.scope(sid).visibility == crate::hir::Visibility::Private {
+                push_vis_row(id, &compiler.scope(sid).name, 3);
+            }
+        }
+        for (cm_name, vis) in &class.class_visibility_overrides {
+            let verb = if *vis == crate::hir::Visibility::Private {
+                3
+            } else {
+                4
+            };
+            push_vis_row(id, cm_name, verb);
+        }
         // A reopened builtin's own `extend M`, same singleton-chain fact the
         // user-class loop records (`class Array; extend M; end`).
         let extend_ids: Vec<u32> = class.extends.iter().map(|m| m.0).collect();

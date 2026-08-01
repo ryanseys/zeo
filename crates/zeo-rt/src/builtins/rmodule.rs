@@ -162,7 +162,7 @@ ruby_class! {
     // or not the module defines it, so these exist to be the no-op that
     // answers -- and, more to the point, to be what a `def self.included`
     // that ends in `super` reaches.
-    def "included" | "extended" | "prepended" (_recv, _arg) {
+    private def "included" | "extended" | "prepended" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
     def "ancestors" (recv) {
@@ -243,7 +243,7 @@ ruby_class! {
     }
     // Returns the removed value; NameError when the constant isn't this
     // module's own (an inherited one doesn't count).
-    def "remove_const" (recv, arg) {
+    private def "remove_const" (recv, arg) {
         let cid = recv_cid(recv);
         let name = const_name_arg(arg)?;
         crate::constants::const_remove(cid.0, &name)
@@ -548,7 +548,7 @@ ruby_class! {
     // A no-op by construction: it flags a method to pass a bare `*args`
     // trailing hash through as keywords, and zeo's keyword arguments are
     // already carried separately from the positionals.
-    def "ruby2_keywords" (_recv, *_args, &_block) {
+    private def "ruby2_keywords" (_recv, *_args, &_block) {
         Ok(RubyValue::Nil)
     }
     def "undef_method" (recv, *args, &_block) {
@@ -563,15 +563,15 @@ ruby_class! {
     // mark visibility in the runtime overlay; the argument-less
     // default-visibility form is a documented nil no-op (see
     // `runtime_set_visibility`).
-    def "private" (recv, *args, &_block) {
+    private def "private" (recv, *args, &_block) {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Private)
     }
-    def "public" (recv, *args, &_block) {
+    private def "public" (recv, *args, &_block) {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Public)
     }
-    def "protected" (recv, *args, &_block) {
+    private def "protected" (recv, *args, &_block) {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Protected)
     }
@@ -579,7 +579,7 @@ ruby_class! {
     // fileutils' `private_module_function` calls `module_function name`). The
     // literal form resolves at compile time in `lower/defs.rs`. Promotes the
     // named instance method to a module method (see `runtime_module_function`).
-    def "module_function" (recv, *args, &_block) {
+    private def "module_function" (recv, *args, &_block) {
         crate::runtime_meta::runtime_module_function(recv_cid(recv), args)
     }
     // `private_class_method`/`public_class_method` at RUNTIME. The literal

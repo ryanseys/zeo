@@ -131,7 +131,7 @@ ruby_class! {
 
     // `Class#inherited`'s default -- the no-op hook a user override's `super`
     // reaches, the `Module#included`/`extended`/`prepended` trio's sibling.
-    def "inherited" (_recv, _arg) {
+    private def "inherited" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
 }

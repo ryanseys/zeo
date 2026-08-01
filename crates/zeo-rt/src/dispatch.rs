@@ -2197,13 +2197,18 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
     // `private_class_method` actually write to.
     if crate::runtime_meta::is_live() {
         if let Some(owner) = crate::runtime_meta::singleton_class_owner(class) {
-            if !class_receiver_responds(owner, name) {
-                return None;
+            // Only when the owner really HAS a class method by this name. A
+            // singleton class also inherits `Class`/`Module`'s own instance
+            // methods, and those carry their own visibility -- answering `None`
+            // here read as "not private" and made
+            // `C.singleton_class.method_defined?(:private)` true, where CRuby
+            // says false because `Module#private` is private.
+            if class_receiver_responds(owner, name) {
+                return Some(match class_method_is_private(owner, name) {
+                    true => MethodVisibility::Private,
+                    false => MethodVisibility::Public,
+                });
             }
-            return Some(match class_method_is_private(owner, name) {
-                true => MethodVisibility::Private,
-                false => MethodVisibility::Public,
-            });
         }
     }
     let reg = REGISTRY.get()?;
