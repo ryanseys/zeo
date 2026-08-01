@@ -987,13 +987,17 @@ fn parse_int_lenient(text: &str, default_base: u32) -> RubyValue {
 /// `String#slice!`: removes the matched span from `recv` in place and returns
 /// it. Supports the `(index[, len])` / `(range)` / `(substring)` forms
 /// (Regexp/`slice!` is a documented gap).
-fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+fn slice_bang_impl(
+    recv: &RubyValue,
+    index: &RubyValue,
+    len: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
     let handle = recv_str!(recv);
     let mut chars: Vec<char> = handle.lock().char_vec();
     let n = chars.len() as i64;
     let norm = |i: i64| if i < 0 { i + n } else { i };
     // Resolve the [start, end) character span to remove.
-    let (start, end) = match (&args[0], args.get(1)) {
+    let (start, end) = match (index, len) {
         (RubyValue::Int(i), Some(RubyValue::Int(len))) => {
             let start = norm(*i);
             if start < 0 || start > n || *len < 0 {
@@ -1063,7 +1067,12 @@ fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Si
 /// The `String#[]=` engine (CRuby `rb_str_aset_m`): resolves the target
 /// character span for every index shape, then splices in the replacement.
 /// Returns the assigned value, matching Ruby's index-assignment expression.
-fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+fn index_set_impl(
+    recv: &RubyValue,
+    index: &RubyValue,
+    second: &RubyValue,
+    third: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
     let handle = recv_str!(recv);
     if handle.is_frozen() {
         return Err(crate::dispatch::raise_error_details(
@@ -1072,7 +1081,7 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
             &[("receiver", recv.clone())],
         ));
     }
-    let val = args.last().unwrap();
+    let val = third.unwrap_or(second);
     // The replacement's `to_str` conversion happens at CRuby's exact point in
     // each index shape: AFTER the index converts but BEFORE its bounds check
     // (Int/start-length/Range forms), yet only after a Regexp/substring index
@@ -1085,13 +1094,13 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
     let index_err = |msg: String| crate::dispatch::raise_error("IndexError", msg);
 
     // Resolve the [start, end) character span to overwrite.
-    let (start, end) = if let RubyValue::Regexp(re) = &args[0] {
+    let (start, end) = if let RubyValue::Regexp(re) = index {
         let text: String = handle.lock().to_utf8_lossy().into_owned();
         let RubyValue::MatchData(m) = crate::regexp_match(re, &text) else {
             return Err(index_err("regexp not matched".to_string()));
         };
-        let span = if args.len() == 3 {
-            match &args[1] {
+        let span = if third.is_some() {
+            match second {
                 RubyValue::Int(k) => m.groups.get(*k as usize).copied().flatten(),
                 RubyValue::Str(name) => group_span_by_name(&m, &name.lock().to_utf8_lossy()),
                 RubyValue::Symbol(s) => group_span_by_name(&m, &s.name()),
@@ -1104,8 +1113,8 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
             return Err(index_err("regexp not matched".to_string()));
         };
         (text[..bstart].chars().count(), text[..bend].chars().count())
-    } else if args.len() == 3 {
-        let (i, len) = (arg_int!(args, 0), arg_int!(args, 1));
+    } else if third.is_some() {
+        let (i, len) = (arg_int!(index), arg_int!(second));
         repl = Some(convert::to_rstr(val)?);
         let start = norm(i);
         if start < 0 || start > n {
@@ -1116,14 +1125,14 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
         }
         (start as usize, (start + len).min(n) as usize)
     } else {
-        match &args[0] {
+        match index {
             RubyValue::Range(s, e, exclusive) => {
                 let start = match s.as_deref() {
                     Some(v) => norm(convert::to_index(v)?),
                     None => 0,
                 };
                 if start < 0 || start > n {
-                    return Err(range_error!("{} out of range", args[0].to_display_string()));
+                    return Err(range_error!("{} out of range", index.to_display_string()));
                 }
                 let end = match e.as_deref() {
                     Some(v) => {
@@ -1270,15 +1279,9 @@ ruby_class! {
     // fresh buffer); a source string is copied, keeping its own encoding
     // unless `encoding:` overrides it. `capacity:` only hints allocation, so
     // it is accepted and ignored.
-    def self."new"(_recv, *args, &_block) {
-        let enc_override = kw_encoding(args)?;
-        // Strip a trailing options Hash before reading the positional source.
-        let positional = match args.last() {
-            Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
-            _ => args,
-        };
-        arity!(positional, 0..=1);
-        let (bytes, enc) = match positional.first() {
+    def self."new"(_recv, source?, **opts) {
+        let enc_override = kw_encoding(opts)?;
+        let (bytes, enc) = match source {
             None => (Vec::new(), crate::encoding::ASCII_8BIT),
             Some(v) => {
                 let s = convert::to_rstr(v)?;
@@ -1547,21 +1550,17 @@ ruby_class! {
     // `unpack`/`unpack1`: deserialize the bytes per a template (see
     // `builtins::pack`). `unpack` answers the whole Array; `unpack1` the
     // first element (nil when empty).
-    def "unpack" arity -2 (recv, *args, &_block) {
-        let positional = kw_strip(args);
-        arity!(positional, 1);
-        let template = unpack_template(&positional[0])?;
+    def "unpack"(recv, fmt, **opts) {
+        let template = unpack_template(fmt)?;
         let bytes = recv_str!(recv).lock().bytes().to_vec();
-        let start = kw_unpack_offset(args, bytes.len())?;
+        let start = kw_unpack_offset(opts, bytes.len())?;
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(RubyValue::Array(crate::array_new(vals)))
     }
-    def "unpack1" arity -2 (recv, *args, &_block) {
-        let positional = kw_strip(args);
-        arity!(positional, 1);
-        let template = unpack_template(&positional[0])?;
+    def "unpack1"(recv, fmt, **opts) {
+        let template = unpack_template(fmt)?;
         let bytes = recv_str!(recv).lock().bytes().to_vec();
-        let start = kw_unpack_offset(args, bytes.len())?;
+        let start = kw_unpack_offset(opts, bytes.len())?;
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(vals.into_iter().next().unwrap_or(RubyValue::Nil))
     }
@@ -1816,10 +1815,9 @@ ruby_class! {
     // `lines` keeps each separator (`["a\n", "b\n", "c"]`).
     // `lines(sep = "\n", chomp: false)` -- split into lines, keeping the
     // separator unless `chomp:` strips it.
-    def "lines"(recv, *args, &block) {
-        arity!(args, 0..=2);
+    def "lines"(recv, sep?, **opts, &block) {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-        let ls = lines_from_args(&text, args);
+        let ls = lines_from_args(&text, sep, opts);
         // With a block, `lines` behaves like `each_line`: yield each, return self.
         if let Some(RubyValue::Proc(p)) = &block {
             for l in ls {
@@ -1872,11 +1870,10 @@ ruby_class! {
     }
     // `each_line` / `each_line(sep)`: a custom separator keeps its trailing
     // occurrence on each piece, exactly like the default `"\n"`.
-    def "each_line"(recv, *args, &block) {
-        arity!(args, 0..=2);
-        let p = block_or_enum!(recv, "each_line", args, block);
+    def "each_line"(recv, sep?, **opts, &block) {
+        let p = block_or_enum!(recv, "each_line", __args, block);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-        for l in lines_from_args(&text, args) {
+        for l in lines_from_args(&text, sep, opts) {
             p.call(&[l])?;
         }
         Ok(recv.clone())
@@ -2358,9 +2355,8 @@ ruby_class! {
     // `v` (Ruby's index-assignment expression value). Out-of-range integers/
     // substrings raise IndexError; an out-of-range range begin raises
     // RangeError.
-    def "[]="(recv, *args, &_block) {
-        arity!(args, 2..=3);
-        index_set_impl(recv, args)
+    def "[]=" cfunc (recv, index, second, third?) {
+        index_set_impl(recv, index, second, third)
     }
     // `casecmp` is an ASCII case-insensitive `<=>`; `casecmp?` its boolean
     // (Unicode-aware) sibling. A non-String argument answers nil.
@@ -2388,10 +2384,9 @@ ruby_class! {
     // `slice!(index[, len])` / `slice!(range)` / `slice!(substring)`: removes
     // the matched portion from the receiver IN PLACE and returns it (nil when
     // nothing matched).
-    def "slice!"(recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "slice!" cfunc (recv, index, len?) {
         guard_str_frozen(recv)?;
-        slice_bang_impl(recv, args)
+        slice_bang_impl(recv, index, len)
     }
     // `sub`/`gsub`: String or Regexp pattern; String replacement or block.
     def "sub"(recv, *args, &block) {
@@ -2473,13 +2468,13 @@ ruby_class! {
     // collapses to one (`"hello".tr_s("l","r") == "hero"`). Delegating to
     // `tr` then `squeeze(to)` reproduces this: only the `to` characters are
     // squeezed, and an empty `to` (a delete) squeezes nothing.
-    def "tr_s" arity 2 (recv, *args, &_block) {
-        arity!(args, 2);
-        let translated = crate::dispatch::send_value(recv, crate::Symbol::intern("tr"), args, None)?;
+    def "tr_s"(recv, from_str, to_str) {
+        let translated = crate::dispatch::send_value(
+            recv, crate::Symbol::intern("tr"), &[from_str.clone(), to_str.clone()], None)?;
         crate::dispatch::send_value(
             &translated,
             crate::Symbol::intern("squeeze"),
-            std::slice::from_ref(&args[1]),
+            std::slice::from_ref(to_str),
             None,
         )
     }
@@ -2627,11 +2622,10 @@ ruby_class! {
     // `upto(other[, exclusive])` -- yields successive `succ` values from self
     // through `other` (excluding `other` when `exclusive`); a blockless call
     // answers an Enumerator. Stops once a value grows past `other`.
-    def "upto"(recv, *args, &block) {
-        arity!(args, 1..=2);
-        let exclusive = args.get(1).is_some_and(|v| v.truthy());
-        let limit = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
-        let p = block_or_enum!(recv, "upto", args, block);
+    def "upto" cfunc (recv, max, exclusive?, &block) {
+        let exclusive = exclusive.is_some_and(|v| v.truthy());
+        let limit = arg_str!(max).lock().to_utf8_lossy().into_owned();
+        let p = block_or_enum!(recv, "upto", __args, block);
         let mut cur = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         loop {
             if cur.as_str() > limit.as_str() {
@@ -2651,18 +2645,14 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "center"(recv, *args, &_block) {
-        arity!(args, 1..=2)
-        ;
-        pad(recv, args, Pad::Center)
+    def "center" cfunc (recv, width, pad_str?) {
+        pad(recv, width, pad_str, Pad::Center)
     }
-    def "ljust"(recv, *args, &_block) {
-        arity!(args, 1..=2);
-        pad(recv, args, Pad::Left)
+    def "ljust" cfunc (recv, width, pad_str?) {
+        pad(recv, width, pad_str, Pad::Left)
     }
-    def "rjust"(recv, *args, &_block) {
-        arity!(args, 1..=2);
-        pad(recv, args, Pad::Right)
+    def "rjust" cfunc (recv, width, pad_str?) {
+        pad(recv, width, pad_str, Pad::Right)
     }
     def "insert" (recv, arg1, arg2) {
         guard_str_frozen(recv)?;
@@ -3052,18 +3042,20 @@ fn str_array(parts: Vec<String>) -> RubyValue {
 /// `lines`/`each_line`'s shared split: an optional `sep` positional and a
 /// `chomp:` keyword (a trailing Hash). Split keeps the separator unless chomped;
 /// the default separator also strips a preceding `\r` when chomping.
-fn lines_from_args(text: &str, args: &[RubyValue]) -> Vec<RubyValue> {
+fn lines_from_args(
+    text: &str,
+    sep: Option<&RubyValue>,
+    opts: Option<&RubyValue>,
+) -> Vec<RubyValue> {
     let mut chomp = false;
-    let mut positional = args;
-    if let Some(RubyValue::Hash(h)) = args.last() {
+    if let Some(RubyValue::Hash(h)) = opts {
         if let RubyValue::Bool(b) =
             crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp")))
         {
             chomp = b;
         }
-        positional = &args[..args.len() - 1];
     }
-    let sep = match positional.first() {
+    let sep = match sep {
         Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
         _ => "\n".to_string(),
     };
@@ -3358,13 +3350,18 @@ enum Pad {
     Right,
 }
 
-fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Signal> {
+fn pad(
+    recv: &RubyValue,
+    width: &RubyValue,
+    fill: Option<&RubyValue>,
+    kind: Pad,
+) -> Result<RubyValue, Signal> {
     let text = match recv {
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => unreachable!("String table row dispatched on a non-String receiver"),
     };
-    let width = convert::to_index(&args[0])?;
-    let fill = match args.get(1) {
+    let width = convert::to_index(width)?;
+    let fill = match fill {
         None => " ".to_string(),
         Some(f) => convert::to_rstr(f)?.lock().to_utf8_lossy().into_owned(),
     };
@@ -3391,8 +3388,8 @@ fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Sig
 /// The `encoding:` keyword shared by `String.new` -- reads it from the
 /// trailing options Hash (the G2 kwargs convention), resolving a name string
 /// or an `Encoding` value; `None` when absent.
-fn kw_encoding(args: &[RubyValue]) -> Result<Option<crate::encoding::EncodingId>, Signal> {
-    let Some(RubyValue::Hash(h)) = args.last() else {
+fn kw_encoding(opts: Option<&RubyValue>) -> Result<Option<crate::encoding::EncodingId>, Signal> {
+    let Some(RubyValue::Hash(h)) = opts else {
         return Ok(None);
     };
     let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("encoding")));
@@ -3400,15 +3397,6 @@ fn kw_encoding(args: &[RubyValue]) -> Result<Option<crate::encoding::EncodingId>
         return Ok(None);
     }
     Ok(Some(crate::builtins::encoding::arg_encoding(&v)?))
-}
-
-/// The positional args of a call that may carry a trailing keyword Hash --
-/// strips that Hash so `arity!` counts only the real positionals.
-fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
-    match args.last() {
-        Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
-        _ => args,
-    }
 }
 
 /// The byte set `String#strip`/`#lstrip`/`#rstrip` remove: CRuby strips
@@ -3423,8 +3411,8 @@ fn is_rb_strip(c: char) -> bool {
 /// from (default 0). CRuby allows `offset == bytesize` (an empty remainder ->
 /// nil), rejects a larger offset ("offset outside of string") and a negative
 /// one ("offset can't be negative").
-fn kw_unpack_offset(args: &[RubyValue], len: usize) -> Result<usize, Signal> {
-    let Some(RubyValue::Hash(h)) = args.last() else {
+fn kw_unpack_offset(opts: Option<&RubyValue>, len: usize) -> Result<usize, Signal> {
+    let Some(RubyValue::Hash(h)) = opts else {
         return Ok(0);
     };
     let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("offset")));
