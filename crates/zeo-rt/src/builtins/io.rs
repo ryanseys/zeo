@@ -1066,9 +1066,7 @@ fn read_one_char(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<Stri
     Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
-use crate::builtins::{
-    arg_error, convert, eof_error, io_error, local_jump_error, not_impl_error, type_error,
-};
+use crate::builtins::{arg_error, convert, eof_error, io_error, not_impl_error, type_error};
 use std::sync::atomic::Ordering::Relaxed;
 
 /// An integer argument (`pread`/`pwrite` counts, `fcntl`/`chmod` operands)
@@ -1680,9 +1678,7 @@ ruby_class! {
     // lineno. Drains through `gets` for the same reason `readlines` does.
     def "each_line" | "each" cfunc (recv, _sep?, _limit?, **_opts, &blk) {
         let args = __args;
-        let Some(RubyValue::Proc(p)) = blk else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = crate::builtins::block_or_enum!(recv, args, blk);
         while let line @ (RubyValue::Str(_) | RubyValue::Object(_)) = gets_value(recv, args)? {
             p.call(&[line])?;
         }
@@ -1691,9 +1687,7 @@ ruby_class! {
 
     // `each_char` -- yield each UTF-8 char.
     def "each_char" | "chars" (recv, &blk) {
-        let Some(RubyValue::Proc(p)) = blk else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = crate::builtins::block_or_enum!(recv, __args, blk);
         loop {
             let ch = with_buffered_file(recv, |io, f, path| {
                 read_one_char(io, f)
@@ -1709,9 +1703,7 @@ ruby_class! {
 
     // `each_byte` -- yield each byte as an Integer.
     def "each_byte" | "bytes" (recv, &blk) {
-        let Some(RubyValue::Proc(p)) = blk else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = crate::builtins::block_or_enum!(recv, __args, blk);
         let text = io_read_val(recv, &[], None)?;
         let RubyValue::Str(s) = &text else {
             return Ok(recv.clone());
@@ -2411,9 +2403,7 @@ ruby_class! {
     // `#each_codepoint { |cp| ... }` -- yield each remaining character's codepoint;
     // answers self.
     def "each_codepoint" | "codepoints" (recv, &blk) {
-        let RubyValue::Proc(p) = blk.unwrap_or(RubyValue::Nil) else {
-            return Err(local_jump_error!("no block given (yield)"));
-        };
+        let p = crate::builtins::block_or_enum!(recv, __args, blk);
         let content = with_file(recv, |f, path| {
             let mut buf = Vec::new();
             let mut chunk = [0u8; 8192];
