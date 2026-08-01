@@ -1875,12 +1875,15 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
         }
         if let Some(table) = crate::builtins::class_table(anc) {
             if table(n).is_some() {
-                // Hidden builtin privates (Kernel's print family,
-                // BasicObject's `initialize`) are reachable via
-                // implicit self / `send` / `super` -- all through the
-                // table -- but `respond_to?`'s default ignores privates,
-                // so they answer false unless `include_all`.
-                if !include_all && is_hidden_builtin_private(n) {
+                // A builtin private (Kernel's print family, BasicObject's
+                // `initialize`, every `module_function`'s instance copy) is
+                // reachable via implicit self / `send` / `super` -- all
+                // through the table -- but `respond_to?`'s default ignores
+                // privates, so it answers false unless `include_all`.
+                if !include_all
+                    && (is_hidden_builtin_private(n)
+                        || crate::builtins::class_method_is_private(anc, n))
+                {
                     continue;
                 }
                 return true;
@@ -2103,19 +2106,26 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
                 }
             }
         }
-        // Builtin-table methods are all public; keep them only when the filter
-        // admits public names.
-        if filter.matches(MethodVisibility::Public) {
-            for &n in crate::builtins::class_table_names(anc) {
-                // Hidden builtin privates (Kernel's print family, BasicObject's
-                // `initialize`) are reflection-invisible, exactly as in CRuby.
-                if is_hidden_builtin_private(n) {
-                    continue;
-                }
-                let sym = Symbol::intern(n);
-                if seen.insert(sym) {
-                    out.push(sym);
-                }
+        // A builtin table row carries its own visibility now (`module_function`
+        // defines the instance copy private, CRuby's rule), so the filter reads
+        // it per name rather than assuming public.
+        for &n in crate::builtins::class_table_names(anc) {
+            // Hidden builtin privates (Kernel's print family, BasicObject's
+            // `initialize`) are reflection-invisible, exactly as in CRuby.
+            if is_hidden_builtin_private(n) {
+                continue;
+            }
+            let vis = if crate::builtins::class_method_is_private(anc, n) {
+                MethodVisibility::Private
+            } else {
+                MethodVisibility::Public
+            };
+            if !filter.matches(vis) {
+                continue;
+            }
+            let sym = Symbol::intern(n);
+            if seen.insert(sym) {
+                out.push(sym);
             }
         }
         // A builtin alias is stored as a NAME INDIRECTION rather than a copied
@@ -2180,12 +2190,15 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         if let Some(vis) = reg.own_method_visibility(*anc, name) {
             return Some(vis);
         }
-        // A builtin-table method is public unless it is one CRuby hides.
+        // A builtin-table method carries its own visibility now; the hidden
+        // list still covers the tables that are not macro-generated.
         // Answering `Private` rather than falling through matters: the name
         // IS defined, so `private_method_defined?` must say so, and the walk
         // must not keep looking for a public copy farther up.
         if crate::builtins::class_table_names(*anc).contains(&name_str.as_str()) {
-            return Some(match is_hidden_builtin_private(&name_str) {
+            let private = is_hidden_builtin_private(&name_str)
+                || crate::builtins::class_method_is_private(*anc, &name_str);
+            return Some(match private {
                 true => MethodVisibility::Private,
                 false => MethodVisibility::Public,
             });

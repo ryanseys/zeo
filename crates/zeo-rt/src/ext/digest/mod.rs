@@ -48,11 +48,13 @@ const fn alias_table(id: ClassId) -> BuiltinClassTable {
             lookup: algorithm::lookup,
             names: algorithm::lookup_names,
             arity: algorithm::lookup_arity,
+            is_private: algorithm::lookup_is_private,
         }),
         class: Some(MethodTable {
             lookup: algorithm::lookup_class,
             names: algorithm::lookup_class_names,
             arity: algorithm::lookup_class_arity,
+            is_private: algorithm::lookup_class_is_private,
         }),
         install_constants: None,
     }

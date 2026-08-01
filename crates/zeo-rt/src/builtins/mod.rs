@@ -92,12 +92,23 @@ pub(crate) mod yielder;
 pub type BuiltinMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
-/// One method surface (instance OR class): the same drift-free trio every
+/// One method surface (instance OR class): the same drift-free set every
 /// `ruby_class!`/`ruby_module!` table derives from a single row set.
+///
+/// Four parallel `match`es on `&str` rather than one array of rows. That looks
+/// like the wrong shape and reads like it too, but it measures smaller: rustc
+/// buckets a string match by length and compares against inline literals, where
+/// an array of rows costs two relocations an entry and cannot be stripped per
+/// row. Collapsing these into one sorted `&[MethodRow]` was tried and measured
+/// +59,744 bytes on a `hello` binary, so it stayed as it is.
 pub struct MethodTable {
     pub lookup: fn(&str) -> Option<BuiltinMethodFn>,
     pub names: fn() -> &'static [&'static str],
     pub arity: fn(&str) -> Option<i64>,
+    /// CRuby-private: reachable through implicit self/`send`/`super`, but
+    /// invisible to `respond_to?` and to reflection. `false` for all but the
+    /// `module_function` instance copies today.
+    pub is_private: fn(&str) -> bool,
 }
 
 /// One builtin class/module's tables, registered by the `ruby_class!`/
@@ -222,6 +233,18 @@ pub(crate) fn class_method_arity_table(id: ClassId) -> Option<fn(&str) -> Option
         zeo_abi::YAML_MODULE => crate::ext::psych::lookup_class_arity,
         _ => return None,
     })
+}
+
+/// Whether the builtin instance method `name` on `id` is CRuby-private --
+/// reachable through implicit self/`send`/`super`, invisible to reflection.
+///
+/// `module_function` is the whole story today: CRuby defines the instance copy
+/// private, so `Math.instance_methods(false)` is empty while
+/// `Math.private_instance_methods(false)` lists 28.
+pub(crate) fn class_method_is_private(id: ClassId, name: &str) -> bool {
+    registered_table(id)
+        .and_then(|t| t.instance.as_ref())
+        .is_some_and(|m| (m.is_private)(name))
 }
 
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin

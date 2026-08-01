@@ -30,6 +30,7 @@ pub mod builtins {
         pub lookup: fn(&str) -> Option<BuiltinMethodFn>,
         pub names: fn() -> &'static [&'static str],
         pub arity: fn(&str) -> Option<i64>,
+        pub is_private: fn(&str) -> bool,
     }
 
     pub struct BuiltinClassTable {
@@ -153,6 +154,18 @@ fn a_bound_name_is_callable_by_its_rust_name_and_via_the_table() {
     );
     // And the bound name is still reachable by its Ruby name "cmp".
     assert!(comparable::lookup("cmp").is_some());
+}
+
+#[test]
+fn a_module_function_is_private_as_an_instance_method() {
+    // CRuby's rule: the class-method copy is public, the instance copy private,
+    // which is why `Math.instance_methods(false)` is empty while
+    // `Math.private_instance_methods(false)` lists all 28.
+    assert!(comparable::lookup_is_private("mf"));
+    // The class-method copy stays public.
+    assert!(!comparable::lookup_class_is_private("mf"));
+    // A plain def is public in both directions.
+    assert!(!comparable::lookup_is_private("opt"));
 }
 
 #[test]
