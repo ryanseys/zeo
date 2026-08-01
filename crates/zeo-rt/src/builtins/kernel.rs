@@ -1011,10 +1011,31 @@ pub(crate) fn float_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 .map(RubyValue::Float)
                 .ok_or_else(invalid)
         }
-        other => Err(type_error!(
-            "can't convert {} into Float",
-            crate::builtins::convert_name_of(other)
-        )),
+        // Anything else goes through the `to_f` protocol, CRuby's
+        // `rb_convert_type_with_id(val, T_FLOAT, "Float", idTo_f)`. This is what
+        // lets `Float(obj)` and every `Numeric` default built on it answer for a
+        // user `class Temp < Numeric` that defines only `to_f`. `nil` has no
+        // `to_f` for this purpose -- CRuby rejects it before asking.
+        other => {
+            let to_f = crate::Symbol::intern("to_f");
+            let refuse = || {
+                type_error!(
+                    "can't convert {} into Float",
+                    crate::builtins::convert_name_of(other)
+                )
+            };
+            if matches!(other, RubyValue::Nil)
+                || !crate::dispatch::responds_to(other.class_id(), to_f, false)
+            {
+                return Err(refuse());
+            }
+            match crate::dispatch::send_value(other, to_f, &[], None)? {
+                f @ RubyValue::Float(_) => Ok(f),
+                // A `to_f` that answers something else is a broken conversion,
+                // not a Float -- CRuby reports the same refusal.
+                _ => Err(refuse()),
+            }
+        }
     }
 }
 

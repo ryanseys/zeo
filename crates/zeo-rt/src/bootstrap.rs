@@ -30,6 +30,48 @@ pub fn register_builtins(registry: &mut ClassRegistry) {
     for (id, name, is_module) in object.chain(always_on) {
         registry.register(id, name, is_module, declared_ancestors(id), None);
     }
+    undefine_builtin_methods(registry);
+}
+
+/// The built-in `undef`s: a name an ancestor defines that the class REFUSES,
+/// so the call raises NoMethodError rather than inheriting an answer that
+/// makes no sense.
+///
+/// `Complex` is the only core class that does this, and it is why
+/// `Complex(1, 2).positive?` is a NoMethodError while `Rational(1, 2).positive?`
+/// is false: an ordering on the complex plane does not exist, so every method
+/// `Numeric` and `Comparable` build out of `<=>` has to go, and with them the
+/// rounding family, which would need one. Without this the generic `Numeric`
+/// rows leak straight through the ancestor walk.
+fn undefine_builtin_methods(registry: &mut ClassRegistry) {
+    const COMPLEX_UNDEF: &[&str] = &[
+        // Ordering, and everything Comparable derives from it.
+        "<",
+        "<=",
+        ">",
+        ">=",
+        "between?",
+        "clamp",
+        "negative?",
+        "positive?", //
+        // Division with a remainder, which needs an ordering to floor.
+        "%",
+        "div",
+        "divmod",
+        "modulo",
+        "remainder",
+        "step", //
+        // Rounding, likewise.
+        "ceil",
+        "floor",
+        "round",
+        "truncate", //
+        // `i` would build a Complex out of a Complex.
+        "i",
+    ];
+    for name in COMPLEX_UNDEF {
+        registry.mark_undefined(zeo_abi::COMPLEX_CLASS, crate::Symbol::intern(name));
+    }
 }
 
 impl ClassRegistry {

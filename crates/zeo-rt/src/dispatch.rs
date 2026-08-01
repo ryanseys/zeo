@@ -865,13 +865,20 @@ impl ClassRegistry {
         let entry = self.entries.get(&id.0)?;
         let map = entry.flat_value.get_or_init(|| {
             let mut map = crate::FMap::default();
+            // A name `undef`'d part-way up the chain must not be flattened in
+            // from ABOVE that point -- `Complex` undefines `positive?`, so the
+            // `Numeric` row behind it may never reach this table. Collected as
+            // the walk descends, so an undef blocks its own ancestor's rows and
+            // every one after it, and never the more-derived rows already in.
+            let mut blocked: FSet<Symbol> = FSet::default();
             for &anc in entry.ancestors.iter() {
                 // Reopen rows first, then the builtin table -- the walk's own
                 // per-ancestor order; `or_insert`-style first-wins across
                 // ancestors is the walk's most-derived-first rule.
                 if let Some(anc_entry) = self.entries.get(&anc.0) {
+                    blocked.extend(anc_entry.undefined_methods.iter().copied());
                     for (&(b, sym), &f) in &anc_entry.value_methods {
-                        if b == 0 {
+                        if b == 0 && !blocked.contains(&sym) {
                             map.entry(sym).or_insert(FlatHit {
                                 f,
                                 owner: anc,
@@ -882,8 +889,12 @@ impl ClassRegistry {
                 }
                 if let Some(lookup) = crate::builtins::class_table(anc) {
                     for &n in crate::builtins::class_table_names(anc) {
+                        let sym = Symbol::intern(n);
+                        if blocked.contains(&sym) {
+                            continue;
+                        }
                         if let Some(f) = lookup(n) {
-                            map.entry(Symbol::intern(n)).or_insert(FlatHit {
+                            map.entry(sym).or_insert(FlatHit {
                                 f,
                                 owner: anc,
                                 builtin: true,

@@ -971,6 +971,17 @@ pub fn seed_errno_constants() {
         let id = zeo_abi::errno_class_id(target);
         crate::constants::const_set(ERRNO_MODULE.0, bare, RubyValue::Class(id));
     }
+    // The readiness classes follow the same errno, so `IO` carries the same
+    // second spellings and needs the same treatment.
+    for (alias, target) in [
+        ("EWOULDBLOCKWaitReadable", "IO::EAGAINWaitReadable"),
+        ("EWOULDBLOCKWaitWritable", "IO::EAGAINWaitWritable"),
+    ] {
+        let Some(id) = crate::dispatch::class_id_by_name(target) else {
+            continue;
+        };
+        crate::constants::const_set(zeo_abi::IO_CLASS.0, alias, RubyValue::Class(id));
+    }
 }
 
 /// `LocalJumpError#reason` -- the jump kind (`:noreason`/`:break`/`:return`/...);

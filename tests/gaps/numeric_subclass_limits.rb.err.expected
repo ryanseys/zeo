@@ -1,0 +1,2 @@
+gaps/numeric_subclass_limits.rb:23:in 'Numeric#singleton_method_added': can't define singleton method "frob" for Deg (TypeError)
+	from gaps/numeric_subclass_limits.rb:23:in '<main>'

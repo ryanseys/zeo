@@ -479,6 +479,111 @@ ruby_class! {
             }
         }
     }
+    // ---- The defaults a `class Temp < Numeric` inherits ----
+    //
+    // Everything above computes on zeo's own numeric lanes, which a user
+    // subclass is not one of. These nineteen are CRuby's own generic
+    // implementations: they know nothing but `<=>`, `-`, `/`, `to_f`, `to_i`,
+    // `to_r` and `coerce`, and reach them by SEND, so they work for a subclass
+    // that defines only those. Every concrete numeric class carries its own
+    // faster row for each, which the ancestor walk finds first.
+
+    // `[other, self]` when the two are the same class, else both as Floats --
+    // the fallback CRuby's `rb_num_coerce_bin` leans on when a subclass
+    // defines no `coerce` of its own.
+    def "coerce" (recv, other) {
+        if recv.class_id() == other.class_id() {
+            return Ok(RubyValue::Array(crate::array_new(vec![other.clone(), recv.clone()])));
+        }
+        let pair = vec![to_float(other)?, to_float(recv)?];
+        Ok(RubyValue::Array(crate::array_new(pair)))
+    }
+    def "+@" (recv) {
+        Ok(recv.clone())
+    }
+    // `zero, x = self.coerce(0); zero - x` -- NOT `0 - self`, which would ask
+    // the subclass to accept an Integer on the left.
+    def "-@" (recv) {
+        let pair = send(recv, "coerce", &[RubyValue::Int(0)])?;
+        let (zero, x) = coerced_pair(&pair)?;
+        send(&zero, "-", &[x])
+    }
+    def "abs" | "magnitude" (recv) {
+        if is_negative(recv)? {
+            return send(recv, "-@", &[]);
+        }
+        Ok(recv.clone())
+    }
+    // `(self / other).floor`, so the subclass's own `/` decides the lane and
+    // the quotient's own `floor` decides the rounding.
+    def "div" (recv, other) {
+        let q = send(recv, "/", std::slice::from_ref(other))?;
+        send(&q, "floor", &[])
+    }
+    // `self - other * self.div(other)` -- floored division's remainder, whose
+    // sign follows the DIVISOR.
+    def "modulo" | "%" (recv, other) {
+        let q = send(recv, "div", std::slice::from_ref(other))?;
+        let whole = send(other, "*", &[q])?;
+        send(recv, "-", &[whole])
+    }
+    // The rounding family all defer to Float, which is what CRuby does
+    // (`num_round` is `flo_round(rb_Float(num))`) -- so a subclass needs only
+    // `to_f` to get all four.
+    def "round" (recv, *args) {
+        float_row(recv, "round", args)
+    }
+    def "floor" (recv, *args) {
+        float_row(recv, "floor", args)
+    }
+    def "ceil" (recv, *args) {
+        float_row(recv, "ceil", args)
+    }
+    def "truncate" (recv, *args) {
+        float_row(recv, "truncate", args)
+    }
+    def "to_int" (recv) {
+        send(recv, "to_i", &[])
+    }
+    // `Complex(0, self)`. CRuby refuses a receiver that is not real, which is
+    // why `Complex#i` does not exist -- see the undef list in `bootstrap`.
+    def "i" (recv) {
+        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
+    }
+    def "numerator" (recv) {
+        let r = send(recv, "to_r", &[])?;
+        send(&r, "numerator", &[])
+    }
+    def "denominator" (recv) {
+        let r = send(recv, "to_r", &[])?;
+        send(&r, "denominator", &[])
+    }
+    // Only `Float` has values that are neither, so the generic answers are
+    // fixed -- `Float` overrides both.
+    def "finite?" (_recv) {
+        Ok(RubyValue::Bool(true))
+    }
+    def "infinite?" (_recv) {
+        Ok(RubyValue::Nil)
+    }
+    // A Numeric is meant to be immutable and interchangeable with any equal
+    // value, so CRuby refuses to give one a singleton class at all.
+    //
+    // Present and correct when CALLED, but nothing calls it yet: zeo has no
+    // `singleton_method_added` hook, so `def n.foo` on a Numeric still
+    // succeeds. `tests/gaps/numeric_singleton_method_added.rb` records that.
+    def "singleton_method_added" (recv, name) {
+        let name = match name {
+            RubyValue::Symbol(s) => s.name_str().to_string(),
+            other => crate::builtins::convert::to_rstr(other)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
+        };
+        let class = crate::dispatch::class_name(recv.class_id()).unwrap_or_default();
+        Err(type_error!("can't define singleton method \"{name}\" for {class}"))
+    }
+
     // `step(limit, step = 1)`; the blockless form returns an Enumerator.
     // Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
@@ -621,6 +726,46 @@ pub(crate) fn reverse_eq(recv: &RubyValue, arg: &RubyValue) -> Result<RubyValue,
 /// The coercion TypeError a generic Numeric row raises (named by the
 /// RECEIVER's class, CRuby's shape; the ARGUMENT reads per
 /// `coerce_operand_name`'s special-constant rule).
+/// Call `name` on `recv` through ordinary dispatch. Every generic `Numeric`
+/// row goes through this rather than a `num_*` helper: the receiver may be a
+/// user subclass, whose `-`/`/`/`to_f` are the only things that know what it
+/// means.
+fn send(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    crate::dispatch::send_value(recv, crate::Symbol::intern(name), args, None)
+}
+
+/// `rb_Float` -- what the rounding family and the fallback `coerce` convert
+/// through.
+fn to_float(v: &RubyValue) -> Result<RubyValue, Signal> {
+    crate::builtins::kernel::float_impl(std::slice::from_ref(v))
+}
+
+/// Run `Float`'s own row: `Float(self).round(*args)` and its three siblings,
+/// which is exactly how CRuby defines the generic ones.
+fn float_row(recv: &RubyValue, name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    send(&to_float(recv)?, name, args)
+}
+
+/// `self < 0`, asked through `<=>` so a subclass needs nothing else.
+fn is_negative(recv: &RubyValue) -> Result<bool, Signal> {
+    Ok(matches!(
+        send(recv, "<=>", &[RubyValue::Int(0)])?,
+        RubyValue::Int(n) if n < 0
+    ))
+}
+
+/// Split what `coerce` answered into its two halves, rejecting anything that
+/// is not a two-element Array -- CRuby's own check, and the message it uses.
+fn coerced_pair(pair: &RubyValue) -> Result<(RubyValue, RubyValue), Signal> {
+    if let RubyValue::Array(a) = pair {
+        let a = a.lock();
+        if a.len() == 2 {
+            return Ok((a[0].clone(), a[1].clone()));
+        }
+    }
+    Err(type_error!("coerce must return [x, y]"))
+}
+
 fn coercion_error(recv: &RubyValue, arg: &RubyValue) -> Signal {
     type_error!(
         "{} can't be coerced into {}",

@@ -208,7 +208,7 @@ Ordered by count. Each lands with a golden blessed from the oracle.
 
 | target | n | notes |
 |---|---|---|
-| `Numeric` instance | 19 | `%`, `+@`, `-@`, `abs`, `ceil`, `coerce`, `div`, `divmod`, `floor`, `round`, `truncate`, `to_int`, `finite?`, `infinite?`, `numerator`, `denominator`, `magnitude`, `modulo`, `i`. **Not cosmetic**: these are the defaults a user's `class MyNum < Numeric` inherits. Integer/Float already answer their own |
+| `Numeric` instance | 19 | **done**, see 2.1 below |
 | `Thread` | 24 | `Thread.start` (a very common idiom), `.kill`, `.exit`, `.stop`, `.abort_on_exception`, `#backtrace`, `#raise`, `#run`, `#wakeup`, `#priority`, `#stop?`, `#fetch` |
 | `Module`/`Class` | 12 | `autoload`, `autoload?`, `const_missing`, `const_source_location`, `remove_class_variable`, `set_temporary_name`, `public_instance_method`, `Module.nesting`. `autoload` is load-bearing for real gems |
 | `GC` | 12 | `stat_heap`, `config`, `total_time`, `measure_total_time`, `latest_gc_info`, the compaction family. Mostly can report honest constants for a non-MRI heap |
@@ -221,6 +221,149 @@ Ordered by count. Each lands with a golden blessed from the oracle.
 | `Process::Tms` | 7 | it is a `Struct`; the accessors and `Struct` class methods |
 | `Thread::Queue`/`SizedQueue` | 5 | `clear`, `num_waiting`, `marshal_dump` |
 | long tail | ~40 | `Marshal.restore` (alias of `load`), `Symbol.all_symbols`, `Regexp.timeout=`, `Random.seed`, `Hash.ruby2_keywords_hash`, `Set#compare_by_identity`, `Warning#warn`, `Warning.categories`, `ThreadGroup#enclose`, `Dir.chroot`, `String#unicode_normalize!`, `Exception#backtrace_locations`, `NameError#local_variables`, `SyntaxError#path`, `Refinement#target`, `Enumerator::Lazy#eager`, … |
+
+### The four scope decisions
+
+Taken before Wave 2.2, because each one changes what "done" means:
+
+1. **Honest stubs for capabilities zeo lacks.** `GC` heap statistics,
+   `Thread#priority`, `Fiber`'s scheduler hooks and `TracePoint`'s
+   frame-dependent rows all get defined and answer a TRUTHFUL degenerate value
+   — `0`, `{}`, `nil`, or the stored value of a setter nothing reads. This is
+   the rule `GC.start` already follows. Every one gets a `COMPATIBILITY.md`
+   line. `TracePoint#self`/`#binding`/`#return_value` are the exception: they
+   raise CRuby's own `RuntimeError` for an event that cannot supply them,
+   because a fabricated `self` is worse than a loud refusal.
+2. **All 103 encodings registered; the single-byte ones implemented for real.**
+   See Wave 3.6.
+3. **`Ractor`: error classes only.** The eight classes so `rescue
+   Ractor::ClosedError` resolves; the 23 methods stay deferred with the reason
+   already written above.
+4. **`Pathname` vendored and default-loaded**, matching the oracle with no
+   `require`. See Wave 3.5.
+
+### 2.1 `Numeric` instance-method defaults (19)
+
+**Status: done.** All 19 rows are written through `send`, so a subclass that
+defines only `<=>`, `-`, `/`, `*`, `to_f`, `to_i`, `to_r` and `coerce` inherits
+the whole family. `tests/numeric_subclass_defaults.rb` matches the oracle byte
+for byte.
+
+Two things had to be fixed underneath it:
+
+- **zeo had no builtin `undef`.** `Complex(1, 2).positive?` answered `false`
+  where CRuby raises, along with `divmod`, `step`, `clamp`, `between?`,
+  `remainder` and `negative?`. `mark_undefined` existed and `respond_to?`
+  honoured it, but `flat_value_hit` flattened every ancestor's methods without
+  consulting `undefined_methods`, so the call still landed. Fixing it was a
+  PREREQUISITE: the generic `Numeric` rows would otherwise have widened the
+  leak by eight more names.
+- **`Kernel#Float` refused a `Numeric` subclass**, which broke `#floor`,
+  `#round` and `#coerce` on exactly the classes this wave exists for. It now
+  uses the `to_f` conversion protocol.
+
+Two limits are recorded as XFAIL rather than shipped quietly
+(`tests/gaps/numeric_subclass_limits.rb`): there is no
+`singleton_method_added` hook, so `def n.foo` on a Numeric still succeeds; and
+`Numeric#i` cannot build a Complex whose component is a subclass, because every
+`cpx_*` routine assumes a native lane.
+
+### 2.2 `Thread` (24)
+
+`builtins/thread.rs` is a HAND-ROLLED `match`-on-`&str` table, not the DSL, and
+it has the exact drift the arity work removed everywhere else: `lookup_names`
+lists `abort_on_exception` twice and `lookup_class_names` omits it entirely, so
+two of the 24 "missing" rows are a stale listing rather than a missing method.
+Every row also reports arity `-1` from a hand-written `lookup_arity`.
+
+So this wave MIGRATES `Thread` to `ruby_class!` first, then adds rows. The
+migration is what makes the additions cheap, and it puts `Thread` into the
+compiler's `CLASS_SURFACE` for the first time. `Fiber` gets the same treatment
+in Wave 2.5.
+
+The rows, by what they need:
+
+- **Free from existing runtime state**: `Thread.start`/`.fork` (aliases of
+  `.new`), `.kill`/`.exit` (the class forms of `#kill`), `#fetch` (over
+  `thread_local_get`), `#pending_interrupt?` and `.pending_interrupt?` (over
+  `interrupt_pending`), `#run`/`#wakeup` (over `wake_target`).
+- **New process- or thread-wide cells**: `.ignore_deadlock`/`=`,
+  `#priority`/`#priority=` (stored, advisory — CRuby's is advisory too on most
+  platforms), `#native_thread_id`.
+- **Honest stubs**: `Thread.stop` sleeps until woken; `#backtrace` and
+  `#backtrace_locations` answer the CURRENT thread's real frames and `nil` for
+  a dead thread, matching CRuby, but `[]` for another live thread, which
+  `crate::frames` cannot reach across threads. `#add_trace_func`/
+  `.set_trace_func` route into the existing `TracePoint` hooks where they can
+  and are otherwise no-ops.
+- `Thread.each_caller_location` over the same frame walk as `#backtrace`.
+
+### 2.3 `Module` reflection (12)
+
+`autoload` is the interesting one, and it is nearly free: zeo resolves
+`autoload :C, "feature"` at COMPILE time by eagerly splicing the feature
+(`parse/loader.rs`), so by the time any program runs, every autoloaded constant
+is already defined. `Module#autoload` therefore lowers to a no-op that answers
+`nil`, and `#autoload?` answers `nil` — which is what CRuby answers for a
+constant that has ALREADY loaded. The observable behaviour matches; only the
+timing differs, and that divergence is already documented.
+
+The rest: `const_source_location` (the compiler knows the defining file and
+line and must thread it into the constant store), `const_missing` (the default
+raises `NameError`; the hook itself needs the constant-miss path to `send` it),
+`public_instance_method`, `remove_class_variable`, `set_temporary_name`,
+`Module.nesting`, `refinements`/`used_modules`/`used_refinements` (zeo already
+mints a `Refinement` per `refine` block, so these are listings over data that
+exists), and `undefined_instance_methods` — which reads the
+`undefined_methods` set Wave 2.1 just made load-bearing.
+
+### 2.4 `IO`, `File`, `File::Stat` (21)
+
+The most mechanical wave. `IO#print`/`#puts` already exist as `Kernel`
+intrinsics and need the `IO`-receiver rows that write to THAT stream;
+`#syswrite`, `#ioctl`, `#timeout`/`#timeout=` and `#set_encoding_by_bom` are
+thin. `File#atime`/`#birthtime`/`#ctime` delegate to the `File::Stat` rows that
+already exist. `File.chown`/`.lchmod`/`.lchown`/`.lutime` are libc calls beside
+the ones `file.rs` already makes. `Stat#dev_major`/`#dev_minor`/`#rdev_major`/
+`#rdev_minor` are bit arithmetic on fields `stat.rs` already holds, and the
+`*_real?` trio is `access(2)` with the real rather than effective uid.
+
+### 2.5 `GC`, `Fiber`, `Binding`, `TracePoint` (35)
+
+Decision 1 governs this wave. `GC` gets the 13 rows as honest stubs plus its
+three constants (`OPTS`, `INTERNAL_CONSTANTS`, `Profiler`), reporting what is
+TRUE of a refcounted heap — zero collections, no compaction, an empty
+`stat_heap`. `GC.config` answers the two keys CRuby answers.
+
+`Fiber` migrates to `ruby_class!` alongside `Thread`, then gains `#raise` on the
+listing (it is already implemented, just absent from `lookup_names`),
+`#backtrace`, `#blocking?`/`.blocking`/`.blocking?`, and the scheduler quartet
+(`.scheduler`, `.set_scheduler`, `.current_scheduler`, `.schedule`) — zeo has
+no fiber scheduler, so `.scheduler` answers `nil` and `.set_scheduler(nil)`
+succeeds while a non-nil scheduler raises rather than being silently ignored.
+`Fiber.yield` is implemented and only missing from the singleton listing.
+
+`Binding`'s four are small: `#irb` raises the same `LoadError`-shaped refusal
+CRuby gives without the gem, and the `implicit_parameter*` trio reports on `it`
+and the numbered block parameters the compiler already tracks.
+
+`TracePoint` gets `#parameters`, `#eval_script`, `#instruction_sequence`,
+`.allow_reentry` and `.stat`; `#self`, `#binding` and `#return_value` are
+defined and raise, per decision 1.
+
+### 2.6 Encoding error classes and the long tail (~55)
+
+`Encoding::InvalidByteSequenceError` (7) and `Encoding::UndefinedConversionError`
+(5) need the transcoder to ATTACH its context to the exception rather than
+formatting it all into the message. `enc/transcode.rs` already knows the source
+encoding, destination encoding and offending bytes at the raise site;
+`transcode_signal` currently discards them.
+
+The long tail is ~40 independent one-liners, each with its own oracle-blessed
+assertion in one golden. Four of them close a whole absent module by
+themselves: `Object::Mutex`/`Queue`/`SizedQueue`/`ConditionVariable` are
+top-level constants CRuby aliases onto the `Thread::*` classes, and zeo
+registers only the nested spelling.
 
 ## Wave 3 — classes zeo lacks (335, minus the out-of-scope 161)
 
@@ -235,6 +378,41 @@ Ordered by count. Each lands with a golden blessed from the oracle.
 | `ObjectSpace::WeakKeyMap` | 7 | `WeakMap` already exists; sibling shape |
 | `Random::Base` / `Random::Formatter` | 6 | `Formatter` is the `SecureRandom` surface |
 | `Enumerator::Generator` / `Producer` | 4 | backs `Enumerator.new` and `Enumerator.produce` |
+| `Ractor::*` error classes | 8 | decision 3 — the classes only, so `rescue` resolves |
+
+Every new class needs a `zeo_abi::BUILTINS` row. **`BUILTINS` is indexed by
+id**: append, never insert, and a nested name needs its lexical parent at an
+earlier index. The highest id in use today is 147.
+
+### 3.5 `Pathname` (96 own methods)
+
+Vendored under `gems/pathname/`, the way the other 40 gems are, and
+DEFAULT-LOADED so it matches the oracle with no `require` — CRuby 4.0 has it
+reachable under `--disable-gems`. CRuby splits it between `pathname.rb` and a C
+extension; the C half is small (`#initialize`, `#==`, `#<=>`, `#hash`, `#to_s`,
+`#sub`, `#sub_ext`, and the `File`/`Dir` delegators) and every one of those has
+a `File` or `Dir` row already. `Kernel#Pathname` comes with it.
+
+### 3.6 The encoding registry — all 103, single-byte implemented
+
+Decision 2, and the largest constant bucket by far: 162 of the 198 missing
+constants are encodings. Two parts, one commit each:
+
+1. **Register all 103.** A table generated from the oracle carrying each
+   encoding's canonical name, aliases, `dummy?` and `ascii_compatible?`. That
+   alone makes `Encoding.list`, `Encoding.name_list`, `Encoding.find`, every
+   constant, and every reflection answer match CRuby exactly, because those
+   four facts are ALL reflection reads. An operation that would need a mapping
+   zeo does not have raises rather than transcoding wrongly.
+2. **Implement the ~40 single-byte families for real** — the `CP*`, `IBM*`,
+   `ISO-8859-*` and `KOI8-*` rows. These are pure 256-entry data tables and
+   drop straight into the existing `EncKind::SingleByte` machinery, so they
+   cost data rather than code. The multibyte families (EUC-TW, GB18030, the
+   Big5 variants, the ISO-2022 family) stay registered-only.
+
+The split matters: part 1 closes all 162 census rows on its own. Part 2 closes
+no census rows at all — it converts registered-only encodings into working
+ones, which the census cannot see and a golden must.
 
 ## Wave 4 — owner and enumeration fidelity (157 + 25)
 
@@ -281,4 +459,6 @@ cheapest once Waves 1–3 have stopped adding new ones.
 - New files under `crates/zeo-rt/src/builtins/` per class, plus `zeo-abi`
   `BUILTINS` rows — Wave 3. **`BUILTINS` is indexed by id**: append, never
   insert, and a nested name needs its lexical parent at an earlier index.
-- `gems/pathname/` — Wave 3, vendored.
+- `gems/pathname/` — Wave 3.5, vendored and default-loaded.
+- `crates/zeo-rt/src/enc/table.rs`, `crates/xtask/src/encoding_table.rs` —
+  Wave 3.6, the 103-row registry generated from the oracle.

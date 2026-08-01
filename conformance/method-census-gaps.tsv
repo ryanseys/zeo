@@ -2,9 +2,9 @@
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 41
-# constant: 200
+# constant: 198
 # owner: 183
-# unreachable: 211
+# unreachable: 192
 absent-module	Encoding::Converter	-	-
 absent-module	Enumerator::ArithmeticSequence	-	-
 absent-module	Enumerator::Generator	-	-
@@ -217,8 +217,6 @@ constant	GC	c	INTERNAL_CONSTANTS
 constant	GC	c	OPTS
 constant	GC	c	Profiler
 constant	IO	c	Buffer
-constant	IO	c	EWOULDBLOCKWaitReadable
-constant	IO	c	EWOULDBLOCKWaitWritable
 constant	Object	c	ConditionVariable
 constant	Object	c	Mutex
 constant	Object	c	Pathname
@@ -537,25 +535,6 @@ unreachable	Module	s	used_refinements
 unreachable	NameError	i	local_variables
 unreachable	NoMatchingPatternKeyError	i	key
 unreachable	NoMatchingPatternKeyError	i	matchee
-unreachable	Numeric	i	%
-unreachable	Numeric	i	+@
-unreachable	Numeric	i	-@
-unreachable	Numeric	i	abs
-unreachable	Numeric	i	ceil
-unreachable	Numeric	i	coerce
-unreachable	Numeric	i	denominator
-unreachable	Numeric	i	div
-unreachable	Numeric	i	finite?
-unreachable	Numeric	i	floor
-unreachable	Numeric	i	i
-unreachable	Numeric	i	infinite?
-unreachable	Numeric	i	magnitude
-unreachable	Numeric	i	modulo
-unreachable	Numeric	i	numerator
-unreachable	Numeric	i	round
-unreachable	Numeric	i	singleton_method_added
-unreachable	Numeric	i	to_int
-unreachable	Numeric	i	truncate
 unreachable	Process::Status	i	coredump?
 unreachable	Process::Status	i	stopsig
 unreachable	Process::Status	s	wait
