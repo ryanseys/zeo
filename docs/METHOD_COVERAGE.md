@@ -56,13 +56,28 @@ The single highest-leverage fix. `Math` already does this correctly (the arity
 work converted it); the other five still declare `def self.X`, so they get a
 singleton copy and no private instance copy.
 
-Two observable defects follow from that, not just reflection noise:
+The observable defect: `class Host; include Process; def go; pid; end; end` →
+`NameError`. Same for `FileTest`, which additionally shared *all* of `File`'s
+class-method table, so `FileTest.read` answered where CRuby raises.
 
-- `class Host; include Process; def go; pid; end; end` → `NameError`. Same for
-  `FileTest`.
-- `5.puts("x")` **works in zeo** and raises `NoMethodError` in CRuby, because
-  zeo's `Kernel#puts` is a *public* instance method rather than a private one.
-  Every object therefore answers `respond_to?(:puts)` with `true`.
+`Kernel` is a different case and the reflection counts overstate it. Measured
+name by name, only `autoload`, `autoload?` and `Pathname` are genuinely
+unreachable; the rest of the 62 work as **compiler intrinsics** (`block_given?`,
+`binding`, `lambda`, `loop`, `at_exit`, `__method__`, `local_variables`, …) and
+are simply absent from the tables reflection walks. `syscall` is missing from
+both engines.
+
+A separate defect surfaced here: `5.puts("x")` answers where CRuby raises. The
+runtime *does* know the method is private (`respond_to?` → false,
+`private_method_defined?` → true, `public_send` raises), but codegen folds an
+explicit-receiver builtin call without consulting visibility, because the
+compiler's `Surface` records no visibility for a builtin row. Pre-existing and
+tracked separately at `tests/gaps/module_function_private_receiver.rb`.
+
+**Ordering constraint**: the singleton copies must land *before* that
+enforcement is tightened. `Kernel.puts` currently resolves only because Kernel
+is itself an object that includes Kernel and the private check is skipped —
+fixing enforcement first would break it.
 
 Exact targets, oracle-measured:
 
@@ -85,7 +100,13 @@ live. The DSL already supports the keyword (`builtins/math.rs:72`). Watch the
 and the includer for the instance call, so any body that uses `recv` needs
 review.
 
-Closes ~170 reflection entries and 2 functional defects.
+Closes ~170 reflection entries and 3 functional defects.
+
+**Status: done.** Process, Signal and ObjectSpace converted in `20030926`;
+FileTest rebuilt as a real 26-row module in `236c21f3`. Process now matches the
+oracle exactly (39 private / 47 singleton), FileTest 26/26, Kernel 43 singleton
+where it had none. Measured effect on the census: unreachable 255 → 212,
+private-unreachable 174 → 122, zeo-only 318 → 279.
 
 ### 1.2 Complete `Errno`
 
@@ -116,6 +137,11 @@ subclass, which is why the census sees 158 constants but fewer distinct classes.
 
 `Array.object_id == Hash.object_id` today. Derive it from the `ClassId` the way
 the other identity paths already do.
+
+**Status: done** in `1d1f752d`. `Kernel#object_id`'s fallback arm takes the
+address of the value it was handed, and a `Class` is a bare `ClassId`, so
+`recv` points at the caller's temporary slot — two classes asked in a loop read
+back the same address. Class ids now sit in their own band above Symbol's.
 
 ## Wave 2 — missing methods on classes zeo already has (255)
 
