@@ -75,7 +75,7 @@ fn encode_codepoint(
         }
         // Codepoint == byte for every single-byte encoding (oracle-verified:
         // `233.chr(Encoding::Windows_1252)` is the byte 0xE9, 256 raises).
-        EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
+        EncKind::Latin1 | EncKind::Binary | EncKind::Registered | EncKind::SingleByte => {
             if cp <= 0xFF {
                 Ok(vec![cp as u8])
             } else {

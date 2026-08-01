@@ -1190,6 +1190,7 @@ pub(crate) fn putc_bytes(arg: &RubyValue) -> Result<Vec<u8>, Signal> {
             match b.encoding().kind() {
                 crate::encoding::EncKind::Latin1
                 | crate::encoding::EncKind::Binary
+                | crate::encoding::EncKind::Registered
                 | crate::encoding::EncKind::SingleByte => {
                     b.bytes().first().map(|&x| vec![x]).unwrap_or_default()
                 }

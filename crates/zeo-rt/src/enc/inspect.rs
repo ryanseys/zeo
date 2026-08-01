@@ -59,7 +59,11 @@ pub fn inspect(buf: &StrBuf) -> String {
         // A non-Unicode single-byte encoding: ASCII bytes escape as usual,
         // high bytes as `\xNN` (CRuby prints Latin-1 `0xE9` as `\xE9`, not
         // as `é` -- and Windows-1252 the same, oracle-verified).
-        EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
+        EncKind::Ascii
+        | EncKind::Latin1
+        | EncKind::Binary
+        | EncKind::Registered
+        | EncKind::SingleByte => {
             let bytes = buf.bytes();
             for i in 0..bytes.len() {
                 let b = bytes[i];

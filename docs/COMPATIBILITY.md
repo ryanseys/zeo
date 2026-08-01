@@ -2,11 +2,30 @@
 
 ## Encoding divergences (zeo-enc)
 
-The encoding engine carries 27 encodings. The single-byte tables
-(Windows-125x, ISO-8859-2/-15, KOI8-R) are generated from the ruby 4.0.6
-oracle itself, so their mappings -- including which vendor-page bytes have
-NO Unicode mapping -- are exact. Known divergences:
+The registry carries all 103 of ruby 4.0.6's encodings, in its order, so
+`Encoding.list`, `.name_list`, `.aliases`, `.find`, every `Encoding::*`
+constant and every `#name`/`#names`/`#dummy?`/`#ascii_compatible?` answer
+match exactly -- see [`tests/encoding_registry.rb`](../tests/encoding_registry.rb).
+The 52 single-byte mapping tables (the ISO-8859, windows-125x, IBM/CP,
+KOI8, mac* and Thai families) are generated from the oracle itself by
+[`tools/encoding_tables.rb`](../tools/encoding_tables.rb), so their
+mappings -- including which vendor-page bytes have NO Unicode mapping --
+are exact. Known divergences:
 
+- **31 rows are registered by NAME only.** They answer every reflection
+  question and carry ASCII through, but this runtime holds no
+  byte<->character mapping for them, so converting a high byte raises
+  `Encoding::ConverterNotFoundError` where CRuby converts, and their
+  strings count one character per byte where CRuby counts one per
+  multibyte sequence. The rows are the multibyte families whose tables are
+  not in the tree (EUC-KR, EUC-TW, GB18030, GB2312, CP949/950/951, the
+  Big5 variants, `UTF8-MAC`, `eucJP-ms`, `CP51932`, `EUC-JIS-2004`,
+  `Emacs-Mule`, `MacJapanese`, `GB12345`, `stateless-ISO-2022-JP`, and the
+  DoCoMo/KDDI/SoftBank emoji pages), the four single-byte rows CRuby
+  itself registers with no transcoder (`Windows-1258`, `GB1988`,
+  `macCentEuro`, `macThai` -- those raise the same class there), and the
+  stateful JIS dummies beyond `ISO-2022-JP`. Executable record:
+  [`tests/gaps/encoding_registered_only.rb`](../tests/gaps/encoding_registered_only.rb).
 - **Shift_JIS mappings are CP932's.** Both the `Shift_JIS` and
   `Windows-31J` rows transcode through encoding_rs's WHATWG `shift_jis`
   table, which matches Windows-31J/CP932. CRuby's strict `Shift_JIS`

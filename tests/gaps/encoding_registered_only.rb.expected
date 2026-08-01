@@ -1,0 +1,14 @@
+EUC-KR encode: [176, 161]
+EUC-KR decode: "가"
+GB18030 decode: "啊"
+GB2312 decode: "啊"
+EUC-TW decode: Encoding::ConverterNotFoundError: code converter not found (EUC-TW to UTF-8)
+CP949 decode: "가"
+Big5-HKSCS decode: "一"
+UTF8-MAC decode: "é"
+eucJP-ms decode: "あ"
+CP51932 decode: "あ"
+Windows-1258 decode: Encoding::ConverterNotFoundError: code converter not found (Windows-1258 to UTF-8)
+macThai decode: Encoding::ConverterNotFoundError: code converter not found (macThai to UTF-8)
+EUC-KR length: 1
+EUC-TW valid?: true

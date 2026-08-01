@@ -633,6 +633,53 @@ The split matters: part 1 closes all 162 census rows on its own. Part 2 closes
 no census rows at all — it converts registered-only encodings into working
 ones, which the census cannot see and a golden must.
 
+**Status: done**, both parts in one commit — `constant` 173 → 12, and the only
+`Encoding` constant left is `Converter` (3.4). The two parts came from ONE
+generator pass (`tools/encoding_tables.rb` writes `enc/registry.rs` and
+`enc/single_byte.rs` together), so splitting them would have meant generating
+the same tables twice. Both review artifacts are present: the census diff for
+part 1, `tests/encoding_registry.rb` for part 2.
+
+Taken **before 3.4** rather than after, because `Encoding::Converter`
+needs it: `.asciicompat_encoding("ISO-2022-JP")` answers
+`stateless-ISO-2022-JP` and every `#convpath` through ISO-2022-JP pivots
+through it, so the class could not answer correctly over a 27-row registry.
+Doing 3.6 first also meant the converter's edge table was generated once,
+against the final registry.
+
+What the oracle settled, none of it guessable:
+
+- **The row order, the aliases and the constant spellings are all data**, so
+  they are generated rather than written. CRuby gives one name up to TWO
+  constants — the name with every non-alphanumeric character turned into `_`
+  and a leading lowercase letter capitalized (`eucJP` → `EucJP`), plus that
+  spelling fully upcased whenever the name carries a lowercase letter
+  (`WINDOWS_1250` beside `Windows_1250`) — except that a name with no
+  uppercase letter gets only the upcased form (`ebcdic-cp-us` → just
+  `EBCDIC_CP_US`) and a name opening with a digit (`646`) gets none. The rule
+  was derived by testing candidates against all 174 names, not read off the C.
+- **`locale`/`external`/`filesystem`/`internal` are not table data.** CRuby
+  moves them onto whichever row `Encoding.default_external`/`.default_internal`
+  currently names, so `#names` computes them. `internal` is a registered alias
+  SLOT: while `default_internal` is unset it belongs to no row, and
+  `Encoding.name_list` still lists it — the one name that is in `name_list` and
+  in no row's `#names`.
+- **`Latin-1` is not one of CRuby's spellings.** zeo carried it as an
+  ISO-8859-1 alias; it resolved a name CRuby refuses, and it is gone.
+- **Four single-byte rows have no transcoder in CRuby either.**
+  `Windows-1258`, `GB1988`, `macCentEuro` and `macThai` are structurally
+  single-byte, and every one of their high bytes is a valid character with no
+  Unicode mapping to be had. A generated table of nothing would have said
+  "undefined conversion" where CRuby says "converter not found", so the
+  generator leaves those rows registered-only.
+
+One adjacent fix the registry golden forced open: **`Encoding.compatible?`
+asked its two sides in the wrong order.** Two ascii-only strings take the
+FIRST one's encoding, not the second's, and an empty first side keeps its own
+encoding only when that encoding could have carried the other side's text as
+it stands. Six of the 100 pairs in `tests/encoding_compatible.rb` were wrong;
+all 100 match now.
+
 ## Wave 4 — owner and enumeration fidelity (157 + 25)
 
 Split by probe, not assumed:

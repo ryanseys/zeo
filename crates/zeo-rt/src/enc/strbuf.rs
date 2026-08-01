@@ -86,7 +86,7 @@ impl StrBuf {
     pub fn to_utf8_lossy(&self) -> Cow<'_, str> {
         match self.enc.kind() {
             EncKind::Utf8 | EncKind::Ascii => String::from_utf8_lossy(&self.bytes),
-            EncKind::Latin1 | EncKind::Binary => {
+            EncKind::Latin1 | EncKind::Binary | EncKind::Registered => {
                 if self.ascii_only() {
                     // Reuse the borrow when it's plain ASCII.
                     String::from_utf8_lossy(&self.bytes)
@@ -177,9 +177,11 @@ impl StrBuf {
                 }
                 ranges
             }
-            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
-                (0..self.bytes.len()).map(|i| i..i + 1).collect()
-            }
+            EncKind::Ascii
+            | EncKind::Latin1
+            | EncKind::Binary
+            | EncKind::Registered
+            | EncKind::SingleByte => (0..self.bytes.len()).map(|i| i..i + 1).collect(),
             EncKind::MultiByte(family) => crate::enc::mb::mb_ranges(family, &self.bytes)
                 .into_iter()
                 .map(|(r, _)| r)
@@ -203,7 +205,11 @@ impl StrBuf {
     /// there. The coderange this consults is computed once and cached.
     fn byte_per_char(&self) -> bool {
         match self.enc.kind() {
-            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => true,
+            EncKind::Ascii
+            | EncKind::Latin1
+            | EncKind::Binary
+            | EncKind::Registered
+            | EncKind::SingleByte => true,
             EncKind::Utf8 | EncKind::MultiByte(_) => self.ascii_only(),
             EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => false,
         }
@@ -271,9 +277,11 @@ impl StrBuf {
     pub fn char_len(&self) -> usize {
         match self.enc.kind() {
             // One character per byte for every single-byte encoding.
-            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
-                self.bytes.len()
-            }
+            EncKind::Ascii
+            | EncKind::Latin1
+            | EncKind::Binary
+            | EncKind::Registered
+            | EncKind::SingleByte => self.bytes.len(),
             EncKind::Utf8 | EncKind::MultiByte(_) if self.ascii_only() => self.bytes.len(),
             EncKind::Utf8
             | EncKind::MultiByte(_)
@@ -302,7 +310,7 @@ impl StrBuf {
     fn case_mapped(&self, mode: CaseMode) -> StrBuf {
         match self.enc.kind() {
             EncKind::Utf8 => StrBuf::from_utf8(case_unicode(&self.to_utf8_lossy(), mode)),
-            EncKind::Ascii | EncKind::Binary => {
+            EncKind::Ascii | EncKind::Binary | EncKind::Registered => {
                 StrBuf::from_bytes(case_bytes(&self.bytes, mode, ascii_case_byte), self.enc)
             }
             // Latin-1: full Unicode case through the identity byte<->scalar

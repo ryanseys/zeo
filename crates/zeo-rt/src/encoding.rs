@@ -16,6 +16,11 @@ pub fn transcode_signal(err: TranscodeError) -> Signal {
     let (class, message, detail) = match err {
         TranscodeError::InvalidByteSequence(m, d) => ("Encoding::InvalidByteSequenceError", m, d),
         TranscodeError::UndefinedConversion(m, d) => ("Encoding::UndefinedConversionError", m, d),
+        // Carries no encoding pair to attach: the refusal is about the
+        // MISSING converter, not about a particular offending character.
+        TranscodeError::NoConverter(m) => {
+            return crate::dispatch::raise_error("Encoding::ConverterNotFoundError", m);
+        }
     };
     let signal = crate::dispatch::raise_error(class, message);
     // The encoding pair and the offending input travel on the exception, not

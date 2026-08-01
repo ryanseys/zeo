@@ -109,15 +109,21 @@ fn find_is_case_and_separator_insensitive() {
     assert_eq!(find("utf_8"), Some(UTF_8));
     assert_eq!(find("BINARY"), Some(ASCII_8BIT));
     assert_eq!(find("ascii-8bit"), Some(ASCII_8BIT));
-    assert_eq!(find("Latin-1"), Some(ISO_8859_1));
+    assert_eq!(find("iso8859_1"), Some(ISO_8859_1));
+    // `Latin-1` is not one of CRuby's spellings, so it resolves nowhere.
+    assert_eq!(find("Latin-1"), None);
     assert_eq!(find("nope"), None);
 }
 
 #[test]
 fn names_lists_canonical_then_real_aliases() {
     assert_eq!(ASCII_8BIT.names(), vec!["ASCII-8BIT", "BINARY"]);
-    // UTF-8's selector aliases (external/locale/...) are filtered out.
-    assert_eq!(UTF_8.names(), vec!["UTF-8", "CP65001"]);
+    // The runtime SELECTORS follow `default_external`, which starts on UTF-8.
+    assert_eq!(
+        UTF_8.names(),
+        vec!["UTF-8", "CP65001", "locale", "external", "filesystem"]
+    );
+    assert_eq!(ISO_8859_2.spec_names(), vec!["ISO-8859-2", "ISO8859-2"]);
 }
 
 #[test]

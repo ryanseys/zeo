@@ -32,14 +32,28 @@ pub enum NewlineMode {
     Universal,
 }
 
-/// The two ways a transcode can refuse a unit, matching CRuby's two error
-/// classes.
+/// The ways a transcode can refuse, matching CRuby's error classes.
 #[derive(Debug)]
 pub enum TranscodeError {
     /// A malformed byte sequence in the SOURCE encoding.
     InvalidByteSequence(String, Box<TranscodeDetail>),
     /// A valid source character with no representation in the TARGET.
     UndefinedConversion(String, Box<TranscodeDetail>),
+    /// One side is registered by name only ([`EncKind::Registered`]) and the
+    /// content is not pure ASCII, so this runtime has no mapping to apply.
+    /// CRuby raises this class when its own registry holds no converter for
+    /// a pair; it never reaches it for these encodings, which is the
+    /// divergence `docs/COMPATIBILITY.md` records.
+    NoConverter(String),
+}
+
+/// CRuby's `Encoding::ConverterNotFoundError` message for a pair.
+pub fn converter_not_found(from: EncodingId, to: EncodingId) -> String {
+    format!(
+        "code converter not found ({} to {})",
+        from.name(),
+        to.name()
+    )
 }
 
 /// What the raised exception exposes beyond its message: the encoding pair the
@@ -140,7 +154,7 @@ pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
     }
     match from.kind() {
         EncKind::Latin1 => bytes.iter().map(|b| Unit::Char(*b as char)).collect(),
-        EncKind::Ascii | EncKind::Binary => bytes
+        EncKind::Ascii | EncKind::Binary | EncKind::Registered => bytes
             .iter()
             .map(|b| {
                 if *b < 0x80 {
@@ -239,7 +253,7 @@ fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
         EncKind::Latin1 => (cp < 0x100).then(|| vec![cp as u8]),
         // Binary accepts any ASCII char verbatim; a non-ASCII scalar has no
         // binary byte (it isn't a byte).
-        EncKind::Binary => (cp < 0x80).then(|| vec![cp as u8]),
+        EncKind::Binary | EncKind::Registered => (cp < 0x80).then(|| vec![cp as u8]),
         EncKind::SingleByte => to.single_byte_table().encode(c).map(|b| vec![b]),
         EncKind::MultiByte(family) => crate::enc::mb::mb_encode_char(family, c),
         EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
@@ -281,6 +295,11 @@ pub fn transcode(
     fallback: Option<TranscodeFallback<'_>>,
 ) -> Result<Vec<u8>, TranscodeError> {
     let mut fallback = fallback;
+    // A registered-only source reads its ASCII half exactly and nothing else,
+    // so a high byte is the point where this runtime runs out of mapping.
+    if from.is_registered_only() && bytes.iter().any(|b| *b >= 0x80) {
+        return Err(TranscodeError::NoConverter(converter_not_found(from, to)));
+    }
     // Dummy targets, mirroring the decode side: UTF-16/32 write a BOM then
     // big-endian code units; ISO-2022-JP threads a stateful escape encoder
     // through the loop (`jis`), finished after the last unit.
@@ -370,6 +389,11 @@ pub fn transcode(
                 }
             }
             Unit::Char(c) => {
+                // A registered-only TARGET takes ASCII and stops there, the
+                // mirror of the source-side check above.
+                if to.is_registered_only() && !c.is_ascii() {
+                    return Err(TranscodeError::NoConverter(converter_not_found(from, to)));
+                }
                 match jis.as_mut() {
                     Some(enc) => {
                         if enc.push(c, &mut out).is_ok() {

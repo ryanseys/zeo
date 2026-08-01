@@ -126,11 +126,17 @@ ruby_class! {
         let all = encoding::all().map(encoding_value).collect();
         Ok(RubyValue::Array(crate::array_new(all)))
     }
+    // Every registered spelling. `internal` is a registered alias SLOT: when
+    // `Encoding.default_internal` is unset it points at no row, so no row's
+    // `#names` carries it and it has to be added here.
     def self."name_list"(_recv) {
-        let names = encoding::all()
+        let mut names: Vec<RubyValue> = encoding::all()
             .flat_map(|id| id.names())
             .map(|n| RubyValue::Str(crate::string_new(n.to_string())))
             .collect();
+        if encoding::default_internal().is_none() {
+            names.push(RubyValue::Str(crate::string_new("internal".to_string())));
+        }
         Ok(RubyValue::Array(crate::array_new(names)))
     }
     def self."find"(_recv, arg) {
@@ -265,19 +271,33 @@ fn compat_of(a: &RubyValue, b: &RubyValue) -> Option<EncodingId> {
             if ea == eb {
                 return Some(ea);
             }
+            // `rb_enc_str_asciionly_p` is ascii-compatible AND 7-bit, so a
+            // UTF-16 string is never ascii-only however it reads.
+            let a_ascii = a_ascii && ea.ascii_compatible();
+            let b_ascii = b_ascii && eb.ascii_compatible();
+            // An empty SECOND side always yields, whatever either encoding
+            // is. An empty FIRST side keeps its own encoding only when that
+            // encoding could have carried the other side's text as it stands.
             if b_empty {
                 return Some(ea);
             }
             if a_empty {
-                return Some(eb);
+                return Some(if ea.ascii_compatible() && b_ascii {
+                    ea
+                } else {
+                    eb
+                });
             }
-            if ea.ascii_compatible() && eb.ascii_compatible() {
-                if a_ascii {
-                    return Some(eb);
-                }
-                if b_ascii {
-                    return Some(ea);
-                }
+            if !ea.ascii_compatible() || !eb.ascii_compatible() {
+                return None;
+            }
+            // Whichever side is 7-bit yields; the SECOND is asked first, so
+            // two ascii-only strings answer the FIRST one's encoding.
+            if b_ascii {
+                return Some(ea);
+            }
+            if a_ascii {
+                return Some(eb);
             }
             None
         }
@@ -302,19 +322,57 @@ fn compat_of(a: &RubyValue, b: &RubyValue) -> Option<EncodingId> {
 pub fn seed_encoding_constants() {
     use crate::const_set;
     let owner = ENCODING_CLASS.0;
+    // The Unicode release the character data answers from: the single-byte
+    // mapping tables were generated from ruby 4.0.6's own converters, and the
+    // case mapping comes from Rust's `char`, which tracks the same release.
+    const_set(
+        owner,
+        "UNICODE_VERSION",
+        RubyValue::Str(crate::string_new("17.0.0".to_string())),
+    );
     for id in encoding::all() {
-        for name in id.names() {
-            const_set(owner, &const_name(name), encoding_value(id));
+        // `names()` also answers the runtime selectors (`locale`, `external`,
+        // ...), which name no constant of their own in CRuby.
+        for name in id.spec_names() {
+            for c in const_names(name) {
+                const_set(owner, &c, encoding_value(id));
+            }
         }
     }
 }
 
-/// The Ruby constant spelling of an encoding name: `"ISO-8859-1"` ->
-/// `"ISO_8859_1"`, `"UTF-8"` -> `"UTF_8"`.
-fn const_name(name: &str) -> String {
-    name.chars()
-        .map(|c| if c == '-' || c == '.' { '_' } else { c })
-        .collect()
+/// The Ruby constant spellings of one encoding name. CRuby registers up to
+/// two per name, oracle-verified across all 174 of them:
+///
+/// - the name with every non-alphanumeric character turned into `_` and a
+///   leading lowercase letter capitalized (`"Big5-HKSCS:2008"` ->
+///   `Big5_HKSCS_2008`, `"eucJP"` -> `EucJP`), but only when the name
+///   carries an uppercase letter somewhere -- `"ebcdic-cp-us"` gets no
+///   `Ebcdic_cp_us`;
+/// - that spelling fully upcased, whenever the name carries a lowercase
+///   letter (`WINDOWS_1250` beside `Windows_1250`).
+///
+/// A name that opens with a digit (`"646"`) spells no constant at all.
+fn const_names(name: &str) -> Vec<String> {
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        return Vec::new();
+    }
+    let mut underscored: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    underscored[..1].make_ascii_uppercase();
+    let mut out = Vec::new();
+    if name.contains(|c: char| c.is_ascii_uppercase()) {
+        out.push(underscored.clone());
+    }
+    if name.contains(|c: char| c.is_ascii_lowercase()) {
+        let upper = underscored.to_ascii_uppercase();
+        if !out.contains(&upper) {
+            out.push(upper);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

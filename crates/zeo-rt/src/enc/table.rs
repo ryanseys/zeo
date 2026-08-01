@@ -1,43 +1,16 @@
-//! The encoding registry: every encoding's declarative description in one
-//! static [`ENCODINGS`] table, addressed by the one-byte [`EncodingId`]
-//! every string carries. Adding an encoding is a new row (plus, for a
-//! genuinely new byte<->character mapping family, an [`EncKind`] variant).
+//! The encoding registry's TYPES and lookups. The rows themselves live in
+//! [`crate::enc::registry`], generated from the ruby 4.0.6 oracle, and are
+//! re-exported here so callers keep reading `table::UTF_8` /
+//! `table::ENCODINGS`.
 
-use crate::enc::mb::MbFamily;
-use crate::enc::single_byte::{self, SingleByteTable};
+use crate::enc::single_byte::SingleByteTable;
+
+pub use crate::enc::registry::*;
 
 /// An index into [`ENCODINGS`]. `Copy` and one byte wide, so every string
 /// carries its encoding for free.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct EncodingId(pub u8);
-
-pub const UTF_8: EncodingId = EncodingId(0);
-pub const US_ASCII: EncodingId = EncodingId(1);
-pub const ASCII_8BIT: EncodingId = EncodingId(2);
-pub const ISO_8859_1: EncodingId = EncodingId(3);
-pub const WINDOWS_1250: EncodingId = EncodingId(4);
-pub const WINDOWS_1251: EncodingId = EncodingId(5);
-pub const WINDOWS_1252: EncodingId = EncodingId(6);
-pub const WINDOWS_1253: EncodingId = EncodingId(7);
-pub const WINDOWS_1254: EncodingId = EncodingId(8);
-pub const WINDOWS_1255: EncodingId = EncodingId(9);
-pub const WINDOWS_1256: EncodingId = EncodingId(10);
-pub const WINDOWS_1257: EncodingId = EncodingId(11);
-pub const ISO_8859_2: EncodingId = EncodingId(12);
-pub const ISO_8859_15: EncodingId = EncodingId(13);
-pub const KOI8_R: EncodingId = EncodingId(14);
-pub const SHIFT_JIS: EncodingId = EncodingId(15);
-pub const WINDOWS_31J: EncodingId = EncodingId(16);
-pub const EUC_JP: EncodingId = EncodingId(17);
-pub const GBK: EncodingId = EncodingId(18);
-pub const BIG5: EncodingId = EncodingId(19);
-pub const UTF_16LE: EncodingId = EncodingId(20);
-pub const UTF_16BE: EncodingId = EncodingId(21);
-pub const UTF_32LE: EncodingId = EncodingId(22);
-pub const UTF_32BE: EncodingId = EncodingId(23);
-pub const ISO_2022_JP: EncodingId = EncodingId(24);
-pub const UTF_16: EncodingId = EncodingId(25);
-pub const UTF_32: EncodingId = EncodingId(26);
 
 /// How an encoding maps bytes to characters -- the single knob that drives
 /// character iteration, validation, and transcoding. A new encoding picks
@@ -58,7 +31,7 @@ pub enum EncKind {
     Binary,
     /// One byte per character through a per-encoding mapping table
     /// (`EncodingSpec::table`): every byte is a valid CHARACTER, but a byte
-    /// whose table slot is `None` has no Unicode mapping and refuses to
+    /// whose table slot is unmapped has no Unicode meaning and refuses to
     /// transcode OUT (the windows-125x vendor pages' unassigned slots).
     SingleByte,
     /// A multibyte CJK encoding: 1-3 bytes per character, structural walk
@@ -68,7 +41,16 @@ pub enum EncKind {
     Utf16 { be: bool },
     /// UTF-32 (4-byte scalars) -- NOT ASCII-compatible.
     Utf32 { be: bool },
+    /// Registered by NAME only: the row answers every reflection question
+    /// (`#name`, `#names`, `#dummy?`, `#ascii_compatible?`, the constant, a
+    /// place in `Encoding.list`) but this runtime has no byte<->character
+    /// mapping for it. Bytes read one per character, as for `Binary`, and a
+    /// conversion of anything but ASCII raises
+    /// `Encoding::ConverterNotFoundError` rather than guessing.
+    Registered,
 }
+
+use crate::enc::mb::MbFamily;
 
 /// One encoding's declarative description -- the whole per-encoding surface.
 pub struct EncodingSpec {
@@ -88,135 +70,10 @@ pub struct EncodingSpec {
     /// be tagged with it, `#inspect` shows ` (dummy)`) but has no per-
     /// character structure -- a "character" is one byte and nothing is ever
     /// invalid, which is why the dummy rows reuse `EncKind::Binary`. What a
-    /// dummy CAN still do is transcode: `transcode` special-cases these ids
+    /// dummy CAN still do is transcode: `transcode` special-cases three ids
     /// (stateful ISO-2022-JP escapes, BOM-carrying UTF-16/32).
     pub dummy: bool,
 }
-
-/// A `SingleByte` row -- name/aliases straight from `Encoding#names` under
-/// the ruby 4.0.6 oracle, mapping table generated from the same oracle.
-const fn single_byte(
-    name: &'static str,
-    aliases: &'static [&'static str],
-    table: &'static SingleByteTable,
-) -> EncodingSpec {
-    EncodingSpec {
-        name,
-        aliases,
-        ascii_compatible: true,
-        kind: EncKind::SingleByte,
-        table: Some(table),
-        dummy: false,
-    }
-}
-
-/// A `MultiByte` row -- name/aliases straight from `Encoding#names` under
-/// the ruby 4.0.6 oracle. Both Shift_JIS and Windows-31J share the `Sjis`
-/// family (CP932 mappings for both -- the documented divergence).
-const fn multi_byte(
-    name: &'static str,
-    aliases: &'static [&'static str],
-    family: MbFamily,
-) -> EncodingSpec {
-    EncodingSpec {
-        name,
-        aliases,
-        ascii_compatible: true,
-        kind: EncKind::MultiByte(family),
-        table: None,
-        dummy: false,
-    }
-}
-
-/// A wide Unicode row (UTF-16/32) -- the only NON-ascii-compatible rows.
-const fn wide(name: &'static str, aliases: &'static [&'static str], kind: EncKind) -> EncodingSpec {
-    EncodingSpec {
-        name,
-        aliases,
-        ascii_compatible: false,
-        kind,
-        table: None,
-        dummy: false,
-    }
-}
-
-/// A dummy row (`Encoding#dummy?`): a name with byte-per-character
-/// semantics (see the `dummy` field's docs). Never ASCII-compatible --
-/// `"abc".force_encoding("ISO-2022-JP").ascii_only?` is false in CRuby.
-const fn dummy(name: &'static str, aliases: &'static [&'static str]) -> EncodingSpec {
-    EncodingSpec {
-        name,
-        aliases,
-        ascii_compatible: false,
-        kind: EncKind::Binary,
-        table: None,
-        dummy: true,
-    }
-}
-
-/// The encoding registry. Extend by appending a row -- ids are the row
-/// index, so existing ids never shift.
-pub static ENCODINGS: &[EncodingSpec] = &[
-    EncodingSpec {
-        name: "UTF-8",
-        aliases: &["CP65001", "locale", "external", "filesystem"],
-        ascii_compatible: true,
-        kind: EncKind::Utf8,
-        table: None,
-        dummy: false,
-    },
-    EncodingSpec {
-        name: "US-ASCII",
-        aliases: &["ASCII", "ANSI_X3.4-1968", "646"],
-        ascii_compatible: true,
-        kind: EncKind::Ascii,
-        table: None,
-        dummy: false,
-    },
-    EncodingSpec {
-        name: "ASCII-8BIT",
-        aliases: &["BINARY"],
-        ascii_compatible: true,
-        kind: EncKind::Binary,
-        table: None,
-        dummy: false,
-    },
-    EncodingSpec {
-        name: "ISO-8859-1",
-        aliases: &["ISO8859-1", "Latin-1"],
-        ascii_compatible: true,
-        kind: EncKind::Latin1,
-        table: None,
-        dummy: false,
-    },
-    single_byte("Windows-1250", &["CP1250"], &single_byte::WINDOWS_1250),
-    single_byte("Windows-1251", &["CP1251"], &single_byte::WINDOWS_1251),
-    single_byte("Windows-1252", &["CP1252"], &single_byte::WINDOWS_1252),
-    single_byte("Windows-1253", &["CP1253"], &single_byte::WINDOWS_1253),
-    single_byte("Windows-1254", &["CP1254"], &single_byte::WINDOWS_1254),
-    single_byte("Windows-1255", &["CP1255"], &single_byte::WINDOWS_1255),
-    single_byte("Windows-1256", &["CP1256"], &single_byte::WINDOWS_1256),
-    single_byte("Windows-1257", &["CP1257"], &single_byte::WINDOWS_1257),
-    single_byte("ISO-8859-2", &["ISO8859-2"], &single_byte::ISO_8859_2),
-    single_byte("ISO-8859-15", &["ISO8859-15"], &single_byte::ISO_8859_15),
-    single_byte("KOI8-R", &["CP878"], &single_byte::KOI8_R),
-    multi_byte("Shift_JIS", &[], MbFamily::Sjis),
-    multi_byte(
-        "Windows-31J",
-        &["CP932", "csWindows31J", "SJIS", "PCK"],
-        MbFamily::Sjis,
-    ),
-    multi_byte("EUC-JP", &["eucJP"], MbFamily::EucJp),
-    multi_byte("GBK", &["CP936"], MbFamily::Gbk),
-    multi_byte("Big5", &[], MbFamily::Big5),
-    wide("UTF-16LE", &[], EncKind::Utf16 { be: false }),
-    wide("UTF-16BE", &["UCS-2BE"], EncKind::Utf16 { be: true }),
-    wide("UTF-32LE", &["UCS-4LE"], EncKind::Utf32 { be: false }),
-    wide("UTF-32BE", &["UCS-4BE"], EncKind::Utf32 { be: true }),
-    dummy("ISO-2022-JP", &["ISO2022-JP"]),
-    dummy("UTF-16", &[]),
-    dummy("UTF-32", &[]),
-];
 
 impl EncodingId {
     pub fn spec(self) -> &'static EncodingSpec {
@@ -246,6 +103,11 @@ impl EncodingId {
     pub fn kind(self) -> EncKind {
         self.spec().kind
     }
+    /// Whether this runtime carries a byte<->character mapping for the
+    /// encoding, or only its name -- see [`EncKind::Registered`].
+    pub fn is_registered_only(self) -> bool {
+        self.kind() == EncKind::Registered
+    }
     /// The mapping table of an `EncKind::SingleByte` row. Panics for other
     /// kinds -- every caller has already matched on the kind.
     pub(crate) fn single_byte_table(self) -> &'static SingleByteTable {
@@ -256,25 +118,30 @@ impl EncodingId {
     pub fn ascii_compatible(self) -> bool {
         self.spec().ascii_compatible
     }
-    /// `Encoding#names`: the canonical name followed by every alias, minus
-    /// the special `default_*` selector aliases (which name no real
-    /// encoding of their own).
-    pub fn names(self) -> Vec<&'static str> {
+    /// The canonical name plus every TABLE alias -- the static half of
+    /// `#names`, and the half that spells the `Encoding::*` constants.
+    pub fn spec_names(self) -> Vec<&'static str> {
         let spec = self.spec();
         std::iter::once(spec.name)
-            .chain(
-                spec.aliases
-                    .iter()
-                    .copied()
-                    .filter(|a| !SELECTOR_ALIASES.contains(a)),
-            )
+            .chain(spec.aliases.iter().copied())
             .collect()
     }
+    /// `Encoding#names`: the canonical name, every alias, and the runtime
+    /// SELECTOR names this encoding currently answers to. CRuby moves
+    /// `locale`/`external`/`filesystem` and `internal` onto whichever row
+    /// `Encoding.default_external`/`.default_internal` names, so they are
+    /// computed here rather than being table data.
+    pub fn names(self) -> Vec<&'static str> {
+        let mut names = self.spec_names();
+        if self == crate::enc::defaults::default_external() {
+            names.extend(["locale", "external", "filesystem"]);
+        }
+        if Some(self) == crate::enc::defaults::default_internal() {
+            names.push("internal");
+        }
+        names
+    }
 }
-
-/// Aliases that are runtime SELECTORS (`Encoding.find("external")`), not
-/// real alternate names -- excluded from `Encoding#names`.
-const SELECTOR_ALIASES: &[&str] = &["locale", "external", "filesystem", "internal"];
 
 /// Every real encoding id, in table order -- backs `Encoding.list`.
 pub fn all() -> impl Iterator<Item = EncodingId> {
