@@ -56,7 +56,7 @@ ruby_module! {
     const RLIM_SAVED_CUR = RubyValue::Int(libc::RLIM_INFINITY as i64);
     const RLIM_SAVED_MAX = RubyValue::Int(libc::RLIM_INFINITY as i64);
 
-    def self.pid(_recv) {
+    module_function def pid(_recv) {
         Ok(RubyValue::Int(std::process::id() as i64))
     }
     // `Process._fork` (process.c) -- the low-level primitive `Process.fork` /
@@ -112,7 +112,7 @@ ruby_module! {
     // signal's default disposition and terminate the very program that
     // trapped it. Signal 0 (existence probe) and other-process delivery go
     // through the real syscall.
-    def self.kill cfunc (_recv, sig, first_pid, *rest_pids, &_block) {
+    module_function def kill cfunc (_recv, sig, first_pid, *rest_pids, &_block) {
         let pids: Vec<&RubyValue> = std::iter::once(first_pid).chain(rest_pids).collect();
         let no = crate::builtins::signal::resolve_signal_arg(sig)?;
         let me = std::process::id() as i64;
@@ -161,38 +161,38 @@ ruby_module! {
     }
     // `Process.ppid` has no portable std equivalent; libc's getppid is the
     // honest answer rather than a fabricated one.
-    def self.ppid(_recv) {
+    module_function def ppid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getppid() } as i64))
     }
-    def self.clock_gettime cfunc (_recv, arg1, arg2?) {
+    module_function def clock_gettime cfunc (_recv, arg1, arg2?) {
         let clock = int_arg(arg1)?;
         clock_in_unit(clock_seconds(clock)?, arg2)
     }
     // `Process.clock_getres(clock_id [, unit])` -- the clock's resolution, in the
     // same units `clock_gettime` accepts (default a Float of seconds).
-    def self.clock_getres cfunc (_recv, arg1, arg2?) {
+    module_function def clock_getres cfunc (_recv, arg1, arg2?) {
         let clock = int_arg(arg1)?;
         clock_in_unit(clock_res_seconds(clock)?, arg2)
     }
     // Real/effective user and group ids (libc getuid/geteuid/getgid/getegid).
-    def self.uid(_recv) {
+    module_function def uid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getuid() } as i64))
     }
-    def self.euid(_recv) {
+    module_function def euid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::geteuid() } as i64))
     }
-    def self.gid(_recv) {
+    module_function def gid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getgid() } as i64))
     }
-    def self.egid(_recv) {
+    module_function def egid(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getegid() } as i64))
     }
     // `Process.getpgrp` -- the current process group id.
-    def self.getpgrp(_recv) {
+    module_function def getpgrp(_recv) {
         Ok(RubyValue::Int(unsafe { libc::getpgrp() } as i64))
     }
     // `Process.getsid([pid])` -- the session id of `pid` (0/none = this process).
-    def self.getsid(_recv, arg?) {
+    module_function def getsid(_recv, arg?) {
         let pid = match arg {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => int_arg(v)? as libc::pid_t,
@@ -206,7 +206,7 @@ ruby_module! {
     // `Process.getpriority(which, who)` -- the scheduling priority. `getpriority`
     // returns -1 both for a real -1 priority and on error, so errno is cleared
     // first and checked after (CRuby does the same).
-    def self.getpriority(_recv, arg1, arg2) {
+    module_function def getpriority(_recv, arg1, arg2) {
         let which = int_arg(arg1)? as libc::c_int;
         let who = int_arg(arg2)? as libc::id_t;
         unsafe { *libc::__error() = 0 };
@@ -217,7 +217,7 @@ ruby_module! {
         Ok(RubyValue::Int(prio as i64))
     }
     // `Process.groups` -- the supplementary group ids, as an Array of Integer.
-    def self.groups(_recv) {
+    module_function def groups(_recv) {
         let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
         let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
         let n = unsafe { libc::getgroups(buf.len() as libc::c_int, buf.as_mut_ptr()) };
@@ -230,7 +230,7 @@ ruby_module! {
     }
     // `Process.times` -- a Process::Tms of CPU seconds, from `getrusage` for
     // this process (utime/stime) and its reaped children (cutime/cstime).
-    def self.times(_recv) {
+    module_function def times(_recv) {
         // SAFETY: each `getrusage` fully initializes its zeroed out-param.
         let rusage = |who: libc::c_int| -> libc::rusage {
             let mut u: libc::rusage = unsafe { std::mem::zeroed() };
@@ -243,7 +243,7 @@ ruby_module! {
         Ok(new_tms(secs(me.ru_utime), secs(me.ru_stime), secs(kids.ru_utime), secs(kids.ru_stime)))
     }
     // `Process.getpgid(pid)` -- the process group id of `pid` (0 = this process).
-    def self.getpgid(_recv, arg) {
+    module_function def getpgid(_recv, arg) {
         let pid = int_arg(arg)? as libc::pid_t;
         let pgid = unsafe { libc::getpgid(pid) };
         if pgid < 0 {
@@ -252,7 +252,7 @@ ruby_module! {
         Ok(RubyValue::Int(pgid as i64))
     }
     // `Process.setpgid(pid, pgrp)` -- put `pid` into process group `pgrp`.
-    def self.setpgid(_recv, arg1, arg2) {
+    module_function def setpgid(_recv, arg1, arg2) {
         let pid = int_arg(arg1)? as libc::pid_t;
         let pgrp = int_arg(arg2)? as libc::pid_t;
         if unsafe { libc::setpgid(pid, pgrp) } != 0 {
@@ -261,14 +261,14 @@ ruby_module! {
         Ok(RubyValue::Int(0))
     }
     // `Process.setpgrp` -- make this process a group leader (setpgid(0, 0)).
-    def self.setpgrp(_recv) {
+    module_function def setpgrp(_recv) {
         if unsafe { libc::setpgid(0, 0) } != 0 {
             return Err(errno_fail("setpgrp"));
         }
         Ok(RubyValue::Int(0))
     }
     // `Process.setsid` -- start a new session; answers the new session id.
-    def self.setsid(_recv) {
+    module_function def setsid(_recv) {
         let sid = unsafe { libc::setsid() };
         if sid < 0 {
             return Err(errno_fail("setsid"));
@@ -276,7 +276,7 @@ ruby_module! {
         Ok(RubyValue::Int(sid as i64))
     }
     // `Process.setpriority(which, who, prio)` -- set a scheduling priority.
-    def self.setpriority(_recv, arg1, arg2, arg3) {
+    module_function def setpriority(_recv, arg1, arg2, arg3) {
         let which = int_arg(arg1)? as libc::c_int;
         let who = int_arg(arg2)? as libc::id_t;
         let prio = int_arg(arg3)? as libc::c_int;
@@ -286,28 +286,28 @@ ruby_module! {
         Ok(RubyValue::Int(0))
     }
     // Real/effective id setters -- each answers its Integer argument (CRuby's shape).
-    def self."uid="(_recv, arg) {
+    module_function def "uid="(_recv, arg) {
         let id = int_arg(arg)?;
         if unsafe { libc::setuid(id as libc::uid_t) } != 0 {
             return Err(errno_fail("setuid"));
         }
         Ok(RubyValue::Int(id))
     }
-    def self."gid="(_recv, arg) {
+    module_function def "gid="(_recv, arg) {
         let id = int_arg(arg)?;
         if unsafe { libc::setgid(id as libc::gid_t) } != 0 {
             return Err(errno_fail("setgid"));
         }
         Ok(RubyValue::Int(id))
     }
-    def self."euid="(_recv, arg) {
+    module_function def "euid="(_recv, arg) {
         let id = int_arg(arg)?;
         if unsafe { libc::seteuid(id as libc::uid_t) } != 0 {
             return Err(errno_fail("seteuid"));
         }
         Ok(RubyValue::Int(id))
     }
-    def self."egid="(_recv, arg) {
+    module_function def "egid="(_recv, arg) {
         let id = int_arg(arg)?;
         if unsafe { libc::setegid(id as libc::gid_t) } != 0 {
             return Err(errno_fail("setegid"));
@@ -315,7 +315,7 @@ ruby_module! {
         Ok(RubyValue::Int(id))
     }
     // `Process.groups = [gid, ...]` -- replace the supplementary groups; answers the arg.
-    def self."groups="(_recv, arg) {
+    module_function def "groups="(_recv, arg) {
         let RubyValue::Array(a) = arg else {
             return Err(type_error!(
                 "no implicit conversion of {} into Array",
@@ -333,7 +333,7 @@ ruby_module! {
         Ok((*arg).clone())
     }
     // `Process.getrlimit(resource)` -> `[soft, hard]`.
-    def self.getrlimit(_recv, arg) {
+    module_function def getrlimit(_recv, arg) {
         let res = int_arg(arg)?;
         // SAFETY: getrlimit fully initializes the zeroed out-param on success.
         let mut lim: libc::rlimit = unsafe { std::mem::zeroed() };
@@ -346,7 +346,7 @@ ruby_module! {
         ])))
     }
     // `Process.setrlimit(resource, soft [, hard])` -- hard defaults to soft.
-    def self.setrlimit cfunc (_recv, arg1, arg2, arg3?) {
+    module_function def setrlimit cfunc (_recv, arg1, arg2, arg3?) {
         let res = int_arg(arg1)?;
         let cur = int_arg(arg2)?;
         let max = match arg3 {
@@ -364,35 +364,35 @@ ruby_module! {
     }
     // `Process.maxgroups` / `maxgroups=` -- a settable ceiling CRuby keeps for
     // `getgroups`; not a syscall, just a stored bound.
-    def self.maxgroups(_recv) {
+    module_function def maxgroups(_recv) {
         // CRuby caps the reported ceiling at the system NGROUPS_MAX (16 on
         // macOS), so a larger stored bound reads back clamped.
         let stored = PROCESS_MAXGROUPS.load(Ordering::Relaxed);
         let cap = unsafe { libc::sysconf(libc::_SC_NGROUPS_MAX) };
         Ok(RubyValue::Int(if cap > 0 { stored.min(cap) } else { stored }))
     }
-    def self."maxgroups="(_recv, arg) {
+    module_function def "maxgroups="(_recv, arg) {
         let n = int_arg(arg)?;
         PROCESS_MAXGROUPS.store(n, Ordering::Relaxed);
         Ok(RubyValue::Int(n))
     }
     // `Process.argv0` -- the program name (`$0`) at startup.
-    def self.argv0(_recv) {
+    module_function def argv0(_recv) {
         Ok(crate::globals::global_get(0, "$0"))
     }
     // `Process.setproctitle(str)` -- answers the title. macOS has no portable
     // setproctitle, so the cosmetic title itself is a best-effort no-op.
-    def self.setproctitle(_recv, arg) {
+    module_function def setproctitle(_recv, arg) {
         crate::builtins::convert::to_str(arg)
     }
     // `Process.warmup` -- a JIT/heap warmup hint; nothing to warm here.
-    def self.warmup(_recv) {
+    module_function def warmup(_recv) {
         Ok(RubyValue::Bool(true))
     }
     // `Process.initgroups(username, gid)` -- set the supplementary group list
     // from the group database for `username` plus `gid`; answers the new
     // groups. Typically root-only.
-    def self.initgroups(_recv, arg1, arg2) {
+    module_function def initgroups(_recv, arg1, arg2) {
         let RubyValue::Str(user) = arg1 else {
             return Err(type_error!(
                 "no implicit conversion of {} into String",
@@ -409,7 +409,7 @@ ruby_module! {
     }
     // `Process.daemon(nochdir = nil, noclose = nil)` -- detach into the
     // background; answers 0.
-    def self.daemon(_recv, arg1?, arg2?) {
+    module_function def daemon(_recv, arg1?, arg2?) {
         let truthy =
             |v: Option<&RubyValue>| matches!(v, Some(x) if !x.is_nil() && !matches!(x, RubyValue::Bool(false)));
         let nochdir = if truthy(arg1) { 1 } else { 0 };
@@ -426,7 +426,7 @@ ruby_module! {
     // A default pid of -1 waits for any child; `WNOHANG` makes a not-yet-exited
     // child answer `nil` (with `$?` cleared) instead of blocking. No children
     // at all raises `Errno::ECHILD`, CRuby's own behaviour.
-    def self."wait" | "waitpid"(_recv, arg1?, arg2?) {
+    module_function def "wait" | "waitpid"(_recv, arg1?, arg2?) {
         let pid = arg1.map(int_arg).transpose()?.unwrap_or(-1);
         let flags = arg2.map(int_arg).transpose()?.unwrap_or(0);
         match raw_waitpid(pid, flags)? {
@@ -443,7 +443,7 @@ ruby_module! {
     // `Process.wait2` / `Process.waitpid2` -- like `wait`, but the answer is the
     // `[pid, Process::Status]` pair (still setting `$?`), or `nil` under
     // `WNOHANG` with no ready child.
-    def self."wait2" | "waitpid2"(_recv, arg1?, arg2?) {
+    module_function def "wait2" | "waitpid2"(_recv, arg1?, arg2?) {
         let pid = arg1.map(int_arg).transpose()?.unwrap_or(-1);
         let flags = arg2.map(int_arg).transpose()?.unwrap_or(0);
         match raw_waitpid(pid, flags)? {
@@ -464,7 +464,7 @@ ruby_module! {
     // `Process.waitall` -- reap EVERY child, answering an Array of
     // `[pid, Process::Status]` pairs (empty when there were none). `$?` ends as
     // the last reaped child's status, matching CRuby.
-    def self.waitall(_recv) {
+    module_function def waitall(_recv) {
         let mut pairs = Vec::new();
         loop {
             match raw_waitpid(-1, 0) {
@@ -495,7 +495,7 @@ ruby_module! {
     // exposing `#pid`); zeo returns a plain Thread, which covers the usual
     // `detach(pid).join` / `.value` contract. The reaper runs on its own
     // thread, so it does not touch the caller's `$?`.
-    def self.detach(_recv, arg) {
+    module_function def detach(_recv, arg) {
         Ok(detach_thread(int_arg(arg)?))
     }
     // `Process.spawn([env,] command... [,options])` -- start a child WITHOUT

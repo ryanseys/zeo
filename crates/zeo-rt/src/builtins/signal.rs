@@ -120,7 +120,7 @@ ruby_module! {
     Signal = zeo_abi::SIGNAL_MODULE;
 
     // `Signal.list` -> {name => number}, the canonical table as a fresh Hash.
-    def self."list"(_recv) {
+    module_function def "list"(_recv) {
         let pairs = SIGNAL_TABLE
             .iter()
             .map(|(name, no)| {
@@ -131,7 +131,7 @@ ruby_module! {
     }
     // `Signal.signame(n)` -> the canonical name (no `SIG` prefix) or nil. A Float
     // truncates toward zero; a non-numeric argument is a TypeError.
-    def self."signame"(_recv, arg) {
+    module_function def "signame"(_recv, arg) {
         let no = crate::builtins::convert::to_index(arg)? as i32;
         match name_from_signo(no) {
             Some(name) => Ok(RubyValue::Str(string_new(name.to_string()))),
@@ -140,7 +140,7 @@ ruby_module! {
     }
     // `Signal.trap(sig, action = nil) { block }` -> the PREVIOUS action for
     // `sig` (`"DEFAULT"` if never set). See `trap_impl`.
-    def self."trap" cfunc (_recv, sig, command?, &block) {
+    module_function def "trap" cfunc (_recv, sig, command?, &block) {
         trap_impl(sig, command, block)
     }
 }

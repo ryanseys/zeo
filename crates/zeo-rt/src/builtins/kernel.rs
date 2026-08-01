@@ -72,19 +72,19 @@ ruby_module! {
     // The print family as REAL Kernel methods (Path 2): `obj.send(:puts,
     // ...)`, `self.puts` on `main`, and any dynamic dispatch reach these;
     // the receiver is ignored, exactly like CRuby's private Kernel#puts.
-    private def "puts"(_recv, *args, &_block) {
+    module_function def "puts"(_recv, *args, &_block) {
         kernel_puts(args)
     }
-    private def "print"(_recv, *args, &_block) {
+    module_function def "print"(_recv, *args, &_block) {
         kernel_print(args)
     }
-    private def "p"(_recv, *args, &_block) {
+    module_function def "p"(_recv, *args, &_block) {
         kernel_p(args)
     }
     // `Kernel#open(path, mode = "r")` -- opens a File (the `"|command"` pipe
     // form is out of scope); delegates to `File.open` so the block-closes-file
     // contract and mode handling are shared, never divergent.
-    private def "open"(_recv, *args, &block) {
+    module_function def "open"(_recv, *args, &block) {
         crate::builtins::file::lookup_class("open").unwrap()(
             &RubyValue::Class(zeo_abi::FILE_CLASS),
             args,
@@ -102,10 +102,10 @@ ruby_module! {
     // `load` takes a second `wrap` argument and is a C function that discarded
     // its signature, so it reports -1 where `require` reports 1. zeo resolves
     // all three the same way, so `load` delegates.
-    private def "load" cfunc (recv, arg1, _arg2?) {
+    module_function def "load" cfunc (recv, arg1, _arg2?) {
         require_feature(recv, std::slice::from_ref(arg1), None)
     }
-    private def "require" | "require_relative" as require_feature (_recv, arg1) {
+    module_function def "require" | "require_relative" as require_feature (_recv, arg1) {
         let path = crate::builtins::convert::to_rstr(arg1)?
             .lock()
             .to_utf8_lossy()
@@ -135,29 +135,29 @@ ruby_module! {
     private def "pp"(_recv, *args, &_block) {
         kernel_pp(args)
     }
-    private def "warn"(_recv, *args, &_block) {
+    module_function def "warn"(_recv, *args, &_block) {
         kernel_warn(args)
     }
     // Spawning a child. `system` inherits stdout/stderr and answers a
     // true/false/nil verdict; the backtick captures stdout and answers it as a
     // String. Both set `$?` (see `builtins::process`). Private Kernel methods,
     // so `respond_to?`'s default hides them (see `is_hidden_builtin_private`).
-    private def "system"(recv, *args, &block) {
+    module_function def "system"(recv, *args, &block) {
         crate::builtins::process::system(recv, args, block)
     }
-    private def "`"(recv, cmd, &block) {
+    module_function def "`"(recv, cmd, &block) {
         crate::builtins::process::backquote(recv, std::slice::from_ref(cmd), block)
     }
     // `spawn` starts the child WITHOUT waiting and answers its pid -- the
     // Kernel spelling of `Process.spawn`, which Open3's popen family calls
     // receiverless from module context.
-    private def "spawn"(_recv, *args, &_block) {
+    module_function def "spawn"(_recv, *args, &_block) {
         crate::builtins::process::spawn_pid(args)
     }
     // `putc` -- writes one character to `$stdout` and returns its argument.
     // An Integer writes the low byte (`n & 0xff`); a String writes its first
     // character.
-    private def "putc"(_recv, arg) {
+    module_function def "putc"(_recv, arg) {
         let out = crate::builtins::io::current_stdout();
         // Shared with `IO#putc`: first character in the string's own
         // encoding (ONE raw byte for the byte encodings), an Integer's low
@@ -220,7 +220,7 @@ ruby_module! {
     // THAT captured scope (its locals, its `self`, its cref); `nil` means the
     // current context, as in CRuby. The filename/lineno arguments set what
     // `__FILE__`/`__LINE__` report inside the source.
-    private def "eval" cfunc (recv, arg1, arg2?, arg3?, arg4?) {
+    module_function def "eval" cfunc (recv, arg1, arg2?, arg3?, arg4?) {
         let file = match arg3 {
             Some(v) if !v.is_nil() => {
                 Some(crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned())
@@ -249,7 +249,7 @@ ruby_module! {
     // `sleep(secs)` -- universal Kernel methods. The static codegen fast path
     // handles the literal `catch {}`/`throw` forms; these rows serve dynamic
     // dispatch (a `send :catch`, a `catch` reached through the MRO walk).
-    private def "catch"(_recv, tag?, &block) {
+    module_function def "catch"(_recv, tag?, &block) {
         // A bare `catch` mints a fresh, unique tag object (passed to the block).
         let tag = tag
             .cloned()
@@ -259,7 +259,7 @@ ruby_module! {
         })?;
         crate::kernel_catch(tag, blk)
     }
-    private def "throw" as kernel_throw cfunc (_recv, _tag, _value?) {
+    module_function def "throw" as kernel_throw cfunc (_recv, _tag, _value?) {
         throw_impl(__args)
     }
     // `Kernel#raise`/`#fail` as REAL dispatch rows -- reached by
@@ -276,7 +276,7 @@ ruby_module! {
     // `cause:` doesn't reach this row (kwargs ride as a trailing Hash that
     // 2-arg shapes would misread; the automatic `$!` chaining below is
     // what dynamic callers get).
-    private def "raise" | "fail"(_recv, exception?, message?, backtrace?) {
+    module_function def "raise" | "fail"(_recv, exception?, message?, backtrace?) {
         let args: Vec<RubyValue> = [exception, message, backtrace]
             .iter()
             .take_while(|p| p.is_some())
@@ -326,7 +326,7 @@ ruby_module! {
         };
         Err(Signal::Raise(crate::dispatch::raise_with_cause(exc)))
     }
-    private def "sleep" as kernel_sleep (_recv, _seconds?) {
+    module_function def "sleep" as kernel_sleep (_recv, _seconds?) {
         sleep_impl(__args)
     }
     def "class"(recv) {
@@ -343,7 +343,7 @@ ruby_module! {
     def "itself"(recv) {
         Ok(recv.clone())
     }
-    private def "caller"(_recv, start?, length?) {
+    module_function def "caller"(_recv, start?, length?) {
         // The formatted frames above the calling frame (this builtin has no
         // frame of its own, so `start = 1` -- the default -- skips exactly
         // the caller). `caller(0)` includes the caller itself; a `start`
@@ -366,7 +366,7 @@ ruby_module! {
     // `caller`'s object form: the same window over the same frames, each entry
     // a `Thread::Backtrace::Location` with real `#path`/`#lineno`/`#label`
     // (forwardable builds its deprecation message out of them).
-    private def "caller_locations"(_recv, start?, length?) {
+    module_function def "caller_locations"(_recv, start?, length?) {
         let all = crate::frames::caller_frames(0);
         let (start, length) = caller_window(start, length);
         if start > all.len() {
@@ -387,25 +387,25 @@ ruby_module! {
     // intercepts a direct literal call. The `as` name IS what codegen emits
     // (`zeo_rt::kernel_integer`), so the fast path and the dispatch row are one
     // function and cannot disagree about the argument count.
-    private def "format" | "sprintf"(_recv, *args, &_block) {
+    module_function def "format" | "sprintf"(_recv, *args, &_block) {
         kernel_format(args)
     }
-    private def "Integer" as kernel_integer (_recv, _arg, _base?, **_opts) {
+    module_function def "Integer" as kernel_integer (_recv, _arg, _base?, **_opts) {
         integer_impl(__args)
     }
-    private def "Float" as kernel_float (_recv, _arg, **_opts) {
+    module_function def "Float" as kernel_float (_recv, _arg, **_opts) {
         float_impl(__args)
     }
-    private def "String" as kernel_string (_recv, _arg) {
+    module_function def "String" as kernel_string (_recv, _arg) {
         string_impl(__args)
     }
-    private def "Array" as kernel_array (_recv, _arg) {
+    module_function def "Array" as kernel_array (_recv, _arg) {
         array_impl(__args)
     }
-    private def "Hash" as kernel_hash (_recv, _arg) {
+    module_function def "Hash" as kernel_hash (_recv, _arg) {
         hash_impl(__args)
     }
-    private def "Rational" as kernel_rational cfunc (_recv, _numerator, _denominator?) {
+    module_function def "Rational" as kernel_rational cfunc (_recv, _numerator, _denominator?) {
         rational_impl(__args)
     }
     // `Kernel#BigDecimal` -- the one BigDecimal constructor (`.new` is long
@@ -415,7 +415,7 @@ ruby_module! {
     private def "BigDecimal" cfunc (_recv, _initial, _digits?) {
         crate::ext::bigdecimal::kernel_big_decimal(__args)
     }
-    private def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
+    module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
         complex_impl(__args)
     }
     // `rand`/`srand` as real rows: without them the argument-count guard would
@@ -423,20 +423,20 @@ ruby_module! {
     // only caller that reaches it -- the double declaration this whole DSL
     // removes. They answer through dispatch now too (`send(:rand)`), which they
     // did not before.
-    private def "rand" as kernel_rand (_recv, _max?) {
+    module_function def "rand" as kernel_rand (_recv, _max?) {
         rand_impl(__args)
     }
-    private def "srand" as kernel_srand (_recv, _seed?) {
+    module_function def "srand" as kernel_srand (_recv, _seed?) {
         srand_impl(__args)
     }
     // Private `Kernel#trap` -- the receiverless spelling of `Signal.trap`, same
     // validated no-op that records the action and returns the prior one.
-    private def "trap" cfunc (_recv, sig, command?, &block) {
+    module_function def "trap" cfunc (_recv, sig, command?, &block) {
         crate::builtins::signal::trap_impl(sig, command, block)
     }
     // `proc(&b)` / `proc { }` -- answer the passed block as a Proc (it already IS
     // one at the ABI level). No block is CRuby's `ArgumentError`.
-    private def "proc"(_recv, &block) {
+    module_function def "proc"(_recv, &block) {
         match block {
             Some(b @ RubyValue::Proc(_)) => Ok(b),
             _ => Err(arg_error!("tried to create Proc object without a block")),
@@ -675,7 +675,7 @@ ruby_module! {
     // loops forever, rescuing StopIteration and returning its `#result`
     // (a literal `loop do…end` is desugared in the lowerer, so this handles
     // the blockless and block-pass forms + the Enumerator re-invoke).
-    private def "loop"(recv, &block) {
+    module_function def "loop"(recv, &block) {
         let Some(RubyValue::Proc(p)) = &block else {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "loop", &[]));
         };
@@ -717,18 +717,18 @@ ruby_module! {
     // file arguments -- IS `$stdin`. zeo has no ARGF, so they forward to
     // `$stdin` directly and answer identically for every script that is not
     // a `while gets` filter over `ARGV`.
-    private def "gets"(_recv, *args, &_block) {
+    module_function def "gets"(_recv, *args, &_block) {
         stdin_send("gets", args)
     }
-    private def "readline"(_recv, *args, &_block) {
+    module_function def "readline"(_recv, *args, &_block) {
         stdin_send("readline", args)
     }
-    private def "readlines"(_recv, *args, &_block) {
+    module_function def "readlines"(_recv, *args, &_block) {
         stdin_send("readlines", args)
     }
     // `select` and `exec` are the same calls as `IO.select` and
     // `Process.exec`, which is exactly how CRuby defines them.
-    private def "select"(_recv, *args, &_block) {
+    module_function def "select"(_recv, *args, &_block) {
         crate::dispatch::send_value(
             &RubyValue::Class(zeo_abi::IO_CLASS),
             Symbol::intern("select"),
@@ -736,7 +736,7 @@ ruby_module! {
             None,
         )
     }
-    private def "exec"(_recv, *args, &_block) {
+    module_function def "exec"(_recv, *args, &_block) {
         crate::dispatch::send_value(
             &RubyValue::Class(zeo_abi::PROCESS_CLASS),
             Symbol::intern("exec"),
@@ -747,13 +747,13 @@ ruby_module! {
     // `test(?e, path)` -- the one-character file tests, each the `File`
     // predicate of the same meaning. The two-file comparison commands
     // (`?=`, `?<`, `?>`, `?-`) are not served here.
-    private def "test" cfunc (_recv, arg1, arg2) {
+    module_function def "test" cfunc (_recv, arg1, arg2) {
         kernel_test(arg1, arg2)
     }
     // `trace_var(:$g) { |v| }` / `trace_var(:$g, command)` -- run something on
     // every assignment RUBY makes to a global. The runtime's own seeding is not
     // an assignment and fires nothing.
-    private def "trace_var" cfunc (_recv, arg1, arg2?, &block) {
+    module_function def "trace_var" cfunc (_recv, arg1, arg2?, &block) {
         let name = global_name_arg(arg1)?;
         let command = match (arg2, block) {
             (Some(c), _) if !matches!(c, RubyValue::Nil) => c.clone(),
@@ -767,7 +767,7 @@ ruby_module! {
     // `untrace_var(:$g)` drops every hook, `untrace_var(:$g, command)` just the
     // one, and both answer what they dropped. A name that was never assigned
     // AND never traced is a NameError.
-    private def "untrace_var" cfunc (_recv, arg1, arg2?) {
+    module_function def "untrace_var" cfunc (_recv, arg1, arg2?) {
         let name = global_name_arg(arg1)?;
         if !crate::globals::is_traced(&name) && !crate::globals::global_defined(0, &name) {
             return Err(crate::builtins::name_error!("undefined global variable {name}"));
@@ -779,7 +779,7 @@ ruby_module! {
     // from the runtime rather than the store and so are never in it. CRuby
     // reports its full predefined set in an unspecified order; zeo reports
     // the ones it models, which is what an `include?` probe asks about.
-    private def "global_variables"(_recv) {
+    module_function def "global_variables"(_recv) {
         let mut names: Vec<String> = crate::globals::defined_globals();
         names.sort();
         Ok(RubyValue::Array(crate::array_new(
