@@ -208,7 +208,7 @@ ruby_module! {
     }
     // The root set is CRuby's own VM state (machine stack, global table,
     // frame chain); zeo's roots are Rust locals a program can't enumerate.
-    def self."reachable_objects_from_root"(_recv, *_args, &_block) {
+    def self."reachable_objects_from_root"(_recv) {
         Err(not_impl_error!("ObjectSpace.reachable_objects_from_root is not available (zeo has no GC root table)"))
     }
     // Every zeo symbol is interned once and never freed, so CRuby's
@@ -239,19 +239,19 @@ ruby_module! {
     // Allocation tracing needs a hook on every allocation site. zeo allocates
     // through Rust's own `Arc::new`, with no such seam, so the tracer says so
     // instead of quietly recording nothing.
-    def self."trace_object_allocations"(_recv, *_args, &_block) {
+    def self."trace_object_allocations"(_recv, &_block) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations is not available (zeo has no allocation hook)"))
     }
-    def self."trace_object_allocations_start"(_recv, *_args, &_block) {
+    def self."trace_object_allocations_start"(_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_start is not available (zeo has no allocation hook)"))
     }
-    def self."trace_object_allocations_stop"(_recv, *_args, &_block) {
+    def self."trace_object_allocations_stop"(_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_stop is not available (zeo has no allocation hook)"))
     }
-    def self."trace_object_allocations_clear"(_recv, *_args, &_block) {
+    def self."trace_object_allocations_clear"(_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_clear is not available (zeo has no allocation hook)"))
     }
-    def self."trace_object_allocations_debug_start"(_recv, *_args, &_block) {
+    def self."trace_object_allocations_debug_start"(_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_debug_start is not available (zeo has no allocation hook)"))
     }
     // The allocation GETTERS answer nil, which is exactly what CRuby answers
@@ -278,23 +278,23 @@ ruby_module! {
     // None of that exists here, and a JSON line carrying only the handful of
     // fields zeo could fill would break every tool that reads dumps in a far
     // more confusing way than an error does.
-    def self."dump"(_recv, *_args, &_block) {
+    def self."dump"(_recv, _obj, **_opts) {
         Err(not_impl_error!("ObjectSpace.dump is not available (zeo objects carry no VM header to serialize)"))
     }
-    def self."dump_all"(_recv, *_args, &_block) {
+    def self."dump_all"(_recv, **_opts) {
         Err(not_impl_error!("ObjectSpace.dump_all is not available (zeo has no heap enumeration)"))
     }
-    def self."dump_shapes"(_recv, *_args, &_block) {
+    def self."dump_shapes"(_recv, **_opts) {
         Err(not_impl_error!("ObjectSpace.dump_shapes is not available (zeo has no shape tree)"))
     }
     // A singleton class, an iclass, a shape -- `internal_class_of` reports
     // whichever of those CRuby really dispatches through. zeo dispatches
     // through a `ClassId` and an overlay, so there is no internal answer to
     // give that `Object#class` doesn't already give honestly.
-    def self."internal_class_of"(_recv, *_args, &_block) {
+    def self."internal_class_of"(_recv, _arg) {
         Err(not_impl_error!("ObjectSpace.internal_class_of is not available (zeo has no internal classes)"))
     }
-    def self."internal_super_of"(_recv, *_args, &_block) {
+    def self."internal_super_of"(_recv, _arg) {
         Err(not_impl_error!("ObjectSpace.internal_super_of is not available (zeo has no internal classes)"))
     }
 }

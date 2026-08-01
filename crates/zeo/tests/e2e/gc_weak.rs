@@ -135,13 +135,16 @@ fn objspace_declines_name_the_missing_capability() {
     let result = run_ruby(
         r#"
         require "objspace"
-        %i[
-          memsize_of_all reachable_objects_from_root
-          trace_object_allocations_start trace_object_allocations_stop
-          dump dump_all dump_shapes internal_class_of internal_super_of
-        ].each do |m|
+        # Each call carries the arguments CRuby's own signature accepts, so
+        # what it answers is the missing capability rather than an arity error.
+        {
+          memsize_of_all: [], reachable_objects_from_root: [],
+          trace_object_allocations_start: [], trace_object_allocations_stop: [],
+          dump: ["x"], dump_all: [], dump_shapes: [],
+          internal_class_of: ["x"], internal_super_of: ["x"],
+        }.each do |m, args|
           begin
-            ObjectSpace.public_send(m, "x")
+            ObjectSpace.public_send(m, *args)
           rescue NotImplementedError => e
             puts e.message
           end

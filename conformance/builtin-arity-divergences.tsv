@@ -6,8 +6,6 @@
 #! it fails the test and cannot be recorded here. Regenerate with
 #! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.
 #! tag	class	kind	name	reason
-zeo-only	Digest	s	bubblebabble	no bubblebabble in CRuby's chain
-zeo-only	Digest::MD5	i	bubblebabble	no bubblebabble in CRuby's chain
 zeo-only	IO	i	bytes	no bytes in CRuby's chain
 zeo-only	IO	i	chars	no chars in CRuby's chain
 zeo-only	IO	i	chmod	no chmod in CRuby's chain
@@ -24,30 +22,6 @@ zeo-only	Method	i	()	no () in CRuby's chain
 zeo-only	Module	i	inherited	no inherited in CRuby's chain
 zeo-only	Module	i	subclasses	no subclasses in CRuby's chain
 zeo-only	Module	i	superclass	no superclass in CRuby's chain
-zeo-only	ObjectSpace	s	allocation_class_path	no allocation_class_path in CRuby's chain
-zeo-only	ObjectSpace	s	allocation_generation	no allocation_generation in CRuby's chain
-zeo-only	ObjectSpace	s	allocation_method_id	no allocation_method_id in CRuby's chain
-zeo-only	ObjectSpace	s	allocation_sourcefile	no allocation_sourcefile in CRuby's chain
-zeo-only	ObjectSpace	s	allocation_sourceline	no allocation_sourceline in CRuby's chain
-zeo-only	ObjectSpace	s	count_imemo_objects	no count_imemo_objects in CRuby's chain
-zeo-only	ObjectSpace	s	count_nodes	no count_nodes in CRuby's chain
-zeo-only	ObjectSpace	s	count_objects_size	no count_objects_size in CRuby's chain
-zeo-only	ObjectSpace	s	count_symbols	no count_symbols in CRuby's chain
-zeo-only	ObjectSpace	s	count_tdata_objects	no count_tdata_objects in CRuby's chain
-zeo-only	ObjectSpace	s	dump	no dump in CRuby's chain
-zeo-only	ObjectSpace	s	dump_all	no dump_all in CRuby's chain
-zeo-only	ObjectSpace	s	dump_shapes	no dump_shapes in CRuby's chain
-zeo-only	ObjectSpace	s	internal_class_of	no internal_class_of in CRuby's chain
-zeo-only	ObjectSpace	s	internal_super_of	no internal_super_of in CRuby's chain
-zeo-only	ObjectSpace	s	memsize_of	no memsize_of in CRuby's chain
-zeo-only	ObjectSpace	s	memsize_of_all	no memsize_of_all in CRuby's chain
-zeo-only	ObjectSpace	s	reachable_objects_from	no reachable_objects_from in CRuby's chain
-zeo-only	ObjectSpace	s	reachable_objects_from_root	no reachable_objects_from_root in CRuby's chain
-zeo-only	ObjectSpace	s	trace_object_allocations	no trace_object_allocations in CRuby's chain
-zeo-only	ObjectSpace	s	trace_object_allocations_clear	no trace_object_allocations_clear in CRuby's chain
-zeo-only	ObjectSpace	s	trace_object_allocations_debug_start	no trace_object_allocations_debug_start in CRuby's chain
-zeo-only	ObjectSpace	s	trace_object_allocations_start	no trace_object_allocations_start in CRuby's chain
-zeo-only	ObjectSpace	s	trace_object_allocations_stop	no trace_object_allocations_stop in CRuby's chain
 zeo-only	Pathname	i	mkdir_p	no mkdir_p in CRuby's chain
 zeo-only	Pathname	i	rm_rf	no rm_rf in CRuby's chain
 zeo-only	Pathname	i	to_str	no to_str in CRuby's chain
@@ -55,8 +29,6 @@ zeo-only	Proc	i	()	no () in CRuby's chain
 zeo-only	Regexp	i	linear_time?	no linear_time? in CRuby's chain
 zeo-only	Set	i	contain?	no contain? in CRuby's chain
 zeo-only	Set	i	merge_new	no merge_new in CRuby's chain
-zeo-only	StringIO	i	<<	no << in CRuby's chain
-zeo-only	StringIO	i	readbyte	no readbyte in CRuby's chain
 zeo-only	Struct	s	[]	no [] in CRuby's chain
 zeo-only	Thread::Queue	i	max	no max in CRuby's chain
 zeo-only	Thread::Queue	i	max=	no max= in CRuby's chain
