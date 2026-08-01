@@ -671,7 +671,7 @@ ruby_class! {
     // `rfind` is `find` scanning from the right -- the last element the block
     // accepts (nil if none); a blockless call answers an Enumerator.
     def "rfind" cfunc (recv, &block) {
-        let p = block_or_enum!(recv, "rfind", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let items = recv_array!(recv).lock().clone();
         for e in items.iter().rev() {
             if p.call(std::slice::from_ref(e))?.truthy() {
@@ -1010,7 +1010,7 @@ ruby_class! {
     }
     def "map!" | "collect!" arity 0 (recv, &block) {
         check_frozen(recv_array!(recv), recv)?;
-        let p = block_or_enum!(recv, "map!", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let items = recv_array!(recv).lock().to_vec();
         let mut out = Vec::with_capacity(items.len());
         for e in items {
@@ -1136,7 +1136,7 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "each" (recv, &block) {
-        let p = block_or_enum!(recv, "each", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         // Live view, one lock round-trip per element: appending from inside
         // the block iterates the appended tail and shrinking stops early --
         // CRuby's own rule -- and the old whole-Vec snapshot per call (which
@@ -1158,7 +1158,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "each_index" (recv, &block) {
-        let p = block_or_enum!(recv, "each_index", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let n = recv_array!(recv).lock().len();
         for i in 0..n {
             p.call(&[RubyValue::Int(i as i64)])?;
@@ -1177,7 +1177,7 @@ ruby_class! {
     //   [1,2].permutation      => the FULL-length permutations (no arg)
     def "combination"(recv, n, &block) {
         let n = arg_int!(n);
-        let p = block_or_enum!(recv, "combination", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let items = recv_array!(recv).lock().clone();
         for tuple in combinations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
@@ -1193,7 +1193,7 @@ ruby_class! {
             Some(v) => arg_int!(v),
             None => items.len() as i64,
         };
-        let p = block_or_enum!(recv, "permutation", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         for tuple in permutations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
         }
@@ -1205,7 +1205,7 @@ ruby_class! {
     // (or return an Enumerator without a block).
     def "repeated_permutation"(recv, n, &block) {
         let n = arg_int!(n);
-        let p = block_or_enum!(recv, "repeated_permutation", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let items = recv_array!(recv).lock().clone();
         for tuple in repeated_permutations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
@@ -1214,7 +1214,7 @@ ruby_class! {
     }
     def "repeated_combination"(recv, n, &block) {
         let n = arg_int!(n);
-        let p = block_or_enum!(recv, "repeated_combination", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let items = recv_array!(recv).lock().clone();
         for tuple in repeated_combinations_of(&items, n) {
             p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
@@ -1303,7 +1303,7 @@ ruby_class! {
             None | Some(RubyValue::Nil) => None,
             Some(v) => Some(arg_int!(v)),
         };
-        let p = block_or_enum!(recv, "cycle", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let items = recv_array!(recv).lock().clone();
         // An empty receiver never yields, and would spin forever below.
         if items.is_empty() {
@@ -1362,7 +1362,7 @@ ruby_class! {
     }
     def "sort_by!" (recv, &block) {
         check_frozen(recv_array!(recv), recv)?;
-        let p = block_or_enum!(recv, "sort_by!", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let cell = recv_array!(recv);
         let items = cell.lock().clone();
         // Decorate-sort-undecorate: the block runs once per element, as

@@ -915,7 +915,7 @@ ruby_class! {
     // Iteration primitives; blockless forms return Enumerators (Phase
     // 17.2). Counts beyond i64 are physically unrunnable -- loud.
     def "times" (recv, &block) {
-        let p = block_or_enum!(recv, "times", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let RubyValue::Int(n) = recv else {
             panic!("Integer#times receiver exceeds i64 (unrunnable iteration count)");
         };
@@ -925,7 +925,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "upto"(recv, limit, &block) {
-        let p = block_or_enum!(recv, "upto", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         // Fast i64 path; otherwise iterate as BigInt -- the VALUES may exceed
         // i64 even when the SPAN is small (`(2**100).upto(2**100 + 2)`).
         if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, limit) {
@@ -946,7 +946,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "downto"(recv, limit, &block) {
-        let p = block_or_enum!(recv, "downto", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, limit) {
             let mut i = *a;
             while i >= *b {

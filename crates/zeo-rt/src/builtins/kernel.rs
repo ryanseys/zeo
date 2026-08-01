@@ -651,7 +651,7 @@ ruby_module! {
         Ok(recv.clone())
     }
     def "then" | "yield_self"(recv, &block) {
-        let p = block_or_enum!(recv, "then", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         p.call(std::slice::from_ref(recv))
     }
     // `Kernel#loop` -- blockless is an infinite Enumerator; with a block it

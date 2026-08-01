@@ -500,7 +500,7 @@ ruby_class! {
     // like `entries`); without a block, an Enumerator.
     def self."foreach" cfunc (recv, dirname, _opt?, &block) {
         let path = path_arg(dirname, "foreach")?;
-        let p = block_or_enum!(recv, "foreach", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let mut names = read_names(&path)?;
         names.push(".".to_string());
         names.push("..".to_string());
@@ -662,7 +662,7 @@ ruby_class! {
     // `.`/`..`); without a block, an Enumerator over the entry array.
     def "each"(recv, &block) {
         let entries: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
-        let p = block_or_enum!(recv, "each", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         for e in entries {
             p.call(&[e])?;
         }
@@ -672,7 +672,7 @@ ruby_class! {
     def "each_child"(recv, &block) {
         let entries: Vec<RubyValue> = live_dir(recv)?
             .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
-        let p = block_or_enum!(recv, "each_child", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         for e in entries {
             p.call(&[e])?;
         }

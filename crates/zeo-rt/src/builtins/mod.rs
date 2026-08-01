@@ -551,6 +551,13 @@ pub(crate) use arg_str;
 /// captures `(recv, method-name, args)` and re-invokes the method when
 /// iterated (`rb_enumeratorize`'s rule).
 macro_rules! block_or_enum {
+    // The ordinary form: the method name comes from the def that owns the body
+    // (`__RUBY_METHOD`, bound by `ruby_class!`), so it cannot drift from it.
+    ($recv:expr_2021, $args:expr_2021, $block:expr_2021) => {
+        crate::builtins::block_or_enum!($recv, __RUBY_METHOD, $args, $block)
+    };
+    // The explicit form, for a shared helper that is not itself a def body and
+    // for the one def whose enumerator names an ALIAS rather than its primary.
     ($recv:expr_2021, $meth:expr_2021, $args:expr_2021, $block:expr_2021) => {
         match $block {
             Some(crate::RubyValue::Proc(p)) => p,

@@ -685,7 +685,7 @@ ruby_class! {
     // `chomp: true` strips terminators, mirroring `readlines`.
     def self."foreach" (recv, path, sep?, opt?, &block) {
         let path = path_arg(path, "foreach")?;
-        let p = block_or_enum!(recv, "foreach", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         let text = String::from_utf8_lossy(&bytes).into_owned();

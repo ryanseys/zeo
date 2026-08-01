@@ -174,7 +174,7 @@ ruby_class! {
     }
 
     def "each" (recv, &block) {
-        let p = block_or_enum!(recv, "each", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let (start, end, exclusive) = range_parts(recv);
         match start {
             // An integer start iterates integers upward. A finite Int/Float
@@ -416,7 +416,7 @@ ruby_class! {
     }
     // `step(n)`: the blockless form returns an Enumerator.
     def "step" | "%" arity 1 cfunc (recv, n, &block) {
-        let p = block_or_enum!(recv, "step", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let (start, end, exclusive) = range_parts(recv);
         // Float mode when any endpoint or the step is a Float. CRuby computes
         // the element COUNT and multiplies (`beg + i*unit`) rather than

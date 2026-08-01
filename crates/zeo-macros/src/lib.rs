@@ -94,6 +94,17 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         let body = &method.body;
         let attrs = &method.attrs;
         let preamble = gen_preamble(method);
+        // `block_or_enum!`'s blockless arm needs the Ruby name to build the
+        // Enumerator that re-invokes this very method. Every call site used to
+        // restate it as a literal beside the def that owns it -- pure
+        // repetition, and a typo there yields an enumerator over the WRONG
+        // method. Bind it here instead, only for the bodies that ask.
+        let method_name = if mentions(&method.body, "block_or_enum") {
+            let primary = &method.names[0].ruby;
+            quote! { const __RUBY_METHOD: &str = #primary; }
+        } else {
+            quote! {}
+        };
         fn_items.push(quote! {
             #( #attrs )*
             pub(crate) fn #fn_ident(
@@ -101,6 +112,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 __args: &[crate::RubyValue],
                 __block: Option<crate::RubyValue>,
             ) -> Result<crate::RubyValue, crate::Signal> {
+                #method_name
                 #preamble
                 #body
             }
@@ -237,6 +249,17 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
 /// implies, emitted ahead of the body.
 ///
 /// The guard is the runtime half of what the signature declares; the reported
+/// Whether a body's tokens name `ident` anywhere, recursing into groups. Used
+/// to bind `__RUBY_METHOD` only where it is read, so the other ~1,400 defs do
+/// not carry an unused const.
+fn mentions(tokens: &TokenStream2, ident: &str) -> bool {
+    tokens.clone().into_iter().any(|t| match t {
+        proc_macro2::TokenTree::Ident(i) => i == ident,
+        proc_macro2::TokenTree::Group(g) => mentions(&g.stream(), ident),
+        _ => false,
+    })
+}
+
 /// arity (`MethodDef::derived_arity`) is the reflection half. Both come from the
 /// one parameter list, so they cannot disagree.
 fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {

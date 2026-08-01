@@ -829,7 +829,7 @@ ruby_module! {
     // (`rb_yield_values2`, enum.c:631-633); results collect into an Array.
     def "map" arity 0 | "collect" arity 0 (recv, *args, &block) {
         reject_args(args, "map", "arguments");
-        let blk = block_or_enum!(recv, "map", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
         let out2 = out.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -930,7 +930,7 @@ ruby_module! {
     // including a `nil` element -- ignores it. With no `ifnone` and no match, nil.
     def "find" | "detect"(recv, *args, &block) {
         let ifnone = args.first().cloned();
-        let blk = block_or_enum!(recv, "find", &[], block);
+        let blk = block_or_enum!(recv, &[], block);
         let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
         let hit2 = hit.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -1065,7 +1065,7 @@ ruby_module! {
             "each_with_index",
             "arguments (forwarding them to #each)",
         );
-        let blk = block_or_enum!(recv, "each_with_index", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let idx = Arc::new(Mutex::new(0i64));
         let idx2 = idx.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -1134,7 +1134,7 @@ ruby_module! {
     }
     def "sort_by" arity 0 (recv, *args, &block) {
         reject_args(args, "sort_by", "arguments");
-        let blk = block_or_enum!(recv, "sort_by", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(recv)?;
         // Decorate-sort-undecorate, keys ordered by rb_cmp.
         let mut decorated: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
@@ -1171,7 +1171,7 @@ ruby_module! {
     }
     def "group_by" arity 0 (recv, *args, &block) {
         reject_args(args, "group_by", "arguments");
-        let blk = block_or_enum!(recv, "group_by", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(recv)?;
         let groups = crate::hash_new(Vec::new());
         for e in items {
@@ -1191,7 +1191,7 @@ ruby_module! {
     }
     def "partition" arity 0 (recv, *args, &block) {
         reject_args(args, "partition", "arguments");
-        let blk = block_or_enum!(recv, "partition", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(recv)?;
         let (mut yes, mut no) = (Vec::new(), Vec::new());
         for e in items {
@@ -1208,7 +1208,7 @@ ruby_module! {
     }
     def "flat_map" arity 0 | "collect_concat" arity 0 (recv, *args, &block) {
         reject_args(args, "flat_map", "arguments");
-        let blk = block_or_enum!(recv, "flat_map", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(recv)?;
         let mut out = Vec::new();
         for e in items {
@@ -1222,7 +1222,7 @@ ruby_module! {
     }
     def "filter_map" arity 0 (recv, *args, &block) {
         reject_args(args, "filter_map", "arguments");
-        let blk = block_or_enum!(recv, "filter_map", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(recv)?;
         let mut out = Vec::new();
         for e in items {
@@ -1235,7 +1235,7 @@ ruby_module! {
     }
     def "each_slice" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_slice")?;
-        let blk = block_or_enum!(recv, "each_slice", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_packed(recv)?;
         for chunk in items.chunks(n) {
             blk.call(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
@@ -1245,7 +1245,7 @@ ruby_module! {
     }
     def "each_cons" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_cons")?;
-        let blk = block_or_enum!(recv, "each_cons", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_packed(recv)?;
         if items.len() >= n {
             for window in items.windows(n) {
@@ -1259,7 +1259,7 @@ ruby_module! {
         if args.len() != 1 {
             panic!("Enumerable#each_with_object takes exactly one argument");
         }
-        let blk = block_or_enum!(recv, "each_with_object", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let memo = args[0].clone();
         // Drive the receiver's own `each` (rather than collect-then-iterate) so
         // the block runs INSIDE that `each` frame: a block-raised exception then
@@ -1348,7 +1348,7 @@ ruby_module! {
     }
     def "reverse_each"(recv, *args, &block) {
         reject_args(args, "reverse_each", "arguments");
-        let blk = block_or_enum!(recv, "reverse_each", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(recv)?;
         for e in items.iter().rev() {
             blk.call(&e.raw)?;
@@ -1378,7 +1378,7 @@ ruby_module! {
     // empty receiver (not `[]`).
     def "minmax_by" arity 0 (recv, *args, &block) {
         reject_args(args, "minmax_by", "arguments");
-        let blk = block_or_enum!(recv, "minmax_by", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let mut lo: Option<(RubyValue, RubyValue)> = None;
         let mut hi: Option<(RubyValue, RubyValue)> = None;
         for e in collect_packed(recv)? {
@@ -1411,7 +1411,7 @@ ruby_module! {
     // Answers the receiver.
     def "each_entry"(recv, *args, &block) {
         reject_args(args, "each_entry", "arguments");
-        let blk = block_or_enum!(recv, "each_entry", args, block);
+        let blk = block_or_enum!(recv, args, block);
         for e in collect_packed(recv)? {
             blk.call(&[e])?;
         }
@@ -1423,7 +1423,7 @@ ruby_module! {
     // Array/Enumerable surface a real Enumerator would).
     def "chunk" arity 0 (recv, *args, &block) {
         reject_args(args, "chunk", "arguments");
-        let blk = block_or_enum!(recv, "chunk", args, block);
+        let blk = block_or_enum!(recv, args, block);
         let items = collect_packed(recv)?;
         let mut out: Vec<RubyValue> = Vec::new();
         let mut cur_key: Option<RubyValue> = None;
@@ -1518,7 +1518,7 @@ ruby_module! {
             None | Some(RubyValue::Nil) => None,
             Some(v) => Some(crate::builtins::convert::to_index(v)?),
         };
-        let p = block_or_enum!(recv, "cycle", args, block);
+        let p = block_or_enum!(recv, args, block);
         let RubyValue::Array(all) = collect_to_a(recv)? else {
             unreachable!("to_a always answers an Array")
         };

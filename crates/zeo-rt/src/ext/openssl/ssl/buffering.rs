@@ -308,7 +308,7 @@ ruby_module! {
         }
     }
     def "each_byte" (recv, &block) {
-        let p = block_or_enum!(recv, "each_byte", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         loop {
             let b = take(recv, Some(1))?;
             let Some(&b) = b.first() else { break };

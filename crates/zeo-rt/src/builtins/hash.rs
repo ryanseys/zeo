@@ -441,7 +441,7 @@ ruby_class! {
     // `transform_values!` rewrites each value in place through the block,
     // keeping keys and order; answers the receiver.
     def "transform_values!" (recv, &block) {
-        let p = block_or_enum!(recv, "transform_values!", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         // After the enumerator return -- CRuby's own order (frozen raises
         // only once a block makes this a real mutation).
         guard_hash_frozen(recv)?;
@@ -502,7 +502,7 @@ ruby_class! {
         Ok(RubyValue::Bool(found))
     }
     def "each_key" (recv, &block) {
-        let p = block_or_enum!(recv, "each_key", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let keys: Vec<RubyValue> =
             recv_hash!(recv).lock().values().map(|(k, _)| k.clone()).collect();
         for k in keys {
@@ -511,7 +511,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "each_value" (recv, &block) {
-        let p = block_or_enum!(recv, "each_value", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let vals: Vec<RubyValue> =
             recv_hash!(recv).lock().values().map(|(_, v)| v.clone()).collect();
         for v in vals {
@@ -528,7 +528,7 @@ ruby_class! {
         hash_filter(recv, &[], block, false)
     }
     def "transform_values" (recv, &block) {
-        let p = block_or_enum!(recv, "transform_values", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
@@ -607,7 +607,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "each" | "each_pair" arity 0 (recv, &block) {
-        let p = block_or_enum!(recv, "each", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         // A block-raised exception shows a 'Hash#each' C-frame between the
         // block and the caller in CRuby's backtrace.
         let _frame = crate::frames::synthetic_c_frame("Hash#each");

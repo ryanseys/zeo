@@ -1334,7 +1334,7 @@ ruby_class! {
         )))
     }
     def "each_byte" (recv, &block) {
-        let p = block_or_enum!(recv, "each_byte", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let bytes: Vec<u8> = recv_str!(recv).lock().bytes().to_vec();
         for b in bytes {
             p.call(&[RubyValue::Int(b as i64)])?;
@@ -1828,7 +1828,7 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(ls)))
     }
     def "each_char" (recv, &block) {
-        let p = block_or_enum!(recv, "each_char", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         for c in char_values(recv_str!(recv)) {
             p.call(&[c])?;
         }
@@ -1845,7 +1845,7 @@ ruby_class! {
     }
     def "each_grapheme_cluster" (recv, &block) {
         use unicode_segmentation::UnicodeSegmentation;
-        let p = block_or_enum!(recv, "each_grapheme_cluster", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let clusters: Vec<String> = recv_str!(recv)
             .lock()
             .to_utf8_lossy()
@@ -1871,7 +1871,7 @@ ruby_class! {
     // `each_line` / `each_line(sep)`: a custom separator keeps its trailing
     // occurrence on each piece, exactly like the default `"\n"`.
     def "each_line"(recv, sep?, **opts, &block) {
-        let p = block_or_enum!(recv, "each_line", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for l in lines_from_args(&text, sep, opts) {
             p.call(&[l])?;
@@ -2112,7 +2112,7 @@ ruby_class! {
         )))
     }
     def "each_codepoint" (recv, &block) {
-        let p = block_or_enum!(recv, "each_codepoint", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         for c in recv_str!(recv).lock().to_utf8_lossy().chars() {
             p.call(&[RubyValue::Int(c as i64)])?;
         }
@@ -2625,7 +2625,7 @@ ruby_class! {
     def "upto" cfunc (recv, max, exclusive?, &block) {
         let exclusive = exclusive.is_some_and(|v| v.truthy());
         let limit = arg_str!(max).lock().to_utf8_lossy().into_owned();
-        let p = block_or_enum!(recv, "upto", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         let mut cur = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         loop {
             if cur.as_str() > limit.as_str() {

@@ -371,7 +371,7 @@ ruby_class! {
     // in place, returning self (dedup applies to the mapped values).
     def "map!" | "collect!" arity 0 (recv, &block) {
         check_frozen(recv)?;
-        let p = block_or_enum!(recv, "map!", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let s = set_of(recv);
         let mut mapped = Vec::new();
         for e in s.elements() {
@@ -384,14 +384,14 @@ ruby_class! {
     // were dropped, else nil.
     def "select!" | "filter!" arity 0 (recv, &block) {
         check_frozen(recv)?;
-        let p = block_or_enum!(recv, "select!", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let changed = filter_in_place(recv, &p, true)?;
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `keep_if` -- like `select!` but always returns self.
     def "keep_if" (recv, &block) {
         check_frozen(recv)?;
-        let p = block_or_enum!(recv, "keep_if", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         filter_in_place(recv, &p, true)?;
         Ok(recv.clone())
     }
@@ -399,27 +399,27 @@ ruby_class! {
     // dropped, else nil.
     def "reject!" (recv, &block) {
         check_frozen(recv)?;
-        let p = block_or_enum!(recv, "reject!", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let changed = filter_in_place(recv, &p, false)?;
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `delete_if` -- like `reject!` but always returns self.
     def "delete_if" (recv, &block) {
         check_frozen(recv)?;
-        let p = block_or_enum!(recv, "delete_if", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         filter_in_place(recv, &p, false)?;
         Ok(recv.clone())
     }
     // `classify { |o| key }` -- a `Hash{ key => Set }` grouping by block value.
     def "classify" (recv, &block) {
-        let p = block_or_enum!(recv, "classify", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         Ok(RubyValue::Hash(classify_groups(recv, &p)?))
     }
     // `divide` -- partition into a Set of Sets. A one-arg block groups by its
     // value (`classify`'s values); a two-arg block treats `block.call(u,v)` as
     // a directed edge and returns the strongly-connected components.
     def "divide" (recv, &block) {
-        let p = block_or_enum!(recv, "divide", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         if p.arity() == 2 {
             let elements = set_of(recv).elements();
             let n = elements.len();
@@ -443,7 +443,7 @@ ruby_class! {
         }
     }
     def "each" (recv, &block) {
-        let p = block_or_enum!(recv, "each", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         for e in set_of(recv).elements() {
             p.call(&[e])?;
         }

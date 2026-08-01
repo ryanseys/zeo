@@ -483,7 +483,7 @@ ruby_class! {
     // Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
     def "step" (recv, to?, by?, **opts, &block) {
-        let p = block_or_enum!(recv, "step", __args, block);
+        let p = block_or_enum!(recv, __args, block);
         // `step` accepts positional (`1.step(10, 2)`) and/or keyword
         // (`1.step(by: 2, to: 10)`) forms.
         let mut limit: Option<RubyValue> = None;

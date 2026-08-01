@@ -469,14 +469,14 @@ ruby_class! {
         struct_to_h(recv, block)
     }
     def "each"(recv, &block) {
-        let p = block_or_enum!(recv, "each", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         for v in slots_of(recv) {
             p.call(&[v])?;
         }
         Ok(recv.clone())
     }
     def "each_pair"(recv, &block) {
-        let p = block_or_enum!(recv, "each_pair", &[], block);
+        let p = block_or_enum!(recv, &[], block);
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         let slots = slots_of(recv);
         for (m, v) in meta.members.iter().zip(slots.iter()) {
