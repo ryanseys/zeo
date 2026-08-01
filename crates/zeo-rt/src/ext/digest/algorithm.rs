@@ -41,14 +41,14 @@ ruby_class! {
         push_bytes(recv, &in_bytes(other)?);
         Ok(recv.clone())
     }
-    def "hexdigest" | "to_s"(recv, *args, &_block) {
-        Ok(str(hex(&finalize(recv, args)?)))
+    def "hexdigest" | "to_s"(recv, data?) {
+        Ok(str(hex(&finalize(recv, data)?)))
     }
-    def "digest"(recv, *args, &_block) {
-        Ok(RubyValue::Str(string_from_bytes(finalize(recv, args)?, ASCII_8BIT)))
+    def "digest"(recv, data?) {
+        Ok(RubyValue::Str(string_from_bytes(finalize(recv, data)?, ASCII_8BIT)))
     }
-    def "base64digest"(recv, *args, &_block) {
-        Ok(str(base64(&finalize(recv, args)?)))
+    def "base64digest"(recv, data?) {
+        Ok(str(base64(&finalize(recv, data)?)))
     }
     def "reset"(recv) {
         reset_buf(recv);

@@ -435,7 +435,7 @@ fn c_handle_interrupt(
     args: &[RubyValue],
     blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
+    crate::builtins::check_arity(args.len(), 1, Some(1))?;
     if !matches!(&args[0], RubyValue::Hash(_)) {
         return Err(crate::builtins::arg_error!("unknown mask signature"));
     }

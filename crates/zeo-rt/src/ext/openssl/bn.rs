@@ -10,7 +10,7 @@
 
 use super::{bin_str, str, str_bytes};
 use crate::builtins::integer::int_value;
-use crate::builtins::{arg_error, arity, convert, type_error};
+use crate::builtins::{arg_error, convert, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal};
 use openssl::bn::{BigNum, BigNumContext, MsbOption};
@@ -134,7 +134,6 @@ fn to_int_value(n: &BigNum) -> Result<RubyValue, Signal> {
 /// `BN.new(arg, base = 10)`: an Integer, another BN, or a String in base
 /// 0 (MPI), 2 (big-endian bytes), 10 or 16.
 fn construct(args: &[RubyValue]) -> Result<BigNum, Signal> {
-    arity!(args, 1..=2);
     match &args[0] {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Object(_) => {
             if args.len() > 1 {
@@ -212,8 +211,8 @@ fn cmp_int(a: &BigNum, b: &BigNum) -> i64 {
 ruby_class! {
     BN = zeo_abi::OPENSSL_BN_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."new" (_recv, *args, &_block) {
-        Ok(wrap(construct(args)?))
+    def self."new" cfunc (_recv, _value, _base?) {
+        Ok(wrap(construct(__args)?))
     }
     // `BN.rand(bits, fill = 0, odd = false)` -- `fill` -1 allows a zero top
     // bit, 0 forces the top bit, 1 forces the top two (BN_rand's msb knob).

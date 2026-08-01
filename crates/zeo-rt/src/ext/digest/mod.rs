@@ -19,7 +19,6 @@
 mod algorithm;
 mod digest_module;
 
-use crate::builtins::arity;
 use crate::builtins::{BUILTIN_TABLES, BuiltinClassTable, MethodTable};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
@@ -249,15 +248,14 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
 /// Shared body of the instance `hexdigest`/`digest`/`base64digest`: an optional
 /// string arg is appended, the buffer hashed, and (per CRuby) the object reset
 /// when an arg was supplied.
-pub(crate) fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
-    arity!(args, 0..=1);
+pub(crate) fn finalize(recv: &RubyValue, data: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
     let d = digest_of(recv);
     let mut buf = d.buf.lock();
-    if let Some(arg) = args.first() {
+    if let Some(arg) = data {
         buf.extend_from_slice(&in_bytes(arg)?);
     }
     let out = d.algo.raw(&buf);
-    if !args.is_empty() {
+    if data.is_some() {
         buf.clear();
     }
     Ok(out)

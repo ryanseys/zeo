@@ -39,7 +39,7 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::collections::array_new;
 use crate::coroutine::CoroutineResult;
 use crate::dispatch::{raise_stop_iteration, send_value};
@@ -239,7 +239,7 @@ pub(crate) fn enumerator_new(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0..=1);
+    crate::builtins::check_arity(args.len(), 0, Some(1))?;
     let Some(RubyValue::Proc(generator)) = block else {
         return Err(arg_error!("tried to create Enumerator without a block"));
     };

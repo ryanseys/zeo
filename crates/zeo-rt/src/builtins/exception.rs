@@ -312,7 +312,7 @@ fn exc_set_backtrace(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 1);
+    crate::builtins::check_arity(args.len(), 1, Some(1))?;
     if matches!(args[0], RubyValue::Nil) {
         *exc(recv).backtrace.lock() = None;
         return Ok(RubyValue::Nil);

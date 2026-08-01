@@ -262,10 +262,6 @@ oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo is absent from the pinned
 oracle-missing	Prism::Zeo	s	serialize_parse_comments	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	serialize_parse_lex	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	version	Prism::Zeo is absent from the pinned oracle
-baseline	BigDecimal	i	<	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/bigdecimal/mod.rs:701
-baseline	BigDecimal	i	<=	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/bigdecimal/mod.rs:704
-baseline	BigDecimal	i	>	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/bigdecimal/mod.rs:707
-baseline	BigDecimal	i	>=	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/bigdecimal/mod.rs:710
 baseline	Class	i	allocate	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/rclass.rs:90
 baseline	Complex	s	rectangular	declared 0, oracle -1 (c) at crates/zeo-rt/src/builtins/complex.rs:624
 baseline	Data	i	deconstruct	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/data.rs:39

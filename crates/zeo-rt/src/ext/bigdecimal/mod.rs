@@ -21,7 +21,7 @@ use std::sync::Arc;
 use value::BD;
 use zeo_macros::ruby_class;
 
-use crate::builtins::{arg_error, arity, convert, type_error};
+use crate::builtins::{arg_error, convert, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 
@@ -260,15 +260,18 @@ fn to_float(bd: &BD) -> f64 {
 /// The rounding-position family: `round`/`floor`/`ceil`/`truncate` share
 /// argument shapes -- no argument (or `n < 1`) answers an Integer, a
 /// positive `n` a BigDecimal.
-fn positional(recv: &RubyValue, args: &[RubyValue], mode: u32) -> Result<RubyValue, Signal> {
-    arity!(args, 0..=1);
+fn positional(
+    recv: &RubyValue,
+    ndigits: Option<&RubyValue>,
+    mode: u32,
+) -> Result<RubyValue, Signal> {
     let bd = recv_bd(recv);
-    let n = match args.first() {
+    let n = match ndigits {
         None => 0,
         Some(v) => convert::to_index(v)?,
     };
     let rounded = arith::mid_round(bd, mode, n);
-    if args.is_empty() || n < 1 {
+    if ndigits.is_none() || n < 1 {
         to_integer(&rounded)
     } else {
         checked(rounded)
@@ -324,7 +327,7 @@ fn rounding_mode_option(h: &RubyValue) -> Result<u32, Signal> {
 pub(crate) fn kernel_big_decimal(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // A trailing `exception:` hash is the only keyword.
     let (args, exception) = split_exception_kwarg(args);
-    arity!(args, 1..=2);
+    crate::builtins::check_arity(args.len(), 1, Some(2))?;
     let digs: Option<i64> = match args.get(1) {
         None => None,
         Some(v) => {
@@ -641,14 +644,14 @@ ruby_class! {
         checked(arith::sub(bd, &fix))
     }
 
-    def "floor" (recv, *args, &_block) {
-        positional(recv, args, ROUND_FLOOR)
+    def "floor" (recv, ndigits?) {
+        positional(recv, ndigits, ROUND_FLOOR)
     }
-    def "ceil" (recv, *args, &_block) {
-        positional(recv, args, ROUND_CEILING)
+    def "ceil" (recv, ndigits?) {
+        positional(recv, ndigits, ROUND_CEILING)
     }
-    def "truncate" (recv, *args, &_block) {
-        positional(recv, args, ROUND_DOWN)
+    def "truncate" (recv, ndigits?) {
+        positional(recv, ndigits, ROUND_DOWN)
     }
     // `round`: `()` and `(n < 1)` answer Integers; a `half:` hash or a
     // trailing mode symbol/flag overrides the global mode.
@@ -698,17 +701,17 @@ ruby_class! {
             Some(std::cmp::Ordering::Equal)
         )))
     }
-    def "<" (recv, *args, &_block) {
-        compare(recv, args, |o| o == std::cmp::Ordering::Less)
+    def "<" (recv, other) {
+        compare(recv, other, |o| o == std::cmp::Ordering::Less)
     }
-    def "<=" (recv, *args, &_block) {
-        compare(recv, args, |o| o != std::cmp::Ordering::Greater)
+    def "<=" (recv, other) {
+        compare(recv, other, |o| o != std::cmp::Ordering::Greater)
     }
-    def ">" (recv, *args, &_block) {
-        compare(recv, args, |o| o == std::cmp::Ordering::Greater)
+    def ">" (recv, other) {
+        compare(recv, other, |o| o == std::cmp::Ordering::Greater)
     }
-    def ">=" (recv, *args, &_block) {
-        compare(recv, args, |o| o != std::cmp::Ordering::Less)
+    def ">=" (recv, other) {
+        compare(recv, other, |o| o != std::cmp::Ordering::Less)
     }
 
     def "coerce" (recv, arg) {
@@ -844,17 +847,16 @@ ruby_class! {
 
 fn compare(
     recv: &RubyValue,
-    args: &[RubyValue],
+    other: &RubyValue,
     ok: fn(std::cmp::Ordering) -> bool,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     let a = recv_bd(recv);
-    let b = operand_bd(&args[0], coerce_prec(a, 0))?.ok_or_else(|| {
+    let b = operand_bd(other, coerce_prec(a, 0))?.ok_or_else(|| {
         raise_error(
             "ArgumentError",
             format!(
                 "comparison of BigDecimal with {} failed",
-                crate::class_name_of_value(&args[0])
+                crate::class_name_of_value(other)
             ),
         )
     })?;

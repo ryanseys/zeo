@@ -3170,7 +3170,7 @@ fn sub_gsub(
         _ => None,
     };
     if block_proc.is_some() {
-        crate::builtins::arity!(args, 1);
+        crate::builtins::check_arity(args.len(), 1, Some(1))?;
     } else if global && args.len() == 1 {
         // Blockless `gsub(pattern)` is an Enumerator over the matched
         // substrings (iterating it with a block performs the substitution,
@@ -3180,7 +3180,7 @@ fn sub_gsub(
             recv, "gsub", args,
         ));
     } else {
-        crate::builtins::arity!(args, 2);
+        crate::builtins::check_arity(args.len(), 2, Some(2))?;
     }
     // Pattern: a Regexp as-is; anything else through the `to_str` probe (a
     // literal pattern); a non-convertible pattern is CRuby's

@@ -7,7 +7,7 @@
 //! the `#status` detail CRuby's C constructor attaches, since a by-name raise
 //! carries only a message (see `docs/EXTENSIONS.md`).
 
-use crate::builtins::{arity, convert};
+use crate::builtins::{convert};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
@@ -78,7 +78,7 @@ fn close_quietly(io: &RubyValue) {
 fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
-    arity!(args, 1..=3);
+    crate::builtins::check_arity(args.len(), 1, Some(3))?;
 
     let (master, slave, _name) = open_pair()?;
     let mut cmd = crate::builtins::process::build_spawn_command(args)?;

@@ -156,19 +156,19 @@ ruby_class! {
     // Naive power-of-ten scaling -- CRuby switches to exact rational
     // arithmetic when double precision is insufficient (`2.675.round(2)`),
     // a documented divergence.
-    def "round" (recv, *args, &_block) {
-        // A trailing `half:` keyword selects the tie-break mode (:up default).
-        let (positional, mode) = split_round_half(args)?;
-        float_round_family(recv, positional, move |x| round_half(x, mode))
+    // A `half:` keyword selects the tie-break mode (:up default).
+    def "round" (recv, ndigits?, **opts) {
+        let mode = round_half_mode(opts)?;
+        float_round_family(recv, ndigits, move |x| round_half(x, mode))
     }
-    def "floor" (recv, *args, &_block) {
-        float_round_family(recv, args, f64::floor)
+    def "floor" (recv, ndigits?) {
+        float_round_family(recv, ndigits, f64::floor)
     }
-    def "ceil" (recv, *args, &_block) {
-        float_round_family(recv, args, f64::ceil)
+    def "ceil" (recv, ndigits?) {
+        float_round_family(recv, ndigits, f64::ceil)
     }
-    def "truncate" (recv, *args, &_block) {
-        float_round_family(recv, args, f64::trunc)
+    def "truncate" (recv, ndigits?) {
+        float_round_family(recv, ndigits, f64::trunc)
     }
 }
 
@@ -416,8 +416,8 @@ fn round_half(x: f64, mode: HalfMode) -> f64 {
 
 /// Split a trailing `half:` keyword Hash off `round`'s arguments, returning the
 /// positional slice and the selected mode (`:up` when absent).
-fn split_round_half(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Signal> {
-    if let Some(RubyValue::Hash(h)) = args.last() {
+fn round_half_mode(opts: Option<&RubyValue>) -> Result<HalfMode, Signal> {
+    if let Some(RubyValue::Hash(h)) = opts {
         let mode = match crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("half"))) {
             RubyValue::Nil => HalfMode::Up,
             RubyValue::Symbol(s) => match s.name().as_str() {
@@ -435,19 +435,18 @@ fn split_round_half(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Sign
                 ));
             }
         };
-        return Ok((&args[..args.len() - 1], mode));
+        return Ok(mode);
     }
-    Ok((args, HalfMode::Up))
+    Ok(HalfMode::Up)
 }
 
 fn float_round_family(
     recv: &RubyValue,
-    args: &[RubyValue],
+    ndigits: Option<&RubyValue>,
     op: impl Fn(f64) -> f64,
 ) -> Result<RubyValue, Signal> {
-    crate::builtins::arity!(args, 0..=1);
     let f = recv_f64(recv);
-    let ndigits = match args.first() {
+    let ndigits = match ndigits {
         Some(RubyValue::Int(n)) => *n,
         Some(other) => return Err(coerce_error(other)),
         None => 0,

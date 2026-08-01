@@ -11,7 +11,6 @@
 //! resets, `hexdigest` alone peeks without resetting.
 
 use super::{base64, bin_str, digest_error, hex, md_by_name, md_from_value, str, str_bytes};
-use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal};
 use parking_lot::Mutex;
@@ -119,15 +118,14 @@ pub(crate) fn digest_of(recv: &RubyValue) -> &RDigest {
 /// Shared body of the instance `hexdigest`/`digest`/`base64digest`: an
 /// optional string arg is appended, the buffer hashed, and (per the
 /// `Digest::Instance` contract) the object reset when an arg was supplied.
-pub(crate) fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
-    arity!(args, 0..=1);
+pub(crate) fn finalize(recv: &RubyValue, data: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
     let d = digest_of(recv);
     let mut buf = d.buf.lock();
-    if let Some(arg) = args.first() {
+    if let Some(arg) = data {
         buf.extend_from_slice(&str_bytes(arg)?);
     }
     let out = d.raw(&buf)?;
-    if !args.is_empty() {
+    if data.is_some() {
         buf.clear();
     }
     Ok(out)
@@ -175,14 +173,14 @@ ruby_class! {
         digest_of(recv).buf.lock().extend_from_slice(&str_bytes(other)?);
         Ok(recv.clone())
     }
-    def "hexdigest" | "to_s" (recv, *args, &_block) {
-        Ok(str(hex(&finalize(recv, args)?)))
+    def "hexdigest" | "to_s" (recv, data?) {
+        Ok(str(hex(&finalize(recv, data)?)))
     }
-    def "digest" (recv, *args, &_block) {
-        Ok(bin_str(finalize(recv, args)?))
+    def "digest" (recv, data?) {
+        Ok(bin_str(finalize(recv, data)?))
     }
-    def "base64digest" (recv, *args, &_block) {
-        Ok(str(base64(&finalize(recv, args)?)))
+    def "base64digest" (recv, data?) {
+        Ok(str(base64(&finalize(recv, data)?)))
     }
     def "reset" (recv) {
         digest_of(recv).buf.lock().clear();

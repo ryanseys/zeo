@@ -14,7 +14,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
@@ -1334,7 +1334,7 @@ pub fn backquote(
     args: &[RubyValue],
     _block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
+    crate::builtins::check_arity(args.len(), 1, Some(1))?;
     set_last_child_status(RubyValue::Nil);
     let raw_cmd = cmd_str(&args[0])?;
     let Some(mut cmd) = build_command(args)? else {
