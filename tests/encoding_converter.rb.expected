@@ -1,0 +1,83 @@
+own singleton: [:asciicompat_encoding, :search_convpath]
+own instance: [:==, :convert, :convpath, :destination_encoding, :finish, :insert_output, :inspect, :last_error, :primitive_convert, :primitive_errinfo, :putback, :replacement, :replacement=, :source_encoding]
+constants: [:AFTER_OUTPUT, :CRLF_NEWLINE_DECORATOR, :CR_NEWLINE_DECORATOR, :INVALID_MASK, :INVALID_REPLACE, :LF_NEWLINE_DECORATOR, :PARTIAL_INPUT, :UNDEF_HEX_CHARREF, :UNDEF_MASK, :UNDEF_REPLACE, :UNIVERSAL_NEWLINE_DECORATOR, :XML_ATTR_CONTENT_DECORATOR, :XML_ATTR_QUOTE_DECORATOR, :XML_TEXT_DECORATOR]
+INVALID_MASK: 15
+UNDEF_HEX_CHARREF: 48
+PARTIAL_INPUT: 131072
+AFTER_OUTPUT: 262144
+XML_ATTR_QUOTE_DECORATOR: 1048576
+new: #<Encoding::Converter: UTF-8 to EUC-JP>
+new encodings: #<Encoding::Converter: UTF-8 to EUC-JP>
+new one arg: ArgumentError: wrong number of arguments (given 1, expected 2..3)
+new symbol: TypeError: no implicit conversion of Symbol into String
+new unknown: Encoding::ConverterNotFoundError: code converter not found (nope to UTF-8)
+new same: Encoding::ConverterNotFoundError: code converter not found (UTF-8 to UTF-8)
+new same + decorator: Encoding::ConverterNotFoundError: code converter not found (UTF-8 to UTF-8 with universal_newline)
+new two newlines: Encoding::ConverterNotFoundError: code converter not found (UTF-8 to EUC-JP with universal_newline,crlf_newline)
+new no-conversion: #<Encoding::Converter: no-conversion>
+new decorator only: #<Encoding::Converter: universal_newline>
+source_encoding: #<Encoding:UTF-8>
+destination_encoding: #<Encoding:EUC-JP>
+no-conversion source: nil
+inspect: "#<Encoding::Converter: UTF-8 to EUC-JP>"
+inspect decorated: "#<Encoding::Converter: UTF-8 to EUC-JP with crlf_newline>"
+inspect xml attr: "#<Encoding::Converter: UTF-8 to EUC-JP with xml_attr_content,xml_attr_quote>"
+inspect no-conversion: "#<Encoding::Converter: no-conversion>"
+inspect decorator only: "#<Encoding::Converter: crlf_newline>"
+== same: true
+== different: false
+== non-converter: nil
+convpath direct: [[#<Encoding:UTF-8>, #<Encoding:EUC-JP>]]
+convpath pivot: [[#<Encoding:ISO-8859-1>, #<Encoding:UTF-8>], [#<Encoding:UTF-8>, #<Encoding:EUC-JP>]]
+convpath sjis-euc: [[#<Encoding:Shift_JIS>, #<Encoding:EUC-JP>]]
+convpath jis: [[#<Encoding:ISO-2022-JP (dummy)>, #<Encoding:stateless-ISO-2022-JP>], [#<Encoding:stateless-ISO-2022-JP>, #<Encoding:EUC-JP>], [#<Encoding:EUC-JP>, #<Encoding:UTF-8>]]
+convpath long: [[#<Encoding:Windows-1252>, #<Encoding:UTF-8>], [#<Encoding:UTF-8>, #<Encoding:EUC-JP>], [#<Encoding:EUC-JP>, #<Encoding:stateless-ISO-2022-JP>], [#<Encoding:stateless-ISO-2022-JP>, #<Encoding:ISO-2022-JP (dummy)>]]
+convpath decorated: [[#<Encoding:UTF-8>, #<Encoding:EUC-JP>], "universal_newline"]
+convpath xml: [[#<Encoding:UTF-8>, #<Encoding:EUC-JP>], "xml_attr_content_escape", "xml_attr_quote"]
+convpath same: Encoding::ConverterNotFoundError: code converter not found (UTF-8 to UTF-8)
+convpath decorator only: ["crlf_newline"]
+asciicompat 2022: #<Encoding:stateless-ISO-2022-JP>
+asciicompat utf16: #<Encoding:UTF-8>
+asciicompat ibm037: #<Encoding:ISO-8859-1>
+asciicompat cesu8: #<Encoding:UTF-8>
+asciicompat utf8: nil
+asciicompat utf8-mac: nil
+asciicompat unknown: nil
+convert: [164, 162, 164, 164]
+convert encoding: #<Encoding:EUC-JP>
+convert split: [[], [164, 162], []]
+convert undef: Encoding::UndefinedConversionError: U+00E9 from UTF-8 to US-ASCII
+convert undef replaced: "?"
+convert invalid: Encoding::InvalidByteSequenceError: "\xFF" on UTF-8
+convert invalid replaced: [63]
+convert after finish: ArgumentError: converter already finished
+convert non-string: TypeError: no implicit conversion of Integer into String
+finish truncated: Encoding::InvalidByteSequenceError: incomplete "\xE3\x81" on UTF-8
+finish truncated replaced: [63]
+finish closes jis: [[27, 36, 66, 36, 34], [27, 40, 66]]
+crlf: [97, 13, 10, 98]
+cr: [97, 13, 98]
+universal: "a\nb"
+universal cr only: "a\nb"
+universal split: ["a", "\nb"]
+xml text: [38, 108, 116, 59, 97, 38, 97, 109, 112, 59, 98, 38, 103, 116, 59]
+xml attr: [34, 97, 38, 113, 117, 111, 116, 59, 98]
+flags integer: [63]
+flags universal: "a\nb"
+replacement euc: "?"
+replacement euc encoding: #<Encoding:US-ASCII>
+replacement utf8: "�"
+replacement utf16: [239, 191, 189]
+replacement set: ["!", "!"]
+replacement unrepresentable: Encoding::UndefinedConversionError: replacement character setup failed
+primitive whole: [:finished, [], [164, 162, 164, 164, 164, 166]]
+primitive truncated: [:incomplete_input, [], [97], [:incomplete_input, "UTF-8", "EUC-JP", "\xE3\x81", ""]]
+primitive partial input: [:source_buffer_empty, [], [97], [:source_buffer_empty, nil, nil, nil, nil]]
+primitive invalid: [:invalid_byte_sequence, [98], [97], [:invalid_byte_sequence, "UTF-8", "EUC-JP", "\xFF", ""], Encoding::InvalidByteSequenceError]
+primitive undefined: [:undefined_conversion, [98], [97], [:undefined_conversion, "UTF-8", "US-ASCII", "\xC3\xA9", ""]]
+primitive offset: [:finished, [107, 101, 164, 162]]
+errinfo fresh: [:source_buffer_empty, nil, nil, nil, nil]
+last_error fresh: nil
+putback: []
+insert_output: [nil, [88, 97]]
+insert_output converts: [164, 162]

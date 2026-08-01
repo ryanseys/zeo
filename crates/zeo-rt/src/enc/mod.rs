@@ -41,8 +41,9 @@ pub use strbuf::{IncompatibleEncodings, StrBuf, compat_concat_enc};
 pub use registry::*;
 pub use table::{ENCODINGS, EncKind, EncodingId, EncodingSpec, all, find};
 pub use transcode::{
-    NewlineMode, TranscodeDetail, TranscodeError, TranscodeFallback, TranscodeOptions, XmlMode,
-    encode_scalar, self_describing_bom, transcode,
+    NewlineMode, Stop, TranscodeDetail, TranscodeError, TranscodeFallback, TranscodeOptions,
+    TranscodeRun, TranscodeState, XmlMode, converter_not_found, encode_scalar, self_describing_bom,
+    transcode, transcode_run,
 };
 pub(crate) use transcode::{Unit, decode};
 

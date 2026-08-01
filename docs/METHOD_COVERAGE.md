@@ -603,6 +603,61 @@ raised. `Ractor::ClosedError` descends from `StopIteration`, not from
 `Ractor::Error`, which is what lets `Kernel#loop` swallow it;
 `Ractor::RemoteError#ractor` is the tree's one method and answers nil.
 
+### 3.4 `Encoding::Converter` (17)
+
+**Status: done** — `absent-module` 23 → 22, `constant` 12 → 11, no new row.
+`tests/encoding_converter.rb` is byte-identical to the oracle across all 17
+methods and all 14 constants.
+
+The class is the same engine `String#encode` runs on; the difference is only
+WHERE a conversion may stop. So `enc::transcode` was split into
+`transcode_run`, which reports how far it got and why, and a thin
+`transcode` that turns a stop into `String#encode`'s exception. That needed
+one thing the decoders did not have: **byte SPANS**. `decode_spans` now
+pairs every unit with the source bytes it consumed (an ISO-2022-JP escape
+and a byte-order mark fold into the unit that follows, so the spans stay a
+partition of the input), which is what lets a converter say how much of a
+chunk it took.
+
+`#convpath` is a real graph search, not a table of answers. The 194 direct
+converters CRuby registers were derived from the oracle by asking
+`search_convpath` for all 10,609 encoding pairs and keeping every
+consecutive pair that appeared; a plain breadth-first walk over those edges
+reproduces **all 10,609 answers exactly**, including the three-hop
+`ISO-2022-JP → stateless-ISO-2022-JP → EUC-JP → UTF-8`. This is the wave
+that needed 3.6 first: `stateless-ISO-2022-JP` is a waypoint on every
+ISO-2022-JP path and had to be a registered encoding before the path could
+name it.
+
+`.asciicompat_encoding` is NOT that graph, and the difference is easy to
+miss: `UTF8-MAC` has exactly one outgoing edge and still answers nil, so it
+is a 12-row table read straight from the oracle.
+
+Four behaviours the oracle settled, three of which were bugs in
+`String#encode` that only this wave's goldens exposed:
+
+- **`xml: :attr` writes a whole ATTRIBUTE, quotes included.** `"a\"b"` in,
+  `"\"a&quot;b\""` out. zeo escaped the content and omitted both quotes.
+- **The replacement text and the XML markup render INTO the target.** A
+  UTF-16BE conversion with `invalid: :replace` was emitting one `?` byte
+  (0x3F) where CRuby writes U+FFFD as a whole code unit, and `&amp;` was
+  going out as bare ASCII inside a wide string.
+- **`universal_newline` is an INPUT transformation**, folding CR and CRLF
+  alike into one LF. zeo's newline decorator only rewrote a LF on the way
+  out, so `universal_newline` was a no-op. It also needs one bit of state:
+  a CR ending a chunk waits for the next chunk before it can answer.
+- **A converter's `#convert` BUFFERS a cut-short tail** rather than raising,
+  and `#finish` is where it becomes an error — or the replacement, under
+  `invalid: :replace`.
+
+One accepted divergence: `#primitive_convert` with a `dst_bytesize` limit
+stops at a different point. zeo refuses the first character that would not
+fit and consumes nothing more; CRuby converts past the limit and holds the
+overflow internally, so its source is shorter and the extra bytes arrive on
+the next call. The end state after draining is identical, so this is an
+intermediate observable only —
+`tests/gaps/encoding_converter_buffer_full.rb`.
+
 ### 3.5 `Pathname` (96 own methods)
 
 Vendored under `gems/pathname/`, the way the other 40 gems are, and

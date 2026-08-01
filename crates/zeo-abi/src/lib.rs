@@ -634,6 +634,10 @@ pub const RANDOM_BASE_CLASS: ClassId = ClassId(155);
 pub const ENUMERATOR_GENERATOR_CLASS: ClassId = ClassId(156);
 pub const ENUMERATOR_PRODUCER_CLASS: ClassId = ClassId(157);
 
+/// `Encoding::Converter` -- the stateful, chunk-at-a-time face of the same
+/// engine `String#encode` runs on.
+pub const ENCODING_CONVERTER_CLASS: ClassId = ClassId(158);
+
 /// `Refinement` -- what `M.refinements` holds and what a refined method's
 /// `Method#owner` reports. A `Module` subclass with no instances of its
 /// own here: the compiler mints one hidden module per `refine` block and
@@ -1941,6 +1945,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass {
         id: ENUMERATOR_PRODUCER_CLASS,
         name: "Enumerator::Producer",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: ENCODING_CONVERTER_CLASS,
+        name: "Encoding::Converter",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
         includes: &[],

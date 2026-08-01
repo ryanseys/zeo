@@ -24,13 +24,23 @@ enum Mode {
     Kana,
 }
 
-/// Decodes ISO-2022-JP bytes into transcode units. Mode carries across
-/// newlines; an unknown escape or a stray high byte is an `Invalid` unit in
-/// CRuby's message shape.
-pub(crate) fn decode_units(bytes: &[u8]) -> Vec<Unit> {
+/// Decodes ISO-2022-JP bytes into transcode units, each paired with the
+/// count of SOURCE bytes it consumed. Mode carries across newlines; an
+/// unknown escape or a stray high byte is an `Invalid` unit in CRuby's
+/// message shape. A mode-switch escape carries no unit of its own, so its
+/// three bytes fold into the unit that follows -- which keeps the counts a
+/// partition of the input.
+pub(crate) fn decode_units(bytes: &[u8]) -> Vec<(Unit, usize)> {
     let mut units = Vec::new();
     let mut mode = Mode::Ascii;
     let mut i = 0;
+    // Where the next unit's bytes begin: after the last unit, INCLUDING any
+    // escapes consumed since.
+    let mut start = 0;
+    let mut push = |units: &mut Vec<(Unit, usize)>, unit, at: usize| {
+        units.push((unit, at - start));
+        start = at;
+    };
     while i < bytes.len() {
         let b = bytes[i];
         if b == 0x1B {
@@ -46,64 +56,75 @@ pub(crate) fn decode_units(bytes: &[u8]) -> Vec<Unit> {
                 // A recognized intermediate with an unsupported final byte:
                 // CRuby reports the two-byte lead `"\e("` followed by it.
                 (Some(m @ (b'(' | b'$')), Some(f)) => {
-                    units.push(Unit::Invalid(vec![0x1B, *m], InvalidStyle::FollowedBy(*f)));
+                    let unit = Unit::Invalid(vec![0x1B, *m], InvalidStyle::FollowedBy(*f));
                     i += 3;
+                    push(&mut units, unit, i);
                 }
                 (Some(b'(' | b'$'), None) => {
-                    units.push(Unit::Invalid(bytes[i..].to_vec(), InvalidStyle::Incomplete));
+                    let unit = Unit::Invalid(bytes[i..].to_vec(), InvalidStyle::Incomplete);
                     i = bytes.len();
+                    push(&mut units, unit, i);
                 }
                 _ => {
-                    units.push(Unit::Invalid(vec![0x1B], InvalidStyle::Plain));
                     i += 1;
+                    push(
+                        &mut units,
+                        Unit::Invalid(vec![0x1B], InvalidStyle::Plain),
+                        i,
+                    );
                 }
             }
             continue;
         }
         match mode {
             Mode::Ascii => {
-                if b < 0x80 {
-                    units.push(Unit::Char(b as char));
+                let unit = if b < 0x80 {
+                    Unit::Char(b as char)
                 } else {
-                    units.push(Unit::Invalid(vec![b], InvalidStyle::Plain));
-                }
+                    Unit::Invalid(vec![b], InvalidStyle::Plain)
+                };
                 i += 1;
+                push(&mut units, unit, i);
             }
             Mode::Kanji => {
                 if !(0x21..=0x7E).contains(&b) {
-                    units.push(Unit::Invalid(vec![b], InvalidStyle::Plain));
                     i += 1;
+                    push(&mut units, Unit::Invalid(vec![b], InvalidStyle::Plain), i);
                     continue;
                 }
                 match bytes.get(i + 1) {
                     Some(t) if (0x21..=0x7E).contains(t) => {
                         let euc = [b | 0x80, t | 0x80];
-                        match mb::mb_decode_seq(MbFamily::EucJp, &euc) {
-                            Some(c) => units.push(Unit::Char(c)),
-                            None => units.push(Unit::Unmapped(vec![b, *t])),
-                        }
+                        let unit = match mb::mb_decode_seq(MbFamily::EucJp, &euc) {
+                            Some(c) => Unit::Char(c),
+                            None => Unit::Unmapped(vec![b, *t]),
+                        };
                         i += 2;
+                        push(&mut units, unit, i);
                     }
                     Some(t) => {
-                        units.push(Unit::Invalid(vec![b], InvalidStyle::FollowedBy(*t)));
+                        let unit = Unit::Invalid(vec![b], InvalidStyle::FollowedBy(*t));
                         i += 2;
+                        push(&mut units, unit, i);
                     }
                     None => {
-                        units.push(Unit::Invalid(vec![b], InvalidStyle::Incomplete));
+                        let unit = Unit::Invalid(vec![b], InvalidStyle::Incomplete);
                         i += 1;
+                        push(&mut units, unit, i);
                     }
                 }
             }
             Mode::Kana => {
                 // Unreachable through public decoding (the `( I` escape is
                 // itself invalid), but kept total for encoder round-trips.
-                if (0x21..=0x5F).contains(&b) {
+                let unit = if (0x21..=0x5F).contains(&b) {
                     let c = char::from_u32(0xFF61 + (b as u32 - 0x21)).expect("halfwidth range");
-                    units.push(Unit::Char(c));
+                    Unit::Char(c)
                 } else {
-                    units.push(Unit::Invalid(vec![b], InvalidStyle::Plain));
-                }
+                    Unit::Invalid(vec![b], InvalidStyle::Plain)
+                };
                 i += 1;
+                push(&mut units, unit, i);
             }
         }
     }
@@ -113,6 +134,7 @@ pub(crate) fn decode_units(bytes: &[u8]) -> Vec<Unit> {
 /// The stateful encoder: characters in, escape-switched bytes out. `finish`
 /// must run last -- it restores ASCII mode, the `ESC ( B` every generator
 /// emits at end of text.
+#[derive(Clone)]
 pub(crate) struct Encoder {
     mode: Mode,
     /// Whether halfwidth katakana may be emitted as `ESC ( I` runs (nkf's
@@ -192,7 +214,7 @@ mod tests {
 
     fn decode(bytes: &[u8]) -> Option<String> {
         let mut s = String::new();
-        for u in decode_units(bytes) {
+        for (u, _) in decode_units(bytes) {
             match u {
                 Unit::Char(c) => s.push(c),
                 _ => return None,
@@ -229,7 +251,7 @@ mod tests {
     fn the_kana_escape_is_invalid_on_decode_like_cruby() {
         assert!(matches!(
             decode_units(b"\x1B(I1\x1B(B").first(),
-            Some(Unit::Invalid(lead, InvalidStyle::FollowedBy(b'I'))) if lead == &vec![0x1B, b'(']
+            Some((Unit::Invalid(lead, InvalidStyle::FollowedBy(b'I')), 3)) if lead == &vec![0x1B, b'(']
         ));
     }
 

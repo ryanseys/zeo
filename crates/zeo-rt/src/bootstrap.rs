@@ -85,6 +85,7 @@ impl ClassRegistry {
         register_builtins(&mut registry);
         register_exceptions(&mut registry);
         crate::builtins::weak::register_weak(&mut registry);
+        crate::builtins::converter::register_converter(&mut registry);
         registry
     }
 }
@@ -97,6 +98,7 @@ pub fn install_core_constants() {
     // `Float::*`, `Math::PI`/`E`, and `Complex::I` seed via their classes'
     // ruby_class! `const` rows (the BUILTIN_TABLES loop below).
     crate::builtins::encoding::seed_encoding_constants();
+    crate::builtins::converter::seed_converter_constants();
     crate::builtins::regexp::seed_regexp_constants();
     crate::constants::seed_argv();
     crate::builtins::io::seed_stdio();

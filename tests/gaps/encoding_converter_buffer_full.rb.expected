@@ -1,0 +1,2 @@
+cut point: [:destination_buffer_full, [227, 129, 134], [164, 162]]
+drained: [:finished, [], [164, 162, 164, 164, 164, 166]]

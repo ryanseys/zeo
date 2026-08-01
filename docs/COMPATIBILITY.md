@@ -49,6 +49,18 @@ are exact. Known divergences:
   encoding TO them, and reading FROM them requires one (no BOM is an
   invalid sequence) -- both CRuby-observed; the difference is only that
   error messages name the BE row (`UTF-16BE`) where CRuby says `UTF-16`.
+- **A converter's `#primitive_convert` cuts at a different point under a
+  `dst_bytesize` limit.** zeo refuses the first character whose bytes would
+  not fit and consumes nothing more, so the source string keeps everything
+  that did not convert. CRuby converts past the limit and holds the overflow
+  in an internal buffer, so its source is shorter and the extra bytes arrive
+  on the next call. Where the cut falls is a property of CRuby's buffer
+  sizes; the end state after draining is the same either way. Executable
+  record:
+  [`tests/gaps/encoding_converter_buffer_full.rb`](../tests/gaps/encoding_converter_buffer_full.rb).
+  `#putback` answers an empty String for the same reason a converter never
+  needs it: zeo's decoders consume an offending sequence whole, so
+  `#primitive_errinfo`'s fifth element is always empty.
 - **A string whose bytes are invalid in its own encoding does not raise.**
   Ruby refuses most operations on such a string (`ArgumentError`, "invalid
   byte sequence"; `Encoding::CompatibilityError` for the strip family); zeo

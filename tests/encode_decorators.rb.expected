@@ -1,0 +1,11 @@
+xml attr: "\"a&quot;b&lt;c\""
+xml text: "a\"b&lt;c"
+xml attr undef: "\"&#x3042;\""
+universal: "a\nb\nc"
+crlf: "a\r\nb"
+cr: "a\rb"
+utf16 invalid replace: [0, 97, 255, 253, 0, 98]
+utf32 invalid replace: [0, 0, 0, 97, 0, 0, 255, 253, 0, 0, 0, 98]
+utf16 xml attr: [0, 34, 0, 97, 0, 38, 0, 113, 0, 117, 0, 111, 0, 116, 0, 59, 0, 98, 0, 34]
+utf16 undef replace: "?"
+replace text into utf16: [0, 97, 0, 33, 0, 98]

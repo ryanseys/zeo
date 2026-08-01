@@ -127,6 +127,18 @@ pub fn self_describing_bom(bytes: &[u8]) -> Option<(EncodingId, usize)> {
 
 /// Decodes `bytes` under `from` into a sequence of units.
 pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
+    decode_spans(bytes, from)
+        .into_iter()
+        .map(|(u, _)| u)
+        .collect()
+}
+
+/// Decodes `bytes` under `from` into units, each paired with the count of
+/// SOURCE bytes it consumed. A byte-order mark and an ISO-2022-JP escape
+/// carry no unit of their own, so their bytes fold into the unit that
+/// follows -- which keeps the spans a partition of the input, and that is
+/// what an incremental converter needs to say how far it got.
+pub(crate) fn decode_spans(bytes: &[u8], from: EncodingId) -> Vec<(Unit, usize)> {
     // The dummy rows have no per-character structure (kind `Binary`), but
     // they DO have converters -- CRuby's exact split. ISO-2022-JP is the
     // stateful escape codec; dummy UTF-16/32 read an endianness off their
@@ -145,32 +157,42 @@ pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
             return Vec::new();
         }
         return match bom.iter().find(|(mark, _)| bytes.starts_with(mark)) {
-            Some((mark, real)) => decode(&bytes[mark.len()..], *real),
-            None => vec![Unit::Invalid(
-                bytes.to_vec(),
-                crate::enc::mb::InvalidStyle::Plain,
+            Some((mark, real)) => {
+                let mut units = decode_spans(&bytes[mark.len()..], *real);
+                if let Some((_, len)) = units.first_mut() {
+                    *len += mark.len();
+                }
+                units
+            }
+            None => vec![(
+                Unit::Invalid(bytes.to_vec(), crate::enc::mb::InvalidStyle::Plain),
+                bytes.len(),
             )],
         };
     }
     match from.kind() {
-        EncKind::Latin1 => bytes.iter().map(|b| Unit::Char(*b as char)).collect(),
+        EncKind::Latin1 => bytes.iter().map(|b| (Unit::Char(*b as char), 1)).collect(),
         EncKind::Ascii | EncKind::Binary | EncKind::Registered => bytes
             .iter()
             .map(|b| {
-                if *b < 0x80 {
+                let unit = if *b < 0x80 {
                     Unit::Char(*b as char)
                 } else {
                     Unit::Invalid(vec![*b], crate::enc::mb::InvalidStyle::Plain)
-                }
+                };
+                (unit, 1)
             })
             .collect(),
         EncKind::SingleByte => {
             let table = from.single_byte_table();
             bytes
                 .iter()
-                .map(|b| match table.decode(*b) {
-                    Some(c) => Unit::Char(c),
-                    None => Unit::Unmapped(vec![*b]),
+                .map(|b| {
+                    let unit = match table.decode(*b) {
+                        Some(c) => Unit::Char(c),
+                        None => Unit::Unmapped(vec![*b]),
+                    };
+                    (unit, 1)
                 })
                 .collect()
         }
@@ -180,14 +202,15 @@ pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
             while i < bytes.len() {
                 let unit = crate::enc::mb::mb_unit(family, &bytes[i..]);
                 let seq = &bytes[i..i + unit.len];
-                if !unit.valid {
-                    units.push(Unit::Invalid(seq.to_vec(), unit.style));
+                let decoded = if !unit.valid {
+                    Unit::Invalid(seq.to_vec(), unit.style)
                 } else {
                     match crate::enc::mb::mb_decode_seq(family, seq) {
-                        Some(c) => units.push(Unit::Char(c)),
-                        None => units.push(Unit::Unmapped(seq.to_vec())),
+                        Some(c) => Unit::Char(c),
+                        None => Unit::Unmapped(seq.to_vec()),
                     }
-                }
+                };
+                units.push((decoded, unit.len));
                 i += unit.len;
             }
             units
@@ -196,30 +219,41 @@ pub(crate) fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
             let w = crate::enc::wide::wide_of(from.kind()).expect("wide kind");
             crate::enc::wide::wide_ranges(w, bytes)
                 .into_iter()
-                .map(|(r, scalar, style)| match scalar {
-                    Some(c) => Unit::Char(c),
-                    None => Unit::Invalid(bytes[r].to_vec(), style),
+                .map(|(r, scalar, style)| {
+                    let len = r.len();
+                    let unit = match scalar {
+                        Some(c) => Unit::Char(c),
+                        None => Unit::Invalid(bytes[r].to_vec(), style),
+                    };
+                    (unit, len)
                 })
                 .collect()
         }
-        EncKind::Utf8 => decode_utf8(bytes),
+        EncKind::Utf8 => decode_utf8_spans(bytes),
     }
 }
 
 pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
+    decode_utf8_spans(bytes)
+        .into_iter()
+        .map(|(u, _)| u)
+        .collect()
+}
+
+pub(crate) fn decode_utf8_spans(bytes: &[u8]) -> Vec<(Unit, usize)> {
     let mut units = Vec::new();
     let mut rest = bytes;
     while !rest.is_empty() {
         match std::str::from_utf8(rest) {
             Ok(s) => {
-                units.extend(s.chars().map(Unit::Char));
+                units.extend(s.chars().map(|c| (Unit::Char(c), c.len_utf8())));
                 break;
             }
             Err(e) => {
                 let good = e.valid_up_to();
                 // SAFETY: `good` is a validated UTF-8 boundary.
                 let valid = unsafe { std::str::from_utf8_unchecked(&rest[..good]) };
-                units.extend(valid.chars().map(Unit::Char));
+                units.extend(valid.chars().map(|c| (Unit::Char(c), c.len_utf8())));
                 // `error_len() == None` means the input ENDED mid-sequence,
                 // which is CRuby's `incomplete "..."` form (and what
                 // `#incomplete_input?` reports) rather than a plainly wrong
@@ -230,7 +264,10 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
                     None => crate::enc::mb::InvalidStyle::Incomplete,
                 };
                 let bad_len = e.error_len().unwrap_or(rest.len() - good).max(1);
-                units.push(Unit::Invalid(rest[good..good + bad_len].to_vec(), style));
+                units.push((
+                    Unit::Invalid(rest[good..good + bad_len].to_vec(), style),
+                    bad_len,
+                ));
                 rest = &rest[good + bad_len..];
             }
         }
@@ -264,25 +301,111 @@ fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
 }
 
 /// The replacement string for undefined/invalid units: the caller's
-/// `:replace`, else U+FFFD for a Unicode target and `"?"` otherwise.
+/// `:replace`, else U+FFFD for a Unicode target and `"?"` otherwise. Always
+/// rendered INTO the target, so a wide target gets whole code units rather
+/// than a stray ASCII byte.
 fn replacement(opts: &TranscodeOptions, to: EncodingId) -> Vec<u8> {
-    if let Some(r) = &opts.replace {
-        // The replacement is given as text; render it into the target.
-        return r
-            .chars()
-            .flat_map(|c| encode_char(c, to).unwrap_or_default())
-            .collect();
-    }
-    match to.kind() {
-        EncKind::Utf8 => "\u{FFFD}".as_bytes().to_vec(),
-        _ => b"?".to_vec(),
-    }
+    let text = opts.replace.as_deref().unwrap_or(match to.kind() {
+        EncKind::Utf8 | EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => "\u{FFFD}",
+        _ => "?",
+    });
+    text.chars()
+        .flat_map(|c| encode_char(c, to).unwrap_or_default())
+        .collect()
 }
 
 /// A `:fallback` handler: given an undefined character's UTF-8 text, answers
 /// replacement text, or `None` to fall through to the error/replace path.
 /// `&mut dyn FnMut` because the handler may invoke arbitrary Ruby (a Proc).
 pub type TranscodeFallback<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
+
+/// Why a run stopped. Every variant but `Finished` leaves source behind.
+pub enum Stop {
+    /// Every source byte converted.
+    Finished,
+    /// The source ENDED mid-sequence. The tail is neither converted nor
+    /// counted as consumed, because the caller decides what it means: more
+    /// input to come (`Encoding::Converter#convert`) or a truncated string
+    /// (`String#encode`, `Encoding::Converter#finish`).
+    Incomplete {
+        bytes: Vec<u8>,
+        msg: String,
+        detail: Box<TranscodeDetail>,
+    },
+    /// A malformed source sequence, already counted as consumed.
+    Invalid {
+        msg: String,
+        detail: Box<TranscodeDetail>,
+    },
+    /// A source character the target cannot hold, already consumed.
+    Undefined {
+        msg: String,
+        detail: Box<TranscodeDetail>,
+    },
+    /// One side is registered by name only, so there is no mapping to apply.
+    NoConverter(String),
+    /// `limit` was reached with source left over. The unit that would not
+    /// fit is untouched -- neither converted nor consumed.
+    DestinationFull,
+}
+
+/// One incremental run's result.
+pub struct TranscodeRun {
+    pub out: Vec<u8>,
+    /// Source bytes consumed, which INCLUDES an offending sequence.
+    pub consumed: usize,
+    pub stop: Stop,
+}
+
+/// The part of a conversion that outlives one call, so a stateful converter
+/// can carry it: the ISO-2022-JP escape mode and the leading byte-order
+/// mark, which goes out once rather than once per chunk.
+pub struct TranscodeState {
+    jis: Option<crate::enc::iso2022jp::Encoder>,
+    bom: &'static [u8],
+    bom_written: bool,
+    /// Whether the last character was a CR -- what `universal_newline` needs
+    /// to fold a CRLF into one LF across a chunk boundary.
+    saw_cr: bool,
+    /// Whether `xml: :attr` opened a quote that `finish` must close.
+    close_quote: bool,
+    /// The REAL target. The dummy UTF-16/32 rows convert as their big-endian
+    /// sibling behind a BOM, so every later step reads this rather than the
+    /// requested encoding.
+    pub to: EncodingId,
+}
+
+impl TranscodeState {
+    pub fn new(to: EncodingId) -> Self {
+        let (to, bom): (EncodingId, &'static [u8]) = if to == crate::enc::table::UTF_16 {
+            (crate::enc::table::UTF_16BE, b"\xFE\xFF")
+        } else if to == crate::enc::table::UTF_32 {
+            (crate::enc::table::UTF_32BE, b"\x00\x00\xFE\xFF")
+        } else {
+            (to, b"")
+        };
+        TranscodeState {
+            jis: (to == crate::enc::table::ISO_2022_JP)
+                .then(|| crate::enc::iso2022jp::Encoder::new(false)),
+            bom,
+            bom_written: false,
+            saw_cr: false,
+            close_quote: false,
+            to,
+        }
+    }
+
+    /// Closes the stream: the `ESC ( B` every ISO-2022-JP generator emits at
+    /// end of text, and the closing quote `xml: :attr` opened.
+    pub fn finish(&mut self, out: &mut Vec<u8>) {
+        if let Some(enc) = self.jis.as_mut() {
+            enc.finish(out);
+        }
+        if std::mem::take(&mut self.close_quote) {
+            out.extend(encode_char('"', self.to).unwrap_or_default());
+        }
+    }
+}
 
 /// Transcodes `bytes` from `from` to `to`, applying `opts`. `fallback` (if
 /// any) is consulted for otherwise-undefined characters BEFORE the error/
@@ -294,36 +417,79 @@ pub fn transcode(
     opts: &TranscodeOptions,
     fallback: Option<TranscodeFallback<'_>>,
 ) -> Result<Vec<u8>, TranscodeError> {
+    let mut state = TranscodeState::new(to);
+    let mut run = transcode_run(bytes, from, opts, fallback, &mut state, None);
+    match run.stop {
+        Stop::Finished => {}
+        // A truncated tail is a whole-string error here: nothing more is
+        // coming. `:invalid => :replace` swallows it like any other bad
+        // sequence.
+        Stop::Incomplete { msg, detail, .. } => {
+            if !opts.invalid_replace {
+                return Err(TranscodeError::InvalidByteSequence(msg, detail));
+            }
+            push_replacement(&mut run.out, opts, &mut state);
+        }
+        Stop::Invalid { msg, detail } => {
+            return Err(TranscodeError::InvalidByteSequence(msg, detail));
+        }
+        Stop::Undefined { msg, detail } => {
+            return Err(TranscodeError::UndefinedConversion(msg, detail));
+        }
+        Stop::NoConverter(msg) => return Err(TranscodeError::NoConverter(msg)),
+        Stop::DestinationFull => unreachable!("no limit was set"),
+    }
+    state.finish(&mut run.out);
+    Ok(run.out)
+}
+
+/// Converts as much of `bytes` as it can, stopping at the first refusal or
+/// once `limit` output bytes exist. The engine both `String#encode` and
+/// `Encoding::Converter` run on -- the difference between them is only what
+/// they do with a [`Stop`].
+pub fn transcode_run(
+    bytes: &[u8],
+    from: EncodingId,
+    opts: &TranscodeOptions,
+    fallback: Option<TranscodeFallback<'_>>,
+    state: &mut TranscodeState,
+    limit: Option<usize>,
+) -> TranscodeRun {
     let mut fallback = fallback;
+    let to = state.to;
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    if !state.bom_written {
+        out.extend_from_slice(state.bom);
+        // `xml: :attr` writes an ATTRIBUTE, quotes and all -- the opening one
+        // here, the closing one in `finish`.
+        if opts.xml == Some(XmlMode::Attr) {
+            out.extend(encode_char('"', to).unwrap_or_default());
+            state.close_quote = true;
+        }
+        state.bom_written = true;
+    }
     // A registered-only source reads its ASCII half exactly and nothing else,
     // so a high byte is the point where this runtime runs out of mapping.
     if from.is_registered_only() && bytes.iter().any(|b| *b >= 0x80) {
-        return Err(TranscodeError::NoConverter(converter_not_found(from, to)));
+        return TranscodeRun {
+            out,
+            consumed: 0,
+            stop: Stop::NoConverter(converter_not_found(from, to)),
+        };
     }
-    // Dummy targets, mirroring the decode side: UTF-16/32 write a BOM then
-    // big-endian code units; ISO-2022-JP threads a stateful escape encoder
-    // through the loop (`jis`), finished after the last unit.
-    let (to, bom): (EncodingId, &[u8]) = if to == crate::enc::table::UTF_16 {
-        (crate::enc::table::UTF_16BE, b"\xFE\xFF")
-    } else if to == crate::enc::table::UTF_32 {
-        (crate::enc::table::UTF_32BE, b"\x00\x00\xFE\xFF")
-    } else {
-        (to, &[])
-    };
-    let mut jis =
-        (to == crate::enc::table::ISO_2022_JP).then(|| crate::enc::iso2022jp::Encoder::new(false));
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    out.extend_from_slice(bom);
-    for unit in decode(bytes, from) {
+    let mut consumed = 0usize;
+    let mut stop = Stop::Finished;
+    for (unit, span) in decode_spans(bytes, from) {
+        // Each unit's bytes are built aside so the destination limit can
+        // refuse the WHOLE unit -- a half-written character is not an
+        // answer. The escape-mode encoder is restored with them.
+        let mut chunk: Vec<u8> = Vec::new();
+        let saved = state.jis.clone();
         match unit {
             Unit::Invalid(raw, style) => {
-                if opts.invalid_replace {
-                    match jis.as_mut() {
-                        Some(enc) => {
-                            emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out)
-                        }
-                        None => out.extend_from_slice(&replacement(opts, to)),
-                    }
+                let incomplete = matches!(style, crate::enc::mb::InvalidStyle::Incomplete);
+                if opts.invalid_replace && !incomplete {
+                    push_replacement(&mut chunk, opts, state);
                 } else {
                     let esc: String = raw.iter().map(|b| quote_byte(*b)).collect();
                     // CRuby's three forms, oracle-verified: `incomplete
@@ -347,9 +513,19 @@ pub fn transcode(
                         }
                     };
                     let mut detail = TranscodeDetail::new(from, to);
-                    detail.error_bytes = raw;
-                    detail.incomplete = matches!(style, crate::enc::mb::InvalidStyle::Incomplete);
-                    return Err(TranscodeError::InvalidByteSequence(msg, detail));
+                    detail.error_bytes = raw.clone();
+                    detail.incomplete = incomplete;
+                    stop = if incomplete {
+                        Stop::Incomplete {
+                            bytes: raw,
+                            msg,
+                            detail,
+                        }
+                    } else {
+                        consumed += span;
+                        Stop::Invalid { msg, detail }
+                    };
+                    break;
                 }
             }
             // A valid character with no Unicode mapping: `:undef` territory,
@@ -361,12 +537,7 @@ pub fn transcode(
             // all three ways.
             Unit::Unmapped(raw) => {
                 if opts.undef_replace {
-                    match jis.as_mut() {
-                        Some(enc) => {
-                            emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out)
-                        }
-                        None => out.extend_from_slice(&replacement(opts, to)),
-                    }
+                    push_replacement(&mut chunk, opts, state);
                 } else {
                     let escaped: String = raw.iter().map(|b| quote_byte(*b)).collect();
                     let msg =
@@ -385,71 +556,119 @@ pub fn transcode(
                         };
                     let mut detail = TranscodeDetail::new(from, to);
                     detail.error_bytes = raw;
-                    return Err(TranscodeError::UndefinedConversion(msg, detail));
+                    consumed += span;
+                    stop = Stop::Undefined { msg, detail };
+                    break;
                 }
             }
             Unit::Char(c) => {
                 // A registered-only TARGET takes ASCII and stops there, the
                 // mirror of the source-side check above.
                 if to.is_registered_only() && !c.is_ascii() {
-                    return Err(TranscodeError::NoConverter(converter_not_found(from, to)));
+                    stop = Stop::NoConverter(converter_not_found(from, to));
+                    break;
                 }
-                match jis.as_mut() {
-                    Some(enc) => {
-                        if enc.push(c, &mut out).is_ok() {
-                            continue;
-                        }
+                if !push_char(&mut chunk, c, opts, state) {
+                    // Undefined in the target: fallback, then :undef, then error.
+                    let mut buf = [0u8; 4];
+                    let s = c.encode_utf8(&mut buf);
+                    let replaced = fallback.as_deref_mut().and_then(|f| f(s));
+                    if let Some(rep) = replaced {
+                        push_text(&mut chunk, &rep, state);
+                    } else if opts.xml.is_some() {
+                        push_ascii(&mut chunk, &format!("&#x{:X};", c as u32), to);
+                    } else if opts.undef_replace {
+                        push_replacement(&mut chunk, opts, state);
+                    } else {
+                        let mut detail = TranscodeDetail::new(from, to);
+                        detail.error_bytes = encode_char(c, from).unwrap_or_default();
+                        detail.error_char = Some(c);
+                        consumed += span;
+                        stop = Stop::Undefined {
+                            msg: undef_message(c, from, to),
+                            detail,
+                        };
+                        break;
                     }
-                    None => {
-                        if let Some(bytes) = encode_char(c, to) {
-                            apply_xml(&mut out, c, &bytes, opts, to);
-                            if opts.xml.is_none() {
-                                maybe_newline(&mut out, c, &bytes, opts);
-                            }
-                            continue;
-                        }
-                    }
-                }
-                // Undefined in the target: fallback, then :undef, then error.
-                let mut buf = [0u8; 4];
-                let s = c.encode_utf8(&mut buf);
-                if let Some(f) = fallback.as_deref_mut() {
-                    if let Some(rep) = f(s) {
-                        match jis.as_mut() {
-                            Some(enc) => emit_via(enc, &rep, &mut out),
-                            None => out.extend(
-                                rep.chars()
-                                    .flat_map(|c| encode_char(c, to).unwrap_or_default()),
-                            ),
-                        }
-                        continue;
-                    }
-                }
-                if let Some(xml) = opts.xml {
-                    push_xml_ref(&mut out, c, xml);
-                } else if opts.undef_replace {
-                    match jis.as_mut() {
-                        Some(enc) => {
-                            emit_via(enc, opts.replace.as_deref().unwrap_or("?"), &mut out)
-                        }
-                        None => out.extend_from_slice(&replacement(opts, to)),
-                    }
-                } else {
-                    let mut detail = TranscodeDetail::new(from, to);
-                    detail.error_bytes = encode_char(c, from).unwrap_or_default();
-                    detail.error_char = Some(c);
-                    return Err(TranscodeError::UndefinedConversion(
-                        undef_message(c, from, to),
-                        detail,
-                    ));
                 }
             }
         }
+        if limit.is_some_and(|l| out.len() + chunk.len() > l) {
+            state.jis = saved;
+            stop = Stop::DestinationFull;
+            break;
+        }
+        out.extend_from_slice(&chunk);
+        consumed += span;
     }
-    if let Some(enc) = jis.as_mut() {
-        enc.finish(&mut out);
+    TranscodeRun {
+        out,
+        consumed,
+        stop,
     }
-    Ok(out)
+}
+
+/// Emits one character into `out`, applying the newline decorator and
+/// `:xml` escaping. `false` when the target cannot represent it.
+fn push_char(
+    out: &mut Vec<u8>,
+    c: char,
+    opts: &TranscodeOptions,
+    state: &mut TranscodeState,
+) -> bool {
+    // `universal_newline` is an INPUT transformation -- a CR and a CRLF both
+    // become one LF -- so it acts before the character is encoded, and it
+    // needs the one bit of state saying whether a CR came just before.
+    if opts.newline == Some(NewlineMode::Universal) {
+        let after_cr = std::mem::replace(&mut state.saw_cr, c == '\r');
+        if c == '\r' {
+            return emit(out, '\n', opts, state);
+        }
+        if c == '\n' && after_cr {
+            return true;
+        }
+    }
+    // The other two rewrite a LF on the way OUT.
+    match (opts.newline, c) {
+        (Some(NewlineMode::Cr), '\n') => return emit(out, '\r', opts, state),
+        (Some(NewlineMode::Crlf), '\n') => {
+            return emit(out, '\r', opts, state) && emit(out, '\n', opts, state);
+        }
+        _ => {}
+    }
+    emit(out, c, opts, state)
+}
+
+/// One character straight into the target, with `:xml` escaping applied.
+fn emit(out: &mut Vec<u8>, c: char, opts: &TranscodeOptions, state: &mut TranscodeState) -> bool {
+    if let Some(enc) = state.jis.as_mut() {
+        return enc.push(c, out).is_ok();
+    }
+    let Some(bytes) = encode_char(c, state.to) else {
+        return false;
+    };
+    apply_xml(out, c, &bytes, opts, state.to);
+    true
+}
+
+/// Emits replacement TEXT -- through the escape encoder when there is one,
+/// so raw bytes never land inside a kanji run.
+fn push_text(out: &mut Vec<u8>, text: &str, state: &mut TranscodeState) {
+    match state.jis.as_mut() {
+        Some(enc) => emit_via(enc, text, out),
+        None => out.extend(
+            text.chars()
+                .flat_map(|c| encode_char(c, state.to).unwrap_or_default()),
+        ),
+    }
+}
+
+/// Emits the `:replace` text for a refused unit.
+fn push_replacement(out: &mut Vec<u8>, opts: &TranscodeOptions, state: &mut TranscodeState) {
+    match state.jis.is_some() {
+        true => push_text(out, opts.replace.as_deref().unwrap_or("?"), state),
+        false => out.extend_from_slice(&replacement(opts, state.to)),
+    }
 }
 
 /// Replacement text through the stateful ISO-2022-JP encoder -- raw bytes
@@ -512,44 +731,27 @@ fn undef_message(c: char, from: EncodingId, to: EncodingId) -> String {
 
 /// Applies the `:xml` escaping to a REPRESENTABLE character, or emits its
 /// bytes verbatim. Undefined characters are handled by `push_xml_ref`.
-fn apply_xml(out: &mut Vec<u8>, c: char, bytes: &[u8], opts: &TranscodeOptions, _to: EncodingId) {
-    match opts.xml {
+fn apply_xml(out: &mut Vec<u8>, c: char, bytes: &[u8], opts: &TranscodeOptions, to: EncodingId) {
+    let escaped = match (opts.xml, c) {
+        (Some(_), '&') => Some("&amp;"),
+        (Some(_), '<') => Some("&lt;"),
+        (Some(_), '>') => Some("&gt;"),
+        (Some(XmlMode::Attr), '"') => Some("&quot;"),
+        _ => None,
+    };
+    match escaped {
+        Some(e) => push_ascii(out, e, to),
         None => out.extend_from_slice(bytes),
-        Some(mode) => {
-            let escaped = match c {
-                '&' => Some("&amp;"),
-                '<' => Some("&lt;"),
-                '>' => Some("&gt;"),
-                '"' if mode == XmlMode::Attr => Some("&quot;"),
-                _ => None,
-            };
-            match escaped {
-                Some(e) => out.extend_from_slice(e.as_bytes()),
-                None => out.extend_from_slice(bytes),
-            }
-        }
     }
 }
 
-/// A numeric character reference for an undefined char under `:xml`.
-fn push_xml_ref(out: &mut Vec<u8>, c: char, _mode: XmlMode) {
-    out.extend_from_slice(format!("&#x{:X};", c as u32).as_bytes());
-}
-
-/// Rewrites a just-emitted `\n` per the newline option.
-fn maybe_newline(out: &mut Vec<u8>, c: char, bytes: &[u8], opts: &TranscodeOptions) {
-    if c != '\n' {
-        return;
-    }
-    if let Some(mode) = opts.newline {
-        // Undo the `\n` just pushed by the caller and replace it.
-        out.truncate(out.len() - bytes.len());
-        match mode {
-            NewlineMode::Cr => out.push(b'\r'),
-            NewlineMode::Crlf => out.extend_from_slice(b"\r\n"),
-            NewlineMode::Universal => out.push(b'\n'),
-        }
-    }
+/// ASCII markup rendered INTO the target -- a wide target spells `&amp;` in
+/// whole code units, not in bare bytes.
+fn push_ascii(out: &mut Vec<u8>, text: &str, to: EncodingId) {
+    out.extend(
+        text.chars()
+            .flat_map(|c| encode_char(c, to).unwrap_or_default()),
+    );
 }
 
 /// The byte length a UTF-8 sequence claims from its leading byte (1 for an
