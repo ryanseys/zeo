@@ -2398,8 +2398,8 @@ pub(crate) fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
 /// The `exception:` keyword of the non-blocking family. True (the default)
 /// RAISES on a would-block or an EOF; false answers a `:wait_*` Symbol or nil
 /// instead.
-pub(crate) fn nonblock_raises(args: &[RubyValue]) -> bool {
-    let Some(RubyValue::Hash(h)) = args.last() else {
+pub(crate) fn nonblock_raises(opts: Option<&RubyValue>) -> bool {
+    let Some(RubyValue::Hash(h)) = opts else {
         return true;
     };
     let key = RubyValue::Symbol(crate::Symbol::intern("exception"));
@@ -2442,7 +2442,7 @@ fn io_read_nonblock(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let raises = nonblock_raises(args);
+    let raises = nonblock_raises(args.last());
     let positional = kw_strip(args);
     crate::builtins::arity!(positional, 1..=2);
     let max = convert::to_index(&positional[0])?.max(0) as usize;
@@ -2505,7 +2505,7 @@ fn io_write_nonblock(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let raises = nonblock_raises(args);
+    let raises = nonblock_raises(args.last());
     let positional = kw_strip(args);
     crate::builtins::arity!(positional, 1);
     let bytes = convert::to_rstr(&positional[0])?.lock().bytes().to_vec();

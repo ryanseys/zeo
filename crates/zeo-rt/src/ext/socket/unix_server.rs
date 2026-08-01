@@ -7,7 +7,7 @@ use std::os::fd::RawFd;
 
 use super::{errno_error, pack_unix_sockaddr};
 use crate::builtins::io::{socket_from_raw_fd, socket_raw_fd};
-use crate::builtins::{arity, io_error};
+use crate::builtins::{io_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{UNIX_SERVER_CLASS, UNIX_SOCKET_CLASS};
 use zeo_macros::ruby_class;
@@ -57,9 +57,8 @@ ruby_class! {
     }
     // `#accept_nonblock(exception: true)` -- accept only a client already
     // waiting; see `TCPServer#accept_nonblock`.
-    def "accept_nonblock"(recv, *args, &_block) {
-        let raises = crate::builtins::io::nonblock_raises(args);
-        arity!(crate::builtins::io::kw_strip(args), 0);
+    def "accept_nonblock"(recv, **opts) {
+        let raises = crate::builtins::io::nonblock_raises(opts);
         let Some((nfd, _, _)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
             return crate::builtins::io::would_block(false, raises, "accept(2)");
         };

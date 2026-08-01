@@ -8,7 +8,6 @@ use std::os::fd::RawFd;
 use std::os::unix::io::IntoRawFd;
 
 use super::{errno_error, host_port, map_io_err};
-use crate::builtins::arity;
 use crate::builtins::io::{socket_from_raw_fd, socket_raw_fd};
 use crate::builtins::io_error;
 use crate::{RubyValue, Signal};
@@ -24,9 +23,8 @@ ruby_class! {
 
     // `TCPServer.new([host, ] port)` -- bind + listen (a nil/omitted host binds
     // all interfaces). Port 0 lets the kernel pick; read it back via `#addr`.
-    def self."new" | "open"(_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let (host, port) = host_port(args, "0.0.0.0")?;
+    def self."new" | "open" cfunc (_recv, _hostname, _port?) {
+        let (host, port) = host_port(__args, "0.0.0.0")?;
         let listener = std::net::TcpListener::bind((host.as_str(), port))
             .map_err(|e| map_io_err(&e, "bind(2)"))?;
         // SAFETY: `into_raw_fd` yields a fresh, solely-owned descriptor.
@@ -52,9 +50,8 @@ ruby_class! {
     // `#accept_nonblock(exception: true)` -- accept only if a client is already
     // waiting; otherwise raise `IO::EAGAINWaitReadable` (or answer
     // `:wait_readable` under `exception: false`).
-    def "accept_nonblock"(recv, *args, &_block) {
-        let raises = crate::builtins::io::nonblock_raises(args);
-        arity!(crate::builtins::io::kw_strip(args), 0);
+    def "accept_nonblock"(recv, **opts) {
+        let raises = crate::builtins::io::nonblock_raises(opts);
         let Some((nfd, _, _)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
             return crate::builtins::io::would_block(false, raises, "accept(2)");
         };

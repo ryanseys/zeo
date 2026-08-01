@@ -7,7 +7,7 @@ use std::os::fd::RawFd;
 
 use super::{errno_error, resolve_one, socketaddr_to_raw};
 use crate::builtins::io::{socket_from_raw_fd, socket_raw_fd};
-use crate::builtins::{arity, io_error};
+use crate::builtins::{io_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::UDP_SOCKET_CLASS;
 use zeo_macros::ruby_class;
@@ -66,13 +66,12 @@ ruby_class! {
     }
     // `#send(mesg, flags[, host, port])` -- a datagram, to the connected peer or
     // (with host+port) an explicit destination. Answers the byte count.
-    def "send"(recv, *args, &_block) {
-        arity!(args, 2..=4);
+    def "send" cfunc (recv, mesg, flags, host?, port?) {
         let fd = fd_of(recv)?;
-        let data = crate::builtins::convert::to_rstr(&args[0])?.lock().bytes().to_vec();
-        let flags = crate::builtins::convert::to_index(&args[1])? as libc::c_int;
-        let n = if args.len() >= 4 {
-            let (host, port) = (args[2].to_display_string(), super::port_of(&args[3])?);
+        let data = crate::builtins::convert::to_rstr(mesg)?.lock().bytes().to_vec();
+        let flags = crate::builtins::convert::to_index(flags)? as libc::c_int;
+        let n = if let (Some(host), Some(port)) = (host, port) {
+            let (host, port) = (host.to_display_string(), super::port_of(port)?);
             let addr = resolve_one(&host, port)?;
             let (storage, len) = socketaddr_to_raw(&addr);
             // SAFETY: `data` and `storage` are initialized buffers.

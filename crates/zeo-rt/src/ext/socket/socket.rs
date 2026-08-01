@@ -16,7 +16,7 @@ use super::{
     addrinfo, binary_string, errno_error, pack_ip_sockaddr, raw_to_socketaddr, resolve_one,
 };
 use crate::builtins::io::socket_from_raw_fd;
-use crate::builtins::{arg_error, arity, io_error, type_error};
+use crate::builtins::{arg_error, io_error, type_error};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, Symbol, string_new};
 use zeo_abi::SOCKET_CLASS;
@@ -142,12 +142,10 @@ ruby_class! {
     // CLOSED (the shape net/http probes for and uses). `connect_timeout:` is
     // honoured; the other timeout keywords are accepted and ignored, since
     // resolution and connect happen in one blocking step here.
-    def self."tcp"(_recv, *args, &block) {
-        let positional = super::kw_strip(args);
-        arity!(positional, 2..=4);
-        let (host, port) = super::host_port(positional, "127.0.0.1")?;
+    def self."tcp"(_recv, host, port, _local_host?, _local_port?, **opts, &block) {
+        let (host, port) = super::host_port(&[host.clone(), port.clone()], "127.0.0.1")?;
         let addr = resolve_one(&host, port)?;
-        let timeout = super::kwarg_secs(args, "connect_timeout")?;
+        let timeout = super::kwarg_secs(opts, "connect_timeout")?;
         // Gvl-released: connect(2) blocks until the peer answers.
         let stream = crate::gvl::without_gvl(|| match timeout {
             Some(t) => std::net::TcpStream::connect_timeout(&addr, t),
@@ -298,9 +296,8 @@ ruby_class! {
     }
     // `#accept_nonblock(exception: true)` -- accept only a connection already
     // pending, answering `[Socket, Addrinfo]` as `#accept` does.
-    def "accept_nonblock"(recv, *args, &_block) {
-        let raises = crate::builtins::io::nonblock_raises(args);
-        arity!(crate::builtins::io::kw_strip(args), 0);
+    def "accept_nonblock"(recv, **opts) {
+        let raises = crate::builtins::io::nonblock_raises(opts);
         let Some((nfd, storage, alen)) = super::accept_nonblock_fd(fd_of(recv)?)? else {
             return crate::builtins::io::would_block(false, raises, "accept(2)");
         };
@@ -314,12 +311,10 @@ ruby_class! {
     }
     // `#connect_nonblock(sockaddr, exception: true)` -- start a connect and
     // report it in flight rather than waiting for the handshake.
-    def "connect_nonblock"(recv, *args, &_block) {
-        let raises = crate::builtins::io::nonblock_raises(args);
-        let positional = crate::builtins::io::kw_strip(args);
-        arity!(positional, 1);
+    def "connect_nonblock"(recv, remote_sockaddr, **opts) {
+        let raises = crate::builtins::io::nonblock_raises(opts);
         let fd = fd_of(recv)?;
-        let sa = sockaddr_bytes(&positional[0])?;
+        let sa = sockaddr_bytes(remote_sockaddr)?;
         crate::builtins::io::set_fd_nonblock(fd, true)?;
         // SAFETY: `sa` describes `sa.len()` initialized sockaddr bytes.
         let rc = unsafe {

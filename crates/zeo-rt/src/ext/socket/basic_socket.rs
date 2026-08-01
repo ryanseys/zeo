@@ -12,7 +12,7 @@
 use std::os::fd::RawFd;
 
 use super::{errno_error, raw_to_socketaddr};
-use crate::builtins::{arity, io_error, not_impl_error, type_error};
+use crate::builtins::{io_error, not_impl_error, type_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
@@ -154,16 +154,20 @@ ruby_class! {
     }
     // `#setsockopt(level, optname, value)`, or `#setsockopt(socket_option)` --
     // set an int/bytes socket option.
-    def "setsockopt"(recv, *args, &_block) {
-        arity!(args, 1..=3);
+    // The one-argument form takes a `Socket::Option`, which carries the level
+    // and name itself; every other form spells all three out -- so the minimum
+    // depends on the first argument's type, which no parameter list can say.
+    def "setsockopt" cfunc (recv, level, optname?, optval?) {
         let fd = fd_of(recv)?;
-        let (level, optname, val) = match super::option::parts(&args[0]) {
+        let (level, optname, val) = match super::option::parts(level) {
             Some(parts) => parts,
             None => {
-                arity!(args, 3);
-                let level = super::option::opt_int(&args[0], None)?;
-                let optname = super::option::opt_int(&args[1], Some(level))?;
-                (level, optname, optval_bytes(&args[2])?)
+                let (Some(optname), Some(optval)) = (optname, optval) else {
+                    return Err(crate::builtins::arity_err(__args.len(), 3, Some(3)));
+                };
+                let level = super::option::opt_int(level, None)?;
+                let optname = super::option::opt_int(optname, Some(level))?;
+                (level, optname, optval_bytes(optval)?)
             }
         };
         // SAFETY: `val`'s pointer/len describe an initialized buffer.
@@ -240,14 +244,12 @@ ruby_class! {
     }
     // `#recv_nonblock(maxlen, flags = 0, exception: true)` -- read only what
     // has already arrived; see `IO#read_nonblock`.
-    def "recv_nonblock"(recv, *args, &_block) {
-        let raises = crate::builtins::io::nonblock_raises(args);
-        let positional = crate::builtins::io::kw_strip(args);
-        arity!(positional, 1..=2);
+    def "recv_nonblock"(recv, maxlen, flags?, **opts) {
+        let raises = crate::builtins::io::nonblock_raises(opts);
         let fd = fd_of(recv)?;
         crate::builtins::io::set_fd_nonblock(fd, true)?;
-        let maxlen = int_arg(&positional[0])?.max(0) as usize;
-        let flags = match positional.get(1) {
+        let maxlen = int_arg(maxlen)?.max(0) as usize;
+        let flags = match flags {
             None | Some(RubyValue::Nil) => 0,
             Some(v) => int_arg(v)?,
         };

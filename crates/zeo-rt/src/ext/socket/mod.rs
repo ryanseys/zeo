@@ -51,22 +51,13 @@ pub(crate) enum Endpoint {
     Unix(String),
 }
 
-/// The POSITIONAL arguments of a call that may carry a trailing keyword Hash
-/// (the runtime's kwargs convention), so `arity!` counts only real positionals.
-pub(crate) fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
-    match args.last() {
-        Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
-        _ => args,
-    }
-}
-
 /// A seconds-valued keyword (`connect_timeout:`) from the trailing options
 /// Hash, as a `Duration`; `None` when absent or nil.
 pub(crate) fn kwarg_secs(
-    args: &[RubyValue],
+    opts: Option<&RubyValue>,
     name: &str,
 ) -> Result<Option<std::time::Duration>, Signal> {
-    let Some(RubyValue::Hash(h)) = args.last() else {
+    let Some(RubyValue::Hash(h)) = opts else {
         return Ok(None);
     };
     let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(name)));

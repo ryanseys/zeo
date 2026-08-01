@@ -7,10 +7,10 @@ use std::net::{SocketAddr, TcpStream};
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 
 use super::{
-    errno_error, host_port, kw_strip, kwarg_secs, map_io_err, resolve_one, socketaddr_to_raw,
+    errno_error, host_port, kwarg_secs, map_io_err, resolve_one, socketaddr_to_raw,
 };
 use crate::builtins::io::socket_from_raw_fd;
-use crate::builtins::{arity, convert};
+use crate::builtins::{convert};
 use crate::{RubyValue, Signal};
 use zeo_abi::TCPSOCKET_CLASS;
 use zeo_macros::ruby_class;
@@ -19,6 +19,7 @@ use zeo_macros::ruby_class;
 /// before connecting. `nil`/absent for either means "let the kernel pick",
 /// which is the whole pair absent.
 fn local_bind(args: &[RubyValue]) -> Result<Option<SocketAddr>, Signal> {
+    // (remote_host, remote_port, local_host, local_port)
     let host = match args.get(2) {
         None | Some(RubyValue::Nil) => return Ok(None),
         Some(v) => convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned(),
@@ -76,14 +77,17 @@ ruby_class! {
     // connect_timeout: nil, open_timeout: nil)` -- connect; the result
     // reads/writes as an IO. The timeout keywords are accepted (net/http
     // passes `open_timeout:`) and bound to the connect itself.
-    def self."new" | "open" arity -1 (_recv, *args, &_block) {
-        let positional = kw_strip(args);
-        arity!(positional, 1..=4);
-        let timeout = kwarg_secs(args, "open_timeout")?
-            .or(kwarg_secs(args, "connect_timeout")?);
+    def self."new" | "open" cfunc (_recv, remote_host, remote_port?, local_host?, local_port?, **opts) {
+        let positional: Vec<RubyValue> = [Some(remote_host), remote_port, local_host, local_port]
+            .iter()
+            .take_while(|p| p.is_some())
+            .filter_map(|p| p.cloned())
+            .collect();
+        let timeout = kwarg_secs(opts, "open_timeout")?
+            .or(kwarg_secs(opts, "connect_timeout")?);
         let (host, port) = host_port(&positional[..positional.len().min(2)], "127.0.0.1")?;
         let addr = resolve_one(&host, port)?;
-        let stream = match local_bind(positional)? {
+        let stream = match local_bind(&positional)? {
             Some(local) => connect_bound(local, addr)?,
             None => match timeout {
                 // Gvl-released: connect(2) blocks until the peer answers.
