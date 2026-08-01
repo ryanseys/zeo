@@ -40,6 +40,7 @@ pub(crate) mod exception;
 pub(crate) mod false_class;
 pub(crate) mod fiber;
 pub(crate) mod file;
+pub(crate) mod file_test;
 pub(crate) mod float;
 pub(crate) mod format;
 pub(crate) mod formatter;
@@ -200,9 +201,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         return t.class.as_ref().map(|m| m.lookup);
     }
     Some(match id {
-        // FileTest is a module, not a File subclass, so it keeps its own arm
-        // (sharing File's class-method table) rather than inheriting via ancestry.
-        zeo_abi::FILE_TEST_MODULE => file::lookup_class,
         zeo_abi::THREAD_CLASS => thread::lookup_class,
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
         // In-tree `ext/` extensions, each behind its `ext-<name>` cargo feature.

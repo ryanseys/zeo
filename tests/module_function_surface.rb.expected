@@ -21,6 +21,15 @@ exit!: singleton=true private=false
 fork: singleton=true private=false
 last_status: singleton=true private=false
 spawn: singleton=true private=false
+-- FileTest mixes in the same 26 predicates File exposes as class methods
+true
+26
+26
+true
+true
+-- but FileTest is not the whole of File's class surface
+undefined method 'read' for module FileTest
+true
 -- Kernel's converted rows answer as class methods too
 true
 "01.50"

@@ -46,6 +46,30 @@ puts "-- the eight Process names CRuby keeps singleton-only stay singleton-only"
        "private=#{Process.private_instance_methods(false).include?(m)}"
 end
 
+puts "-- FileTest mixes in the same 26 predicates File exposes as class methods"
+
+class Prober
+  include FileTest
+
+  def tmp_there?
+    directory?("/tmp")
+  end
+end
+
+p Prober.new.tmp_there?
+p FileTest.private_instance_methods(false).size
+p FileTest.singleton_methods(false).size
+p FileTest.exist?("/tmp")
+p FileTest.identical?("/tmp", "/tmp")
+
+puts "-- but FileTest is not the whole of File's class surface"
+begin
+  FileTest.read("/etc/hosts")
+rescue NoMethodError => e
+  puts e.message
+end
+p File.read("/etc/hosts").is_a?(String)
+
 puts "-- Kernel's converted rows answer as class methods too"
 p Kernel.respond_to?(:format)
 p Kernel.format("%05.2f", 1.5)

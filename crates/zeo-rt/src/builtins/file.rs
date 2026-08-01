@@ -45,6 +45,16 @@ pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
     raise_error(class, format!("{desc} @ {syscall} - {path}"))
 }
 
+/// Run `File`'s class-method row `name` on behalf of `FileTest`, which mixes in
+/// the same 26 predicates CRuby shares between the two. The receiver a
+/// predicate row sees is the class value and every one of them ignores it, so
+/// passing `File` keeps the `BuiltinMethodFn` ABI satisfied without pretending
+/// `FileTest` is a class.
+pub(crate) fn file_test_forward(name: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let row = lookup_class(name).expect("every FileTest row names a File class method");
+    row(&RubyValue::Class(zeo_abi::FILE_CLASS), args, None)
+}
+
 /// A path argument -- CRuby's `rb_get_path`: a String, else the `to_path`
 /// answer (when the method exists), with the survivor going through the
 /// `to_str` protocol. A lying `to_path` therefore reports its ANSWER's
