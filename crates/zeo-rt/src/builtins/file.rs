@@ -638,7 +638,7 @@ ruby_class! {
     // (default `Encoding.default_external`, UTF-8) WITHOUT validation --
     // CRuby's own rule. `encoding:`/`external_encoding:`/`internal_encoding:`
     // options override it; an internal encoding transcodes the bytes.
-    def self."read" (_recv, path, length?, offset?, opt?) {
+    def self."read" cfunc (_recv, path, length?, offset?, opt?) {
         let path = path_arg(path, "read")?;
         let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
@@ -655,13 +655,13 @@ ruby_class! {
         Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
     }
     // `binread` always answers ASCII-8BIT bytes, no transcoding.
-    def self."binread" (_recv, arg1, _arg2?, _arg3?) {
+    def self."binread" cfunc (_recv, arg1, _arg2?, _arg3?) {
         let path = path_arg(arg1, "binread")?;
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
     }
-    def self."binwrite" (_recv, arg1, arg2, _arg3?) {
+    def self."binwrite" cfunc (_recv, arg1, arg2, _arg3?) {
         let path = path_arg(arg1, "binwrite")?;
         let data = write_bytes(arg2);
         crate::gvl::without_gvl(|| std::fs::write(&path, &data))
@@ -683,7 +683,7 @@ ruby_class! {
     }
     // `File.foreach(path)` -- yield each line; without a block, an Enumerator.
     // `chomp: true` strips terminators, mirroring `readlines`.
-    def self."foreach" (recv, path, sep?, opt?, &block) {
+    def self."foreach" cfunc (recv, path, sep?, opt?, &block) {
         let path = path_arg(path, "foreach")?;
         let p = block_or_enum!(recv, __args, block);
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
@@ -748,7 +748,7 @@ ruby_class! {
         let name = path_arg(arg2, "fnmatch")?;
         Ok(RubyValue::Bool(fnmatch(&pat, &name)))
     }
-    def self."write" (_recv, arg1, arg2, arg3?) {
+    def self."write" cfunc (_recv, arg1, arg2, arg3?) {
         let path = path_arg(arg1, "write")?;
         // Bytes are written VERBATIM (a String emits its own bytes, so a
         // BINARY string round-trips unchanged).

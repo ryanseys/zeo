@@ -155,7 +155,6 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         return t.instance.as_ref().map(|m| m.lookup);
     }
     Some(match id {
-        zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup,
         zeo_abi::FIBER_CLASS => fiber::lookup,
         zeo_abi::THREAD_CLASS => thread::lookup,
         #[cfg(feature = "ext-date")]
@@ -173,7 +172,6 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         return t.instance.as_ref().map(|m| m.arity);
     }
     Some(match id {
-        zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_arity,
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
         zeo_abi::THREAD_CLASS => thread::lookup_arity,
         #[cfg(feature = "ext-date")]
@@ -205,7 +203,6 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // FileTest is a module, not a File subclass, so it keeps its own arm
         // (sharing File's class-method table) rather than inheriting via ancestry.
         zeo_abi::FILE_TEST_MODULE => file::lookup_class,
-        zeo_abi::IO_CLASS => io::lookup_class,
         zeo_abi::THREAD_CLASS => thread::lookup_class,
         zeo_abi::FIBER_CLASS => fiber::lookup_class,
         // In-tree `ext/` extensions, each behind its `ext-<name>` cargo feature.
@@ -255,7 +252,6 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         return t.instance.as_ref().map(|m| (m.names)()).unwrap_or(&[]);
     }
     match id {
-        zeo_abi::IO_CLASS | zeo_abi::FILE_CLASS => io::lookup_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_names(),
         #[cfg(feature = "ext-date")]
@@ -272,7 +268,6 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
     }
     match id {
         zeo_abi::FILE_TEST_MODULE => file::lookup_class_names(),
-        zeo_abi::IO_CLASS => io::lookup_class_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_class_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_class_names(),
         _ => &[],
@@ -438,36 +433,6 @@ pub(crate) use {
     local_jump_error, name_error, not_impl_error, range_error, regexp_error, runtime_error,
     thread_error, type_error,
 };
-
-/// CRuby's exact ArgumentError shapes for a fixed or ranged arity.
-macro_rules! arity {
-    ($args:expr_2021, $n:literal) => {
-        if $args.len() != $n {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!(
-                    "wrong number of arguments (given {}, expected {})",
-                    $args.len(),
-                    $n
-                ),
-            ));
-        }
-    };
-    ($args:expr_2021, $lo:literal..=$hi:literal) => {
-        if !($lo..=$hi).contains(&$args.len()) {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!(
-                    "wrong number of arguments (given {}, expected {}..{})",
-                    $args.len(),
-                    $lo,
-                    $hi
-                ),
-            ));
-        }
-    };
-}
-pub(crate) use arity;
 
 /// The argument-count guard the `ruby_class!` macro emits from a def's
 /// parameter list. `max: None` means a `*rest` accepts any number.

@@ -19,7 +19,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::builtins::{arity, io, local_jump_error, not_impl_error};
+use crate::builtins::{io, local_jump_error, not_impl_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_class;
@@ -237,28 +237,25 @@ pub fn raw_bang(
 
 pub fn cooked(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     in_mode(recv, "IO#cooked", cooked_mode, || yield_self(recv, block))
 }
 
 pub fn cooked_bang(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     set_mode(recv, "IO#cooked!", cooked_mode)
 }
 
 pub fn echo_p(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     let fd = io::raw_fd(recv)?;
     let t = get_attr(fd).ok_or_else(|| not_a_terminal(recv, "IO#echo?"))?;
     Ok(RubyValue::Bool(
@@ -271,7 +268,6 @@ pub fn echo_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     let on = args[0].truthy();
     set_mode(recv, "IO#echo=", |t| echo_mode(t, on))?;
     // An assignment answers its right-hand side, not the receiver.
@@ -280,10 +276,9 @@ pub fn echo_set(
 
 pub fn noecho(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     in_mode(
         recv,
         "IO#noecho",
@@ -317,7 +312,6 @@ pub fn getpass(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0..=1);
     if let Some(prompt) = args.first().filter(|v| !matches!(v, RubyValue::Nil)) {
         let s = crate::builtins::convert::to_rstr(prompt)?
             .lock()
@@ -353,28 +347,25 @@ fn flush_queue(
 
 pub fn iflush(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     flush_queue(recv, "IO#iflush", libc::TCIFLUSH)
 }
 
 pub fn oflush(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     flush_queue(recv, "IO#oflush", libc::TCOFLUSH)
 }
 
 pub fn ioflush(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     flush_queue(recv, "IO#ioflush", libc::TCIOFLUSH)
 }
 
@@ -382,10 +373,9 @@ pub fn ioflush(
 /// terminal (CRuby answers nil rather than raising here).
 pub fn ttyname(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     let fd = io::raw_fd(recv)?;
     // SAFETY: `ttyname` answers a pointer into thread-local storage, valid
     // until the next call on this thread -- copied out immediately below.
@@ -405,7 +395,6 @@ pub fn winsize_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     let RubyValue::Array(dims) = &args[0] else {
         return Err(crate::builtins::type_error!(
             "expected an Array of [rows, columns]"
@@ -426,10 +415,9 @@ pub fn winsize_set(
 /// `console_mode=` later.
 pub fn console_mode(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     let fd = io::raw_fd(recv)?;
     let t = get_attr(fd).ok_or_else(|| not_a_terminal(recv, "IO#console_mode"))?;
     Ok(RubyValue::Object(std::sync::Arc::new(ConsoleMode::new(t))))
@@ -440,7 +428,6 @@ pub fn console_mode_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     let mode = mode_of(&args[0])?;
     let saved = *mode.mode.lock();
     set_mode(recv, "IO#console_mode=", |t| *t = saved)?;
@@ -479,19 +466,17 @@ pub fn check_winsize_changed(
 
 pub fn beep(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     write_str(recv, "\x07".to_string())
 }
 
 pub fn clear_screen(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     write_str(recv, "\x1b[2J\x1b[1;1H".to_string())
 }
 
@@ -500,7 +485,6 @@ pub fn erase_line(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     write_str(recv, format!("\x1b[{}K", int_arg(&args[0])?))
 }
 
@@ -509,7 +493,6 @@ pub fn erase_screen(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     write_str(recv, format!("\x1b[{}J", int_arg(&args[0])?))
 }
 
@@ -520,7 +503,6 @@ pub fn goto(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 2);
     let (row, col) = (int_arg(&args[0])? + 1, int_arg(&args[1])? + 1);
     write_str(recv, format!("\x1b[{row};{col}H"))
 }
@@ -530,14 +512,12 @@ pub fn goto_column(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     write_str(recv, format!("\x1b[{}G", int_arg(&args[0])? + 1))
 }
 
 /// The four relative moves plus the two scrolls, which differ only in their
 /// final letter.
 fn move_by(recv: &RubyValue, args: &[RubyValue], letter: char) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     write_str(recv, format!("\x1b[{}{letter}", int_arg(&args[0])?))
 }
 
@@ -595,10 +575,9 @@ pub fn scroll_backward(
 /// would otherwise be echoed and line-buffered.
 pub fn cursor(
     recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     let opts = RawOpts {
         min: Some(1),
         ..RawOpts::default()
@@ -642,7 +621,6 @@ pub fn cursor_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     let RubyValue::Array(pos) = &args[0] else {
         return Err(crate::builtins::type_error!(
             "expected an Array of [row, column]"
@@ -660,10 +638,9 @@ pub fn cursor_set(
 /// own test, and what makes this answer nil under a test harness).
 pub fn io_class_console(
     _recv: &RubyValue,
-    args: &[RubyValue],
+    _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 0);
     if (0..=2).all(|fd| unsafe { libc::isatty(fd) } != 1) {
         return Ok(RubyValue::Nil);
     }

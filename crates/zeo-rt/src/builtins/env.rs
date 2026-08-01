@@ -148,7 +148,7 @@ ruby_class! {
             return Ok(d.clone());
         }
         if let Some(RubyValue::Proc(p)) = block {
-            return p.call(&[name.clone()]);
+            return p.call(std::slice::from_ref(name));
         }
         Err(crate::dispatch::raise_error_details(
             "KeyError",
@@ -195,7 +195,7 @@ ruby_class! {
             }
             // A miss yields to the block if one was given, else nil.
             Err(_) => match block {
-                Some(RubyValue::Proc(p)) => p.call(&[name.clone()]),
+                Some(RubyValue::Proc(p)) => p.call(std::slice::from_ref(name)),
                 _ => Ok(RubyValue::Nil),
             },
         }

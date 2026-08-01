@@ -30,9 +30,12 @@ end
 
 # `Object.const_get` cannot see a gated class before its `require`. YAML and
 # WeakRef additionally alias constants that only appear once their own file is
-# loaded, so they are requested unconditionally.
+# loaded, so they are requested unconditionally. So are the three stdlib files
+# that ADD to IO -- zeo answers `raw`, `nonblock?` and `wait_readable` without
+# a require, so the oracle has to have them loaded for the comparison to be
+# about arity rather than about which file defines the method.
 missing_features = {}
-(features.uniq + %w[yaml weakref]).each do |feature|
+(features.uniq + %w[yaml weakref io/console io/nonblock io/wait]).each do |feature|
   require feature
 rescue LoadError => e
   missing_features[feature] = e.message
