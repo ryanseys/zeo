@@ -11,18 +11,16 @@
 //! `cargo run -p xtask -- arity-oracle`.
 //!
 //! Accepted disagreements live in `conformance/builtin-arity-divergences.tsv`,
-//! one tagged row each. The `baseline` tag is the migration backlog and is a
-//! ratchet: `BASELINE_LIMIT` may only go down. `ZEO_BLESS=1` rewrites the file
-//! from the current state, the same convention the golden corpus uses.
+//! one tagged row each -- but only two kinds are acceptable: a method zeo
+//! defines and CRuby does not, and a class the dump could not reach. A declared
+//! arity that simply disagrees with the oracle is a BUG, not a row: it fails
+//! here and cannot be blessed away. `ZEO_BLESS=1` rewrites the file from the
+//! current state, the same convention the golden corpus uses.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use zeo_dsl::scan::{self, Kind};
-
-/// The number of `baseline` rows -- declarations that disagree with the oracle
-/// and have not been migrated yet. Lower this as phases land; never raise it.
-const BASELINE_LIMIT: usize = 117;
 
 const DUMP: &str = "conformance/builtin-arity.tsv";
 const DIVERGENCES: &str = "conformance/builtin-arity-divergences.tsv";
@@ -116,8 +114,9 @@ enum Tag {
     OracleMissing,
     /// A real, intentional difference. Needs prose.
     Deliberate,
-    /// The unmigrated backlog. Ratcheted by `BASELINE_LIMIT`.
-    Baseline,
+    /// The declaration and the oracle disagree. NOT blessable -- see the
+    /// module docs; the migration backlog this once tracked is empty.
+    Mismatch,
 }
 
 impl Tag {
@@ -126,7 +125,7 @@ impl Tag {
             Tag::ZeoOnly => "zeo-only",
             Tag::OracleMissing => "oracle-missing",
             Tag::Deliberate => "deliberate",
-            Tag::Baseline => "baseline",
+            Tag::Mismatch => "mismatch",
         }
     }
 
@@ -135,7 +134,6 @@ impl Tag {
             "zeo-only" => Some(Tag::ZeoOnly),
             "oracle-missing" => Some(Tag::OracleMissing),
             "deliberate" => Some(Tag::Deliberate),
-            "baseline" => Some(Tag::Baseline),
             _ => None,
         }
     }
@@ -177,10 +175,12 @@ fn load_divergences(root: &Path) -> BTreeMap<(String, String, String), Tag> {
 fn write_divergences(root: &Path, rows: &[Divergence]) {
     let mut out = String::new();
     out.push_str("#! Accepted divergences from conformance/builtin-arity.tsv.\n");
-    out.push_str("#! Every row needs a reason. `baseline` is the unmigrated backlog and is\n");
-    out.push_str("#! ratcheted by BASELINE_LIMIT in crates/zeo/tests/builtin_arity.rs -- that\n");
-    out.push_str("#! number may only go down. Regenerate with `ZEO_BLESS=1 cargo nextest run\n");
-    out.push_str("#! -p zeo --test builtin_arity`.\n");
+    out.push_str("#! Every row needs a reason, and only two kinds may appear:\n");
+    out.push_str("#! `zeo-only` (zeo defines a method CRuby has nowhere in the chain) and\n");
+    out.push_str("#! `oracle-missing` (the dump could not reach the class at all). An arity\n");
+    out.push_str("#! that simply disagrees with the oracle is a BUG in the parameter list --\n");
+    out.push_str("#! it fails the test and cannot be recorded here. Regenerate with\n");
+    out.push_str("#! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.\n");
     out.push_str("#! tag\tclass\tkind\tname\treason\n");
     for d in rows {
         out.push_str(&format!(
@@ -237,7 +237,7 @@ fn builtin_arity_matches_the_oracle() {
                 None => (Tag::ZeoOnly, format!("no {} in CRuby's chain", decl.name)),
                 Some(row) if row.arity == declared => continue,
                 Some(row) => (
-                    Tag::Baseline,
+                    Tag::Mismatch,
                     format!(
                         "declared {declared}, oracle {} ({}) at {}:{}",
                         row.arity, row.implementation, decl.file, decl.line
@@ -255,18 +255,29 @@ fn builtin_arity_matches_the_oracle() {
     }
     found.sort_by_key(|d| (d.tag, key(d)));
 
+    // A mismatch is a bug in the declaration, so it is reported before anything
+    // else and never written to the file -- `ZEO_BLESS` cannot launder one.
+    let mismatched: Vec<&Divergence> = found.iter().filter(|d| d.tag == Tag::Mismatch).collect();
+    assert!(
+        mismatched.is_empty(),
+        "{} builtin arity declaration(s) disagree with the oracle:\n{}\n\
+         Fix the parameter list. This is not blessable.",
+        mismatched.len(),
+        mismatched
+            .iter()
+            .take(25)
+            .map(|d| format!("  {}#{} [{}] {}", d.class, d.name, d.kind.tag(), d.reason))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
     if std::env::var_os("ZEO_BLESS").is_some() {
         write_divergences(&root, &found);
-        eprintln!(
-            "blessed {DIVERGENCES}: {} rows ({} baseline)",
-            found.len(),
-            found.iter().filter(|d| d.tag == Tag::Baseline).count()
-        );
+        eprintln!("blessed {DIVERGENCES}: {} rows", found.len());
         return;
     }
 
     let accepted = load_divergences(&root);
-    let baseline = found.iter().filter(|d| d.tag == Tag::Baseline).count();
 
     // A declaration that newly disagrees, with no row accepting it.
     let unlisted: Vec<&Divergence> = found
@@ -301,10 +312,30 @@ fn builtin_arity_matches_the_oracle() {
             .collect::<Vec<_>>()
             .join("\n"),
     );
+}
+
+/// An explicit `arity N` that restates what the parameter list already implies
+/// is the double declaration this DSL exists to remove: two numbers that can
+/// drift apart. The override earns its place only where a `|`-joined name
+/// genuinely differs from its def -- `"<<"` is 1 where `push` is variadic.
+#[test]
+fn no_explicit_arity_restates_what_the_parameters_already_say() {
+    let root = root();
+    let redundant: Vec<String> = scan::scan_decls(&root)
+        .into_iter()
+        .filter(|d| d.override_written && d.arity == d.derived)
+        .map(|d| {
+            format!(
+                "  {}#{} declares arity {} at {}:{}",
+                d.class_const, d.name, d.arity, d.file, d.line
+            )
+        })
+        .collect();
 
     assert!(
-        baseline <= BASELINE_LIMIT,
-        "the arity backlog grew to {baseline}, above BASELINE_LIMIT ({BASELINE_LIMIT}). \
-         This ratchet may only go down."
+        redundant.is_empty(),
+        "{} explicit `arity N` annotation(s) equal the derived value -- delete them:\n{}",
+        redundant.len(),
+        redundant.join("\n"),
     );
 }

@@ -505,7 +505,7 @@ ruby_class! {
     def "==" (recv, other) {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
-    def "abs" | "magnitude" arity 0 (recv) {
+    def "abs" | "magnitude" (recv) {
         let r = recv_rational(recv);
         rational_new(r.num.abs(), r.den.clone())
     }
@@ -519,7 +519,7 @@ ruby_class! {
         Ok(RubyValue::Float(rat_to_f64(recv_rational(recv))))
     }
     // Truncation toward zero (BigInt's `/` truncates).
-    def "to_i" | "to_int" arity 0 (recv) {
+    def "to_i" | "to_int" (recv) {
         let r = recv_rational(recv);
         Ok(crate::builtins::integer::int_value(&r.num / &r.den))
     }

@@ -111,16 +111,16 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
 ruby_class! {
     UnboundMethod = zeo_abi::UNBOUND_METHOD_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "name"(recv, *_a, &_b) {
+    def "name"(recv) {
         Ok(RubyValue::Symbol(recv_unbound(recv).name))
     }
-    def "arity"(recv, *_a, &_b) {
+    def "arity"(recv) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Int(
             crate::method_meta::arity(None, um.home, um.kind, um.name).unwrap_or(-1),
         ))
     }
-    def "parameters"(recv, *_a, &_b) {
+    def "parameters"(recv) {
         let um = recv_unbound(recv);
         Ok(crate::method_meta::parameters(None, um.home, um.kind, um.name)
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
@@ -141,17 +141,17 @@ ruby_class! {
     }
     // `UnboundMethod#owner` -- the defining class/module in the owning class's
     // ancestry (may differ from the class the unbound method was fetched from).
-    def "owner"(recv, *_a, &_b) {
+    def "owner"(recv) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Class(um.owner().unwrap_or(um.home)))
     }
-    def "source_location"(recv, *_a, &_b) {
+    def "source_location"(recv) {
         let um = recv_unbound(recv);
         Ok(crate::method_meta::source_location(um.home, um.kind, um.name))
     }
     // The unbound twin of `Method#super_method`, walking the chain of the
     // class this method was fetched from.
-    def "super_method"(recv, *_a, &_b) {
+    def "super_method"(recv) {
         let um = recv_unbound(recv);
         let Some(owner) = um.owner() else {
             return Ok(RubyValue::Nil);
@@ -176,13 +176,13 @@ ruby_class! {
     }
     // `UnboundMethod#original_name` -- the name it was DEFINED under, which
     // differs from `#name` only for one reached through an alias.
-    def "original_name"(recv, *_a, &_b) {
+    def "original_name"(recv) {
         let um = recv_unbound(recv);
         Ok(RubyValue::Symbol(crate::method_meta::original_name(um.home, um.kind, um.name)))
     }
     // Unbound, there is no receiver to qualify against: CRuby prints the
     // OWNER alone, never the class the method was fetched from.
-    def "inspect" | "to_s" (recv, *_a, &_b) {
+    def "inspect" | "to_s" (recv) {
         let um = recv_unbound(recv);
         let owner = um.owner().unwrap_or(um.home);
         Ok(RubyValue::Str(crate::collections::string_new(

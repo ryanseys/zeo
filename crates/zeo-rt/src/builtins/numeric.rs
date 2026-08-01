@@ -332,14 +332,14 @@ ruby_class! {
     def "real" (recv) {
         Ok(recv.clone())
     }
-    def "imag" | "imaginary" arity 0 (_recv) {
+    def "imag" | "imaginary" (_recv) {
         Ok(RubyValue::Int(0))
     }
     def "to_c" (recv) {
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
     // A real number's cartesian view is `[self, 0]`.
-    def "rect" | "rectangular" arity 0 (recv) {
+    def "rect" | "rectangular" (recv) {
         Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
     }
     // Polar view: magnitude `|self|`, angle `0` (non-negative) or `pi` (negative).
@@ -356,10 +356,10 @@ ruby_class! {
     def "abs2" (recv) {
         num_mul(recv, recv).expect("numeric receiver")
     }
-    def "conj" | "conjugate" arity 0 (recv) {
+    def "conj" | "conjugate" (recv) {
         Ok(recv.clone())
     }
-    def "angle" | "arg" arity 0 | "phase" arity 0 (recv) {
+    def "angle" | "arg" | "phase" (recv) {
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
         // only for the negative case; 0 stays Integer).
         Ok(if matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1))) {

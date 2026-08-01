@@ -535,7 +535,7 @@ ruby_class! {
     // `with_index([offset]) { |item, idx| ... }` -- lazily pairs each value with
     // an incrementing index; blockless it yields the `[item, idx]` pairs, with a
     // block it maps each pair through it (the block auto-splats the pair).
-    def "with_index" | "each_with_index"(recv, arg?, &block) {
+    def "with_index" | "each_with_index" arity 0 (recv, arg?, &block) {
         let offset = match arg {
             Some(v) => crate::builtins::convert::to_index(v)?,
             None => 0,

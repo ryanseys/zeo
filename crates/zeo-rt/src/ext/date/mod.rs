@@ -245,7 +245,7 @@ ruby_class! {
         Ok(RubyValue::Str(string_new(date_strftime(date_of(recv).jdn, &fmt))))
     }
     // `date + n` advances by n days; `next_day`/`prev_day` are the named forms.
-    def "+" | "next_day" (recv, *args, &_block) {
+    def "+" arity 1 | "next_day" (recv, *args, &_block) {
         let d = date_of(recv);
         let n = match args.first() {
             None => 1,

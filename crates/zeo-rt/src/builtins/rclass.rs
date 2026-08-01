@@ -87,7 +87,7 @@ ruby_class! {
     // class allocates its zero-initialized struct via its registered allocator;
     // a builtin value class answers its empty value (`String.allocate` -> `""`,
     // like CRuby, whose `allocate` yields the class's default instance).
-    def "allocate"(recv, *_args, &_block) {
+    def "allocate"(recv) {
         let cid = recv_cid(recv);
         if let Some(v) = builtin_allocate(cid) {
             return Ok(v);

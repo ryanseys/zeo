@@ -85,7 +85,7 @@ ruby_class! {
     }
 
     // Run to the end of the stream and hand back everything queued.
-    def "finish" arity -1 (recv, _arg?) {
+    def "finish"(recv) {
         codec::finish(recv)
     }
 

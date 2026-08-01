@@ -297,7 +297,7 @@ ruby_class! {
         Ok(set_from(args.iter().cloned()))
     }
 
-    def "add" | "<<" arity 1 (recv, other) {
+    def "add" | "<<" (recv, other) {
         check_frozen(recv)?;
         set_of(recv).insert((*other).clone());
         Ok(recv.clone())
@@ -311,7 +311,7 @@ ruby_class! {
             Ok(RubyValue::Nil)
         }
     }
-    def "include?" | "member?" arity 1 | "===" arity 1 | "contain?"(recv, other) {
+    def "include?" | "member?" | "===" | "contain?"(recv, other) {
         Ok(RubyValue::Bool(set_of(recv).contains(other)))
     }
     def "delete" (recv, arg) {
@@ -369,7 +369,7 @@ ruby_class! {
     }
     // `map!`/`collect!` -- replaces each element with the block's result,
     // in place, returning self (dedup applies to the mapped values).
-    def "map!" | "collect!" arity 0 (recv, &block) {
+    def "map!" | "collect!" (recv, &block) {
         check_frozen(recv)?;
         let p = block_or_enum!(recv, &[], block);
         let s = set_of(recv);
@@ -382,7 +382,7 @@ ruby_class! {
     }
     // `select!`/`filter!` -- keep the elements the block likes; self if any
     // were dropped, else nil.
-    def "select!" | "filter!" arity 0 (recv, &block) {
+    def "select!" | "filter!" (recv, &block) {
         check_frozen(recv)?;
         let p = block_or_enum!(recv, &[], block);
         let changed = filter_in_place(recv, &p, true)?;
@@ -449,7 +449,7 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "size" | "length" arity 0 (recv) {
+    def "size" | "length" (recv) {
         Ok(RubyValue::Int(set_of(recv).len() as i64))
     }
     // `Set#reset` rebuilds the internal index after elements have been mutated
@@ -487,12 +487,12 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "|" | "union" arity 1 | "+" arity 1 | "merge_new"(recv, other) {
+    def "|" | "union" | "+" | "merge_new"(recv, other) {
         let mut out = set_of(recv).elements();
         out.extend(arg_elements(other)?);
         Ok(set_from(out))
     }
-    def "&" | "intersection" arity 1 (recv, other) {
+    def "&" | "intersection" (recv, other) {
         let other = set_from(arg_elements(other)?);
         let keep: Vec<RubyValue> = set_of(recv)
             .elements()
@@ -501,7 +501,7 @@ ruby_class! {
             .collect();
         Ok(set_from(keep))
     }
-    def "-" | "difference" arity 1 (recv, other) {
+    def "-" | "difference" (recv, other) {
         let other = set_from(arg_elements(other)?);
         let keep: Vec<RubyValue> = set_of(recv)
             .elements()
@@ -564,24 +564,24 @@ ruby_class! {
         };
         Ok(r.map_or(RubyValue::Nil, RubyValue::Int))
     }
-    def "subset?" | "<=" arity 1 (recv, other) {
+    def "subset?" | "<=" (recv, other) {
         let other = coerce_set(other)?;
         let a = set_of(recv);
         Ok(RubyValue::Bool(a.elements().iter().all(|e| set_of(&other).contains(e))))
     }
-    def "proper_subset?" | "<" arity 1 (recv, other) {
+    def "proper_subset?" | "<" (recv, other) {
         let other = coerce_set(other)?;
         let a = set_of(recv);
         let os = set_of(&other);
         Ok(RubyValue::Bool(a.len() < os.len() && a.elements().iter().all(|e| os.contains(e))))
     }
-    def "superset?" | ">=" arity 1 (recv, other) {
+    def "superset?" | ">=" (recv, other) {
         let other = coerce_set(other)?;
         let os = set_of(&other);
         let a = set_of(recv);
         Ok(RubyValue::Bool(os.elements().iter().all(|e| a.contains(e))))
     }
-    def "proper_superset?" | ">" arity 1 (recv, other) {
+    def "proper_superset?" | ">" (recv, other) {
         let other = coerce_set(other)?;
         let os = set_of(&other);
         let a = set_of(recv);
@@ -604,7 +604,7 @@ ruby_class! {
     def "clone" (recv, **_opts) {
         Ok(RubyValue::Object(set_of(recv).dup_object(false)))
     }
-    def "inspect" | "to_s" arity 0 (recv) {
+    def "inspect" | "to_s" (recv) {
         let parts: Vec<String> =
             set_of(recv).elements().iter().map(|e| e.inspect_string()).collect();
         Ok(RubyValue::Str(crate::string_new(format!("Set[{}]", parts.join(", ")))))

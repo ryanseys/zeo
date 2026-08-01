@@ -41,7 +41,7 @@ ruby_class! {
         push_bytes(recv, &in_bytes(other)?);
         Ok(recv.clone())
     }
-    def "hexdigest" | "to_s"(recv, data?) {
+    def "hexdigest" | "to_s" arity 0 (recv, data?) {
         Ok(str(hex(&finalize(recv, data)?)))
     }
     def "digest"(recv, data?) {

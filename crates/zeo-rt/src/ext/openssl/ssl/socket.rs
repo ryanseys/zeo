@@ -235,7 +235,7 @@ ruby_class! {
     // The three unbuffered primitives `OpenSSL::Buffering` is written
     // against. Everything above them -- read/gets/puts/each_line/... -- lives
     // in that module, where CRuby puts it.
-    def "syswrite" arity -1 (recv, *args, &_block) {
+    def "syswrite" arity 1 (recv, *args, &_block) {
         let mut total = 0i64;
         for arg in args {
             // A trailing kwargs hash is `exception: false`, not data.

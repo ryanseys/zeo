@@ -147,7 +147,7 @@ ruby_class! {
     Symbol = zeo_abi::SYMBOL_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def "to_s" | "id2name" arity 0 (recv) {
+    def "to_s" | "id2name" (recv) {
         Ok(RubyValue::Str(crate::string_new(recv_sym(recv).name())))
     }
     // `Symbol#name` returns a FROZEN String (unlike `to_s`, which is a fresh
@@ -157,7 +157,7 @@ ruby_class! {
         s.set_frozen();
         Ok(RubyValue::Str(s))
     }
-    def "to_sym" | "intern" arity 0 (recv) {
+    def "to_sym" | "intern" (recv) {
         Ok(recv.clone())
     }
     def "encoding" (recv) {
@@ -167,7 +167,7 @@ ruby_class! {
     def "inspect" (recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_name(&recv_sym(recv).name()))))
     }
-    def "length" | "size" arity 0 (recv) {
+    def "length" | "size" (recv) {
         Ok(RubyValue::Int(recv_sym(recv).name().chars().count() as i64))
     }
     def "empty?" (recv) {
@@ -238,7 +238,7 @@ ruby_class! {
             &crate::builtins::string::swapcase_str(&recv_sym(recv).name()),
         )))
     }
-    def "succ" | "next" arity 0 (recv) {
+    def "succ" | "next" (recv) {
         Ok(RubyValue::Symbol(Symbol::intern(
             &crate::builtins::string::succ_str(&recv_sym(recv).name()),
         )))

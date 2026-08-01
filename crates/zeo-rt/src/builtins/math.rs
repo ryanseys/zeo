@@ -5,7 +5,7 @@
 //! CRuby's exact message shape.
 
 use crate::builtins::numeric::num_to_f64_unchecked;
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::type_error;
 use crate::collections::array_new;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
@@ -43,31 +43,15 @@ fn domain_error(fn_name: &str) -> Signal {
     )
 }
 
-fn math_arity(given: usize, expected: &str) -> Signal {
-    arg_error!("wrong number of arguments (given {given}, expected {expected})")
+/// A one-argument libm call: coerce the argument to `f64` and apply `f`.
+fn plain(x: &RubyValue, f: impl Fn(f64) -> f64) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Float(f(arg_f64(x)?)))
 }
 
-/// A one-argument libm call: coerce the single argument to `f64` and apply `f`.
-/// A wrong argument count is CRuby's ArgumentError.
-fn unary(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<f64, Signal> {
-    if args.len() != 1 {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 1)",
-            args.len()
-        ));
-    }
-    Ok(f(arg_f64(&args[0])?))
-}
-
-/// [`unary`] wrapped as a `Float` result -- the common case.
-fn plain(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<RubyValue, Signal> {
-    unary(args, f).map(RubyValue::Float)
-}
-
-/// [`unary`] with a NaN-result domain check: `sqrt`/`asin`/`log2`/... of an
+/// [`plain`] with a NaN-result domain check: `sqrt`/`asin`/`log2`/... of an
 /// out-of-domain argument is a `Math::DomainError` rather than a NaN Float.
-fn checked(args: &[RubyValue], f: impl Fn(f64) -> f64, name: &str) -> Result<RubyValue, Signal> {
-    let r = unary(args, f)?;
+fn checked(x: &RubyValue, f: impl Fn(f64) -> f64, name: &str) -> Result<RubyValue, Signal> {
+    let r = f(arg_f64(x)?);
     if r.is_nan() {
         Err(domain_error(name))
     } else {
@@ -85,31 +69,25 @@ ruby_module! {
     // after `include Math`, as a private `sqrt(x)`. Every argument coerces
     // through the numeric tower's `f64` view; domain violations raise
     // `Math::DomainError` with CRuby's exact message.
-    module_function def "sqrt"(_recv, *args, &_block) { checked(args, f64::sqrt, "sqrt") }
-    module_function def "cbrt"(_recv, *args, &_block) { plain(args, f64::cbrt) }
-    module_function def "sin"(_recv, *args, &_block) { plain(args, f64::sin) }
-    module_function def "cos"(_recv, *args, &_block) { plain(args, f64::cos) }
-    module_function def "tan"(_recv, *args, &_block) { plain(args, f64::tan) }
-    module_function def "asin"(_recv, *args, &_block) { checked(args, f64::asin, "asin") }
-    module_function def "acos"(_recv, *args, &_block) { checked(args, f64::acos, "acos") }
-    module_function def "atan"(_recv, *args, &_block) { plain(args, f64::atan) }
-    module_function def "exp"(_recv, *args, &_block) { plain(args, f64::exp) }
+    module_function def "sqrt"(_recv, x) { checked(x, f64::sqrt, "sqrt") }
+    module_function def "cbrt"(_recv, x) { plain(x, f64::cbrt) }
+    module_function def "sin"(_recv, x) { plain(x, f64::sin) }
+    module_function def "cos"(_recv, x) { plain(x, f64::cos) }
+    module_function def "tan"(_recv, x) { plain(x, f64::tan) }
+    module_function def "asin"(_recv, x) { checked(x, f64::asin, "asin") }
+    module_function def "acos"(_recv, x) { checked(x, f64::acos, "acos") }
+    module_function def "atan"(_recv, x) { plain(x, f64::atan) }
+    module_function def "exp"(_recv, x) { plain(x, f64::exp) }
     // `expm1`/`log1p` keep precision near zero, where `exp(x) - 1` and
     // `log(1 + x)` lose it to cancellation.
-    module_function def "expm1"(_recv, *args, &_block) { plain(args, f64::exp_m1) }
-    module_function def "log1p"(_recv, *args, &_block) { checked(args, f64::ln_1p, "log1p") }
-    module_function def "log2"(_recv, *args, &_block) { checked(args, f64::log2, "log2") }
-    module_function def "log10"(_recv, *args, &_block) { checked(args, f64::log10, "log10") }
+    module_function def "expm1"(_recv, x) { plain(x, f64::exp_m1) }
+    module_function def "log1p"(_recv, x) { checked(x, f64::ln_1p, "log1p") }
+    module_function def "log2"(_recv, x) { checked(x, f64::log2, "log2") }
+    module_function def "log10"(_recv, x) { checked(x, f64::log10, "log10") }
     // `log(x)` natural; `log(x, base)` arbitrary-base.
-    module_function def "log"(_recv, *args, &_block) {
-        if args.is_empty() || args.len() > 2 {
-            return Err(arg_error!(
-                "wrong number of arguments (given {}, expected 1..2)",
-                args.len()
-            ));
-        }
-        let x = arg_f64(&args[0])?;
-        let r = match args.get(1) {
+    module_function def "log" cfunc (_recv, x, base?) {
+        let x = arg_f64(x)?;
+        let r = match base {
             Some(base) => x.log(arg_f64(base)?),
             None => x.ln(),
         };
@@ -118,49 +96,37 @@ ruby_module! {
         }
         Ok(RubyValue::Float(r))
     }
-    module_function def "atan2"(_recv, *args, &_block) {
-        if args.len() != 2 {
-            return Err(arg_error!("wrong number of arguments (given {}, expected 2)", args.len()));
-        }
-        Ok(RubyValue::Float(arg_f64(&args[0])?.atan2(arg_f64(&args[1])?)))
+    module_function def "atan2"(_recv, y, x) {
+        Ok(RubyValue::Float(arg_f64(y)?.atan2(arg_f64(x)?)))
     }
-    module_function def "hypot"(_recv, *args, &_block) {
-        if args.len() != 2 {
-            return Err(arg_error!("wrong number of arguments (given {}, expected 2)", args.len()));
-        }
-        Ok(RubyValue::Float(arg_f64(&args[0])?.hypot(arg_f64(&args[1])?)))
+    module_function def "hypot"(_recv, x, y) {
+        Ok(RubyValue::Float(arg_f64(x)?.hypot(arg_f64(y)?)))
     }
-    module_function def "sinh"(_recv, *args, &_block) { plain(args, f64::sinh) }
-    module_function def "cosh"(_recv, *args, &_block) { plain(args, f64::cosh) }
-    module_function def "tanh"(_recv, *args, &_block) { plain(args, f64::tanh) }
-    module_function def "asinh"(_recv, *args, &_block) { plain(args, f64::asinh) }
+    module_function def "sinh"(_recv, x) { plain(x, f64::sinh) }
+    module_function def "cosh"(_recv, x) { plain(x, f64::cosh) }
+    module_function def "tanh"(_recv, x) { plain(x, f64::tanh) }
+    module_function def "asinh"(_recv, x) { plain(x, f64::asinh) }
     // `acosh(x<1)` and `atanh(|x|>1)` are NaN -> DomainError; `atanh(±1)` is
     // ±Infinity, which passes through (oracle-verified).
-    module_function def "acosh"(_recv, *args, &_block) { checked(args, f64::acosh, "acosh") }
-    module_function def "atanh"(_recv, *args, &_block) { checked(args, f64::atanh, "atanh") }
-    module_function def "erf"(_recv, *args, &_block) { plain(args, |x| unsafe { erf(x) }) }
-    module_function def "erfc"(_recv, *args, &_block) { plain(args, |x| unsafe { erfc(x) }) }
-    module_function def "gamma"(_recv, *args, &_block) { math_gamma(args).map(RubyValue::Float) }
-    module_function def "ldexp"(_recv, *args, &_block) {
-        if args.len() != 2 {
-            return Err(math_arity(args.len(), "2"));
-        }
-        let fraction = arg_f64(&args[0])?;
-        let exponent = arg_f64(&args[1])? as i32;
+    module_function def "acosh"(_recv, x) { checked(x, f64::acosh, "acosh") }
+    module_function def "atanh"(_recv, x) { checked(x, f64::atanh, "atanh") }
+    module_function def "erf"(_recv, x) { plain(x, |x| unsafe { erf(x) }) }
+    module_function def "erfc"(_recv, x) { plain(x, |x| unsafe { erfc(x) }) }
+    module_function def "gamma"(_recv, x) { math_gamma(x).map(RubyValue::Float) }
+    module_function def "ldexp"(_recv, fraction, exponent) {
+        let fraction = arg_f64(fraction)?;
+        let exponent = arg_f64(exponent)? as i32;
         Ok(RubyValue::Float(unsafe { ldexp(fraction, exponent) }))
     }
     // `frexp`/`lgamma` answer a two-element Array, not a Float.
-    module_function def "frexp"(_recv, *args, &_block) { math_frexp(args) }
-    module_function def "lgamma"(_recv, *args, &_block) { math_lgamma(args) }
+    module_function def "frexp"(_recv, x) { math_frexp(x) }
+    module_function def "lgamma"(_recv, x) { math_lgamma(x) }
 }
 
 /// `Math.frexp(x) -> [fraction, exponent]` with `x == fraction * 2**exponent`
 /// and `0.5 <= |fraction| < 1` (`[0.0, 0]` for `x == 0`) -- the C `frexp`.
-fn math_frexp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    if args.len() != 1 {
-        return Err(math_arity(args.len(), "1"));
-    }
-    let x = arg_f64(&args[0])?;
+fn math_frexp(x: &RubyValue) -> Result<RubyValue, Signal> {
+    let x = arg_f64(x)?;
     let mut exponent: i32 = 0;
     let fraction = unsafe { frexp(x, &mut exponent) };
     Ok(pair(fraction, i64::from(exponent)))
@@ -177,11 +143,8 @@ fn pair(value: f64, tag: i64) -> RubyValue {
 /// `Math.lgamma(x) -> [log(|gamma(x)|), sign]` (`sign` is -1 or 1), matching
 /// CRuby's `math.c`: `+inf`/`+0.0` -> `[Infinity, 1]`, `-0.0` -> `[Infinity, -1]`,
 /// `-inf` -> DomainError; otherwise the system `lgamma_r`.
-fn math_lgamma(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    if args.len() != 1 {
-        return Err(math_arity(args.len(), "1"));
-    }
-    let d = arg_f64(&args[0])?;
+fn math_lgamma(x: &RubyValue) -> Result<RubyValue, Signal> {
+    let d = arg_f64(x)?;
     if d.is_infinite() {
         return if d < 0.0 {
             Err(domain_error("lgamma"))
@@ -202,11 +165,8 @@ fn math_lgamma(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// DomainError, `±0.0` -> `±Infinity`, negative integers -> DomainError, small
 /// positive integers via the exact factorial table (so e.g. `gamma(20)` is
 /// bit-identical to Ruby's, not a rounded `tgamma`), else the system `tgamma`.
-fn math_gamma(args: &[RubyValue]) -> Result<f64, Signal> {
-    if args.len() != 1 {
-        return Err(math_arity(args.len(), "1"));
-    }
-    let d = arg_f64(&args[0])?;
+fn math_gamma(x: &RubyValue) -> Result<f64, Signal> {
+    let d = arg_f64(x)?;
     if d.is_infinite() {
         return if d < 0.0 {
             Err(domain_error("gamma"))

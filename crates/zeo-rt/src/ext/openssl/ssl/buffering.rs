@@ -179,7 +179,7 @@ ruby_module! {
         Ok((*arg).clone())
     }
 
-    def "write" | "write_nonblock" arity -1 (recv, *args, &_block) {
+    def "write" | "write_nonblock" arity -2 (recv, *args, &_block) {
         Ok(RubyValue::Int(write_args(recv, args)?))
     }
     def "<<" (recv, s) {
@@ -191,14 +191,9 @@ ruby_module! {
         write_args(recv, args)?;
         Ok(RubyValue::Nil)
     }
-    def "printf" arity -1 (recv, *args, &_block) {
-        let Some(template) = args.first() else {
-            return Err(crate::builtins::arg_error!(
-                "wrong number of arguments (given 0, expected 1+)"
-            ));
-        };
+    def "printf" (recv, template, *args, &_block) {
         let template = convert::to_rstr(template)?.lock().to_utf8_lossy().into_owned();
-        let text = crate::builtins::format::sprintf(&template, &args[1..])?;
+        let text = crate::builtins::format::sprintf(&template, args)?;
         send(recv, "syswrite", &[crate::ext::openssl::str(text)])?;
         Ok(RubyValue::Nil)
     }
@@ -237,10 +232,10 @@ ruby_module! {
         Ok(bin_str(out))
     }
     // Whatever is buffered, or one `sysread`'s worth; EOFError at the end.
-    def "readpartial" | "read_nonblock" arity -1 (recv, arg1?, _arg2?, _arg3?) {
+    def "readpartial" | "read_nonblock" (recv, arg1, _arg2?, _arg3?) {
         let want = match arg1 {
-            None | Some(RubyValue::Nil) => BLOCK_SIZE as usize,
-            Some(v) => convert::to_index(v)? as usize,
+            RubyValue::Nil => BLOCK_SIZE as usize,
+            v => convert::to_index(v)? as usize,
         };
         if rbuffer(recv)?.is_empty() && !fill(recv)? && want > 0 {
             return Err(eof_error!("end of file reached"));

@@ -52,7 +52,7 @@ ruby_class! {
     // `synchronize { }` -- lock, run the block, ALWAYS unlock (even on a
     // signal: an exception/`break` inside the block must release the lock on
     // its way out), then re-propagate. `break` exits it with the break value.
-    def "synchronize"(recv, *_args, &block) {
+    def "synchronize"(recv, &block) {
         let blk = need_block!(block);
         let m = recv.as_mutex_unchecked();
         mutex_lock(&m).map_err(thread_error)?;

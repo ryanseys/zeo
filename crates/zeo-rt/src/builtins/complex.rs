@@ -621,7 +621,7 @@ ruby_class! {
     // cartesian constructor (the class-method mirror of the `Complex(...)`
     // Kernel form). `Complex.polar` is a separate gap (its CRuby type-exact
     // trig is tracked with the numeric-exactness work).
-    def self."rect" | "rectangular" arity 0 cfunc (_recv, arg1, arg2?) {
+    def self."rect" | "rectangular" cfunc (_recv, arg1, arg2?) {
         let real = (*arg1).clone();
         let imag = arg2.cloned().unwrap_or(RubyValue::Int(0));
         complex_new(real, imag)
@@ -652,14 +652,14 @@ ruby_class! {
     def "real" (recv) {
         Ok(recv_complex(recv).real.clone())
     }
-    def "imag" | "imaginary" arity 0 (recv) {
+    def "imag" | "imaginary" (recv) {
         Ok(recv_complex(recv).imag.clone())
     }
     def "real?" (recv) {
         let _ = recv;
         Ok(RubyValue::Bool(false))
     }
-    def "abs" | "magnitude" arity 0 (recv) {
+    def "abs" | "magnitude" (recv) {
         Ok(complex_abs_value(recv_complex(recv)))
     }
     def "abs2" (recv) {
@@ -669,7 +669,7 @@ ruby_class! {
             &num_mul_or_panic(&c.imag, &c.imag)?,
         )
     }
-    def "arg" | "angle" arity 0 | "phase" arity 0 (recv) {
+    def "arg" | "angle" | "phase" (recv) {
         let c = recv_complex(recv);
         Ok(RubyValue::Float(
             crate::builtins::numeric::num_to_f64_unchecked(&c.imag)
@@ -686,14 +686,14 @@ ruby_class! {
             ),
         ])))
     }
-    def "rect" | "rectangular" arity 0 (recv) {
+    def "rect" | "rectangular" (recv) {
         let c = recv_complex(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
             c.real.clone(),
             c.imag.clone(),
         ])))
     }
-    def "conj" | "conjugate" arity 0 (recv) {
+    def "conj" | "conjugate" (recv) {
         let c = recv_complex(recv);
         let neg_imag = crate::builtins::numeric::num_sub_or_panic(&RubyValue::Int(0), &c.imag)?;
         complex_new(c.real.clone(), neg_imag)
@@ -736,7 +736,7 @@ ruby_class! {
     def "to_f" (recv) {
         real_projection(recv, "to_f")
     }
-    def "to_i" | "to_int" arity 0 (recv) {
+    def "to_i" | "to_int" (recv) {
         real_projection(recv, "to_i")
     }
     def "to_r" (recv) {

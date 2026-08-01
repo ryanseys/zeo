@@ -69,7 +69,7 @@ ruby_class! {
         // num_equal -- how `1.5 == BigDecimal("1.5")` holds.
         crate::builtins::numeric::reverse_eq(recv, other)
     }
-    def "abs" | "magnitude" arity 0 (recv) {
+    def "abs" | "magnitude" (recv) {
         Ok(RubyValue::Float(recv_f64(recv).abs()))
     }
     def "nan?" (recv) {
@@ -116,7 +116,7 @@ ruby_class! {
     def "to_f" (recv) {
         Ok(recv.clone())
     }
-    def "to_i" | "to_int" arity 0 (recv) {
+    def "to_i" | "to_int" (recv) {
         float_to_integer(recv_f64(recv).trunc())
     }
     // EXACT: every finite double is a dyadic rational (mantissa * 2^exp).

@@ -562,7 +562,7 @@ ruby_module! {
     // `Object#respond_to_missing?` default: false for every name -- what a
     // user override's `super` reaches (CRuby's
     // `rb_obj_respond_to_missing`). Hidden-private, like `initialize`.
-    def "respond_to_missing?"(_recv, _arg1, _arg2?) {
+    def "respond_to_missing?"(_recv, _name, _include_private) {
         Ok(RubyValue::Bool(false))
     }
     // Universal named-ivar reflection over ANY receiver (an `Object`'s or a

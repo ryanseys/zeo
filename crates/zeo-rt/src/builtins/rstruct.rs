@@ -459,10 +459,10 @@ ruby_class! {
         bind_members(recv, args, false)?;
         Ok(RubyValue::Nil)
     }
-    def "members"(recv, *_args, &_block) {
+    def "members"(recv) {
         build_members(recv)
     }
-    def "to_a" | "values" | "deconstruct" (recv, *_args, &_block) {
+    def "to_a" | "values" | "deconstruct" (recv) {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
     def "to_h"(recv, &block) {
@@ -513,7 +513,7 @@ ruby_class! {
         }
         send_value(&value, Symbol::intern("dig"), &args[1..], None)
     }
-    def "size" | "length" (recv, *_args, &_block) {
+    def "size" | "length" (recv) {
         let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
         Ok(RubyValue::Int(meta.members.len() as i64))
     }
@@ -523,14 +523,14 @@ ruby_class! {
     def "eql?"(recv, arg) {
         Ok(RubyValue::Bool(struct_equal(recv, arg)))
     }
-    def "hash"(recv, *_args, &_block) {
+    def "hash"(recv) {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("hash"), &[], None)
     }
     def "deconstruct_keys"(recv, arg) {
         deconstruct_keys(recv, arg)
     }
-    def "inspect" | "to_s" (recv, *_args, &_block) {
+    def "inspect" | "to_s" (recv) {
         build_inspect(recv)
     }
 }

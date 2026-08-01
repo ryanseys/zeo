@@ -388,7 +388,7 @@ ruby_module! {
         crate::builtins::convert::to_str(arg)
     }
     // `Process.warmup` -- a JIT/heap warmup hint; nothing to warm here.
-    def self.warmup(_recv, _arg?) {
+    def self.warmup(_recv) {
         Ok(RubyValue::Bool(true))
     }
     // `Process.initgroups(username, gid)` -- set the supplementary group list

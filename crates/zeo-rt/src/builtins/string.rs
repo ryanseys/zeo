@@ -1308,7 +1308,7 @@ ruby_class! {
     // `String#-@` / `#dedup`: an already-frozen receiver is returned as-is
     // (CRuby #2630); otherwise the content is interned to its immortal
     // frozen twin, so two dedups of equal content are the same object.
-    def "-@" | "dedup" arity 0 (recv) {
+    def "-@" | "dedup" (recv) {
         let s = rstr;
         if s.is_frozen() {
             return Ok(recv.clone());
@@ -1760,7 +1760,7 @@ ruby_class! {
             _ => Err(arg_error!("string size too big")),
         }
     }
-    def "to_s" | "to_str" arity 0 (recv) {
+    def "to_s" | "to_str" (recv) {
         Ok(recv.clone())
     }
     def "<=>" (recv, other) {
@@ -1769,7 +1769,7 @@ ruby_class! {
         };
         Ok(RubyValue::Int(str_byte_cmp(rstr, other)))
     }
-    def "==" | "eql?" arity 1 (recv, other) {
+    def "==" | "eql?" (recv, other) {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
     // Casing is encoding-aware (`StrBuf::*cased`): full Unicode for UTF-8
@@ -2600,12 +2600,12 @@ ruby_class! {
     def "undump" (recv) {
         undump_str(&rstr.lock())
     }
-    def "to_sym" | "intern" arity 0 (recv) {
+    def "to_sym" | "intern" (recv) {
         Ok(RubyValue::Symbol(crate::Symbol::intern(
             &rstr.lock().to_utf8_lossy(),
         )))
     }
-    def "succ" | "next" arity 0 (recv) {
+    def "succ" | "next" (recv) {
         let s = rstr;
         let buf = s.lock();
         // A single-byte or broken string increments BYTES -- routing it

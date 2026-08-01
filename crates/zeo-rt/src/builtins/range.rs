@@ -159,7 +159,7 @@ ruby_class! {
     //
     // The test is on the END only, matching CRuby: a BEGINLESS range isn't
     // caught here and instead fails in `each`, which cannot start.
-    def "to_a" | "entries" arity 0 (recv) {
+    def "to_a" | "entries" (recv) {
         let (_, end, _) = range_parts(recv);
         let unbounded = match end {
             None => true,
@@ -324,7 +324,7 @@ ruby_class! {
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this runtime supports the
     // cover check is the faithful behavior for all four names.
-    def "===" | "include?" arity 1 | "member?" arity 1 (recv, other) {
+    def "===" | "include?" | "member?" (recv, other) {
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
             start, end, exclusive, other,

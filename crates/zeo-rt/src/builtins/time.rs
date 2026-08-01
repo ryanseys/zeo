@@ -1080,7 +1080,7 @@ ruby_class! {
         }
     }
 
-    def "to_i" | "tv_sec" arity 0 (recv) {
+    def "to_i" | "tv_sec" (recv) {
         Ok(RubyValue::Int(recv_time(recv).sec()))
     }
     def "to_f" (recv) {
@@ -1090,10 +1090,10 @@ ruby_class! {
         let (n, d) = (t.num.clone(), t.den.clone());
         Ok(RubyValue::Float(bigint_to_f64(&n) / bigint_to_f64(&d)))
     }
-    def "nsec" | "tv_nsec" arity 0 (recv) {
+    def "nsec" | "tv_nsec" (recv) {
         Ok(RubyValue::Int(recv_time(recv).nsec() as i64))
     }
-    def "usec" | "tv_usec" arity 0 (recv) {
+    def "usec" | "tv_usec" (recv) {
         Ok(RubyValue::Int((recv_time(recv).nsec() / 1000) as i64))
     }
     // The fraction of a second, EXACTLY: a Rational (`Time.at(0.5).subsec`
@@ -1113,10 +1113,10 @@ ruby_class! {
     def "year" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_year as i64 + 1900))
     }
-    def "month" | "mon" arity 0 (recv) {
+    def "month" | "mon" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_mon as i64 + 1))
     }
-    def "day" | "mday" arity 0 (recv) {
+    def "day" | "mday" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_mday as i64))
     }
     def "hour" (recv) {
@@ -1134,7 +1134,7 @@ ruby_class! {
     def "yday" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).tm.tm_yday as i64 + 1))
     }
-    def "utc_offset" | "gmt_offset" arity 0 | "gmtoff" arity 0 (recv) {
+    def "utc_offset" | "gmt_offset" | "gmtoff" (recv) {
         Ok(RubyValue::Int(civil(recv_time(recv)).offset as i64))
     }
     def "zone" (recv) {
@@ -1148,17 +1148,17 @@ ruby_class! {
     // `tm_isdst` is tri-state in C (>0 in effect, 0 not, <0 unknown); Ruby
     // reports a plain bool, so anything that isn't a positive answer is
     // false -- the same `> 0` test `to_a`/`strftime` already use above.
-    def "isdst" | "dst?" arity 0 (recv) {
+    def "isdst" | "dst?" (recv) {
         Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_isdst > 0))
     }
-    def "utc?" | "gmt?" arity 0 (recv) {
+    def "utc?" | "gmt?" (recv) {
         Ok(RubyValue::Bool(recv_time(recv).is_utc()))
     }
     // The MUTATING converters: they change which zone the receiver RENDERS
     // in and answer self, leaving the instant alone. Callers observe the
     // mutation (`t.utc; t.to_s` renders UTC), which is why `offset` is
     // interior-mutable -- see `RTime`.
-    def "utc" | "gmtime" arity 0 (recv) {
+    def "utc" | "gmtime" (recv) {
         *recv_time(recv).offset.lock() = Some(RTime::UTC);
         Ok(recv.clone())
     }
@@ -1168,7 +1168,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     // ...and their non-mutating counterparts, which answer a fresh Time.
-    def "getutc" | "getgm" arity 0 (recv) {
+    def "getutc" | "getgm" (recv) {
         let t = recv_time(recv);
         Ok(time_value(t.sec(), t.nsec(), Some(RTime::UTC)))
     }
@@ -1224,7 +1224,7 @@ ruby_class! {
             },
         ))
     }
-    def "==" | "eql?" arity 1 (recv, other) {
+    def "==" | "eql?" (recv, other) {
         let t = recv_time(recv);
         if let RubyValue::Object(o) = other {
             if let Some(other) = o.as_any().downcast_ref::<RTime>() {
@@ -1255,7 +1255,7 @@ ruby_class! {
     def "saturday?" (recv) { Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 6)) }
 
     // `asctime`/`ctime`: the fixed C `ctime` shape, in the Time's own zone.
-    def "asctime" | "ctime" arity 0 (recv) {
+    def "asctime" | "ctime" (recv) {
         Ok(RubyValue::Str(crate::collections::string_new(
             strftime(recv_time(recv), "%a %b %e %H:%M:%S %Y"),
         )))

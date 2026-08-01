@@ -149,7 +149,7 @@ ruby_class! {
     def "compare_by_identity?" (recv) {
         Ok(RubyValue::Bool(rhash.lock().compare_by_identity))
     }
-    def "[]=" | "store" arity 2 (recv, arg1, arg2) {
+    def "[]=" | "store" (recv, arg1, arg2) {
         let h = rhash;
         // CRuby's `rb_hash_aset` checks modifiability first, so `h[k] = v` (and
         // the `h[k] += v` opassign desugaring) on a frozen Hash raises.
@@ -180,7 +180,7 @@ ruby_class! {
         }
         Ok(crate::hash_delete(h, arg))
     }
-    def "key?" | "has_key?" arity 1 | "include?" arity 1 | "member?" arity 1 (recv, arg) {
+    def "key?" | "has_key?" | "include?" | "member?" (recv, arg) {
         Ok(RubyValue::Bool(crate::hash_has_key(rhash, arg)))
     }
     def "keys" (recv) {
@@ -189,7 +189,7 @@ ruby_class! {
     def "values" (recv) {
         Ok(crate::hash_values(rhash))
     }
-    def "length" | "size" arity 0 (recv) {
+    def "length" | "size" (recv) {
         Ok(RubyValue::Int(crate::hash_len(rhash)))
     }
     def "empty?" (recv) {
@@ -423,7 +423,7 @@ ruby_class! {
     // block accepts; `reject!`/`delete_if` drop them. The `!`-suffixed forms
     // answer nil when nothing changed; `keep_if`/`delete_if` always answer
     // the receiver.
-    def "select!" | "filter!" arity 0 (recv, &block) {
+    def "select!" | "filter!" (recv, &block) {
         guard_hash_frozen(recv)?;
         hash_filter_bang(recv, &[], block, true, true)
     }
@@ -458,7 +458,7 @@ ruby_class! {
     // Blockless `to_h` on a Hash is identity; with a block each entry is
     // re-mapped, the block seeing the two RAW yielded values (`{ |k, v| }`).
     // `to_hash` is the implicit-conversion protocol and never takes a block.
-    def "to_h" | "to_hash" arity 0 (recv, &block) {
+    def "to_h" | "to_hash" (recv, &block) {
         let Some(blk) = block else {
             return Ok(recv.clone());
         };
@@ -495,7 +495,7 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "value?" | "has_value?" arity 1 (recv, arg) {
+    def "value?" | "has_value?" (recv, arg) {
         let found = rhash
             .lock()
             .values()
@@ -522,7 +522,7 @@ ruby_class! {
     }
     // Hash-returning select/reject (Enumerable's array-returning forms
     // are shadowed by these, real Ruby's rule).
-    def "select" | "filter" arity 0 (recv, &block) {
+    def "select" | "filter" (recv, &block) {
         hash_filter(recv, &[], block, true)
     }
     def "reject" (recv, &block) {
@@ -607,7 +607,7 @@ ruby_class! {
         rhash.lock().clear();
         Ok(recv.clone())
     }
-    def "each" | "each_pair" arity 0 (recv, &block) {
+    def "each" | "each_pair" (recv, &block) {
         let p = block_or_enum!(recv, &[], block);
         // A block-raised exception shows a 'Hash#each' C-frame between the
         // block and the caller in CRuby's backtrace.

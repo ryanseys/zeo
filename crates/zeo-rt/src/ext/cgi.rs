@@ -138,22 +138,22 @@ ruby_module! {
 
     // CRuby exposes these as `CGI.escape` etc. (singleton methods on the module),
     // so they migrate as `def self.`. Arities match ruby 4.0.6.
-    def self."escape" arity 1 (_recv, arg) {
+    def self."escape" (_recv, arg) {
         Ok(out(percent_encode(&in_bytes(arg), true)))
     }
     def self."unescape" cfunc (_recv, string, _encoding?) {
         Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(string), true)).into_owned()))
     }
-    def self."escapeURIComponent" arity 1 | "escape_uri_component" arity 1 (_recv, arg) {
+    def self."escapeURIComponent" | "escape_uri_component" (_recv, arg) {
         Ok(out(percent_encode(&in_bytes(arg), false)))
     }
     def self."unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, arg1, _arg2?) {
         Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(arg1), false)).into_owned()))
     }
-    def self."escapeHTML" arity 1 | "escape_html" arity 1 (_recv, arg) {
+    def self."escapeHTML" | "escape_html" (_recv, arg) {
         Ok(out(html_escape(&in_bytes(arg))))
     }
-    def self."unescapeHTML" arity 1 | "unescape_html" arity 1 (_recv, arg) {
+    def self."unescapeHTML" | "unescape_html" (_recv, arg) {
         let text = match arg {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => other.to_display_string(),

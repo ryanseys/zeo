@@ -51,9 +51,16 @@ $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
   conversion goes through `builtins/convert.rs` (the `rb_convert_type`
   protocol).
 - One Ruby class/module per runtime module, declared with the
-  `ruby_class!`/`ruby_module!` DSL. A def's parameter list gives both its
-  argument-count check and its `Method#arity`; `cargo run -p xtask --
-  arity-oracle` records what ruby reports and the `builtin_arity` test gates it.
+  `ruby_class!`/`ruby_module!` DSL (a second class in the same file needs its
+  own inline `mod`: each block emits one `lookup`). A def's parameter list is
+  the ONLY place its shape is written — it gives both the argument-count check
+  and its `Method#arity`. Never write an arity number: the one exception is a
+  `|`-joined name that genuinely differs from its def (`"<<" arity 1 | "push"`),
+  and a test fails any override that merely restates the parameter list. Add
+  `cfunc` when CRuby declares the method `argc = -1`, which discards a
+  signature the DSL can still express. `cargo run -p xtask -- arity-oracle`
+  records what ruby reports; `builtin_arity` gates every declaration against it
+  and the backlog is zero, so a disagreement is a bug in the parameter list.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
 

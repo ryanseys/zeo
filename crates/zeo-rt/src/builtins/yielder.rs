@@ -20,8 +20,8 @@ ruby_class! {
 
     // `y << v` forwards to the consumer's block and returns the yielder
     // (chainable: `y << 1 << 2`).
-    def "<<"(recv, *args, &_block) {
-        recv_yielder(recv).call(args)?;
+    def "<<"(recv, value, &_block) {
+        recv_yielder(recv).call(std::slice::from_ref(value))?;
         Ok(recv.clone())
     }
     // `y.yield(*vs)` forwards and returns the block's own return value.

@@ -177,10 +177,10 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "length" | "size" arity 0 (recv) {
+    def "length" | "size" (recv) {
         Ok(RubyValue::Int(crate::array_len(rary)))
     }
-    def "include?" | "member?" arity 1 (recv, arg) {
+    def "include?" | "member?" (recv, arg) {
         Ok(RubyValue::Bool(crate::array_include(rary, arg)))
     }
     def "empty?" (recv) {
@@ -1007,7 +1007,7 @@ ruby_class! {
         *rary.lock() = items.into();
         Ok(recv.clone())
     }
-    def "map!" | "collect!" arity 0 (recv, &block) {
+    def "map!" | "collect!" (recv, &block) {
         check_frozen(rary, recv)?;
         let p = block_or_enum!(recv, &[], block);
         let items = rary.lock().to_vec();
@@ -1020,7 +1020,7 @@ ruby_class! {
     }
     // In-place filters: self when anything changed, nil otherwise (real
     // Ruby's contract).
-    def "select!" | "filter!" arity 0 (recv, &block) {
+    def "select!" | "filter!" (recv, &block) {
         in_place_filter(recv, "select!", block, true)
     }
     def "reject!" (recv, &block) {
@@ -1276,7 +1276,7 @@ ruby_class! {
     }
     // Pattern-matching / implicit-conversion hooks: an Array deconstructs to
     // and converts as itself.
-    def "deconstruct" | "to_ary" arity 0 (recv) {
+    def "deconstruct" | "to_ary" (recv) {
         Ok(recv.clone())
     }
     // In-place Fisher-Yates shuffle (mirrors `shuffle` but writes back and

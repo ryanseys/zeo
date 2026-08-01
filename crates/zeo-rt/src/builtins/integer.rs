@@ -694,7 +694,7 @@ ruby_class! {
             _ => Err(type_error!("{} can't be coerced into Integer", crate::builtins::class_name_of(arg))),
         }
     }
-    def "abs" | "magnitude" arity 0 (recv) {
+    def "abs" | "magnitude" (recv) {
         Ok(match recv {
             RubyValue::Int(i) if *i >= 0 => recv.clone(),
             _ => {
@@ -709,7 +709,7 @@ ruby_class! {
     def "odd?" (recv) {
         Ok(RubyValue::Bool(to_bigint(recv).is_odd()))
     }
-    def "succ" | "next" arity 0 (recv) {
+    def "succ" | "next" (recv) {
         Ok(int_add(recv, &RubyValue::Int(1)))
     }
     def "pred" (recv) {
@@ -755,7 +755,7 @@ ruby_class! {
         };
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))
     }
-    def "ord" | "to_i" arity 0 | "to_int" arity 0 (recv) {
+    def "ord" | "to_i" | "to_int" (recv) {
         Ok(recv.clone())
     }
     def "to_f" (recv) {

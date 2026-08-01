@@ -607,7 +607,7 @@ ruby_class! {
     // missing convenience. It arrives with the stdlib work, as Ruby's own.
     // `Dir.glob(pat)` / `Dir[pat]` -- the block form yields each match and
     // answers nil; otherwise an Array. Multiple patterns union.
-    def self."glob" | "[]"(_recv, *args, &block) {
+    def self."glob" arity -2 | "[]"(_recv, *args, &block) {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }

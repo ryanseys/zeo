@@ -19,7 +19,7 @@ ruby_class! {
     }
     // Declared here rather than left to Kernel's row for the same reason
     // `NilClass#inspect` is: the OWNER is observable, and pp reads it.
-    def "to_s" arity 0 | "inspect" (_recv) {
+    def "to_s" | "inspect" (_recv) {
         Ok(RubyValue::Str(crate::string_new("false".to_string())))
     }
 }

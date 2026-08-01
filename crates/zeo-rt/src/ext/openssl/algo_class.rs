@@ -91,7 +91,7 @@ ruby_class! {
     def self."hexdigest" (recv, arg) {
         Ok(str(hex(&class_raw(recv, arg)?)))
     }
-    def self."base64digest" arity 1 (recv, arg) {
+    def self."base64digest" (recv, arg) {
         Ok(str(super::base64(&class_raw(recv, arg)?)))
     }
 }

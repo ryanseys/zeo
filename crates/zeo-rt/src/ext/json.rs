@@ -166,8 +166,8 @@ ruby_module! {
 
     // CRuby's json/common.rb declares these `module_function`, so each is both a
     // public `JSON.parse` and a private instance method reachable via `include
-    // JSON`. Arity is -2 (one required arg + optional opts).
-    module_function def "parse" | "load" arity -2 (_recv, arg1, arg2?) {
+    // JSON`.
+    module_function def "parse" | "load" (_recv, arg1, arg2?) {
         let text = parse_text(arg1)?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;

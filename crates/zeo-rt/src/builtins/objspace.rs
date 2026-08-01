@@ -179,7 +179,7 @@ ruby_module! {
         Err(not_impl_error!("ObjectSpace.each_object is not available (zeo has no heap enumeration)"))
     }
     // No id->object table exists under Arc refcounting.
-    def self."_id2ref"(_recv, *_args, &_block) {
+    def self."_id2ref"(_recv, _object_id) {
         Err(not_impl_error!("ObjectSpace._id2ref is not available (zeo has no id-to-object table)"))
     }
     // `garbage_collect` is `GC.start` by another name -- a no-op sweep (plus

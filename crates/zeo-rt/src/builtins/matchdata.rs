@@ -38,7 +38,7 @@ ruby_class! {
     // Two MatchData are equal when they cover the same string with the same
     // group spans (CRuby also checks the regexp; same-string-same-spans is the
     // observable equivalent here).
-    def "==" | "eql?" arity 1 (recv, other) {
+    def "==" | "eql?" (recv, other) {
         let RubyValue::MatchData(other) = other else {
             return Ok(RubyValue::Bool(false));
         };
@@ -69,7 +69,7 @@ ruby_class! {
     }
     // `#size`/`#length` -- the number of elements (whole match + every group),
     // i.e. `to_a.length`.
-    def "size" | "length" arity 0 (recv) {
+    def "size" | "length" (recv) {
         let arr = crate::regexp::matchdata_to_a(&recv_md(recv));
         let n = match &arr {
             RubyValue::Array(a) => a.lock().len(),

@@ -159,11 +159,11 @@ ruby_class! {
         let (md, _) = md_from_value(arg1)?;
         Ok(bin_str(raw_hash(md, &str_bytes(arg2)?)?))
     }
-    def self."hexdigest" arity 2 (_recv, arg1, arg2) {
+    def self."hexdigest" (_recv, arg1, arg2) {
         let (md, _) = md_from_value(arg1)?;
         Ok(str(hex(&raw_hash(md, &str_bytes(arg2)?)?)))
     }
-    def self."base64digest" arity 2 (_recv, arg1, arg2) {
+    def self."base64digest" (_recv, arg1, arg2) {
         let (md, _) = md_from_value(arg1)?;
         Ok(str(base64(&raw_hash(md, &str_bytes(arg2)?)?)))
     }
@@ -173,7 +173,7 @@ ruby_class! {
         digest_of(recv).buf.lock().extend_from_slice(&str_bytes(other)?);
         Ok(recv.clone())
     }
-    def "hexdigest" | "to_s" (recv, data?) {
+    def "hexdigest" | "to_s" arity 0 (recv, data?) {
         Ok(str(hex(&finalize(recv, data)?)))
     }
     def "digest" (recv, data?) {

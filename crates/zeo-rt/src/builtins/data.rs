@@ -30,13 +30,13 @@ ruby_class! {
         bind_members(recv, args, true)?;
         Ok(RubyValue::Nil)
     }
-    def "members"(recv, *_args, &_block) {
+    def "members"(recv) {
         build_members(recv)
     }
     def "to_h"(recv, &block) {
         struct_to_h(recv, block)
     }
-    def "deconstruct"(recv, *_args, &_block) {
+    def "deconstruct"(recv) {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
     def "deconstruct_keys"(recv, arg) {
@@ -69,7 +69,7 @@ ruby_class! {
     def "eql?"(recv, arg) {
         Ok(RubyValue::Bool(struct_equal(recv, arg)))
     }
-    def "hash"(recv, *_args, &_block) {
+    def "hash"(recv) {
         // Hash the slots ARRAY (structural), NOT a fresh `to_h` Hash -- a Hash
         // keys by object identity here, so equal Data would otherwise hash
         // apart, breaking their use as Hash keys and their `Array#==`/`uniq`.
@@ -77,7 +77,7 @@ ruby_class! {
         let arr = RubyValue::Array(array_new(slots_of(recv)));
         send_value(&arr, Symbol::intern("hash"), &[], None)
     }
-    def "inspect" | "to_s" (recv, *_args, &_block) {
+    def "inspect" | "to_s" (recv) {
         build_inspect(recv)
     }
 }

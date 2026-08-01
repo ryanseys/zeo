@@ -180,7 +180,7 @@ ruby_module! {
     // `reopen`/`open!` -- close (raising if there is nothing open, as the
     // plain `close` would) and open again with the NEW arguments; omitted
     // ones fall back to the defaults, not to the previous values.
-    def self."reopen" | "open!" arity -1 (recv, *args, &block) {
+    def self."reopen" | "open!" (recv, *args, &block) {
         {
             let mut st = STATE.lock();
             if st.ident.is_none() {
@@ -294,10 +294,10 @@ ruby_module! {
     }
 
     // The priority-mask macros, CAPITALIZED METHODS as in CRuby's Macros.
-    def self."LOG_MASK" arity 1 (_recv, arg) {
+    def self."LOG_MASK" (_recv, arg) {
         Ok(RubyValue::Int(1 << convert::to_index(arg)?))
     }
-    def self."LOG_UPTO" arity 1 (_recv, arg) {
+    def self."LOG_UPTO" (_recv, arg) {
         Ok(RubyValue::Int((1 << (convert::to_index(arg)? + 1)) - 1))
     }
 

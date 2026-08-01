@@ -148,7 +148,7 @@ ruby_class! {
     // Enter, run the block, ALWAYS leave -- an exception or `break` out of
     // the block must still unwind one nesting level. Same shape as
     // `Mutex#synchronize`, which is what `mon_synchronize` aliases to.
-    def "synchronize" | "mon_synchronize" (recv, *_args, &block) {
+    def "synchronize" | "mon_synchronize" (recv, &block) {
         let blk = need_block!(block);
         let m = monitor_of(recv);
         m.enter()?;
