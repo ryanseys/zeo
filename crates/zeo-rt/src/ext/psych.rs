@@ -19,7 +19,7 @@
 //! built; the `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) raises
 //! NotImplementedError (not modelled).
 
-use crate::builtins::{arity, not_impl_error};
+use crate::builtins::{not_impl_error};
 use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
@@ -354,21 +354,21 @@ ruby_module! {
 
     // CRuby's `Psych.load`/`dump`/... are singleton module methods (`def self.`),
     // each arity -2 (one required arg + optional opts).
-    def self."load" arity -2 | "unsafe_load" arity -2 | "safe_load" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2); // (yaml[, opts]) -- opts ignored
-        let text = load_text(&args[0])?;
+    // `opts` is ignored.
+    def self."load" | "unsafe_load" | "safe_load" (_recv, yaml, **_opts) {
+        let text = load_text(yaml)?;
         let docs = load_documents(&text)?;
         Ok(docs.into_iter().next().unwrap_or(RubyValue::Nil))
     }
-    def self."dump" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2); // (obj[, io/opts]) -- only the compact string form
-        Ok(RubyValue::Str(string_new(dump(&args[0]))))
+    // Only the compact string form; an `io`/`opts` argument is ignored.
+    def self."dump" (_recv, obj, _io?, _options?) {
+        Ok(RubyValue::Str(string_new(dump(obj))))
     }
 
     // `Psych.load_file(path)` -- read the file and load its first document.
-    def self."load_file" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2); // (path[, opts]) -- opts ignored
-        let path = crate::builtins::file::path_arg(&args[0], "load_file")?;
+    // `opts` is ignored.
+    def self."load_file" (_recv, filename, **_opts) {
+        let path = crate::builtins::file::path_arg(filename, "load_file")?;
         let text = crate::gvl::without_gvl(|| std::fs::read_to_string(&path)).map_err(|e| raise_error(
             "Errno::ENOENT",
             format!("No such file or directory - {path} ({e})"),

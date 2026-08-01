@@ -14,7 +14,7 @@
 
 mod parse;
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use std::sync::Arc;
@@ -295,9 +295,8 @@ ruby_class! {
         Ok(RubyValue::Bool(equal))
     }
 
-    def self."new" | "civil" (recv, *args, &_block) {
-        arity!(args, 0..=3);
-        let (y, m, d) = civil_args(args)?;
+    def self."new" | "civil" (recv, _year?, _month?, _mday?, _start?) {
+        let (y, m, d) = civil_args(__args)?;
         Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
     }
     def self."jd" (recv, arg?) {
@@ -326,11 +325,10 @@ ruby_class! {
         let comp = arg2.is_none_or(RubyValue::truthy);
         Ok(RubyValue::Hash(crate::collections::hash_new(parse::date_parse(&text, comp))))
     }
-    def self."valid_date?" | "valid_civil?" (_recv, *args, &_block) {
-        arity!(args, 3..=4);
+    def self."valid_date?" | "valid_civil?" cfunc (_recv, _year, _month, _mday, _start?) {
         // A non-numeric component answers false rather than raising
         // (oracle: `Date.valid_date?(2020, nil, 1)` is false).
-        let Ok((y, m, d)) = civil_args(args) else {
+        let Ok((y, m, d)) = civil_args(__args) else {
             return Ok(RubyValue::Bool(false));
         };
         // Round-trips only for a real calendar date.

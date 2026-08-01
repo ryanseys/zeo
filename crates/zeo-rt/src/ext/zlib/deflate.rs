@@ -5,7 +5,7 @@ use super::codec::{
     wrap_of, yield_or_return,
 };
 use crate::RubyValue;
-use crate::builtins::{arity, convert, not_impl_error};
+use crate::builtins::{convert, not_impl_error};
 use flate2::FlushCompress;
 use std::sync::Arc;
 use zeo_macros::ruby_class;
@@ -30,24 +30,21 @@ ruby_class! {
     }
 
     // `Deflate.deflate(string, level)` -- a whole stream in one call.
-    def self."deflate" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        codec::one_shot_deflate(&bytes_of(args.first())?, super::level_of(args.get(1)), Wrap::Zlib)
+    def self."deflate" cfunc (_recv, string, level?) {
+        codec::one_shot_deflate(&bytes_of(Some(string))?, super::level_of(level), Wrap::Zlib)
     }
 
     // `#deflate(string, flush = NO_FLUSH)` -- feed input, take back whatever
     // has been flushed so far (with NO_FLUSH, usually nothing).
-    def "deflate" (recv, *args, &block) {
-        arity!(args, 1..=2);
-        let flush = flush_of(args.get(1))?;
-        let out = run_and_maybe_detach(recv, &bytes_of(args.first())?, Flush::Compress(flush), true)?;
+    def "deflate" cfunc (recv, string, flush?, &block) {
+        let flush = flush_of(flush)?;
+        let out = run_and_maybe_detach(recv, &bytes_of(Some(string))?, Flush::Compress(flush), true)?;
         yield_or_return(out, block)
     }
     // `#<<` feeds input and QUEUES the output for the next detaching call.
-    def "<<" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "<<" (recv, string) {
         run_and_maybe_detach(
-            recv, &bytes_of(args.first())?, Flush::Compress(FlushCompress::None), false,
+            recv, &bytes_of(Some(string))?, Flush::Compress(FlushCompress::None), false,
         )
     }
     // `#flush(flush = SYNC_FLUSH)` -- flush without ending the stream.
@@ -67,10 +64,9 @@ ruby_class! {
     // is the change taking effect mid-stream. CRuby's own `params` raises
     // `Zlib::StreamError` in both natural call shapes and segfaults in a third
     // (ruby 4.0.5, `rb_deflate_params`), so nothing depends on it working.
-    def "params" (recv, *args, &_block) {
-        arity!(args, 2);
-        let level = super::level_of(args.first());
-        let strategy = convert::to_index(&args[1])?;
+    def "params" (recv, level, strategy) {
+        let level = super::level_of(Some(level));
+        let strategy = convert::to_index(strategy)?;
         let st = &mut *ready(recv)?;
         let codec::Codec::Deflate(d) = &mut st.codec else {
             return Err(stream_error());

@@ -9,7 +9,6 @@
 //! `==` is a fixed-length constant-time compare of the two MACs.
 
 use super::{base64, bin_str, hex, md_from_value, str, str_bytes};
-use crate::builtins::arity;
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal};
 use parking_lot::Mutex;
@@ -87,9 +86,9 @@ fn hmac_of(recv: &RubyValue) -> &RHmac {
 
 /// The one-shot class-form body (`HMAC.digest(md, key, data)` family --
 /// algorithm FIRST there, where `new` takes the key first).
-fn class_mac(args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
-    let (md, _) = md_from_value(&args[0])?;
-    one_shot(md, &str_bytes(&args[1])?, &str_bytes(&args[2])?)
+fn class_mac(digest: &RubyValue, key: &RubyValue, data: &RubyValue) -> Result<Vec<u8>, Signal> {
+    let (md, _) = md_from_value(digest)?;
+    one_shot(md, &str_bytes(key)?, &str_bytes(data)?)
 }
 
 ruby_class! {
@@ -108,17 +107,14 @@ ruby_class! {
             frozen: AtomicBool::new(false),
         })))
     }
-    def self."digest" arity 3 (_recv, *args, &_block) {
-        arity!(args, 3);
-        Ok(bin_str(class_mac(args)?))
+    def self."digest"(_recv, digest, key, data) {
+        Ok(bin_str(class_mac(digest, key, data)?))
     }
-    def self."hexdigest" arity 3 (_recv, *args, &_block) {
-        arity!(args, 3);
-        Ok(str(hex(&class_mac(args)?)))
+    def self."hexdigest"(_recv, digest, key, data) {
+        Ok(str(hex(&class_mac(digest, key, data)?)))
     }
-    def self."base64digest" arity 3 (_recv, *args, &_block) {
-        arity!(args, 3);
-        Ok(str(base64(&class_mac(args)?)))
+    def self."base64digest"(_recv, digest, key, data) {
+        Ok(str(base64(&class_mac(digest, key, data)?)))
     }
 
     def "update" | "<<" (recv, other) {

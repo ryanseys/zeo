@@ -652,8 +652,8 @@ ruby_class! {
     }
     // `round`: `()` and `(n < 1)` answer Integers; a `half:` hash or a
     // trailing mode symbol/flag overrides the global mode.
-    def "round" (recv, *args, &_block) {
-        arity!(args, 0..=2);
+    def "round" (recv, _n?, _mode?) {
+        let args = __args;
         let bd = recv_bd(recv);
         let mut mode = arith::round_mode();
         let mut n = 0i64;

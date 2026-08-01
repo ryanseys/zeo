@@ -12,7 +12,7 @@ use super::{
     write_int_array, write_int_m,
 };
 use crate::RubyValue;
-use crate::builtins::{arity, index_error, type_error};
+use crate::builtins::{index_error, type_error};
 use zeo_abi::FFI_POINTER_CLASS;
 use zeo_macros::ruby_class;
 
@@ -22,9 +22,8 @@ ruby_class! {
     // `FFI::Pointer.new(address)` or `FFI::Pointer.new(type, address)` (the
     // type governs `[]` element size, which we don't model -- the address is
     // what matters). A Pointer argument copies its address.
-    def self."new"(_recv, *args, &_b) {
-        arity!(args, 1..=2);
-        let addr_arg = args.last().expect("arity checked");
+    def self."new"(_recv, type_or_address, address?) {
+        let addr_arg = address.unwrap_or(type_or_address);
         let addr = match address_of(addr_arg) {
             Some(a) => a,
             None => crate::ffi::to_i64(addr_arg)? as usize,
@@ -83,16 +82,17 @@ ruby_class! {
     def "put_float64" | "put_double"(r, *a, &_b) { write_float_m(r, a, 8, true) }
 
     // -- pointers (read/write an address-sized word, wrapped as a Pointer) --
-    def "read_pointer" | "get_pointer"(recv, *args, &_b) {
-        arity!(args, 0..=1);
-        let off = off_arg(args, 0)?;
+    def "read_pointer" | "get_pointer"(recv, offset?) {
+        let off = off_arg(offset)?;
         let p = ptr_of(recv);
         p.check_bounds(off, 8)?;
         Ok(wrap_address(unsafe { p.read_int(off, 8, false) } as usize))
     }
-    def "write_pointer" | "put_pointer"(recv, *args, &_b) {
-        arity!(args, 1..=2);
-        let (off, target) = if args.len() == 2 { (off_arg(args, 0)?, &args[1]) } else { (0, &args[0]) };
+    def "write_pointer" | "put_pointer"(recv, first, second?) {
+        let (off, target) = match second {
+            Some(v) => (off_arg(Some(first))?, v),
+            None => (0, first),
+        };
         let addr = address_of(target).ok_or_else(|| type_error!("wrong argument type (expected a pointer)"))?;
         let p = ptr_of(recv);
         p.check_bounds(off, 8)?;

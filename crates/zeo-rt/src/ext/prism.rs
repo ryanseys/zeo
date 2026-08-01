@@ -16,7 +16,6 @@
 
 use std::ffi::{CStr, c_char};
 
-use crate::builtins::arity;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 
@@ -131,34 +130,29 @@ ruby_module! {
     }
 
     // `Prism.dump`'s buffer: the serialized AST.
-    def self."serialize_parse"(_recv, *args, &_block) {
-        arity!(args, 2);
-        serialize(args, pm_serialize_parse)
+    def self."serialize_parse"(_recv, _source, _options) {
+        serialize(__args, pm_serialize_parse)
     }
 
     // `Prism.lex`'s buffer: the token stream with its lex states.
-    def self."serialize_lex"(_recv, *args, &_block) {
-        arity!(args, 2);
-        serialize(args, pm_serialize_lex)
+    def self."serialize_lex"(_recv, _source, _options) {
+        serialize(__args, pm_serialize_lex)
     }
 
     // `Prism.parse_lex`'s buffer: the AST and the token stream together.
-    def self."serialize_parse_lex"(_recv, *args, &_block) {
-        arity!(args, 2);
-        serialize(args, pm_serialize_parse_lex)
+    def self."serialize_parse_lex"(_recv, _source, _options) {
+        serialize(__args, pm_serialize_parse_lex)
     }
 
     // `Prism.parse_comments`' buffer.
-    def self."serialize_parse_comments"(_recv, *args, &_block) {
-        arity!(args, 2);
-        serialize(args, pm_serialize_parse_comments)
+    def self."serialize_parse_comments"(_recv, _source, _options) {
+        serialize(__args, pm_serialize_parse_comments)
     }
 
     // Whether the source parses with no errors -- answered without
     // building or serializing a tree.
-    def self."parse_success?"(_recv, *args, &_block) {
-        arity!(args, 2);
-        let (source, options) = args_bytes(args)?;
+    def self."parse_success?"(_recv, _source, _options) {
+        let (source, options) = args_bytes(__args)?;
         let ok = unsafe {
             pm_parse_success_p(
                 source.as_ptr(),

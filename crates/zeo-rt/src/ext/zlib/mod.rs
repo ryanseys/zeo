@@ -36,7 +36,7 @@ pub(crate) mod gzip_writer;
 pub(crate) mod inflate;
 pub(crate) mod zstream;
 
-use crate::builtins::{arity, convert};
+use crate::builtins::{convert};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 
@@ -154,26 +154,21 @@ ruby_module! {
 
     // `Zlib.deflate(str, level = DEFAULT_COMPRESSION)` -- zlib-format
     // compressed bytes (ASCII-8BIT).
-    def self."deflate" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        codec::one_shot_deflate(&bytes_arg(args.first())?, level_of(args.get(1)), codec::Wrap::Zlib)
+    def self."deflate" cfunc (_recv, string, level?) {
+        codec::one_shot_deflate(&bytes_arg(Some(string))?, level_of(level), codec::Wrap::Zlib)
     }
     // `Zlib.inflate(str)` -- decompress a zlib stream.
-    def self."inflate" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        codec::one_shot_inflate(&bytes_arg(args.first())?, codec::Wrap::Zlib)
+    def self."inflate" (_recv, string) {
+        codec::one_shot_inflate(&bytes_arg(Some(string))?, codec::Wrap::Zlib)
     }
     // `Zlib.gzip(str, level: nil, strategy: nil)` -- a whole gzip member.
-    def self."gzip" (_recv, *args, &_block) {
-        let (positional, kwargs) = split_kwargs(args);
-        arity!(positional, 1);
-        let level = level_of(kw(&kwargs, "level").as_ref());
-        gzip::gzip_string(&bytes_arg(positional.first())?, level)
+    def self."gzip" cfunc (_recv, string, **opts) {
+        let level = level_of(kw(&opts.cloned(), "level").as_ref());
+        gzip::gzip_string(&bytes_arg(Some(string))?, level)
     }
     // `Zlib.gunzip(str)` -- decompress a gzip member, footer checked.
-    def self."gunzip" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        gzip::gunzip_string(&bytes_arg(args.first())?)
+    def self."gunzip" (_recv, string) {
+        gzip::gunzip_string(&bytes_arg(Some(string))?)
     }
 }
 
@@ -184,15 +179,6 @@ pub(super) fn level_of(v: Option<&RubyValue>) -> flate2::Compression {
         Some(RubyValue::Int(n)) if (0..=9).contains(n) => flate2::Compression::new(*n as u32),
         Some(RubyValue::Int(n)) if *n > 9 => flate2::Compression::best(),
         _ => flate2::Compression::default(),
-    }
-}
-
-/// Split a call's trailing keyword Hash off its positional arguments (the
-/// runtime's kwargs convention), so `arity!` counts only real positionals.
-fn split_kwargs(args: &[RubyValue]) -> (&[RubyValue], Option<RubyValue>) {
-    match args.last() {
-        Some(h @ RubyValue::Hash(_)) => (&args[..args.len() - 1], Some(h.clone())),
-        _ => (args, None),
     }
 }
 

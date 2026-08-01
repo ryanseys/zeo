@@ -3,8 +3,8 @@
 //! `OpenSSL::KDF::KDFError`; an absent required keyword is CRuby's plain
 //! `ArgumentError` (`"missing keyword: :hash"`).
 
-use super::{bin_str, md_from_value, req_kw, split_kwargs, str_bytes};
-use crate::builtins::{arity, convert};
+use super::{bin_str, md_from_value, req_kw, str_bytes};
+use crate::builtins::{convert};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
@@ -26,10 +26,9 @@ ruby_module! {
     KDF = zeo_abi::OPENSSL_KDF_MODULE;
 
     // `KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)`.
-    def self."pbkdf2_hmac" (_recv, *args, &_block) {
-        let (positional, kwargs) = split_kwargs(args);
-        arity!(positional, 1);
-        let pass = str_bytes(&positional[0])?;
+    def self."pbkdf2_hmac" cfunc (_recv, pass, **opts) {
+        let kwargs = opts.cloned();
+        let pass = str_bytes(pass)?;
         let salt = str_bytes(&req_kw(&kwargs, "salt")?)?;
         let iterations = convert::to_index(&req_kw(&kwargs, "iterations")?)?;
         let length = usize_kw(&kwargs, "length")?;
@@ -41,10 +40,9 @@ ruby_module! {
     }
 
     // `KDF.hkdf(ikm, salt:, info:, length:, hash:)` (RFC 5869).
-    def self."hkdf" (_recv, *args, &_block) {
-        let (positional, kwargs) = split_kwargs(args);
-        arity!(positional, 1);
-        let ikm = str_bytes(&positional[0])?;
+    def self."hkdf" cfunc (_recv, ikm, **opts) {
+        let kwargs = opts.cloned();
+        let ikm = str_bytes(ikm)?;
         let salt = str_bytes(&req_kw(&kwargs, "salt")?)?;
         let info = str_bytes(&req_kw(&kwargs, "info")?)?;
         let length = usize_kw(&kwargs, "length")?;
@@ -67,10 +65,9 @@ ruby_module! {
 
     // `KDF.scrypt(pass, salt:, N:, r:, p:, length:)`. `maxmem` 0 keeps
     // OpenSSL's default ceiling, as CRuby's binding does.
-    def self."scrypt" (_recv, *args, &_block) {
-        let (positional, kwargs) = split_kwargs(args);
-        arity!(positional, 1);
-        let pass = str_bytes(&positional[0])?;
+    def self."scrypt" cfunc (_recv, pass, **opts) {
+        let kwargs = opts.cloned();
+        let pass = str_bytes(pass)?;
         let salt = str_bytes(&req_kw(&kwargs, "salt")?)?;
         let n = convert::to_index(&req_kw(&kwargs, "N")?)? as u64;
         let r = convert::to_index(&req_kw(&kwargs, "r")?)? as u64;

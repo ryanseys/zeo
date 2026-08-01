@@ -120,15 +120,6 @@ pub(crate) fn digest_error(msg: &str) -> Signal {
     raise_error("OpenSSL::Digest::DigestError", msg.to_string())
 }
 
-/// Split a call's trailing keyword Hash off its positional arguments (the
-/// runtime's kwargs convention), so `arity!` counts only real positionals.
-pub(crate) fn split_kwargs(args: &[RubyValue]) -> (&[RubyValue], Option<RubyValue>) {
-    match args.last() {
-        Some(h @ RubyValue::Hash(_)) => (&args[..args.len() - 1], Some(h.clone())),
-        _ => (args, None),
-    }
-}
-
 /// One keyword out of a call's trailing Hash, `None` when absent.
 pub(crate) fn kw(kwargs: &Option<RubyValue>, name: &str) -> Option<RubyValue> {
     let RubyValue::Hash(h) = kwargs.as_ref()? else {

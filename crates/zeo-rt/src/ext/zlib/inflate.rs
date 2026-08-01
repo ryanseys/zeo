@@ -4,7 +4,7 @@ use super::codec::{
     self, Flush, RZStream, Wrap, bytes_of, run_and_maybe_detach, wrap_of, yield_or_return, zs_of,
 };
 use crate::RubyValue;
-use crate::builtins::{arity, convert, not_impl_error};
+use crate::builtins::{convert, not_impl_error};
 use flate2::FlushDecompress;
 use std::sync::Arc;
 use zeo_macros::ruby_class;
@@ -24,9 +24,8 @@ ruby_class! {
     }
 
     // `Inflate.inflate(string)` -- a whole stream in one call.
-    def self."inflate" arity 1 (_recv, *args, &_block) {
-        arity!(args, 1);
-        codec::one_shot_inflate(&bytes_of(args.first())?, Wrap::Zlib)
+    def self."inflate" (_recv, string) {
+        codec::one_shot_inflate(&bytes_of(Some(string))?, Wrap::Zlib)
     }
 
     // `#inflate(string)` -- feed input, take back what it decompressed to. A
@@ -49,10 +48,9 @@ ruby_class! {
         yield_or_return(out, block)
     }
     // `#<<` feeds input and QUEUES the output for the next detaching call.
-    def "<<" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "<<" (recv, string) {
         run_and_maybe_detach(
-            recv, &bytes_of(args.first())?, Flush::Decompress(FlushDecompress::None), false,
+            recv, &bytes_of(Some(string))?, Flush::Decompress(FlushDecompress::None), false,
         )
     }
 

@@ -316,8 +316,8 @@ pub fn address_of(v: &RubyValue) -> Option<usize> {
 // ---- argument helpers ----
 
 /// An integer argument at `idx`, defaulting to 0 (an absent offset).
-fn off_arg(args: &[RubyValue], idx: usize) -> Result<usize, Signal> {
-    match args.get(idx) {
+fn off_arg(offset: Option<&RubyValue>) -> Result<usize, Signal> {
+    match offset {
         None => Ok(0),
         Some(v) => Ok(crate::ffi::to_i64(v)? as usize),
     }

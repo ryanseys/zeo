@@ -9,7 +9,7 @@
 //! reads (`[]`/`captures`/`named_captures`/`values_at`), and `inspect` -- is
 //! oracle-verified against ruby 4.0.6.
 
-use crate::builtins::{arity, index_error};
+use crate::builtins::{index_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::regexp::ScannerMatch;
 use crate::{RubyValue, Signal, string_new};
@@ -334,13 +334,11 @@ ruby_class! {
     // `(true, true)`, `skip` `(true, false)`, `check` `(false, true)`,
     // `match?` `(false, false)`. `search_full` is the same for the forward
     // search, over the whole span consumed rather than the match alone.
-    def "scan_full" (recv, *args, &_block) {
-        arity!(args, 3);
-        full_scan(&mut sc_of(recv).state.lock(), args, true)
+    def "scan_full" (recv, _pattern, _advance_pointer, _return_string) {
+        full_scan(&mut sc_of(recv).state.lock(), __args, true)
     }
-    def "search_full" (recv, *args, &_block) {
-        arity!(args, 3);
-        full_scan(&mut sc_of(recv).state.lock(), args, false)
+    def "search_full" (recv, _pattern, _advance_pointer, _return_string) {
+        full_scan(&mut sc_of(recv).state.lock(), __args, false)
     }
     def "getch" (recv) {
         let st = &mut *sc_of(recv).state.lock();
@@ -661,11 +659,10 @@ ruby_class! {
         Ok(RubyValue::Int(n))
     }
 
-    def self."new" (_recv, *args, &_block) {
-        arity!(args, 1..=2); // (string[, fixed_anchor: bool])
-        let s = &crate::builtins::convert::to_rstr(&args[0])?;
+    def self."new" cfunc (_recv, string, opts?) {
+        let s = &crate::builtins::convert::to_rstr(string)?;
         let text = s.lock().to_utf8_lossy().into_owned();
-        let fixed_anchor = match args.get(1) {
+        let fixed_anchor = match opts {
             Some(RubyValue::Hash(h)) => crate::collections::hash_get(
                 h,
                 &RubyValue::Symbol(crate::Symbol::intern("fixed_anchor")),

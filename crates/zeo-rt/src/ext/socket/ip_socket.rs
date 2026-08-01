@@ -8,7 +8,7 @@
 use std::os::fd::RawFd;
 
 use super::{errno_error, ip_addr_array, raw_to_socketaddr};
-use crate::builtins::{arity, io_error};
+use crate::builtins::{io_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
@@ -52,8 +52,8 @@ ruby_class! {
     }
 
     // `#addr` -- `[family, port, hostname, ip]` for the local address.
-    def "addr"(recv, *args, &_block) {
-        arity!(args, 0..=1); // (reverse_lookup) -- ignored, DNS is never done
+    // `reverse_lookup` is ignored -- DNS is never done.
+    def "addr"(recv, _reverse_lookup?) {
         addr_array(recv, "getsockname(2)", libc::getsockname)
     }
     // `#peeraddr` -- the same array for the connected peer.

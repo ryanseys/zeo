@@ -183,9 +183,8 @@ ruby_class! {
     // `Socket.getaddrinfo(host, service[, family, socktype, protocol, flags])`
     // -- `[family_name, port, canonname, addr, afamily, socktype, protocol]`
     // rows. Resolution runs through `libc::getaddrinfo`.
-    def self."getaddrinfo"(_recv, *args, &_block) {
-        arity!(args, 2..=6);
-        getaddrinfo(args)
+    def self."getaddrinfo" cfunc (_recv, _nodename, _service, _family?, _socktype?, _protocol?, _flags?) {
+        getaddrinfo(__args)
     }
     // `Socket.socketpair(domain, type, protocol = 0)` (aka `pair`) -- a
     // connected pair of `Socket`s (AF_UNIX in practice).

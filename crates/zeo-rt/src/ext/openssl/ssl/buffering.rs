@@ -11,7 +11,7 @@
 //! `write_nonblock` work a BLOCKING descriptor, so they never answer
 //! `:wait_readable`.
 
-use crate::builtins::{arity, block_or_enum, convert, eof_error};
+use crate::builtins::{block_or_enum, convert, eof_error};
 use crate::dispatch::send_value_in;
 use crate::ext::openssl::{bin_str, str_bytes};
 use crate::signal::Signal;
@@ -181,9 +181,8 @@ ruby_module! {
     def "write" | "write_nonblock" arity -1 (recv, *args, &_block) {
         Ok(RubyValue::Int(write_args(recv, args)?))
     }
-    def "<<" (recv, *args, &_block) {
-        arity!(args, 1);
-        send(recv, "syswrite", &args[0..1])?;
+    def "<<" (recv, s) {
+        send(recv, "syswrite", std::slice::from_ref(s))?;
         Ok(recv.clone())
     }
     // `print`/`printf`/`puts` answer nil, unlike `write`'s byte count.
@@ -270,10 +269,9 @@ ruby_module! {
         }
         Ok(RubyValue::Array(crate::array_new(lines)))
     }
-    def "each" | "each_line" arity -1 (recv, *args, &block) {
-        arity!(args, 0..=2);
-        let sep = separator(args.first())?;
-        let p = block_or_enum!(recv, "each_line", args, block);
+    def "each" | "each_line" cfunc (recv, sep?, _limit?, &block) {
+        let sep = separator(sep)?;
+        let p = block_or_enum!(recv, "each_line", __args, block);
         while let Some(line) = read_line(recv, sep)? {
             p.call(&[bin_str(line)])?;
         }

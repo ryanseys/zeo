@@ -14,7 +14,6 @@
 //! degraded to `RuntimeError`. Documented divergence: `to_json` on arbitrary
 //! objects (the require-time monkeypatch) is not added -- use `JSON.generate`.
 
-use crate::builtins::arity;
 use crate::collections::{array_new, hash_new};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
@@ -174,10 +173,10 @@ ruby_module! {
             .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;
         Ok(to_ruby(&value, symbolize_opt(arg2)))
     }
-    module_function def "generate" arity -2 | "dump" arity -2 (_recv, *args, &_block) {
-        arity!(args, 1..=2); // (obj[, opts]) -- opts ignored for compact form
+    // `opts` is ignored -- only the compact form is generated.
+    module_function def "generate" | "dump" (_recv, obj, _opts?) {
         let mut out = String::new();
-        generate_into(&args[0], None, &mut out);
+        generate_into(obj, None, &mut out);
         Ok(RubyValue::Str(string_new(out)))
     }
     module_function def "pretty_generate" (_recv, arg1, _arg2?) {

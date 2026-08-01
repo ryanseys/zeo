@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-use crate::builtins::{arity, runtime_error, type_error};
+use crate::builtins::{runtime_error, type_error};
 use crate::collections::{array_new, hash_get, hash_has_key, hash_new};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
@@ -172,8 +172,8 @@ fn build_result(st: &CovState) -> RubyValue {
 
 /// A `result`/`start` keyword read off the trailing Hash argument,
 /// defaulting to `default` when absent.
-fn kwarg_bool(args: &[RubyValue], name: &str, default: bool) -> bool {
-    let Some(RubyValue::Hash(h)) = args.first() else {
+fn kwarg_bool(opts: Option<&RubyValue>, name: &str, default: bool) -> bool {
+    let Some(RubyValue::Hash(h)) = opts else {
         return default;
     };
     let key = RubyValue::Symbol(Symbol::intern(name));
@@ -189,15 +189,13 @@ ruby_module! {
 
     // `start` / `start(lines: true)` -- setup + resume. Modes beyond line
     // coverage raise (the AOT instrumentation has no branch/method events).
-    def self."start"(_recv, *args, &_b) {
-        arity!(args, 0..=1);
-        do_setup(args)?;
+    def self."start"(_recv, _opt?) {
+        do_setup(__args)?;
         do_resume()?;
         Ok(RubyValue::Nil)
     }
-    def self."setup"(_recv, *args, &_b) {
-        arity!(args, 0..=1);
-        do_setup(args)?;
+    def self."setup"(_recv, _opt?) {
+        do_setup(__args)?;
         Ok(RubyValue::Nil)
     }
     def self."resume"(_recv) {
@@ -227,10 +225,9 @@ ruby_module! {
     }
     // `result(stop: true, clear: true)` -- the measured coverage; by default
     // ends measurement (a second `result` raises "not enabled").
-    def self."result"(_recv, *args, &_b) {
-        arity!(args, 0..=1);
-        let stop = kwarg_bool(args, "stop", true);
-        let clear = kwarg_bool(args, "clear", true);
+    def self."result"(_recv, **opts) {
+        let stop = kwarg_bool(opts, "stop", true);
+        let clear = kwarg_bool(opts, "clear", true);
         let mut st = STATE.lock().expect("coverage state lock");
         if st.mode == Mode::Idle {
             return Err(runtime_error!("coverage measurement is not enabled"));

@@ -14,7 +14,7 @@
 //! arbitrary bytes with an encoding.
 
 use crate::RubyValue;
-use crate::builtins::{arity, eof_error};
+use crate::builtins::{eof_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -329,19 +329,17 @@ ruby_class! {
         Ok(RubyValue::Int(i64::from(b)))
     }
     // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
-    def "readline" (recv, *args, &_block) {
-        arity!(args, 0..=1);
-        match gets(recv, args, None)? {
+    def "readline" (recv, _sep?) {
+        match gets(recv, __args, None)? {
             RubyValue::Nil => Err(eof_error!("end of file reached")),
             line => Ok(line),
         }
     }
     // `readlines(sep = "\n")` -- every remaining line as an Array.
-    def "readlines" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "readlines" (recv, _sep?) {
         let mut lines = Vec::new();
         loop {
-            match gets(recv, args, None)? {
+            match gets(recv, __args, None)? {
                 RubyValue::Nil => break,
                 line => lines.push(line),
             }
@@ -359,10 +357,10 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
 
-    def self."new" | "open" (_recv, *args, &_block) {
-        arity!(args, 0..=2); // (string=""[, mode]) -- mode ignored for now
+    // `mode` is ignored for now.
+    def self."new" | "open" (_recv, string?, _mode?) {
         // An empty `StringIO.new` is UTF-8, as the `""` it stands in for is.
-        let (bytes, enc) = match args.first() {
+        let (bytes, enc) = match string {
             None | Some(RubyValue::Nil) => (Vec::new(), crate::encoding::UTF_8),
             Some(v) => {
                 let s = crate::builtins::convert::to_rstr(v)?;

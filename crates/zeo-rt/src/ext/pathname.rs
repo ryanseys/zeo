@@ -11,7 +11,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::builtins::arity;
 use crate::builtins::file::{basename_of, dirname_of, expand_path_of, extname_of, path_arg};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
@@ -222,7 +221,7 @@ ruby_class! {
         };
         Ok(pathname_val(expand_path_of(recv_path(recv), base.as_deref())?))
     }
-    def "cleanpath" (recv, *args, &_b) { arity!(args, 0..=1); Ok(pathname_val(cleanpath(recv_path(recv)))) }
+    def "cleanpath" (recv, _consider_symlink?) { Ok(pathname_val(cleanpath(recv_path(recv)))) }
     def "sub_ext" (recv, arg) {
         let newext = arg_path(arg)?;
         let path = recv_path(recv);

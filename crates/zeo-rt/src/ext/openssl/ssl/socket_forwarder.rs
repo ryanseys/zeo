@@ -6,7 +6,6 @@
 //! why these belong to a module rather than to `SSLSocket`: any object that
 //! answers `to_io` can mix them in.
 
-use crate::builtins::arity;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 
@@ -38,34 +37,29 @@ ruby_module! {
     def "remote_address" (recv) {
         forward(recv, "remote_address", &[])
     }
-    def "setsockopt" (recv, *args, &_block) {
-        arity!(args, 3);
-        forward(recv, "setsockopt", args)
+    def "setsockopt" (recv, _level, _optname, _optval) {
+        forward(recv, "setsockopt", __args)
     }
-    def "getsockopt" (recv, *args, &_block) {
-        arity!(args, 2);
-        forward(recv, "getsockopt", args)
+    def "getsockopt" (recv, _level, _optname) {
+        forward(recv, "getsockopt", __args)
     }
     def "fcntl" (recv, *args, &_block) {
         forward(recv, "fcntl", args)
     }
-    def "close_on_exec=" (recv, *args, &_block) {
-        arity!(args, 1);
-        forward(recv, "close_on_exec=", args)
+    def "close_on_exec=" (recv, _value) {
+        forward(recv, "close_on_exec=", __args)
     }
     def "close_on_exec?" (recv) {
         forward(recv, "close_on_exec?", &[])
     }
-    def "do_not_reverse_lookup=" (recv, *args, &_block) {
-        arity!(args, 1);
-        forward(recv, "do_not_reverse_lookup=", args)
+    def "do_not_reverse_lookup=" (recv, _value) {
+        forward(recv, "do_not_reverse_lookup=", __args)
     }
     def "timeout" (recv) {
         forward(recv, "timeout", &[])
     }
-    def "timeout=" (recv, *args, &_block) {
-        arity!(args, 1);
-        forward(recv, "timeout=", args)
+    def "timeout=" (recv, _value) {
+        forward(recv, "timeout=", __args)
     }
     def "wait" (recv, *args, &_block) {
         forward(recv, "wait", args)
