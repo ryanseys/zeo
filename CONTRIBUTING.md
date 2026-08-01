@@ -61,6 +61,11 @@ $ cargo run -p xtask -- bench                     # perf vs bench/baseline.tsv
   signature the DSL can still express. `cargo run -p xtask -- arity-oracle`
   records what ruby reports; `builtin_arity` gates every declaration against it
   and the backlog is zero, so a disagreement is a bug in the parameter list.
+- Declare a method on the class CRuby owns it on — that decides which receivers
+  answer it, so `IO#flock` (File's) and `Module#superclass` (Class's) were
+  behaviour bugs, not reflection details. `builtin_arity`'s `zeo-only` tag
+  catches exactly this and is currently empty, so a new row there is a wrong
+  class or an invented name, not routine bookkeeping.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
 
