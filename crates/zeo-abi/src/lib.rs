@@ -594,6 +594,13 @@ pub const PRISM_MODULE: ClassId = ClassId(146);
 /// what puts `File::Constants` in `IO.ancestors`.
 pub const FILE_CONSTANTS_MODULE: ClassId = ClassId(147);
 
+/// `Enumerator::ArithmeticSequence` -- what a BLOCKLESS `Range#step`,
+/// `Range#%` or `Numeric#step` over a numeric receiver answers. An
+/// `Enumerator` that also carries its `(begin, end, step, exclude_end)`
+/// quadruple, so `#size`/`#last` compute rather than iterate and `Array#[]`
+/// can slice with a stride.
+pub const ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS: ClassId = ClassId(148);
+
 /// `Refinement` -- what `M.refinements` holds and what a refined method's
 /// `Method#owner` reports. A `Module` subclass with no instances of its
 /// own here: the compiler mints one hidden module per `refine` block and
@@ -1819,6 +1826,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "File::Constants",
         is_module: true,
         superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS,
+        name: "Enumerator::ArithmeticSequence",
+        is_module: false,
+        superclass: Some(ENUMERATOR_CLASS),
         includes: &[],
         feature: None,
     },

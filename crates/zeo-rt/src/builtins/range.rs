@@ -3,8 +3,8 @@
 //! `range_covers` (the `Range#===` fix that makes `case x when 1..5` real).
 //! The remaining Tier A rows land in stage E.
 
-use crate::RubyValue;
 use crate::builtins::{arg_error, block_or_enum, range_error, type_error};
+use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
@@ -12,6 +12,73 @@ fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, boo
         RubyValue::Range(s, e, x) => (s.as_deref(), e.as_deref(), *x),
         _ => unreachable!("Range table row dispatched on a non-Range receiver"),
     }
+}
+
+/// `Range#step` and `Range#%`, which differ only in the name the
+/// `Enumerator::ArithmeticSequence` they answer prints back
+/// (`((1..10).step(2))` against `((1..10).%(2))`).
+///
+/// A numeric range walks through the ONE shared arithmetic-sequence walk in
+/// `numeric.rs`, so a `.step(n).to_a` can never disagree with the block form
+/// that built it -- and so an endless or Rational range walks at all.
+fn range_step(
+    recv: &RubyValue,
+    meth: &'static str,
+    args: &[RubyValue],
+    n: &RubyValue,
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    use crate::builtins::numeric::{num_cmp, step_walk};
+    let (start, end, exclusive) = range_parts(recv);
+    let numeric = |v: Option<&RubyValue>| {
+        matches!(
+            v,
+            Some(
+                RubyValue::Int(_)
+                    | RubyValue::BigInt(_)
+                    | RubyValue::Float(_)
+                    | RubyValue::Rational(_)
+            )
+        )
+    };
+    if !numeric(start) && !numeric(end) {
+        // Any other element type walks by `succ`, and its blockless form is
+        // an ordinary Enumerator rather than a sequence.
+        block_or_enum!(recv, meth, args, block);
+        panic!("Range#step on a non-numeric range isn't supported (zeo limitation)");
+    }
+    // A non-numeric step is not refused until the walk actually needs it:
+    // `(1..5).step("x")` blocklessly answers an ordinary Enumerator, and
+    // only iterating it raises. NOT an implicit-conversion site either --
+    // CRuby raises the numeric-tower coerce shape ("String can't be coerced
+    // into Integer").
+    if !numeric(Some(n)) {
+        block_or_enum!(recv, meth, args, block);
+        return Err(type_error!(
+            "{} can't be coerced into Integer",
+            crate::builtins::coerce_operand_name(n)
+        ));
+    }
+    if matches!(num_cmp(n, &RubyValue::Int(0)), Some(Some(0))) {
+        return Err(arg_error!("step can't be 0"));
+    }
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(crate::builtins::enumerator::arith_seq_of(
+            recv,
+            meth,
+            args,
+            start.cloned().unwrap_or(RubyValue::Nil),
+            end.cloned().unwrap_or(RubyValue::Nil),
+            n.clone(),
+            exclusive,
+        ));
+    };
+    let nil = RubyValue::Nil;
+    step_walk(start.unwrap_or(&nil), end, n, exclusive, |v| {
+        p.call(std::slice::from_ref(v))?;
+        Ok(())
+    })?;
+    Ok(recv.clone())
 }
 
 /// `Range#cover?(other_range)` -- true iff every element of `other` lies within
@@ -414,75 +481,14 @@ ruby_class! {
         };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
-    // `step(n)`: the blockless form returns an Enumerator.
-    def "step" | "%" arity 1 cfunc (recv, n, &block) {
-        let p = block_or_enum!(recv, __args, block);
-        let (start, end, exclusive) = range_parts(recv);
-        // Float mode when any endpoint or the step is a Float. CRuby computes
-        // the element COUNT and multiplies (`beg + i*unit`) rather than
-        // repeatedly adding, so there's no drift and `1.0` lands exactly.
-        let is_float = matches!(start, Some(RubyValue::Float(_)))
-            || matches!(end, Some(RubyValue::Float(_)))
-            || matches!(n, RubyValue::Float(_));
-        if is_float {
-            let to_f = |v: Option<&RubyValue>| match v {
-                Some(RubyValue::Int(n)) => Some(*n as f64),
-                Some(RubyValue::Float(f)) => Some(*f),
-                _ => None,
-            };
-            let (Some(beg), Some(fin)) = (to_f(start), to_f(end)) else {
-                return Err(type_error!("can't iterate from the given Range"));
-            };
-            let unit = match n {
-                RubyValue::Int(n) => *n as f64,
-                RubyValue::Float(f) => *f,
-                _ => unreachable!(),
-            };
-            if unit == 0.0 {
-                return Err(arg_error!("step can't be 0"));
-            }
-            let n_f = (fin - beg) / unit;
-            let err = (((beg.abs() + fin.abs() + (fin - beg).abs()) / unit.abs())
-                * f64::EPSILON)
-                .min(0.5);
-            let n = if exclusive { (n_f - err).floor() } else { (n_f + err).floor() };
-            let mut i = 0.0;
-            while i <= n {
-                p.call(&[RubyValue::Float(i * unit + beg)])?;
-                i += 1.0;
-            }
-            return Ok(recv.clone());
-        }
-        let (Some(RubyValue::Int(s)), Some(RubyValue::Int(e))) = (start, end) else {
-            panic!("Range#step on a non-Integer range isn't supported (zeo limitation)");
-        };
-        // NOT an implicit-conversion site: CRuby's Range#step raises the
-        // numeric-tower coerce shape here (oracle: `(1..5).step("x")` is
-        // "String can't be coerced into Integer").
-        let RubyValue::Int(by) = n else {
-            return Err(type_error!("{} can't be coerced into Integer",
-                    crate::builtins::coerce_operand_name(n)));
-        };
-        if *by == 0 {
-            return Err(arg_error!("step can't be 0"));
-        }
-        // A negative step walks a descending range downward (`(10..2).step(-2)`
-        // is 10,8,6,4,2); a step against the range's direction yields nothing.
-        if *by < 0 {
-            let mut i = *s;
-            while if exclusive { i > *e } else { i >= *e } {
-                p.call(&[RubyValue::Int(i)])?;
-                i += by;
-            }
-            return Ok(recv.clone());
-        }
-        let last = if exclusive { e - 1 } else { *e };
-        let mut i = *s;
-        while i <= last {
-            p.call(&[RubyValue::Int(i)])?;
-            i += by;
-        }
-        Ok(recv.clone())
+    // `step(n)` / `% n`: over a NUMERIC range the blockless form answers an
+    // `Enumerator::ArithmeticSequence`. The two names share one body and
+    // differ only in what that sequence prints back.
+    def "step" cfunc (recv, n, &block) {
+        range_step(recv, "step", __args, n, block)
+    }
+    def "%" (recv, n, &block) {
+        range_step(recv, "%", __args, n, block)
     }
     def "exclude_end?" (recv) {
         let (_, _, exclusive) = range_parts(recv);

@@ -19,7 +19,7 @@ use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
-use crate::builtins::{arg_error, block_or_enum, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal};
 use num_traits::ToPrimitive;
 use zeo_macros::ruby_class;
@@ -260,6 +260,197 @@ fn num_floor_exact(v: &RubyValue) -> RubyValue {
 fn num_trunc_exact(v: &RubyValue) -> RubyValue {
     let (n, d) = as_ratio(v);
     crate::builtins::integer::int_value(n / d)
+}
+
+/// Whether an arithmetic sequence walks in the Float lane: a Float in ANY
+/// of the three slots moves the whole walk there, so `1.step(2.0, 0.5)`
+/// yields `1.0` first (CRuby's `ruby_float_step`).
+fn float_step_lane(begin: &RubyValue, end: Option<&RubyValue>, step: &RubyValue) -> bool {
+    matches!(begin, RubyValue::Float(_))
+        || matches!(step, RubyValue::Float(_))
+        || matches!(end, Some(RubyValue::Float(_)))
+}
+
+/// How many elements a Float walk yields -- CRuby's `ruby_float_step_size`
+/// (numeric.c), reproduced including its epsilon slack, which is what makes
+/// `(0.0..1.0).step(0.1)` answer 11 rather than the 10 that plain division
+/// rounds down to.
+fn float_step_count(beg: f64, end: f64, unit: f64, excl: bool) -> f64 {
+    if unit.is_infinite() {
+        let one = if unit > 0.0 { beg <= end } else { beg >= end };
+        return one as u8 as f64;
+    }
+    if unit == 0.0 {
+        return f64::INFINITY;
+    }
+    let mut n = (end - beg) / unit;
+    let err = (((beg.abs() + end.abs() + (end - beg).abs()) / unit.abs()) * f64::EPSILON).min(0.5);
+    if excl {
+        if n <= 0.0 {
+            return 0.0;
+        }
+        n = if n < 1.0 { 0.0 } else { (n - err).floor() };
+        let d = (n + 1.0) * unit + beg;
+        if (beg < end && d < end) || (beg > end && d > end) {
+            n += 1.0;
+        }
+    } else {
+        if n < 0.0 {
+            return 0.0;
+        }
+        n = (n + err).floor();
+        let d = (n + 1.0) * unit + beg;
+        if (beg < end && d <= end) || (beg > end && d >= end) {
+            n += 1.0;
+        }
+    }
+    n + 1.0
+}
+
+/// Every `step_*` helper below is reached only from a sequence whose three
+/// slots the constructor already checked, so a non-numeric one is a bug here
+/// rather than a Ruby-level error.
+const NUMERIC_OPERANDS: &str = "an arithmetic sequence's operands are numeric";
+
+/// A beginless sequence has nothing to walk from; CRuby reports it as the
+/// coercion failure the first arithmetic would have raised.
+fn need_begin(begin: &RubyValue) -> Result<(), Signal> {
+    match begin {
+        RubyValue::Nil => Err(type_error!("nil can't be coerced into Integer")),
+        _ => Ok(()),
+    }
+}
+
+/// The ONE arithmetic-sequence walk, shared by `Range#step`, `Range#%`,
+/// `Numeric#step` and `Enumerator::ArithmeticSequence#each` -- so a
+/// sequence's `to_a` can never disagree with the block form that built it.
+///
+/// The Float lane computes each element as `begin + i * step` rather than
+/// running a sum, which is why `0.0.step(1.0, 0.1)` lands exactly on `1.0`;
+/// every other lane (Integer, Bignum, Rational) walks by repeated `+`, so it
+/// stays exact.
+pub(crate) fn step_walk(
+    begin: &RubyValue,
+    end: Option<&RubyValue>,
+    step: &RubyValue,
+    exclude_end: bool,
+    mut f: impl FnMut(&RubyValue) -> Result<(), Signal>,
+) -> Result<(), Signal> {
+    need_begin(begin)?;
+    if float_step_lane(begin, end, step) {
+        let beg = num_to_f64_unchecked(begin);
+        let unit = num_to_f64_unchecked(step);
+        let fin = match end {
+            Some(v) => num_to_f64_unchecked(v),
+            None if unit < 0.0 => f64::NEG_INFINITY,
+            None => f64::INFINITY,
+        };
+        let n = float_step_count(beg, fin, unit, exclude_end);
+        let mut i = 0.0f64;
+        while i < n {
+            let d = i * unit + beg;
+            // CRuby clamps the final element back onto `end`, so accumulated
+            // ulps can never carry it past the endpoint the caller named.
+            let d = if (unit >= 0.0 && fin < d) || (unit < 0.0 && d < fin) {
+                fin
+            } else {
+                d
+            };
+            f(&RubyValue::Float(d))?;
+            i += 1.0;
+        }
+        return Ok(());
+    }
+    let descending = matches!(num_cmp(step, &RubyValue::Int(0)), Some(Some(-1)));
+    let mut cur = begin.clone();
+    loop {
+        if let Some(end) = end {
+            let Some(Some(o)) = num_cmp(&cur, end) else {
+                break;
+            };
+            if (if descending { o < 0 } else { o > 0 }) || (exclude_end && o == 0) {
+                break;
+            }
+        }
+        f(&cur)?;
+        cur = num_add(&cur, step).expect("an arithmetic sequence's operands are numeric")?;
+    }
+    Ok(())
+}
+
+/// `(end - begin).div(step)` across the tower -- how many hops separate the
+/// endpoints, floored. `Enumerator::ArithmeticSequence#last` is built on it,
+/// and computes rather than walks, which is why `(1..10.5).step(2).last` is
+/// the Integer `9` while the walk's own last element is the Float `9.0`.
+pub(crate) fn step_hops(
+    begin: &RubyValue,
+    end: &RubyValue,
+    step: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let span = num_sub(end, begin).expect(NUMERIC_OPERANDS)?;
+    if float_step_lane(begin, Some(end), step) {
+        let q = num_to_f64_unchecked(&span) / num_to_f64_unchecked(step);
+        return crate::builtins::float::float_to_integer(q.floor());
+    }
+    Ok(num_floor_exact(
+        &num_quo(&span, step).expect(NUMERIC_OPERANDS)?,
+    ))
+}
+
+/// The i-th element of the same walk: `begin + i * step`. What
+/// `Enumerator::ArithmeticSequence#last` builds each of its answers from.
+pub(crate) fn step_nth(
+    begin: &RubyValue,
+    step: &RubyValue,
+    i: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let offset = num_mul(i, step).expect(NUMERIC_OPERANDS)?;
+    num_add(begin, &offset).expect(NUMERIC_OPERANDS)
+}
+
+/// How many elements the same walk yields, WITHOUT walking -- CRuby computes
+/// `Enumerator::ArithmeticSequence#size` from the quadruple, which is what
+/// lets an endless sequence answer `Float::INFINITY` at all.
+pub(crate) fn step_size(
+    begin: &RubyValue,
+    end: Option<&RubyValue>,
+    step: &RubyValue,
+    exclude_end: bool,
+) -> Result<RubyValue, Signal> {
+    need_begin(begin)?;
+    let Some(end) = end else {
+        return Ok(RubyValue::Float(f64::INFINITY));
+    };
+    if float_step_lane(begin, Some(end), step) {
+        let n = float_step_count(
+            num_to_f64_unchecked(begin),
+            num_to_f64_unchecked(end),
+            num_to_f64_unchecked(step),
+            exclude_end,
+        );
+        return Ok(if n.is_finite() {
+            RubyValue::Int(n as i64)
+        } else {
+            RubyValue::Float(n)
+        });
+    }
+    let descending = matches!(num_cmp(step, &RubyValue::Int(0)), Some(Some(-1)));
+    let Some(Some(o)) = num_cmp(begin, end) else {
+        return Ok(RubyValue::Int(0));
+    };
+    if if descending { o < 0 } else { o > 0 } {
+        return Ok(RubyValue::Int(0));
+    }
+    // The hop count, then the first element on top -- unless an exclusive end
+    // lands exactly where the last hop would have.
+    let hops = step_hops(begin, end, step)?;
+    if exclude_end {
+        let last = step_nth(begin, step, &hops)?;
+        if matches!(num_cmp(&last, end), Some(Some(0))) {
+            return Ok(hops);
+        }
+    }
+    num_add(&hops, &RubyValue::Int(1)).expect(NUMERIC_OPERANDS)
 }
 
 /// `a <=> b` across the tower. Outer `None` = not a numeric pair; inner
@@ -584,11 +775,10 @@ ruby_class! {
         Err(type_error!("can't define singleton method \"{name}\" for {class}"))
     }
 
-    // `step(limit, step = 1)`; the blockless form returns an Enumerator.
-    // Drives the tower generically, so `1.step(2.0, 0.5)`
-    // works too.
+    // `step(limit, step = 1)`; the blockless form answers an
+    // `Enumerator::ArithmeticSequence`. Drives the tower generically, so
+    // `1.step(2.0, 0.5)` works too.
     def "step" (recv, to?, by?, **opts, &block) {
-        let p = block_or_enum!(recv, __args, block);
         // `step` accepts positional (`1.step(10, 2)`) and/or keyword
         // (`1.step(by: 2, to: 10)`) forms.
         let mut limit: Option<RubyValue> = None;
@@ -618,28 +808,23 @@ ruby_class! {
         if matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(0))) {
             return Err(arg_error!("step can't be 0"));
         }
-        let descending = matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(-1)));
-        // CRuby's rule: a Float limit OR step moves the WHOLE iteration
-        // into the Float domain (`1.step(2.0, 0.5)` yields 1.0 first).
-        let mut cur = if matches!(limit, Some(RubyValue::Float(_)))
-            || matches!(step, RubyValue::Float(_))
-        {
-            RubyValue::Float(num_to_f64_unchecked(recv))
-        } else {
-            recv.clone()
+        // An absent limit (`1.step(by: 2)`) is an unbounded sequence, and a
+        // Numeric one is never exclusive.
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(crate::builtins::enumerator::arith_seq_of(
+                recv,
+                "step",
+                __args,
+                recv.clone(),
+                limit.unwrap_or(RubyValue::Nil),
+                step,
+                false,
+            ));
         };
-        loop {
-            // An absent limit (`1.step(by: 2)`) is an unbounded sequence.
-            if let Some(limit) = &limit {
-                match num_cmp(&cur, limit) {
-                    Some(Some(c)) if (!descending && c > 0) || (descending && c < 0) => break,
-                    Some(Some(_)) => {}
-                    _ => break,
-                }
-            }
-            p.call(std::slice::from_ref(&cur))?;
-            cur = num_add(&cur, &step).expect("numeric step operands")?;
-        }
+        step_walk(recv, limit.as_ref(), &step, false, |v| {
+            p.call(std::slice::from_ref(v))?;
+            Ok(())
+        })?;
         Ok(recv.clone())
     }
 }

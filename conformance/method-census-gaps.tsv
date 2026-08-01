@@ -1,12 +1,11 @@
 # Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
-# absent-module: 41
-# constant: 190
+# absent-module: 40
+# constant: 189
 # owner: 156
 # unreachable: 41
 absent-module	Encoding::Converter	-	-
-absent-module	Enumerator::ArithmeticSequence	-	-
 absent-module	Enumerator::Generator	-	-
 absent-module	Enumerator::Producer	-	-
 absent-module	GC::Profiler	-	-
@@ -209,7 +208,6 @@ constant	Encoding	c	WINDOWS_31J
 constant	Encoding	c	WINDOWS_874
 constant	Encoding	c	Windows_1258
 constant	Encoding	c	Windows_874
-constant	Enumerator	c	ArithmeticSequence
 constant	Enumerator	c	Generator
 constant	Enumerator	c	Producer
 constant	GC	c	Profiler

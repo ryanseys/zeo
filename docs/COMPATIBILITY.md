@@ -557,6 +557,14 @@ cannot read another's execution state:
   the rule `TracePoint.new` already follows for the events zeo cannot raise:
   refuse loudly rather than accept a handler that never runs.
 
+### `Range#step` over a non-numeric range
+
+A blockless `("a".."e").step(2)` answers the right Enumerator, but WALKING it
+panics: zeo's `Range#step` has no `succ`-driven path. Every numeric range —
+Integer, Bignum, Float, Rational, endless, beginless — walks correctly and
+answers an `Enumerator::ArithmeticSequence` blockless, matching CRuby
+(`tests/arithmetic_sequence_rows.rb`).
+
 ## Satisfied faithfully (zeo-bundled gems)
 
 Zeo ships its own copy under `gems/<name>/`, intended to match upstream

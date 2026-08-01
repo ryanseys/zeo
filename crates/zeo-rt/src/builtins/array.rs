@@ -6,6 +6,138 @@ use crate::RubyValue;
 use crate::builtins::{arg_error, arg_int, block_or_enum, convert, index_error, type_error};
 use zeo_macros::ruby_class;
 
+/// `arr[1..3]` -- the ordinary Range slice: an out-of-range begin answers
+/// nil, and an end past the last element clamps rather than raising.
+fn range_slice(
+    rary: &crate::RArray,
+    start: Option<&RubyValue>,
+    end: Option<&RubyValue>,
+    exclusive: bool,
+) -> RubyValue {
+    let guard = rary.lock();
+    let n = guard.len() as i64;
+    let s = match start {
+        Some(RubyValue::Int(v)) => {
+            if *v < 0 {
+                v + n
+            } else {
+                *v
+            }
+        }
+        None => 0,
+        _ => return RubyValue::Nil,
+    };
+    let e = match end {
+        Some(RubyValue::Int(v)) => {
+            let v = if *v < 0 { v + n } else { *v };
+            if exclusive { v - 1 } else { v }
+        }
+        None => n - 1,
+        _ => return RubyValue::Nil,
+    };
+    if s < 0 || s > n {
+        return RubyValue::Nil;
+    }
+    let e = e.min(n - 1);
+    RubyValue::Array(crate::array_new(if e < s {
+        Vec::new()
+    } else {
+        guard[s as usize..=e as usize].to_vec()
+    }))
+}
+
+/// An arithmetic sequence's endpoint or step, as an array index. CRuby's
+/// `NUM2LONG` truncates toward zero, which is why `(1.5..5.5).step(2)`
+/// slices from 1 through 5.
+fn seq_index(v: &RubyValue) -> i64 {
+    match v {
+        RubyValue::Int(n) => *n,
+        // `as i64` saturates, and any index that far out is out of range
+        // either way.
+        other => crate::builtins::numeric::num_to_f64_unchecked(other) as i64,
+    }
+}
+
+/// `arr[(1..10).step(2)]` -- CRuby's `rb_arithmetic_sequence_beg_len_step`
+/// reduced to the span `(begin, len)` plus a stride.
+///
+/// A sequence is stricter than the equivalent Range: where `arr[20..30]`
+/// answers nil, `arr[(20..30).step(2)]` raises. The exception is a step of
+/// exactly 1, which CRuby routes through the ordinary Range slice instead --
+/// so `arr[(20..30).step(1)]` IS nil.
+fn arith_seq_slice(rary: &crate::RArray, seq: &RubyValue) -> Result<RubyValue, crate::Signal> {
+    let (begin, end, step, exclude_end) = crate::builtins::enumerator::arith_seq_parts(seq)
+        .expect("the caller checked this is an arithmetic sequence");
+    let stride = seq_index(step);
+    if stride == 0 {
+        return Err(arg_error!("slice step cannot be zero"));
+    }
+    // A beginless sequence starts at the array's own beginning.
+    let begin = match begin {
+        RubyValue::Nil => None,
+        v => Some(v),
+    };
+    if stride == 1 {
+        return Ok(range_slice(rary, begin, end, exclude_end));
+    }
+    // A descending sequence walks the SAME span from its far end, so the
+    // endpoints swap -- and an exclusive end, now the span's low side,
+    // excludes the first index rather than the last.
+    let (low, high, mut excl) = if stride < 0 {
+        (end, begin, false)
+    } else {
+        (begin, end, exclude_end)
+    };
+    let bump = (stride < 0 && exclude_end && low.is_some()) as i64;
+    let n = rary.lock().len() as i64;
+    let mut b = low.map_or(0, seq_index) + bump;
+    let mut e = match high {
+        Some(v) => seq_index(v),
+        None => {
+            excl = false;
+            -1
+        }
+    };
+    let out_of_range = || {
+        crate::dispatch::raise_error(
+            "RangeError",
+            format!("{} out of range", seq.inspect_string()),
+        )
+    };
+    if b < 0 {
+        b += n;
+        if b < 0 {
+            return Err(out_of_range());
+        }
+    }
+    if e < 0 {
+        e += n;
+    }
+    if !excl {
+        e += 1;
+    }
+    let len = (e - b).max(0);
+    if b > n || len > n {
+        return Err(out_of_range());
+    }
+    let guard = rary.lock();
+    let mut out = Vec::new();
+    if stride > 0 {
+        let mut i = b;
+        while i < (b + len).min(n) {
+            out.push(guard[i as usize].clone());
+            i += stride;
+        }
+    } else if len > 0 {
+        let mut i = (b + len - 1).min(n - 1);
+        while i >= b {
+            out.push(guard[i as usize].clone());
+            i += stride;
+        }
+    }
+    Ok(RubyValue::Array(crate::array_new(out)))
+}
+
 ruby_class! {
     Array = zeo_abi::ARRAY_CLASS < zeo_abi::OBJECT_CLASS;
     receiver rary = crate::RubyValue::Array;
@@ -88,32 +220,12 @@ ruby_class! {
         match index {
             // `arr[1..3]` -- Range slicing.
             RubyValue::Range(start, end, exclusive) => {
-                let guard = rary.lock();
-                let n = guard.len() as i64;
-                let s = match start.as_deref() {
-                    Some(RubyValue::Int(v)) => {
-                        if *v < 0 { v + n } else { *v }
-                    }
-                    None => 0,
-                    _ => return Ok(RubyValue::Nil),
-                };
-                let e = match end.as_deref() {
-                    Some(RubyValue::Int(v)) => {
-                        let v = if *v < 0 { v + n } else { *v };
-                        if *exclusive { v - 1 } else { v }
-                    }
-                    None => n - 1,
-                    _ => return Ok(RubyValue::Nil),
-                };
-                if s < 0 || s > n {
-                    return Ok(RubyValue::Nil);
-                }
-                let e = e.min(n - 1);
-                Ok(RubyValue::Array(crate::array_new(if e < s {
-                    Vec::new()
-                } else {
-                    guard[s as usize..=e as usize].to_vec()
-                })))
+                Ok(range_slice(rary, start.as_deref(), end.as_deref(), *exclusive))
+            }
+            // `arr[(1..10).step(2)]` -- an arithmetic sequence slices with a
+            // STRIDE (CRuby's `rb_arithmetic_sequence_beg_len_step`).
+            other if crate::builtins::enumerator::arith_seq_parts(other).is_some() => {
+                arith_seq_slice(rary, other)
             }
             other => {
                 let i = convert::to_index(other)?;

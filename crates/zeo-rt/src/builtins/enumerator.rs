@@ -39,7 +39,7 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::{arg_error, arg_int, type_error};
 use crate::collections::array_new;
 use crate::coroutine::CoroutineResult;
 use crate::dispatch::{raise_stop_iteration, send_value};
@@ -85,6 +85,23 @@ enum EnumSource {
     /// Array per combination, rightmost source varying fastest.
     Product {
         sources: Vec<RubyValue>,
+    },
+    /// `Enumerator::ArithmeticSequence` -- a blockless `Range#step`,
+    /// `Range#%` or `Numeric#step` over a numeric receiver. It is an
+    /// Enumerator that also KNOWS its quadruple, which is what lets `#size`
+    /// and `#last` compute instead of iterate.
+    ArithSeq {
+        /// The receiver and call `#inspect` replays -- purely cosmetic, but
+        /// CRuby renders `((1..10).step(2))` and `(1.step(10, 3))`
+        /// differently, and only the original call can tell them apart.
+        recv: RubyValue,
+        meth: &'static str,
+        args: Vec<RubyValue>,
+        begin: RubyValue,
+        /// `Nil` for an endless sequence.
+        end: RubyValue,
+        step: RubyValue,
+        exclude_end: bool,
     },
 }
 
@@ -219,13 +236,69 @@ pub(crate) fn chain_of(sources: Vec<RubyValue>) -> RubyValue {
     }))
 }
 
+/// `Enumerator::ArithmeticSequence` over `(begin, end, step, exclude_end)`.
+/// `recv`/`meth`/`args` are the call that produced it, which only `#inspect`
+/// reads back.
+pub(crate) fn arith_seq_of(
+    recv: &RubyValue,
+    meth: &'static str,
+    args: &[RubyValue],
+    begin: RubyValue,
+    end: RubyValue,
+    step: RubyValue,
+    exclude_end: bool,
+) -> RubyValue {
+    RubyValue::Enumerator(Arc::new(EnumeratorData {
+        source: EnumSource::ArithSeq {
+            recv: recv.clone(),
+            meth,
+            args: args.to_vec(),
+            begin,
+            end,
+            step,
+            exclude_end,
+        },
+        size_hint: None,
+        state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
+    }))
+}
+
+/// The `(begin, end, step, exclude_end)` quadruple, for a value that is an
+/// arithmetic sequence -- what `Array#[]` slices with and what the
+/// `Enumerator::ArithmeticSequence` rows read. `None` for any other value,
+/// including a plain Enumerator.
+pub(crate) fn arith_seq_parts(
+    v: &RubyValue,
+) -> Option<(&RubyValue, Option<&RubyValue>, &RubyValue, bool)> {
+    let RubyValue::Enumerator(e) = v else {
+        return None;
+    };
+    let EnumSource::ArithSeq {
+        begin,
+        end,
+        step,
+        exclude_end,
+        ..
+    } = &e.source
+    else {
+        return None;
+    };
+    let end = match end {
+        RubyValue::Nil => None,
+        other => Some(other),
+    };
+    Some((begin, end, step, *exclude_end))
+}
+
 /// The class an enumerator reports: the source variant picks
-/// `Enumerator::Chain`/`Enumerator::Product` over plain `Enumerator`
-/// (see `value.rs`).
+/// `Enumerator::Chain`/`Enumerator::Product`/`::ArithmeticSequence` over
+/// plain `Enumerator` (see `value.rs`).
 pub fn enumerator_class_id(e: &REnumerator) -> crate::ClassId {
     match e.source {
         EnumSource::Chain { .. } => zeo_abi::ENUMERATOR_CHAIN_CLASS,
         EnumSource::Product { .. } => zeo_abi::ENUMERATOR_PRODUCT_CLASS,
+        EnumSource::ArithSeq { .. } => zeo_abi::ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS,
         _ => zeo_abi::ENUMERATOR_CLASS,
     }
 }
@@ -315,7 +388,39 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
             product_walk(&lists, &mut Vec::with_capacity(lists.len()), &each_block)?;
             Ok(RubyValue::Nil)
         }
+        EnumSource::ArithSeq { .. } => {
+            let each_block = block.as_proc_unchecked();
+            arith_walk(source, |v| {
+                each_block.call(std::slice::from_ref(v))?;
+                Ok(())
+            })?;
+            Ok(RubyValue::Nil)
+        }
     }
+}
+
+/// Walk an `ArithSeq` source through the one shared numeric walk, so a
+/// sequence's `to_a` matches the `Range#step`/`Numeric#step` block form that
+/// would have built it.
+fn arith_walk(
+    source: &EnumSource,
+    f: impl FnMut(&RubyValue) -> Result<(), Signal>,
+) -> Result<(), Signal> {
+    let EnumSource::ArithSeq {
+        begin,
+        end,
+        step,
+        exclude_end,
+        ..
+    } = source
+    else {
+        unreachable!("arith_walk on a non-ArithSeq source");
+    };
+    let end = match end {
+        RubyValue::Nil => None,
+        other => Some(other),
+    };
+    crate::builtins::numeric::step_walk(begin, end, step, *exclude_end, f)
 }
 
 /// Materialize each product source once (CRuby snapshots them up front, then
@@ -509,6 +614,38 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
         // while `a.each + b.each` shows the two enumerators).
         EnumSource::Chain { sources } => format!("#<Enumerator::Chain: {}>", list(sources)),
         EnumSource::Product { sources } => format!("#<Enumerator::Product: {}>", list(sources)),
+        // CRuby replays the CALL rather than the quadruple, so
+        // `(1..10).step(2)` and `1.step(10, 2)` -- the same sequence -- print
+        // differently. The receiver goes through `to_s` (a Rational shows as
+        // `1/2`, not `(1/2)`) and a Range receiver gains explicit parentheses.
+        EnumSource::ArithSeq {
+            recv, meth, args, ..
+        } => {
+            let rendered = recv.to_display_string();
+            let head = match recv {
+                RubyValue::Range(..) => format!("({rendered})"),
+                _ => rendered,
+            };
+            let mut s = format!("({head}.{meth}");
+            if !args.is_empty() {
+                let last = args.len() - 1;
+                let rendered: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| match a {
+                        RubyValue::Hash(h) if i == last => {
+                            render_kwargs(h).unwrap_or_else(|| a.inspect_string())
+                        }
+                        _ => a.inspect_string(),
+                    })
+                    .collect();
+                s.push('(');
+                s.push_str(&rendered.join(", "));
+                s.push(')');
+            }
+            s.push(')');
+            s
+        }
         EnumSource::Method { recv, meth, args } => {
             let mut s = format!("#<Enumerator: {}:{meth}", recv.inspect_string());
             if !args.is_empty() {
@@ -600,7 +737,30 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
         // infinite if any part is (CRuby's rule).
         EnumSource::Chain { sources } => fold_sizes(sources, 0, |acc, n| acc + n),
         EnumSource::Product { sources } => fold_sizes(sources, 1, |acc, n| acc * n),
+        // Computed from the quadruple, never walked -- which is the only way
+        // an endless sequence can answer at all.
+        EnumSource::ArithSeq { .. } => arith_size(&e.source).unwrap_or(RubyValue::Nil),
     }
+}
+
+/// `arith_size`'s fallible form -- a beginless sequence raises the coercion
+/// TypeError rather than answering a count.
+fn arith_size(source: &EnumSource) -> Result<RubyValue, Signal> {
+    let EnumSource::ArithSeq {
+        begin,
+        end,
+        step,
+        exclude_end,
+        ..
+    } = source
+    else {
+        unreachable!("arith_size on a non-ArithSeq source");
+    };
+    let end = match end {
+        RubyValue::Nil => None,
+        other => Some(other),
+    };
+    crate::builtins::numeric::step_size(begin, end, step, *exclude_end)
 }
 
 /// Fold the sources' sizes with `f`, propagating nil (unknown) and
@@ -829,6 +989,185 @@ ruby_class! {
     def "each_with_object"(recv, obj, &block) {
         drive_with_object(recv, obj, block, "each_with_object")
     }
+
+    // `Enumerator::ArithmeticSequence` -- a blockless `Range#step`,
+    // `Range#%` or `Numeric#step` over a numeric receiver. Everything else
+    // it answers comes down the chain from `Enumerator` and `Enumerable`;
+    // these thirteen are the ones CRuby defines here, and they exist because
+    // the quadruple lets `#size` and `#last` compute instead of walk.
+    class ArithmeticSequence = zeo_abi::ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS
+        < zeo_abi::ENUMERATOR_CLASS
+    {
+        def "begin"(recv) {
+            Ok(arith_parts(recv).0.clone())
+        }
+
+        def "end"(recv) {
+            Ok(arith_parts(recv).1.cloned().unwrap_or(RubyValue::Nil))
+        }
+
+        def "step"(recv) {
+            Ok(arith_parts(recv).2.clone())
+        }
+
+        def "exclude_end?"(recv) {
+            Ok(RubyValue::Bool(arith_parts(recv).3))
+        }
+
+        // Answers SELF, not the walk's return value -- and a blockless call
+        // answers self too, rather than wrapping in another enumerator.
+        def "each"(recv, &block) {
+            if let Some(RubyValue::Proc(p)) = &block {
+                let e = recv_enum(recv);
+                arith_walk(&e.source, |v| {
+                    p.call(std::slice::from_ref(v))?;
+                    Ok(())
+                })?;
+            }
+            Ok(recv.clone())
+        }
+
+        def "size"(recv) {
+            arith_size(&recv_enum(recv).source)
+        }
+
+        def "inspect"(recv) {
+            Ok(RubyValue::Str(crate::string_new(enum_inspect(recv_enum(recv)))))
+        }
+
+        // One comparison behind all three: CRuby compares the quadruple with
+        // `==`, so `(1..10).step(2)` equals `(1..10).step(2.0)` and equals
+        // `1.step(10, 2)` -- the call that built it does not enter into it.
+        // `#hash` deliberately does NOT match that, exactly as in CRuby:
+        // `2.hash` and `2.0.hash` differ.
+        def "==" | "===" | "eql?"(recv, other) {
+            let (Some(a), Some(b)) = (arith_seq_parts(recv), arith_seq_parts(other)) else {
+                return Ok(RubyValue::Bool(false));
+            };
+            let eq = |x: &RubyValue, y: &RubyValue| x.rb_eq(y);
+            let ends = match (a.1, b.1) {
+                (Some(x), Some(y)) => eq(x, y),
+                (None, None) => true,
+                _ => false,
+            };
+            Ok(RubyValue::Bool(eq(a.0, b.0) && ends && eq(a.2, b.2) && a.3 == b.3))
+        }
+
+        def "hash"(recv) {
+            let (begin, end, step, exclude_end) = arith_parts(recv);
+            let members = array_new(vec![
+                begin.clone(),
+                end.cloned().unwrap_or(RubyValue::Nil),
+                step.clone(),
+                RubyValue::Bool(exclude_end),
+            ]);
+            send_value(&RubyValue::Array(members), Symbol::intern("hash"), &[], None)
+        }
+
+        // The 0-arg form answers `begin` without walking (so an endless
+        // sequence answers at all); the n-arg form walks, which is why
+        // `(1..10.5).step(2).first(3)` is Floats while `#begin` is `1`.
+        def "first"(recv, n?) {
+            let (begin, end, step, _) = arith_parts(recv);
+            let Some(n) = n else {
+                if let Some(end) = end {
+                    let dir = crate::builtins::numeric::num_cmp(step, &RubyValue::Int(0));
+                    let past = match crate::builtins::numeric::num_cmp(begin, end) {
+                        Some(Some(o)) => match dir {
+                            Some(Some(d)) if d > 0 => o > 0,
+                            Some(Some(d)) if d < 0 => o < 0,
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if past {
+                        return Ok(RubyValue::Nil);
+                    }
+                }
+                return Ok(begin.clone());
+            };
+            let want = arg_int!(n);
+            if want < 0 {
+                return Err(arg_error!("attempt to take negative size"));
+            }
+            let mut out: Vec<RubyValue> = Vec::new();
+            if want > 0 {
+                // `Signal::Break` is the walk's only exit for an endless
+                // sequence -- the same stop `Enumerable#first` uses.
+                let taken = arith_walk(&recv_enum(recv).source, |v| {
+                    out.push(v.clone());
+                    if out.len() as i64 >= want {
+                        return Err(Signal::Break(RubyValue::Nil));
+                    }
+                    Ok(())
+                });
+                match taken {
+                    Ok(()) | Err(Signal::Break(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(RubyValue::Array(array_new(out)))
+        }
+
+        // Computed from the quadruple, so it neither walks nor inherits the
+        // walk's Float lane: `(1..10.5).step(2).last` is the Integer `9`.
+        def "last"(recv, n?) {
+            let (begin, end, step, exclude_end) = arith_parts(recv);
+            let Some(end) = end else {
+                return Err(crate::dispatch::raise_error(
+                    "RangeError",
+                    "cannot get the last element of endless arithmetic sequence".to_string(),
+                ));
+            };
+            use crate::builtins::numeric::{num_cmp, step_hops, step_nth};
+            let hops = step_hops(begin, end, step)?;
+            if matches!(num_cmp(&hops, &RubyValue::Int(0)), Some(Some(-1))) {
+                return Ok(match n {
+                    Some(_) => RubyValue::Array(array_new(Vec::new())),
+                    None => RubyValue::Nil,
+                });
+            }
+            let nth = |i: i64| step_nth(begin, step, &RubyValue::Int(i));
+            // An exclusive end that the last hop lands exactly on drops that
+            // element -- and with it one from the count `last(n)` counts back.
+            let last = step_nth(begin, step, &hops)?;
+            let dropped = exclude_end && matches!(num_cmp(&last, end), Some(Some(0)));
+            let Some(n) = n else {
+                return if dropped {
+                    let RubyValue::Int(h) = hops else {
+                        return Ok(last);
+                    };
+                    nth(h - 1)
+                } else {
+                    Ok(last)
+                };
+            };
+            let want = arg_int!(n);
+            if want < 0 {
+                return Err(arg_error!("negative array size"));
+            }
+            let len = match &hops {
+                RubyValue::Int(h) if !dropped => h + 1,
+                RubyValue::Int(h) => *h,
+                // A bignum hop count cannot be materialized as an Array
+                // anyway; the take is bounded by `want`.
+                _ => want,
+            };
+            let take = want.min(len);
+            let mut out = Vec::with_capacity(take as usize);
+            for i in (len - take)..len {
+                out.push(nth(i)?);
+            }
+            Ok(RubyValue::Array(array_new(out)))
+        }
+    }
+}
+
+/// The quadruple behind every `Enumerator::ArithmeticSequence` row (those
+/// rows only ever dispatch on an arithmetic sequence).
+fn arith_parts(recv: &RubyValue) -> (&RubyValue, Option<&RubyValue>, &RubyValue, bool) {
+    arith_seq_parts(recv)
+        .expect("an ArithmeticSequence table row dispatched on a non-sequence receiver")
 }
 
 #[cfg(test)]

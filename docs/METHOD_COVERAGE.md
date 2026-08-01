@@ -485,7 +485,47 @@ pattern to one boolean, so the raise arm cannot name the failing key. XFAIL in
 
 Every new class needs a `zeo_abi::BUILTINS` row. **`BUILTINS` is indexed by
 id**: append, never insert, and a nested name needs its lexical parent at an
-earlier index. The highest id in use today is 147.
+earlier index. The highest id in use today is 148.
+
+### 3.1 `Enumerator::ArithmeticSequence` (13)
+
+**Status: done** — `absent-module` 41 → 40, `constant` 190 → 189, and no new
+row of any tag. `tests/arithmetic_sequence_rows.rb` is byte-identical to the
+oracle across 100 lines.
+
+It is an `EnumSource` variant, not a new value type: an arithmetic sequence
+IS an Enumerator that also carries `(begin, end, step, exclude_end)`, and
+`enumerator_class_id` reports the subclass off that variant, exactly as
+`Enumerator::Chain` and `::Product` already did. So every inherited method
+kept working for free, and the thirteen own rows are the ones the quadruple
+makes possible.
+
+Three things it forced open, each a real fix rather than scope creep:
+
+- **One walk, shared.** `Range#step`, `Range#%`, `Numeric#step` and
+  `ArithmeticSequence#each` now all go through `numeric::step_walk`. They had
+  to: a sequence's `to_a` must equal the block form that would have built it.
+  Unifying them fixed `Numeric#step`'s Float lane, which summed repeatedly and
+  drifted — `0.0.step(1.0, 0.1).to_a` ended on `0.9999999999999999` where
+  CRuby ends on `1.0`. `Range#step` already computed `begin + i * step`; the
+  shared walk is that one.
+- **`Range#step` handled only Integer endpoints** and panicked on anything
+  else, so an endless or Rational range could not be stepped at all. The
+  generic walk removes the panic for every numeric range. A non-numeric range
+  (`("a".."e").step(2)`) still answers the right blockless Enumerator and
+  still panics when walked — unchanged, and not this wave's business.
+- **`Range#step` and `Range#%` had to split.** They shared a `|`-joined def,
+  and `__RUBY_METHOD` binds the PRIMARY name, so `%` could not have printed
+  `((1..10).%(2))`. Splitting them also separated their arities, which the
+  oracle says differ: `step` is `-1` (C discarded the signature), `%` is `1`.
+
+`Array#[]` reads a sequence through `rb_arithmetic_sequence_beg_len_step`'s
+rules, which are stricter than the equivalent Range's and were derived from a
+44-case oracle matrix rather than the C: an out-of-range span RAISES where
+`a[20..30]` answers nil, a negative step swaps the endpoints and walks the
+span backwards, and **a step of exactly 1 routes through the ordinary Range
+slice instead** — which is why `a[(11..12).step(1)]` is nil while
+`a[(11..12).step(2)]` raises.
 
 ### 3.5 `Pathname` (96 own methods)
 
