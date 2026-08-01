@@ -78,12 +78,12 @@ ruby_class! {
         Ok(recv.clone())
     }
 
-    def "[]" cfunc (_recv, arg) {
+    def "[]" (_recv, arg) {
         let st = super::STATE.lock();
         let i = resolve(convert::to_index(arg)?, st.history.len())?;
         Ok(str_value(&st.history[i]))
     }
-    def "[]=" cfunc (_recv, arg1, arg2) {
+    def "[]=" (_recv, arg1, arg2) {
         let s = push_arg(arg2)?;
         let mut st = super::STATE.lock();
         let i = resolve(convert::to_index(arg1)?, st.history.len())?;

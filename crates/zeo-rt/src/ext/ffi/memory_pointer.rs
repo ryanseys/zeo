@@ -17,7 +17,7 @@ ruby_class! {
     // form yields the pointer and returns the block's value (the gem also
     // auto-frees afterward; our pointer is GC-managed, so the buffer simply
     // lives as long as it is referenced).
-    def self."new"(_recv, arg1, arg2?, _arg3?, &block) {
+    def self."new" cfunc (_recv, arg1, arg2?, _arg3?, &block) {
         let elem = memptr_elem_size(arg1)?;
         let count = match arg2 {
             None | Some(RubyValue::Nil) => 1,

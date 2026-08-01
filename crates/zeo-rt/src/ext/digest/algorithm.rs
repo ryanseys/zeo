@@ -26,13 +26,13 @@ ruby_class! {
     def self."new" cfunc (recv) {
         Ok(new_digest(algo_of_class(recv)))
     }
-    def self."hexdigest"(recv, arg) {
+    def self."hexdigest" cfunc (recv, arg, *_rest) {
         Ok(str(hex(&class_raw(recv, arg)?)))
     }
-    def self."digest"(recv, arg) {
+    def self."digest" cfunc (recv, arg, *_rest) {
         Ok(RubyValue::Str(string_from_bytes(class_raw(recv, arg)?, ASCII_8BIT)))
     }
-    def self."base64digest"(recv, arg) {
+    def self."base64digest" (recv, arg, *_rest) {
         Ok(str(base64(&class_raw(recv, arg)?)))
     }
 

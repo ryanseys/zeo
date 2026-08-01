@@ -159,11 +159,11 @@ ruby_class! {
         let (md, _) = md_from_value(arg1)?;
         Ok(bin_str(raw_hash(md, &str_bytes(arg2)?)?))
     }
-    def self."hexdigest" (_recv, arg1, arg2) {
+    def self."hexdigest" cfunc (_recv, arg1, arg2) {
         let (md, _) = md_from_value(arg1)?;
         Ok(str(hex(&raw_hash(md, &str_bytes(arg2)?)?)))
     }
-    def self."base64digest" (_recv, arg1, arg2) {
+    def self."base64digest" arity -2 (_recv, arg1, arg2) {
         let (md, _) = md_from_value(arg1)?;
         Ok(str(base64(&raw_hash(md, &str_bytes(arg2)?)?)))
     }

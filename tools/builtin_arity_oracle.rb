@@ -92,6 +92,22 @@ end
 
 rows = []
 unavailable = []
+# Every `(class, kind)` whose own methods have been dumped, so the ancestor
+# pass below does not duplicate a manifest class.
+dumped = {}
+# Ancestor tokens seen in a chain, so their own methods can be dumped too.
+seen_ancestors = {}
+
+def dump_own(rows, name, kind, klass)
+  own_methods(klass, kind).each do |mname, meth|
+    rows << [
+      "M", name, kind, mname.to_s, meth.arity.to_s,
+      visibility_of(klass, kind, mname),
+      meth.source_location ? "ruby" : "c",
+      params_of(meth),
+    ]
+  end
+end
 
 classes.each do |entry|
   name = entry[:name]
@@ -113,16 +129,30 @@ classes.each do |entry|
     chain = (kind == "s" ? klass.singleton_class : klass).ancestors
                                                          .filter_map { |m| ancestor_token(m) }
     rows << ["A", name, kind, *chain]
+    chain.each { |token| seen_ancestors[token] = true }
 
-    own_methods(klass, kind).each do |mname, meth|
-      rows << [
-        "M", name, kind, mname.to_s, meth.arity.to_s,
-        visibility_of(klass, kind, mname),
-        meth.source_location ? "ruby" : "c",
-        params_of(meth),
-      ]
-    end
+    dumped[[name, kind]] = true
+    dump_own(rows, name, kind, klass)
   end
+end
+
+# A method zeo declares may be OWNED by an ancestor the manifest never names --
+# every `FFI::Pointer` accessor really lives on `FFI::AbstractMemory`. Without
+# its own `M` rows the drift test cannot resolve those names at all and reads
+# them as invented, so dump each ancestor's own methods too.
+seen_ancestors.each_key do |token|
+  kind, aname = token.split(":", 2)
+  next if dumped[[aname, kind]]
+
+  aklass = begin
+    Object.const_get(aname)
+  rescue NameError
+    next
+  end
+  next unless aklass.is_a?(Module)
+
+  dumped[[aname, kind]] = true
+  dump_own(rows, aname, kind, aklass)
 end
 
 out = $stdout

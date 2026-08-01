@@ -6,31 +6,8 @@
 #! it fails the test and cannot be recorded here. Regenerate with
 #! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.
 #! tag	class	kind	name	reason
-zeo-only	CGI	s	escape	no escape in CRuby's chain
-zeo-only	CGI	s	escapeHTML	no escapeHTML in CRuby's chain
-zeo-only	CGI	s	escapeURIComponent	no escapeURIComponent in CRuby's chain
-zeo-only	CGI	s	escape_html	no escape_html in CRuby's chain
-zeo-only	CGI	s	escape_uri_component	no escape_uri_component in CRuby's chain
-zeo-only	CGI	s	unescape	no unescape in CRuby's chain
-zeo-only	CGI	s	unescapeHTML	no unescapeHTML in CRuby's chain
-zeo-only	CGI	s	unescapeURIComponent	no unescapeURIComponent in CRuby's chain
-zeo-only	CGI	s	unescape_html	no unescape_html in CRuby's chain
-zeo-only	CGI	s	unescape_uri_component	no unescape_uri_component in CRuby's chain
 zeo-only	Digest	s	bubblebabble	no bubblebabble in CRuby's chain
-zeo-only	Digest::MD5	i	<<	no << in CRuby's chain
-zeo-only	Digest::MD5	i	base64digest	no base64digest in CRuby's chain
-zeo-only	Digest::MD5	i	block_length	no block_length in CRuby's chain
 zeo-only	Digest::MD5	i	bubblebabble	no bubblebabble in CRuby's chain
-zeo-only	Digest::MD5	i	digest	no digest in CRuby's chain
-zeo-only	Digest::MD5	i	digest_length	no digest_length in CRuby's chain
-zeo-only	Digest::MD5	i	hexdigest	no hexdigest in CRuby's chain
-zeo-only	Digest::MD5	i	length	no length in CRuby's chain
-zeo-only	Digest::MD5	i	reset	no reset in CRuby's chain
-zeo-only	Digest::MD5	i	size	no size in CRuby's chain
-zeo-only	Digest::MD5	i	update	no update in CRuby's chain
-zeo-only	Digest::MD5	s	base64digest	no base64digest in CRuby's chain
-zeo-only	Digest::MD5	s	digest	no digest in CRuby's chain
-zeo-only	Digest::MD5	s	hexdigest	no hexdigest in CRuby's chain
 zeo-only	IO	i	bytes	no bytes in CRuby's chain
 zeo-only	IO	i	chars	no chars in CRuby's chain
 zeo-only	IO	i	chmod	no chmod in CRuby's chain
@@ -71,199 +48,18 @@ zeo-only	ObjectSpace	s	trace_object_allocations_clear	no trace_object_allocation
 zeo-only	ObjectSpace	s	trace_object_allocations_debug_start	no trace_object_allocations_debug_start in CRuby's chain
 zeo-only	ObjectSpace	s	trace_object_allocations_start	no trace_object_allocations_start in CRuby's chain
 zeo-only	ObjectSpace	s	trace_object_allocations_stop	no trace_object_allocations_stop in CRuby's chain
-zeo-only	OpenSSL::Digest	i	base64digest	no base64digest in CRuby's chain
-zeo-only	OpenSSL::Digest	i	digest	no digest in CRuby's chain
-zeo-only	OpenSSL::Digest	i	hexdigest	no hexdigest in CRuby's chain
-zeo-only	OpenSSL::Digest	i	length	no length in CRuby's chain
-zeo-only	OpenSSL::Digest	i	size	no size in CRuby's chain
-zeo-only	OpenSSL::Digest	s	base64digest	no base64digest in CRuby's chain
-zeo-only	OpenSSL::Digest	s	hexdigest	no hexdigest in CRuby's chain
-zeo-only	OpenSSL::Digest::MD4	s	base64digest	no base64digest in CRuby's chain
 zeo-only	Pathname	i	mkdir_p	no mkdir_p in CRuby's chain
 zeo-only	Pathname	i	rm_rf	no rm_rf in CRuby's chain
 zeo-only	Pathname	i	to_str	no to_str in CRuby's chain
 zeo-only	Proc	i	()	no () in CRuby's chain
-zeo-only	Random	i	bytes	no bytes in CRuby's chain
-zeo-only	Random	i	seed	no seed in CRuby's chain
-zeo-only	Readline	s	basic_quote_characters	no basic_quote_characters in CRuby's chain
-zeo-only	Readline	s	basic_quote_characters=	no basic_quote_characters= in CRuby's chain
-zeo-only	Readline	s	basic_word_break_characters	no basic_word_break_characters in CRuby's chain
-zeo-only	Readline	s	basic_word_break_characters=	no basic_word_break_characters= in CRuby's chain
-zeo-only	Readline	s	completer_quote_characters	no completer_quote_characters in CRuby's chain
-zeo-only	Readline	s	completer_quote_characters=	no completer_quote_characters= in CRuby's chain
-zeo-only	Readline	s	completer_word_break_characters	no completer_word_break_characters in CRuby's chain
-zeo-only	Readline	s	completer_word_break_characters=	no completer_word_break_characters= in CRuby's chain
-zeo-only	Readline	s	completion_append_character	no completion_append_character in CRuby's chain
-zeo-only	Readline	s	completion_append_character=	no completion_append_character= in CRuby's chain
-zeo-only	Readline	s	completion_case_fold	no completion_case_fold in CRuby's chain
-zeo-only	Readline	s	completion_case_fold=	no completion_case_fold= in CRuby's chain
-zeo-only	Readline	s	completion_proc	no completion_proc in CRuby's chain
-zeo-only	Readline	s	completion_proc=	no completion_proc= in CRuby's chain
-zeo-only	Readline	s	emacs_editing_mode	no emacs_editing_mode in CRuby's chain
-zeo-only	Readline	s	emacs_editing_mode?	no emacs_editing_mode? in CRuby's chain
-zeo-only	Readline	s	filename_quote_characters	no filename_quote_characters in CRuby's chain
-zeo-only	Readline	s	filename_quote_characters=	no filename_quote_characters= in CRuby's chain
-zeo-only	Readline	s	input=	no input= in CRuby's chain
-zeo-only	Readline	s	output=	no output= in CRuby's chain
-zeo-only	Readline	s	pre_input_hook	no pre_input_hook in CRuby's chain
-zeo-only	Readline	s	pre_input_hook=	no pre_input_hook= in CRuby's chain
-zeo-only	Readline	s	special_prefixes	no special_prefixes in CRuby's chain
-zeo-only	Readline	s	special_prefixes=	no special_prefixes= in CRuby's chain
-zeo-only	Readline	s	vi_editing_mode	no vi_editing_mode in CRuby's chain
-zeo-only	Readline	s	vi_editing_mode?	no vi_editing_mode? in CRuby's chain
 zeo-only	Regexp	i	linear_time?	no linear_time? in CRuby's chain
 zeo-only	Set	i	contain?	no contain? in CRuby's chain
 zeo-only	Set	i	merge_new	no merge_new in CRuby's chain
 zeo-only	StringIO	i	<<	no << in CRuby's chain
 zeo-only	StringIO	i	readbyte	no readbyte in CRuby's chain
 zeo-only	Struct	s	[]	no [] in CRuby's chain
-zeo-only	Syslog	s	LOG_MASK	no LOG_MASK in CRuby's chain
-zeo-only	Syslog	s	LOG_UPTO	no LOG_UPTO in CRuby's chain
 zeo-only	Thread::Queue	i	max	no max in CRuby's chain
 zeo-only	Thread::Queue	i	max=	no max= in CRuby's chain
-oracle-missing	FFI	s	errno	FFI is absent from the pinned oracle
-oracle-missing	FFI	s	errno=	FFI is absent from the pinned oracle
-oracle-missing	FFI::DynamicLibrary	i	find_function	FFI::DynamicLibrary is absent from the pinned oracle
-oracle-missing	FFI::DynamicLibrary	i	find_variable	FFI::DynamicLibrary is absent from the pinned oracle
-oracle-missing	FFI::DynamicLibrary	i	name	FFI::DynamicLibrary is absent from the pinned oracle
-oracle-missing	FFI::DynamicLibrary	s	open	FFI::DynamicLibrary is absent from the pinned oracle
-oracle-missing	FFI::Function	i	call	FFI::Function is absent from the pinned oracle
-oracle-missing	FFI::Function	i	free	FFI::Function is absent from the pinned oracle
-oracle-missing	FFI::Function	s	new	FFI::Function is absent from the pinned oracle
-oracle-missing	FFI::MemoryPointer	s	from_string	FFI::MemoryPointer is absent from the pinned oracle
-oracle-missing	FFI::MemoryPointer	s	new	FFI::MemoryPointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	+	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	==	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	address	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	eql?	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_bytes	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_char	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_double	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_float	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_float32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_float64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_int	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_int16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_int32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_int64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_int8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_long_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_pointer	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_short	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_string	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_uchar	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_uint	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_uint16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_uint32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_uint64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_uint8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_ulong	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_ulong_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	get_ushort	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	null?	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_bytes	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_char	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_double	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_float	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_float32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_float64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_int	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_int16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_int32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_int64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_int8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_long_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_pointer	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_short	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_string	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_uchar	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_uint	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_uint16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_uint32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_uint64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_uint8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_ulong	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_ulong_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	put_ushort	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_double	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_float	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_int	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_int16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_int32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_int64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_int8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_uint	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_uint32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_array_of_uint8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_bytes	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_char	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_double	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_float	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_int	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_int16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_int32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_int64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_int8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_long_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_pointer	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_short	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_string	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_uchar	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_uint	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_uint16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_uint32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_uint64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_uint8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_ulong	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_ulong_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	read_ushort	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	size	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	size_limit?	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	slice	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	to_i	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	to_ptr	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	total	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_double	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_float	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_int	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_int16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_int32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_int64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_int8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_array_of_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_bytes	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_char	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_double	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_float	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_int	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_int16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_int32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_int64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_int8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_long_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_pointer	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_short	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_uchar	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_uint	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_uint16	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_uint32	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_uint64	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_uint8	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_ulong	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_ulong_long	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	i	write_ushort	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Pointer	s	new	FFI::Pointer is absent from the pinned oracle
-oracle-missing	FFI::Type	i	==	FFI::Type is absent from the pinned oracle
-oracle-missing	FFI::Type	i	alignment	FFI::Type is absent from the pinned oracle
-oracle-missing	FFI::Type	i	eql?	FFI::Type is absent from the pinned oracle
-oracle-missing	FFI::Type	i	size	FFI::Type is absent from the pinned oracle
-oracle-missing	FFI::VariadicInvoker	i	call	FFI::VariadicInvoker is absent from the pinned oracle
-oracle-missing	FFI::VariadicInvoker	s	new	FFI::VariadicInvoker is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	parse_success?	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	serialize_lex	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo is absent from the pinned oracle

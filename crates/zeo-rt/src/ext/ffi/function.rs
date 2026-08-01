@@ -69,7 +69,7 @@ ruby_class! {
 
     // `FFI::Function.new(return_type, arg_types, pointer_or_proc, options?)`.
     // The options (`convention:`) name ABIs this platform doesn't distinguish.
-    def self."new"(_recv, arg1, arg2, arg3, _arg4?) {
+    def self."new" cfunc (_recv, arg1, arg2, arg3, _arg4?) {
         let ret = kind_of_type_value(arg1)?;
         let arg_kinds = arg_kinds_of(arg2)?;
         let (base, closure) = match arg3 {
@@ -182,7 +182,7 @@ mod invoker {
     // `FFI::VariadicInvoker.new(pointer, arg_types, return_type, options?)`.
     // `arg_types` ends with the `VARARGS` marker; everything before it is the
     // fixed prototype.
-    def self."new"(_recv, arg1, arg2, arg3, _arg4?) {
+    def self."new" cfunc (_recv, arg1, arg2, arg3, _arg4?) {
         let addr = target_address(arg1)?;
         let RubyValue::Array(a) = arg2 else {
             return Err(type_error!(

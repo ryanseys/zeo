@@ -22,7 +22,7 @@ ruby_class! {
     // `FFI::Pointer.new(address)` or `FFI::Pointer.new(type, address)` (the
     // type governs `[]` element size, which we don't model -- the address is
     // what matters). A Pointer argument copies its address.
-    def self."new"(_recv, type_or_address, address?) {
+    def self."new" cfunc (_recv, type_or_address, address?) {
         let addr_arg = address.unwrap_or(type_or_address);
         let addr = match address_of(addr_arg) {
             Some(a) => a,
@@ -82,13 +82,13 @@ ruby_class! {
     def "put_float64" | "put_double"(r, offset, value) { write_float_m(r, off_arg(Some(offset))?, value, 8) }
 
     // -- pointers (read/write an address-sized word, wrapped as a Pointer) --
-    def "read_pointer" | "get_pointer"(recv, offset?) {
+    def "read_pointer" arity 0 | "get_pointer" arity 1 (recv, offset?) {
         let off = off_arg(offset)?;
         let p = ptr_of(recv);
         p.check_bounds(off, 8)?;
         Ok(wrap_address(unsafe { p.read_int(off, 8, false) } as usize))
     }
-    def "write_pointer" | "put_pointer"(recv, first, second?) {
+    def "write_pointer" arity 1 | "put_pointer" arity 2 (recv, first, second?) {
         let (off, target) = match second {
             Some(v) => (off_arg(Some(first))?, v),
             None => (0, first),
@@ -118,7 +118,7 @@ ruby_class! {
         }
     }
     // `get_string(offset, length = nil)` -- NUL-terminated at offset, or fixed length.
-    def "get_string"(recv, arg1, arg2?) {
+    def "get_string" cfunc (recv, arg1, arg2?) {
         let off = crate::ffi::to_i64(arg1)? as usize;
         let p = ptr_of(recv);
         match arg2 {
@@ -169,7 +169,7 @@ ruby_class! {
     }
     // `put_bytes(offset, str, index = 0, length = nil)` -- raw bytes (a slice
     // of `str` starting at `index`), no NUL.
-    def "put_bytes"(recv, arg1, arg2, arg3?, arg4?) {
+    def "put_bytes" cfunc (recv, arg1, arg2, arg3?, arg4?) {
         let off = crate::ffi::to_i64(arg1)? as usize;
         let mut bytes = str_bytes(arg2)?;
         let idx = match arg3 {
@@ -191,7 +191,7 @@ ruby_class! {
         unsafe { p.write_bytes_at(off, &bytes) };
         Ok(recv.clone())
     }
-    def "write_bytes"(recv, arg) {
+    def "write_bytes" cfunc (recv, arg) {
         let bytes = str_bytes(arg)?;
         let p = ptr_of(recv);
         p.check_bounds(0, bytes.len())?;
