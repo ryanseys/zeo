@@ -246,7 +246,7 @@ fn gen_preamble(method: &zeo_dsl::MethodDef) -> TokenStream2 {
     // The guard counts POSITIONALS, so a `**kwrest` slot is excluded -- unlike
     // `max_args`, where CRuby's equation does count it. `Time.new` accepts
     // seven positionals plus `in:`, and CRuby says `expected 0..7` for eight.
-    let max = method.rest.is_none().then(|| method.params.len());
+    let max = method.rest.is_none().then_some(method.params.len());
 
     // `**kwrest` peels the trailing options Hash off before anything is
     // counted, so `[1].pack()` reports `given 0`, not `given 1`.

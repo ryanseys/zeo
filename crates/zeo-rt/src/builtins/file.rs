@@ -9,7 +9,7 @@
 //! (plan E1+), paths become a real encoding concern; today they round-trip
 //! through `String` and non-UTF-8 paths are out of reach.
 
-use crate::builtins::{arg_error, arity, block_or_enum, type_error};
+use crate::builtins::{arg_error, block_or_enum, type_error};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
@@ -597,10 +597,10 @@ ruby_class! {
     // CLOSES it afterwards no matter how the block leaves (return, raise,
     // break), answering the block's value; without one, answers the open
     // file for the caller to close.
-    def self."open" | "new" (_recv, *args, &block) {
-        arity!(args, 1..=3);
-        if let RubyValue::Int(fd) = &args[0] {
-            let io = file_from_fd(*fd, args.last())?;
+    def self."open" | "new" cfunc (_recv, path, mode?, perm?, &block) {
+        let trailing = perm.or(mode);
+        if let RubyValue::Int(fd) = path {
+            let io = file_from_fd(*fd, trailing)?;
             let Some(RubyValue::Proc(p)) = block else {
                 return Ok(io);
             };
@@ -608,15 +608,15 @@ ruby_class! {
             let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
             return out;
         }
-        let path = path_arg(&args[0], "open")?;
+        let path = path_arg(path, "open")?;
         // The mode is a String (`"w"`), an Integer O_* bitmask
         // (`File::WRONLY | File::CREAT`), a `mode:` keyword in a trailing Hash,
         // or absent (`"r"`).
-        let opts = match args.get(1) {
+        let opts = match mode {
             None => open_options("r")?,
             Some(RubyValue::Int(flags)) => open_options_int(*flags),
             Some(RubyValue::Hash(_)) => {
-                open_options(kwarg_str(args.get(1), "mode").as_deref().unwrap_or("r"))?
+                open_options(kwarg_str(mode, "mode").as_deref().unwrap_or("r"))?
             }
             Some(v) => open_options(&path_arg(v, "open")?)?,
         };
@@ -638,21 +638,20 @@ ruby_class! {
     // (default `Encoding.default_external`, UTF-8) WITHOUT validation --
     // CRuby's own rule. `encoding:`/`external_encoding:`/`internal_encoding:`
     // options override it; an internal encoding transcodes the bytes.
-    def self."read" (_recv, *args, &_block) {
-        arity!(args, 1..=4);
-        let path = path_arg(&args[0], "read")?;
+    def self."read" (_recv, path, length?, offset?, opt?) {
+        let path = path_arg(path, "read")?;
         let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         // `File.read(path, length, offset)`: drop `offset` leading bytes, then
         // cap at `length` (an Integer positional; a trailing Hash is options).
-        if let Some(RubyValue::Int(off)) = args.get(2) {
+        if let Some(RubyValue::Int(off)) = offset {
             let off = (*off).max(0) as usize;
             bytes = bytes.split_off(off.min(bytes.len()));
         }
-        if let Some(RubyValue::Int(len)) = args.get(1) {
+        if let Some(RubyValue::Int(len)) = length {
             bytes.truncate((*len).max(0) as usize);
         }
-        let (ext, int) = read_encodings(args.last())?;
+        let (ext, int) = read_encodings(opt.or(offset).or(length))?;
         Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
     }
     // `binread` always answers ASCII-8BIT bytes, no transcoding.
@@ -669,30 +668,28 @@ ruby_class! {
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Int(data.len() as i64))
     }
-    def self."readlines" (_recv, *args, &_block) {
-        arity!(args, 1..=3);
-        let path = path_arg(&args[0], "readlines")?;
+    def self."readlines" cfunc (_recv, path, sep?, opt?) {
+        let path = path_arg(path, "readlines")?;
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         // A String positional after the path is the record separator (default
         // "\n"); `chomp: true` (trailing Hash) strips it.
-        let sep = match args.get(1) {
+        let chomp = kwarg_truthy(opt.or(sep), "chomp");
+        let sep = match sep {
             Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
             _ => "\n".to_string(),
         };
-        let chomp = kwarg_truthy(args.last(), "chomp");
         Ok(RubyValue::Array(crate::collections::array_new(split_records(&bytes, &sep, chomp))))
     }
     // `File.foreach(path)` -- yield each line; without a block, an Enumerator.
     // `chomp: true` strips terminators, mirroring `readlines`.
-    def self."foreach" (recv, *args, &block) {
-        arity!(args, 1..=2);
-        let path = path_arg(&args[0], "foreach")?;
-        let p = block_or_enum!(recv, "foreach", args, block);
+    def self."foreach" (recv, path, sep?, opt?, &block) {
+        let path = path_arg(path, "foreach")?;
+        let p = block_or_enum!(recv, "foreach", __args, block);
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
-        let chomp = kwarg_truthy(args.get(1), "chomp");
+        let chomp = kwarg_truthy(opt.or(sep), "chomp");
         for line in crate::builtins::string::split_lines(&text) {
             let line = if chomp {
                 let s = line.to_display_string();
@@ -936,9 +933,8 @@ ruby_class! {
     }
     // `File.realpath(path [, dir])` -- the absolute, symlink-resolved path.
     // Every component, the last one included, must exist.
-    def self."realpath" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let joined = realpath_join(args, "realpath")?;
+    def self."realpath" cfunc (_recv, path, dir?) {
+        let joined = realpath_join(path, dir, "realpath")?;
         let real = std::fs::canonicalize(&joined).map_err(|e| raise_errno(&e, "realpath", &joined))?;
         Ok(str_val(real.to_string_lossy().into_owned()))
     }
@@ -946,9 +942,8 @@ ruby_class! {
     // part must exist. A resolvable path answers exactly what `realpath` does,
     // symlinked last component included; otherwise the parent resolves and the
     // basename rides along unresolved.
-    def self."realdirpath" (_recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let joined = realpath_join(args, "realdirpath")?;
+    def self."realdirpath" cfunc (_recv, path, dir?) {
+        let joined = realpath_join(path, dir, "realdirpath")?;
         if let Ok(real) = std::fs::canonicalize(&joined) {
             return Ok(str_val(real.to_string_lossy().into_owned()));
         }
@@ -1178,9 +1173,9 @@ ruby_class! {
 /// metadata (which would ignore ACLs and the effective uid).
 /// The `path [, dir]` argument pair `realpath`/`realdirpath` share, joined into
 /// one path. An absolute `path` ignores `dir`.
-fn realpath_join(args: &[RubyValue], who: &str) -> Result<String, Signal> {
-    let raw = path_arg(&args[0], who)?;
-    Ok(match args.get(1) {
+fn realpath_join(path: &RubyValue, dir: Option<&RubyValue>, who: &str) -> Result<String, Signal> {
+    let raw = path_arg(path, who)?;
+    Ok(match dir {
         Some(d) if !d.is_nil() => {
             let base = path_arg(d, who)?;
             if raw.starts_with('/') {

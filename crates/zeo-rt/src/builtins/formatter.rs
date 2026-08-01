@@ -19,7 +19,7 @@
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::send_value;
 use crate::encoding::ASCII_8BIT;
 use crate::{RubyValue, Signal, Symbol, string_new};
@@ -57,8 +57,8 @@ fn entropy(recv: &RubyValue, n: i64) -> Result<Vec<u8>, Signal> {
 /// The byte-count argument shared by `random_bytes`/`hex`/`base64`/... : a
 /// missing or `nil` count means the CRuby default (16); anything else runs the
 /// `to_int` protocol. Negative sizes raise, matching `Random#bytes`.
-fn count(args: &[RubyValue], default: i64) -> Result<i64, Signal> {
-    match args.first() {
+fn count(n: Option<&RubyValue>, default: i64) -> Result<i64, Signal> {
+    match n {
         None | Some(RubyValue::Nil) => Ok(default),
         Some(v) => {
             let n = crate::builtins::convert::to_index(v)?;
@@ -201,29 +201,25 @@ ruby_module! {
         send_value(recv, Symbol::intern("bytes"), std::slice::from_ref(arg), None)
     }
     // `random_bytes(n = 16)` -- n raw bytes (ASCII-8BIT).
-    def "random_bytes"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let bytes = entropy(recv, count(args, 16)?)?;
+    def "random_bytes"(recv, n?) {
+        let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, ASCII_8BIT)))
     }
     // `hex(n = 16)` -- 2n lowercase hex chars.
-    def "hex"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let bytes = entropy(recv, count(args, 16)?)?;
+    def "hex"(recv, n?) {
+        let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(string_new(hex_encode(&bytes))))
     }
     // `base64(n = 16)` -- RFC 4648 base64, padded.
-    def "base64"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let bytes = entropy(recv, count(args, 16)?)?;
+    def "base64"(recv, n?) {
+        let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, STD, true))))
     }
     // `urlsafe_base64(n = 16, padding = false)` -- URL/filename-safe alphabet;
     // padding stripped unless the second argument is truthy.
-    def "urlsafe_base64"(recv, *args, &_block) {
-        arity!(args, 0..=2);
-        let bytes = entropy(recv, count(&args[..args.len().min(1)], 16)?)?;
-        let padding = matches!(args.get(1), Some(v) if v.truthy());
+    def "urlsafe_base64"(recv, n?, padding?) {
+        let bytes = entropy(recv, count(n, 16)?)?;
+        let padding = matches!(padding, Some(v) if v.truthy());
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, URL, padding))))
     }
     // `uuid` / `uuid_v4` -- a random RFC 9562 version-4 UUID.
@@ -236,9 +232,8 @@ ruby_module! {
     // `random_number(n = 0)` -- an integer in `[0, n)` for a positive Integer,
     // a float in `[0.0, n)` for a positive Float, a value inside a Range, and a
     // float in `[0.0, 1.0)` for `0`/absent/non-positive (CRuby's fallback).
-    def "random_number"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        match args.first() {
+    def "random_number"(recv, n?) {
+        match n {
             None | Some(RubyValue::Nil) => Ok(RubyValue::Float(rand_float_unit(recv)?)),
             Some(RubyValue::Int(n)) if *n > 0 => {
                 Ok(RubyValue::Int(rand_int_below(recv, *n as u64)? as i64))
@@ -249,16 +244,14 @@ ruby_module! {
             Some(RubyValue::Float(f)) if *f > 0.0 => {
                 Ok(RubyValue::Float(rand_float_unit(recv)? * *f))
             }
-            Some(RubyValue::Range(..)) => random_in_range(recv, &args[0]),
+            Some(v @ RubyValue::Range(..)) => random_in_range(recv, v),
             _ => Ok(RubyValue::Float(rand_float_unit(recv)?)),
         }
     }
     // `alphanumeric(n = 16, chars: [A-Za-z0-9])`.
-    def "alphanumeric"(recv, *args, &_block) {
-        arity!(args, 0..=2);
-        // A trailing `chars:` keyword hash carries the alphabet.
-        let (positional, chars) = split_chars_kwarg(args)?;
-        let n = count(positional, 16)?;
+    def "alphanumeric"(recv, n?, **opts) {
+        let chars = chars_kwarg(opts);
+        let n = count(n, 16)?;
         choose(recv, &chars, n)
     }
     // `choose(source, n)` -- public in CRuby's formatter.
@@ -329,14 +322,14 @@ fn to_f(v: &RubyValue) -> Result<f64, Signal> {
 
 /// Split a trailing `chars:` keyword hash off `alphanumeric`'s args, returning
 /// the positional args and the chosen alphabet.
-fn split_chars_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], Vec<RubyValue>), Signal> {
-    if let Some(RubyValue::Hash(h)) = args.last() {
+fn chars_kwarg(opts: Option<&RubyValue>) -> Vec<RubyValue> {
+    if let Some(RubyValue::Hash(h)) = opts {
         let chars = crate::collections::hash_get(h, &RubyValue::Symbol(Symbol::intern("chars")));
         if let RubyValue::Array(a) = chars {
-            return Ok((&args[..args.len() - 1], a.lock().to_vec()));
+            return a.lock().to_vec();
         }
     }
-    Ok((args, default_alnum()))
+    default_alnum()
 }
 
 #[cfg(test)]
