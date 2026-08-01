@@ -1590,9 +1590,10 @@ ruby_class! {
     }
     // `scrub!` scrubs in place and ALWAYS answers the receiver (unlike the
     // other bang mutators, which answer nil when nothing changed).
-    def "scrub!"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let scrubbed = crate::dispatch::send_value(recv, crate::Symbol::intern("scrub"), args, None)?;
+    def "scrub!"(recv, replacement?) {
+        let forwarded = replacement.map(std::slice::from_ref).unwrap_or(&[]);
+        let scrubbed =
+            crate::dispatch::send_value(recv, crate::Symbol::intern("scrub"), forwarded, None)?;
         let s = recv_str!(recv);
         if s.is_frozen() {
             return Err(crate::dispatch::raise_error_details(
@@ -2064,11 +2065,10 @@ ruby_class! {
     def "succ!" arity 0 | "next!" arity 0 (recv, *args, &block) { str_bang_via(recv, "succ", args, block) }
     // `sum` -- the CRuby checksum: the sum of the byte values, masked to `bits`
     // (default 16) bits. `chr` is the first character as a one-char String.
-    def "sum"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let bits = match args.first() {
+    def "sum"(recv, bits?) {
+        let bits = match bits {
             None => 16,
-            Some(_) => arg_int!(args, 0),
+            Some(v) => arg_int!(v),
         };
         let total: i64 = recv_str!(recv).lock().bytes().iter().map(|&b| b as i64).sum();
         let masked = if (1..64).contains(&bits) {
@@ -2307,13 +2307,12 @@ ruby_class! {
     // The `[]`/`slice` forms: Int, (Int, Int), Range, String -- all
     // char-indexed and encoding-preserving (a substring of a BINARY string
     // stays BINARY; a UTF-8 multibyte char is one index).
-    def "[]" | "slice"(recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "[]" | "slice" cfunc (recv, index, len?) {
         // Regexp indexing: `s[/re/]` is the whole match; `s[/re/, n]`/`s[/re/,
         // :name]` is that capture group (nil when the pattern doesn't match).
-        if let RubyValue::Regexp(re) = &args[0] {
+        if let RubyValue::Regexp(re) = index {
             let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-            return regexp_index(re, &text, args.get(1));
+            return regexp_index(re, &text, len);
         }
         let s = recv_str!(recv).lock();
         let n = s.char_len() as i64;
@@ -2321,11 +2320,11 @@ ruby_class! {
             Some(b) => RubyValue::Str(crate::string_wrap(b)),
             None => RubyValue::Nil,
         };
-        if args.len() == 2 {
-            let (start, len) = (arg_int!(args, 0), arg_int!(args, 1));
+        if let Some(len) = len {
+            let (start, len) = (arg_int!(index), arg_int!(len));
             return Ok(wrap(s.char_substr(start, len)));
         }
-        match &args[0] {
+        match index {
             RubyValue::Range(start, end, exclusive) => {
                 let start_i = match start.as_deref() {
                     Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },

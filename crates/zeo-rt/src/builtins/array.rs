@@ -28,19 +28,18 @@ ruby_class! {
     def self."try_convert" (_recv, arg) {
         Ok(convert::try_convert_value(arg, "Array", "to_ary")?.unwrap_or(RubyValue::Nil))
     }
-    def self."new"(_recv, *args, &block) {
-        arity!(args, 0..=2);
+    def self."new"(_recv, size?, fill?, &block) {
         // `Array.new(other_array)` is the COPY form (CRuby `rb_ary_initialize`):
         // a shallow copy of the given array, ignoring any block. Only when the
         // sole argument is an Array -- otherwise the arg is a size below.
-        if args.len() == 1 {
-            if let Some(RubyValue::Array(a)) = args.first() {
+        if fill.is_none() {
+            if let Some(RubyValue::Array(a)) = size {
                 return Ok(RubyValue::Array(crate::array_new(a.lock().to_vec())));
             }
         }
-        let size = match args.first() {
+        let size = match size {
             None => 0,
-            Some(_) => arg_int!(args, 0),
+            Some(v) => arg_int!(v),
         };
         if size < 0 {
             return Err(arg_error!("negative array size"));
@@ -53,20 +52,19 @@ ruby_class! {
             }
             return Ok(RubyValue::Array(crate::array_new(out)));
         }
-        let fill = args.get(1).cloned().unwrap_or(RubyValue::Nil);
+        let fill = fill.cloned().unwrap_or(RubyValue::Nil);
         Ok(RubyValue::Array(crate::array_new(vec![fill; size])))
     }
 
-    def "[]" | "slice"(recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "[]" | "slice" cfunc (recv, index, len?) {
         // NO up-front whole-Vec snapshot: a plain `arr[i]` in a loop must be
         // O(1), not O(n) (bm_huffman spent 250s cloning arrays here). The
         // two slice shapes copy only the requested span, under the lock; any
         // dispatch-capable conversion (`to_int` ducks) runs BEFORE locking,
         // so user code can never re-enter this array while it is held.
         // `arr[start, len]`.
-        if args.len() == 2 {
-            let (start, len) = (arg_int!(args, 0), arg_int!(args, 1));
+        if let Some(len) = len {
+            let (start, len) = (arg_int!(index), arg_int!(len));
             let guard = recv_array!(recv).lock();
             let n = guard.len() as i64;
             let start = if start < 0 { start + n } else { start };
@@ -82,7 +80,7 @@ ruby_class! {
                 guard[start as usize..end as usize].to_vec(),
             )));
         }
-        match &args[0] {
+        match index {
             // `arr[1..3]` -- Range slicing.
             RubyValue::Range(start, end, exclusive) => {
                 let guard = recv_array!(recv).lock();
@@ -118,8 +116,7 @@ ruby_class! {
             }
         }
     }
-    def "[]="(recv, *args, &_block) {
-        arity!(args, 2..=3);
+    def "[]=" cfunc (recv, index, second, third?) {
         // The frozen check comes FIRST -- before length/index validation --
         // matching CRuby's `rb_ary_modify_check` at the top of the mutator
         // (oracle-verified ordering: FrozenError wins over a negative
@@ -130,12 +127,12 @@ ruby_class! {
         // `to_ary` coercion's elements (a plain Array as-is; an object
         // without `to_ary` inserts as one element). The expression value is
         // the object as written, never the coercion.
-        if args.len() == 3 {
-            let (start, len) = (arg_int!(args, 0), arg_int!(args, 1));
-            array_splice(recv_array!(recv), start, len, &args[2])?;
-            return Ok(args[2].clone());
+        if let Some(value) = third {
+            let (start, len) = (arg_int!(index), arg_int!(second));
+            array_splice(recv_array!(recv), start, len, value)?;
+            return Ok(value.clone());
         }
-        if let RubyValue::Range(s, e, exclusive) = &args[0] {
+        if let RubyValue::Range(s, e, exclusive) = index {
             let n = crate::array_len(recv_array!(recv));
             let start = match s.as_deref() {
                 Some(v) => {
@@ -150,7 +147,7 @@ ruby_class! {
             if start < 0 {
                 return Err(crate::builtins::range_error!(
                     "{} out of range",
-                    args[0].inspect_string()
+                    index.inspect_string()
                 ));
             }
             let end = match e.as_deref() {
@@ -161,11 +158,11 @@ ruby_class! {
                 None => n - 1,
             };
             let len = (end - start + if *exclusive { 0 } else { 1 }).max(0);
-            array_splice(recv_array!(recv), start, len, &args[1])?;
-            return Ok(args[1].clone());
+            array_splice(recv_array!(recv), start, len, second)?;
+            return Ok(second.clone());
         }
-        let i = arg_int!(args, 0);
-        match crate::array_set(recv_array!(recv), i, args[1].clone()) {
+        let i = arg_int!(index);
+        match crate::array_set(recv_array!(recv), i, second.clone()) {
             Some(v) => Ok(v),
             None => Err(index_error!("index {i} too small for array; minimum: -{}", crate::array_len(recv_array!(recv)))),
         }
@@ -210,10 +207,9 @@ ruby_class! {
     // `last`/`last(n)` mirror `pop`'s dual return: bare answers ONE element
     // (nil when empty), `last(n)` an ARRAY of up to the last n, in original
     // order (`n` past the length takes what's there; `n == 0` is `[]`).
-    def "last"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "last"(recv, n?) {
         let items = recv_array!(recv).lock();
-        let Some(n) = count_arg(args)? else {
+        let Some(n) = count_arg(n)? else {
             return Ok(items.last().cloned().unwrap_or(RubyValue::Nil));
         };
         let at = items.len().saturating_sub(n);
@@ -294,9 +290,8 @@ ruby_class! {
     // `|` is the BINARY operator (`a | b`); `union` is its variadic sibling
     // (`a.union(b, c, ...)`, zero args = a uniq'd copy of self). Both drop
     // later duplicates, keeping first-occurrence order.
-    def "|" arity 1 (recv, *args, &_block) {
-        arity!(args, 1);
-        let others = set_op_args(args)?;
+    def "|" (recv, other) {
+        let others = set_op_args(std::slice::from_ref(other))?;
         Ok(RubyValue::Array(crate::array_new(union_of(recv_array!(recv), &others))))
     }
     def "union"(recv, *args, &_block) {
@@ -353,24 +348,22 @@ ruby_class! {
     // answer an ARRAY of up to n -- a different return type, not just a
     // different count, which is why the no-arg case can't just be `pop(1)`.
     // `n` past the length takes what's there; `n == 0` is `[]`.
-    def "pop"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "pop"(recv, n?) {
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let mut guard = handle.lock();
-        let Some(n) = count_arg(args)? else {
+        let Some(n) = count_arg(n)? else {
             return Ok(guard.pop().unwrap_or(RubyValue::Nil));
         };
         let at = guard.len().saturating_sub(n);
         let taken: Vec<RubyValue> = guard.split_off(at);
         Ok(RubyValue::Array(crate::array_new(taken)))
     }
-    def "shift"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "shift"(recv, n?) {
         let handle = recv_array!(recv);
         check_frozen(handle, recv)?;
         let mut guard = handle.lock();
-        let Some(n) = count_arg(args)? else {
+        let Some(n) = count_arg(n)? else {
             return Ok(guard.shift().unwrap_or(RubyValue::Nil));
         };
         let n = n.min(guard.len());
@@ -403,11 +396,10 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `flatten` / `flatten(depth)`.
-    def "flatten"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let depth = match args.first() {
+    def "flatten"(recv, depth?) {
+        let depth = match depth {
             None | Some(RubyValue::Nil) => -1,
-            Some(_) => arg_int!(args, 0),
+            Some(v) => arg_int!(v),
         };
         fn go(items: &[RubyValue], depth: i64, out: &mut Vec<RubyValue>) {
             for e in items {
@@ -839,11 +831,10 @@ ruby_class! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    def "rotate"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        let by = match args.first() {
+    def "rotate"(recv, by?) {
+        let by = match by {
             None => 1,
-            Some(_) => arg_int!(args, 0),
+            Some(v) => arg_int!(v),
         };
         let mut out = recv_array!(recv).lock().to_vec();
         if !out.is_empty() {
@@ -1572,8 +1563,8 @@ fn uniq_dedup(
 /// absent (the answer-one-element form), else the count through the
 /// `to_int` protocol. A negative one is CRuby's "negative array size"
 /// ArgumentError (checked after conversion, so `pop(-2.9)` truncates first).
-fn count_arg(args: &[RubyValue]) -> Result<Option<usize>, crate::Signal> {
-    let Some(v) = args.first() else {
+fn count_arg(v: Option<&RubyValue>) -> Result<Option<usize>, crate::Signal> {
+    let Some(v) = v else {
         return Ok(None);
     };
     let n = convert::to_index(v)?;
