@@ -17,6 +17,9 @@
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 //! - `xtask arity-oracle`: re-records `conformance/builtin-arity.tsv` from the
 //!   installed ruby, which the `builtin_arity` drift test reads.
+//! - `xtask method-census`: re-records `conformance/method-census.tsv` -- what
+//!   every module CRuby reaches from `Object` owns -- which the
+//!   `method_census` coverage ratchet reads.
 //!
 //! (The golden-file conformance corpus, examples, and gaps all run as
 //! `cargo test`/nextest -- see `crates/zeo/tests/`.)
@@ -27,6 +30,7 @@ mod compile_bench;
 mod exec;
 mod gem;
 mod gem_compat;
+mod method_census;
 mod prebuild;
 mod stdlib_status;
 
@@ -48,11 +52,12 @@ fn main() -> ExitCode {
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
+        Some("method-census") => method_census::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
                  <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
-                 arity-oracle>"
+                 arity-oracle|method-census>"
             );
             ExitCode::FAILURE
         }

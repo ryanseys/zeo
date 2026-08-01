@@ -173,6 +173,35 @@ address of the value it was handed, and a `Class` is a bare `ClassId`, so
 `recv` points at the caller's temporary slot — two classes asked in a loop read
 back the same address. Class ids now sit in their own band above Symbol's.
 
+### 1.4 The census as a ratchet
+
+The measurement lived in throwaway scratch scripts, so nothing stopped the
+numbers going back up.
+
+**Status: done.** `tools/method_census.rb` is the walker, and it runs UNCHANGED
+under both engines — that is what makes the two dumps comparable.
+`cargo run -p xtask -- method-census` records the oracle side into
+`conformance/method-census.tsv`; `crates/zeo/tests/method_census.rs` compiles
+the same walker through zeo, diffs, and gates every gap against
+`conformance/method-census-gaps.tsv` (642 rows). A new gap fails; a closed row
+must be deleted, so the file can only shrink. `ZEO_BLESS=1` re-records it. No
+ruby is needed at test time, and the whole test runs in 0.2s once built.
+
+Four tags, because the four need different work: `absent-module` 41,
+`unreachable` 211, `owner` 183, `constant` 200. `absent-module` deliberately
+does NOT also list that module's methods — the module row implies them, and
+listing both would double-count the same work.
+
+Methods zeo has and CRuby does not are deliberately not gated. Every exception
+class registers the shared `Exception` natives on its own id (flat dispatch), so
+that direction is dominated by a design choice rather than by bugs and would
+bury the rows that matter.
+
+`tools/method_coverage.rb` is DELETED. It sampled a representative instance for
+38 hand-listed classes and counted inherited methods repeatedly — the
+methodology behind the wrong "~1,976 missing" figure this plan opens by
+correcting.
+
 ## Wave 2 — missing methods on classes zeo already has (255)
 
 Ordered by count. Each lands with a golden blessed from the oracle.
@@ -228,9 +257,9 @@ cheapest once Waves 1–3 have stopped adding new ones.
 - Per commit: `cargo build -p zeo-rt` plus the affected golden. Cheapest
   sufficient check; full suite at wave boundaries only; tee once and slice the
   log rather than re-running for detail.
-- The census **is** the ledger. It reduces to five numbers that must fall
-  monotonically. Move the scripts into `tools/` and add an `xtask` subcommand so
-  the ratchet survives, matching `conformance/builtin-arity-divergences.tsv`.
+- The census **is** the ledger, and it now runs as a test — see 1.4. Every wave
+  ends with `ZEO_BLESS=1 cargo test -p zeo --test method_census`, whose diff is
+  the review artifact: the rows it deletes are exactly what the wave closed.
 - Goldens blessed with `ZEO_BLESS=1` against `mise exec ruby@4.0.6`.
 - Wave boundaries: `cargo nextest run --workspace`, `cargo clippy --workspace
   --all-targets --all-features -- -D warnings`, `cargo fmt --all`.
@@ -241,8 +270,12 @@ cheapest once Waves 1–3 have stopped adding new ones.
 
 - `crates/zeo-rt/src/builtins/{kernel,process,objspace,signal}.rs` — Wave 1.1
   (`FileTest` has no file of its own yet).
-- `crates/zeo/src/parse/mod.rs`, `crates/zeo-abi/src/lib.rs`,
-  `crates/zeo-rt/src/builtins/file.rs` — Wave 1.2, all three from one table.
+- `crates/zeo-abi/src/errno.rs` — Wave 1.2, the one table behind
+  `crates/zeo/src/parse/mod.rs`, `crates/zeo-abi/src/lib.rs` and
+  `crates/zeo-rt/src/builtins/file.rs`.
+- `tools/method_census.rb`, `crates/xtask/src/method_census.rs`,
+  `crates/zeo/tests/method_census.rs`, `conformance/method-census*.tsv` —
+  Wave 1.4, the ratchet.
 - `crates/zeo-rt/src/builtins/{numeric,thread,rmodule,gc,io,file,stat,fiber,encoding}.rs`
   — Wave 2.
 - New files under `crates/zeo-rt/src/builtins/` per class, plus `zeo-abi`
