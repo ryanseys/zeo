@@ -4,7 +4,7 @@
 //! `ArgumentError` (`"missing keyword: :hash"`).
 
 use super::{bin_str, md_from_value, req_kw, str_bytes};
-use crate::builtins::{convert};
+use crate::builtins::convert;
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;

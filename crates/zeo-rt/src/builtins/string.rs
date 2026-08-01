@@ -3309,8 +3309,7 @@ fn sub_gsub(
                 let mut out = String::new();
                 for (k, (_, ch)) in char_boundaries(&text).enumerate() {
                     if global || k == 0 {
-                        let replaced =
-                            p.call(&[str_value_in(enc, "")])?;
+                        let replaced = p.call(&[str_value_in(enc, "")])?;
                         out.push_str(&replaced.to_display_string());
                     }
                     if let Some(ch) = ch {
@@ -3325,8 +3324,7 @@ fn sub_gsub(
                 match rest.find(&pattern) {
                     Some(pos) if !pattern.is_empty() => {
                         out.push_str(&rest[..pos]);
-                        let replaced =
-                            p.call(&[str_value_in(enc, &pattern)])?;
+                        let replaced = p.call(&[str_value_in(enc, &pattern)])?;
                         out.push_str(&replaced.to_display_string());
                         rest = &rest[pos + pattern.len()..];
                         if !global {

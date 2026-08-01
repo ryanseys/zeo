@@ -14,8 +14,8 @@
 //! ops into a [`Sink`], and a [`Flow::Stop`] short-circuits the pull (what
 //! makes `take`/`first`/`take_while` terminate an infinite source).
 
+use crate::builtins::arg_error;
 use crate::builtins::enumerator::{enumerator_for, pull_next};
-use crate::builtins::{arg_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;

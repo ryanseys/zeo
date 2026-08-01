@@ -1238,7 +1238,12 @@ pub fn scanner_match(
 pub fn regexp_case_eq(re: &RRegexp, haystack: &str) -> bool {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
+            crate::lastmatch::set_last_match(Some(build_match_data(
+                re,
+                haystack,
+                &caps,
+                crate::encoding::UTF_8,
+            )));
             true
         }
         None => {
@@ -1263,7 +1268,12 @@ pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let start = caps.get(0).expect("group 0 always exists on a match").0;
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
+            crate::lastmatch::set_last_match(Some(build_match_data(
+                re,
+                haystack,
+                &caps,
+                crate::encoding::UTF_8,
+            )));
             RubyValue::Int(char_index(haystack, start))
         }
         None => {
@@ -1292,7 +1302,12 @@ pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> Rub
     match regexp_byterindex(re, haystack, byte_limit) {
         Some(byte_start) => {
             if let Some(caps) = anchored_caps_at(re, haystack, byte_start) {
-                crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
+                crate::lastmatch::set_last_match(Some(build_match_data(
+                    re,
+                    haystack,
+                    &caps,
+                    crate::encoding::UTF_8,
+                )));
             }
             RubyValue::Int(char_index(haystack, byte_start))
         }
@@ -1461,7 +1476,12 @@ pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<()
         };
         // `$~` tracks the CURRENT match inside the block, as it does in
         // `sub`/`gsub`'s block form.
-        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
+        crate::lastmatch::set_last_match(Some(build_match_data(
+            re,
+            haystack,
+            &caps,
+            crate::encoding::UTF_8,
+        )));
         blk.call(&[yielded])?;
     }
     Ok(())
@@ -1650,7 +1670,12 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
         out.push_str(&haystack[last_end..m_start]);
         // Each iteration sets `$~`/`$1..` so the block can read the capture
         // groups of the CURRENT match (CRuby updates the frame's backref).
-        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
+        crate::lastmatch::set_last_match(Some(build_match_data(
+            re,
+            haystack,
+            &caps,
+            crate::encoding::UTF_8,
+        )));
         let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
         let replaced = blk.call(&[matched])?;
         out.push_str(&replaced.to_display_string());
@@ -1666,7 +1691,12 @@ pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Rub
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8)));
+            crate::lastmatch::set_last_match(Some(build_match_data(
+                re,
+                haystack,
+                &caps,
+                crate::encoding::UTF_8,
+            )));
             let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
             let replaced = blk.call(&[matched])?;
             let mut out = String::new();

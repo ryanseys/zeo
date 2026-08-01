@@ -9,7 +9,7 @@
 //! reads (`[]`/`captures`/`named_captures`/`values_at`), and `inspect` -- is
 //! oracle-verified against ruby 4.0.6.
 
-use crate::builtins::{index_error};
+use crate::builtins::index_error;
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::regexp::ScannerMatch;
 use crate::{RubyValue, Signal, string_new};

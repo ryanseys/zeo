@@ -8,7 +8,7 @@
 use std::os::fd::RawFd;
 
 use super::{errno_error, ip_addr_array, raw_to_socketaddr};
-use crate::builtins::{io_error};
+use crate::builtins::io_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 

@@ -8,11 +8,11 @@
 
 use crate::RubyValue;
 use crate::array_new;
+use crate::builtins::arg_error;
 use crate::builtins::rstruct::{
     StructInstance, bind_members, build_inspect, build_members, deconstruct_keys,
     define_value_class, meta_of, slots_of, struct_equal, struct_to_h,
 };
-use crate::builtins::arg_error;
 use crate::dispatch::send_value;
 use crate::symbol::Symbol;
 use zeo_abi::DATA_CLASS;

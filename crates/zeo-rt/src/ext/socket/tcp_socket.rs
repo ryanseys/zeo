@@ -6,11 +6,9 @@
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 
-use super::{
-    errno_error, host_port, kwarg_secs, map_io_err, resolve_one, socketaddr_to_raw,
-};
+use super::{errno_error, host_port, kwarg_secs, map_io_err, resolve_one, socketaddr_to_raw};
+use crate::builtins::convert;
 use crate::builtins::io::socket_from_raw_fd;
-use crate::builtins::{convert};
 use crate::{RubyValue, Signal};
 use zeo_abi::TCPSOCKET_CLASS;
 use zeo_macros::ruby_class;

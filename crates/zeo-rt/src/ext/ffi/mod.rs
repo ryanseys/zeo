@@ -401,11 +401,7 @@ fn read_int_array(
 }
 
 /// `write_array_of_<int>(array)` -- writes each element sequentially.
-fn write_int_array(
-    recv: &RubyValue,
-    ary: &RubyValue,
-    bytes: usize,
-) -> Result<RubyValue, Signal> {
+fn write_int_array(recv: &RubyValue, ary: &RubyValue, bytes: usize) -> Result<RubyValue, Signal> {
     let elems = array_elems(ary)?;
     let p = ptr_of(recv);
     p.check_bounds(0, elems.len() * bytes)?;
@@ -429,11 +425,7 @@ fn read_float_array(
     Ok(RubyValue::Array(crate::array_new(out)))
 }
 
-fn write_float_array(
-    recv: &RubyValue,
-    ary: &RubyValue,
-    bytes: usize,
-) -> Result<RubyValue, Signal> {
+fn write_float_array(recv: &RubyValue, ary: &RubyValue, bytes: usize) -> Result<RubyValue, Signal> {
     let elems = array_elems(ary)?;
     let p = ptr_of(recv);
     p.check_bounds(0, elems.len() * bytes)?;

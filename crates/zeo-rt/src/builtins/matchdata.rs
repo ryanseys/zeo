@@ -11,7 +11,7 @@
 //! The rows delegate rather than reimplement, so the two paths cannot drift.
 
 use crate::RubyValue;
-use crate::builtins::{type_error};
+use crate::builtins::type_error;
 use zeo_macros::ruby_class;
 
 /// One end (`idx` 0 = begin, 1 = end) of a group's `offset`/`byteoffset` pair,

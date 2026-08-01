@@ -879,7 +879,11 @@ fn round_ndigits(ndigits: Option<&RubyValue>) -> Result<u32, Signal> {
 /// A new Time with the instant reduced to `10**ndigits`-of-a-second precision.
 /// `round` is half-up toward +Infinity (`Time.at(-0.5).round` is `0`, not `-1`
 /// -- oracle-verified): `floor(value*scale + 1/2) / scale`.
-fn time_reduce(t: &RTime, ndigits: Option<&RubyValue>, kind: Rounding) -> Result<RubyValue, Signal> {
+fn time_reduce(
+    t: &RTime,
+    ndigits: Option<&RubyValue>,
+    kind: Rounding,
+) -> Result<RubyValue, Signal> {
     use num_integer::Integer;
     let scale = num_bigint::BigInt::from(10u32).pow(round_ndigits(ndigits)?);
     let n = &t.num * &scale;

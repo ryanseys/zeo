@@ -14,7 +14,7 @@
 //! arbitrary bytes with an encoding.
 
 use crate::RubyValue;
-use crate::builtins::{eof_error};
+use crate::builtins::eof_error;
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use parking_lot::Mutex;
 use std::sync::Arc;

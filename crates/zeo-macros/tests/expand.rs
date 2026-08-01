@@ -172,7 +172,10 @@ fn a_module_function_lands_in_both_the_instance_and_class_tables() {
 fn instance_lookup_arity_and_names() {
     // Operator + `?` names resolve through the generated instance table.
     let lt = comparable::lookup("<").expect("`<` is defined");
-    assert_eq!(lt(&RubyValue::Nil, &[RubyValue::Nil], None).unwrap(), RubyValue::Int(-1));
+    assert_eq!(
+        lt(&RubyValue::Nil, &[RubyValue::Nil], None).unwrap(),
+        RubyValue::Int(-1)
+    );
     assert!(comparable::lookup("between?").is_some());
     assert!(comparable::lookup("nope").is_none());
 
@@ -194,8 +197,14 @@ fn instance_lookup_arity_and_names() {
 #[test]
 fn the_parameter_list_drives_both_the_guard_and_the_reported_arity() {
     let lt = comparable::lookup("<").expect("`<` is defined");
-    assert!(lt(&RubyValue::Nil, &[], None).is_err(), "one required, given none");
-    assert!(lt(&RubyValue::Nil, &[RubyValue::Nil; 2], None).is_err(), "given two");
+    assert!(
+        lt(&RubyValue::Nil, &[], None).is_err(),
+        "one required, given none"
+    );
+    assert!(
+        lt(&RubyValue::Nil, &[RubyValue::Nil; 2], None).is_err(),
+        "given two"
+    );
     assert!(lt(&RubyValue::Nil, &[RubyValue::Nil], None).is_ok());
 
     // An optional parameter: accepts 0 or 1, and the default is only reached
@@ -211,13 +220,20 @@ fn the_parameter_list_drives_both_the_guard_and_the_reported_arity() {
 
     // `*rest` after a required parameter: one or more, unbounded above.
     let splat = comparable::lookup("splat").expect("`splat` is defined");
-    assert!(splat(&RubyValue::Nil, &[], None).is_err(), "needs at least one");
+    assert!(
+        splat(&RubyValue::Nil, &[], None).is_err(),
+        "needs at least one"
+    );
     assert_eq!(
         splat(&RubyValue::Nil, &[RubyValue::Nil; 4], None).unwrap(),
         RubyValue::Int(3),
         "the head is bound separately, so three land in the rest"
     );
-    assert_eq!(comparable::lookup_arity("splat"), Some(-2), "min 1, unbounded");
+    assert_eq!(
+        comparable::lookup_arity("splat"),
+        Some(-2),
+        "min 1, unbounded"
+    );
 
     // A wide-open list keeps accepting anything -- no guard is emitted at all.
     let clamp = comparable::lookup("clamp").expect("`clamp` is defined");

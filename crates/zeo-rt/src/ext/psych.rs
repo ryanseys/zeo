@@ -19,7 +19,7 @@
 //! built; the `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) raises
 //! NotImplementedError (not modelled).
 
-use crate::builtins::{not_impl_error};
+use crate::builtins::not_impl_error;
 use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};

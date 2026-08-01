@@ -78,9 +78,7 @@ pub struct AbiClass {
 pub fn scan_decls(root: &Path) -> Vec<Decl> {
     let mut out = Vec::new();
     walk_dir(&root.join("crates/zeo-rt/src"), root, &mut out);
-    out.sort_by(|a, b| {
-        (&a.class_const, a.kind, &a.name).cmp(&(&b.class_const, b.kind, &b.name))
-    });
+    out.sort_by(|a, b| (&a.class_const, a.kind, &a.name).cmp(&(&b.class_const, b.kind, &b.name)));
     out
 }
 
@@ -216,8 +214,8 @@ pub fn scan_abi(root: &Path) -> BTreeMap<String, AbiClass> {
     let path = root.join("crates/zeo-abi/src/lib.rs");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let file = syn::parse_file(&source)
-        .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+    let file =
+        syn::parse_file(&source).unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
 
     let mut out = BTreeMap::new();
     for item in &file.items {
@@ -299,7 +297,9 @@ fn expr_bool(e: &syn::Expr) -> Option<bool> {
 
 /// `Some("base64")` -> `Some("base64")`; `None` -> `None`.
 fn expr_some_str(e: &syn::Expr) -> Option<String> {
-    let syn::Expr::Call(call) = e else { return None };
+    let syn::Expr::Call(call) = e else {
+        return None;
+    };
     if expr_ident(&call.func).as_deref() != Some("Some") {
         return None;
     }
@@ -307,7 +307,9 @@ fn expr_some_str(e: &syn::Expr) -> Option<String> {
 }
 
 fn expr_some_ident(e: &syn::Expr) -> Option<String> {
-    let syn::Expr::Call(call) = e else { return None };
+    let syn::Expr::Call(call) = e else {
+        return None;
+    };
     if expr_ident(&call.func).as_deref() != Some("Some") {
         return None;
     }

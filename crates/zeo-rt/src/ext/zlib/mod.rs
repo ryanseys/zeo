@@ -36,7 +36,7 @@ pub(crate) mod gzip_writer;
 pub(crate) mod inflate;
 pub(crate) mod zstream;
 
-use crate::builtins::{convert};
+use crate::builtins::convert;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;
 

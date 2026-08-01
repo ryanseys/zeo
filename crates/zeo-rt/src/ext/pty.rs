@@ -7,7 +7,7 @@
 //! the `#status` detail CRuby's C constructor attaches, since a by-name raise
 //! carries only a message (see `docs/EXTENSIONS.md`).
 
-use crate::builtins::{convert};
+use crate::builtins::convert;
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_module;

@@ -2,9 +2,7 @@
 //! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
 
 use crate::RubyValue;
-use crate::builtins::{
-    arg_error, block_or_enum, convert, frozen_error, recv_hash, type_error,
-};
+use crate::builtins::{arg_error, block_or_enum, convert, frozen_error, recv_hash, type_error};
 use zeo_macros::ruby_class;
 
 /// CRuby's `rb_hash_modify` guard: a frozen Hash raises before any in-place

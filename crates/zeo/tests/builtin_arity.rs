@@ -91,7 +91,9 @@ fn load_oracle(root: &Path) -> Oracle {
 impl Oracle {
     /// Walk the MRO for `name`, returning the first ancestor that owns it.
     fn resolve(&self, class: &str, kind: Kind, name: &str) -> Option<&OracleRow> {
-        let chain = self.ancestry.get(&(class.to_owned(), kind.tag().to_owned()))?;
+        let chain = self
+            .ancestry
+            .get(&(class.to_owned(), kind.tag().to_owned()))?;
         for token in chain {
             let (tag, owner) = token.split_once(':')?;
             if let Some(row) = self
@@ -149,11 +151,7 @@ struct Divergence {
 }
 
 fn key(d: &Divergence) -> (String, String, String) {
-    (
-        d.class.clone(),
-        d.kind.tag().to_owned(),
-        d.name.clone(),
-    )
+    (d.class.clone(), d.kind.tag().to_owned(), d.name.clone())
 }
 
 fn load_divergences(root: &Path) -> BTreeMap<(String, String, String), Tag> {
@@ -170,10 +168,7 @@ fn load_divergences(root: &Path) -> BTreeMap<(String, String, String), Tag> {
             continue;
         }
         if let Some(tag) = Tag::parse(f[0]) {
-            out.insert(
-                (f[1].to_owned(), f[2].to_owned(), f[3].to_owned()),
-                tag,
-            );
+            out.insert((f[1].to_owned(), f[2].to_owned(), f[3].to_owned()), tag);
         }
     }
     out
@@ -239,10 +234,7 @@ fn builtin_arity_matches_the_oracle() {
             )
         } else {
             match oracle.resolve(&class.ruby_name, decl.kind, &decl.name) {
-                None => (
-                    Tag::ZeoOnly,
-                    format!("no {} in CRuby's chain", decl.name),
-                ),
+                None => (Tag::ZeoOnly, format!("no {} in CRuby's chain", decl.name)),
                 Some(row) if row.arity == declared => continue,
                 Some(row) => (
                     Tag::Baseline,

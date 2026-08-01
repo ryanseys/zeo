@@ -559,9 +559,8 @@ fn parse_params(
         }
 
         if block.is_some() || kwrest.is_some() || rest.is_some() {
-            return Err(input.error(
-                "positional parameters must come before `*rest`, `**kwrest` and `&block`",
-            ));
+            return Err(input
+                .error("positional parameters must come before `*rest`, `**kwrest` and `&block`"));
         }
 
         let name: Ident = input.parse()?;
@@ -837,10 +836,15 @@ mod tests {
         assert_eq!(arity(6), -2, "(a, *rest) is min 1, unbounded");
         assert_eq!(arity(7), -2, "kwargs count as one extra slot: min 1, max 2");
         assert_eq!(arity(8), 0, "a block never counts");
-        assert_eq!(arity(9), -1, "cfunc collapses the range C could not express");
+        assert_eq!(
+            arity(9),
+            -1,
+            "cfunc collapses the range C could not express"
+        );
         assert_eq!(arity(10), -1, "cfunc collapses the unbounded case too");
         assert_eq!(
-            arity(11), -1,
+            arity(11),
+            -1,
             "a -1 cfunc reports -1 even when it accepts exactly none"
         );
     }

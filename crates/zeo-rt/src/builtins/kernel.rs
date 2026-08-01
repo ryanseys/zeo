@@ -1282,10 +1282,7 @@ pub(crate) fn feature_already_loaded(path: &str) -> bool {
 /// list: no argument starts at 1 (skipping the caller's own frame, since these
 /// builtins push none); an Integer `start` with an optional `length`; or a
 /// Range, whose bounds mean the same thing.
-fn caller_window(
-    start: Option<&RubyValue>,
-    length: Option<&RubyValue>,
-) -> (usize, Option<usize>) {
+fn caller_window(start: Option<&RubyValue>, length: Option<&RubyValue>) -> (usize, Option<usize>) {
     match (start, length) {
         (None, _) => (1, None),
         (Some(RubyValue::Int(s)), len) => {

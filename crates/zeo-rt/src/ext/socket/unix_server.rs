@@ -7,7 +7,7 @@ use std::os::fd::RawFd;
 
 use super::{errno_error, pack_unix_sockaddr};
 use crate::builtins::io::{socket_from_raw_fd, socket_raw_fd};
-use crate::builtins::{io_error};
+use crate::builtins::io_error;
 use crate::{RubyValue, Signal};
 use zeo_abi::{UNIX_SERVER_CLASS, UNIX_SOCKET_CLASS};
 use zeo_macros::ruby_class;
