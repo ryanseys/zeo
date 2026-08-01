@@ -22,7 +22,7 @@ use zeo_dsl::scan::{self, Kind};
 
 /// The number of `baseline` rows -- declarations that disagree with the oracle
 /// and have not been migrated yet. Lower this as phases land; never raise it.
-const BASELINE_LIMIT: usize = 151;
+const BASELINE_LIMIT: usize = 149;
 
 const DUMP: &str = "conformance/builtin-arity.tsv";
 const DIVERGENCES: &str = "conformance/builtin-arity-divergences.tsv";

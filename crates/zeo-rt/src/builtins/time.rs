@@ -16,7 +16,7 @@
 use std::sync::Arc;
 use zeo_macros::ruby_class;
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, TIME_CLASS};
@@ -659,6 +659,16 @@ fn frac_seconds(
 /// (sec, min, hour, mday, mon, year, wday, yday, isdst, zone). Normalize that
 /// into the forward (year, mon, mday, hour, min, sec) order; every other arity
 /// passes through unchanged. Returns owned values so the caller borrows a slice.
+/// `Time.utc`/`local` accept one to eight civil fields, PLUS the ten-element
+/// form `Time#to_a` produces (which `normalize_civil_args` reverses). CRuby
+/// special-cases the ten the same way, and still reports `1..8` for the rest.
+fn check_civil_argc(args: &[RubyValue]) -> Result<(), Signal> {
+    match args.len() {
+        10 => Ok(()),
+        n => crate::builtins::check_arity(n, 1, Some(8)),
+    }
+}
+
 fn normalize_civil_args(args: &[RubyValue]) -> Vec<RubyValue> {
     if args.len() == 10 {
         vec![
@@ -858,8 +868,8 @@ enum Rounding {
 
 /// The sub-second precision argument (`ndigits`, default 0), as a non-negative
 /// count of decimal places.
-fn round_ndigits(args: &[RubyValue]) -> Result<u32, Signal> {
-    match args.first() {
+fn round_ndigits(ndigits: Option<&RubyValue>) -> Result<u32, Signal> {
+    match ndigits {
         // An explicit nil precision is accepted as absent (oracle-verified).
         None | Some(RubyValue::Nil) => Ok(0),
         Some(v) => Ok(crate::builtins::convert::to_index(v)?.max(0) as u32),
@@ -869,9 +879,9 @@ fn round_ndigits(args: &[RubyValue]) -> Result<u32, Signal> {
 /// A new Time with the instant reduced to `10**ndigits`-of-a-second precision.
 /// `round` is half-up toward +Infinity (`Time.at(-0.5).round` is `0`, not `-1`
 /// -- oracle-verified): `floor(value*scale + 1/2) / scale`.
-fn time_reduce(t: &RTime, args: &[RubyValue], kind: Rounding) -> Result<RubyValue, Signal> {
+fn time_reduce(t: &RTime, ndigits: Option<&RubyValue>, kind: Rounding) -> Result<RubyValue, Signal> {
     use num_integer::Integer;
-    let scale = num_bigint::BigInt::from(10u32).pow(round_ndigits(args)?);
+    let scale = num_bigint::BigInt::from(10u32).pow(round_ndigits(ndigits)?);
     let n = &t.num * &scale;
     let d = &t.den;
     let two = num_bigint::BigInt::from(2);
@@ -926,20 +936,15 @@ ruby_class! {
     // `Time.at(sec)` / `Time.at(sec, frac[, unit])` -- the second argument is a
     // fractional count in `unit` (default `:microsecond`; also `:millisecond`,
     // `:nanosecond`), added to the base seconds exactly.
-    def self."at"(_recv, *args, &_block) {
+    // The `in:` keyword supplies the DISPLAY utc_offset (the instant itself is
+    // the absolute epoch value, so no shift -- unlike `Time.new`, whose
+    // components are local to that offset).
+    def self."at"(_recv, time, subsec?, unit?, **opts) {
         use num_bigint::BigInt;
-        // A trailing `in:` keyword hash supplies the DISPLAY utc_offset (the
-        // instant itself is the absolute epoch value, so no shift -- unlike
-        // `Time.new`, whose components are local to that offset). Split it off
-        // before the positional (seconds, subsec, unit) arguments.
-        let (args, in_offset) = match args.last() {
-            Some(RubyValue::Hash(h)) => {
-                let off = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in")));
-                (&args[..args.len() - 1], (!off.is_nil()).then_some(off))
-            }
-            _ => (args, None),
-        };
-        arity!(args, 1..=3);
+        let in_offset = opts.map(|h| match h {
+            RubyValue::Hash(h) => crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in"))),
+            _ => RubyValue::Nil,
+        }).filter(|off| !off.is_nil());
         let offset = match &in_offset {
             None => None,
             Some(RubyValue::Int(off)) => Some(check_offset(*off)?),
@@ -947,11 +952,11 @@ ruby_class! {
             Some(other) => return Err(type_error!("can't convert {} into an exact number",
                     crate::builtins::convert_name_of(other))),
         };
-        let (base_num, base_den) = exact_seconds(&args[0])?;
-        let (num, den) = match args.get(1) {
+        let (base_num, base_den) = exact_seconds(time)?;
+        let (num, den) = match subsec {
             None => (base_num, base_den),
             Some(frac) => {
-                let scale = match args.get(2) {
+                let scale = match unit {
                     None => 1_000_000i64,
                     Some(RubyValue::Symbol(s)) => match s.name().as_str() {
                         "millisecond" => 1_000,
@@ -978,8 +983,8 @@ ruby_class! {
     // ArgumentError ("mon out of range"). Needs a range check per field
     // before the call. Also unsupported: the string-month form
     // (`Time.utc(2023, "nov", 1)`).
-    def self."utc" | "gm"(_recv, *args, &_block) {
-        arity!(args, 1..=10);
+    def self."utc" | "gm" cfunc (_recv, *args) {
+        check_civil_argc(args)?;
         let norm = normalize_civil_args(args);
         let args = norm.as_slice();
         if let Some((parts, frac_num, frac_den)) = frac_seconds(args)? {
@@ -995,24 +1000,25 @@ ruby_class! {
     // OFFSET, in seconds or as a `"+HH:MM"` String, unlike `Time.utc`'s
     // microseconds. With no offset given it is local time, like `Time.local`.
     // TODO(plan P-B): the `in:` keyword form isn't handled.
-    def self."new"(recv, *args, &_block) {
-        arity!(args, 0..=8);
+    // The `in:` keyword offset takes the place of the 7th positional argument.
+    def self."new" cfunc (recv, year?, mon?, mday?, hour?, min?, sec?, zone?, **opts) {
         // `Time.new("2021-12-25 10:00:00 +09:00")` parses a time string.
-        if let Some(RubyValue::Str(s)) = args.first() {
+        if let Some(RubyValue::Str(s)) = year {
             return parse_time_string(&s.lock().to_utf8_lossy());
         }
-        // A trailing `in:` keyword hash supplies the utc_offset (like the 7th
-        // positional argument); split it off before reading the components.
-        let (args, in_offset) = match args.last() {
-            Some(RubyValue::Hash(h)) => {
-                let off = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in")));
-                (&args[..args.len() - 1], Some(off))
-            }
-            _ => (args, None),
-        };
+        let in_offset = opts.map(|h| match h {
+            RubyValue::Hash(h) => crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in"))),
+            _ => RubyValue::Nil,
+        });
+        let args: Vec<RubyValue> = [year, mon, mday, hour, min, sec, zone]
+            .iter()
+            .take_while(|p| p.is_some())
+            .filter_map(|p| p.cloned())
+            .collect();
         if args.is_empty() && in_offset.is_none() {
             return time_now(recv, &[], None);
         }
+        let args = args.as_slice();
         let parts = int_parts(args, 6)?;
         validate_civil_parts(&parts)?;
         let as_utc = civil_to_epoch_utc(&parts);
@@ -1044,8 +1050,8 @@ ruby_class! {
     // the offset at the UTC instant rather than the local one is off by an
     // hour for civil times inside a DST transition; that edge is a
     // documented approximation, not a silent one.)
-    def self."local" | "mktime"(_recv, *args, &_block) {
-        arity!(args, 1..=10);
+    def self."local" | "mktime" cfunc (_recv, *args) {
+        check_civil_argc(args)?;
         let norm = normalize_civil_args(args);
         let args = norm.as_slice();
         let frac = frac_seconds(args)?;
@@ -1277,26 +1283,22 @@ ruby_class! {
         let t = recv_time(recv);
         crate::builtins::rational::rational_new(t.num.clone(), t.den.clone())
     }
-    def "round"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        time_reduce(recv_time(recv), args, Rounding::Round)
+    def "round"(recv, ndigits?) {
+        time_reduce(recv_time(recv), ndigits, Rounding::Round)
     }
-    def "floor"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        time_reduce(recv_time(recv), args, Rounding::Floor)
+    def "floor"(recv, ndigits?) {
+        time_reduce(recv_time(recv), ndigits, Rounding::Floor)
     }
-    def "ceil"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        time_reduce(recv_time(recv), args, Rounding::Ceil)
+    def "ceil"(recv, ndigits?) {
+        time_reduce(recv_time(recv), ndigits, Rounding::Ceil)
     }
     // ISO 8601 / `xmlschema`: `YYYY-MM-DDTHH:MM:SS`, an optional `.fff`
     // fractional part (`fraction_digits`), and the zone (`Z` for UTC else
     // `+HH:MM`).
-    def "xmlschema" | "iso8601"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "xmlschema" | "iso8601"(recv, fraction_digits?) {
         let t = recv_time(recv);
         let mut s = strftime(t, "%Y-%m-%dT%H:%M:%S");
-        let digits = round_ndigits(args)?;
+        let digits = round_ndigits(fraction_digits)?;
         if digits > 0 {
             use num_integer::Integer;
             let (n, d) = t.frac();

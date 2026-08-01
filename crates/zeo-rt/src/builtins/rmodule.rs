@@ -7,7 +7,7 @@
 //! keywords. The shared `recv_cid` helper is `pub(crate)` for `rclass` to use.
 
 use crate::RubyValue;
-use crate::builtins::{arity, name_error, type_error};
+use crate::builtins::{name_error, type_error};
 use zeo_macros::ruby_class;
 
 pub(crate) fn recv_cid(recv: &RubyValue) -> crate::ClassId {
@@ -100,11 +100,8 @@ pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
 
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
-fn inherit_flag(args: &[RubyValue]) -> bool {
-    !matches!(
-        args.first(),
-        Some(RubyValue::Bool(false)) | Some(RubyValue::Nil)
-    )
+fn inherit_flag(v: Option<&RubyValue>) -> bool {
+    !matches!(v, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil))
 }
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
@@ -227,11 +224,10 @@ ruby_class! {
     def "deprecate_constant" (recv, *args, &_block) {
         constant_visibility_no_op(recv, args)
     }
-    def "const_get" (recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "const_get" cfunc (recv, name, inherit?) {
         let cid = recv_cid(recv);
-        let name = const_name_arg(&args[0])?;
-        const_lookup(cid, &name, inherit_flag(&args[1..])).ok_or_else(|| {
+        let name = const_name_arg(name)?;
+        const_lookup(cid, &name, inherit_flag(inherit)).ok_or_else(|| {
             // Qualified by the RECEIVER, which is what tells a miss on
             // `Foo.const_get(:X)` apart from one on a bare `X`.
             match crate::dispatch::class_name(cid) {
@@ -240,10 +236,9 @@ ruby_class! {
             }
         })
     }
-    def "const_defined?" (recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let name = const_name_arg(&args[0])?;
-        let found = const_lookup(recv_cid(recv), &name, inherit_flag(&args[1..])).is_some();
+    def "const_defined?" cfunc (recv, name, inherit?) {
+        let name = const_name_arg(name)?;
+        let found = const_lookup(recv_cid(recv), &name, inherit_flag(inherit)).is_some();
         Ok(RubyValue::Bool(found))
     }
     // Returns the removed value; NameError when the constant isn't this
@@ -254,8 +249,7 @@ ruby_class! {
         crate::constants::const_remove(cid.0, &name)
             .ok_or_else(|| name_error!("constant {name} not defined"))
     }
-    def "constants" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "constants" (recv, inherit?) {
         let cid = recv_cid(recv);
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
@@ -273,7 +267,7 @@ ruby_class! {
             }
         };
         push_owner(cid, &mut out);
-        if inherit_flag(args) {
+        if inherit_flag(inherit) {
             for anc in crate::dispatch::ancestors_of_value(cid) {
                 // `Object`'s constants (every top-level constant) are excluded
                 // from a non-Object module's `constants`, matching CRuby.
@@ -411,40 +405,36 @@ ruby_class! {
     // module/class (and its ancestors unless `inherit` is false). A builtin's
     // list is a subset of CRuby's (this runtime implements a subset), so
     // callers assert membership; a user class's own list is exact.
-    def "instance_methods" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "instance_methods" (recv, inherit?) {
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
             crate::dispatch::VisFilter::NotPrivate,
-            inherit_flag(args),
+            inherit_flag(inherit),
         );
         Ok(syms_to_array(names))
     }
     // `public_instance_methods` narrows to public ONLY (protected excluded).
-    def "public_instance_methods" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "public_instance_methods" (recv, inherit?) {
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
             crate::dispatch::VisFilter::Public,
-            inherit_flag(args),
+            inherit_flag(inherit),
         );
         Ok(syms_to_array(names))
     }
-    def "private_instance_methods" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "private_instance_methods" (recv, inherit?) {
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
             crate::dispatch::VisFilter::Private,
-            inherit_flag(args),
+            inherit_flag(inherit),
         );
         Ok(syms_to_array(names))
     }
-    def "protected_instance_methods" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "protected_instance_methods" (recv, inherit?) {
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
             crate::dispatch::VisFilter::Protected,
-            inherit_flag(args),
+            inherit_flag(inherit),
         );
         Ok(syms_to_array(names))
     }
@@ -472,18 +462,17 @@ ruby_class! {
     // instance method AT RUNTIME (a computed name, or inside an `each` loop).
     // The literal `define_method(:sym) { ... }` form is desugared to a `def` at
     // compile time in zeo; this row serves everything that isn't literal.
-    def "define_method" (recv, *args, &block) {
-        arity!(args, 1..=2);
-        let name = crate::runtime_meta::coerce_method_name(args.first())?;
+    def "define_method" cfunc (recv, name, body?, &block) {
+        let name = crate::runtime_meta::coerce_method_name(Some(name))?;
         // A `Method`/`UnboundMethod` second argument installs that method's
         // own definition under `name` (not a Proc body).
-        if let Some(src) = args.get(1) {
+        if let Some(src) = body {
             if let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
                 return crate::runtime_meta::runtime_define_method_from_method(
                     recv_cid(recv), name, owner, src_name);
             }
         }
-        let body = crate::runtime_meta::coerce_method_body(args, &block)?;
+        let body = crate::runtime_meta::coerce_method_body(body, &block)?;
         crate::runtime_define_method(recv_cid(recv), name, body)
     }
     // `Module#alias_method(new_name, old_name)` -- the RUNTIME form (a
@@ -492,10 +481,9 @@ ruby_class! {
     // serves everything that isn't literal. Snapshot semantics -- the alias
     // keeps the method `old_name` resolves to NOW -- and returns the new
     // name's Symbol, both per CRuby.
-    def "alias_method" (recv, *args, &_block) {
-        arity!(args, 2);
-        let new = crate::runtime_meta::coerce_method_name(args.first())?;
-        let old = crate::runtime_meta::coerce_method_name(args.get(1))?;
+    def "alias_method" (recv, new, old) {
+        let new = crate::runtime_meta::coerce_method_name(Some(new))?;
+        let old = crate::runtime_meta::coerce_method_name(Some(old))?;
         crate::runtime_meta::runtime_alias_method(recv_cid(recv), new, old)
     }
     // `Module#include(M, ...)` reached at RUNTIME on a Class/Module receiver
@@ -659,8 +647,7 @@ ruby_class! {
     // `Module#class_variables([inherit=true])` -- the `@@name` symbols owned by
     // this class and (unless `inherit` is false) its ancestors, own first.
     // Names store bare (`x`); the reflection re-adds the `@@` prefix.
-    def "class_variables" (recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "class_variables" (recv, inherit?) {
         let cid = recv_cid(recv);
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
@@ -672,7 +659,7 @@ ruby_class! {
             }
         };
         push_owner(cid, &mut out);
-        if inherit_flag(args) {
+        if inherit_flag(inherit) {
             // No Object/BasicObject exclusion here, unlike `constants` -- a
             // `@@x` can only reach Object through an explicit `class Object`
             // body (a top-level one raises; see `Hir::cvar_is_toplevel`), and

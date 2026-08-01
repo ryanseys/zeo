@@ -178,16 +178,15 @@ ruby_module! {
     // receiver is a `Class`. Universal (this Kernel row is reached by every
     // receiver's MRO walk, including a class value). A singleton on an
     // immediate (Integer/Symbol/nil/...) is a `TypeError`, like CRuby.
-    def "define_singleton_method"(recv, *args, &block) {
-        arity!(args, 1..=2);
-        let name = crate::runtime_meta::coerce_method_name(args.first())?;
-        if let Some(src) = args.get(1) {
+    def "define_singleton_method" cfunc (recv, name, body?, &block) {
+        let name = crate::runtime_meta::coerce_method_name(Some(name))?;
+        if let Some(src) = body {
             if let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
                 return crate::runtime_meta::runtime_define_singleton_from_method(
                     recv, name, owner, src_name);
             }
         }
-        let body = crate::runtime_meta::coerce_method_body(args, &block)?;
+        let body = crate::runtime_meta::coerce_method_body(body, &block)?;
         crate::runtime_define_singleton_method(recv, name, body)
     }
     // `eval(str)` -- runtime string eval through the eval VM

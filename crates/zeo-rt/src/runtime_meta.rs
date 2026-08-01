@@ -2149,13 +2149,13 @@ pub(crate) fn coerce_method_name(arg: Option<&RubyValue>) -> Result<Symbol, Sign
 /// as the second positional argument (`define_method(:x, some_proc)`). A
 /// `Method`/`UnboundMethod` second argument is a documented fast-follow.
 pub(crate) fn coerce_method_body(
-    args: &[RubyValue],
+    body: Option<&RubyValue>,
     block: &Option<RubyValue>,
 ) -> Result<RProc, Signal> {
     if let Some(RubyValue::Proc(p)) = block {
         return Ok(p.clone());
     }
-    if let Some(RubyValue::Proc(p)) = args.get(1) {
+    if let Some(RubyValue::Proc(p)) = body {
         return Ok(p.clone());
     }
     Err(arg_error!("tried to create Proc object without a block"))

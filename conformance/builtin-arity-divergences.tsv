@@ -368,7 +368,6 @@ baseline	Method	i	super_method	declared -1, oracle 0 (c) at crates/zeo-rt/src/bu
 baseline	Method	i	to_proc	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/method.rs:275
 baseline	Method	i	to_s	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/method.rs:414
 baseline	Method	i	unbind	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/method.rs:302
-baseline	Module	i	alias_method	declared -1, oracle 2 (c) at crates/zeo-rt/src/builtins/rmodule.rs:495
 baseline	Monitor	i	mon_synchronize	declared -1, oracle 0 (c) at crates/zeo-rt/src/ext/monitor.rs:151
 baseline	Monitor	i	synchronize	declared -1, oracle 0 (c) at crates/zeo-rt/src/ext/monitor.rs:151
 baseline	ObjectSpace	s	_id2ref	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/objspace.rs:182
@@ -399,7 +398,6 @@ baseline	Struct	i	to_a	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/r
 baseline	Struct	i	to_s	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/rstruct.rs:533
 baseline	Struct	i	values	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/rstruct.rs:465
 baseline	Thread::Mutex	i	synchronize	declared -1, oracle 0 (ruby) at crates/zeo-rt/src/builtins/mutex.rs:55
-baseline	Time	s	at	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/builtins/time.rs:929
 baseline	UnboundMethod	i	arity	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/unbound_method.rs:117
 baseline	UnboundMethod	i	inspect	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/unbound_method.rs:185
 baseline	UnboundMethod	i	name	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/unbound_method.rs:114
