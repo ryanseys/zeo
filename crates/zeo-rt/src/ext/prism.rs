@@ -1,10 +1,11 @@
-//! `Prism::Zeo` -- the native half of the vendored `prism` gem.
+//! The native half of the vendored `prism` gem -- private class methods on
+//! `Prism` itself, which is where CRuby's C extension puts its own.
 //!
 //! Upstream ships two backends over one C library: a C extension (CRuby) and
 //! an FFI one (every other engine). Both reduce to the same thing -- a
 //! handful of `pm_serialize_*` calls that write a serialized buffer, which
 //! `Prism::Serialize` then decodes into the node tree in pure Ruby. That is
-//! the whole native surface, so this module is that surface and nothing
+//! the whole native surface, so these rows are that surface and nothing
 //! more: the ~40k lines of node classes, visitors and the deserializer are
 //! the gem's own Ruby, compiled like any other vendored gem.
 //!
@@ -120,38 +121,46 @@ fn serialize(
 }
 
 ruby_module! {
-    Zeo = zeo_abi::PRISM_ZEO_MODULE;
+    // The native entry points live on `Prism` ITSELF, as private class
+    // methods. CRuby's prism puts its native half on `Prism` too (the C
+    // extension defines `Prism.dump`/`lex`/... directly), so an extra
+    // namespace would be a constant `Prism.constants` has and ruby's does
+    // not. Private, because these are the backend's own seam -- the gem's
+    // Ruby calls them with implicit self, and nothing outside should.
+    Prism = zeo_abi::PRISM_MODULE;
 
     // The version of the linked prism, which the gem reports as
     // `Prism::VERSION`.
-    def self."version"(_recv) {
+    private def self."version"(_recv) {
         let raw = unsafe { CStr::from_ptr(pm_version()) };
         Ok(RubyValue::Str(crate::string_new(raw.to_string_lossy().into_owned())))
     }
 
     // `Prism.dump`'s buffer: the serialized AST.
-    def self."serialize_parse"(_recv, _source, _options) {
+    private def self."serialize_parse"(_recv, _source, _options) {
         serialize(__args, pm_serialize_parse)
     }
 
     // `Prism.lex`'s buffer: the token stream with its lex states.
-    def self."serialize_lex"(_recv, _source, _options) {
+    private def self."serialize_lex"(_recv, _source, _options) {
         serialize(__args, pm_serialize_lex)
     }
 
     // `Prism.parse_lex`'s buffer: the AST and the token stream together.
-    def self."serialize_parse_lex"(_recv, _source, _options) {
+    private def self."serialize_parse_lex"(_recv, _source, _options) {
         serialize(__args, pm_serialize_parse_lex)
     }
 
     // `Prism.parse_comments`' buffer.
-    def self."serialize_parse_comments"(_recv, _source, _options) {
+    private def self."serialize_parse_comments"(_recv, _source, _options) {
         serialize(__args, pm_serialize_parse_comments)
     }
 
-    // Whether the source parses with no errors -- answered without
-    // building or serializing a tree.
-    def self."parse_success?"(_recv, _source, _options) {
+    // Whether the source parses with no errors -- answered without building or
+    // serializing a tree. `native_` prefixed because this is the ONE native row
+    // whose bare name collides with the public `Prism.parse_success?` the shim
+    // defines over it; the `serialize_*` rows need no such guard.
+    private def self."native_parse_success?"(_recv, _source, _options) {
         let (source, options) = args_bytes(__args)?;
         let ok = unsafe {
             pm_parse_success_p(

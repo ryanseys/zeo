@@ -1,0 +1,28 @@
+-- it reports the backend CRuby reports
+:CEXT
+-- no zeo-invented constant
+false
+nil
+-- and the native seam is invisible
+version: respond_to?=false listed=false
+serialize_parse: respond_to?=false listed=false
+serialize_lex: respond_to?=false listed=false
+serialize_parse_lex: respond_to?=false listed=false
+serialize_parse_comments: respond_to?=false listed=false
+native_parse_success?: respond_to?=false listed=false
+-- while the public API works
+Prism::ParseResult
+true
+Prism::ProgramNode
+String
+Prism::LexResult
+Prism::ParseLexResult
+1
+true
+false
+true
+true
+-- a real parse round-trip
+true
+Prism::DefNode
+:greet

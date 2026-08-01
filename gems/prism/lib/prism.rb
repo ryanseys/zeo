@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 # :markup: markdown
 
-# zeo: pull in the statically linked native half FIRST, so `Prism::Zeo` exists
-# for `prism/zeo.rb` to call. CRuby's loader idiom -- see
-# `gems/strscan/lib/strscan.rb` for the same shape and the reason for it.
+# zeo: pull in the statically linked native half FIRST, so `Prism`'s private
+# `serialize_*` class methods exist for `prism/zeo.rb` to call. CRuby's loader
+# idiom -- see `gems/strscan/lib/strscan.rb` for the same shape and the reason
+# for it.
 require "prism.so"
 
 # The Prism Ruby parser.
@@ -88,11 +89,13 @@ require_relative "prism/node_ext"
 require_relative "prism/parse_result"
 
 # zeo: upstream picks between the C extension (CRuby) and the FFI backend
-# (every other engine) here. zeo links the same prism C library its own front
-# end parses with, and reaches it through a built-in module rather than
-# `dlopen` -- so it takes a third branch, structured exactly like the FFI one:
-# the native surface is the handful of `pm_serialize_*` entry points, and
-# `Prism::Serialize` decodes their buffers in Ruby.
-Prism::BACKEND = :ZEO
+# (every other engine) here. zeo reports `:CEXT`, the value CRuby reports, for
+# the same reason `RUBY_ENGINE` is `"ruby"`: a gem branching on this should take
+# the path zeo actually implements. It is also the honest description -- the
+# prism C library is linked in, not `dlopen`ed, and reached through native
+# entry points on `Prism` exactly as the C extension's are. Only the shape of
+# those entry points follows the FFI backend: `pm_serialize_*` writing buffers
+# that `Prism::Serialize` decodes in Ruby, rather than a tree built in C.
+Prism::BACKEND = :CEXT
 
 require_relative "prism/zeo"

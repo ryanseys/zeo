@@ -59,6 +59,11 @@ pub struct Decl {
     /// method may legitimately be absent from an oracle running on another
     /// platform, which is a different thing from zeo having invented it.
     pub cfg: Option<String>,
+    /// Whether the def is `private`. A PRIVATE name CRuby lacks is an
+    /// implementation seam, not surface -- it cannot be reached, listed, or
+    /// `respond_to?`'d -- which is a different kind of divergence from a
+    /// public method zeo invented.
+    pub is_private: bool,
 }
 
 /// What `zeo-abi`'s `BUILTINS` says about one class.
@@ -178,6 +183,7 @@ fn collect_spec(spec: &ClassSpec, rel: &str, out: &mut Vec<Decl>) {
                     file: rel.to_owned(),
                     line,
                     cfg: cfg.clone(),
+                    is_private: method.visibility == crate::Visibility::Private,
                 });
             }
         }

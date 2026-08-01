@@ -583,17 +583,12 @@ pub const OPENSSL_SOCKET_FORWARDER_MODULE: ClassId = ClassId(144);
 /// below can nest inside it; the gem's Ruby then reopens it, the same split
 /// `Zlib` makes.
 pub const PRISM_MODULE: ClassId = ClassId(146);
-/// `Prism::Zeo` -- the native half of the vendored `prism` gem: the
-/// `pm_serialize_*` entry points, which answer a serialized buffer that
-/// `Prism::Serialize` decodes in Ruby. The same split upstream's FFI
-/// backend makes, and the same C library zeo's own front end parses with.
-pub const PRISM_ZEO_MODULE: ClassId = ClassId(147);
 
 /// `File::Constants` -- the open/lock/fnmatch flags. A MODULE rather than a
 /// bag of constants on `File`, because CRuby includes it into `IO` as well:
 /// that is what makes `IO::APPEND` and `File::APPEND` the same constant, and
 /// what puts `File::Constants` in `IO.ancestors`.
-pub const FILE_CONSTANTS_MODULE: ClassId = ClassId(148);
+pub const FILE_CONSTANTS_MODULE: ClassId = ClassId(147);
 
 /// `Refinement` -- what `M.refinements` holds and what a refined method's
 /// `Method#owner` reports. A `Module` subclass with no instances of its
@@ -1810,14 +1805,6 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass {
         id: PRISM_MODULE,
         name: "Prism",
-        is_module: true,
-        superclass: None,
-        includes: &[],
-        feature: Some("prism"),
-    },
-    BuiltinClass {
-        id: PRISM_ZEO_MODULE,
-        name: "Prism::Zeo",
         is_module: true,
         superclass: None,
         includes: &[],

@@ -18,12 +18,12 @@
 //! current state, the same convention the golden corpus uses.
 //!
 //! Both categories are now near-empty, which is what makes a NEW row worth
-//! reading rather than routine. `zeo-only` holds nothing at all: the last of
-//! them were methods sitting on the wrong class (`IO#flock`, `Module#superclass`)
-//! or invented outright, and the tag caught every one. `oracle-missing` holds
-//! only `Prism::Zeo`, a namespace zeo invented for the vendored gem's native
-//! half -- ruby loads `prism` and still has no such constant, so those rows are
-//! permanent rather than an environment gap.
+//! reading rather than routine. `oracle-missing` is EMPTY. `zeo-only` holds
+//! only PRIVATE rows -- the prism backend's native seam, which nothing can
+//! call, list or `respond_to?`, so it cannot make zeo's observable surface
+//! differ. A PUBLIC `zeo-only` row is the thing to look at: the last batch of
+//! those were methods sitting on the wrong class (`IO#flock`,
+//! `Module#superclass`) or invented outright, and the tag caught every one.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -193,9 +193,10 @@ fn write_divergences(root: &Path, rows: &[Divergence]) {
     out.push_str("#! it fails the test and cannot be recorded here. Regenerate with\n");
     out.push_str("#! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.\n");
     out.push_str("#!\n");
-    out.push_str("#! `zeo-only` is currently EMPTY, and every method zeo declares on a class\n");
-    out.push_str("#! ruby also has now resolves. A new `zeo-only` row means a method landed\n");
-    out.push_str("#! on the wrong class, or was invented -- check before accepting it.\n");
+    out.push_str("#! Every PUBLIC method zeo declares on a class ruby also has now resolves,\n");
+    out.push_str("#! so a public `zeo-only` row means one landed on the wrong class or was\n");
+    out.push_str("#! invented -- check before accepting it. A PRIVATE one is a seam nothing\n");
+    out.push_str("#! can reach, and cannot make the observable surface differ.\n");
     out.push_str("#! tag\tclass\tkind\tname\treason\n");
     for d in rows {
         out.push_str(&format!(
@@ -255,6 +256,17 @@ fn builtin_arity_matches_the_oracle() {
             )
         } else {
             match oracle.resolve(&class.ruby_name, decl.kind, &decl.name) {
+                // A PRIVATE name CRuby lacks is an implementation seam, not
+                // surface: nothing can call, list or `respond_to?` it, so it
+                // cannot make zeo's observable API differ. Worth saying in the
+                // row, because a PUBLIC one is a bug and this is not.
+                None if decl.is_private => (
+                    Tag::ZeoOnly,
+                    format!(
+                        "private {}, a backend seam CRuby has no name for",
+                        decl.name
+                    ),
+                ),
                 None => (Tag::ZeoOnly, format!("no {} in CRuby's chain", decl.name)),
                 Some(row) if row.arity == declared => continue,
                 Some(row) => (

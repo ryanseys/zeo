@@ -6,13 +6,14 @@
 #! it fails the test and cannot be recorded here. Regenerate with
 #! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.
 #!
-#! `zeo-only` is currently EMPTY, and every method zeo declares on a class
-#! ruby also has now resolves. A new `zeo-only` row means a method landed
-#! on the wrong class, or was invented -- check before accepting it.
+#! Every PUBLIC method zeo declares on a class ruby also has now resolves,
+#! so a public `zeo-only` row means one landed on the wrong class or was
+#! invented -- check before accepting it. A PRIVATE one is a seam nothing
+#! can reach, and cannot make the observable surface differ.
 #! tag	class	kind	name	reason
-oracle-missing	Prism::Zeo	s	parse_success?	Prism::Zeo: ruby defines no such constant
-oracle-missing	Prism::Zeo	s	serialize_lex	Prism::Zeo: ruby defines no such constant
-oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo: ruby defines no such constant
-oracle-missing	Prism::Zeo	s	serialize_parse_comments	Prism::Zeo: ruby defines no such constant
-oracle-missing	Prism::Zeo	s	serialize_parse_lex	Prism::Zeo: ruby defines no such constant
-oracle-missing	Prism::Zeo	s	version	Prism::Zeo: ruby defines no such constant
+zeo-only	Prism	s	native_parse_success?	private native_parse_success?, a backend seam CRuby has no name for
+zeo-only	Prism	s	serialize_lex	private serialize_lex, a backend seam CRuby has no name for
+zeo-only	Prism	s	serialize_parse	private serialize_parse, a backend seam CRuby has no name for
+zeo-only	Prism	s	serialize_parse_comments	private serialize_parse_comments, a backend seam CRuby has no name for
+zeo-only	Prism	s	serialize_parse_lex	private serialize_parse_lex, a backend seam CRuby has no name for
+zeo-only	Prism	s	version	private version, a backend seam CRuby has no name for

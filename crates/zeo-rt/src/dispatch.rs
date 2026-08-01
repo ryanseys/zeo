@@ -2278,6 +2278,16 @@ pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
         if class_defines_own_class_method(*anc, name) {
             return false;
         }
+        // A builtin class-method row carries its own `private def self.` mark
+        // (prism's `serialize_parse` and friends), which no registry set knows
+        // about. Answering here also STOPS the walk, for the same reason an
+        // own definition does.
+        let n = name.name();
+        if let Some(lookup) = crate::builtins::class_method_table(*anc) {
+            if lookup(n.as_str()).is_some() {
+                return crate::builtins::builtin_class_method_is_private(*anc, n.as_str());
+            }
+        }
     }
     false
 }

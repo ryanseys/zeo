@@ -244,6 +244,15 @@ pub(crate) fn class_method_is_private(id: ClassId, name: &str) -> bool {
         .is_some_and(|m| (m.is_private)(name))
 }
 
+/// The same question for a builtin CLASS-method row (`private def self."x"`)
+/// -- prism's `serialize_parse` and friends, the backend seam the gem's own
+/// Ruby calls with implicit self and nothing outside should see.
+pub(crate) fn builtin_class_method_is_private(id: ClassId, name: &str) -> bool {
+    registered_table(id)
+        .and_then(|t| t.class.as_ref())
+        .is_some_and(|m| (m.is_private)(name))
+}
+
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin
 /// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
 /// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.

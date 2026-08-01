@@ -2,20 +2,22 @@
 # :markup: markdown
 
 # zeo: the zeo backend, adapted from upstream's `prism/ffi.rb`. Upstream's FFI
-# backend reaches the C library through `dlopen`; zeo links that same library
-# in and reaches it through the built-in `Prism::Zeo` module. Everything else
-# is upstream's -- the option packing below is copied verbatim, so the option
-# encoding stays defined in exactly one place, and `Prism::Serialize` decodes
-# the buffers in Ruby just as it does for FFI.
+# backend reaches the C library through `dlopen`; zeo links that same library in
+# and reaches it through private class methods on `Prism` itself -- the same
+# place CRuby's C extension puts its native entry points, so `Prism.constants`
+# carries no extra namespace. Everything else is upstream's: the option packing
+# below is copied verbatim, so the option encoding stays defined in exactly one
+# place, and `Prism::Serialize` decodes the buffers in Ruby just as it does for
+# FFI.
 
 module Prism
   # The version of the linked prism.
-  VERSION = Zeo.version.freeze
+  VERSION = version.freeze
 
   class << self
     # Mirror the Prism.dump API by using the serialization API.
     def dump(source, **options)
-      dumped = Zeo.serialize_parse(source, dump_options(options))
+      dumped = serialize_parse(source, dump_options(options))
       dumped.freeze if options.fetch(:freeze, false)
       dumped
     end
@@ -28,7 +30,7 @@ module Prism
 
     # Mirror the Prism.lex API by using the serialization API.
     def lex(code, **options)
-      Serialize.load_lex(code, Zeo.serialize_lex(code, dump_options(options)), options.fetch(:freeze, false))
+      Serialize.load_lex(code, serialize_lex(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
     # Mirror the Prism.lex_file API by using the serialization API.
@@ -39,7 +41,7 @@ module Prism
 
     # Mirror the Prism.parse API by using the serialization API.
     def parse(code, **options)
-      Serialize.load_parse(code, Zeo.serialize_parse(code, dump_options(options)), options.fetch(:freeze, false))
+      Serialize.load_parse(code, serialize_parse(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
     # Mirror the Prism.parse_file API by using the serialization API.
@@ -64,7 +66,7 @@ module Prism
 
     # Mirror the Prism.parse_comments API by using the serialization API.
     def parse_comments(code, **options)
-      Serialize.load_parse_comments(code, Zeo.serialize_parse_comments(code, dump_options(options)), options.fetch(:freeze, false))
+      Serialize.load_parse_comments(code, serialize_parse_comments(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
     # Mirror the Prism.parse_file_comments API by using the serialization API.
@@ -75,7 +77,7 @@ module Prism
 
     # Mirror the Prism.parse_lex API by using the serialization API.
     def parse_lex(code, **options)
-      Serialize.load_parse_lex(code, Zeo.serialize_parse_lex(code, dump_options(options)), options.fetch(:freeze, false))
+      Serialize.load_parse_lex(code, serialize_parse_lex(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
     # Mirror the Prism.parse_lex_file API by using the serialization API.
@@ -86,7 +88,7 @@ module Prism
 
     # Mirror the Prism.parse_success? API by using the serialization API.
     def parse_success?(code, **options)
-      Zeo.parse_success?(code, dump_options(options))
+      native_parse_success?(code, dump_options(options))
     end
 
     # Mirror the Prism.parse_failure? API by using the serialization API.
@@ -107,7 +109,7 @@ module Prism
 
     # Mirror the Prism.profile API by using the serialization API.
     def profile(source, **options)
-      Zeo.serialize_parse(source, dump_options(options))
+      serialize_parse(source, dump_options(options))
       nil
     end
 
