@@ -447,6 +447,31 @@ CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
 is pay-per-use; see `docs/EVAL_VM.md`).
 
+### `Module` reflection
+
+The constant and method-reflection surface is faithful — `const_get`/`_set`/
+`_defined?`, the visibility family, `instance_method`/`public_instance_method`,
+`define_method`, `remove_class_variable`, `undefined_instance_methods`,
+`set_temporary_name`, `const_missing` and `Module.nesting` are oracle-matched
+live (`tests/module_reflection_rows.rb`). Four rows report less, each because
+the fact they report is resolved at COMPILE time and left no runtime record:
+
+- **`#const_source_location` answers `[]` for a constant that exists**, `nil`
+  for one that does not. `[]` is exactly what CRuby answers for a constant
+  defined in C, and every zeo constant is: codegen resolves a constant path
+  statically and the store keeps no file or line.
+- **`#autoload` registers, but never loads.** zeo splices a literal
+  `autoload :C, "feature"` at compile time and lowers the call to a no-op, so
+  the constant is already defined and `#autoload?` answers `nil` — CRuby's own
+  answer once a feature has loaded. A call the structural collector cannot see
+  (an explicit receiver, a computed path) reaches the runtime row instead: it
+  records the path so `#autoload?` answers it, but the feature does not load.
+- **`#refinements` is empty.** The compiler mints a `Refinement` module per
+  `refine` block and marks it, but records no back-link to the refining
+  module. Refined dispatch and `Refinement#target` are unaffected.
+- **`Module.used_modules`/`.used_refinements` are empty.** `using` resolves at
+  compile time and leaves no runtime activation set.
+
 ### `Thread`
 
 A zeo `Thread` is a REAL OS thread, so the whole scheduling and storage surface

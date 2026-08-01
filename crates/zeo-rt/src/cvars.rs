@@ -73,6 +73,22 @@ pub fn cvar_names_of(owner_class_id: u32) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `Module#remove_class_variable` -- drop `@@name`'s slot on this exact owner
+/// and answer what it held. `None` when the owner never had one, which the
+/// caller turns into CRuby's `NameError`. The frozen check is the OWNER's, as
+/// in [`cvar_set`].
+pub fn cvar_remove(owner_class_id: u32, name: &str) -> Result<Option<RubyValue>, crate::Signal> {
+    if crate::dispatch::class_frozen(crate::ClassId(owner_class_id)) {
+        return Err(crate::dispatch::frozen_class_error(crate::ClassId(
+            owner_class_id,
+        )));
+    }
+    Ok(CVARS
+        .lock()
+        .get_mut(&owner_class_id)
+        .and_then(|m| m.remove(name)))
+}
+
 /// Whether `@@name` has EVER been assigned on `owner_class_id` -- the
 /// genuine "defined" distinction `cvar_get`'s nil-on-miss convention can't
 /// express, needed by `Module#class_variable_defined?`/`class_variable_get`

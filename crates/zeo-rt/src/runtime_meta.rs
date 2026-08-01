@@ -2101,6 +2101,44 @@ pub fn name_runtime_class_if_anonymous(id: ClassId, name: &str) {
     }
 }
 
+/// The runtime classes whose current name came from `set_temporary_name`
+/// rather than from a constant binding. CRuby's rule is that only a name
+/// reachable by a CONSTANT PATH is permanent, and a temporary one may be
+/// replaced or cleared; nothing else in this runtime needs to tell the two
+/// apart, so the distinction lives in this side set rather than in the entry.
+static TEMPORARY_NAMES: std::sync::LazyLock<parking_lot::Mutex<crate::FSet<u32>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(crate::FSet::default()));
+
+/// `Module#set_temporary_name`'s storage half. `false` when the class already
+/// carries a PERMANENT name (every compile-time class, and any runtime class
+/// already bound to a constant), which the caller turns into CRuby's
+/// `RuntimeError: can't change permanent name`. `None` clears the name, making
+/// the class anonymous again.
+pub fn set_temporary_class_name(id: ClassId, name: Option<String>) -> bool {
+    if id.0 < RUNTIME_CLASS_ID_BASE || !is_live() {
+        return false;
+    }
+    let classes = maps().classes.read().unwrap();
+    let Some(entry) = classes.get(&id.0) else {
+        return false;
+    };
+    let mut temporary = TEMPORARY_NAMES.lock();
+    let mut slot = entry.name.write().unwrap();
+    if slot.is_some() && !temporary.contains(&id.0) {
+        return false;
+    }
+    match &name {
+        Some(_) => temporary.insert(id.0),
+        None => temporary.remove(&id.0),
+    };
+    *slot = name;
+    drop(slot);
+    drop(temporary);
+    drop(classes);
+    crate::constants::bump_const_epoch();
+    true
+}
+
 // ---------------------------------------------------------------------------
 // Resolver support (called from dispatch.rs, always behind `is_live()`)
 // ---------------------------------------------------------------------------

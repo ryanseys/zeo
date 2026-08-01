@@ -82,7 +82,7 @@ pub use constants::{
     ConstSite, const_get, const_get_master, const_get_scoped, const_is_private, const_set,
     const_set_private,
 };
-pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
+pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_remove, cvar_set};
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     CallSite, ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS,

@@ -324,6 +324,26 @@ mints a `Refinement` per `refine` block, so these are listings over data that
 exists), and `undefined_instance_methods` — which reads the
 `undefined_methods` set Wave 2.1 just made load-bearing.
 
+**Status: done**, `unreachable` 169 → 155. Three findings shaped it:
+
+- **`Module.nesting` cannot be answered by a runtime row at all.** Nesting is
+  the LEXICAL chain at the call site, and a builtin row has no view of its
+  caller's scope. Codegen already tracks that chain (`Ctx::cref_chain`), so
+  the literal call folds to the array and the runtime row answers `[]` — which
+  is what CRuby answers at top level anyway.
+- **`autoload?` can be faithful without loading anything.** The literal
+  `autoload` form never reaches the runtime row (it is spliced and lowered to
+  a no-op), so the row only ever sees the residue the collector cannot find.
+  Recording its path there makes `autoload?` answer exactly what CRuby answers
+  in BOTH cases: the path for a feature that has not loaded, `nil` once the
+  constant resolves.
+- **`Complex.undefined_instance_methods` matches the oracle name for name** —
+  the same 19 the Wave 2.1 undef list installs, which is an independent
+  confirmation that that list is right.
+
+`Kernel.autoload`/`autoload?` moved from `unreachable` to `owner`: they answer
+now, through `Module`, but CRuby files them on `Kernel` too. That is Wave 4's.
+
 ### 2.4 `IO`, `File`, `File::Stat` (21)
 
 The most mechanical wave. `IO#print`/`#puts` already exist as `Kernel`

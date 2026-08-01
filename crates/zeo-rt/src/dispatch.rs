@@ -1977,6 +1977,18 @@ pub fn method_owner(recv_class: ClassId, name: Symbol) -> Option<ClassId> {
     scan_owner(recv_class, 0, name)
 }
 
+/// `Module#undefined_instance_methods` -- the names THIS class's own body
+/// `undef`'d, which the MRO walk treats as a lookup terminator. Sorted, so the
+/// listing is stable across runs (the set is a hash set).
+pub fn undefined_method_names(class: ClassId) -> Vec<Symbol> {
+    let Some(entry) = REGISTRY.get().and_then(|r| r.entries.get(&class.0)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<Symbol> = entry.undefined_methods.iter().copied().collect();
+    names.sort_by_key(|s| s.name_str());
+    names
+}
+
 /// The next class up that defines `name` -- the one strictly AFTER `after` in
 /// `recv_class`'s MRO. Backs `Method#super_method`: `nil` once the chain runs
 /// out, and `nil` too for an `after` that isn't in this chain at all.

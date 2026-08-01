@@ -1775,6 +1775,20 @@ pub fn emit_call(
                         .collect();
                     return quote! { zeo_rt::thread_new(#proc, vec![#(#arg_exprs),*]) };
                 }
+                // `Module.nesting` -- the lexical class/module chain at THIS
+                // call site, innermost first. It is compile-time knowledge and
+                // nothing else: a builtin row runs with no view of its
+                // caller's lexical scope, so folding here is the only way to
+                // answer anything but `[]`. `cref_chain` is outermost-first.
+                ("Module", "nesting") if args.is_empty() && block.is_none() => {
+                    let ids = cx.cref_chain().iter().rev().map(|c| {
+                        let id = c.0;
+                        quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
+                    });
+                    return quote! {
+                        zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![#(#ids),*]))
+                    };
+                }
                 ("Mutex", "new") if args.is_empty() && block.is_none() => {
                     return quote! { zeo_rt::mutex_new() };
                 }

@@ -140,6 +140,17 @@ fn inherit_flag(v: Option<&RubyValue>) -> bool {
     !matches!(v, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil))
 }
 
+/// `(owner, constant name) -> feature path` for every `autoload` that reached
+/// the RUNTIME row -- see its docs. Only `autoload?` reads this, and a program
+/// that never makes a non-literal `autoload` call never allocates the map.
+fn pending_autoloads()
+-> &'static parking_lot::Mutex<std::collections::HashMap<(u32, String), String>> {
+    static MAP: std::sync::LazyLock<
+        parking_lot::Mutex<std::collections::HashMap<(u32, String), String>>,
+    > = std::sync::LazyLock::new(Default::default);
+    &MAP
+}
+
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
 fn syms_to_array(names: Vec<crate::Symbol>) -> RubyValue {
     RubyValue::Array(crate::array_new(
@@ -718,6 +729,158 @@ ruby_class! {
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    // `Module#remove_class_variable(:@@x)` -- drop the slot this exact module
+    // owns and answer what it held. An INHERITED `@@x` does not count, which is
+    // what makes the NameError's wording name the receiver.
+    def "remove_class_variable" (recv, arg) {
+        let name = cvar_name_arg(arg)?;
+        let cid = recv_cid(recv);
+        crate::cvar_remove(cid.0, &name)?.ok_or_else(|| {
+            name_error!("class variable @@{name} not defined for {}",
+                crate::dispatch::class_name(cid).unwrap_or_default())
+        })
+    }
+
+    // --- autoload -------------------------------------------------------
+    //
+    // zeo resolves a literal `autoload :C, "feature"` at COMPILE time:
+    // `parse::loader` eagerly splices the feature and lowers the call itself
+    // to a no-op, so that form never reaches this row and its constant is
+    // already defined -- which is why `autoload?` then answers nil, exactly as
+    // CRuby's does for a feature that has finished loading.
+    //
+    // What DOES reach here is the residue the structural collector cannot
+    // see: an explicit-receiver or computed call. Its feature never loads,
+    // so recording the path is the whole honest behavior -- and it is enough
+    // to make `autoload?` answer what CRuby answers.
+    def "autoload" (recv, sym, path) {
+        let name = const_name_arg(sym)?;
+        let path = crate::builtins::convert::to_rstr(path)?
+            .lock()
+            .to_utf8_lossy()
+            .into_owned();
+        pending_autoloads()
+            .lock()
+            .insert((recv_cid(recv).0, name), path);
+        Ok(RubyValue::Nil)
+    }
+    def "autoload?" cfunc (recv, sym, inherit?) {
+        let name = const_name_arg(sym)?;
+        let cid = recv_cid(recv);
+        // A constant that resolved is loaded, and CRuby answers nil for that
+        // whatever the registration said.
+        if const_lookup(cid, &name, inherit_flag(inherit)).is_some() {
+            return Ok(RubyValue::Nil);
+        }
+        Ok(match pending_autoloads().lock().get(&(cid.0, name)) {
+            Some(path) => RubyValue::Str(crate::string_new(path.clone())),
+            None => RubyValue::Nil,
+        })
+    }
+
+    // `Module#const_missing(:X)` -- the default hook, which just raises the
+    // NameError a missing constant would have raised anyway. A program that
+    // OVERRIDES it gets its own definition; this row is what `super` lands on.
+    def "const_missing" (recv, name) {
+        let name = const_name_arg(name)?;
+        let cid = recv_cid(recv);
+        Err(match crate::dispatch::class_name(cid) {
+            Some(owner) if cid.0 != 0 => name_error!("uninitialized constant {owner}::{name}"),
+            _ => name_error!("uninitialized constant {name}"),
+        })
+    }
+    // `Module#const_source_location` -- `nil` for a constant nobody defines,
+    // and `[]` for one that exists. CRuby answers `[]` for every constant
+    // defined in C, which is what all of zeo's are: codegen resolves a
+    // constant path statically and the store keeps no file or line.
+    def "const_source_location" cfunc (recv, name, inherit?) {
+        let name = const_name_arg(name)?;
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Err(name_error!("wrong constant name {name}"));
+        }
+        Ok(match const_lookup(recv_cid(recv), &name, inherit_flag(inherit)) {
+            Some(_) => RubyValue::Array(crate::array_new(Vec::new())),
+            None => RubyValue::Nil,
+        })
+    }
+
+    // `Module#public_instance_method(:name)` -- `instance_method`'s narrowing
+    // to a method a caller could reach with an explicit receiver.
+    def "public_instance_method" (recv, arg) {
+        let cid = recv_cid(recv);
+        let name = crate::Symbol::intern(&name_arg(arg)?);
+        if crate::dispatch::instance_method_visibility(cid, name)
+            == Some(crate::dispatch::MethodVisibility::Private)
+        {
+            let kind = if crate::dispatch::class_is_module(cid).unwrap_or(false) {
+                "module"
+            } else {
+                "class"
+            };
+            return Err(name_error!(
+                "method '{}' for {kind} '{}' is private",
+                name.name(),
+                crate::dispatch::class_name(cid).unwrap_or_default()
+            ));
+        }
+        crate::builtins::unbound_method::unbound_method_new(cid, arg)
+    }
+    // `Module#undefined_instance_methods` -- the names this module's own body
+    // `undef`'d. `Complex` is the one core class that uses this, and it is why
+    // `Complex(1, 2).positive?` raises where `Rational(1, 2).positive?` is false.
+    def "undefined_instance_methods" (recv) {
+        Ok(syms_to_array(crate::dispatch::undefined_method_names(recv_cid(recv))))
+    }
+    // `Module#set_temporary_name` -- only a class with NO permanent name (no
+    // constant path to it) may take one, so every compile-time class refuses.
+    // `nil` clears a temporary name, making the class anonymous again.
+    def "set_temporary_name" (recv, name) {
+        let cid = recv_cid(recv);
+        let name = match name {
+            RubyValue::Nil => None,
+            other => {
+                let text = crate::builtins::convert::to_rstr(other)?
+                    .lock()
+                    .to_utf8_lossy()
+                    .into_owned();
+                if text.is_empty() {
+                    return Err(crate::builtins::arg_error!("empty class/module name"));
+                }
+                if text.contains("::") || text.starts_with(|c: char| c.is_ascii_uppercase()) {
+                    return Err(crate::builtins::arg_error!(
+                        "the temporary name must not be a constant path to avoid confusion"
+                    ));
+                }
+                Some(text)
+            }
+        };
+        if !crate::runtime_meta::set_temporary_class_name(cid, name) {
+            return Err(crate::builtins::runtime_error!("can't change permanent name"));
+        }
+        Ok(recv.clone())
+    }
+    // `Module#refinements` -- the `Refinement` modules THIS module's `refine`
+    // blocks minted. The compiler marks each holder but records no back-link
+    // to the refining module, so this is empty; `Refinement#target` and the
+    // refined dispatch itself work regardless.
+    def "refinements" (_recv) {
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    }
+
+    // `Module.nesting` -- the lexical class/module chain at the CALL SITE,
+    // innermost first, which is compile-time knowledge: codegen folds the
+    // literal `Module.nesting` into the chain it already tracks. This row
+    // serves a computed `Module.send(:nesting)`, where no lexical scope
+    // survives to answer with, and top level is `[]` in CRuby too.
+    def self."nesting" (_recv) {
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    }
+    // `Module.used_modules`/`.used_refinements` -- the refinements ACTIVATED
+    // in the caller's lexical scope. zeo resolves `using` at compile time and
+    // keeps no runtime activation set, so both are empty.
+    def self."used_modules" | "used_refinements" (_recv) {
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
     }
 }
 
