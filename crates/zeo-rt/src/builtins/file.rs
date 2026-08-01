@@ -558,40 +558,53 @@ fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
     Ok(o)
 }
 
+/// `File::Constants` -- the open/lock/fnmatch flags, in their own module
+/// because CRuby includes them into `IO` as well as `File`. Its own inline
+/// `mod`: one `ruby_class!`/`ruby_module!` per module scope, since each emits
+/// a `lookup` of its own.
+mod file_constants {
+    use crate::RubyValue;
+    use zeo_macros::ruby_module;
+
+    ruby_module! {
+        Constants = zeo_abi::FILE_CONSTANTS_MODULE;
+
+        // `FNM_*` are Darwin fnmatch flags (SHORTNAME/SYSCASE are 0 on a
+        // case-sensitive fs); the `open(2)` and `flock(2)` bits come straight
+        // from libc so they match the host headers exactly.
+        const FNM_NOESCAPE = RubyValue::Int(1);
+        const FNM_PATHNAME = RubyValue::Int(2);
+        const FNM_DOTMATCH = RubyValue::Int(4);
+        const FNM_CASEFOLD = RubyValue::Int(8);
+        const FNM_EXTGLOB = RubyValue::Int(16);
+        const FNM_SHORTNAME = RubyValue::Int(0);
+        const FNM_SYSCASE = RubyValue::Int(0);
+        const RDONLY = RubyValue::Int(libc::O_RDONLY as i64);
+        const WRONLY = RubyValue::Int(libc::O_WRONLY as i64);
+        const RDWR = RubyValue::Int(libc::O_RDWR as i64);
+        const APPEND = RubyValue::Int(libc::O_APPEND as i64);
+        const CREAT = RubyValue::Int(libc::O_CREAT as i64);
+        const TRUNC = RubyValue::Int(libc::O_TRUNC as i64);
+        const EXCL = RubyValue::Int(libc::O_EXCL as i64);
+        const NONBLOCK = RubyValue::Int(libc::O_NONBLOCK as i64);
+        const LOCK_SH = RubyValue::Int(libc::LOCK_SH as i64);
+        const LOCK_EX = RubyValue::Int(libc::LOCK_EX as i64);
+        const LOCK_UN = RubyValue::Int(libc::LOCK_UN as i64);
+        const LOCK_NB = RubyValue::Int(libc::LOCK_NB as i64);
+        const NOCTTY = RubyValue::Int(libc::O_NOCTTY as i64);
+        const NOFOLLOW = RubyValue::Int(libc::O_NOFOLLOW as i64);
+        const SYNC = RubyValue::Int(libc::O_SYNC as i64);
+        const DSYNC = RubyValue::Int(libc::O_DSYNC as i64);
+        // Windows-only flags; 0 on POSIX, exactly as CRuby defines them here.
+        const BINARY = RubyValue::Int(0);
+        const SHARE_DELETE = RubyValue::Int(0);
+        const NULL = RubyValue::Str(crate::string_new("/dev/null".to_string()));
+    }
+}
+
 ruby_class! {
     File = zeo_abi::FILE_CLASS < zeo_abi::IO_CLASS;
 
-    // `File`'s constants, colocated here. `FNM_*` are
-    // Darwin fnmatch flags (SHORTNAME/SYSCASE are 0 on a case-sensitive fs);
-    // the `open(2)` and `flock(2)` bits come straight from libc so they match
-    // the host headers exactly.
-    const FNM_NOESCAPE = RubyValue::Int(1);
-    const FNM_PATHNAME = RubyValue::Int(2);
-    const FNM_DOTMATCH = RubyValue::Int(4);
-    const FNM_CASEFOLD = RubyValue::Int(8);
-    const FNM_EXTGLOB = RubyValue::Int(16);
-    const FNM_SHORTNAME = RubyValue::Int(0);
-    const FNM_SYSCASE = RubyValue::Int(0);
-    const RDONLY = RubyValue::Int(libc::O_RDONLY as i64);
-    const WRONLY = RubyValue::Int(libc::O_WRONLY as i64);
-    const RDWR = RubyValue::Int(libc::O_RDWR as i64);
-    const APPEND = RubyValue::Int(libc::O_APPEND as i64);
-    const CREAT = RubyValue::Int(libc::O_CREAT as i64);
-    const TRUNC = RubyValue::Int(libc::O_TRUNC as i64);
-    const EXCL = RubyValue::Int(libc::O_EXCL as i64);
-    const NONBLOCK = RubyValue::Int(libc::O_NONBLOCK as i64);
-    const LOCK_SH = RubyValue::Int(libc::LOCK_SH as i64);
-    const LOCK_EX = RubyValue::Int(libc::LOCK_EX as i64);
-    const LOCK_UN = RubyValue::Int(libc::LOCK_UN as i64);
-    const LOCK_NB = RubyValue::Int(libc::LOCK_NB as i64);
-    const NOCTTY = RubyValue::Int(libc::O_NOCTTY as i64);
-    const NOFOLLOW = RubyValue::Int(libc::O_NOFOLLOW as i64);
-    const SYNC = RubyValue::Int(libc::O_SYNC as i64);
-    const DSYNC = RubyValue::Int(libc::O_DSYNC as i64);
-    // Windows-only flags; 0 on POSIX, exactly as CRuby defines them here.
-    const BINARY = RubyValue::Int(0);
-    const SHARE_DELETE = RubyValue::Int(0);
-    const NULL = RubyValue::Str(crate::string_new("/dev/null".to_string()));
 
     // `File.open(path, mode = "r")` -- with a block, yields the file and
     // CLOSES it afterwards no matter how the block leaves (return, raise,

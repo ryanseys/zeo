@@ -313,13 +313,18 @@ const IGNORECASE: i64 = 1;
 const EXTENDED: i64 = 2;
 const MULTILINE: i64 = 4;
 
-/// Seeds `Regexp::IGNORECASE`/`EXTENDED`/`MULTILINE` -- called once from
-/// generated `main()`, alongside the other builtin-constant seeders.
+/// Seeds the `Regexp::*` option bits -- called once from generated `main()`,
+/// alongside the other builtin-constant seeders. `FIXEDENCODING` and
+/// `NOENCODING` are the two `#options` bits zeo never sets (its regexps are
+/// always encoding-aware), but a program that ANDs against them must still
+/// find them defined.
 pub fn seed_regexp_constants() {
     let re = zeo_abi::REGEXP_CLASS.0;
     crate::const_set(re, "IGNORECASE", RubyValue::Int(IGNORECASE));
     crate::const_set(re, "EXTENDED", RubyValue::Int(EXTENDED));
     crate::const_set(re, "MULTILINE", RubyValue::Int(MULTILINE));
+    crate::const_set(re, "FIXEDENCODING", RubyValue::Int(16));
+    crate::const_set(re, "NOENCODING", RubyValue::Int(32));
 }
 
 /// `Regexp.escape`/`.quote`: backslash-escapes every regex metacharacter (and

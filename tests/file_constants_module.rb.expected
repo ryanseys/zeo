@@ -1,0 +1,15 @@
+[:APPEND, :BINARY, :CREAT, :DSYNC, :EXCL, :FNM_CASEFOLD, :FNM_DOTMATCH, :FNM_EXTGLOB, :FNM_NOESCAPE, :FNM_PATHNAME, :FNM_SHORTNAME, :FNM_SYSCASE, :LOCK_EX, :LOCK_NB, :LOCK_SH, :LOCK_UN, :NOCTTY, :NOFOLLOW, :NONBLOCK, :NULL, :RDONLY, :RDWR, :SHARE_DELETE, :SYNC, :TRUNC, :WRONLY]
+Module
+true
+true
+[IO, File::Constants, Enumerable, Object]
+1
+true
+1
+[0, 1, 2, 3, 4]
+[1, 2, 4]
+false
+[16, 32]
+0
+File
+true

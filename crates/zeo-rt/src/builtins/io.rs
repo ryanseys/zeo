@@ -2780,13 +2780,22 @@ ruby_class! {
     }
 }
 
-/// The `IO::SEEK_*` constants -- seeded from generated `main()` beside the
-/// stdio ones.
+/// The `IO::SEEK_*` and `IO::READABLE`/`WRITABLE`/`PRIORITY` constants --
+/// seeded from generated `main()` beside the stdio ones. The open/lock flags
+/// are NOT here: those are `File::Constants`, which `IO` includes.
 pub fn seed_io_constants() {
     let io = zeo_abi::IO_CLASS.0;
     crate::constants::const_set(io, "SEEK_SET", RubyValue::Int(0));
     crate::constants::const_set(io, "SEEK_CUR", RubyValue::Int(1));
     crate::constants::const_set(io, "SEEK_END", RubyValue::Int(2));
+    // Sparse-file seeks. Darwin has no `SEEK_HOLE`/`SEEK_DATA` in libc, so the
+    // values are CRuby's own (`io.c` defines them unconditionally).
+    crate::constants::const_set(io, "SEEK_HOLE", RubyValue::Int(3));
+    crate::constants::const_set(io, "SEEK_DATA", RubyValue::Int(4));
+    // The `IO#wait` event mask.
+    crate::constants::const_set(io, "READABLE", RubyValue::Int(1));
+    crate::constants::const_set(io, "PRIORITY", RubyValue::Int(2));
+    crate::constants::const_set(io, "WRITABLE", RubyValue::Int(4));
 }
 
 #[cfg(test)]

@@ -589,6 +589,12 @@ pub const PRISM_MODULE: ClassId = ClassId(146);
 /// backend makes, and the same C library zeo's own front end parses with.
 pub const PRISM_ZEO_MODULE: ClassId = ClassId(147);
 
+/// `File::Constants` -- the open/lock/fnmatch flags. A MODULE rather than a
+/// bag of constants on `File`, because CRuby includes it into `IO` as well:
+/// that is what makes `IO::APPEND` and `File::APPEND` the same constant, and
+/// what puts `File::Constants` in `IO.ancestors`.
+pub const FILE_CONSTANTS_MODULE: ClassId = ClassId(148);
+
 /// `Refinement` -- what `M.refinements` holds and what a refined method's
 /// `Method#owner` reports. A `Module` subclass with no instances of its
 /// own here: the compiler mints one hidden module per `refine` block and
@@ -868,7 +874,9 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "IO",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
-        includes: &[ENUMERABLE_CLASS],
+        // Reverse of the resolution order, as `include A; include B` is:
+        // CRuby's `IO.ancestors` is `[IO, File::Constants, Enumerable, ...]`.
+        includes: &[ENUMERABLE_CLASS, FILE_CONSTANTS_MODULE],
         feature: None,
     },
     BuiltinClass {
@@ -1814,6 +1822,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("prism"),
+    },
+    BuiltinClass {
+        id: FILE_CONSTANTS_MODULE,
+        name: "File::Constants",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
     },
 ];
 
