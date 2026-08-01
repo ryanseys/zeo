@@ -48,8 +48,15 @@ pub(crate) fn object_id_of(recv: &RubyValue) -> RubyValue {
         RubyValue::Array(a) => std::sync::Arc::as_ptr(a) as i64,
         RubyValue::Hash(h) => std::sync::Arc::as_ptr(h) as i64,
         RubyValue::Symbol(s) => 0x1000_0000_0000 + i64::from(s.to_u32()),
+        // A class/module IS its id, so derive from that. The fallback below
+        // cannot serve here: a `Class` is a bare `ClassId`, so `recv` points at
+        // whatever temporary slot the caller built, and every class in a loop
+        // reads back the same address -- `Array.object_id == Hash.object_id`.
+        RubyValue::Class(cid) => 0x2000_0000_0000 + i64::from(cid.0),
         // The remaining kinds get a per-call address-ish value -- a documented
         // approximation (identity comparison via object_id on them is rare).
+        // It holds only while the values sit in distinct slots; anything with
+        // a stable identity of its own should get an arm above instead.
         _ => recv as *const _ as i64,
     })
 }

@@ -1,0 +1,13 @@
+-- every class and module gets its own id
+true
+-- and the same one every time it is asked
+true
+-- so a cache keyed on it distinguishes them
+16
+-- a class id never collides with an instance's
+true
+-- __id__ is the same answer
+true
+true
+-- singleton classes are distinct too
+true
