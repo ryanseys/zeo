@@ -15,15 +15,15 @@
 //! - `xtask stdlib-status [<lib-dir>]`: sweeps the installed Ruby stdlib `lib`
 //!   (dropped in via `-I`, no bespoke flag) and records which files `zeo`
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
+//! - `xtask arity-oracle`: re-records `conformance/builtin-arity.tsv` from the
+//!   installed ruby, which the `builtin_arity` drift test reads.
 //!
 //! (The golden-file conformance corpus, examples, and gaps all run as
 //! `cargo test`/nextest -- see `crates/zeo/tests/`.)
 
-mod arity_annotate;
 mod arity_oracle;
 mod bench;
 mod compile_bench;
-mod dsl_migrate;
 mod exec;
 mod gem;
 mod gem_compat;
@@ -47,14 +47,12 @@ fn main() -> ExitCode {
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
-        Some("arity-annotate") => arity_annotate::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
-        Some("dsl-migrate") => dsl_migrate::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
                  <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
-                 arity-oracle|arity-annotate|dsl-migrate>"
+                 arity-oracle>"
             );
             ExitCode::FAILURE
         }

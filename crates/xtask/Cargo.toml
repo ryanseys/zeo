@@ -7,9 +7,9 @@ license.workspace = true
 
 [dependencies]
 zeo.workspace = true
-# `spans` gives the DSL scanner a file:line for each declaration, and the
-# annotator byte ranges to splice against. `zeo-macros` links zeo-dsl without
-# it, so expanding every `ruby_class!` does not pay for a source map.
+# `spans` gives the DSL scanner a file:line for each declaration. `zeo-macros`
+# links zeo-dsl without it, so expanding every `ruby_class!` does not pay for a
+# source map.
 zeo-dsl = { workspace = true, features = ["spans"] }
 
 [lints]
