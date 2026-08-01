@@ -58,14 +58,9 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "printf" (recv, *args, &_block) {
-        let Some(fmt) = args.first() else {
-            return Err(crate::builtins::arg_error!("wrong number of arguments (given 0, expected 1+)"));
-        };
-        let _ = fmt;
-        let fmt = convert::to_rstr(&args[0])?;
-        let template = fmt.lock().to_utf8_lossy().to_string();
-        let text = crate::builtins::format::sprintf(&template, &args[1..])?;
+    def "printf" cfunc (recv, format, *args, &_block) {
+        let template = convert::to_rstr(format)?.lock().to_utf8_lossy().to_string();
+        let text = crate::builtins::format::sprintf(&template, args)?;
         write_bytes(recv, text.as_bytes())?;
         Ok(RubyValue::Nil)
     }

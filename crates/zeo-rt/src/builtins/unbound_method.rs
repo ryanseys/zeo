@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::builtins::method::{method_value, resolve_method_name};
-use crate::builtins::{arg_error, name_error, type_error};
+use crate::builtins::{name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::method_meta::MethodKind;
 use crate::signal::Signal;
@@ -128,16 +128,11 @@ ruby_class! {
     def "bind"(recv, arg) {
         bind_target(recv_unbound(recv), arg)
     }
-    def "bind_call"(recv, *args, &blk) {
-        if args.is_empty() {
-            return Err(arg_error!(
-                "wrong number of arguments (given 0, expected 1+)"
-            ));
-        }
+    def "bind_call" cfunc (recv, receiver, *args, &blk) {
         let um = recv_unbound(recv);
         // The receiver must still be a valid bind target.
-        bind_target(um, &args[0])?;
-        crate::dispatch::send_value(&args[0], um.name, &args[1..], blk)
+        bind_target(um, receiver)?;
+        crate::dispatch::send_value(receiver, um.name, args, blk)
     }
     // `UnboundMethod#owner` -- the defining class/module in the owning class's
     // ancestry (may differ from the class the unbound method was fetched from).

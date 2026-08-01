@@ -520,7 +520,8 @@ ruby_class! {
             cols.into_iter().map(|c| RubyValue::Array(crate::array_new(c))).collect(),
         )))
     }
-    def "slice!"(recv, *args, &_block) {
+    def "slice!" cfunc (recv, _start, _length?, &_block) {
+        let args = __args;
         // `slice!(i)` / `slice!(i, len)` / `slice!(start..end)` -- remove and
         // return the removed span.
         let h = rary;
@@ -567,7 +568,7 @@ ruby_class! {
                 let removed: Vec<RubyValue> = h.lock().drain(idx as usize..end).collect();
                 Ok(RubyValue::Array(crate::array_new(removed)))
             }
-            n => Err(arg_error!("wrong number of arguments (given {n}, expected 1..2)")),
+            n => unreachable!("the header admits 1..2 arguments, not {n}"),
         }
     }
     def "reverse" (recv) {
@@ -679,10 +680,8 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "dig"(recv, *args, &_block) {
-        if args.is_empty() {
-            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
-        }
+    def "dig" cfunc (recv, _key, *_rest, &_block) {
+        let args = __args;
         let cur = index_only(recv, &args[0])?;
         if args.len() == 1 {
             return Ok(cur);
@@ -777,10 +776,8 @@ ruby_class! {
             RubyValue::Nil
         })
     }
-    def "insert"(recv, *args, &_block) {
-        if args.len() < 2 {
-            return Err(arg_error!("wrong number of arguments (given {}, expected 2+)", args.len()));
-        }
+    def "insert" cfunc (recv, _index, *_objects, &_block) {
+        let args = __args;
         let orig = arg_int!(args, 0);
         let handle = rary;
         check_frozen(handle, recv)?;

@@ -410,6 +410,49 @@ fn live_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
     Ok(d)
 }
 
+/// The matcher behind `Dir.glob` and `Dir[]`. Multiple patterns union; a block
+/// takes each match and the call answers nil.
+fn glob_matches(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    // A trailing Integer FNM flags argument (`File::FNM_DOTMATCH`, ...)
+    // governs matching for all patterns. FNM_DOTMATCH is bit 0x4.
+    let dotmatch = args
+        .iter()
+        .filter_map(|a| {
+            if let RubyValue::Int(f) = a {
+                Some(*f)
+            } else {
+                None
+            }
+        })
+        .any(|f| f & 0x4 != 0);
+    let mut all = Vec::new();
+    for a in args {
+        match a {
+            RubyValue::Array(pats) => {
+                for p in pats.lock().iter() {
+                    all.extend(glob(&path_arg(p, "glob")?, dotmatch));
+                }
+            }
+            // A trailing options Hash (`base:`) or the Integer FNM flags
+            // argument itself is not a pattern.
+            // TODO(plan P-B): honor `base:`.
+            RubyValue::Hash(_) | RubyValue::Int(_) => {}
+            v => all.extend(glob(&path_arg(v, "glob")?, dotmatch)),
+        }
+    }
+    all.sort();
+    all.dedup();
+    if let Some(RubyValue::Proc(p)) = block {
+        for m in all {
+            p.call(&[str_val(m)])?;
+        }
+        return Ok(RubyValue::Nil);
+    }
+    Ok(RubyValue::Array(crate::collections::array_new(
+        all.into_iter().map(str_val).collect(),
+    )))
+}
+
 ruby_class! {
     Dir = zeo_abi::DIR_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
@@ -607,42 +650,13 @@ ruby_class! {
     // missing convenience. It arrives with the stdlib work, as Ruby's own.
     // `Dir.glob(pat)` / `Dir[pat]` -- the block form yields each match and
     // answers nil; otherwise an Array. Multiple patterns union.
-    def self."glob" arity -2 | "[]"(_recv, *args, &block) {
-        if args.is_empty() {
-            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
-        }
-        // A trailing Integer FNM flags argument (`File::FNM_DOTMATCH`, ...)
-        // governs matching for all patterns. FNM_DOTMATCH is bit 0x4.
-        let dotmatch = args
-            .iter()
-            .filter_map(|a| if let RubyValue::Int(f) = a { Some(*f) } else { None })
-            .any(|f| f & 0x4 != 0);
-        let mut all = Vec::new();
-        for a in args {
-            match a {
-                RubyValue::Array(pats) => {
-                    for p in pats.lock().iter() {
-                        all.extend(glob(&path_arg(p, "glob")?, dotmatch));
-                    }
-                }
-                // A trailing options Hash (`base:`) or the Integer FNM flags
-                // argument itself is not a pattern.
-                // TODO(plan P-B): honor `base:`.
-                RubyValue::Hash(_) | RubyValue::Int(_) => {}
-                v => all.extend(glob(&path_arg(v, "glob")?, dotmatch)),
-            }
-        }
-        all.sort();
-        all.dedup();
-        if let Some(RubyValue::Proc(p)) = block {
-            for m in all {
-                p.call(&[str_val(m)])?;
-            }
-            return Ok(RubyValue::Nil);
-        }
-        Ok(RubyValue::Array(crate::collections::array_new(
-            all.into_iter().map(str_val).collect(),
-        )))
+    def self."glob" (_recv, _pattern, _flags?, **_opts, &block) {
+        glob_matches(__args, block)
+    }
+    // `Dir[]` is the same matcher with a looser signature -- any number of
+    // patterns, and none at all answers `[]` where `glob` would raise.
+    def self."[]" (_recv, *args, &block) {
+        glob_matches(args, block)
     }
 
     // `#read` -- the next entry name (INCLUDING `.`/`..`), or nil at the end.

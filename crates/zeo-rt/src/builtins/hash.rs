@@ -214,10 +214,8 @@ ruby_class! {
             &[("key", (*arg1).clone()), ("receiver", recv.clone())],
         ))
     }
-    def "dig"(recv, *args, &_block) {
-        if args.is_empty() {
-            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
-        }
+    def "dig" cfunc (recv, _key, *_rest, &_block) {
+        let args = __args;
         let cur = crate::hash_get(rhash, &args[0]);
         if args.len() == 1 {
             return Ok(cur);

@@ -975,12 +975,9 @@ ruby_class! {
     }
     // `File.mkfifo(path, mode = 0666)` -- create a FIFO special file; answers 0
     // (`libc::mkfifo`, the process umask applies to `mode` as usual).
-    def self."mkfifo" (_recv, *args, &_block) {
-        if args.is_empty() || args.len() > 2 {
-            return Err(arg_error!("wrong number of arguments (given {}, expected 1..2)", args.len()));
-        }
-        let path = path_arg(&args[0], "mkfifo")?;
-        let mode: libc::mode_t = match args.get(1) {
+    def self."mkfifo" cfunc (_recv, path, mode?, &_block) {
+        let path = path_arg(path, "mkfifo")?;
+        let mode: libc::mode_t = match mode {
             Some(RubyValue::Nil) => {
                 return Err(type_error!("no implicit conversion of nil into Integer"));
             }
@@ -1003,17 +1000,14 @@ ruby_class! {
     }
     // `File.utime(atime, mtime, *paths)` -- set each file's access and
     // modification times; answers the number of files touched.
-    def self."utime" (_recv, *args, &_block) {
-        if args.len() < 2 {
-            return Err(arg_error!("wrong number of arguments (given 0, expected 2+)"));
-        }
-        let atime = time_secs(&args[0])?;
-        let mtime = time_secs(&args[1])?;
+    def self."utime" cfunc (_recv, atime, mtime, *paths, &_block) {
+        let atime = time_secs(atime)?;
+        let mtime = time_secs(mtime)?;
         let tv = [
             libc::timeval { tv_sec: atime, tv_usec: 0 },
             libc::timeval { tv_sec: mtime, tv_usec: 0 },
         ];
-        for p in &args[2..] {
+        for p in paths {
             let path = path_arg(p, "utime")?;
             let c = std::ffi::CString::new(path.clone())
                 .map_err(|_| arg_error!("string contains null byte"))?;
@@ -1022,7 +1016,7 @@ ruby_class! {
                 return Err(raise_errno(&std::io::Error::last_os_error(), "utime", &path));
             }
         }
-        Ok(RubyValue::Int((args.len() - 2) as i64))
+        Ok(RubyValue::Int(paths.len() as i64))
     }
     // `File.umask` -- the current file-creation mask; `File.umask(mask)` sets it
     // and answers the previous value. Reading is non-destructive (set-then-restore).
@@ -1047,11 +1041,9 @@ ruby_class! {
     }
     // `File.chmod(mode, *paths)` -- set each file's permission bits; answers the
     // number of files changed.
-    def self."chmod" (_recv, *args, &_block) {
+    def self."chmod" cfunc (_recv, _mode, *_paths, &_block) {
         use std::os::unix::fs::PermissionsExt;
-        if args.is_empty() {
-            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
-        }
+        let args = __args;
         let mode = &match &args[0] {
             RubyValue::Nil => {
                 return Err(type_error!("no implicit conversion of nil into Integer"));

@@ -112,13 +112,11 @@ ruby_module! {
     // signal's default disposition and terminate the very program that
     // trapped it. Signal 0 (existence probe) and other-process delivery go
     // through the real syscall.
-    def self.kill(_recv, *args, &_block) {
-        let Some((sig, pids)) = args.split_first() else {
-            return Err(arg_error!("wrong number of arguments (given 0, expected at least 1)"));
-        };
+    def self.kill cfunc (_recv, sig, first_pid, *rest_pids, &_block) {
+        let pids: Vec<&RubyValue> = std::iter::once(first_pid).chain(rest_pids).collect();
         let no = crate::builtins::signal::resolve_signal_arg(sig)?;
         let me = std::process::id() as i64;
-        for pv in pids {
+        for pv in &pids {
             let pid = int_arg(pv)?;
             if pid == me && no != 0 {
                 match crate::builtins::signal::trap_action(no) {

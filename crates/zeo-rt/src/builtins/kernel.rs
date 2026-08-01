@@ -164,11 +164,8 @@ ruby_module! {
     // `obj.extend(Mod, ...)` -- mix each module's instance methods into the
     // receiver's singleton. The bare `extend Mod` STATEMENT form (no receiver)
     // is a separate parse-level mixin; this row is the method-call form only.
-    def "extend"(recv, *args, &_block) {
-        if args.is_empty() {
-            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
-        }
-        for m in args {
+    def "extend" cfunc (recv, first, *rest, &_block) {
+        for m in std::iter::once(first).chain(rest) {
             crate::runtime_meta::runtime_extend(recv, m)?;
         }
         Ok(recv.clone())
