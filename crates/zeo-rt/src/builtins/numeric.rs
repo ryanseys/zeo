@@ -19,7 +19,7 @@ use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
-use crate::builtins::{arg_error, arity, block_or_enum, type_error};
+use crate::builtins::{arg_error, block_or_enum, type_error};
 use crate::{RubyValue, Signal};
 use num_traits::ToPrimitive;
 use zeo_macros::ruby_class;
@@ -482,15 +482,13 @@ ruby_class! {
     // `step(limit, step = 1)`; the blockless form returns an Enumerator.
     // Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
-    def "step" (recv, *args, &block) {
-        arity!(args, 0..=2);
-        let p = block_or_enum!(recv, "step", args, block);
+    def "step" (recv, to?, by?, **opts, &block) {
+        let p = block_or_enum!(recv, "step", __args, block);
         // `step` accepts positional (`1.step(10, 2)`) and/or keyword
-        // (`1.step(by: 2, to: 10)`) forms; a trailing Hash carries `:by`/`:to`.
-        let mut positional = args;
+        // (`1.step(by: 2, to: 10)`) forms.
         let mut limit: Option<RubyValue> = None;
         let mut step = RubyValue::Int(1);
-        if let Some(RubyValue::Hash(h)) = args.last() {
+        if let Some(RubyValue::Hash(h)) = opts {
             let by = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("by")));
             let to = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("to")));
             if !matches!(by, RubyValue::Nil) {
@@ -499,12 +497,11 @@ ruby_class! {
             if !matches!(to, RubyValue::Nil) {
                 limit = Some(to);
             }
-            positional = &args[..args.len() - 1];
         }
-        if let Some(l) = positional.first() {
+        if let Some(l) = to {
             limit = Some(l.clone());
         }
-        if let Some(s) = positional.get(1) {
+        if let Some(s) = by {
             step = s.clone();
         }
         // A zero step never advances `cur`, so the loop below would spin

@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::builtins::{arg_error, arity, class_name_of};
+use crate::builtins::{arg_error, class_name_of};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
 use zeo_macros::ruby_module;
@@ -140,8 +140,8 @@ ruby_module! {
     }
     // `Signal.trap(sig, action = nil) { block }` -> the PREVIOUS action for
     // `sig` (`"DEFAULT"` if never set). See `trap_impl`.
-    def self."trap"(_recv, *args, &block) {
-        trap_impl(args, block)
+    def self."trap" cfunc (_recv, sig, command?, &block) {
+        trap_impl(sig, command, block)
     }
 }
 
@@ -150,9 +150,12 @@ ruby_module! {
 /// never set). A no-op beyond that bookkeeping -- zeo installs no handler, so
 /// nothing fires. Unknown signals raise `ArgumentError`; `KILL`/`STOP` raise
 /// `Errno::EINVAL`.
-pub(crate) fn trap_impl(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    arity!(args, 1..=2);
-    let no = resolve_signal_arg(&args[0])?;
+pub(crate) fn trap_impl(
+    sig: &RubyValue,
+    command: Option<&RubyValue>,
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let no = resolve_signal_arg(sig)?;
     if UNTRAPPABLE.contains(&no) {
         return Err(raise_error(
             "Errno::EINVAL",
@@ -162,7 +165,7 @@ pub(crate) fn trap_impl(args: &[RubyValue], block: Option<RubyValue>) -> Result<
     let prev = TRAP_STATE.with(|s| s.borrow().get(&no).cloned());
     let handler = match block {
         Some(b) => b,
-        None => args.get(1).cloned().unwrap_or(RubyValue::Nil),
+        None => command.cloned().unwrap_or(RubyValue::Nil),
     };
     TRAP_STATE.with(|s| s.borrow_mut().insert(no, handler));
     Ok(prev.unwrap_or_else(|| RubyValue::Str(string_new("DEFAULT".to_string()))))

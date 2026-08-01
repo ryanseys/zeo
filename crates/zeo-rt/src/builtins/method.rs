@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::builtins::{arity, name_error, type_error};
+use crate::builtins::{name_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::method_meta::MethodKind;
 use crate::signal::Signal;
@@ -225,10 +225,9 @@ fn recv_method(recv: &RubyValue) -> &RMethod {
 
 /// Shared body of `>>`/`<<`: both sides go through `#call`, so a Method, a
 /// Proc, or any object answering `call` composes uniformly.
-fn compose(recv: &RubyValue, args: &[RubyValue], forward: bool) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
+fn compose(recv: &RubyValue, other: &RubyValue, forward: bool) -> Result<RubyValue, Signal> {
     let this = recv.clone();
-    let other = args[0].clone();
+    let other = other.clone();
     let call = Symbol::intern("call");
     Ok(RubyValue::Proc(crate::RProc::new(
         move |call_args: &[RubyValue]| {
@@ -352,12 +351,12 @@ ruby_class! {
     }
     // `meth >> other` -- a Proc running `meth` then piping its result into
     // `other` (`other.call(meth.call(*args))`). `other` is any callable.
-    def ">>"(recv, *args, &_blk) {
-        compose(recv, args, true)
+    def ">>"(recv, other) {
+        compose(recv, other, true)
     }
     // `meth << other` -- the reverse pipe: `meth.call(other.call(*args))`.
-    def "<<"(recv, *args, &_blk) {
-        compose(recv, args, false)
+    def "<<"(recv, other) {
+        compose(recv, other, false)
     }
     // `Method#==`/`#eql?` -- same defining method (name + owner) bound to the
     // SAME receiver. CRuby compares receivers by identity, not by `==`, so two

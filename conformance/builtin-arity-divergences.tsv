@@ -276,8 +276,6 @@ baseline	Data	i	to_s	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/dat
 baseline	Date	i	+	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/date/mod.rs:248
 baseline	Digest::MD5	i	to_s	declared -1, oracle 0 (c) at crates/zeo-rt/src/ext/digest/algorithm.rs:45
 baseline	Dir	s	glob	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/builtins/dir.rs:611
-baseline	Enumerator	i	each_with_object	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/enumerator.rs:831
-baseline	Enumerator	i	with_object	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/enumerator.rs:827
 baseline	Enumerator::Lazy	i	each_with_index	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/lazy.rs:538
 baseline	Enumerator::Yielder	i	<<	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/yielder.rs:24
 baseline	GC	s	compact	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/gc.rs:18
@@ -290,7 +288,6 @@ baseline	Kernel	i	Float	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/built
 baseline	Kernel	i	Hash	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/kernel.rs:400
 baseline	Kernel	i	Integer	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/builtins/kernel.rs:388
 baseline	Kernel	i	String	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/kernel.rs:394
-baseline	Kernel	i	`	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/kernel.rs:123
 baseline	Kernel	i	respond_to_missing?	declared -2, oracle 2 (c) at crates/zeo-rt/src/builtins/kernel.rs:554
 baseline	Math	i	acos	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/math.rs:94
 baseline	Math	i	acosh	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/math.rs:139
@@ -346,9 +343,7 @@ baseline	Math	s	sinh	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/mat
 baseline	Math	s	sqrt	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/math.rs:88
 baseline	Math	s	tan	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/math.rs:92
 baseline	Math	s	tanh	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/math.rs:135
-baseline	Method	i	<<	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/method.rs:359
 baseline	Method	i	==	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/method.rs:365
-baseline	Method	i	>>	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/method.rs:355
 baseline	Method	i	arity	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/method.rs:285
 baseline	Method	i	eql?	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/method.rs:365
 baseline	Method	i	hash	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/method.rs:384

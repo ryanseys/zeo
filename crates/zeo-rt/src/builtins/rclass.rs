@@ -65,7 +65,7 @@ ruby_class! {
         // instance `Object.new` builds, tagged with the root class's own id.
         // Its `initialize` (the true root's) takes no arguments.
         if cid == zeo_abi::BASIC_OBJECT_CLASS {
-            crate::builtins::arity!(args, 0);
+            crate::builtins::check_arity(args.len(), 0, Some(0))?;
             return Ok(crate::runtime_meta::blank_instance(cid));
         }
         match crate::dispatch::constructor_of(cid) {

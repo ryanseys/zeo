@@ -6,7 +6,7 @@
 //! plan.
 
 use crate::builtins::{
-    arg_error, arg_int, arg_str, arity, block_or_enum, convert, index_error, range_error, recv_str,
+    arg_error, arg_int, arg_str, block_or_enum, convert, index_error, range_error, recv_str,
     regexp_error, type_error,
 };
 use crate::{RubyValue, Signal};
@@ -2167,8 +2167,8 @@ ruby_class! {
     // `bytesplice(index, length, str)` / `bytesplice(range, str)`: replaces
     // the byte span in place with `str`'s bytes and answers `str`. A frozen
     // receiver raises. (The 5-arg `str`-sub-span form is a separate gap.)
-    def "bytesplice"(recv, *args, &_block) {
-        arity!(args, 2..=3);
+    def "bytesplice" cfunc (recv, _first, _second, _third?) {
+        let args = __args;
         let s = recv_str!(recv);
         if s.is_frozen() {
             return Err(crate::dispatch::raise_error_details(

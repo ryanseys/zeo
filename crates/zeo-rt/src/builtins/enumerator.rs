@@ -671,17 +671,16 @@ fn drive_with_index(e: &REnumerator, block: RubyValue, offset: i64) -> Result<Ru
 /// `(packed_element, memo)` and returns the memo.
 fn drive_with_object(
     recv: &RubyValue,
-    args: &[RubyValue],
+    obj: &RubyValue,
     block: Option<RubyValue>,
     label: &str,
 ) -> Result<RubyValue, Signal> {
-    arity!(args, 1);
     let e = recv_enum(recv);
     let Some(block) = block else {
-        return Ok(enumerator_for(recv, label, args));
+        return Ok(enumerator_for(recv, label, std::slice::from_ref(obj)));
     };
     let blk = block.as_proc_unchecked();
-    let memo = args[0].clone();
+    let memo = obj.clone();
     let memo_for_block = memo.clone();
     let wrapper: RProc =
         RProc::new(move |raw: &[RubyValue]| blk.call(&[pack(raw), memo_for_block.clone()]));
@@ -823,12 +822,12 @@ ruby_class! {
         }
     }
 
-    def "with_object"(recv, *args, &block) {
-        drive_with_object(recv, args, block, "with_object")
+    def "with_object"(recv, obj, &block) {
+        drive_with_object(recv, obj, block, "with_object")
     }
 
-    def "each_with_object"(recv, *args, &block) {
-        drive_with_object(recv, args, block, "each_with_object")
+    def "each_with_object"(recv, obj, &block) {
+        drive_with_object(recv, obj, block, "each_with_object")
     }
 }
 

@@ -139,11 +139,8 @@ ruby_module! {
 
     // `PTY.spawn([env,] command... [,options]) -> [r, w, pid]` (or yields the
     // trio). `getpty` is CRuby's older name for the same call.
-    def self."spawn" (_recv, *args, &block) {
-        spawn_under_pty(args, block)
-    }
-    def self."getpty" (_recv, *args, &block) {
-        spawn_under_pty(args, block)
+    def self."spawn" | "getpty" cfunc (_recv, _command, _arg1?, _arg2?, &block) {
+        spawn_under_pty(__args, block)
     }
 
     // `PTY.open -> [master, slave]` (or yields the pair and closes it after):

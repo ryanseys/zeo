@@ -120,8 +120,8 @@ ruby_module! {
     def "system"(recv, *args, &block) {
         crate::builtins::process::system(recv, args, block)
     }
-    def "`"(recv, *args, &block) {
-        crate::builtins::process::backquote(recv, args, block)
+    def "`"(recv, cmd, &block) {
+        crate::builtins::process::backquote(recv, std::slice::from_ref(cmd), block)
     }
     // `spawn` starts the child WITHOUT waiting and answers its pid -- the
     // Kernel spelling of `Process.spawn`, which Open3's popen family calls
@@ -406,16 +406,16 @@ ruby_module! {
     // removed). Present whenever the extension is compiled in; like `Time`'s
     // extra methods, it answers even without `require "bigdecimal"`.
     #[cfg(feature = "ext-bigdecimal")]
-    def "BigDecimal"(_recv, *args, &_block) {
-        crate::ext::bigdecimal::kernel_big_decimal(args)
+    def "BigDecimal" cfunc (_recv, _initial, _digits?) {
+        crate::ext::bigdecimal::kernel_big_decimal(__args)
     }
     def "Complex"(_recv, *args, &_block) {
         kernel_complex(args)
     }
     // Private `Kernel#trap` -- the receiverless spelling of `Signal.trap`, same
     // validated no-op that records the action and returns the prior one.
-    def "trap"(_recv, *args, &block) {
-        crate::builtins::signal::trap_impl(args, block)
+    def "trap" cfunc (_recv, sig, command?, &block) {
+        crate::builtins::signal::trap_impl(sig, command, block)
     }
     // `proc(&b)` / `proc { }` -- answer the passed block as a Proc (it already IS
     // one at the ABI level). No block is CRuby's `ArgumentError`.

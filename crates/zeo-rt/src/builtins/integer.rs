@@ -898,17 +898,19 @@ ruby_class! {
     }
     // The rounding family: a missing/non-negative ndigits is `self`; a
     // negative ndigits rounds to a power of ten with each mode's rule.
-    def "round"(recv, *args, &_block) {
-        int_round_family(recv, args, RoundMode::HalfAway)
+    // A `half:` keyword selects the tie-break mode; floor/ceil/truncate have
+    // no tie to break, so they take none.
+    def "round"(recv, ndigits?, **opts) {
+        int_round_family(recv, ndigits, RoundMode::HalfAway, half_kwarg(opts)?)
     }
-    def "floor"(recv, *args, &_block) {
-        int_round_family(recv, args, RoundMode::Floor)
+    def "floor"(recv, ndigits?) {
+        int_round_family(recv, ndigits, RoundMode::Floor, HalfMode::Up)
     }
-    def "ceil"(recv, *args, &_block) {
-        int_round_family(recv, args, RoundMode::Ceil)
+    def "ceil"(recv, ndigits?) {
+        int_round_family(recv, ndigits, RoundMode::Ceil, HalfMode::Up)
     }
-    def "truncate"(recv, *args, &_block) {
-        int_round_family(recv, args, RoundMode::Trunc)
+    def "truncate"(recv, ndigits?) {
+        int_round_family(recv, ndigits, RoundMode::Trunc, HalfMode::Up)
     }
     // Iteration primitives; blockless forms return Enumerators (Phase
     // 17.2). Counts beyond i64 are physically unrunnable -- loud.
@@ -987,16 +989,16 @@ enum HalfMode {
 
 /// Splits an optional trailing keyword Hash (`half:`) off the positional args,
 /// returning the positionals and the parsed `HalfMode` (default `Up`).
-fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Signal> {
-    let Some(RubyValue::Hash(h)) = args.last() else {
-        return Ok((args, HalfMode::Up));
+fn half_kwarg(opts: Option<&RubyValue>) -> Result<HalfMode, Signal> {
+    let Some(RubyValue::Hash(h)) = opts else {
+        return Ok(HalfMode::Up);
     };
     let pairs = crate::hash_pairs(h);
     let half_key = RubyValue::Symbol(crate::Symbol::intern("half"));
     // Only peel it off as keywords if every key is the recognized `half:`; a
     // stray positional Hash keeps falling through to the coercion error.
     if pairs.is_empty() || !pairs.iter().all(|(k, _)| k.rb_eq(&half_key)) {
-        return Ok((args, HalfMode::Up));
+        return Ok(HalfMode::Up);
     }
     let mode = match crate::hash_get(h, &half_key) {
         RubyValue::Symbol(s) => match s.name().as_str() {
@@ -1013,7 +1015,7 @@ fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Sign
             ));
         }
     };
-    Ok((&args[..args.len() - 1], mode))
+    Ok(mode)
 }
 
 /// Rounds magnitude `m` down to a multiple of `p`, resolving an exact half by
@@ -1041,15 +1043,11 @@ fn round_half_mag(m: &BigInt, p: &BigInt, half: HalfMode) -> BigInt {
 
 fn int_round_family(
     recv: &RubyValue,
-    args: &[RubyValue],
+    ndigits: Option<&RubyValue>,
     mode: RoundMode,
+    half: HalfMode,
 ) -> Result<RubyValue, Signal> {
-    // `half:` is only meaningful for `round`; floor/ceil/truncate ignore it but
-    // still accept and discard the keyword (CRuby raises on it for those, but
-    // the corpus never exercises that edge).
-    let (args, half) = split_half_kwarg(args)?;
-    crate::builtins::arity!(args, 0..=1);
-    let ndigits = match args.first() {
+    let ndigits = match ndigits {
         Some(RubyValue::Int(n)) => *n,
         Some(other) => {
             return Err(coerce_error(other, "Integer"));
