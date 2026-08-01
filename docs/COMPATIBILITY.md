@@ -336,8 +336,12 @@ this event"`, `"unknown event: x"`) are oracle-matched live
   raises `RuntimeError: event :x is not supported by zeo` where CRuby
   accepts it -- loud, not a handler that silently never runs.
 - **`#self`, `#binding`, `#return_value`, `#parameters`,
-  `#eval_script`, `#instruction_sequence` are not implemented**: the
-  lightweight frame deliberately carries no receiver or bindings.
+  `#eval_script` and `#instruction_sequence` are defined and REFUSE**, with
+  CRuby's own `RuntimeError: not supported by this event` (and its
+  `access from outside` when no handler is running). The lightweight frame
+  deliberately carries no receiver or bindings. Four of the six are what
+  CRuby answers for a `:line` event too; `#self` and `#binding` are the
+  divergence, tracked in `tests/gaps/tracepoint_self_and_binding.rb`.
 - **An explicit early `return` reports the `end` line** for `:return`
   where CRuby reports the `return` statement's line (the frame pop
   cannot tell the exit paths apart; an exception unwind reports the
@@ -355,8 +359,12 @@ this event"`, `"unknown event: x"`) are oracle-matched live
   from inside a line stamp or a frame pop. Observably close to CRuby,
   where the propagated exception is not catchable by a `rescue` around
   the traced call either.
-- `enable(target:)`/`enable(target_line:)` filtering and
-  `TracePoint.allow_reentry` are not implemented.
+- `enable(target:)`/`enable(target_line:)` filtering is not implemented.
+- **`TracePoint.stat` is empty** — it keys per-VM hook counts on a `RubyVM`
+  object zeo has none of. **`.allow_reentry`** raises CRuby's own
+  `No need to allow reentrance.` outside a handler and runs the block inside
+  one, but reentrancy suppression stays on either way: a `:line` handler that
+  traced itself would not terminate.
 
 ### `openssl`
 
@@ -426,8 +434,11 @@ storage). The bounds:
   parameter is a plain per-iteration `let` with no cell to share, so it is
   ABSENT from `local_variables` rather than wrongly bound. Real (escaping)
   blocks and lambdas carry theirs unconditionally.
-- **`Binding#irb`**, `#implicit_parameter_get`/`_defined?`/`#implicit_parameters`
-  are not implemented.
+- **`Binding#irb`** raises `LoadError` — zeo ships no irb, and a caller can
+  rescue that. `#implicit_parameters` is empty and
+  `#implicit_parameter_defined?` is false: zeo compiles `it` and `_1`..`_9` to
+  ordinary block parameters, so a Binding carries no separate implicit set.
+  That is CRuby's answer for every binding taken outside such a block.
 - **A `send` whose method name is COMPUTED** (`m = :eval; send(m, src)`) is
   invisible to static analysis: that binary may not link the eval VM at all,
   and the eval gets no scope. A LITERAL `send(:eval, src)` /
@@ -446,6 +457,35 @@ behind it — `Symbol#to_proc` and the other runtime-internal ones — raises
 CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
 is pay-per-use; see `docs/EVAL_VM.md`).
+
+### `GC`
+
+zeo's heap is `Arc`-refcounted with no tracing collector, so `GC` reports what
+is TRUE of it rather than raising: zero collections, no compaction, an empty
+`stat`/`stat_heap`, and `GC.config` naming the implementation `"refcount"`
+where MRI says `"default"`. `GC::OPTS` and `GC::INTERNAL_CONSTANTS` are empty
+for the same reason — they describe MRI's build and slot layout. `.enable`/
+`.disable` answer false (the collector is never enabled, because there isn't
+one) and `.stress=`/`.auto_compact=`/`.measure_total_time=` record what they
+were told so a reader gets its own value back. `GC.latest_gc_info` and
+`.latest_compact_info` answer exactly what CRuby answers in a process that has
+not yet collected. `GC.start`/`.compact` do run finalizers for objects whose
+last reference has dropped, which is the one real thing there is to do.
+Cycles genuinely leak; see `docs/ROADMAP.md`.
+
+### `Fiber`
+
+The fiber surface is faithful (`tests/gc_fiber_binding_rows.rb`), with two
+bounds:
+
+- **There is no fiber scheduler.** `.scheduler`/`.current_scheduler` answer
+  nil, `.set_scheduler(nil)` succeeds and any other argument raises
+  `NotImplementedError`, and `.schedule` raises the same `RuntimeError: No
+  scheduler is available!` CRuby raises without one.
+- **`#backtrace`/`#backtrace_locations` answer `[]` for a fiber other than the
+  current one.** A suspended fiber keeps its frames in a saved execution
+  context (`crate::ec`) that the backtrace walk cannot enter. A terminated
+  fiber answers `[]` in CRuby too.
 
 ### `IO#timeout`
 

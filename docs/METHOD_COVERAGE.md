@@ -394,6 +394,29 @@ and the numbered block parameters the compiler already tracks.
 `.allow_reentry` and `.stat`; `#self`, `#binding` and `#return_value` are
 defined and raise, per decision 1.
 
+**Status: done**, `unreachable` 132 → 98, `constant` 198 → 196 and `owner`
+184 → 182. Three things are worth recording:
+
+- **`GC.latest_gc_info` and `.latest_compact_info` match the oracle exactly.**
+  The shape CRuby answers in a process that has not yet collected is the shape
+  a refcounted heap answers forever, so those two are not stubs at all. The
+  counters (`count`, `total_time`) had to become type assertions in the golden
+  anyway: CRuby's own values move between runs.
+- **`Fiber` migrated to `ruby_class!` alongside `Thread`**, which is what
+  freed `#inspect`/`#to_s` — they had no rows at all and fell back to
+  `Object`'s. `Fiber#backtrace` answers `[]` rather than `nil` for a
+  terminated fiber, which is CRuby's answer and the opposite of `Thread`'s.
+- **The golden found a 30-second latency bug.** `Thread.kill(t)` on a thread
+  that had not yet reached its `sleep` posted the interrupt before
+  `sleep_impl` registered a ctx to wake, and the loop checked interrupts only
+  AFTER parking — so the kill took effect when the sleep expired. Both sleep
+  loops now check before parking. `tests/thread_surface.rb` went from 30.0s to
+  0.0s.
+
+`TracePoint#self` and `#binding` are the one place a listed row refuses where
+CRuby answers, so they are XFAIL in `tests/gaps/tracepoint_self_and_binding.rb`
+with the fix shape written down.
+
 ### 2.6 Encoding error classes and the long tail (~55)
 
 `Encoding::InvalidByteSequenceError` (7) and `Encoding::UndefinedConversionError`

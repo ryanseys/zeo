@@ -9,15 +9,64 @@
 //! Hash so `GC.stat[:count]`-style reads get `nil` rather than crashing --
 //! no fabricated statistics.
 
-use crate::RubyValue;
+use crate::{RubyValue, Signal};
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeo_macros::ruby_module;
+
+/// The two switches a program may set and read back. Nothing consults them --
+/// there is no collector to measure or compact -- but a setter that silently
+/// discarded its argument would be a worse lie than one that remembers.
+static MEASURE_TOTAL_TIME: AtomicBool = AtomicBool::new(true);
+static AUTO_COMPACT: AtomicBool = AtomicBool::new(false);
+static STRESS: AtomicBool = AtomicBool::new(false);
+
+fn hash_of(pairs: Vec<(&str, RubyValue)>) -> RubyValue {
+    RubyValue::Hash(crate::collections::hash_new(
+        pairs
+            .into_iter()
+            .map(|(k, v)| (RubyValue::Symbol(crate::Symbol::intern(k)), v))
+            .collect(),
+    ))
+}
+
+fn empty_hash() -> RubyValue {
+    RubyValue::Hash(crate::collections::hash_new(Vec::new()))
+}
+
+/// The `considered`/`moved`/`moved_up`/`moved_down` shape both compaction
+/// queries answer. Every bucket is empty, because nothing ever moves.
+fn compact_info() -> RubyValue {
+    hash_of(vec![
+        ("considered", empty_hash()),
+        ("moved", empty_hash()),
+        ("moved_up", empty_hash()),
+        ("moved_down", empty_hash()),
+    ])
+}
+
+fn flag(cell: &AtomicBool, arg: &RubyValue) -> Result<RubyValue, Signal> {
+    cell.store(arg.truthy(), Ordering::Relaxed);
+    Ok(arg.clone())
+}
 
 ruby_module! {
     GC = zeo_abi::GC_CLASS;
 
+    // zeo's heap is refcounted with no tracing collector, so `OPTS` names no
+    // build options and `INTERNAL_CONSTANTS` describes no slot layout. Empty
+    // is the truthful answer to both; CRuby's values describe its own heap.
+    const OPTS = RubyValue::Array(crate::array_new(Vec::new()));
+    const INTERNAL_CONSTANTS = empty_hash();
+
     def self."start" | "compact" arity 0 (_recv, *_args, &_block) {
         // No tracing collector to drive, but this is the honest moment to run
         // finalizers for objects whose last strong reference has dropped.
+        crate::builtins::weak::run_finalizers_for_dead();
+        Ok(RubyValue::Nil)
+    }
+    // `GC#garbage_collect` -- the private instance twin of `GC.start`, which a
+    // class gets by `include GC`.
+    private def "garbage_collect" (_recv, *_args, &_block) {
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }
@@ -27,13 +76,69 @@ ruby_module! {
         Ok(RubyValue::Bool(false))
     }
     def self."stress"(_recv) {
-        Ok(RubyValue::Bool(false))
+        Ok(RubyValue::Bool(STRESS.load(Ordering::Relaxed)))
+    }
+    def self."stress="(_recv, on) {
+        flag(&STRESS, on)
     }
     def self."count"(_recv) {
         Ok(RubyValue::Int(0))
     }
     def self."stat"(_recv, *_args, &_block) {
-        Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
+        Ok(empty_hash())
+    }
+    // One size-pooled heap per slot size is an MRI structure; there are no
+    // heaps here to describe, whether asked for all of them or for one.
+    def self."stat_heap" cfunc (_recv, *_args, &_block) {
+        Ok(empty_hash())
+    }
+    // `GC.config` reports the collector's own settings. zeo's answer names the
+    // implementation truthfully rather than echoing MRI's `"default"`.
+    def self."config" cfunc (_recv, *_args, &_block) {
+        Ok(hash_of(vec![(
+            "implementation",
+            RubyValue::Str(crate::string_new("refcount".to_string())),
+        )]))
+    }
+    // No collection has ever run, so every measurement is zero and every
+    // "what did the last GC do" query describes nothing having happened --
+    // which is the same shape CRuby answers in a process that has not yet
+    // collected.
+    def self."total_time"(_recv) {
+        Ok(RubyValue::Int(0))
+    }
+    def self."measure_total_time"(_recv) {
+        Ok(RubyValue::Bool(MEASURE_TOTAL_TIME.load(Ordering::Relaxed)))
+    }
+    def self."measure_total_time="(_recv, on) {
+        flag(&MEASURE_TOTAL_TIME, on)
+    }
+    def self."latest_gc_info" cfunc (_recv, *_args, &_block) {
+        Ok(hash_of(vec![
+            ("major_by", RubyValue::Nil),
+            ("need_major_by", RubyValue::Nil),
+            ("gc_by", RubyValue::Nil),
+            ("have_finalizer", RubyValue::Bool(false)),
+            ("immediate_sweep", RubyValue::Bool(false)),
+            ("state", RubyValue::Symbol(crate::Symbol::intern("none"))),
+            ("weak_references_count", RubyValue::Int(0)),
+            ("retained_weak_references_count", RubyValue::Int(0)),
+        ]))
+    }
+    def self."latest_compact_info"(_recv) {
+        Ok(compact_info())
+    }
+    def self."verify_compaction_references" cfunc (_recv, *_args, &_block) {
+        Ok(compact_info())
+    }
+    def self."verify_internal_consistency"(_recv) {
+        Ok(RubyValue::Nil)
+    }
+    def self."auto_compact"(_recv) {
+        Ok(RubyValue::Bool(AUTO_COMPACT.load(Ordering::Relaxed)))
+    }
+    def self."auto_compact="(_recv, on) {
+        flag(&AUTO_COMPACT, on)
     }
 }
 

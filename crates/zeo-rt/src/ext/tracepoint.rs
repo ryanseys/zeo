@@ -494,6 +494,42 @@ ruby_class! {
         Ok(snap.raised.unwrap_or(RubyValue::Nil))
     }
 
+    // The frame-dependent accessors. zeo's `Frame` is deliberately
+    // lightweight -- a file, a line and a label -- so it carries no receiver,
+    // no bindings, no return value and no compiled sequence. Every one of
+    // these raises CRuby's OWN refusal for an event that cannot supply them,
+    // which is what a `:line` event gets from CRuby for four of the six.
+    // Refusing loudly is the rule `TracePoint.new` already follows for the
+    // events zeo cannot fire.
+    def "self" | "binding" | "return_value" | "parameters"
+        | "eval_script" | "instruction_sequence" (recv) {
+        let _ = tp_of(recv);
+        // "access from outside" outranks it, exactly as in CRuby: a handler
+        // has to be running before the event can be the wrong one.
+        let _ = snapshot()?;
+        Err(runtime_error!("not supported by this event"))
+    }
+
+    // `TracePoint.stat` reports per-VM hook counts, keyed by a `RubyVM`
+    // object zeo has none of, so there is nothing to key on and nothing to
+    // count.
+    def self."stat" (_recv) {
+        Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
+    }
+    // `TracePoint.allow_reentry { }` re-arms tracing inside a handler.
+    // Outside one CRuby refuses; inside one, zeo's reentrancy suppression
+    // stays on (a handler that traced itself would not terminate), so the
+    // block simply runs.
+    def self."allow_reentry" (_recv, &block) {
+        let Some(block) = block else {
+            return Err(runtime_error!("must be called with a block"));
+        };
+        if CURRENT.with(|c| c.borrow().is_none()) {
+            return Err(runtime_error!("No need to allow reentrance."));
+        }
+        block.as_proc_unchecked().call(&[])
+    }
+
     // Outside a handler: `#<TracePoint:enabled>`/`#<TracePoint:disabled>`
     // (no address -- CRuby's own shape). Inside one, the current event:
     // `#<TracePoint:call 'volume' f.rb:9>`.

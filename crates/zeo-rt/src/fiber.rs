@@ -161,6 +161,29 @@ pub fn fiber_is_current(handle: &RFiber) -> bool {
     Arc::ptr_eq(handle, &current_handle())
 }
 
+/// Whether `handle` is a thread's ROOT fiber (id 0) rather than one `Fiber.new`
+/// made. It is the one fiber CRuby calls blocking, since it is the one no
+/// scheduler ever created.
+pub fn fiber_is_root(handle: &RFiber) -> bool {
+    handle.id == 0
+}
+
+/// `Fiber#inspect`/`#to_s` -- `#<Fiber:0xADDR (state)>`, where the state is
+/// `created`/`resumed`/`suspended`/`terminated` as in CRuby.
+pub fn fiber_inspect(handle: &RFiber) -> String {
+    let state = if !fiber_alive(handle) {
+        "terminated"
+    } else if fiber_is_current(handle) {
+        "resumed"
+    } else {
+        "suspended"
+    };
+    format!(
+        "#<Fiber:0x{:016x} ({state})>",
+        Arc::as_ptr(handle) as *const () as usize
+    )
+}
+
 /// `Fiber.current` -- the running fiber as a Ruby value.
 pub fn fiber_current() -> RubyValue {
     RubyValue::Fiber(current_handle())

@@ -1,0 +1,39 @@
+== GC ==
+count: true
+total_time: true
+stat: Hash
+stat_heap: Hash
+config: Hash
+OPTS: Array
+INTERNAL_CONSTANTS: Hash
+latest_gc_info keys: [:gc_by, :have_finalizer, :immediate_sweep, :major_by, :need_major_by, :retained_weak_references_count, :state, :weak_references_count]
+latest_compact_info: {considered: {}, moved: {}, moved_up: {}, moved_down: {}}
+verify_compaction_references: Hash
+verify_internal_consistency: nil
+measure_total_time: true
+measure_total_time set: false
+auto_compact: false
+stress: false
+stress set: false
+== Fiber ==
+blocking?: 1
+current blocking?: true
+scheduler: nil
+current_scheduler: nil
+set_scheduler nil: nil
+schedule: No scheduler is available!
+blocking block: Fiber
+new fiber blocking?: false
+inside blocking?: false
+resume: paused
+alive?: true
+resume again: done
+dead backtrace: []
+dead locations: []
+current backtrace is an Array: true
+raise setup: first
+raise: caught boom
+== Binding ==
+implicit_parameters: []
+implicit_parameter_defined?: false
+implicit_parameter_get: implicit parameter 'it' is not defined

@@ -421,8 +421,10 @@ pub fn thread_stop_current() -> Result<RubyValue, Signal> {
     // is what keeps it from being lost), so loop on our own flag rather than
     // on the sleep's return.
     while t.stopped.load(Ordering::Relaxed) {
-        crate::gvl::process_gvl().without(|| ctx.sleep(None));
+        // Before parking, for the reason `sleep_impl` documents: an interrupt
+        // posted while this thread was starting up found no ctx to wake.
         crate::check_ints()?;
+        crate::gvl::process_gvl().without(|| ctx.sleep(None));
     }
     Ok(RubyValue::Nil)
 }

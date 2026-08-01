@@ -2,9 +2,9 @@
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 41
-# constant: 198
-# owner: 184
-# unreachable: 132
+# constant: 196
+# owner: 182
+# unreachable: 98
 absent-module	Encoding::Converter	-	-
 absent-module	Enumerator::ArithmeticSequence	-	-
 absent-module	Enumerator::Generator	-	-
@@ -213,8 +213,6 @@ constant	Enumerator	c	ArithmeticSequence
 constant	Enumerator	c	Generator
 constant	Enumerator	c	Producer
 constant	File	c	Separator
-constant	GC	c	INTERNAL_CONSTANTS
-constant	GC	c	OPTS
 constant	GC	c	Profiler
 constant	IO	c	Buffer
 constant	Object	c	ConditionVariable
@@ -305,8 +303,6 @@ owner	Exception	i	respond_to?
 owner	Exception	i	set_backtrace
 owner	Exception	i	to_s
 owner	FalseClass	i	===
-owner	Fiber	i	inspect
-owner	Fiber	i	to_s
 owner	Float	i	<
 owner	Float	i	<=
 owner	Float	i	===
@@ -429,10 +425,6 @@ owner	UncaughtThrowError	i	tag
 owner	UncaughtThrowError	i	to_s
 owner	UncaughtThrowError	i	value
 unreachable	Array	s	[]
-unreachable	Binding	i	implicit_parameter_defined?
-unreachable	Binding	i	implicit_parameter_get
-unreachable	Binding	i	implicit_parameters
-unreachable	Binding	i	irb
 unreachable	Class	i	attached_object
 unreachable	Dir	i	chdir
 unreachable	Dir	s	chroot
@@ -454,29 +446,7 @@ unreachable	Encoding::UndefinedConversionError	i	source_encoding
 unreachable	Encoding::UndefinedConversionError	i	source_encoding_name
 unreachable	Enumerator::Lazy	i	eager
 unreachable	Exception	i	backtrace_locations
-unreachable	Fiber	i	backtrace
-unreachable	Fiber	i	backtrace_locations
-unreachable	Fiber	i	blocking?
-unreachable	Fiber	s	blocking
-unreachable	Fiber	s	blocking?
-unreachable	Fiber	s	current_scheduler
-unreachable	Fiber	s	schedule
-unreachable	Fiber	s	scheduler
-unreachable	Fiber	s	set_scheduler
-unreachable	Fiber	s	yield
 unreachable	GC	i	garbage_collect
-unreachable	GC	s	auto_compact
-unreachable	GC	s	auto_compact=
-unreachable	GC	s	config
-unreachable	GC	s	latest_compact_info
-unreachable	GC	s	latest_gc_info
-unreachable	GC	s	measure_total_time
-unreachable	GC	s	measure_total_time=
-unreachable	GC	s	stat_heap
-unreachable	GC	s	stress=
-unreachable	GC	s	total_time
-unreachable	GC	s	verify_compaction_references
-unreachable	GC	s	verify_internal_consistency
 unreachable	Hash	s	ruby2_keywords_hash
 unreachable	Hash	s	ruby2_keywords_hash?
 unreachable	Kernel	s	Pathname
@@ -550,13 +520,5 @@ unreachable	Thread::Queue	i	num_waiting
 unreachable	Thread::SizedQueue	i	clear
 unreachable	Thread::SizedQueue	i	num_waiting
 unreachable	ThreadGroup	i	enclose
-unreachable	TracePoint	i	binding
-unreachable	TracePoint	i	eval_script
-unreachable	TracePoint	i	instruction_sequence
-unreachable	TracePoint	i	parameters
-unreachable	TracePoint	i	return_value
-unreachable	TracePoint	i	self
-unreachable	TracePoint	s	allow_reentry
-unreachable	TracePoint	s	stat
 unreachable	Warning	i	warn
 unreachable	Warning	s	categories

@@ -293,6 +293,31 @@ ruby_class! {
             names.iter().map(|n| RubyValue::Symbol(Symbol::intern(n))).collect(),
         )))
     }
+    // The implicit block parameters (`it`, `_1`..`_9`). zeo compiles them to
+    // ordinary block parameters, so a Binding carries no separate implicit
+    // set -- which is the empty answer CRuby gives for every binding taken
+    // outside such a block.
+    def "implicit_parameters"(_recv) {
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    }
+    def "implicit_parameter_defined?"(_recv, _name) {
+        Ok(RubyValue::Bool(false))
+    }
+    def "implicit_parameter_get"(recv, name) {
+        Err(crate::builtins::name_error!(
+            "implicit parameter '{}' is not defined for {}",
+            var_name(name)?,
+            recv.inspect_string()
+        ))
+    }
+    // `Binding#irb` opens an IRB session on this scope. zeo ships no irb, and
+    // a `require` for it is the LoadError a caller can rescue.
+    def "irb" cfunc (_recv, *_args, &_block) {
+        Err(crate::dispatch::raise_error(
+            "LoadError",
+            "cannot load such file -- irb".to_string(),
+        ))
+    }
     def "local_variable_defined?"(recv, arg) {
         Ok(RubyValue::Bool(recv_binding(recv).scope.defined(&var_name(arg)?)))
     }

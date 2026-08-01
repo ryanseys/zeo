@@ -1695,6 +1695,11 @@ pub(crate) fn sleep_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // spurious wake must not cut the sleep short. No deadline means only
     // an interrupt ever exits the loop.
     loop {
+        // BEFORE parking, not only after: `Thread#kill`/`#raise` posted while
+        // the target was still starting up finds no ctx to wake (this call
+        // registers it), so a check only on the wake path would sit out the
+        // whole sleep before noticing.
+        crate::check_ints()?;
         let remaining = match deadline {
             Some(d) => {
                 let now = std::time::Instant::now();
@@ -1706,7 +1711,6 @@ pub(crate) fn sleep_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             None => None,
         };
         crate::gvl::process_gvl().without(|| ctx.sleep(remaining));
-        crate::check_ints()?;
     }
     Ok(RubyValue::Int(
         started.elapsed().as_secs_f64().round() as i64
