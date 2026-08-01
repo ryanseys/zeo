@@ -13,7 +13,7 @@
 //! STRING form (`instance_eval("@x + 1")`), which genuinely needs the eval
 //! VM -- it raises NotImplementedError below, like every other eval path.
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use std::sync::Arc;
 use zeo_macros::ruby_class;
@@ -25,12 +25,12 @@ ruby_class! {
     def "==" (recv, other) {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
-    def "!=" (recv, *args, &_block) {
-        arity!(args, 1);
+    def "!=" (recv, other) {
         // CRuby's `!=` is `!(self == other)` -- it dispatches the receiver's
         // OWN `==` (a Struct's value equality, a user override), not the
         // low-level identity fallback `rb_eq` gives for a plain object.
-        let eq = crate::dispatch::send_value(recv, crate::Symbol::intern("=="), args, None)?;
+        let eq = crate::dispatch::send_value(
+            recv, crate::Symbol::intern("=="), std::slice::from_ref(other), None)?;
         Ok(RubyValue::Bool(!eq.truthy()))
     }
     def "!" (recv) {

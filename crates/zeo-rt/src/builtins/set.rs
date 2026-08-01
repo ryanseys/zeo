@@ -6,7 +6,7 @@
 //! iteration method (`map`/`select`/`count`/...) drives the `each` row below;
 //! only the set-specific surface lives here.
 
-use crate::builtins::{arg_error, arity, block_or_enum};
+use crate::builtins::{arg_error, block_or_enum};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RHash, RubyValue, Signal};
 use std::sync::Arc;
@@ -465,10 +465,9 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(set_of(recv).elements())))
     }
     // `Set#join(sep = "")` -- delegates to the element array's join.
-    def "join"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "join"(recv, _separator?) {
         let arr = RubyValue::Array(crate::array_new(set_of(recv).elements()));
-        crate::dispatch::send_value(&arr, crate::Symbol::intern("join"), args, None)
+        crate::dispatch::send_value(&arr, crate::Symbol::intern("join"), __args, None)
     }
     def "to_set" cfunc (recv) {
         Ok(recv.clone())

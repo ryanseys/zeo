@@ -3,7 +3,7 @@
 
 use crate::RubyValue;
 use crate::builtins::{
-    arg_error, arity, block_or_enum, convert, frozen_error, recv_hash, type_error,
+    arg_error, block_or_enum, convert, frozen_error, recv_hash, type_error,
 };
 use zeo_macros::ruby_class;
 
@@ -296,14 +296,13 @@ ruby_class! {
     // `flatten(depth = 1)`: the `[k, v, ...]` pairs concatenated, then
     // flattened `depth` more levels (so `flatten(2)` also splays array
     // values). Depth 0 leaves the pairs nested.
-    def "flatten"(recv, *args, &_block) {
-        arity!(args, 0..=1);
+    def "flatten"(recv, depth?) {
         // `Hash#flatten(depth)` == `to_a.flatten(depth)`: depth 0 keeps the
         // `[k, v]` pairs intact, 1 (the argless default) splays one level,
         // and a negative depth flattens fully.
-        let depth = match args.first() {
+        let depth = match depth {
             None => 1,
-            Some(_) => crate::builtins::arg_int!(args, 0),
+            Some(v) => crate::builtins::arg_int!(v),
         };
         let pairs: Vec<RubyValue> = recv_hash!(recv)
             .lock()
@@ -542,15 +541,14 @@ ruby_class! {
     // `transform_keys([mapping]) { |k| }` -- an optional mapping Hash renames
     // the keys it lists (block/identity handles the rest), then the block maps
     // any remaining keys; with neither, an Enumerator.
-    def "transform_keys"(recv, *args, &block) {
-        arity!(args, 0..=1);
-        let mapping = transform_keys_mapping(args)?;
+    def "transform_keys"(recv, mapping?, &block) {
+        let mapping = transform_keys_mapping(mapping)?;
         let blk = match &block {
             Some(RubyValue::Proc(p)) => Some(p.clone()),
             _ => None,
         };
         if mapping.is_none() && blk.is_none() {
-            return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys", args));
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys", __args));
         }
         let pairs = crate::collections::hash_pairs_snapshot(recv_hash!(recv));
         let mut out = Vec::with_capacity(pairs.len());
@@ -562,15 +560,14 @@ ruby_class! {
     // In-place `transform_keys` -- rebuilds the hash with each key mapped
     // through the mapping/block, keeping insertion order and answering the
     // receiver.
-    def "transform_keys!"(recv, *args, &block) {
-        arity!(args, 0..=1);
-        let mapping = transform_keys_mapping(args)?;
+    def "transform_keys!"(recv, mapping?, &block) {
+        let mapping = transform_keys_mapping(mapping)?;
         let blk = match &block {
             Some(RubyValue::Proc(p)) => Some(p.clone()),
             _ => None,
         };
         if mapping.is_none() && blk.is_none() {
-            return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys!", args));
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys!", __args));
         }
         guard_hash_frozen(recv)?;
         let h = recv_hash!(recv);
@@ -588,8 +585,7 @@ ruby_class! {
     // `to_proc` yields a lambda that looks a key up in this hash (`h.to_proc`
     // is `->(k) { h[k] }`); the hash is captured by identity, so later
     // mutations are visible through the proc.
-    def "to_proc" arity 0 (recv, *args, &_block) {
-        arity!(args, 0);
+    def "to_proc"(recv) {
         let h = recv_hash!(recv).clone();
         let p = crate::RProc::with_meta(
             move |args: &[RubyValue]| {
@@ -631,9 +627,9 @@ ruby_class! {
 /// `transform_keys`'s optional first argument: a mapping Hash (`nil`/absent is
 /// none), else CRuby's `no implicit conversion into Hash` TypeError.
 fn transform_keys_mapping(
-    args: &[RubyValue],
+    mapping: Option<&RubyValue>,
 ) -> Result<Option<crate::collections::RHash>, crate::Signal> {
-    match args.first() {
+    match mapping {
         None => Ok(None),
         // Strict: an explicit nil raises too (CRuby's rb_to_hash_type).
         Some(v) => Ok(Some(convert::to_rhash(v)?)),

@@ -11,7 +11,7 @@
 //! numeric operator rows move into `integer.rs`/`float.rs` (stage C) -- it
 //! would shadow the post-walk numeric `<=>` today.
 
-use crate::builtins::{arg_error, arity, block_or_enum, local_jump_error, need_block, type_error};
+use crate::builtins::{arg_error, block_or_enum, local_jump_error, need_block, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
 
@@ -227,11 +227,9 @@ ruby_module! {
     // `sleep(secs)` -- universal Kernel methods. The static codegen fast path
     // handles the literal `catch {}`/`throw` forms; these rows serve dynamic
     // dispatch (a `send :catch`, a `catch` reached through the MRO walk).
-    def "catch"(_recv, *args, &block) {
-        arity!(args, 0..=1);
+    def "catch"(_recv, tag?, &block) {
         // A bare `catch` mints a fresh, unique tag object (passed to the block).
-        let tag = args
-            .first()
+        let tag = tag
             .cloned()
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(Vec::new())));
         let blk = block.ok_or_else(|| {
@@ -256,9 +254,13 @@ ruby_module! {
     // `cause:` doesn't reach this row (kwargs ride as a trailing Hash that
     // 2-arg shapes would misread; the automatic `$!` chaining below is
     // what dynamic callers get).
-    def "raise" | "fail"(_recv, *args, &_block) {
-        arity!(args, 0..=3);
-        let exc = match args {
+    def "raise" | "fail"(_recv, exception?, message?, backtrace?) {
+        let args: Vec<RubyValue> = [exception, message, backtrace]
+            .iter()
+            .take_while(|p| p.is_some())
+            .filter_map(|p| p.cloned())
+            .collect();
+        let exc = match args.as_slice() {
             // Bare re-raise: the exception being rescued, exactly (same
             // object); outside any rescue, a fresh EMPTY-message
             // RuntimeError (oracle-verified, matching `emit_raise`).
@@ -336,15 +338,14 @@ ruby_module! {
     def "itself"(recv) {
         Ok(recv.clone())
     }
-    def "caller"(_recv, *args, &_block) {
+    def "caller"(_recv, start?, length?) {
         // The formatted frames above the calling frame (this builtin has no
         // frame of its own, so `start = 1` -- the default -- skips exactly
         // the caller). `caller(0)` includes the caller itself; a `start`
         // past the top answers nil (not [] -- oracle-verified); an optional
         // `length` truncates. The Range form is served by the same window.
-        arity!(args, 0..=2);
         let all = crate::frames::caller_lines(0);
-        let (start, length) = caller_window(args);
+        let (start, length) = caller_window(start, length);
         if start > all.len() {
             return Ok(RubyValue::Nil);
         }
@@ -360,10 +361,9 @@ ruby_module! {
     // `caller`'s object form: the same window over the same frames, each entry
     // a `Thread::Backtrace::Location` with real `#path`/`#lineno`/`#label`
     // (forwardable builds its deprecation message out of them).
-    def "caller_locations"(_recv, *args, &_block) {
-        arity!(args, 0..=2);
+    def "caller_locations"(_recv, start?, length?) {
         let all = crate::frames::caller_frames(0);
-        let (start, length) = caller_window(args);
+        let (start, length) = caller_window(start, length);
         if start > all.len() {
             return Ok(RubyValue::Nil);
         }
@@ -640,9 +640,9 @@ ruby_module! {
     // `Object#!~` -- the negation of `=~`, dispatched to the receiver's own
     // `=~` (so a receiver without one raises NoMethodError, exactly as CRuby
     // does since `Object#=~` was removed).
-    def "!~"(recv, *args, &_block) {
-        arity!(args, 1);
-        let matched = crate::dispatch::send_value(recv, crate::Symbol::intern("=~"), args, None)?;
+    def "!~"(recv, other) {
+        let matched = crate::dispatch::send_value(
+            recv, crate::Symbol::intern("=~"), std::slice::from_ref(other), None)?;
         Ok(RubyValue::Bool(!matched.truthy()))
     }
     def "tap"(recv, &block) {
@@ -1282,8 +1282,11 @@ pub(crate) fn feature_already_loaded(path: &str) -> bool {
 /// list: no argument starts at 1 (skipping the caller's own frame, since these
 /// builtins push none); an Integer `start` with an optional `length`; or a
 /// Range, whose bounds mean the same thing.
-fn caller_window(args: &[RubyValue]) -> (usize, Option<usize>) {
-    match (args.first(), args.get(1)) {
+fn caller_window(
+    start: Option<&RubyValue>,
+    length: Option<&RubyValue>,
+) -> (usize, Option<usize>) {
+    match (start, length) {
         (None, _) => (1, None),
         (Some(RubyValue::Int(s)), len) => {
             let length = match len {

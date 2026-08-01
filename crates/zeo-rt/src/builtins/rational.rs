@@ -7,7 +7,7 @@
 //! oracle-verified); only Complex's internal component arithmetic demotes
 //! (see `complex.rs`).
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -329,8 +329,8 @@ enum RoundMode {
 }
 
 /// The optional `ndigits` precision argument (default 0).
-fn precision_arg(args: &[RubyValue]) -> Result<i64, Signal> {
-    match args.first() {
+fn precision_arg(ndigits: Option<&RubyValue>) -> Result<i64, Signal> {
+    match ndigits {
         None => Ok(0),
         Some(RubyValue::Int(n)) => Ok(*n),
         // NOT an implicit-conversion site: CRuby's Rational rounding family
@@ -344,9 +344,9 @@ fn precision_arg(args: &[RubyValue]) -> Result<i64, Signal> {
 /// the positional arguments and the tie-breaking mode it selects (`HalfUp` when
 /// no `half:` is given). `#round`/`#floor`/`#ceil` take at most a precision, so
 /// any trailing Hash is the keyword arguments.
-fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], RoundMode), Signal> {
-    let Some(RubyValue::Hash(h)) = args.last() else {
-        return Ok((args, RoundMode::HalfUp));
+fn half_kwarg(opts: Option<&RubyValue>) -> Result<RoundMode, Signal> {
+    let Some(RubyValue::Hash(h)) = opts else {
+        return Ok(RoundMode::HalfUp);
     };
     let half = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("half")));
     let mode = match &half {
@@ -366,7 +366,7 @@ fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], RoundMode), Sig
             ));
         }
     };
-    Ok((&args[..args.len() - 1], mode))
+    Ok(mode)
 }
 
 /// `num/den` reduced to an integer under `mode` (`den` is always positive here).
@@ -483,12 +483,12 @@ fn simplest_ratio(mut a: (BigInt, BigInt), mut b: (BigInt, BigInt)) -> (BigInt, 
 ruby_class! {
     Rational = zeo_abi::RATIONAL_CLASS < zeo_abi::NUMERIC_CLASS;
 
-    def "+" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_add, "+") }
-    def "-" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_sub, "-") }
-    def "*" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mul, "*") }
-    def "/" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_div, "/") }
-    def "%" arity 1 | "modulo" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mod, "%") }
-    def "**" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_pow, "**") }
+    def "+" (recv, other) { num_op_row!(other, recv, num_add, "+") }
+    def "-" (recv, other) { num_op_row!(other, recv, num_sub, "-") }
+    def "*" (recv, other) { num_op_row!(other, recv, num_mul, "*") }
+    def "/" (recv, other) { num_op_row!(other, recv, num_div, "/") }
+    def "%" | "modulo" (recv, other) { num_op_row!(other, recv, num_mod, "%") }
+    def "**" (recv, other) { num_op_row!(other, recv, num_pow, "**") }
     def "-@" (recv) {
         let r = recv_rational(recv);
         rational_new(-r.num.clone(), r.den.clone())
@@ -547,22 +547,18 @@ ruby_class! {
     }
     // `floor`/`ceil`/`round`/`truncate` accept an optional precision: a
     // positive `ndigits` answers a Rational, zero/negative an Integer.
-    def "floor"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Floor)
+    def "floor"(recv, ndigits?) {
+        round_with_precision(recv_rational(recv), precision_arg(ndigits)?, RoundMode::Floor)
     }
-    def "ceil"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Ceil)
+    def "ceil"(recv, ndigits?) {
+        round_with_precision(recv_rational(recv), precision_arg(ndigits)?, RoundMode::Ceil)
     }
-    def "truncate"(recv, *args, &_block) {
-        arity!(args, 0..=1);
-        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Trunc)
+    def "truncate"(recv, ndigits?) {
+        round_with_precision(recv_rational(recv), precision_arg(ndigits)?, RoundMode::Trunc)
     }
-    def "round"(recv, *args, &_block) {
-        let (pos, mode) = split_half_kwarg(args)?;
-        arity!(pos, 0..=1);
-        round_with_precision(recv_rational(recv), precision_arg(pos)?, mode)
+    def "round"(recv, ndigits?, **opts) {
+        let mode = half_kwarg(opts)?;
+        round_with_precision(recv_rational(recv), precision_arg(ndigits)?, mode)
     }
     // A Rational is always a finite value.
     def "finite?" (recv) {

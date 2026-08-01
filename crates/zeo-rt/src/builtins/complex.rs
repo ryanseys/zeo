@@ -11,7 +11,7 @@
 //! demotes.
 
 use crate::builtins::numeric::{num_add_or_panic, num_mul_or_panic, num_sub_or_panic};
-use crate::builtins::{arity, range_error, type_error};
+use crate::builtins::{range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_traits::One;
@@ -635,11 +635,11 @@ ruby_class! {
         complex_new_polar(mag, angle)
     }
 
-    def "+" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_add, "+") }
-    def "-" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_sub, "-") }
-    def "*" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mul, "*") }
-    def "/" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_div, "/") }
-    def "**" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_pow, "**") }
+    def "+" (recv, other) { num_op_row!(other, recv, num_add, "+") }
+    def "-" (recv, other) { num_op_row!(other, recv, num_sub, "-") }
+    def "*" (recv, other) { num_op_row!(other, recv, num_mul, "*") }
+    def "/" (recv, other) { num_op_row!(other, recv, num_div, "/") }
+    def "**" (recv, other) { num_op_row!(other, recv, num_pow, "**") }
     def "-@" (recv) {
         cpx_sub(&complex_new(RubyValue::Int(0), RubyValue::Int(0))?, recv)
     }

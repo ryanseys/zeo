@@ -14,7 +14,7 @@
 //! A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
 
@@ -76,16 +76,15 @@ ruby_module! {
     // beginless/endless range form; an exclusive bounded range is CRuby's
     // ArgumentError. Two present bounds must be ordered (CRuby rejects a
     // reversed pair).
-    def "clamp" (recv, *args, &_block) {
-        arity!(args, 1..=2);
-        let (lo, hi): (Option<RubyValue>, Option<RubyValue>) = if args.len() == 2 {
+    def "clamp" cfunc (recv, min, max?) {
+        let (lo, hi): (Option<RubyValue>, Option<RubyValue>) = if let Some(max) = max {
             let open = |v: &RubyValue| if v.is_nil() { None } else { Some(v.clone()) };
-            (open(&args[0]), open(&args[1]))
+            (open(min), open(max))
         } else {
-            let RubyValue::Range(lo, hi, exclusive) = &args[0] else {
+            let RubyValue::Range(lo, hi, exclusive) = min else {
                 return Err(type_error!(
                     "wrong argument type {} (expected Range)",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::class_name_of(min)
                 ));
             };
             if *exclusive && hi.is_some() {

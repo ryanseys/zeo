@@ -799,10 +799,9 @@ ruby_class! {
         Ok(RubyValue::Str(crate::string_new(enum_inspect(recv_enum(recv)))))
     }
 
-    def "with_index"(recv, *args, &block) {
-        arity!(args, 0..=1);
+    def "with_index"(recv, offset?, &block) {
         let e = recv_enum(recv);
-        let offset = match args.first() {
+        let offset = match offset {
             // An explicit nil offset is accepted as absent (oracle:
             // `with_index(nil)` starts at 0).
             None | Some(RubyValue::Nil) => 0,
@@ -812,7 +811,7 @@ ruby_class! {
             Some(b) => drive_with_index(e, b, offset),
             // Blockless: a wrapping enumerator over SELF -- iterating it
             // re-dispatches this very row with a block.
-            None => Ok(enumerator_for(recv, "with_index", args)),
+            None => Ok(enumerator_for(recv, "with_index", __args)),
         }
     }
 

@@ -15,7 +15,7 @@
 //! makes `take`/`first`/`take_while` terminate an infinite source).
 
 use crate::builtins::enumerator::{enumerator_for, pull_next};
-use crate::builtins::{arg_error, arity};
+use crate::builtins::{arg_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;
@@ -587,13 +587,11 @@ ruby_class! {
     }
     // `each_cons(n)` / `each_slice(n)` -- lazy since ruby 3.1, so an infinite
     // source stays workable.
-    def "each_cons"(recv, *args, &block) {
-        arity!(args, 1);
-        each_group(recv, args, block, false)
+    def "each_cons"(recv, n, &block) {
+        each_group(recv, std::slice::from_ref(n), block, false)
     }
-    def "each_slice"(recv, *args, &block) {
-        arity!(args, 1);
-        each_group(recv, args, block, true)
+    def "each_slice"(recv, n, &block) {
+        each_group(recv, std::slice::from_ref(n), block, true)
     }
     def "lazy"(recv) {
         Ok(recv.clone())

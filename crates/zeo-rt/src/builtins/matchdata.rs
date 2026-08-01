@@ -11,7 +11,7 @@
 //! The rows delegate rather than reimplement, so the two paths cannot drift.
 
 use crate::RubyValue;
-use crate::builtins::{arity, type_error};
+use crate::builtins::{type_error};
 use zeo_macros::ruby_class;
 
 /// One end (`idx` 0 = begin, 1 = end) of a group's `offset`/`byteoffset` pair,
@@ -47,14 +47,13 @@ ruby_class! {
     }
     // `md[i]` / `md[name]` -- a single group; `md[start, length]` / `md[range]`
     // slice the group array (delegated to `Array#[]`, like CRuby).
-    def "[]"(recv, *args, &_block) {
-        arity!(args, 1..=2);
+    def "[]" cfunc (recv, index, len?) {
         let md = recv_md(recv);
-        if args.len() == 2 || matches!(&args[0], RubyValue::Range(..)) {
+        if len.is_some() || matches!(index, RubyValue::Range(..)) {
             let all = crate::regexp::matchdata_to_a(&md);
-            return crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), args, None);
+            return crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), __args, None);
         }
-        crate::regexp::matchdata_get(&md, &args[0])
+        crate::regexp::matchdata_get(&md, index)
     }
     def "pre_match" (recv) {
         Ok(crate::regexp::matchdata_pre_match(&recv_md(recv)))

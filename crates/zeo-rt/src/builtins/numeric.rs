@@ -25,19 +25,18 @@ use num_traits::ToPrimitive;
 use zeo_macros::ruby_class;
 
 /// One binary numeric-operator table row, shared by every numeric class
-/// (`Integer`/`Float`/`Rational`/`Complex`): check arity, compute the operation
-/// via `numeric::<num_fn>`, and hand the result to `num_coerce_bin`, which
-/// applies `coerce`/`TypeError` against a non-numeric operand. The class isn't a
+/// (`Integer`/`Float`/`Rational`/`Complex`): compute the operation via
+/// `numeric::<num_fn>` and hand the result to `num_coerce_bin`, which applies
+/// `coerce`/`TypeError` against a non-numeric operand. The class isn't a
 /// parameter -- `num_coerce_bin` derives the "can't be coerced into <Class>"
 /// message from the receiver's own type -- so all four classes' rows were
 /// byte-identical; this is the one definition they now share.
 macro_rules! num_op_row {
-    ($args:ident, $recv:ident, $num_fn:ident, $op:literal) => {{
-        arity!($args, 1);
+    ($other:ident, $recv:ident, $num_fn:ident, $op:literal) => {{
         crate::builtins::numeric::num_coerce_bin(
             $recv,
-            &$args[0],
-            crate::builtins::numeric::$num_fn($recv, &$args[0]),
+            $other,
+            crate::builtins::numeric::$num_fn($recv, $other),
             $op,
         )
     }};

@@ -10,7 +10,7 @@
 //! result that fits back into `Int`, so a big payload never aliases a
 //! fixnum value (equality/hashing/matching stay canonical).
 
-use crate::builtins::{arg_error, arity, block_or_enum, range_error, type_error};
+use crate::builtins::{arg_error, block_or_enum, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -329,12 +329,16 @@ fn int_mask_arg(v: &RubyValue) -> Result<BigInt, Signal> {
 /// single-index / `start, len` / range forms, then answers
 /// `(recv >> shift) & ((1 << width) - 1)`; `width = None` (an endless range)
 /// answers the whole `recv >> shift`.
-fn int_bit_ref(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+fn int_bit_ref(
+    recv: &RubyValue,
+    index: &RubyValue,
+    len: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
     use num_traits::One;
     let val = to_bigint(recv);
-    let (shift, width): (BigInt, Option<BigInt>) = if args.len() == 2 {
-        (to_bigint(&args[0]), Some(to_bigint(&args[1])))
-    } else if let RubyValue::Range(begin, end, exclusive) = &args[0] {
+    let (shift, width): (BigInt, Option<BigInt>) = if let Some(len) = len {
+        (to_bigint(index), Some(to_bigint(len)))
+    } else if let RubyValue::Range(begin, end, exclusive) = index {
         let Some(b) = begin else {
             return Err(arg_error!(
                 "The beginless range for Integer#[] results in infinity"
@@ -353,7 +357,7 @@ fn int_bit_ref(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal
             }
         }
     } else {
-        (to_bigint(&args[0]), Some(BigInt::one()))
+        (to_bigint(index), Some(BigInt::one()))
     };
 
     // A NEGATIVE start shifts the other way (`n[-k, len]` == `(n << k)[0, len]`);
@@ -505,12 +509,12 @@ ruby_class! {
         Ok(int_value(n.sqrt()))
     }
 
-    def "+" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_add, "+") }
-    def "-" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_sub, "-") }
-    def "*" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mul, "*") }
-    def "/" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_div, "/") }
-    def "%" arity 1 | "modulo" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mod, "%") }
-    def "**" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_pow, "**") }
+    def "+" (recv, other) { num_op_row!(other, recv, num_add, "+") }
+    def "-" (recv, other) { num_op_row!(other, recv, num_sub, "-") }
+    def "*" (recv, other) { num_op_row!(other, recv, num_mul, "*") }
+    def "/" (recv, other) { num_op_row!(other, recv, num_div, "/") }
+    def "%" | "modulo" (recv, other) { num_op_row!(other, recv, num_mod, "%") }
+    def "**" (recv, other) { num_op_row!(other, recv, num_pow, "**") }
     def "&" (recv, other) {
         match other {
             RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_band(recv, other)),
@@ -557,9 +561,8 @@ ruby_class! {
     // extension for negatives. `n[i]` is a single bit; `n[start, len]` and
     // `n[range]` extract a `len`-bit field. A beginless range is an
     // ArgumentError (its width is infinite), matching CRuby.
-    def "[]"(recv, *args, &_block) {
-        arity!(args, 1..=2);
-        int_bit_ref(recv, args)
+    def "[]" cfunc (recv, index, len?) {
+        int_bit_ref(recv, index, len)
     }
     // Bit-mask predicates: `allbits?` (every mask bit set), `anybits?` (at
     // least one), `nobits?` (none). All via `self & mask` over the BigInt
@@ -866,24 +869,23 @@ ruby_class! {
         }))
     }
     // `pow(e)` == `**`; `pow(e, m)` is modular exponentiation.
-    def "pow"(recv, *args, &_block) {
-        arity!(args, 1..=2);
-        match args.len() {
-            1 => match crate::builtins::numeric::num_pow(recv, &args[0]) {
+    def "pow" cfunc (recv, exponent, modulo?) {
+        match modulo {
+            None => match crate::builtins::numeric::num_pow(recv, exponent) {
                 Some(r) => r,
-                None => Err(coerce_error(&args[0], "Integer")),
+                None => Err(coerce_error(exponent, "Integer")),
             },
-            _ => {
+            Some(modulo) => {
                 let (RubyValue::Int(_) | RubyValue::BigInt(_), RubyValue::Int(_) | RubyValue::BigInt(_)) =
-                    (&args[0], &args[1])
+                    (exponent, modulo)
                 else {
                     return Err(type_error!("Integer#pow() 2nd argument not allowed unless all arguments are integers"));
                 };
-                let e = to_bigint(&args[0]);
+                let e = to_bigint(exponent);
                 if e.is_negative() {
                     return Err(range_error!("Integer#pow() 1st argument cannot be negative when 2nd argument specified"));
                 }
-                let m = to_bigint(&args[1]);
+                let m = to_bigint(modulo);
                 if m.is_zero() {
                     return Err(crate::dispatch::raise_error(
                         "ZeroDivisionError",
@@ -920,12 +922,11 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "upto" arity 1 (recv, *args, &block) {
-        arity!(args, 1);
-        let p = block_or_enum!(recv, "upto", args, block);
+    def "upto"(recv, limit, &block) {
+        let p = block_or_enum!(recv, "upto", __args, block);
         // Fast i64 path; otherwise iterate as BigInt -- the VALUES may exceed
         // i64 even when the SPAN is small (`(2**100).upto(2**100 + 2)`).
-        if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) {
+        if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, limit) {
             for i in *a..=*b {
                 p.call(&[RubyValue::Int(i)])?;
             }
@@ -936,16 +937,15 @@ ruby_class! {
         // handles the mixed comparison (a Float limit is compared, not
         // converted). Spans are assumed small even when the values are huge.
         let mut i = to_bigint(recv);
-        while matches!(int_value(i.clone()).rb_cmp(&args[0]), Some(c) if c <= 0) {
+        while matches!(int_value(i.clone()).rb_cmp(limit), Some(c) if c <= 0) {
             p.call(&[int_value(i.clone())])?;
             i += 1;
         }
         Ok(recv.clone())
     }
-    def "downto" arity 1 (recv, *args, &block) {
-        arity!(args, 1);
-        let p = block_or_enum!(recv, "downto", args, block);
-        if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) {
+    def "downto"(recv, limit, &block) {
+        let p = block_or_enum!(recv, "downto", __args, block);
+        if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, limit) {
             let mut i = *a;
             while i >= *b {
                 p.call(&[RubyValue::Int(i)])?;
@@ -959,7 +959,7 @@ ruby_class! {
             return Ok(recv.clone());
         }
         let mut i = to_bigint(recv);
-        while matches!(int_value(i.clone()).rb_cmp(&args[0]), Some(c) if c >= 0) {
+        while matches!(int_value(i.clone()).rb_cmp(limit), Some(c) if c >= 0) {
             p.call(&[int_value(i.clone())])?;
             i -= 1;
         }

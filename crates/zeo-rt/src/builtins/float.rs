@@ -5,7 +5,7 @@
 //! `[Float, Numeric, Comparable, ...]`. The Tier A breadth
 //! (`nan?`/`round(n)`/`to_r`/...) lands with stage C's generics pass.
 
-use crate::builtins::{arg_error, arity, type_error};
+use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
@@ -37,12 +37,12 @@ ruby_class! {
     const MIN_10_EXP = RubyValue::Int(-307);
     const RADIX = RubyValue::Int(2);
 
-    def "+" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_add, "+") }
-    def "-" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_sub, "-") }
-    def "*" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mul, "*") }
-    def "/" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_div, "/") }
-    def "%" arity 1 | "modulo" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_mod, "%") }
-    def "**" arity 1 (recv, *args, &_block) { num_op_row!(args, recv, num_pow, "**") }
+    def "+" (recv, other) { num_op_row!(other, recv, num_add, "+") }
+    def "-" (recv, other) { num_op_row!(other, recv, num_sub, "-") }
+    def "*" (recv, other) { num_op_row!(other, recv, num_mul, "*") }
+    def "/" (recv, other) { num_op_row!(other, recv, num_div, "/") }
+    def "%" | "modulo" (recv, other) { num_op_row!(other, recv, num_mod, "%") }
+    def "**" (recv, other) { num_op_row!(other, recv, num_pow, "**") }
     def "-@" (recv) {
         match recv {
             RubyValue::Float(f) => Ok(RubyValue::Float(-f)),

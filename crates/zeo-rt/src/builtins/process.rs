@@ -152,17 +152,14 @@ ruby_module! {
     // that unwinds `ensure`/runs `at_exit`; `exit!` is the uncatchable immediate
     // `_exit(2)` (no unwinding, no `at_exit`); `abort` writes its message to
     // stderr first, then raises `SystemExit` with status 1.
-    def self.exit(_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        Err(crate::builtins::kernel::kernel_exit(args))
+    def self.exit(_recv, _status?) {
+        Err(crate::builtins::kernel::kernel_exit(__args))
     }
-    def self."exit!"(_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        crate::builtins::kernel::kernel_exit_bang(args)
+    def self."exit!"(_recv, _status?) {
+        crate::builtins::kernel::kernel_exit_bang(__args)
     }
-    def self.abort(_recv, *args, &_block) {
-        arity!(args, 0..=1);
-        Err(crate::builtins::kernel::kernel_abort(args))
+    def self.abort(_recv, _msg?) {
+        Err(crate::builtins::kernel::kernel_abort(__args))
     }
     // `Process.ppid` has no portable std equivalent; libc's getppid is the
     // honest answer rather than a fabricated one.

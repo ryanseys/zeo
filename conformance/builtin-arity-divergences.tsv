@@ -262,7 +262,6 @@ oracle-missing	Prism::Zeo	s	serialize_parse	Prism::Zeo is absent from the pinned
 oracle-missing	Prism::Zeo	s	serialize_parse_comments	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	serialize_parse_lex	Prism::Zeo is absent from the pinned oracle
 oracle-missing	Prism::Zeo	s	version	Prism::Zeo is absent from the pinned oracle
-baseline	BasicObject	i	!=	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/basic_object.rs:28
 baseline	BasicSocket	i	recv_nonblock	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/ext/socket/basic_socket.rs:243
 baseline	BigDecimal	i	<	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/bigdecimal/mod.rs:701
 baseline	BigDecimal	i	<=	declared -1, oracle 1 (c) at crates/zeo-rt/src/ext/bigdecimal/mod.rs:704
@@ -280,8 +279,6 @@ baseline	Digest::MD5	i	to_s	declared -1, oracle 0 (c) at crates/zeo-rt/src/ext/d
 baseline	Dir	s	glob	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/builtins/dir.rs:611
 baseline	Enumerator	i	each_with_object	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/enumerator.rs:831
 baseline	Enumerator	i	with_object	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/enumerator.rs:827
-baseline	Enumerator::Lazy	i	each_cons	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/lazy.rs:590
-baseline	Enumerator::Lazy	i	each_slice	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/lazy.rs:594
 baseline	Enumerator::Lazy	i	each_with_index	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/lazy.rs:538
 baseline	Enumerator::Yielder	i	<<	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/yielder.rs:24
 baseline	GC	s	compact	declared -1, oracle 0 (c) at crates/zeo-rt/src/builtins/gc.rs:18
@@ -289,7 +286,6 @@ baseline	GC	s	count	declared -1, oracle 0 (ruby) at crates/zeo-rt/src/builtins/g
 baseline	GC	s	disable	declared -1, oracle 0 (ruby) at crates/zeo-rt/src/builtins/gc.rs:26
 baseline	GC	s	enable	declared -1, oracle 0 (ruby) at crates/zeo-rt/src/builtins/gc.rs:26
 baseline	GC	s	stress	declared -1, oracle 0 (ruby) at crates/zeo-rt/src/builtins/gc.rs:29
-baseline	Kernel	i	!~	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/kernel.rs:644
 baseline	Kernel	i	Array	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/kernel.rs:397
 baseline	Kernel	i	Float	declared -1, oracle -2 (ruby) at crates/zeo-rt/src/builtins/kernel.rs:391
 baseline	Kernel	i	Hash	declared -1, oracle 1 (c) at crates/zeo-rt/src/builtins/kernel.rs:400

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use zeo_macros::ruby_class;
 
 use crate::builtins::file::{path_arg, raise_errno};
-use crate::builtins::{arg_error, arity, block_or_enum, io_error, type_error};
+use crate::builtins::{arg_error, block_or_enum, io_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, DIR_CLASS};
@@ -498,10 +498,9 @@ ruby_class! {
     }
     // `Dir.foreach(path)` -- yield each entry name (INCLUDING `.` and `..`,
     // like `entries`); without a block, an Enumerator.
-    def self."foreach"(recv, *args, &block) {
-        arity!(args, 1..=2);
-        let path = path_arg(&args[0], "foreach")?;
-        let p = block_or_enum!(recv, "foreach", args, block);
+    def self."foreach" cfunc (recv, dirname, _opt?, &block) {
+        let path = path_arg(dirname, "foreach")?;
+        let p = block_or_enum!(recv, "foreach", __args, block);
         let mut names = read_names(&path)?;
         names.push(".".to_string());
         names.push("..".to_string());

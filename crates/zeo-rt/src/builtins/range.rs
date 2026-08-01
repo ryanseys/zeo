@@ -4,7 +4,7 @@
 //! The remaining Tier A rows land in stage E.
 
 use crate::RubyValue;
-use crate::builtins::{arg_error, arity, block_or_enum, range_error, type_error};
+use crate::builtins::{arg_error, block_or_enum, range_error, type_error};
 use zeo_macros::ruby_class;
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
@@ -415,16 +415,15 @@ ruby_class! {
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
     // `step(n)`: the blockless form returns an Enumerator.
-    def "step" | "%" arity 1 (recv, *args, &block) {
-        arity!(args, 1);
-        let p = block_or_enum!(recv, "step", args, block);
+    def "step" | "%" arity 1 cfunc (recv, n, &block) {
+        let p = block_or_enum!(recv, "step", __args, block);
         let (start, end, exclusive) = range_parts(recv);
         // Float mode when any endpoint or the step is a Float. CRuby computes
         // the element COUNT and multiplies (`beg + i*unit`) rather than
         // repeatedly adding, so there's no drift and `1.0` lands exactly.
         let is_float = matches!(start, Some(RubyValue::Float(_)))
             || matches!(end, Some(RubyValue::Float(_)))
-            || matches!(&args[0], RubyValue::Float(_));
+            || matches!(n, RubyValue::Float(_));
         if is_float {
             let to_f = |v: Option<&RubyValue>| match v {
                 Some(RubyValue::Int(n)) => Some(*n as f64),
@@ -434,7 +433,7 @@ ruby_class! {
             let (Some(beg), Some(fin)) = (to_f(start), to_f(end)) else {
                 return Err(type_error!("can't iterate from the given Range"));
             };
-            let unit = match &args[0] {
+            let unit = match n {
                 RubyValue::Int(n) => *n as f64,
                 RubyValue::Float(f) => *f,
                 _ => unreachable!(),
@@ -460,9 +459,9 @@ ruby_class! {
         // NOT an implicit-conversion site: CRuby's Range#step raises the
         // numeric-tower coerce shape here (oracle: `(1..5).step("x")` is
         // "String can't be coerced into Integer").
-        let RubyValue::Int(by) = &args[0] else {
+        let RubyValue::Int(by) = n else {
             return Err(type_error!("{} can't be coerced into Integer",
-                    crate::builtins::coerce_operand_name(&args[0])));
+                    crate::builtins::coerce_operand_name(n)));
         };
         if *by == 0 {
             return Err(arg_error!("step can't be 0"));
