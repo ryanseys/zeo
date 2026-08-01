@@ -17,7 +17,7 @@ use zeo_abi::FFI_POINTER_CLASS;
 use zeo_macros::ruby_class;
 
 ruby_class! {
-    Pointer = zeo_abi::FFI_POINTER_CLASS < zeo_abi::OBJECT_CLASS;
+    Pointer = zeo_abi::FFI_POINTER_CLASS < zeo_abi::FFI_ABSTRACT_MEMORY_CLASS;
 
     // `FFI::Pointer.new(address)` or `FFI::Pointer.new(type, address)` (the
     // type governs `[]` element size, which we don't model -- the address is

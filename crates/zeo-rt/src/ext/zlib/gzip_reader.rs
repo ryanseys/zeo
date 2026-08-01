@@ -15,6 +15,7 @@ use zeo_macros::ruby_class;
 
 ruby_class! {
     GzipReader = zeo_abi::ZLIB_GZIP_READER_CLASS < zeo_abi::ZLIB_GZIP_FILE_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     def self."new" arity -1 (_recv, arg1, _arg2?) {
         reader((*arg1).clone(), false)

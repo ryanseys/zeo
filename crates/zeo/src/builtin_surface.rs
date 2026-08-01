@@ -19,6 +19,12 @@ use zeo_abi::ClassId;
 /// fold.
 pub struct ClassSurface {
     pub id: ClassId,
+    /// The `ruby_class!` header identifier -- what the shape test checks
+    /// against `zeo_abi::BUILTINS`' Ruby name.
+    pub header_name: &'static str,
+    pub is_module: bool,
+    pub superclass: Option<ClassId>,
+    pub includes: &'static [ClassId],
     pub instance_methods: &'static [&'static str],
     pub class_methods: &'static [&'static str],
     pub constants: &'static [&'static str],
@@ -51,6 +57,25 @@ pub fn provides_instance_method(id: ClassId, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `module_function def` defines the method BOTH ways, so it must land in
+    /// both buckets. Math is the whole story: 28 module functions, and
+    /// bucketing on `is_class_method` alone left it with zero class methods --
+    /// so the compiler believed `Math.sqrt` did not exist.
+    #[test]
+    fn a_module_function_lands_in_both_buckets() {
+        let s = surface_for(zeo_abi::MATH_CLASS).expect("Math is on the DSL");
+        assert!(s.class_methods.contains(&"sqrt"));
+        assert!(s.instance_methods.contains(&"sqrt"));
+    }
+
+    /// A nested `class Status = ... { .. }` is a class in its own right; the
+    /// projection used to stop at the outer header and skip it entirely.
+    #[test]
+    fn a_nested_class_gets_its_own_surface_row() {
+        let s = surface_for(zeo_abi::PROCESS_STATUS_CLASS).expect("Process::Status is nested");
+        assert!(s.instance_methods.contains(&"exitstatus"));
+    }
 
     /// End-to-end proof the build.rs parsed `comparable.rs`'s `ruby_module!`
     /// header and projected its surface -- Comparable is a pure mixin (instance

@@ -165,6 +165,7 @@ fn write_args(recv: &RubyValue, args: &[RubyValue]) -> Result<i64, Signal> {
 
 ruby_module! {
     Buffering = zeo_abi::OPENSSL_BUFFERING_MODULE;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     const BLOCK_SIZE = RubyValue::Int(BLOCK_SIZE);
 

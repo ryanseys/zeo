@@ -63,6 +63,7 @@ fn push_arg(v: &RubyValue) -> Result<String, Signal> {
 
 ruby_class! {
     History = zeo_abi::READLINE_HISTORY_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::ENUMERABLE_CLASS;
 
     def "push" (recv, *args, &_block) {
         let mut st = super::STATE.lock();

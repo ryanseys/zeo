@@ -163,6 +163,8 @@ fn write_all(recv: &RubyValue, data: &[u8]) -> Result<(), Signal> {
 
 ruby_class! {
     SSLSocket = zeo_abi::OPENSSL_SSL_SOCKET_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::OPENSSL_BUFFERING_MODULE;
+    include zeo_abi::OPENSSL_SOCKET_FORWARDER_MODULE;
 
     // `SSLSocket.new(io, context = SSLContext.new)`.
     def self."new" arity -1 (_recv, arg1, arg2?) {

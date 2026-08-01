@@ -79,7 +79,7 @@ fn rendered(loc: &BacktraceLocation) -> String {
 }
 
 ruby_class! {
-    BacktraceLocationClass = zeo_abi::BACKTRACE_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
+    Location = zeo_abi::BACKTRACE_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
 
     def "path"(recv) {
         Ok(RubyValue::Str(string_new(loc_of(recv).path.clone())))
