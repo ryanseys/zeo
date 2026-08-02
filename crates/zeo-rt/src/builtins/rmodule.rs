@@ -94,50 +94,91 @@ fn class_constant(owner: crate::ClassId, name: &str) -> Option<RubyValue> {
     crate::dispatch::class_id_by_name(&path).map(RubyValue::Class)
 }
 
-/// `cid`'s own constant table first, then its ancestry when `inherit`. Shared
-/// by `const_get` and `const_defined?` so the two can't disagree.
-fn const_lookup(cid: crate::ClassId, name: &str, inherit: bool) -> Option<RubyValue> {
+/// Which of ruby's constant searches to run -- the `(recurse, exclude)` pair
+/// of `variable.c`'s `rb_const_search`, which is the only thing that varies
+/// between them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Search {
+    /// `const_get(name, false)` / `const_defined?(name, false)`: the receiver's
+    /// OWN binding, no ancestry.
+    Own,
+    /// `const_get` / `const_defined?`: the receiver and its ancestry, and a
+    /// top-level (`Object`-owned) constant answers as well.
+    Inherited,
+    /// The `::` operator: the receiver and its ancestry, but a constant
+    /// `Object` itself owns does NOT answer -- see `const_get_scoped`.
+    Scoped,
+}
+
+/// `cid`'s constants under one of the three searches. Shared so `const_get`,
+/// `const_defined?` and the scope operator cannot disagree about anything but
+/// the flag they pass.
+fn const_lookup(cid: crate::ClassId, name: &str, how: Search) -> Option<RubyValue> {
     // `const_get` walks the ancestry itself, so the non-inheriting form has to
     // ask for the OWN binding explicitly -- otherwise every class answers for
     // every top-level constant, `Object` being an ancestor of them all.
-    if !inherit {
+    if how == Search::Own {
         return crate::constants::const_get_own(cid.0, name).or_else(|| class_constant(cid, name));
     }
-    crate::constants::const_get(cid.0, name)
+    // A constant `Object` owns is out of reach of the scope operator, and the
+    // top-level class registry is `Object`'s half of that table.
+    let through_object = how == Search::Inherited || cid.0 == 0;
+    let scoped = how == Search::Scoped;
+    let ancestry = || {
+        crate::dispatch::ancestors_of_value(cid)
+            .iter()
+            .skip(1)
+            .filter(|&&anc| through_object || anc.0 != 0)
+            .find_map(|&anc| class_constant(anc, name))
+    };
+    let searched = if scoped {
+        crate::constants::const_get_scoped(cid.0, name)
+    } else {
+        crate::constants::const_get(cid.0, name)
+    };
+    searched
         .or_else(|| class_constant(cid, name))
         .or_else(|| {
             // A MODULE's ancestry does not pass through `Object`, but the
             // inheriting form consults it anyway -- CRuby's rule, and the only
             // way a module sees a top-level constant.
             let is_module = cid.0 != 0 && crate::dispatch::class_is_module(cid).unwrap_or(false);
-            is_module.then(|| crate::constants::const_get_own(0, name))?
+            (is_module && through_object).then(|| crate::constants::const_get_own(0, name))?
         })
-        .or_else(|| {
-            // The ancestry walk again, for a class constant an ANCESTOR owns
-            // (`StringIO::SEEK_SET` through `IO`). `const_get` above covers the
-            // table half; this covers the registered-by-name half.
-            crate::dispatch::ancestors_of_value(cid)
-                .iter()
-                .skip(1)
-                .find_map(|&anc| class_constant(anc, name))
-        })
+        // The ancestry walk again, for a class constant an ANCESTOR owns
+        // (`StringIO::SEEK_SET` through `IO`). The search above covers the
+        // table half; this covers the registered-by-name half.
+        .or_else(ancestry)
         // A top-level class is a constant of `Object`, so every class sees it
         // through the ancestry -- but a MODULE's chain never reaches `Object`,
         // and `Object` itself is already covered above.
-        .or_else(|| (cid.0 != 0).then(|| class_constant(crate::ClassId(0), name))?)
+        .or_else(|| {
+            (through_object && cid.0 != 0).then(|| class_constant(crate::ClassId(0), name))?
+        })
 }
 
 /// `defined?(Scope::NAME)`'s membership test, for a scope codegen resolved but
 /// a name it could not: the constant may not exist until a `const_set` runs.
-/// Shares `const_lookup` with `const_defined?`, whose semantics these are.
+/// The scope OPERATOR's search, not `const_defined?`'s -- `defined?(K::TOP)` is
+/// nil for a top-level `TOP` that `K.const_defined?(:TOP)` answers true for.
 pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
-    const_lookup(cid, name, true).is_some()
+    const_lookup(cid, name, Search::Scoped).is_some()
 }
 
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
 fn inherit_flag(v: Option<&RubyValue>) -> bool {
     !matches!(v, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil))
+}
+
+/// The same flag as the search a reflective row (`const_get`,
+/// `const_defined?`, `autoload?`) runs.
+fn inherit_search(v: Option<&RubyValue>) -> Search {
+    if inherit_flag(v) {
+        Search::Inherited
+    } else {
+        Search::Own
+    }
 }
 
 /// `(owner, constant name) -> feature path` for every `autoload` that reached
@@ -250,8 +291,16 @@ ruby_class! {
         // NOT consulted: `const_get` reaches a `private_constant`, and only the
         // scope OPERATOR is gated.
         if let Some((head, rest)) = name.split_once("::") {
-            let inherit = inherit_flag(inherit);
-            let mut cur = const_lookup(cid, head, inherit)
+            let head_search = inherit_search(inherit);
+            // Only the HEAD gets `const_get`'s reach. Every segment past it is
+            // a scope operator, and CRuby searches it as one -- so
+            // `Object.const_get("K::TOP")` raises where a written `K::TOP`
+            // raises, even though `K.const_get(:TOP)` answers.
+            let rest_search = match head_search {
+                Search::Own => Search::Own,
+                _ => Search::Scoped,
+            };
+            let mut cur = const_lookup(cid, head, head_search)
                 .ok_or_else(|| name_error!("uninitialized constant {head}"))?;
             // A miss past the head is reported qualified by the scope that
             // failed to answer, not by the bare segment -- CRuby's wording.
@@ -259,7 +308,7 @@ ruby_class! {
                 let RubyValue::Class(scope) = cur else {
                     return Err(type_error!("{} is not a class/module", cur.inspect_string()));
                 };
-                cur = const_lookup(scope, seg, inherit).ok_or_else(|| {
+                cur = const_lookup(scope, seg, rest_search).ok_or_else(|| {
                     let owner = crate::dispatch::class_name(scope)
                         .unwrap_or_else(|| "Object".to_string());
                     name_error!("uninitialized constant {owner}::{seg}")
@@ -267,7 +316,7 @@ ruby_class! {
             }
             return Ok(cur);
         }
-        const_lookup(cid, &name, inherit_flag(inherit)).ok_or_else(|| {
+        const_lookup(cid, &name, inherit_search(inherit)).ok_or_else(|| {
             // Qualified by the RECEIVER, which is what tells a miss on
             // `Foo.const_get(:X)` apart from one on a bare `X`.
             match crate::dispatch::class_name(cid) {
@@ -278,7 +327,7 @@ ruby_class! {
     }
     def "const_defined?" cfunc (recv, name, inherit?) {
         let name = const_name_arg(name)?;
-        let found = const_lookup(recv_cid(recv), &name, inherit_flag(inherit)).is_some();
+        let found = const_lookup(recv_cid(recv), &name, inherit_search(inherit)).is_some();
         Ok(RubyValue::Bool(found))
     }
     // Returns the removed value; NameError when the constant isn't this
@@ -770,7 +819,7 @@ ruby_class! {
         let cid = recv_cid(recv);
         // A constant that resolved is loaded, and CRuby answers nil for that
         // whatever the registration said.
-        if const_lookup(cid, &name, inherit_flag(inherit)).is_some() {
+        if const_lookup(cid, &name, inherit_search(inherit)).is_some() {
             return Ok(RubyValue::Nil);
         }
         Ok(match pending_autoloads().lock().get(&(cid.0, name)) {
@@ -799,7 +848,7 @@ ruby_class! {
         if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
             return Err(name_error!("wrong constant name {name}"));
         }
-        Ok(match const_lookup(recv_cid(recv), &name, inherit_flag(inherit)) {
+        Ok(match const_lookup(recv_cid(recv), &name, inherit_search(inherit)) {
             Some(_) => RubyValue::Array(crate::array_new(Vec::new())),
             None => RubyValue::Nil,
         })

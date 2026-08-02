@@ -2282,8 +2282,24 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // main program ran. Falling straight through to `Object` would hand the box
     // main's own top-level constants, which a box (a copy of master) never
     // sees.
+    //
+    // An explicit scope also searches the SCOPE ITSELF rather than the owner
+    // the compile-time map redirects to. That map answers where a name WOULD
+    // resolve from, which for a class means `Object` (an ancestor of them all)
+    // -- and the scope operator is the one lookup `Object`'s own constants are
+    // out of reach of. The ancestry the redirect stood in for is walked at run
+    // time instead, by `const_get_scoped`.
     let top = box_top_owner(cx);
-    let mut lookup = quote! { zeo_rt::const_get(#owner, #name) };
+    let scope_owner = scope.map(|s| {
+        cx.resolve_class(s)
+            .expect("const_owner_id_opt resolved this scope above")
+            .0
+    });
+    let owner = scope_owner.unwrap_or(owner);
+    let mut lookup = match scope_owner {
+        Some(sid) => quote! { zeo_rt::const_get_scoped(#sid, #name) },
+        None => quote! { zeo_rt::const_get(#owner, #name) },
+    };
     if scope.is_none() {
         if owner != top {
             lookup = quote! { #lookup.or_else(|| zeo_rt::const_get(#top, #name)) };

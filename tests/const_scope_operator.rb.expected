@@ -1,0 +1,27 @@
+K::Errno !! NameError: uninitialized constant K::Errno
+SystemCallError::Errno !! NameError: uninitialized constant SystemCallError::Errno
+BasicObject::Errno !! NameError: uninitialized constant BasicObject::Errno
+M::Errno !! NameError: uninitialized constant M::Errno
+K::TOP !! NameError: uninitialized constant K::TOP
+K::String !! NameError: uninitialized constant K::String
+Object::Errno => Errno
+Object::TOP => 4
+::TOP => 4
+K.const_get(:Errno) => Errno
+K.const_get(:TOP) => 4
+M.const_get(:Errno) => Errno
+K.const_defined?(:TOP) => true
+K.const_defined?(:TOP, false) => false
+M.const_defined?(:TOP) => true
+defined? K::TOP => nil
+defined? K::Errno => nil
+defined? Object::TOP => "constant"
+Object.const_get('K::TOP') !! NameError: uninitialized constant K::TOP
+Object.const_get('K') => K
+Deriv::INSIDE => 1
+WithMix::VIA => 2
+File::SEEK_SET => 0
+Deriv.const_get(:INSIDE, false) !! NameError: uninitialized constant Deriv::INSIDE
+[:TOP, K, "uninitialized constant K::TOP"]
+[:Nope, K, "uninitialized constant K::Nope"]
+[4, 5, 5, [:TOP]]

@@ -18,22 +18,54 @@ use super::Ctx;
 use crate::compiler::{ClassId, OBJECT_CLASS};
 use crate::hir::{HirNode, NodeId};
 
+/// Whether a search may answer with a constant `Object` itself owns -- ruby's
+/// `exclude` flag (`variable.c`'s `rb_const_search`). `Object` is an ancestor
+/// of every class, so a search that reads its table from a `Foo` receiver makes
+/// every top-level constant answer as `Foo`'s own.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ObjectReach {
+    /// `const_get`/`const_defined?`, and a bare name (whose lookup ENDS at the
+    /// top level).
+    Included,
+    /// The `::` operator, and the `defined?` that gates it. A scope that IS
+    /// `Object` still reads `Object`'s constants -- it excludes the ancestor,
+    /// not the receiver.
+    Excluded,
+}
+
 /// The class/module `target::cname` names, if any -- a nested definition in
-/// `target`'s own namespace, or (const lookup inherits) a top-level class,
-/// which lives on `Object` and so is visible from every receiver.
-pub(super) fn class_const_in(cx: &Ctx, target: ClassId, cname: &str) -> Option<ClassId> {
+/// `target`'s own namespace, or, where the search reaches `Object`, a top-level
+/// class, which lives there and so is visible from every receiver.
+pub(super) fn class_const_in(
+    cx: &Ctx,
+    target: ClassId,
+    cname: &str,
+    reach: ObjectReach,
+) -> Option<ClassId> {
     if let Some(c) = cx.resolve_class(&format!("{}::{cname}", cx.compiler.fq_name(target))) {
         return Some(c);
+    }
+    if reach == ObjectReach::Excluded && target != OBJECT_CLASS {
+        return None;
     }
     cx.compiler.resolve_class(cname, &[], cx.box_id)
 }
 
 /// Whether a VALUE constant named `cname` is defined on `target` or any
-/// ancestor (constant lookup inherits, up through `Object`) -- read from the
-/// compile-time `const_owners` registry `resolve_consts` populates.
-pub(super) fn value_const_defined_in(cx: &Ctx, target: ClassId, cname: &str) -> bool {
+/// ancestor -- read from the compile-time `const_owners` registry
+/// `resolve_consts` populates. `reach` decides whether `Object`'s own
+/// constants count, which is what tells `Foo::BAR` apart from
+/// `Foo.const_get(:BAR)`.
+pub(super) fn value_const_defined_in(
+    cx: &Ctx,
+    target: ClassId,
+    cname: &str,
+    reach: ObjectReach,
+) -> bool {
     let mut chain = cx.compiler.class(target).ancestors.clone();
-    if !chain.contains(&OBJECT_CLASS) {
+    if reach == ObjectReach::Excluded && target != OBJECT_CLASS {
+        chain.retain(|&anc| anc != OBJECT_CLASS);
+    } else if !chain.contains(&OBJECT_CLASS) {
         chain.push(OBJECT_CLASS);
     }
     // An ACTUAL `NAME = ...` in the body, not merely a `const_owners` entry:
@@ -91,7 +123,7 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
                 scopes
                     .iter()
                     .rev()
-                    .any(|&s| value_const_defined_in(cx, s, name)),
+                    .any(|&s| value_const_defined_in(cx, s, name, ObjectReach::Included)),
             )
         }
         HirNode::QualifiedConstRead(scope, name) => {
@@ -106,8 +138,10 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             if defined_only_later(cx, id, &[scope_id], name) {
                 return Some(false);
             }
-            let known = class_const_in(cx, scope_id, name).is_some()
-                || value_const_defined_in(cx, scope_id, name);
+            // The scope OPERATOR, so a top-level constant does not answer:
+            // `defined?(K::TOP)` is nil even where `TOP` is set.
+            let known = class_const_in(cx, scope_id, name, ObjectReach::Excluded).is_some()
+                || value_const_defined_in(cx, scope_id, name, ObjectReach::Excluded);
             known.then_some(true)
         }
         _ => None,

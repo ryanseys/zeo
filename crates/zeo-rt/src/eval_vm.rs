@@ -487,7 +487,7 @@ mod imp {
                     }
                 },
             };
-            return const_lookup(owner, &name);
+            return const_lookup_scoped(owner, &name);
         }
 
         // ---- control flow ---------------------------------------------------
@@ -1447,6 +1447,32 @@ mod imp {
         if let Some(v) = crate::constants::const_get(owner, name) {
             return Ok(v);
         }
+        top_level_class(owner, name)
+    }
+
+    /// The `::` operator's lookup: `owner`'s ancestry, minus what `Object`
+    /// itself owns -- so `K::Errno` raises rather than answering the top-level
+    /// `Errno`, exactly as the compiled path does.
+    fn const_lookup_scoped(owner: u32, name: &str) -> Result<RubyValue, Signal> {
+        if let Some(v) = crate::constants::const_get_scoped(owner, name) {
+            return Ok(v);
+        }
+        // A nested class/module is registered by its qualified name rather than
+        // written to the constants table, so it needs its own probe.
+        if owner != 0 {
+            let path = crate::dispatch::class_name(crate::ClassId(owner))
+                .map(|scope| format!("{scope}::{name}"));
+            if let Some(cid) = path.and_then(|p| crate::dispatch::class_id_by_name(&p)) {
+                return Ok(RubyValue::Class(cid));
+            }
+        }
+        top_level_class(owner, name)
+    }
+
+    /// The class registry is `Object`'s half of the constant table: codegen
+    /// bakes a bare class NAME in at compile time, so nothing ever `const_set`s
+    /// one and only the top level can answer for it.
+    fn top_level_class(owner: u32, name: &str) -> Result<RubyValue, Signal> {
         if owner == 0 {
             if let Some(cid) = crate::dispatch::class_id_by_name(name) {
                 return Ok(RubyValue::Class(cid));

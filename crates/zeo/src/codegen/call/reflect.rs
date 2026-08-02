@@ -7,7 +7,7 @@
 use quote::quote;
 
 use crate::codegen::Ctx;
-use crate::codegen::constfold::{class_const_in, value_const_defined_in};
+use crate::codegen::constfold::{ObjectReach, class_const_in, value_const_defined_in};
 use crate::hir::{HirNode, KwArg, NodeId};
 use proc_macro2::TokenStream;
 
@@ -103,7 +103,9 @@ pub(super) fn try_const_reflection(
         return Some(quote! { return Err(zeo_rt::Signal::Raise(#err)) });
     }
 
-    let as_class = class_const_in(cx, target, &cname);
+    // `const_get`/`const_defined?` reach through to `Object`, unlike the
+    // scope operator -- `K.const_get(:Errno)` answers where `K::Errno` raises.
+    let as_class = class_const_in(cx, target, &cname, ObjectReach::Included);
     if name == "const_defined?" {
         // A BUILTIN's ext constants (`Socket::AF_INET6`, `Float::INFINITY`) are
         // seeded straight into `const_owners` by `analyze::seed_ext_const_owners`
@@ -114,7 +116,9 @@ pub(super) fn try_const_reflection(
         // Exact for a builtin: those entries are the seeded table itself.
         let seeded = cx.compiler.class(target).is_builtin
             && cx.compiler.class(target).const_owners.contains_key(&cname);
-        let defined = as_class.is_some() || seeded || value_const_defined_in(cx, target, &cname);
+        let defined = as_class.is_some()
+            || seeded
+            || value_const_defined_in(cx, target, &cname, ObjectReach::Included);
         // Only a PROVEN yes folds. A no here means "no class body writes this
         // name", which is not the same as "no such constant": a top-level
         // assignment is no class body's statement, and a `const_set` can add one

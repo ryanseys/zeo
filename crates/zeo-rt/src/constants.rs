@@ -151,6 +151,14 @@ pub fn const_get_own(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 }
 
 pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    const_search(owner_class_id, name, false)
+}
+
+/// `owner` and its ancestry, with `skip_object` deciding whether a constant
+/// `Object` itself owns may answer. That single flag is the whole difference
+/// between ruby's two constant searches (`variable.c`'s `exclude`), so both
+/// spellings share this walk and cannot drift.
+fn const_search(owner_class_id: u32, name: &str, skip_object: bool) -> Option<RubyValue> {
     let map = CONSTANTS.lock();
     if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
         return Some(v.clone());
@@ -161,13 +169,14 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     // The compile-time owner resolution can't see a builtin module's
     // constants, so this runtime walk covers them.
     for &anc in crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id)) {
-        if anc.0 != owner_class_id {
-            if let Some(v) = map.get(&anc.0).and_then(|m| m.get(name)) {
-                return Some(v.clone());
-            }
-            if let Some(cid) = nested_class_of(anc, name) {
-                return Some(RubyValue::Class(cid));
-            }
+        if anc.0 == owner_class_id || (skip_object && anc.0 == 0) {
+            continue;
+        }
+        if let Some(v) = map.get(&anc.0).and_then(|m| m.get(name)) {
+            return Some(v.clone());
+        }
+        if let Some(cid) = nested_class_of(anc, name) {
+            return Some(RubyValue::Class(cid));
         }
     }
     None
@@ -189,25 +198,14 @@ fn nested_class_of(owner: crate::ClassId, name: &str) -> Option<crate::ClassId> 
 }
 
 /// Explicit-scope constant lookup (`Scope::NAME`): the scope class and its
-/// ancestors, but NOT a bare top-level (`Object`-owned) constant unless the
-/// scope IS `Object`. CRuby's `Foo::BAR` raises `NameError` rather than
-/// resolving a top-level `BAR` through `Object` merely being an ancestor of
-/// `Foo` (a `Struct.new` block's constant lands at top level, so `Line::FLAGS`
-/// must not find it).
+/// ancestors, but NOT a constant `Object` itself owns unless the scope IS
+/// `Object`. `Object` is an ancestor of every class, so without that rule
+/// every top-level constant would answer as every class's own -- `K::Errno`
+/// would find the top-level `Errno`, and `Line::FLAGS` would find a `FLAGS`
+/// that a `Struct.new` block left at top level. Ruby raises `NameError` for
+/// both, and reserves the through-`Object` answer for `const_get`.
 pub fn const_get_scoped(owner_class_id: u32, name: &str) -> Option<RubyValue> {
-    let map = CONSTANTS.lock();
-    if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
-        return Some(v.clone());
-    }
-    for &anc in crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id)) {
-        if anc.0 == owner_class_id || (anc.0 == 0 && owner_class_id != 0) {
-            continue;
-        }
-        if let Some(v) = map.get(&anc.0).and_then(|m| m.get(name)) {
-            return Some(v.clone());
-        }
-    }
-    None
+    const_search(owner_class_id, name, owner_class_id != 0)
 }
 
 /// `(owner, name)` pairs marked `private_constant`. Kept here rather than on
