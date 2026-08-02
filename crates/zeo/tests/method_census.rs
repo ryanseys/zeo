@@ -26,6 +26,14 @@
 //! exception class registers the shared `Exception` natives on its own id (flat
 //! dispatch), so that direction is dominated by a design choice rather than by
 //! bugs, and would bury the rows that matter.
+//!
+//! PUBLIC and PRIVATE instance methods are both gated. Only the public sets
+//! were, at first, and a private row drifts precisely because nothing calling
+//! it can tell: `Exception` declares its own `method_missing` and
+//! `respond_to_missing?`, zeo answered both off `BasicObject`/`Kernel`, and the
+//! whole suite stayed green. Adding the private column found 114 more rows on
+//! the day it landed, of which 56 are two patterns -- a private `initialize`
+//! (39 classes) and `initialize_copy` (17), each owned one class off.
 
 mod support;
 
@@ -93,7 +101,12 @@ fn diff(oracle: &Census, zeo: &Census) -> Vec<Gap> {
         // `own` is what the module itself declares, `all` what it can answer
         // from anywhere. A name missing from BOTH raises; missing from `own`
         // alone means zeo files it under a different class.
-        for (own, all) in [("i", "I"), ("s", "S")] {
+        //
+        // PRIVATE rows are gated too. They are invisible to a program that only
+        // calls methods, which is exactly why they drift: `Exception`'s own
+        // `method_missing`/`respond_to_missing?` sat on `BasicObject`/`Kernel`
+        // for as long as this compared public sets alone, and nothing failed.
+        for (own, all) in [("i", "I"), ("s", "S"), ("p", "P")] {
             let reachable = names(mine, all);
             for name in names(oracle.get(module).unwrap(), own).difference(&names(mine, own)) {
                 gaps.push(Gap {

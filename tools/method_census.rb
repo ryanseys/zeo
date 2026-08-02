@@ -13,11 +13,12 @@
 #
 #   i  public instance, own          I  public instance, inherited too
 #   s  public singleton, own         S  public singleton, inherited too
-#   p  private instance, own         c  constants, own
+#   p  private instance, own         P  private instance, inherited too
+#   c  constants, own
 #
-# The `I`/`S` pair is what makes the dump worth having: without it a missing
-# `i` row cannot be told apart from a method zeo answers off a different class,
-# and the two need completely different work. `walk` keys on `mod.name`, not
+# The `I`/`S`/`P` partners are what make the dump worth having: without them a
+# missing `i` row cannot be told apart from a method zeo answers off a different
+# class, and the two need completely different work. `walk` keys on `mod.name`, not
 # `object_id` -- an engine that gives every class one id would otherwise stop
 # after the first row.
 
@@ -74,6 +75,7 @@ rows.each do |path, mod|
       "c" => mod.constants(false),
       "I" => mod.instance_methods(true),
       "S" => mod.methods,
+      "P" => mod.private_instance_methods(true),
     }
   rescue StandardError => e
     puts "#{path}\tERR\t#{e.class}"
