@@ -39,7 +39,7 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arg_error, arg_int, need_block, type_error};
+use crate::builtins::{arg_error, arg_int, inherited_row, need_block, type_error};
 use crate::collections::array_new;
 use crate::coroutine::CoroutineResult;
 use crate::dispatch::{raise_stop_iteration, send_value};
@@ -1061,6 +1061,30 @@ ruby_class! {
     // it answers comes down the chain from `Enumerator` and `Enumerable`;
     // these thirteen are the ones CRuby defines here, and they exist because
     // the quadruple lets `#size` and `#last` compute instead of walk.
+    // `Enumerator::Chain` and `::Product` add no behaviour of their own --
+    // everything they answer comes down the chain from `Enumerator`, and the
+    // `EnumSource` variant is what makes `#each` walk the right shape. ruby
+    // OWNS these four on each subclass all the same, so the rows exist to
+    // make `.owner` and `instance_methods(false)` agree; each calls the very
+    // `Enumerator` row it would otherwise have inherited.
+    class Chain = zeo_abi::ENUMERATOR_CHAIN_CLASS < zeo_abi::ENUMERATOR_CLASS {
+        def "each" cfunc (recv, *_args, &block) {
+            inherited_row!(enumerator, "each", recv, __args, block)
+        }
+        def "inspect"(recv) { inherited_row!(enumerator, "inspect", recv, __args, None) }
+        def "rewind"(recv) { inherited_row!(enumerator, "rewind", recv, __args, None) }
+        def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
+    }
+
+    class Product = zeo_abi::ENUMERATOR_PRODUCT_CLASS < zeo_abi::ENUMERATOR_CLASS {
+        def "each" arity 0 (recv, *_args, &block) {
+            inherited_row!(enumerator, "each", recv, __args, block)
+        }
+        def "inspect"(recv) { inherited_row!(enumerator, "inspect", recv, __args, None) }
+        def "rewind"(recv) { inherited_row!(enumerator, "rewind", recv, __args, None) }
+        def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
+    }
+
     class ArithmeticSequence = zeo_abi::ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS
         < zeo_abi::ENUMERATOR_CLASS
     {

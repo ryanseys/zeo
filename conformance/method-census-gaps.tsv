@@ -3,7 +3,7 @@
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 21
 # constant: 10
-# owner: 22
+# owner: 14
 # unreachable: 28
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
@@ -37,14 +37,6 @@ constant	Ractor	c	MovedObject
 constant	Ractor	c	Port
 constant	Set	c	CoreSet
 owner	Class	s	allocate
-owner	Enumerator::Chain	i	each
-owner	Enumerator::Chain	i	inspect
-owner	Enumerator::Chain	i	rewind
-owner	Enumerator::Chain	i	size
-owner	Enumerator::Product	i	each
-owner	Enumerator::Product	i	inspect
-owner	Enumerator::Product	i	rewind
-owner	Enumerator::Product	i	size
 owner	Exception	i	respond_to?
 owner	Kernel	s	autoload
 owner	Kernel	s	autoload?
