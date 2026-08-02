@@ -7,6 +7,7 @@
 
 use crate::RubyValue;
 use crate::builtins::arg_int;
+use crate::builtins::inherited_row;
 use crate::thread::{queue_max, queue_set_max, sized_queue_new};
 use zeo_macros::ruby_class;
 
@@ -40,6 +41,17 @@ ruby_class! {
     def "num_waiting"(recv) {
         Ok(RubyValue::Int(crate::thread::queue_num_waiting(&recv.as_queue_unchecked())))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "<<"(recv, _item, *_rest) { inherited_row!(queue, "<<", recv, __args, None) }
+    def "push"(recv, _item, *_rest) { inherited_row!(queue, "push", recv, __args, None) }
+    def "enq"(recv, _item, *_rest) { inherited_row!(queue, "enq", recv, __args, None) }
+    def "pop" cfunc (recv, *_args) { inherited_row!(queue, "pop", recv, __args, None) }
+    def "deq" cfunc (recv, *_args) { inherited_row!(queue, "deq", recv, __args, None) }
+    def "shift" cfunc (recv, *_args) { inherited_row!(queue, "shift", recv, __args, None) }
+    def "close"(recv) { inherited_row!(queue, "close", recv, __args, None) }
 }
 
 #[cfg(test)]
@@ -49,11 +61,14 @@ mod tests {
         let t = crate::builtins::registered_table(zeo_abi::SIZED_QUEUE_CLASS)
             .expect("SizedQueue is a registered builtin table");
         assert!((t.class.as_ref().unwrap().lookup)("new").is_some());
-        // Its instance table holds ONLY the bound; every other row comes from
-        // Queue through the ancestry walk (`SizedQueue < Queue`).
+        // Its instance table holds the bound plus the seven rows ruby OWNS on
+        // SizedQueue while their bodies live on Queue -- each declared here
+        // only so `.owner` agrees, and routed straight back to Queue's row.
         let inst = t.instance.as_ref().expect("SizedQueue owns max/max=");
         assert!((inst.lookup)("max").is_some());
         assert!((inst.lookup)("max=").is_some());
-        assert!((inst.lookup)("push").is_none());
+        assert!((inst.lookup)("push").is_some());
+        // Everything else still comes from Queue through the ancestry walk.
+        assert!((inst.lookup)("empty?").is_none());
     }
 }

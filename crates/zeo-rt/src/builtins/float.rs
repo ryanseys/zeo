@@ -5,7 +5,7 @@
 //! `[Float, Numeric, Comparable, ...]`. The Tier A breadth
 //! (`nan?`/`round(n)`/`to_r`/...) lands with stage C's generics pass.
 
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::{arg_error, inherited_row, type_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
@@ -170,6 +170,28 @@ ruby_class! {
     def "truncate" (recv, ndigits?) {
         float_round_family(recv, ndigits, f64::trunc)
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "<"(recv, _other) { inherited_row!(comparable, "<", recv, __args, None) }
+    def "<="(recv, _other) { inherited_row!(comparable, "<=", recv, __args, None) }
+    def ">"(recv, _other) { inherited_row!(comparable, ">", recv, __args, None) }
+    def ">="(recv, _other) { inherited_row!(comparable, ">=", recv, __args, None) }
+    def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
+    // spell the two differently, so each goes to its own Kernel row.
+    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "angle" | "arg" | "phase"(recv) { inherited_row!(numeric, "angle", recv, __args, None) }
+    def "divmod"(recv, _other) { inherited_row!(numeric, "divmod", recv, __args, None) }
+    def "fdiv"(recv, _other) { inherited_row!(numeric, "fdiv", recv, __args, None) }
+    def "quo"(recv, _other) { inherited_row!(numeric, "quo", recv, __args, None) }
+    def "negative?"(recv) { inherited_row!(numeric, "negative?", recv, __args, None) }
+    def "positive?"(recv) { inherited_row!(numeric, "positive?", recv, __args, None) }
+    def "zero?"(recv) { inherited_row!(numeric, "zero?", recv, __args, None) }
 }
 
 fn recv_f64(recv: &RubyValue) -> f64 {

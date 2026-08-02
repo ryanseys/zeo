@@ -3,7 +3,9 @@
 //! to CRuby's real TypeError); the Tier A breadth lands in stage E.
 
 use crate::RubyValue;
-use crate::builtins::{arg_error, arg_int, block_or_enum, convert, index_error, type_error};
+use crate::builtins::{
+    arg_error, arg_int, block_or_enum, convert, index_error, inherited_row, type_error,
+};
 use zeo_macros::ruby_class;
 
 /// `arr[1..3]` -- the ordinary Range slice: an out-of-range begin answers
@@ -1492,6 +1494,38 @@ ruby_class! {
         *cell.lock() = keyed.into_iter().map(|(_, e)| e).collect();
         Ok(recv.clone())
     }
+
+    // ---- rows ruby OWNS on Array while the body lives on an ancestor.
+    //
+    // Declaring them here changes `.owner` and `instance_methods(false)` and
+    // NOTHING else: each one calls the very row it would otherwise have
+    // inherited, so the two can never drift apart. The parameter lists are
+    // the oracle's, which is why some take a splat where the ancestor's
+    // signature is narrower.
+    def "map" arity 0 | "collect" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "map", recv, __args, block) }
+    def "select" arity 0 | "filter" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "select", recv, __args, block) }
+    def "reject" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reject", recv, __args, block) }
+    def "find" | "detect" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "find", recv, __args, block) }
+    def "all?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "all?", recv, __args, block) }
+    def "any?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "any?", recv, __args, block) }
+    def "none?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "none?", recv, __args, block) }
+    def "one?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "one?", recv, __args, block) }
+    def "count" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "count", recv, __args, block) }
+    def "sum" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "sum", recv, __args, block) }
+    def "max" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "max", recv, __args, block) }
+    def "min" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "min", recv, __args, block) }
+    def "minmax" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "minmax", recv, __args, block) }
+    def "take" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "take", recv, __args, block) }
+    def "drop" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "drop", recv, __args, block) }
+    def "take_while" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "take_while", recv, __args, block) }
+    def "drop_while" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "drop_while", recv, __args, block) }
+    def "reverse_each" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reverse_each", recv, __args, block) }
+    def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
+    // spell the two differently, so each goes to its own Kernel row.
+    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
 }
 
 /// Coerces every argument of a variadic set op (`union`/`intersection`/

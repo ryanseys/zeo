@@ -19,7 +19,7 @@ use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::{arg_error, inherited_row, type_error};
 use crate::{RubyValue, Signal};
 use num_traits::ToPrimitive;
 use zeo_macros::ruby_class;
@@ -827,6 +827,14 @@ ruby_class! {
         })?;
         Ok(recv.clone())
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "<=>"(recv, _other) { inherited_row!(kernel, "<=>", recv, __args, None) }
+    def "clone" cfunc (recv, *_args) { inherited_row!(kernel, "clone", recv, __args, None) }
+    def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
 }
 
 /// CRuby's `rb_num_coerce_bin` for a binary numeric operator: given the

@@ -9,6 +9,7 @@
 //! sibling file) inherits every instance row here through the ancestry walk,
 //! since `SizedQueue < Queue`, and adds the bound (`max`/`max=`) that only a
 //! bounded queue answers.
+use crate::builtins::inherited_row;
 
 use crate::RubyValue;
 use crate::dispatch::raise_error;
@@ -67,6 +68,11 @@ ruby_class! {
         Err(crate::builtins::type_error!(
             "can't dump {}", crate::builtins::class_name_of(recv)))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
 }
 
 #[cfg(test)]

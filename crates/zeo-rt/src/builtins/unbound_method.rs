@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::builtins::method::{method_value, resolve_method_name};
-use crate::builtins::{name_error, type_error};
+use crate::builtins::{inherited_row, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::method_meta::MethodKind;
 use crate::signal::Signal;
@@ -195,4 +195,13 @@ ruby_class! {
             .render(),
         )))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
+    def "clone"(recv) { inherited_row!(kernel, "clone", recv, __args, None) }
+    def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
 }

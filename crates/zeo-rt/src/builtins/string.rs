@@ -6,8 +6,8 @@
 //! plan.
 
 use crate::builtins::{
-    arg_error, arg_int, arg_str, block_or_enum, convert, index_error, range_error, recv_str,
-    regexp_error, type_error,
+    arg_error, arg_int, arg_str, block_or_enum, convert, index_error, inherited_row, range_error,
+    recv_str, regexp_error, type_error,
 };
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
@@ -2820,6 +2820,15 @@ ruby_class! {
             _ => Ok(RubyValue::Array(crate::array_new(matches))),
         }
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
+    def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
+    def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
 }
 
 /// `lines`' separator-keeping splitter.

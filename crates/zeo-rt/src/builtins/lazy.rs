@@ -13,6 +13,7 @@
 //! The chain runs as a PUSH transducer: each source value flows through the
 //! ops into a [`Sink`], and a [`Flow::Stop`] short-circuits the pull (what
 //! makes `take`/`first`/`take_while` terminate an infinite source).
+use crate::builtins::inherited_row;
 
 use crate::builtins::arg_error;
 use crate::builtins::enumerator::{enumerator_for, pull_next};
@@ -632,6 +633,18 @@ ruby_class! {
         // avoids an address in the output (a documented simplification).
         Ok(RubyValue::Str(crate::string_new("#<Enumerator::Lazy>".to_string())))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "chunk" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "chunk", recv, __args, block) }
+    def "chunk_while" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "chunk_while", recv, __args, block) }
+    def "slice_after" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_after", recv, __args, block) }
+    def "slice_before" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_before", recv, __args, block) }
+    def "slice_when" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_when", recv, __args, block) }
+    def "zip" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "zip", recv, __args, block) }
+    def "enum_for" cfunc (recv, *_args, &block) { inherited_row!(kernel, "enum_for", recv, __args, block) }
+    def "to_enum" cfunc (recv, *_args, &block) { inherited_row!(kernel, "to_enum", recv, __args, block) }
 }
 
 #[cfg(test)]

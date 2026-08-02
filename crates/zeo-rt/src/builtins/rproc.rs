@@ -6,6 +6,7 @@
 
 use crate::RubyValue;
 use crate::builtins::arg_error;
+use crate::builtins::inherited_row;
 use zeo_macros::ruby_class;
 
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
@@ -195,6 +196,17 @@ ruby_class! {
             is_lambda,
         )))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "clone"(recv) { inherited_row!(kernel, "clone", recv, __args, None) }
+    def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
+    // spell the two differently, so each goes to its own Kernel row.
+    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
 }
 
 /// One step of `Proc#curry`: a proc that either invokes the target (enough

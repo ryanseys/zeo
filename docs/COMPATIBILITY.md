@@ -608,6 +608,16 @@ divergences:
   population. A method defined in RUBY is unaffected. Executable record:
   [`tests/gaps/builtin_protected_rows.rb`](../tests/gaps/builtin_protected_rows.rb).
 
+### A Hash or a Regexp as a Hash KEY
+
+Keyed by IDENTITY, not by value: `{ {a: 1} => "x" }[{a: 1}]` answers nil, and
+`{a: 1}.hash` differs between two equal literals. The key projection has
+structural forms for String, Array, Range and the whole numeric tower and
+none for these two, so both fall through to the pointer. An Array key works,
+which is what makes this a missing pair of variants rather than a missing
+mechanism. Executable record:
+[`tests/gaps/hash_and_regexp_as_hash_keys.rb`](../tests/gaps/hash_and_regexp_as_hash_keys.rb).
+
 ### `Random::Formatter` carries its whole surface from the start
 
 ruby 4.0 keeps `Random::Formatter` in core with `#rand` and `#random_number`,

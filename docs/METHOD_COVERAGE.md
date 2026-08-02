@@ -793,6 +793,57 @@ Split by probe, not assumed:
 Wave 4 is last because it changes no behavior, and because moving rows is
 cheapest once Waves 1–3 have stopped adding new ones.
 
+**Status: 134 of the 156 owner rows closed** — `owner` 156 → 22.
+
+"Moving the row" turned out to be the wrong picture, and the oracle said so
+in one probe: `Array#map`'s owner in CRuby is **`Array`**, not `Enumerable`.
+Every one of the 156 rows runs the same way — CRuby owns the method on the
+CLASS while zeo answers it from an ancestor. So the fix is not to move a body
+but to DECLARE the row where CRuby declares it, and route it straight back to
+the ancestor's row:
+
+```rust
+def "map" arity 0 | "collect" arity 0 (recv, *_args, &block) {
+    inherited_row!(enumerable, "map", recv, __args, block)
+}
+```
+
+`inherited_row!` is the whole wave. There is still exactly one body, so the
+two can never drift apart; `.owner` and `instance_methods(false)` agree; and
+dispatch gets marginally faster, because the lookup hits the class instead of
+walking to an ancestor. What each row still has to state for itself is its
+PARAMETER LIST, because the arity is the oracle's and the ledger refuses a
+mismatch — which is why `Array#map` takes a splat where its `arity 0` says
+otherwise, and why `Array#take` declares one required argument.
+
+The pattern has exactly one hazard, and it bit once: **declaring two names as
+one row asserts they are the SAME method.** `def "inspect" | "to_s"` is true
+of `Array` and false of `Complex`, `Rational` and `Regexp`, where the two
+spell differently (`1+2i` against `(1+2i)`, `(?-mix:a)` against `/a/`). Each
+now goes to its own ancestor row.
+
+Closed: `Array` (25), the numeric tower (`Float` 18, `Integer` 9, `Rational`
+7, `Complex` 5, `Numeric` 4), `Range` (8), `Enumerator::Lazy` (8), `Hash` (5),
+`String` (5), `UnboundMethod` (5), `Proc` (4), `Regexp` (4),
+`Thread::SizedQueue` (7), and the small tail (`Struct`, `NilClass`,
+`TrueClass`, `FalseClass`, `Symbol`, `Method`, `Binding`, `MatchData`, `Set`,
+`Module`, `Thread::Queue`).
+
+The 22 left over are the ones the pattern does not reach as it stands:
+`Enumerator::Chain`/`::Product` (8) are NESTED classes, whose generated
+`lookup` is not at module scope; `Ractor` (4), `Process::Tms` (2) and
+`SystemCallError`/`Class` want CLASS-method rows, where declaring `new` or
+`allocate` would then show up in `singleton_methods(false)` and has to be a
+constructor instead; `SignalException` (2) is the exception tree's flat
+dispatch; and `Kernel#autoload`/`autoload?` need Kernel to own what `Module`
+implements.
+
+One pre-existing bug this wave surfaced without touching: **a Hash or a
+Regexp used as a Hash KEY is keyed by identity**, so two equal literals are
+two different keys and `#hash` disagrees between them. `HashKey` has
+structural variants for String, Array, Range and the whole numeric tower and
+none for these two. `tests/gaps/hash_and_regexp_as_hash_keys.rb`.
+
 ## Verification
 
 - Per commit: `cargo build -p zeo-rt` plus the affected golden. Cheapest

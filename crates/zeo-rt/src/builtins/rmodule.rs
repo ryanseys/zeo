@@ -7,7 +7,7 @@
 //! keywords. The shared `recv_cid` helper is `pub(crate)` for `rclass` to use.
 
 use crate::RubyValue;
-use crate::builtins::{name_error, type_error};
+use crate::builtins::{inherited_row, name_error, type_error};
 use zeo_macros::ruby_class;
 
 pub(crate) fn recv_cid(recv: &RubyValue) -> crate::ClassId {
@@ -882,6 +882,12 @@ ruby_class! {
     def self."used_modules" | "used_refinements" (_recv) {
         Ok(RubyValue::Array(crate::array_new(Vec::new())))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
+    def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
 }
 
 /// Shared body of `Module`'s `<`/`<=`/`>`/`>=`: a non-class/module argument

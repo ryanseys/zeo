@@ -35,7 +35,9 @@ use std::sync::{Arc, LazyLock, RwLock};
 use parking_lot::Mutex;
 use zeo_abi::{ClassId, STRUCT_CLASS};
 
-use crate::builtins::{arg_error, block_or_enum, index_error, name_error, type_error};
+use crate::builtins::{
+    arg_error, block_or_enum, index_error, inherited_row, name_error, type_error,
+};
 use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -533,6 +535,12 @@ ruby_class! {
     def "inspect" | "to_s" (recv) {
         build_inspect(recv)
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "select" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "select", recv, __args, block) }
+    def "filter" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "filter", recv, __args, block) }
 }
 
 fn frozen_error(recv: &RubyValue) -> Signal {

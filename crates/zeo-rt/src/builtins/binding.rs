@@ -28,7 +28,7 @@ use parking_lot::Mutex;
 use zeo_abi::ClassId;
 use zeo_macros::ruby_class;
 
-use crate::builtins::{name_error, type_error};
+use crate::builtins::{inherited_row, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -348,4 +348,10 @@ ruby_class! {
     def "inspect" | "to_s"(recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_of(recv))))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "clone"(recv) { inherited_row!(kernel, "clone", recv, __args, None) }
+    def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
 }

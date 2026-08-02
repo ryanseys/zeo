@@ -4,6 +4,7 @@
 //! String's, sharing `crate::regexp`'s helpers with the static paths.
 
 use crate::RubyValue;
+use crate::builtins::inherited_row;
 use crate::builtins::regexp_error;
 use zeo_macros::ruby_class;
 
@@ -240,6 +241,17 @@ ruby_class! {
             + (re.multiline as i64) * MULTILINE;
         Ok(RubyValue::Int(bits))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
+    // spell the two differently, so each goes to its own Kernel row.
+    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
 }
 
 /// True if `source` contains a backreference (`\1`..`\9` or `\k<name>`/

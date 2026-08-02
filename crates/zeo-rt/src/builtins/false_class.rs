@@ -3,6 +3,7 @@
 //! always false, `false | obj` and `false ^ obj` are both `obj`'s truthiness.
 
 use crate::RubyValue;
+use crate::builtins::inherited_row;
 use zeo_macros::ruby_class;
 
 ruby_class! {
@@ -22,6 +23,11 @@ ruby_class! {
     def "to_s" | "inspect" (_recv) {
         Ok(RubyValue::Str(crate::string_new("false".to_string())))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
 }
 
 #[cfg(test)]

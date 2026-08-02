@@ -6,7 +6,7 @@
 //! iteration method (`map`/`select`/`count`/...) drives the `each` row below;
 //! only the set-specific surface lives here.
 
-use crate::builtins::{arg_error, block_or_enum};
+use crate::builtins::{arg_error, block_or_enum, inherited_row};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RHash, RubyValue, Signal};
 use std::sync::Arc;
@@ -618,6 +618,11 @@ ruby_class! {
             set_of(recv).elements().iter().map(|e| e.inspect_string()).collect();
         Ok(RubyValue::Str(crate::string_new(format!("Set[{}]", parts.join(", ")))))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
 }
 
 /// A subset/superset comparison argument must itself be a Set (CRuby raises

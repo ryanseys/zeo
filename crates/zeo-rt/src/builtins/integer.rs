@@ -10,7 +10,7 @@
 //! result that fits back into `Int`, so a big payload never aliases a
 //! fixnum value (equality/hashing/matching stay canonical).
 
-use crate::builtins::{arg_error, block_or_enum, range_error, type_error};
+use crate::builtins::{arg_error, block_or_enum, inherited_row, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -967,6 +967,19 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "<"(recv, _other) { inherited_row!(comparable, "<", recv, __args, None) }
+    def "<="(recv, _other) { inherited_row!(comparable, "<=", recv, __args, None) }
+    def ">"(recv, _other) { inherited_row!(comparable, ">", recv, __args, None) }
+    def ">="(recv, _other) { inherited_row!(comparable, ">=", recv, __args, None) }
+    def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
+    def "divmod"(recv, _other) { inherited_row!(numeric, "divmod", recv, __args, None) }
+    def "remainder"(recv, _other) { inherited_row!(numeric, "remainder", recv, __args, None) }
+    def "integer?"(recv) { inherited_row!(numeric, "integer?", recv, __args, None) }
+    def "zero?"(recv) { inherited_row!(numeric, "zero?", recv, __args, None) }
 }
 
 /// The Integer rounding family's shared core.

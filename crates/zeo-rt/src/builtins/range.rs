@@ -3,7 +3,7 @@
 //! `range_covers` (the `Range#===` fix that makes `case x when 1..5` real).
 //! The remaining Tier A rows land in stage E.
 
-use crate::builtins::{arg_error, block_or_enum, range_error, type_error};
+use crate::builtins::{arg_error, block_or_enum, inherited_row, range_error, type_error};
 use crate::{RubyValue, Signal};
 use zeo_macros::ruby_class;
 
@@ -576,6 +576,21 @@ ruby_class! {
         crate::builtins::enumerable::enumerable_send(recv, "max", args, block)
             .expect("Enumerable implements max")
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
+    // spell the two differently, so each goes to its own Kernel row.
+    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "count" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "count", recv, __args, block) }
+    def "minmax" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "minmax", recv, __args, block) }
+    def "reverse_each" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reverse_each", recv, __args, block) }
+    def "to_set" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "to_set", recv, __args, block) }
 }
 
 #[cfg(test)]

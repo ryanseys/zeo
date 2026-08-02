@@ -553,6 +553,23 @@ macro_rules! block_or_enum {
 }
 pub(crate) use block_or_enum;
 
+/// The row `name` exactly as the ANCESTOR module declares it.
+///
+/// Ruby owns a good many methods on a SUBCLASS while their bodies live
+/// further up the chain -- `Array#map` is `Array`'s, not `Enumerable`'s, and
+/// `Float#<` is `Float`'s, not `Comparable`'s. Declaring the row on the
+/// subclass is what makes `.owner` and `instance_methods(false)` agree;
+/// routing it straight back to the ancestor's row is what stops the two from
+/// ever drifting apart, since there is only ever one body.
+macro_rules! inherited_row {
+    ($module:ident, $name:literal, $recv:expr_2021, $args:expr_2021, $block:expr_2021) => {
+        crate::builtins::$module::lookup($name).expect(concat!("the ancestor declares ", $name))(
+            $recv, $args, $block,
+        )
+    };
+}
+pub(crate) use inherited_row;
+
 /// The block, or CRuby's `LocalJumpError` (what a bare `yield` with no
 /// block raises -- `5.tap` reproduces it, oracle-verified).
 macro_rules! need_block {

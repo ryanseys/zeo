@@ -11,6 +11,7 @@
 //! The rows delegate rather than reimplement, so the two paths cannot drift.
 
 use crate::RubyValue;
+use crate::builtins::inherited_row;
 use crate::builtins::type_error;
 use zeo_macros::ruby_class;
 
@@ -213,6 +214,11 @@ ruby_class! {
     def "regexp" (recv) {
         Ok(crate::regexp::matchdata_regexp(&recv_md(recv)))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
 }
 
 #[cfg(test)]

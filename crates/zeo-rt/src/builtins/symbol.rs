@@ -3,6 +3,7 @@
 //! `to_proc` builds the `&:name` block (one dynamic dispatch per call).
 
 use crate::builtins::arg_error;
+use crate::builtins::inherited_row;
 use crate::{RProc, RubyValue, Symbol};
 use zeo_macros::ruby_class;
 
@@ -255,6 +256,11 @@ ruby_class! {
     def "to_proc" (recv) {
         Ok(symbol_to_proc(recv_sym(recv)))
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "==="(recv, _other) { inherited_row!(kernel, "===", recv, __args, None) }
 }
 
 #[cfg(test)]

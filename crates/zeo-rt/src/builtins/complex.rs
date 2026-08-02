@@ -11,7 +11,7 @@
 //! demotes.
 
 use crate::builtins::numeric::{num_add_or_panic, num_mul_or_panic, num_sub_or_panic};
-use crate::builtins::{range_error, type_error};
+use crate::builtins::{inherited_row, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_traits::One;
@@ -800,6 +800,17 @@ ruby_class! {
             RubyValue::Float((ai * br - ar * bi) / denom),
         )
     }
+
+    // ---- rows ruby OWNS on this class while the body lives on an ancestor.
+    // Each calls the very row it would otherwise have inherited, so `.owner`
+    // and `instance_methods(false)` agree and there is still only one body.
+    def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
+    // spell the two differently, so each goes to its own Kernel row.
+    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "quo"(recv, _other) { inherited_row!(numeric, "quo", recv, __args, None) }
 }
 
 /// A component's `denominator` as a BigInt (`Integer` -> 1, `Rational` -> den).
