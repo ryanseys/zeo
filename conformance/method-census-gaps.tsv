@@ -3,7 +3,7 @@
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 19
 # constant: 7
-# owner: 14
+# owner: 10
 # unreachable: 28
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
@@ -32,7 +32,6 @@ constant	Process	c	Waiter
 constant	Ractor	c	MovedObject
 constant	Ractor	c	Port
 owner	Class	s	allocate
-owner	Exception	i	respond_to?
 owner	Kernel	s	autoload
 owner	Kernel	s	autoload?
 owner	Process::Tms	s	inspect
@@ -41,10 +40,7 @@ owner	Ractor	i	inspect
 owner	Ractor	i	send
 owner	Ractor	i	to_s
 owner	Ractor	s	new
-owner	SignalException	i	signm
-owner	SignalException	i	signo
 owner	SystemCallError	s	===
-owner	UncaughtThrowError	i	to_s
 unreachable	Kernel	s	binding
 unreachable	Kernel	s	block_given?
 unreachable	Kernel	s	iterator?

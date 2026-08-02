@@ -1,0 +1,22 @@
+[:==, :backtrace, :backtrace_locations, :cause, :detailed_message, :exception, :full_message, :inspect, :message, :respond_to?, :set_backtrace, :to_s]
+[:signm, :signo]
+[:tag, :to_s, :value]
+Exception
+Exception
+Exception
+SignalException
+SignalException
+UncaughtThrowError
+UncaughtThrowError
+UncaughtThrowError
+[]
+15
+"SIGTERM"
+[true, false, true]
+[false, true]
+true
+"wrong number of arguments (given 0, expected 1..2)"
+"1 is not a symbol nor a string"
+"SIGTERM"
+"uncaught throw :nope"
+[:nope, 42]

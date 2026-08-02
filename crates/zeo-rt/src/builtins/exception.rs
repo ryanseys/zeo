@@ -855,6 +855,7 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
                 "full_message",
                 "detailed_message",
                 "inspect",
+                "respond_to?",
             ],
         ),
         (
@@ -870,7 +871,8 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
         (|| SYSTEM_CALL_ERROR_CLASS, &["errno"]),
         (|| LOCAL_JUMP_ERROR_CLASS, &["reason", "exit_value"]),
         (|| SYSTEM_EXIT_CLASS, &["status", "success?"]),
-        (|| UNCAUGHT_THROW_ERROR_CLASS, &["tag", "value"]),
+        (|| UNCAUGHT_THROW_ERROR_CLASS, &["to_s", "tag", "value"]),
+        (|| SIGNAL_EXCEPTION_CLASS, &["signm", "signo"]),
         (|| STOP_ITERATION_CLASS, &["result"]),
         (
             || zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
@@ -907,12 +909,15 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
             registry.mark_own(id, Symbol::intern(name));
         }
     }
-    // `#initialize` is owned by `Exception` and PRIVATE, as it is on every
-    // class -- listed by `private_instance_methods(false)` and by nothing else.
+    // `#initialize` is PRIVATE on every class, so the mark goes on every id --
+    // flat dispatch put a row there, and without the mark
+    // `RuntimeError.new.respond_to?(:initialize)` answers true. Only
+    // `Exception` OWNS it, though, so only `Exception` lists it in
+    // `private_instance_methods(false)`.
+    let init = Symbol::intern("initialize");
+    registry.mark_private(id, init);
     if id == EXCEPTION_CLASS {
-        let init = Symbol::intern("initialize");
         registry.mark_own(id, init);
-        registry.mark_private(id, init);
     }
 }
 
@@ -1387,6 +1392,24 @@ fn interrupt_initialize(
     Ok(msg)
 }
 
+/// `Exception#respond_to?` -- Kernel's answer, re-declared. CRuby owns a row
+/// here because `Exception` also carries a private `method_missing`, and the
+/// override keeps that hook out of the question; the ANSWER is Kernel's, so
+/// this routes straight to it rather than restating the protocol.
+fn exc_respond_to(
+    recv: &RObj,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::inherited_row!(
+        kernel,
+        "respond_to?",
+        &RubyValue::Object(recv.clone()),
+        args,
+        blk
+    )
+}
+
 /// `SignalException#signo` -- the signal number.
 fn exc_signo(
     recv: &RObj,
@@ -1396,14 +1419,15 @@ fn exc_signo(
     Ok(exc(recv).detail("signo"))
 }
 
-/// `SignalException#signm` -- an alias for `#message` (a DYNAMIC send, so a
-/// subclass override of `message`/`to_s` is honored).
+/// `SignalException#signm` -- the signal's name. It sends `to_s`, exactly as
+/// the DEFAULT `#message` does, so it steps AROUND a subclass override of
+/// `message` while still honoring one of `to_s`.
 fn exc_signm(
     recv: &RObj,
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    send(recv, Symbol::intern("message"), &[], None)
+    send(recv, Symbol::intern("to_s"), &[], None)
 }
 
 /// `def full_message; self.class.name + ": " + message; end`
@@ -1625,6 +1649,7 @@ pub fn register_exception_subclass(
     registry.define_method_own(id, Symbol::intern("full_message"), exc_full_message);
     registry.define_method_own(id, Symbol::intern("detailed_message"), exc_detailed_message);
     registry.define_method_own(id, Symbol::intern("inspect"), exc_inspect);
+    registry.define_method_own(id, Symbol::intern("respond_to?"), exc_respond_to);
     // Typed introspection accessors, installed by ancestry so a user subclass
     // of the relevant error inherits them the same way the built-in tree does.
     // `NoMethodError < NameError`, so it picks up `#name`/`#receiver` here and
