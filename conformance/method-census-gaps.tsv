@@ -4,7 +4,7 @@
 # absent-module: 19
 # constant: 7
 # owner: 4
-# unreachable: 28
+# unreachable: 27
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
@@ -62,4 +62,3 @@ unreachable	Ractor	s	select
 unreachable	Ractor	s	shareable_lambda
 unreachable	Ractor	s	shareable_proc
 unreachable	Ractor	s	store_if_absent
-unreachable	Refinement	i	target

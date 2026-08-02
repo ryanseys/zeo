@@ -1335,9 +1335,14 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // A `refine` holder is a module in every respect but one: its own
         // `.class` is `Refinement`, which is what a refined `Method#owner`
         // reports.
-        if compiler.is_refinement_holder(ClassId(id)) {
+        if let Some((module, target)) = compiler.refinement_of(ClassId(id)) {
+            let (module, target) = (module.0, target.0);
             registrations.push(quote! {
-                __registry.mark_refinement(zeo_rt::ClassId(#id));
+                __registry.mark_refinement(
+                    zeo_rt::ClassId(#id),
+                    zeo_rt::ClassId(#module),
+                    zeo_rt::ClassId(#target),
+                );
             });
         }
         let mut undefined: Vec<&String> = compiler.class(ClassId(id)).undefined.iter().collect();

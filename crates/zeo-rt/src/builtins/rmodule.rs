@@ -861,11 +861,16 @@ ruby_class! {
         Ok(recv.clone())
     }
     // `Module#refinements` -- the `Refinement` modules THIS module's `refine`
-    // blocks minted. The compiler marks each holder but records no back-link
-    // to the refining module, so this is empty; `Refinement#target` and the
-    // refined dispatch itself work regardless.
-    def "refinements" (_recv) {
-        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    // blocks minted, in source order. They are ordinary registered modules
+    // carrying the refined methods; what makes each a `Refinement` is the
+    // `(module, target)` pair codegen marked it with.
+    def "refinements" (recv) {
+        Ok(RubyValue::Array(crate::array_new(
+            crate::dispatch::refinements_of(recv_cid(recv))
+                .into_iter()
+                .map(RubyValue::Class)
+                .collect(),
+        )))
     }
 
     // `Module.nesting` -- the lexical class/module chain at the CALL SITE,

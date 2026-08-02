@@ -850,10 +850,14 @@ impl Compiler {
         out
     }
 
-    /// Whether `cid` is the hidden module a `refine` block put its methods
-    /// in.
-    pub(crate) fn is_refinement_holder(&self, cid: ClassId) -> bool {
-        self.refinements.iter().any(|r| r.holder == cid)
+    /// `(refining module, refined target)` for a `refine` holder -- what
+    /// codegen registers so `Module#refinements` and `Refinement#target` can
+    /// answer at run time. `None` for an ordinary module.
+    pub(crate) fn refinement_of(&self, holder: ClassId) -> Option<(ClassId, ClassId)> {
+        self.refinements
+            .iter()
+            .find(|r| r.holder == holder)
+            .map(|r| (r.module, r.target))
     }
 
     /// The class `holder` refines, or `None` when `holder` is an ordinary

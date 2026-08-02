@@ -68,6 +68,7 @@ pub(crate) mod random;
 pub(crate) mod range;
 pub(crate) mod rational;
 pub(crate) mod rclass;
+pub(crate) mod refinement;
 pub(crate) mod regexp;
 pub(crate) mod rmodule;
 pub(crate) mod rproc;

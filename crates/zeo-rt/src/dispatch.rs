@@ -643,9 +643,12 @@ struct ClassEntry {
     is_module: bool,
     /// A `refine Target do ... end` holder: a module in every respect except
     /// that its own `.class` answers `Refinement`, which is how a refined
-    /// `Method#owner` identifies itself. Marked after registration, since
-    /// only the compiler knows which modules a `refine` block minted.
-    is_refinement: bool,
+    /// `Method#owner` identifies itself. Carries `(refining module, refined
+    /// target)` -- what `Module#refinements` and `Refinement#target` answer,
+    /// and what renders the `#<refinement:String@M>` name. Marked after
+    /// registration, since only the compiler knows which modules a `refine`
+    /// block minted.
+    refinement_of: Option<(ClassId, ClassId)>,
     /// The full, already-linearized MRO (this class first, then prepends/
     /// includes/superclass in resolution order) -- computed at COMPILE time
     /// by `zeo::analyze::mro::compute_ancestors` and baked in as a
@@ -845,7 +848,7 @@ impl ClassRegistry {
             ClassEntry {
                 name: name.to_string(),
                 is_module,
-                is_refinement: false,
+                refinement_of: None,
                 ancestors,
                 extends: Vec::new(),
                 methods: FMap::default(),
@@ -1024,11 +1027,11 @@ impl ClassRegistry {
         }
     }
 
-    /// Records that `id` is a `refine` holder -- see
-    /// [`ClassEntry::is_refinement`].
-    pub fn mark_refinement(&mut self, id: ClassId) {
+    /// Records that `id` is the holder `module`'s `refine target` block
+    /// minted -- see [`ClassEntry::refinement_of`].
+    pub fn mark_refinement(&mut self, id: ClassId, module: ClassId, target: ClassId) {
         if let Some(e) = self.entries.get_mut(&id.0) {
-            e.is_refinement = true;
+            e.refinement_of = Some((module, target));
         }
     }
 
@@ -2810,6 +2813,16 @@ pub(crate) fn registry_value_method_impl(id: ClassId, name: Symbol) -> Option<Me
 /// before any statement runs). See `RubyValue::Class`'s display arms for
 /// the fallback rendering.
 pub fn class_name(id: ClassId) -> Option<String> {
+    // A `refine` holder renders as ruby renders it, from the pair it refines
+    // -- not as the unwritable `#refinement:String` the compiler keys it by.
+    // Still leading-`#`, so `Module#name` keeps answering nil.
+    if let Some((module, target)) = refinement_of(id) {
+        return Some(format!(
+            "#<refinement:{}@{}>",
+            class_name(target).unwrap_or_default(),
+            class_name(module).unwrap_or_default(),
+        ));
+    }
     if let Some(name) = REGISTRY
         .get()
         .and_then(|r| r.entries.get(&id.0))
@@ -2928,10 +2941,33 @@ pub fn nested_class_names(id: ClassId) -> Vec<String> {
 /// Whether `id` is a `refine` holder, whose `.class` is `Refinement`
 /// rather than `Module`.
 pub fn class_is_refinement(id: ClassId) -> bool {
+    refinement_of(id).is_some()
+}
+
+/// `(refining module, refined target)` for a `refine` holder -- `None` for
+/// every ordinary module.
+pub fn refinement_of(id: ClassId) -> Option<(ClassId, ClassId)> {
     REGISTRY
         .get()
         .and_then(|r| r.entries.get(&id.0))
-        .is_some_and(|e| e.is_refinement)
+        .and_then(|e| e.refinement_of)
+}
+
+/// The holders `module`'s own `refine` blocks minted, in the order the source
+/// wrote them -- ids are handed out as the compiler walks the body, so id
+/// order IS declaration order. What `Module#refinements` answers.
+pub fn refinements_of(module: ClassId) -> Vec<ClassId> {
+    let Some(r) = REGISTRY.get() else {
+        return Vec::new();
+    };
+    let mut holders: Vec<ClassId> = r
+        .entries
+        .iter()
+        .filter(|(_, e)| e.refinement_of.is_some_and(|(m, _)| m == module))
+        .map(|(&id, _)| ClassId(id))
+        .collect();
+    holders.sort_by_key(|c| c.0);
+    holders
 }
 
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs
