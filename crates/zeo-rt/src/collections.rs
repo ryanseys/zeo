@@ -243,7 +243,9 @@ pub type RArray = Arc<Freezable<ArrayStore>>;
 /// nested `Hash`) falls back to pointer IDENTITY -- real Ruby's own default
 /// `Object#hash` before a user overrides it. (A user-defined `#hash` IS
 /// consulted for `Object` keys -- see `hash_key`'s `Object` arm below.)
-#[derive(Clone, PartialEq, Eq)]
+// `Ord` only so a `Hash` key's pairs can be put in a canonical order -- see
+// that variant. The order itself has no meaning to ruby.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HashKey {
     Nil,
     Bool(bool),
@@ -285,6 +287,12 @@ pub enum HashKey {
     BigInt(num_bigint::BigInt),
     Rational(num_bigint::BigInt, num_bigint::BigInt),
     Complex(Box<(HashKey, HashKey)>),
+    /// A Hash key, by its PAIRS. Ruby's `Hash#hash`/`#eql?` are order
+    /// INSENSITIVE, so the pairs are sorted into a canonical order when the
+    /// key is built (`hash_key`) rather than compared as a multiset here --
+    /// which keeps the derived `PartialEq` correct without hand-writing one
+    /// for the whole enum, on the hottest equality surface in this module.
+    Hash(Vec<(HashKey, HashKey)>),
 }
 
 /// `HashKey::Str`'s hash tag -- shared with [`StrProbe`], whose whole point
@@ -324,6 +332,12 @@ impl std::hash::Hash for HashKey {
             HashKey::Array(v) => {
                 state.write_u8(6);
                 v.hash(state);
+            }
+            // Sorted at construction, so hashing the `Vec` in order is already
+            // the order-insensitive answer ruby gives.
+            HashKey::Hash(pairs) => {
+                state.write_u8(17);
+                pairs.hash(state);
             }
             HashKey::Regexp(src, flags) => {
                 state.write_u8(16);
@@ -443,7 +457,17 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
             end.as_ref().map(|b| Box::new(hash_key(b))),
             *exclusive,
         ),
-        RubyValue::Hash(h) => HashKey::Identity(Arc::as_ptr(h) as usize),
+        RubyValue::Hash(h) => {
+            // A SNAPSHOT, not the live map: projecting a value can dispatch a
+            // user `hash`, which may read the very hash being projected, and
+            // the payload lock is not reentrant.
+            let mut pairs: Vec<(HashKey, HashKey)> = hash_pairs_snapshot(h)
+                .iter()
+                .map(|(k, v)| (hash_key(k), hash_key(v)))
+                .collect();
+            pairs.sort();
+            HashKey::Hash(pairs)
+        }
         // `Arc<dyn Trait>`'s pointer is a FAT pointer (data + vtable) -- cast
         // through `*const ()` first to get a plain, `usize`-castable thin
         // pointer to the data alone (the vtable half is irrelevant to

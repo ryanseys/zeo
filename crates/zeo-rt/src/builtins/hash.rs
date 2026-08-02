@@ -615,10 +615,21 @@ ruby_class! {
         );
         Ok(RubyValue::Proc(p))
     }
-    // `rehash` recomputes key digests after in-place key mutation. Zeo
-    // hashes digest each key on lookup, so nothing is cached to rebuild --
-    // it is a self-returning no-op here.
+    // `rehash` re-derives every key's digest after an in-place key mutation.
+    // The map IS keyed by that digest, computed when the pair went in, so a
+    // key mutated afterwards is filed under a digest that no longer describes
+    // it -- `h[k]` misses even though `h.keys` shows `k`. (This was a no-op,
+    // on the belief that lookups digest afresh. They do not.)
+    //
+    // Digests are computed BEFORE the lock: projecting a key can dispatch a
+    // user `hash`, and the payload lock is not reentrant.
     def "rehash" (recv) {
+        guard_hash_frozen(recv)?;
+        let pairs = crate::collections::hash_pairs_snapshot(rhash);
+        rhash.lock().clear();
+        for (k, v) in pairs {
+            crate::hash_set(rhash, k, v);
+        }
         Ok(recv.clone())
     }
     def "clear" (recv) {

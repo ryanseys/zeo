@@ -1,0 +1,24 @@
+hash key: "hash key"
+regexp key: "regexp key"
+array key: "array key"
+Hash#hash agrees: true
+Regexp#hash agrees: true
+Array#hash agrees: true
+Hash#hash ignores order: true
+two keys: "two"
+reordered: "two"
+empty hash key: "empty"
+miss: nil
+size: 3
+nested: "nested"
+nested miss: nil
+mixed: "mixed"
+eql?: true
+uniq: 2
+as a set member: 1
+stale hash key: nil
+rehashed hash key: "v"
+stale array key: nil
+rehashed array key: "v"
+rehash returns self: true
+keys survive rehash: [[1, 2]]

@@ -19,7 +19,7 @@ use crate::FMap;
 use parking_lot::Mutex;
 use std::sync::LazyLock;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Symbol(u32);
 
 #[derive(Default)]
