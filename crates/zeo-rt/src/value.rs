@@ -190,6 +190,12 @@ pub(crate) fn default_object_repr(
     with_ivars: bool,
     seen: &mut Vec<usize>,
 ) -> Result<String, crate::Signal> {
+    // The top-level `self` renders as `main`, never as an address -- see
+    // `dispatch::is_main_object`. Both spellings, since ruby's singletons
+    // cover `to_s` and `inspect` alike.
+    if crate::dispatch::is_main_object(o) {
+        return Ok("main".to_string());
+    }
     let name = crate::dispatch::class_name(o.class_id()).unwrap_or_else(|| "Object".to_string());
     let addr = std::sync::Arc::as_ptr(o) as *const () as usize;
     if !with_ivars {

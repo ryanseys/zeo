@@ -414,9 +414,20 @@ fn kw_names_error(kind: &str, names: &[String]) -> Signal {
 /// instance so identity is stable across the program, lazily built since
 /// most programs never touch it.
 pub fn main_object() -> RubyValue {
+    main_slot().clone()
+}
+
+fn main_slot() -> &'static RubyValue {
     static MAIN: std::sync::OnceLock<RubyValue> = std::sync::OnceLock::new();
     MAIN.get_or_init(|| RubyValue::Object(Arc::new(Object::default())))
-        .clone()
+}
+
+/// Whether `o` IS `main`. CRuby installs `to_s`/`inspect` singletons on the
+/// top-level self that answer `"main"`, so it never renders as an address;
+/// zeo asks by identity instead, because installing a singleton at startup
+/// would mark the runtime-overlay maps live for every program.
+pub fn is_main_object(o: &RObj) -> bool {
+    matches!(main_slot(), RubyValue::Object(m) if Arc::ptr_eq(m, o))
 }
 
 /// Read `@name` off a receiver whose concrete class isn't statically known
