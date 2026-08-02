@@ -11,15 +11,23 @@ use crate::builtins::rmodule::recv_cid;
 use crate::builtins::type_error;
 use zeo_macros::ruby_class;
 
-/// The empty/default value a builtin value class's `allocate` yields, matching
-/// CRuby (`String.allocate == ""`, `Array.allocate == []`, `Hash.allocate ==
-/// {}`). `None` for a user or non-value class, which routes to its registered
-/// allocator instead.
+/// The empty/default value a builtin class's `allocate` yields, matching CRuby
+/// (`String.allocate == ""`, `Array.allocate == []`, `Hash.allocate == {}`,
+/// `Range.allocate` a beginless-and-endless range). `None` for a user or
+/// non-value class, which routes to its registered allocator instead.
+///
+/// `Object`/`BasicObject` land here rather than on a registered allocator
+/// because their instances have no payload to allocate -- CRuby's is a blank
+/// object, and so is this.
 fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
     match cid {
         zeo_abi::STRING_CLASS => Some(RubyValue::Str(crate::string_new(String::new()))),
         zeo_abi::ARRAY_CLASS => Some(RubyValue::Array(crate::array_new(Vec::new()))),
         zeo_abi::HASH_CLASS => Some(RubyValue::Hash(crate::hash_new(Vec::new()))),
+        zeo_abi::RANGE_CLASS => Some(RubyValue::Range(None, None, false)),
+        zeo_abi::OBJECT_CLASS | zeo_abi::BASIC_OBJECT_CLASS => {
+            Some(crate::runtime_meta::blank_instance(cid))
+        }
         _ => None,
     }
 }
@@ -48,6 +56,9 @@ ruby_class! {
     // edge cases) raises real Ruby's NoMethodError shape for its kind.
     def "new"(recv, *args, &block) {
         let cid = recv_cid(recv);
+        if crate::runtime_meta::class_is_uninitialized(cid) {
+            return Err(type_error!("can't instantiate uninitialized class"));
+        }
         // `Class.new(superclass) { body }` -- `recv` is `Class`
         // itself, so its `.new` mints a fresh ANONYMOUS class rather than an
         // instance. The block is the class body, run with `self` bound to the
@@ -105,8 +116,17 @@ ruby_class! {
     // like CRuby, whose `allocate` yields the class's default instance).
     def "allocate"(recv) {
         let cid = recv_cid(recv);
+        if crate::runtime_meta::class_is_uninitialized(cid) {
+            return Err(type_error!("can't instantiate uninitialized class"));
+        }
         if let Some(v) = builtin_allocate(cid) {
             return Ok(v);
+        }
+        // An exception carries a native payload every `Exception` method reads,
+        // so a blank one is the native constructor with no arguments -- which
+        // is what makes `RuntimeError.allocate.message` the class name.
+        if crate::dispatch::ancestors_of_value(cid).contains(&zeo_abi::EXCEPTION_CLASS) {
+            return crate::builtins::exception::exception_construct(cid, &[], None);
         }
         match crate::dispatch::allocate_of(cid) {
             Some(v) => Ok(v),
@@ -118,6 +138,14 @@ ruby_class! {
         }
     }
 
+    // `Class.allocate` -- ruby declares it on `Class`'s OWN singleton, where it
+    // answers a class with no superclass at all rather than an instance of
+    // `Class`. Every other receiver falls through to the `Class#allocate` row
+    // below.
+    def self."allocate"(_recv) {
+        Ok(crate::runtime_meta::runtime_class_allocate())
+    }
+
     // `Class#superclass` -- the first non-module entry after self in the
     // linearized ancestors (prepends/includes are modules, so this lands on
     // the real parent class); `nil` at the root (`BasicObject`). Declaring it
@@ -125,6 +153,11 @@ ruby_class! {
     // raises: a module receiver never reaches this table.
     def "superclass" (recv) {
         let cid = recv_cid(recv);
+        // "no superclass yet" is not "no superclass": `Class.allocate`'s
+        // result raises here where `BasicObject` answers nil.
+        if crate::runtime_meta::class_is_uninitialized(cid) {
+            return Err(type_error!("uninitialized class"));
+        }
         let ancestors = crate::dispatch::ancestors_of_value(cid);
         for &anc in ancestors.iter().skip_while(|&&a| a != cid).skip(1) {
             if !crate::dispatch::class_is_module(anc).unwrap_or(false) {

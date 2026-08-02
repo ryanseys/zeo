@@ -180,8 +180,8 @@ pub(super) fn try_collection_dispatch(
         (TyKind::Str, "empty?", 0) => {
             quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len(&(#recv_expr).as_str_unchecked()) == 0) }
         }
-        (TyKind::Range, "first", 0) => quote! { (#recv_expr).range_first() },
-        (TyKind::Range, "last", 0) => quote! { (#recv_expr).range_last() },
+        (TyKind::Range, "first", 0) => quote! { (#recv_expr).range_first_checked()? },
+        (TyKind::Range, "last", 0) => quote! { (#recv_expr).range_last_checked()? },
         (TyKind::Range, "exclude_end?", 0) => {
             quote! { zeo_rt::RubyValue::Bool((#recv_expr).range_exclude_end()) }
         }

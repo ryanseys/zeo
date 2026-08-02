@@ -505,12 +505,18 @@ impl RubyValue {
                 format!("{{{}}}", body?.join(", "))
             }
             RubyValue::Range(start, end, exclusive) => {
+                // An absent endpoint renders as nothing (`..5`, `1..`) -- EXCEPT
+                // when both are absent, which ruby spells `nil..nil` so the
+                // result is not the bare `..` that no literal can produce.
+                let both_open = start.is_none() && end.is_none();
                 let s = match start {
                     Some(b) => b.inspect_with(seen)?,
+                    None if both_open => "nil".to_string(),
                     None => String::new(),
                 };
                 let e = match end {
                     Some(b) => b.inspect_with(seen)?,
+                    None if both_open => "nil".to_string(),
                     None => String::new(),
                 };
                 let op = if *exclusive { "..." } else { ".." };
@@ -744,7 +750,9 @@ impl RubyValue {
         }
     }
 
-    /// `Range#first` -- `nil` for a beginless range (`..5`).
+    /// A range's BEGIN endpoint, `nil` when beginless -- what `Range#begin`
+    /// answers, and what a `for i in a..b` loop reads. NOT `Range#first`, which
+    /// raises on a beginless range: see [`RubyValue::range_first_checked`].
     pub fn range_first(&self) -> RubyValue {
         match self {
             RubyValue::Range(start, ..) => start.as_deref().cloned().unwrap_or(RubyValue::Nil),
@@ -752,10 +760,36 @@ impl RubyValue {
         }
     }
 
-    /// `Range#last` -- `nil` for an endless range (`1..`).
+    /// A range's END endpoint, `nil` when endless -- the `Range#end` half of
+    /// [`RubyValue::range_first`].
     pub fn range_last(&self) -> RubyValue {
         match self {
             RubyValue::Range(_, end, _) => end.as_deref().cloned().unwrap_or(RubyValue::Nil),
+            other => panic!("expected a Range, got {}", other.to_display_string()),
+        }
+    }
+
+    /// `Range#first` -- the endpoint, or the RangeError a beginless range
+    /// raises. Codegen's typed fast path calls this rather than
+    /// [`RubyValue::range_first`] so it cannot disagree with the table row.
+    pub fn range_first_checked(&self) -> Result<RubyValue, crate::Signal> {
+        match self {
+            RubyValue::Range(start, ..) => match start.as_deref() {
+                Some(v) => Ok(v.clone()),
+                None => Err(range_endpoint_error(true)),
+            },
+            other => panic!("expected a Range, got {}", other.to_display_string()),
+        }
+    }
+
+    /// `Range#last` -- the `Range#first` half of
+    /// [`RubyValue::range_first_checked`], raising on an ENDLESS range.
+    pub fn range_last_checked(&self) -> Result<RubyValue, crate::Signal> {
+        match self {
+            RubyValue::Range(_, end, _) => match end.as_deref() {
+                Some(v) => Ok(v.clone()),
+                None => Err(range_endpoint_error(false)),
+            },
             other => panic!("expected a Range, got {}", other.to_display_string()),
         }
     }
@@ -1441,6 +1475,20 @@ pub(crate) fn cmp_or_raise(a: &RubyValue, b: &RubyValue) -> Result<i64, crate::S
 /// same way -- so both an `Object` pattern and a `Class` one go through
 /// dispatch. A `Class` still resolves to `Module#===`'s ancestry check when
 /// nothing overrides it, so the common `when Integer` keeps its meaning.
+/// The RangeError `Range#first`/`#last` raise when the endpoint they want is
+/// open -- one function so the two messages stay a matched pair.
+pub fn range_endpoint_error(first: bool) -> crate::Signal {
+    let (which, side) = if first {
+        ("first", "beginless")
+    } else {
+        ("last", "endless")
+    };
+    crate::dispatch::raise_error(
+        "RangeError",
+        format!("cannot get the {which} element of {side} range"),
+    )
+}
+
 pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::Signal> {
     match pattern {
         RubyValue::Object(_) | RubyValue::Class(_) => {

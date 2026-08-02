@@ -1586,12 +1586,7 @@ fn syscall_error_eqq(
         return Ok(RubyValue::Bool(false));
     };
     let got = crate::dispatch::send_value(other, errno, &[], None)?;
-    Ok(crate::dispatch::send_value(
-        &got,
-        Symbol::intern("=="),
-        &[want],
-        None,
-    )?)
+    crate::dispatch::send_value(&got, Symbol::intern("=="), &[want], None)
 }
 
 /// `Exception.to_tty?` -- whether the error stream is a TTY. Under the

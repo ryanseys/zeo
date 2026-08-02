@@ -434,7 +434,12 @@ ruby_class! {
     def "last"(recv, arg?) {
         let (start, end, exclusive) = range_parts(recv);
         match arg {
-            None => Ok(end.cloned().unwrap_or(RubyValue::Nil)),
+            // Like `first`, `last` is NOT `end` under another name: an endless
+            // range HAS no last element, where its `end` is plainly nil.
+            None => match end {
+                Some(v) => Ok(v.clone()),
+                None => Err(crate::range_endpoint_error(false)),
+            },
             Some(v) => {
                 let n = crate::builtins::convert::to_index(v)?;
                 // Materialize (Enumerable to_a) and take the tail --
@@ -494,7 +499,13 @@ ruby_class! {
         let (_, _, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(exclusive))
     }
-    def "begin" arity 0 | "first"(recv, *args, &_block) {
+    def "begin"(recv) {
+        let (start, _, _) = range_parts(recv);
+        Ok(start.cloned().unwrap_or(RubyValue::Nil))
+    }
+    // `first` is NOT `begin` under another name: a beginless range HAS no
+    // first element, where its `begin` is plainly nil.
+    def "first"(recv, *args, &_block) {
         // `first` with an argument is Enumerable's n-form; only the 0-arg
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:
@@ -508,7 +519,10 @@ ruby_class! {
                 .expect("Enumerable implements first(n)");
         }
         let (start, _, _) = range_parts(recv);
-        Ok(start.cloned().unwrap_or(RubyValue::Nil))
+        match start {
+            Some(v) => Ok(v.clone()),
+            None => Err(crate::range_endpoint_error(true)),
+        }
     }
     def "end" (recv) {
         let (_, end, _) = range_parts(recv);

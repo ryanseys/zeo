@@ -159,6 +159,7 @@ pub use thread::{
     thread_new, thread_outcome,
 };
 pub use value::RubyValue;
+pub use value::range_endpoint_error;
 pub use value::rb_eq_checked;
 pub use value::{case_eq, case_eq_any};
 

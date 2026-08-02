@@ -1,0 +1,29 @@
+[:allocate]
+class: Class
+is_a: [true, true]
+name: nil
+ancestors: true
+instance_methods: []
+superclass: [TypeError, "uninitialized class"]
+new: [TypeError, "can't instantiate uninitialized class"]
+allocate: [TypeError, "can't instantiate uninitialized class"]
+distinct: false
+String: ""
+Array: []
+Hash: {}
+Object: Object
+Range: "nil..nil"
+RuntimeError: [RuntimeError, "RuntimeError"]
+Exception: "#<Exception: Exception>"
+Errno: Errno::ENOENT
+Integer: [TypeError, "allocator undefined for Integer"]
+Symbol: [TypeError, "allocator undefined for Symbol"]
+Comparable: [NoMethodError, "undefined method 'allocate' for module Comparable"]
+beginless first: [RangeError, "cannot get the first element of beginless range"]
+beginless begin: nil
+beginless last: 5
+endless last: [RangeError, "cannot get the last element of endless range"]
+endless end: nil
+endless first: 1
+bounded: [1, 5, 5]
+n-form: [[1, 2], [4, 5], [1, 2]]

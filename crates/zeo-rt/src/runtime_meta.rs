@@ -86,6 +86,10 @@ struct OverlayEntry {
     /// every other object's. Not `ancestors.as_ptr()`: `include`/`prepend`
     /// re-leak that slice.
     addr: usize,
+    /// `Class.allocate` handed this one out and no `initialize` has run, so it
+    /// has no superclass AT ALL -- distinct from "its superclass is
+    /// `BasicObject`", and the difference is what `#superclass` reports.
+    uninitialized: bool,
 }
 
 impl Default for OverlayEntry {
@@ -101,6 +105,7 @@ impl Default for OverlayEntry {
             constructor: None,
             undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
+            uninitialized: false,
         }
     }
 }
@@ -2046,6 +2051,43 @@ pub fn runtime_class_new(
         with_body_frame(new_id, || b.call_with_self(&class_val, &[]))?;
     }
     Ok(class_val)
+}
+
+/// `Class.allocate` -- a class with NO superclass, because `Class#initialize`
+/// is what installs one and it has not run. Its ancestry is just itself, so it
+/// inherits nothing, answers no instance method, and cannot instantiate.
+///
+/// Only `Marshal` and the reflection corners reach this. It exists so
+/// `Class.allocate` answers the object ruby answers rather than the TypeError
+/// the generic `Class#allocate` raises for a class with no allocator.
+pub fn runtime_class_allocate() -> RubyValue {
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    let leaked: &'static [ClassId] = Box::leak(vec![new_id].into_boxed_slice());
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                ancestors: leaked,
+                uninitialized: true,
+                ..Default::default()
+            },
+        );
+    }
+    mark_live();
+    RubyValue::Class(new_id)
+}
+
+/// Whether `id` is a class `Class.allocate` handed out and nothing initialized.
+pub fn class_is_uninitialized(id: ClassId) -> bool {
+    is_live()
+        && maps()
+            .classes
+            .read()
+            .unwrap()
+            .get(&id.0)
+            .is_some_and(|e| e.uninitialized)
 }
 
 /// Mint a fresh runtime class rooted at `root` (e.g. `STRUCT_CLASS`/
