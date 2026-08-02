@@ -1,0 +1,14 @@
+[:[], :inspect, :keyword_init?, :members, :new]
+[-1, 0]
+"Process::Tms"
+"Process::Tms"
+[nil, nil, nil, nil]
+[1, 2, 3, 4]
+[1, 2, 3, 4]
+[1, 2, nil, nil]
+"struct size differs"
+"#<struct Process::Tms utime=1, stime=2, cutime=3, cstime=4>"
+[:utime, :stime, :cutime, :cstime]
+nil
+[Float, Float, Float, Float]
+4

@@ -617,6 +617,16 @@ ruby_module! {
         def self."[]" cfunc (_recv, *args, &_block) {
             tms_construct(args)
         }
+        // `new` is `[]` under its other name, as on every Struct.
+        def self."new" cfunc (_recv, *args, &_block) {
+            tms_construct(args)
+        }
+        // A Struct subclass re-declares `inspect` on its own singleton, where
+        // it answers exactly what `Module#inspect` answers. Declaring it here
+        // is what puts the name in `singleton_methods(false)`.
+        def self."inspect"(recv) {
+            crate::builtins::inherited_row!(rmodule, "inspect", recv, __args, None)
+        }
 
         def "utime"(recv) {
             Ok(recv_tms(recv).get(0))
