@@ -1857,3 +1857,51 @@ pub fn register_exception_subclass(
         registry.define_method_own(id, Symbol::intern("result"), stop_result);
     }
 }
+
+// The `(key, matchee)` of the most recent hash-pattern KEY miss.
+//
+// A pattern compiles to one boolean, so by the time the `expr => pattern` arm
+// raises, the expression tree that knew which key was absent is gone. The miss
+// is therefore recorded where it happens and read back at the raise. Thread-
+// local because a pattern match is entirely within one thread, and cleared at
+// the start of every required match so a stale record from an earlier one --
+// or from a `case/in` arm that simply did not apply -- cannot leak into it.
+thread_local! {
+    static PATTERN_KEY_MISS: std::cell::RefCell<Option<(RubyValue, RubyValue)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Arm a required match: forget any earlier miss.
+pub fn pattern_key_miss_clear() {
+    PATTERN_KEY_MISS.with(|m| *m.borrow_mut() = None);
+}
+
+/// Record that `key` was absent from `matchee`. The LAST miss wins, which is
+/// what ruby reports for a nested pattern: `{a: {b: 1}} => {a: {c:}}` names
+/// `:c` and the INNER hash, not `:a` and the outer one.
+pub fn pattern_key_miss_record(key: &RubyValue, matchee: &RubyValue) {
+    PATTERN_KEY_MISS.with(|m| *m.borrow_mut() = Some((key.clone(), matchee.clone())));
+}
+
+/// The exception an `expr => pattern` raises. A recorded key miss makes it
+/// `NoMatchingPatternKeyError`, carrying the key and the hash it was asked of;
+/// anything else stays the parent class. `subject` is the OUTERMOST subject,
+/// which is what ruby puts in the message even when `matchee` is a nested hash.
+pub fn pattern_match_error(subject: &RubyValue) -> crate::Signal {
+    let miss = PATTERN_KEY_MISS.with(|m| m.borrow_mut().take());
+    let Some((key, matchee)) = miss else {
+        return crate::dispatch::raise_error(
+            "NoMatchingPatternError",
+            "no matching pattern".to_string(),
+        );
+    };
+    let message = format!(
+        "{}: key not found: {}",
+        subject.inspect_string(),
+        key.inspect_string()
+    );
+    let exc = crate::dispatch::construct_exception_value("NoMatchingPatternKeyError", &message);
+    set_exception_detail(&exc, "key", key);
+    set_exception_detail(&exc, "matchee", matchee);
+    crate::Signal::Raise(crate::stamp_backtrace(exc))
+}

@@ -54,7 +54,11 @@ pub fn emit_case_in(
     // `Poly`; every arm must agree on `RubyValue`).
     let mut chain = match else_body {
         Some(body) => super::stmt::emit_body_boxed(cx, body),
-        None => emit_no_matching_pattern_raise(cx),
+        None => emit_no_matching_pattern_raise(super::expr::box_if_object_typed(
+            cx,
+            subject,
+            quote! { __subject.clone() },
+        )),
     };
 
     for arm in arms.iter().rev() {
@@ -104,21 +108,29 @@ pub fn emit_match_required(cx: &Ctx, subject: NodeId, pattern: &Pattern) -> Toke
     let subject_ty = infer(cx, subject);
     let arm_cx = cx.with_narrowed_locals(collect_narrowing(pattern));
     let cond = emit_pattern_match(&arm_cx, pattern, subject_ty, &quote! { __subject });
-    let raise = emit_no_matching_pattern_raise(&arm_cx);
+    // `__subject` keeps the subject's STATIC type, which for an object-typed
+    // one is an `Arc<Concrete>` rather than a `RubyValue` -- so the raise arm
+    // (and only it, being cold) boxes what it reports.
+    let raise = emit_no_matching_pattern_raise(super::expr::box_if_object_typed(
+        &arm_cx,
+        subject,
+        quote! { __subject.clone() },
+    ));
     quote! {
         {
             let __subject = #subject_expr;
+            zeo_rt::pattern_key_miss_clear();
             if !(#cond) { #raise }
             zeo_rt::RubyValue::Nil
         }
     }
 }
 
-fn emit_no_matching_pattern_raise(cx: &Ctx) -> TokenStream {
-    let msg =
-        quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("no matching pattern".to_string())) };
-    let boxed = super::expr::emit_boxed_new(cx, "NoMatchingPatternError", vec![msg]);
-    quote! { return Err(zeo_rt::Signal::Raise(#boxed)); }
+/// The raise arm. Which exception it is depends on WHY the match failed, and
+/// only the failing sub-pattern knows that -- see `zeo_rt::pattern_match_error`
+/// for how a hash-pattern key miss reaches this from there.
+fn emit_no_matching_pattern_raise(subject: TokenStream) -> TokenStream {
+    quote! { return Err(zeo_rt::pattern_match_error(&(#subject))); }
 }
 
 /// The DRY core: compiles `pattern` against an already-evaluated `scrutinee`
@@ -794,7 +806,17 @@ fn emit_hash_pattern(
                 quote! { { #write true } }
             }
         };
-        quote! { if !(#has_key) || !(#value_check) { break #label false; } }
+        // A MISSING key is ruby's `NoMatchingPatternKeyError`, while a key that
+        // is present with a non-matching value is the plain parent error -- so
+        // the two failures are kept apart here, and only the first records
+        // itself for the `expr => pattern` raise arm to read.
+        quote! {
+            if !(#has_key) {
+                zeo_rt::pattern_key_miss_record(&(#key_expr), &zeo_rt::RubyValue::Hash(#h_ident.clone()));
+                break #label false;
+            }
+            if !(#value_check) { break #label false; }
+        }
     });
 
     let no_more_keys_check = matches!(rest, HashPatternRest::NoMoreKeys).then(|| {

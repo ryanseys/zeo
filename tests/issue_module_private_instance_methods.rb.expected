@@ -1,0 +1,31 @@
+BareDirective
+[:a]
+[:b]
+[]
+[true, false, false]
+WrappedDef
+[:a]
+[:b]
+[]
+[true, false, false]
+NamedAfter
+[:a]
+[:b]
+[]
+[true, false, false]
+ProtectedDirective
+[:a, :b]
+[]
+[:b]
+[false, true, true]
+ClassControl
+[:a]
+[:b]
+[]
+[true, false, false]
+1
+true
+false
+true
+private method 'b' called for an instance of Host
+2

@@ -1639,8 +1639,13 @@ fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
 /// via `extend`/`include` -- registry methods plus any runtime-overlay ones a
 /// `Module.new` added.
 fn module_extendable_method_names(mid: ClassId) -> Vec<Symbol> {
+    // PRIVATE methods extend too -- ruby copies the module's whole instance
+    // set onto the singleton, private ones staying private there, which is how
+    // `singleton`'s own `set_mutex` writer travels. The filter said
+    // `NotPrivate`, which went unnoticed only because a `private` inside a
+    // module body never reached the registry to begin with.
     let mut names =
-        crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::NotPrivate, false);
+        crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::All, false);
     for n in overlay_own_method_names(mid) {
         if !names.contains(&n) {
             names.push(n);

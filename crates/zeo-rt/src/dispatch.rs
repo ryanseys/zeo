@@ -1812,8 +1812,14 @@ pub(crate) fn obj_dig(cur: RubyValue, rest: &[RubyValue]) -> Result<RubyValue, S
 /// class's own methods) -- the reflection counterpart of `send_value_in`'s
 /// `RubyValue::Class` dispatch probes.
 fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
+    // The ANCESTRY, not just `cid`: a subclass's singleton class inherits its
+    // parent's, so a `Base.extend Store` answers on `Sub` too. The frozen half
+    // needs no walk -- materialization already copied a `def self.x` onto every
+    // subclass's entry -- but nothing copies a runtime overlay.
     if crate::runtime_meta::is_live()
-        && crate::runtime_meta::overlay_class_method(cid, name).is_some()
+        && ancestors_of_value(cid)
+            .iter()
+            .any(|&anc| crate::runtime_meta::overlay_class_method(anc, name).is_some())
     {
         return true;
     }
@@ -2095,11 +2101,15 @@ pub enum VisFilter {
     Public,
     Protected,
     Private,
+    /// Every visibility -- what `extend` copies, since ruby carries a module's
+    /// private instance methods onto the singleton as private ones.
+    All,
 }
 
 impl VisFilter {
     fn matches(self, v: MethodVisibility) -> bool {
         match self {
+            VisFilter::All => true,
             VisFilter::NotPrivate => v != MethodVisibility::Private,
             VisFilter::Public => v == MethodVisibility::Public,
             VisFilter::Protected => v == MethodVisibility::Protected,
@@ -2355,9 +2365,14 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
     // A class minted at runtime keeps its `def self.x`/`define_singleton_method`/
     // `module_function` methods in the overlay, never in the frozen registry.
     if crate::runtime_meta::is_live() {
-        for name in crate::runtime_meta::overlay_class_method_names(class) {
-            if seen.insert(name) {
-                out.push(name);
+        // Ancestors included, so the listing agrees with what dispatch actually
+        // answers -- see `class_receiver_responds` for why only the overlay
+        // half needs the walk.
+        for &anc in ancestors_of_value(class) {
+            for name in crate::runtime_meta::overlay_class_method_names(anc) {
+                if seen.insert(name) {
+                    out.push(name);
+                }
             }
         }
     }
@@ -3272,6 +3287,16 @@ pub fn raise_no_block_yield() -> Signal {
 /// stores answers `e.name`/`e.receiver`, matching CRuby. `receiver` is
 /// `RubyValue::Nil` where the lexical scope isn't statically known (a bare
 /// top-level reference), which reads back as `nil` -- the same as an unset slot.
+/// An exception VALUE of `class_name` carrying `message`, for a raise site that
+/// must set details on it before raising. `raise_error` is the shortcut for
+/// every site that does not.
+pub fn construct_exception_value(class_name: &str, message: &str) -> RubyValue {
+    match REGISTRY.get() {
+        Some(reg) => reg.construct_exception(class_name, message.to_string()),
+        None => panic!("{class_name}: {message}"),
+    }
+}
+
 pub fn make_name_error(message: String, name: &str, receiver: RubyValue) -> RubyValue {
     match REGISTRY.get() {
         Some(reg) => {
@@ -3935,6 +3960,21 @@ fn send_value_in_reason(
         if crate::builtins::rstruct::is_struct_class(*cid) {
             if let Some(f) = crate::builtins::rstruct::class_lookup(name.name_str()) {
                 return f(recv, args, block);
+            }
+        }
+        // An ANCESTOR's runtime class method -- what a `Base.extend Store` or a
+        // `define_singleton_method` on a superclass installs. A subclass's
+        // singleton class inherits its parent's in ruby, so `Sub.tag` answers;
+        // zeo probed the receiver's own overlay alone and stopped. Last, so
+        // nothing that already resolves changes order: a frozen `def self.x`
+        // nearer the receiver still wins, which is ruby's placement rule too.
+        if crate::runtime_meta::is_live() {
+            let inherited = ancestors_of_value(*cid)
+                .iter()
+                .skip(1)
+                .find_map(|&anc| crate::runtime_meta::overlay_class_method(anc, name));
+            if let Some(p) = inherited {
+                return p.call_with_self_and_block(recv, args, block);
             }
         }
     }

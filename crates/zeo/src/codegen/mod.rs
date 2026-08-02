@@ -2684,6 +2684,16 @@ fn emit_user_module_bridges(compiler: &Compiler) -> Vec<TokenStream> {
                 &scope_frame_guard(compiler, scope, false),
             );
             push_vm_row(id, 0, &scope.name, tramp);
+            // A module declares its methods in `own_methods`, while the
+            // registration loop's visibility pass reads the materialized
+            // `methods` -- empty for a module nothing includes. So the mark
+            // goes where the ROW goes, and `private` inside a module body
+            // finally reaches the registry.
+            match scope.visibility {
+                crate::hir::Visibility::Private => push_vis_row(id, &scope.name, 0),
+                crate::hir::Visibility::Protected => push_vis_row(id, &scope.name, 1),
+                crate::hir::Visibility::Public => {}
+            }
         }
     }
     containers

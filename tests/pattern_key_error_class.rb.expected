@@ -1,0 +1,13 @@
+missing key: NoMatchingPatternKeyError key=:b matchee={a: 1}
+missing, several: NoMatchingPatternKeyError key=:b matchee={a: 1}
+nested missing: NoMatchingPatternKeyError key=:c matchee={b: 1}
+wrong value: NoMatchingPatternError key=- matchee=-
+array length: NoMatchingPatternError key=- matchee=-
+not a hash: NoMatchingPatternError key=- matchee=-
+ok: no raise
+after ok: NoMatchingPatternKeyError key=:z matchee={a: 1}
+case then array fail: NoMatchingPatternError key=- matchee=-
+:a
+NoMatchingPatternKeyError
+true
+:b
