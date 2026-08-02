@@ -2263,7 +2263,10 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         }
     }
     let reg = REGISTRY.get()?;
-    let name_str = name.name();
+    // `name_str`, not `name()`: this walk is on the explicit-receiver barrier's
+    // path, so a `String` per call would be a global lock and a heap allocation
+    // on every dynamic call a site's inline cache does not serve.
+    let name_str = name.name_str();
     for anc in ancestors_of_value(class) {
         // Runtime marks first: an explicit `class_eval { private :m }` (or an
         // alias's inherited visibility) on the nearest ancestor beats the
@@ -2293,9 +2296,9 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         // Answering `Private` rather than falling through matters: the name
         // IS defined, so `private_method_defined?` must say so, and the walk
         // must not keep looking for a public copy farther up.
-        if crate::builtins::class_table_names(*anc).contains(&name_str.as_str()) {
-            let private = is_hidden_builtin_private(*anc, &name_str)
-                || crate::builtins::class_method_is_private(*anc, &name_str);
+        if crate::builtins::class_table_names(*anc).contains(&name_str) {
+            let private = is_hidden_builtin_private(*anc, name_str)
+                || crate::builtins::class_method_is_private(*anc, name_str);
             return Some(match private {
                 true => MethodVisibility::Private,
                 false => MethodVisibility::Public,
@@ -4026,18 +4029,24 @@ enum Cached {
 /// a fat pointer in every site in the program to serve a minority of them.
 pub struct CallSite {
     hit: std::sync::OnceLock<(u32, Cached)>,
+    /// The class whose body this site sits in -- [`FCALL`] where ruby asks no
+    /// visibility question at all. It rides in the site rather than in a call
+    /// argument because it is a per-site CONSTANT, and because the hot path
+    /// never reads it: a filled site was vetted when it filled.
+    caller_class: u32,
 }
 
 impl Default for CallSite {
     fn default() -> Self {
-        Self::new()
+        Self::new(FCALL)
     }
 }
 
 impl CallSite {
-    pub const fn new() -> CallSite {
+    pub const fn new(caller_class: u32) -> CallSite {
         CallSite {
             hit: std::sync::OnceLock::new(),
+            caller_class,
         }
     }
 }
@@ -4059,6 +4068,11 @@ impl CallSite {
 /// NOT `#[inline]`: a generated program has tens of thousands of dynamic call
 /// sites, and inlining this body into each cost uri 153% more rustc time for
 /// no runtime gain -- the work it saves is two hash probes, not a call.
+/// The site's own `caller_class` carries the visibility question (see
+/// [`explicit_call_barrier`]). It is asked only where the cache does NOT
+/// answer: a filled site was already vetted for that receiver class when it
+/// filled, and visibility is a function of the same `(receiver class, name)`
+/// the cache is keyed by -- so a hit reads neither the field nor the tables.
 pub fn send_value_cached(
     site: &'static CallSite,
     box_id: u32,
@@ -4088,7 +4102,11 @@ pub fn send_value_cached(
             // Empty. Resolve once and remember, BEFORE the call, so a
             // recursive method hits its own site on the way down rather than
             // only after the outermost frame returns -- which is the shape
-            // `bm_rbtree` and `bm_splay` actually have.
+            // `bm_rbtree` and `bm_splay` actually have. The site is vetted
+            // before it fills, so every later hit on it is vetted too.
+            if let Some(reason) = explicit_call_barrier(recv, name, site.caller_class) {
+                return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+            }
             match recv {
                 RubyValue::Object(o) if id != zeo_abi::OBJECT_CLASS => {
                     if let Some(MethodImpl::Static(f)) =
@@ -4111,7 +4129,73 @@ pub fn send_value_cached(
             }
         }
     }
-    send_value_in(box_id, recv, name, args, block)
+    // Every route the cache did not serve -- a `Class` receiver, a box, a live
+    // overlay, a site that has already seen another class -- still has to ask.
+    send_value_explicit_in(box_id, recv, name, args, block, site.caller_class)
+}
+
+/// [`send_value_in`] behind ruby's explicit-receiver barrier. The uncached
+/// entry point, and the one every non-cacheable route funnels into.
+pub fn send_value_explicit_in(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    caller_class: u32,
+) -> Result<RubyValue, Signal> {
+    match explicit_call_barrier(recv, name, caller_class) {
+        Some(reason) => Err(raise_method_missing(recv, &name.to_string(), args, reason)),
+        None => send_value_in(box_id, recv, name, args, block),
+    }
+}
+
+/// The `caller_class` that means "run no visibility check" -- ruby's
+/// `VM_CALL_FCALL`. The compiler passes it for an implicit receiver, for a
+/// literal `self` receiver (allowed to reach a private method since 2.7), and
+/// for `send`/`__send__`, which are visibility-blind by design.
+pub const FCALL: u32 = u32::MAX;
+
+/// Ruby's barrier on an explicit-receiver call (`rb_method_call_status`,
+/// `vm_eval.c:837`), or `None` to let the call through. A name nothing defines
+/// is `None` too: that is `NoEntry`'s job, and it carries a different message.
+///
+/// `caller_class` stands in for CRuby's caller `self`. The rule there is
+/// `self.is_a?(owner)`, and an instance of `caller_class` is a kind of `owner`
+/// exactly when `caller_class` has `owner` in its ancestry -- so the class the
+/// call site sits in decides it, with no runtime `self` to thread through.
+fn explicit_call_barrier(
+    recv: &RubyValue,
+    name: Symbol,
+    caller_class: u32,
+) -> Option<MissingReason> {
+    if caller_class == FCALL {
+        return None;
+    }
+    // A CLASS receiver's class methods keep their own visibility table; the
+    // instance walk below reads Class/Module's, which says nothing about them.
+    if let RubyValue::Class(cid) = recv {
+        if class_method_is_private(*cid, name) {
+            return Some(MissingReason::Private);
+        }
+        // ...and a class method the class DOES provide is the one that answers,
+        // so nothing below may overrule it. `File.open` is File's own public
+        // singleton method; the instance walk would reach past it to the
+        // private `Kernel#open`, which is not on File's singleton chain at all.
+        if class_method_owner(*cid, name).is_some() {
+            return None;
+        }
+    }
+    match instance_method_visibility(recv.class_id(), name)? {
+        MethodVisibility::Public => None,
+        MethodVisibility::Private => Some(MissingReason::Private),
+        MethodVisibility::Protected => {
+            let owner = method_owner(recv.class_id(), name)?;
+            let kin = caller_class == owner.0
+                || ancestors_of_value(ClassId(caller_class)).contains(&owner);
+            (!kin).then_some(MissingReason::Protected)
+        }
+    }
 }
 
 pub fn send(

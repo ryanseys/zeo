@@ -701,7 +701,11 @@ struct PoolBuilder {
     /// One `CallSite` inline cache per dynamic call SITE -- never deduped,
     /// because sharing one between two sites is what makes a cache
     /// megamorphic. See `zeo_rt::CallSite`.
-    call_sites: usize,
+    /// One counter per CALLER class, because the caller decides the visibility
+    /// question a site asks and is baked into the site's own constructor. A
+    /// program has a handful of classes and tens of thousands of call sites, so
+    /// grouping this way keeps the emitted arrays O(classes).
+    call_sites: std::collections::BTreeMap<u32, usize>,
     /// `mark_private`/`mark_protected`/`mark_public` rows (`__VIS_ROWS`,
     /// verb 0/1/2) -- ONE ordered stream for all three verbs, because a
     /// `public :m` promotion must stay AFTER the private stamp it clears.
@@ -753,13 +757,25 @@ pub(crate) fn pooled_frozen_str(text: &str) -> TokenStream {
 /// Deliberately NOT deduped by name: the whole point is that one site tends to
 /// see one receiver class, and two sites sharing a cache would each evict the
 /// other's answer.
-pub(crate) fn pooled_call_site() -> TokenStream {
+pub(crate) fn pooled_call_site(caller_class: u32) -> TokenStream {
     let i = POOLS.with_borrow_mut(|p| {
-        p.call_sites += 1;
-        p.call_sites - 1
+        let n = p.call_sites.entry(caller_class).or_default();
+        *n += 1;
+        *n - 1
     });
     let i = proc_macro2::Literal::usize_unsuffixed(i);
-    quote! { &crate::__CS[#i] }
+    let arr = call_site_array(caller_class);
+    quote! { &crate::#arr[#i] }
+}
+
+/// The `__CS_*` array holding every site whose caller class is `caller_class`.
+/// `FCALL` gets its own name rather than a number, since `u32::MAX` would
+/// otherwise read as a class id.
+fn call_site_array(caller_class: u32) -> proc_macro2::Ident {
+    match caller_class {
+        u32::MAX => format_ident!("__CS_FCALL"),
+        c => format_ident!("__CS_{c}"),
+    }
 }
 
 /// `crate::__PP_N` for one proc signature's `ProcParamMeta` table, deduped
@@ -2205,10 +2221,15 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // ONE array, not one static per site: a `static` item each cost rustc
     // 155% on uri and 26% more emitted lines, for storage that is identical
     // either way.
-    let call_sites = (pools.call_sites > 0).then(|| {
-        let n = pools.call_sites;
+    // ...and one array per CALLER class, so the visibility question a site
+    // asks rides in the site itself rather than in an argument every dynamic
+    // call would have to pass. A program has few classes, so this stays a
+    // handful of arrays.
+    let call_sites = pools.call_sites.iter().map(|(&caller, &n)| {
+        let arr = call_site_array(caller);
         quote! {
-            static __CS: [zeo_rt::CallSite; #n] = [const { zeo_rt::CallSite::new() }; #n];
+            static #arr: [zeo_rt::CallSite; #n] =
+                [const { zeo_rt::CallSite::new(#caller) }; #n];
         }
     });
     let pps = &pools.pps;
@@ -2232,7 +2253,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
     });
     quote! {
-        #program #syms #lits #call_sites #(#pps)*
+        #program #syms #lits #(#call_sites)* #(#pps)*
         static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
         #vm_rows #cm_rows #vis_rows
     }

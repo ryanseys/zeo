@@ -3600,17 +3600,19 @@ fn dispatch(
         // resolving the same class to the same method on every call. Per-site
         // inline cache; see `zeo_rt::CallSite`. A SHARED body gets none -- see
         // `Ctx::shared_body`.
+        let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
         let dyn_call = if cx.shared_body {
             quote! {
-                zeo_rt::send_value_in(#__bx,
+                zeo_rt::send_value_explicit_in(#__bx,
                     &(#recv_expr),
                     #name_expr,
                     &[#(#arg_exprs,)* #(#kw_hash,)*],
                     #block_value,
+                    #caller,
                 )
             }
         } else {
-            let site = crate::codegen::pooled_call_site();
+            let site = crate::codegen::pooled_call_site(caller);
             quote! {
                 zeo_rt::send_value_cached(#site, #__bx,
                     &(#recv_expr),
@@ -3658,12 +3660,14 @@ fn dispatch(
             // Keyword args ride as one trailing Hash (the G2 convention).
             let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
             let block_value = emit_block_option(cx, block, block_arg);
+            let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
             return quote! {
-                zeo_rt::catch_break(zeo_rt::send_value_in(#__bx,
+                zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
                     &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
                     #name_expr,
                     &[#(#arg_exprs,)* #(#kw_hash,)*],
                     #block_value,
+                    #caller,
                 ))?
             };
         }
@@ -3688,7 +3692,8 @@ fn dispatch(
     // The general dynamic dispatch, and the one the object-graph benchmarks
     // spend a third of their time in -- so it carries a per-site inline cache
     // (`zeo_rt::CallSite`). Every other dynamic entry point stays uncached.
-    let site = crate::codegen::pooled_call_site();
+    let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
+    let site = crate::codegen::pooled_call_site(caller);
     quote! {
         zeo_rt::catch_break(zeo_rt::send_value_cached(#site, #__bx,
             &#recv_boxed,

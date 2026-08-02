@@ -86,7 +86,7 @@ pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_remove, cvar_set};
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     CallSite, ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS,
-    FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
+    FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
     MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MissingReason, NIL_CLASS,
     NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
     REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
@@ -101,8 +101,8 @@ pub use dispatch::{
     raise_with_cause, refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
     rescue_matches_any, responds_to, responds_to_or_missing, responds_to_value, run_initialize,
     send, send_dispatch_in, send_in, send_super_class_from, send_super_from, send_value,
-    send_value_cached, send_value_in, send_value_public_in, send_value_vcall_in, stamp_backtrace,
-    validate_aliases, validate_class_aliases, value_class,
+    send_value_cached, send_value_explicit_in, send_value_in, send_value_public_in,
+    send_value_vcall_in, stamp_backtrace, validate_aliases, validate_class_aliases, value_class,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};

@@ -20,9 +20,9 @@ use proc_macro2::TokenStream;
 /// ancestor-related (either direction) to the target method's owner class
 /// -- e.g. `def ==(other); x == other.x; end` calling a `protected` `x` on
 /// `other`, another instance of the same class. Path 2 (dynamic dispatch
-/// against a receiver whose class isn't statically known) doesn't enforce
-/// this at all yet -- a documented, narrow gap, matching this codebase's
-/// existing posture on other Path-1-only guarantees (e.g. keyword args).
+/// against a receiver whose class isn't statically known) asks the same
+/// question at RUN time instead -- see [`caller_class`], which is how the site
+/// tells the runtime which of the two rules applies to it.
 pub(super) fn enforce_visibility(
     cx: &Ctx,
     recv_id: NodeId,
@@ -52,6 +52,23 @@ pub(super) fn enforce_visibility(
     }
     None
 }
+/// The caller class a Path 2 site records -- the same question
+/// [`enforce_visibility`] answers at compile time, for the sites where the
+/// receiver's class is only known at run time.
+///
+/// `zeo_rt::FCALL` (`u32::MAX`) wherever ruby runs no check at all: an implicit
+/// receiver, a literal `self` receiver (private is reachable that way since
+/// 2.7), and `send`/`__send__`. Otherwise the class whose body the call sits
+/// in, which is what decides whether a `protected` target is in reach.
+pub(super) fn caller_class(cx: &Ctx, recv_id: NodeId, bypass: bool) -> u32 {
+    if bypass || matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
+        return u32::MAX;
+    }
+    // Outside any class body `self` is `main`, an ordinary `Object` -- and
+    // `Object` is what a protected check has to compare against there.
+    cx.current_class.map_or(0, |c| c.0)
+}
+
 /// The class-method counterpart, for an explicit `Target.name` receiver. Ruby
 /// has no protected class method, so `private_class_method` is the whole rule,
 /// and -- as with the instance half -- a literal `self` receiver is allowed.
