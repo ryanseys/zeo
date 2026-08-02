@@ -151,7 +151,11 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
     // `respond_to_missing?` counts: `obj.method(:dyn)` succeeds when the
     // hook admits `:dyn`, returning a Method that dispatches through
     // `method_missing` at call time -- CRuby's `rb_obj_method`.
-    if !crate::dispatch::responds_to_or_missing(recv, name, true)? {
+    // ...but a NOT-IMPLEMENTED stub still exists, and ruby hands back a Method
+    // for it (reporting arity 0) even though `respond_to?` denies it.
+    if !crate::dispatch::responds_to_or_missing(recv, name, true)?
+        && !crate::dispatch::has_notimplement_row(recv, name)
+    {
         // CRuby's phrasing names the receiver's CLASS, not the receiver
         // ("undefined method 'nope' for class 'String'").
         return Err(name_error!(

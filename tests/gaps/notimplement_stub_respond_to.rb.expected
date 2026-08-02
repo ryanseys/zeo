@@ -1,6 +1,0 @@
-respond_to? syscall: false
-respond_to? Process::Sys.setresuid: false
-listed as private: true
-listed as singleton: true
-arity: 0
-calling syscall: NotImplementedError: syscall() function is unimplemented on this machine

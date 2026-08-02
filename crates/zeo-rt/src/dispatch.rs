@@ -1723,7 +1723,22 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
 /// per-object singleton method, which is keyed by object identity and
 /// so invisible to the class-id-only `responds_to`. Codegen's `respond_to?`
 /// fast path routes here so a `def obj.foo` singleton answers `true`.
+/// Whether `recv` carries a not-implemented stub named `name` (see
+/// [`is_notimplement_row`]). Reflection that asks whether a row EXISTS --
+/// `method`, `instance_method` -- must answer yes exactly where `respond_to?`
+/// answers no, which is the whole shape of `rb_f_notimplement`.
+pub fn has_notimplement_row(recv: &RubyValue, name: Symbol) -> bool {
+    is_notimplement_row(recv.class_id(), name)
+        || matches!(recv, RubyValue::Class(cid) if is_notimplement_row(*cid, name))
+}
+
 pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> bool {
+    // Asked HERE and not in `responds_to`, which doubles as an EXISTENCE
+    // predicate -- `instance_method(:syscall)` must still build an
+    // `UnboundMethod`, and report arity 0, for a row that exists but refuses.
+    if has_notimplement_row(recv, name) {
+        return false;
+    }
     if crate::runtime_meta::is_live()
         && crate::runtime_meta::object_has_singleton_method(recv, name)
     {
@@ -1916,6 +1931,34 @@ pub fn method_defined_inherit(recv_class: ClassId, name: Symbol, inherit: bool) 
     };
     r.defines_own(recv_class, name)
         && r.own_method_visibility(recv_class, name) != Some(MethodVisibility::Private)
+}
+
+/// A row this build DEFINES but cannot perform -- CRuby's `rb_f_notimplement`.
+/// Such an entry is listed like any other (`private_instance_methods` and
+/// `singleton_methods` both carry it, and its arity answers), but `respond_to?`
+/// reports FALSE, which is how a program is meant to detect the absence before
+/// calling. CRuby tells them apart by the entry's implementation identity; the
+/// bodies here are ordinary rows, so they are named instead.
+///
+/// `tests/notimplement_stub_respond_to.rb` calls every name below and asserts
+/// each one raises `NotImplementedError`, so an entry cannot go stale by having
+/// its body implemented out from under it.
+fn is_notimplement_row(cid: ClassId, name: Symbol) -> bool {
+    /// One owning module and the stub it declares. The id is a THUNK because a
+    /// `ClassId` const is not usable in a const initializer here -- the same
+    /// shape `exception.rs`'s `BY_OWNER` table uses.
+    type Stub = (fn() -> ClassId, &'static str);
+    const STUBS: &[Stub] = &[
+        // `crates/zeo-rt/src/builtins/kernel.rs`
+        (|| KERNEL_CLASS, "syscall"),
+        // `crates/zeo-rt/src/builtins/process.rs`
+        (|| zeo_abi::PROCESS_SYS_MODULE, "setresuid"),
+        (|| zeo_abi::PROCESS_SYS_MODULE, "setresgid"),
+    ];
+    let n = name.name_str();
+    STUBS
+        .iter()
+        .any(|(owner, stub)| *stub == n && ancestors_of_value(cid).contains(&owner()))
 }
 
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {

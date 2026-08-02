@@ -63,8 +63,15 @@ fn method_defined_with_vis(
     want: crate::dispatch::MethodVisibility,
 ) -> Result<bool, crate::Signal> {
     let name = name_arg(arg)?;
-    let vis =
-        crate::dispatch::instance_method_visibility(recv_cid(recv), crate::Symbol::intern(&name));
+    let sym = crate::Symbol::intern(&name);
+    // A not-implemented stub is LISTED but not "defined" -- ruby's
+    // `rb_method_boundp` rejects it the same way `respond_to?` does, so
+    // `private_instance_methods` carries `:syscall` while
+    // `private_method_defined?(:syscall)` is false.
+    if crate::dispatch::has_notimplement_row(recv, sym) {
+        return Ok(false);
+    }
+    let vis = crate::dispatch::instance_method_visibility(recv_cid(recv), sym);
     Ok(vis == Some(want))
 }
 

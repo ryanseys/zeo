@@ -1,0 +1,15 @@
+respond_to? syscall: false
+respond_to? syscall public: false
+Process::Sys.respond_to? setresuid: false
+Process::Sys.respond_to? setresgid: false
+listed as private: true
+listed as singleton: true
+private_method_defined?: false
+arity: 0
+owner: Kernel
+Sys singleton listing: true
+respond_to? puts: true
+Process::Sys.respond_to? getuid: true
+Kernel#syscall: NotImplementedError: syscall() function is unimplemented on this machine
+Process::Sys.setresuid: NotImplementedError: setresuid() function is unimplemented on this machine
+Process::Sys.setresgid: NotImplementedError: setresgid() function is unimplemented on this machine
