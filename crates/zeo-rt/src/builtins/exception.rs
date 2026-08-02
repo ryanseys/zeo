@@ -909,15 +909,17 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
             registry.mark_own(id, Symbol::intern(name));
         }
     }
-    // `#initialize` is PRIVATE on every class, so the mark goes on every id --
-    // flat dispatch put a row there, and without the mark
+    // `Exception`'s three PRIVATE rows. The mark goes on every id -- flat
+    // dispatch put a row on each, and without it
     // `RuntimeError.new.respond_to?(:initialize)` answers true. Only
-    // `Exception` OWNS it, though, so only `Exception` lists it in
+    // `Exception` OWNS them, though, so only `Exception` lists them in
     // `private_instance_methods(false)`.
-    let init = Symbol::intern("initialize");
-    registry.mark_private(id, init);
-    if id == EXCEPTION_CLASS {
-        registry.mark_own(id, init);
+    for name in ["initialize", "method_missing", "respond_to_missing?"] {
+        let sym = Symbol::intern(name);
+        registry.mark_private(id, sym);
+        if id == EXCEPTION_CLASS {
+            registry.mark_own(id, sym);
+        }
     }
 }
 
@@ -1410,6 +1412,39 @@ fn exc_respond_to(
     )
 }
 
+/// `Exception`'s own private `method_missing` and `respond_to_missing?`, the
+/// other two thirds of its `private_instance_methods(false)`. CRuby declares
+/// both here rather than inheriting them, and both answer exactly what the root
+/// pair answers -- so each routes to that root instead of restating it, the way
+/// `exc_respond_to` routes to Kernel's.
+fn exc_method_missing(
+    recv: &RObj,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::inherited_row!(
+        basic_object,
+        "method_missing",
+        &RubyValue::Object(recv.clone()),
+        args,
+        blk
+    )
+}
+
+fn exc_respond_to_missing(
+    recv: &RObj,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::inherited_row!(
+        kernel,
+        "respond_to_missing?",
+        &RubyValue::Object(recv.clone()),
+        args,
+        blk
+    )
+}
+
 /// `SignalException#signo` -- the signal number.
 fn exc_signo(
     recv: &RObj,
@@ -1683,6 +1718,12 @@ pub fn register_exception_subclass(
     registry.define_method_own(id, Symbol::intern("detailed_message"), exc_detailed_message);
     registry.define_method_own(id, Symbol::intern("inspect"), exc_inspect);
     registry.define_method_own(id, Symbol::intern("respond_to?"), exc_respond_to);
+    registry.define_method_own(id, Symbol::intern("method_missing"), exc_method_missing);
+    registry.define_method_own(
+        id,
+        Symbol::intern("respond_to_missing?"),
+        exc_respond_to_missing,
+    );
     // Typed introspection accessors, installed by ancestry so a user subclass
     // of the relevant error inherits them the same way the built-in tree does.
     // `NoMethodError < NameError`, so it picks up `#name`/`#receiver` here and

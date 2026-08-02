@@ -1,0 +1,20 @@
+[:initialize, :method_missing, :respond_to_missing?]
+Exception
+Exception
+-1
+2
+true
+false
+[]
+[]
+true
+false
+true
+false
+[NoMethodError, "undefined method 'nope' for an instance of Boom", :nope]
+false
+false
+:loud
+true
+false
+"undefined method 'quiet' for an instance of Loud"
