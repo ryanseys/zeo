@@ -1,0 +1,18 @@
+true
+1
+true
+true
+true
+false
+true
+false
+false
+false
+true
+false
+false
+[Errno::ENOENT, 2]
+Errno::EACCES
+:enoent
+:other_syscall
+:not_syscall

@@ -1556,6 +1556,44 @@ fn exc_class_exception(
     exception_construct(*cid, args, block)
 }
 
+/// `SystemCallError.===(other)` -- `rescue Errno::ENOENT` matches on the ERRNO
+/// NUMBER, not on the class, so any object answering that number matches. The
+/// bare `SystemCallError` matches every one of its instances outright.
+///
+/// The receiver's own `Errno` constant carries the number to compare. On
+/// `SystemCallError` itself that name reaches the top-level `Errno` MODULE
+/// through `Object`, which equals no integer -- so the duck-typed arm answers
+/// false there, exactly as CRuby's does.
+fn syscall_error_eqq(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::check_arity(args.len(), 1, Some(1))?;
+    let RubyValue::Class(cid) = recv else {
+        return Err(type_error!("=== must be sent to a class"));
+    };
+    let other = &args[0];
+    let errno = Symbol::intern("errno");
+    if crate::dispatch::is_a_value(other, SYSTEM_CALL_ERROR_CLASS) {
+        if *cid == SYSTEM_CALL_ERROR_CLASS {
+            return Ok(RubyValue::Bool(true));
+        }
+    } else if !crate::dispatch::responds_to_or_missing(other, errno, false)? {
+        return Ok(RubyValue::Bool(false));
+    }
+    let Some(want) = crate::constants::const_get(cid.0, "Errno") else {
+        return Ok(RubyValue::Bool(false));
+    };
+    let got = crate::dispatch::send_value(other, errno, &[], None)?;
+    Ok(crate::dispatch::send_value(
+        &got,
+        Symbol::intern("=="),
+        &[want],
+        None,
+    )?)
+}
+
 /// `Exception.to_tty?` -- whether the error stream is a TTY. Under the
 /// conformance harness stderr is redirected (not a TTY), so `false`; the value
 /// is environment-dependent, and callers only rely on it being a boolean.
@@ -1743,6 +1781,9 @@ pub fn register_exception_subclass(
     if is_system_call_error {
         registry.define_method_own(id, Symbol::intern("initialize"), syscall_error_initialize);
         registry.define_method_own(id, Symbol::intern("errno"), exc_errno);
+        // On every descendant, not just the owner: class-method lookup does
+        // not walk ancestors, so `Errno::ENOENT === x` needs its own row.
+        registry.define_class_method(id, Symbol::intern("==="), syscall_error_eqq);
     }
     if is_local_jump {
         registry.define_method_own(id, Symbol::intern("reason"), exc_reason);

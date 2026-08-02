@@ -11,9 +11,15 @@
 //! numeric operator rows move into `integer.rs`/`float.rs` (stage C) -- it
 //! would shadow the post-walk numeric `<=>` today.
 
+use crate::builtins::inherited_row;
 use crate::builtins::{arg_error, block_or_enum, local_jump_error, need_block, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
+
+/// `Object` as a receiver value -- what a receiverless `autoload` registers on.
+fn object_value() -> RubyValue {
+    RubyValue::Class(zeo_abi::OBJECT_CLASS)
+}
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
 fn syms_to_array(names: Vec<Symbol>) -> RubyValue {
@@ -429,6 +435,21 @@ ruby_module! {
     }
     module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
         complex_impl(__args)
+    }
+    // `Kernel#autoload`/`#autoload?` -- the RECEIVERLESS spellings, which
+    // register on `Object` rather than on the caller's class. `Module`'s rows
+    // hold the implementation; only the receiver differs.
+    //
+    // ruby reads the caller's cref here, so `class Foo; autoload :X, "y"; end`
+    // lands on `Foo`. zeo folds that literal form at compile time
+    // (`parse::loader` splices the feature), so what reaches this row is the
+    // computed residue -- `send(:autoload, ...)` -- where no cref is knowable
+    // and `Object` is what ruby itself uses at top level.
+    module_function def "autoload"(_recv, _sym, _path) {
+        inherited_row!(rmodule, "autoload", &object_value(), __args, None)
+    }
+    module_function def "autoload?" cfunc (_recv, _sym, _inherit?) {
+        inherited_row!(rmodule, "autoload?", &object_value(), __args, None)
     }
     // `rand`/`srand` as real rows: without them the argument-count guard would
     // have to live in the runtime routine, where the codegen fast path is the
