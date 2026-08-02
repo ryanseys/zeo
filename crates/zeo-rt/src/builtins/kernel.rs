@@ -422,6 +422,11 @@ ruby_module! {
     private def "BigDecimal" cfunc (_recv, _initial, _digits?) {
         crate::ext::bigdecimal::kernel_big_decimal(__args)
     }
+    // `Kernel#Pathname(str)` -- PRIVATE, and there with no require, because
+    // ruby 4.0 loads `pathname.so` before the first line.
+    private def "Pathname"(_recv, arg) {
+        crate::builtins::pathname::kernel_pathname(arg)
+    }
     module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
         complex_impl(__args)
     }

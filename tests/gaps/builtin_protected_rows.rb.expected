@@ -1,0 +1,5 @@
+calling it: NoMethodError: protected method 'path' called for an instance of Pathname
+protected_instance_methods: [:path]
+public lists it: false
+instance_methods lists it: true
+ruby-defined protected: NoMethodError: protected method 'secret' called for an instance of Probe

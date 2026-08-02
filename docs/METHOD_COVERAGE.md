@@ -239,8 +239,9 @@ Taken before Wave 2.2, because each one changes what "done" means:
 3. **`Ractor`: error classes only.** The eight classes so `rescue
    Ractor::ClosedError` resolves; the 23 methods stay deferred with the reason
    already written above.
-4. **`Pathname` vendored and default-loaded**, matching the oracle with no
-   `require`. See Wave 3.5.
+4. **`Pathname` default-loaded**, matching the oracle with no `require`. The
+   decision said "vendored"; the oracle said `pathname.so` carries 96 of the
+   98 methods, so it is a core class instead. See Wave 3.5.
 
 ### 2.1 `Numeric` instance-method defaults (19)
 
@@ -472,7 +473,7 @@ pattern to one boolean, so the raise arm cannot name the failing key. XFAIL in
 
 | class | n | why |
 |---|---|---|
-| `Pathname` | 110 | CRuby loads it by default in 4.0 even under `--disable-gems`. Almost pure Ruby — vendor `lib/pathname.rb` the way the other gems are vendored, and back the few native bits with existing `File` methods |
+| `Pathname` | 110 | CRuby loads it by default in 4.0 even under `--disable-gems`. **Not** almost pure Ruby, as this table first said — `pathname.so` carries 96 of the methods and the `.rb` half adds two, so it is a core class backed by the existing `File`/`Dir` rows. See 3.5 |
 | `Process::Sys` / `UID` / `GID` | 68 | thin libc wrappers over `set*id`; `Process` already links libc |
 | `Encoding::Converter` | 17 | the encoding engine exists; this is its public face |
 | `Enumerator::ArithmeticSequence` | 13 | **observable today**: `(1..10).step(2).class` is `Enumerator` in zeo, `Enumerator::ArithmeticSequence` in CRuby, and `Array#[]` accepts one |
@@ -660,12 +661,53 @@ intermediate observable only —
 
 ### 3.5 `Pathname` (96 own methods)
 
-Vendored under `gems/pathname/`, the way the other 40 gems are, and
-DEFAULT-LOADED so it matches the oracle with no `require` — CRuby 4.0 has it
-reachable under `--disable-gems`. CRuby splits it between `pathname.rb` and a C
-extension; the C half is small (`#initialize`, `#==`, `#<=>`, `#hash`, `#to_s`,
-`#sub`, `#sub_ext`, and the `File`/`Dir` delegators) and every one of those has
-a `File` or `Dir` row already. `Kernel#Pathname` comes with it.
+**Status: done** — `absent-module` 22 → 21, `constant` 11 → 10, no new row.
+`tests/pathname_rows.rb` is byte-identical to the oracle across 138 lines.
+
+**The plan had the split backwards, and the oracle said so.** It expected a
+vendored `lib/pathname.rb`; ruby 4.0 loads `pathname.so` before the first
+line and the C half is nearly the whole class — 96 instance methods and 3
+class methods with no `require` at all. `require "pathname"` only reopens it
+to add `#find` and `#rmtree`, and `Pathname.mktmpdir` arrives with `tmpdir`.
+So the right shape was a CORE class, not a gem. zeo also already HAD a
+`require`-gated `Pathname` with ~35 methods, so the wave was ungate and
+complete, not vendor.
+
+Most of the surface is delegation: every file test, every stat reader, every
+read and write goes to the `File` or `Dir` row that already implements it, so
+a Pathname cannot answer differently from the same call spelled out. What is
+written by hand is the path ALGEBRA — `#+`, `#cleanpath`,
+`#relative_path_from`, `#ascend` — ported from CRuby's `chop_basename`
+decomposition rather than re-derived, because the interleaving of its two
+peels is the whole reason `"a/b/c" + "../../d"` answers `"a/d"` without ever
+asking the filesystem.
+
+Three things the oracle settled:
+
+- **`Pathname` does not include `Comparable`**, however much its `#<=>`
+  suggests otherwise: `Pathname.new("a") < Pathname.new("b")` is a
+  NoMethodError. zeo's row included it, so the include is gone.
+- **`#path` is PROTECTED**, not public — it is listed by `#instance_methods`
+  and still refuses an outside caller, which is what makes `#to_s` the way to
+  spell a path out loud.
+- **`Pathname.new` is inherited from `Class`**, so it must not appear in
+  `singleton_methods(false)`. It moved from a class-method row to a real
+  constructor.
+
+Two adjacent bugs the golden exposed, both in rows Pathname delegates to:
+`File.binread` ignored its `length` and `offset` arguments and always
+answered the whole file; and `Dir.mkdir`/`Dir.rmdir` labelled their errno
+messages `@ mkdir`/`@ rmdir` where CRuby says `@ dir_s_mkdir`/`@ dir_s_rmdir`.
+
+One accepted **widening**, the `Random::Formatter` shape again: `#find`,
+`#rmtree` and `.mktmpdir` are here from the start rather than arriving with a
+require. Three `zeo-only` rows in
+`conformance/builtin-arity-divergences.tsv`, whose header says why.
+
+One gap it opened: a builtin row declared `protected` reads as PUBLIC,
+because the method table carries one visibility bit. `Pathname#path` is the
+whole population — `tests/gaps/builtin_protected_rows.rb`, and the fix shape
+belongs with the private-visibility work already tracked.
 
 ### 3.6 The encoding registry — all 103, single-byte implemented
 

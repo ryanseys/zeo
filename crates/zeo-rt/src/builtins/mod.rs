@@ -61,6 +61,7 @@ pub(crate) mod nil_class;
 pub(crate) mod numeric;
 pub(crate) mod objspace;
 pub(crate) mod pack;
+pub(crate) mod pathname;
 pub(crate) mod process;
 pub(crate) mod queue;
 pub(crate) mod random;

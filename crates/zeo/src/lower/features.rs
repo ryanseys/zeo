@@ -65,6 +65,10 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // on: CRuby folded it into core long ago and keeps the name only so old
     // code still loads, answering `false` for the require -- which is what
     // zeo does now too (minitest/parallel.rb opens with it).
+    // `pathname` is the same shape once more: ruby 4.0 loads `pathname.so`
+    // before the first line, so `Pathname` and 96 of its methods are there
+    // whatever the program does, and the require only reopens the class to
+    // add `#find` and `#rmtree`. zeo carries those two from the start.
     // `random/formatter` is the `time` shape again: ruby 4.0 keeps
     // `Random::Formatter` in CORE with `#rand`/`#random_number`, and this
     // require only REOPENS it to add the hex/uuid/base64 family. zeo gates
@@ -84,5 +88,6 @@ pub fn is_builtin_feature(feature: &str) -> bool {
             | "fiber"
             | "thread"
             | "random/formatter"
+            | "pathname"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }

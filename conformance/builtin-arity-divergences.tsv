@@ -16,7 +16,15 @@
 #! hex/uuid/base64 family when `random/formatter` is required. zeo gates
 #! whole classes rather than methods, so it carries all of them always --
 #! it answers where ruby raises NoMethodError, never the reverse.
+#!
+#! The three `Pathname` rows are the same widening. ruby loads
+#! `pathname.so` before the first line and `require "pathname"` only
+#! reopens the class to add `#find` and `#rmtree`; `Pathname.mktmpdir`
+#! arrives with `tmpdir`. All three are here from the start.
 #! tag	class	kind	name	reason
+zeo-only	Pathname	i	find	no find in CRuby's chain
+zeo-only	Pathname	i	rmtree	no rmtree in CRuby's chain
+zeo-only	Pathname	s	mktmpdir	no mktmpdir in CRuby's chain
 zeo-only	Prism	s	native_parse_success?	private native_parse_success?, a backend seam CRuby has no name for
 zeo-only	Prism	s	serialize_lex	private serialize_lex, a backend seam CRuby has no name for
 zeo-only	Prism	s	serialize_parse	private serialize_parse, a backend seam CRuby has no name for

@@ -3075,7 +3075,6 @@ M	Pathname	i	exist?	0	public	ruby	-
 M	Pathname	i	expand_path	-1	public	ruby	rest:*,keyrest:**,block:&
 M	Pathname	i	extname	0	public	ruby	-
 M	Pathname	i	file?	0	public	ruby	-
-M	Pathname	i	find	-1	public	ruby	key:ignore_error
 M	Pathname	i	fnmatch	-2	public	ruby	req:pattern,rest:*,keyrest:**,block:&
 M	Pathname	i	fnmatch?	-2	public	ruby	req:pattern,rest:*,keyrest:**,block:&
 M	Pathname	i	freeze	0	public	ruby	-
@@ -3116,7 +3115,6 @@ M	Pathname	i	relative?	0	public	ruby	-
 M	Pathname	i	relative_path_from	1	public	ruby	req:base_directory
 M	Pathname	i	rename	1	public	ruby	req:to
 M	Pathname	i	rmdir	0	public	ruby	-
-M	Pathname	i	rmtree	-1	public	ruby	key:noop,key:verbose,key:secure
 M	Pathname	i	root?	0	public	ruby	-
 M	Pathname	i	same_paths?	2	private	ruby	req:a,req:b
 M	Pathname	i	setgid?	0	public	ruby	-
@@ -3145,7 +3143,6 @@ M	Pathname	i	write	-1	public	ruby	rest:*,keyrest:**,block:&
 M	Pathname	i	zero?	0	public	ruby	-
 M	Pathname	s	getwd	0	public	ruby	-
 M	Pathname	s	glob	-1	public	ruby	rest:args,keyrest:kwargs
-M	Pathname	s	mktmpdir	0	public	ruby	-
 M	Pathname	s	pwd	0	public	ruby	-
 M	Prism	s	dump	-1	public	c	rest
 M	Prism	s	dump_file	-1	public	c	rest

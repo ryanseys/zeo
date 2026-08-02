@@ -144,7 +144,6 @@ ext-all = [
     "ext-openssl",
     "ext-ffi",
     "ext-etc",
-    "ext-pathname",
     "ext-fcntl",
     "ext-pty",
     "ext-syslog",
@@ -171,7 +170,6 @@ ext-syslog = []
 ext-readline = ["dep:rustyline"]
 ext-nkf = []
 ext-bigdecimal = []
-ext-pathname = []
 ext-monitor = []
 ext-stringio = []
 ext-strscan = []

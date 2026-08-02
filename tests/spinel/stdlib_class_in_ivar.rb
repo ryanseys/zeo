@@ -7,9 +7,12 @@
 # classes are unaffected. The ivar slot still compiles either way (the raise
 # expression is int-typed, so no undeclared `sp_<Class> *` field is emitted).
 #
-# pathname/ostruct/ipaddr are unimplemented stdlib: under SPINEL_REQUIRE_GATE the
+# ostruct/ipaddr are unimplemented stdlib: under SPINEL_REQUIRE_GATE the
 # `require` itself is a compile error, so a real program omits it and the .new
 # still raises NameError at the use site. Mutex is core (no require needed).
+# `Pathname` USED to be in that list; ruby 4.0 loads it before the first line,
+# so it constructs here exactly as it does there -- the fixture said `pathname
+# raised` and ruby says `no raise`.
 
 class WithMutex
   def initialize
@@ -55,7 +58,7 @@ end
 
 puts Holder.new.px            #=> 42
 
-# Constructing the unsupported-stdlib holder raises (loud), not a silent inert 0.
+# `Pathname` is core, so this one constructs.
 begin
   WithPathname.new
   puts "no raise"

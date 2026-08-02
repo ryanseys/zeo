@@ -395,9 +395,9 @@ pub const ETC_PASSWD_CLASS: ClassId = ClassId(87);
 /// what `Etc.getgrnam`/`getgrgid`/`getgrent` answer.
 pub const ETC_GROUP_CLASS: ClassId = ClassId(88);
 
-/// `Pathname` -- the `pathname` stdlib class (a value wrapping a path String).
-/// `require`-gated on `"pathname"`; a focused native implementation over
-/// `File`/`Dir`/`std::path`.
+/// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
+/// loads `pathname.so` before the first line, so the class and 96 of its
+/// methods are there whatever the program does.
 pub const PATHNAME_CLASS: ClassId = ClassId(89);
 
 /// The `socket` gem's socket hierarchy, mirroring CRuby's:
@@ -1389,8 +1389,11 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "Pathname",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
-        includes: &[COMPARABLE_CLASS],
-        feature: Some("pathname"),
+        // CRuby's Pathname does NOT include Comparable, however much its
+        // `#<=>` suggests otherwise: `Pathname.new("a") < "b"` is a
+        // NoMethodError there.
+        includes: &[],
+        feature: None,
     },
     // The `socket` gem's hierarchy (all `require "socket"`-gated). Appended
     // after the last non-socket id so the table stays contiguous; the

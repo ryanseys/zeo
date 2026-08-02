@@ -4,8 +4,9 @@ use crate::support::{
 
 #[test]
 fn native_pathname_path_operations_match_the_oracle() {
-    // The `pathname` native class: path manipulation (`+`/`join` resolve `..`
-    // lexically like CRuby's `plus`), predicates, and reflection.
+    // `Pathname`: path manipulation (`+`/`join` resolve `..` lexically like
+    // CRuby's `plus`), predicates, and reflection. The last line pins that it
+    // does NOT include Comparable, however much its `#<=>` suggests it.
     let result = run_ruby(
         r##"
         require "pathname"
@@ -27,21 +28,17 @@ fn native_pathname_path_operations_match_the_oracle() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "/usr/local/bin/ruby\nruby\n/usr/local/bin\n\"\"\ntrue\n/usr/local/bin\n/usr/bin\nruby\nfoo/bar.md\nb/c\ntrue\ntrue\n"
+        "/usr/local/bin/ruby\nruby\n/usr/local/bin\n\"\"\ntrue\n/usr/local/bin\n/usr/bin\nruby\nfoo/bar.md\nb/c\ntrue\nfalse\n"
     );
 }
 
 #[test]
-fn pathname_is_a_name_error_without_its_require() {
-    // The class is `require`-gated: no `require "pathname"`, no `Pathname`.
-    let result = run_ruby("puts Pathname.new(\"/x\")\n");
-    assert!(!result.status.success());
-    assert!(
-        result.stderr.contains("uninitialized constant Pathname")
-            || result.stderr.contains("Pathname"),
-        "stderr: {}",
-        result.stderr
-    );
+fn pathname_needs_no_require() {
+    // ruby 4.0 loads `pathname.so` before the first line, so the class and
+    // `Kernel#Pathname` are there with no require at all.
+    let result = run_ruby("puts Pathname.new(\"/x\")\nputs Pathname(\"/y\").class\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "/x\nPathname\n");
 }
 
 #[test]

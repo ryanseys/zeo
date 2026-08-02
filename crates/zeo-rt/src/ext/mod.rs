@@ -87,8 +87,6 @@ pub(crate) mod tracepoint;
 // `eval-vm` variant links. See `ext-prism` in Cargo.toml.
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
-#[cfg(feature = "ext-pathname")]
-pub(crate) mod pathname;
 #[cfg(all(feature = "ext-prism", feature = "eval-vm"))]
 pub(crate) mod prism;
 #[cfg(feature = "ext-psych")]

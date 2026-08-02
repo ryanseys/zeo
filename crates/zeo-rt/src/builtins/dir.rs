@@ -594,7 +594,7 @@ ruby_class! {
     }
     def self."mkdir" cfunc (_recv, arg1, _arg2?) {
         let path = path_arg(arg1, "mkdir")?;
-        std::fs::create_dir(&path).map_err(|e| raise_errno(&e, "mkdir", &path))?;
+        std::fs::create_dir(&path).map_err(|e| raise_errno(&e, "dir_s_mkdir", &path))?;
         Ok(RubyValue::Int(0))
     }
     // `mktmpdir([prefix | [prefix, suffix]], [parent])`: create a fresh
@@ -648,7 +648,7 @@ ruby_class! {
     }
     def self."rmdir" | "unlink" | "delete"(_recv, arg) {
         let path = path_arg(arg, "rmdir")?;
-        std::fs::remove_dir(&path).map_err(|e| raise_errno(&e, "rmdir", &path))?;
+        std::fs::remove_dir(&path).map_err(|e| raise_errno(&e, "dir_s_rmdir", &path))?;
         Ok(RubyValue::Int(0))
     }
     def self."home"(_recv, _arg?) {

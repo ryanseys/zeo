@@ -203,6 +203,11 @@ fn write_divergences(root: &Path, rows: &[Divergence]) {
     out.push_str("#! hex/uuid/base64 family when `random/formatter` is required. zeo gates\n");
     out.push_str("#! whole classes rather than methods, so it carries all of them always --\n");
     out.push_str("#! it answers where ruby raises NoMethodError, never the reverse.\n");
+    out.push_str("#!\n");
+    out.push_str("#! The three `Pathname` rows are the same widening. ruby loads\n");
+    out.push_str("#! `pathname.so` before the first line and `require \"pathname\"` only\n");
+    out.push_str("#! reopens the class to add `#find` and `#rmtree`; `Pathname.mktmpdir`\n");
+    out.push_str("#! arrives with `tmpdir`. All three are here from the start.\n");
     out.push_str("#! tag\tclass\tkind\tname\treason\n");
     for d in rows {
         out.push_str(&format!(

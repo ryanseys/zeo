@@ -734,10 +734,23 @@ ruby_class! {
         Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
     }
     // `binread` always answers ASCII-8BIT bytes, no transcoding.
-    def self."binread" cfunc (_recv, arg1, _arg2?, _arg3?) {
-        let path = path_arg(arg1, "binread")?;
-        let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
+    def self."binread" cfunc (_recv, path, length?, offset?) {
+        let path = path_arg(path, "binread")?;
+        let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        // Same window as `File.read`: skip `offset` bytes, then cap at
+        // `length`. An offset past the end answers nil rather than "".
+        let past_end = matches!(offset, Some(RubyValue::Int(off)) if (*off).max(0) as usize >= bytes.len());
+        if let Some(RubyValue::Int(off)) = offset {
+            let off = (*off).max(0) as usize;
+            bytes = bytes.split_off(off.min(bytes.len()));
+        }
+        if length.is_some() && past_end {
+            return Ok(RubyValue::Nil);
+        }
+        if let Some(RubyValue::Int(len)) = length {
+            bytes.truncate((*len).max(0) as usize);
+        }
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
     }
     def self."binwrite" cfunc (_recv, arg1, arg2, _arg3?) {

@@ -588,6 +588,26 @@ cannot read another's execution state:
   the rule `TracePoint.new` already follows for the events zeo cannot raise:
   refuse loudly rather than accept a handler that never runs.
 
+### `Pathname`
+
+A core class here, with no `require`, matching ruby 4.0 -- it loads
+`pathname.so` before the first line, so 96 instance methods and 3 class
+methods are there whatever the program does. Every file test, stat reader and
+read/write DELEGATES to the `File` or `Dir` row that implements it, so a
+Pathname answers exactly what the same call spelled out answers. Two
+divergences:
+
+- **`#find`, `#rmtree` and `.mktmpdir` are present from the start.** ruby adds
+  the first two with `require "pathname"` and the third with `tmpdir`; zeo
+  gates whole classes rather than methods, so it answers where ruby raises
+  `NoMethodError`, never the reverse. `#find` walks the tree itself rather
+  than through `Find`, so `Find.prune` has nothing to prune.
+- **`#path` reads as PUBLIC.** ruby makes it protected. This is not about
+  Pathname: a builtin row declared `protected` collapses into public because
+  the method table carries one visibility bit, and `#path` is the whole
+  population. A method defined in RUBY is unaffected. Executable record:
+  [`tests/gaps/builtin_protected_rows.rb`](../tests/gaps/builtin_protected_rows.rb).
+
 ### `Random::Formatter` carries its whole surface from the start
 
 ruby 4.0 keeps `Random::Formatter` in core with `#rand` and `#random_number`,
