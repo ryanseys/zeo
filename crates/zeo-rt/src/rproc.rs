@@ -375,6 +375,26 @@ impl RProc {
     /// identity, `frozen` per the caller's dup-vs-clone rule) sharing the
     /// one closure allocation -- CRuby's own copy semantics, under which
     /// freezing the original never freezes an earlier copy.
+    /// The same block AS A LAMBDA -- what `Kernel#lambda { }` answers when it
+    /// is reached through `send` rather than folded at the call site. Only the
+    /// flag differs, and with it `#lambda?`, the argument-count strictness it
+    /// implies, and where a `return` inside the body unwinds to.
+    pub fn as_lambda(&self) -> RProc {
+        if self.0.is_lambda {
+            return self.clone();
+        }
+        RProc(Arc::new(ProcData {
+            f: Arc::clone(&self.0.f),
+            self_val: self.0.self_val.clone(),
+            arity: self.0.arity,
+            is_lambda: true,
+            params: self.0.params.clone(),
+            home: self.0.home.clone(),
+            binding: self.0.binding.clone(),
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+
     pub fn dup_data(&self, frozen: bool) -> RProc {
         RProc(Arc::new(ProcData {
             f: Arc::clone(&self.0.f),

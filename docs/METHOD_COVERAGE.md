@@ -844,6 +844,52 @@ two different keys and `#hash` disagrees between them. `HashKey` has
 structural variants for String, Array, Range and the whole numeric tower and
 none for these two. `tests/gaps/hash_and_regexp_as_hash_keys.rb`.
 
+## The folded Kernel intrinsics (unreachable 41 -> 28)
+
+`Kernel`'s function-style methods are compiled straight into the caller by
+`codegen::call::kernel`, so `printf(...)` has always worked — but with no
+method-table row behind them, `send(:printf, ...)` raised NoMethodError,
+`method(:printf)` raised NameError, `respond_to?(:printf, true)` answered
+false, and `Kernel.printf(...)` had nowhere to land. Seventeen names sat in
+the census's `unreachable` bucket, the ONLY tag a user meets as a
+NoMethodError.
+
+Thirteen now have rows, each calling the very function the fold calls so the
+two forms cannot diverge: `printf`, `exit`, `exit!`, `abort`, `at_exit`,
+`lambda`, `fork`, `syscall`, `set_trace_func`, `__method__`, `__callee__`,
+`__dir__` and `Pathname`. All `module_function`, which is how ruby files
+them — a PRIVATE instance copy and a PUBLIC singleton one, and the singleton
+half is what the census was actually missing.
+
+Two things that took a probe rather than a guess:
+
+- **The frame readers work because a builtin row pushes no frame.** The top
+  frame IS the caller, which is the same reason `#caller` defaults to
+  `start = 1`. `__method__` reads the label, and since a block's label names
+  the method it was written in (`block (2 levels) in Object#m`), it takes
+  everything after the last ` in ` — which is exactly what ruby answers from
+  inside a block.
+- **`Kernel#fork` IS `Process.fork`**, so it dispatches there rather than
+  forking itself. That keeps a gem's `Process._fork` hook in the path, which
+  is the whole reason gems hook `_fork` rather than `fork`.
+
+Four are left, and they are declined rather than deferred:
+`block_given?`/`iterator?` need the CALLER's block and
+`binding`/`local_variables` need its local scope. Neither travels to a table
+row, and zeo's `Frame` deliberately carries only `(file, line, label)` — 40
+bytes, pushed on every call — so widening it would tax every call in the
+program for a reflection path almost nothing takes. Called directly they all
+work. `tests/gaps/kernel_scope_intrinsics.rb`.
+
+One narrow divergence this surfaced: **`respond_to?` answers true for a
+not-implemented STUB** where ruby answers false. CRuby defines the calls a
+platform lacks (`Kernel#syscall` on macOS, `Process::Sys.setresuid`) with
+`rb_f_notimplement`; such an entry is still listed by every reflection
+reader, but `respond_to?` reports false, which is how a program detects the
+absence before calling. zeo's rows carry no "this is a stub" bit. Calling one
+refuses identically either way.
+`tests/gaps/notimplement_stub_respond_to.rb`.
+
 ## Verification
 
 - Per commit: `cargo build -p zeo-rt` plus the affected golden. Cheapest

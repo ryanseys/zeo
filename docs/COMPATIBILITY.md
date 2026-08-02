@@ -608,6 +608,28 @@ divergences:
   population. A method defined in RUBY is unaffected. Executable record:
   [`tests/gaps/builtin_protected_rows.rb`](../tests/gaps/builtin_protected_rows.rb).
 
+### `respond_to?` and a not-implemented stub
+
+Answers TRUE where ruby answers false. CRuby defines the calls a platform
+lacks (`Kernel#syscall` on macOS, `Process::Sys.setresuid` where the syscall
+is absent) with `rb_f_notimplement`: still LISTED by every reflection reader,
+but `respond_to?` reports false, which is how a program is meant to detect
+the absence before calling. zeo's method rows carry no "this is a stub" bit.
+Calling one refuses identically either way. Executable record:
+[`tests/gaps/notimplement_stub_respond_to.rb`](../tests/gaps/notimplement_stub_respond_to.rb).
+
+### `Kernel#block_given?`, `#iterator?`, `#binding`, `#local_variables` through `send`
+
+These four raise NoMethodError where ruby answers, and `respond_to?`/`method`
+do not find them. `block_given?`/`iterator?` need the CALLER's block and
+`binding`/`local_variables` need its local scope; neither travels to a method
+row, and zeo's call `Frame` deliberately carries only `(file, line, label)` --
+40 bytes, pushed on every call -- so widening it would tax every call in the
+program for a reflection path almost nothing takes. Called DIRECTLY all four
+work: the compiler folds each into the caller, where the block and the scope
+are in hand. Executable record:
+[`tests/gaps/kernel_scope_intrinsics.rb`](../tests/gaps/kernel_scope_intrinsics.rb).
+
 ### A Hash or a Regexp as a Hash KEY
 
 Keyed by IDENTITY, not by value: `{ {a: 1} => "x" }[{a: 1}]` answers nil, and

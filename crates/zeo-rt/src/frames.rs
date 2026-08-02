@@ -324,6 +324,28 @@ pub fn current_frame() -> Option<Frame> {
     with_frames(|f| f.last().copied())
 }
 
+/// `Kernel#__method__` / `#__callee__`: the innermost frame's METHOD name,
+/// with the `Class#` qualifier the backtrace label carries stripped off.
+/// `None` at the top level and inside a block, which is what ruby answers
+/// there too. A builtin row pushes no frame of its own, so the top frame is
+/// the caller whose name is being asked for.
+pub fn current_frame_method() -> Option<&'static str> {
+    with_frames(|f| {
+        // A block's label names the method it was written in
+        // (`block (2 levels) in Object#m`), and that is the name ruby answers
+        // from inside it -- so take everything after the last ` in `.
+        let label = f.last()?.method;
+        let owner = label.rsplit(" in ").next().unwrap_or(label);
+        if owner.starts_with('<') {
+            return None;
+        }
+        Some(match owner.split_once('#') {
+            Some((_, name)) => name,
+            None => owner,
+        })
+    })
+}
+
 /// The innermost frame's `file:line`, for a caller-location label like
 /// `Thread#inspect`'s creation site. A builtin C function has no frame of its
 /// own, so the top frame is its caller.

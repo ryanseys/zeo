@@ -424,7 +424,7 @@ ruby_module! {
     }
     // `Kernel#Pathname(str)` -- PRIVATE, and there with no require, because
     // ruby 4.0 loads `pathname.so` before the first line.
-    private def "Pathname"(_recv, arg) {
+    module_function def "Pathname"(_recv, arg) {
         crate::builtins::pathname::kernel_pathname(arg)
     }
     module_function def "Complex" as kernel_complex cfunc (_recv, _real, _imaginary?) {
@@ -797,6 +797,85 @@ ruby_module! {
         Ok(RubyValue::Array(crate::array_new(
             names.into_iter().map(|n| RubyValue::Symbol(Symbol::intern(n.as_str()))).collect(),
         )))
+    }
+
+    // ---- the FOLDED intrinsics, as real rows.
+    //
+    // Each of these is compiled straight into the caller by
+    // `codegen::call::kernel`, which is why `Kernel#printf(...)` has always
+    // worked. Without a table row, though, `send(:printf, ...)` raised
+    // NoMethodError, `method(:printf)` raised NameError and
+    // `respond_to?(:printf, true)` answered false -- ruby answers all three.
+    // The row calls the very function the fold calls, so the two forms cannot
+    // diverge. `module_function`, which is how ruby has them: a PRIVATE
+    // instance copy (`send(:printf, ...)`) and a PUBLIC singleton one
+    // (`Kernel.printf(...)`).
+    module_function def "printf" cfunc (_recv, *_args) { kernel_printf(__args) }
+    module_function def "exit" cfunc (_recv, *_args) { Err(kernel_exit(__args)) }
+    module_function def "abort" cfunc (_recv, *_args) { Err(kernel_abort(__args)) }
+    module_function def "exit!" cfunc (_recv, *_args) { kernel_exit_bang(__args) }
+    module_function def "at_exit"(_recv, &block) {
+        let handler = crate::builtins::need_block!(block);
+        let handler = RubyValue::Proc(handler);
+        crate::exec::at_exit_register(handler.clone());
+        Ok(handler)
+    }
+    // `lambda { }` answers the block as a LAMBDA -- `#lambda?` true, and a
+    // `return` inside it returns from the lambda rather than its defining
+    // method.
+    module_function def "lambda"(_recv, &block) {
+        let p = crate::builtins::need_block!(block);
+        Ok(RubyValue::Proc(p.as_lambda()))
+    }
+    // The frame readers. A builtin row pushes no frame of its own, so the
+    // CURRENT frame is the caller's -- the same reason `#caller` defaults to
+    // `start = 1`.
+    module_function def "__method__" | "__callee__"(_recv) {
+        Ok(match crate::frames::current_frame_method() {
+            Some(name) => RubyValue::Symbol(Symbol::intern(name)),
+            None => RubyValue::Nil,
+        })
+    }
+    module_function def "__dir__"(_recv) {
+        let Some((file, _)) = crate::frames::current_location() else {
+            return Ok(RubyValue::Nil);
+        };
+        let abs = crate::builtins::file::expand_path_of(file, None)?;
+        Ok(RubyValue::Str(crate::string_new(
+            crate::builtins::file::dirname_of(&abs),
+        )))
+    }
+    // Refused, and refused the way ruby refuses them on a machine without
+    // the call -- a NotImplementedError naming the function, not a
+    // NoMethodError naming the method.
+    // `Kernel#fork` IS `Process.fork` in ruby -- same primitive, two names --
+    // so it dispatches there rather than forking itself, which also keeps a
+    // gem's `Process._fork` hook in the path.
+    module_function def "fork"(_recv, &block) {
+        crate::dispatch::send_value(
+            &RubyValue::Class(zeo_abi::PROCESS_CLASS),
+            Symbol::intern("fork"),
+            &[],
+            block,
+        )
+    }
+    // `nil` clears a hook that was never installed, so it succeeds; a Proc
+    // would be accepted and then never called, so it is refused instead --
+    // the rule `Thread#set_trace_func` and `TracePoint.new` already follow.
+    module_function def "set_trace_func"(_recv, arg) {
+        if matches!(arg, RubyValue::Nil) {
+            return Ok(RubyValue::Nil);
+        }
+        Err(crate::dispatch::raise_error(
+            "NotImplementedError",
+            "set_trace_func is not supported: zeo raises no per-line trace events".to_string(),
+        ))
+    }
+    module_function def "syscall" arity 0 (_recv, *_args) {
+        Err(crate::dispatch::raise_error(
+            "NotImplementedError",
+            "syscall() function is unimplemented on this machine".to_string(),
+        ))
     }
 }
 

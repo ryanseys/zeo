@@ -4,7 +4,7 @@
 # absent-module: 21
 # constant: 10
 # owner: 22
-# unreachable: 41
+# unreachable: 28
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
@@ -58,23 +58,10 @@ owner	SignalException	i	signm
 owner	SignalException	i	signo
 owner	SystemCallError	s	===
 owner	UncaughtThrowError	i	to_s
-unreachable	Kernel	s	Pathname
-unreachable	Kernel	s	__callee__
-unreachable	Kernel	s	__dir__
-unreachable	Kernel	s	__method__
-unreachable	Kernel	s	abort
-unreachable	Kernel	s	at_exit
 unreachable	Kernel	s	binding
 unreachable	Kernel	s	block_given?
-unreachable	Kernel	s	exit
-unreachable	Kernel	s	exit!
-unreachable	Kernel	s	fork
 unreachable	Kernel	s	iterator?
-unreachable	Kernel	s	lambda
 unreachable	Kernel	s	local_variables
-unreachable	Kernel	s	printf
-unreachable	Kernel	s	set_trace_func
-unreachable	Kernel	s	syscall
 unreachable	Ractor	i	<<
 unreachable	Ractor	i	[]
 unreachable	Ractor	i	[]=
