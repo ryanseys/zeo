@@ -395,6 +395,15 @@ pub const ETC_PASSWD_CLASS: ClassId = ClassId(87);
 /// what `Etc.getgrnam`/`getgrgid`/`getgrent` answer.
 pub const ETC_GROUP_CLASS: ClassId = ClassId(88);
 
+/// `UnicodeNormalize` -- an EMPTY module in ruby: it declares no method and
+/// no constant of its own, and exists as the namespace `String`'s
+/// `#unicode_normalize` family is documented under.
+pub const UNICODE_NORMALIZE_MODULE: ClassId = ClassId(159);
+
+/// `Set::CoreSet` -- a `Set` subclass with no methods of its own, which ruby
+/// 4.0 keeps as the name for the core implementation.
+pub const SET_CORE_SET_CLASS: ClassId = ClassId(160);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -1958,6 +1967,22 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "Encoding::Converter",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: UNICODE_NORMALIZE_MODULE,
+        name: "UnicodeNormalize",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: SET_CORE_SET_CLASS,
+        name: "Set::CoreSet",
+        is_module: false,
+        superclass: Some(SET_CLASS),
         includes: &[],
         feature: None,
     },

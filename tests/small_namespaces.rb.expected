@@ -1,0 +1,13 @@
+UnicodeNormalize class: Module
+UnicodeNormalize methods: []
+UnicodeNormalize singletons: []
+UnicodeNormalize constants: []
+UnicodeNormalize name: "UnicodeNormalize"
+CoreSet name: "Set::CoreSet"
+CoreSet superclass: Set
+CoreSet ancestors: [Set::CoreSet, Set, Enumerable]
+CoreSet own methods: []
+CoreSet is not Set: false
+BasicObject constants: [:BasicObject]
+BasicObject::BasicObject: BasicObject
+Object constants(false) has no self: true

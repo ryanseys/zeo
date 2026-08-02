@@ -98,6 +98,14 @@ impl ClassRegistry {
 pub fn install_core_constants() {
     // `Float::*`, `Math::PI`/`E`, and `Complex::I` seed via their classes'
     // ruby_class! `const` rows (the BUILTIN_TABLES loop below).
+    // `BasicObject::BasicObject` -- ruby defines the class as a constant on
+    // ITSELF, so `BasicObject.constants(false)` is `[:BasicObject]` where
+    // every other class's is empty. Nothing else names it that way.
+    crate::constants::const_set(
+        zeo_abi::BASIC_OBJECT_CLASS.0,
+        "BasicObject",
+        crate::RubyValue::Class(zeo_abi::BASIC_OBJECT_CLASS),
+    );
     crate::builtins::encoding::seed_encoding_constants();
     crate::builtins::pathname::seed_pathname_constants();
     crate::builtins::converter::seed_converter_constants();

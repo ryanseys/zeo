@@ -890,6 +890,26 @@ absence before calling. zeo's rows carry no "this is a stub" bit. Calling one
 refuses identically either way.
 `tests/gaps/notimplement_stub_respond_to.rb`.
 
+## The name-only namespaces (absent-module 21 -> 19, constant 10 -> 7)
+
+Three of the remaining absent modules carry no method at all, so an ABI row
+is the whole implementation — no Rust module, no table:
+
+- **`UnicodeNormalize`** is an EMPTY module in ruby: no method, no constant.
+  It exists as the namespace `String#unicode_normalize` is documented under.
+- **`Set::CoreSet`** is a `Set` subclass with no methods of its own, and NOT
+  the same object as `Set` — ruby 4.0 keeps it as the name for the core
+  implementation.
+- **`BasicObject::BasicObject`** is ruby defining the class as a constant on
+  ITSELF, which is why `BasicObject.constants(false)` is `[:BasicObject]`
+  where every other class's is empty. `Object.constants(false)` does NOT
+  contain `:Object`, so this really is a one-off rather than a rule.
+
+`tests/small_namespaces.rb`. `Process::Waiter` looked like a fourth but is
+not: it is a `Thread` subclass carrying `#pid` that `Process.detach` answers
+with, so closing it means the thread object reporting a SUBCLASS id — a
+change to what `RThread` carries, not a new row.
+
 ## Verification
 
 - Per commit: `cargo build -p zeo-rt` plus the affected golden. Cheapest
