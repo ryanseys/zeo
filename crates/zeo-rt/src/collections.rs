@@ -260,6 +260,11 @@ pub enum HashKey {
     Str(Vec<u8>, u8),
     Array(Vec<HashKey>),
     Range(Option<Box<HashKey>>, Option<Box<HashKey>>, bool),
+    /// A Regexp key, by SOURCE and flags -- ruby's own `Regexp#eql?`/`#hash`
+    /// rule, under which `/a/` written twice is one key. The flags travel as
+    /// a bitmask (ignore-case 1, extended 2, multiline 4) so `/a/i` and `/a/`
+    /// stay apart.
+    Regexp(String, u8),
     /// A first-class class/module value: keyed by class
     /// identity, exactly real Ruby's `Class#hash`/`#eql?` (two references
     /// to the same class are one key).
@@ -319,6 +324,11 @@ impl std::hash::Hash for HashKey {
             HashKey::Array(v) => {
                 state.write_u8(6);
                 v.hash(state);
+            }
+            HashKey::Regexp(src, flags) => {
+                state.write_u8(16);
+                src.hash(state);
+                flags.hash(state);
             }
             HashKey::Range(a, b, x) => {
                 state.write_u8(7);
@@ -457,10 +467,12 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
             },
         },
         RubyValue::Proc(p) => HashKey::Identity(p.ptr_id()),
-        // Same identity-only fallback as `Object`/`Proc` above -- neither has
-        // a user-overridable `#hash`/`#eql?` protocol yet (see `HashKey`'s
-        // own docs on this documented, narrow scope-cut).
-        RubyValue::Regexp(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
+        // Value-based, like ruby's own `Regexp#eql?`/`#hash`: two regexps with
+        // the same source and flags are ONE key, however they were built.
+        RubyValue::Regexp(r) => HashKey::Regexp(
+            r.source.clone(),
+            u8::from(r.ignore_case) | u8::from(r.extended) << 1 | u8::from(r.multiline) << 2,
+        ),
         // Value-based, like CRuby's `MatchData#eql?`/`#hash`: two matches with
         // the same subject, pattern, and captured regions are one key even
         // though they are distinct objects (so `"abc".match(/b/).hash` is

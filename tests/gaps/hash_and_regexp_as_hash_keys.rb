@@ -1,16 +1,20 @@
-# A Hash or a Regexp used as a Hash KEY is keyed by identity, not by value.
+# A Hash used as a Hash KEY is keyed by identity, not by value.
 #
-# `collections::HashKey` projects every key to a structural form -- there are
-# variants for String, Array, Range, the whole numeric tower -- but none for
-# Hash or Regexp, so both fall through to `Identity(pointer)`. Two equal
-# literals are therefore two different keys, and `#hash` disagrees between
-# them for the same reason.
+# `collections::HashKey` projects every key to a structural form -- String,
+# Array, Range, Regexp, the whole numeric tower -- but has none for Hash, so
+# a Hash key falls through to `Identity(pointer)`. Two equal literals are
+# therefore two different keys, and `#hash` disagrees between them for the
+# same reason. The REGEXP half of this file used to fail the same way and is
+# fixed; it stays here as the control.
 #
-# Array keys work, which is what makes this a missing pair of variants rather
-# than a missing mechanism. Fix shape: a `Regexp(source, flags)` variant
-# (cheap and total), and a `Hash(Vec<(HashKey, HashKey)>)` one whose hash is
-# order-INSENSITIVE, as CRuby's is -- taking care with a self-referential
-# hash, which `#inspect` already has to handle.
+# What the Hash half needs beyond a variant: ruby's `Hash#hash` is order
+# INSENSITIVE, and `HashKey` derives `PartialEq`, which over a `Vec` is order
+# SENSITIVE. So a `Hash(Vec<(HashKey, HashKey)>)` variant would hash two
+# equal-but-differently-ordered hashes alike and then compare them unequal --
+# worse than today. Closing it means hand-writing `PartialEq` for the whole
+# enum with a multiset comparison for this one variant, on the hottest
+# equality surface in the collections layer. Worth doing deliberately, not
+# as a rider.
 
 def show(label)
   puts "#{label}: #{yield.inspect}"

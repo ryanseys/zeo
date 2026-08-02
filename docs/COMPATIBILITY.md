@@ -630,14 +630,16 @@ work: the compiler folds each into the caller, where the block and the scope
 are in hand. Executable record:
 [`tests/gaps/kernel_scope_intrinsics.rb`](../tests/gaps/kernel_scope_intrinsics.rb).
 
-### A Hash or a Regexp as a Hash KEY
+### A Hash as a Hash KEY
 
 Keyed by IDENTITY, not by value: `{ {a: 1} => "x" }[{a: 1}]` answers nil, and
 `{a: 1}.hash` differs between two equal literals. The key projection has
-structural forms for String, Array, Range and the whole numeric tower and
-none for these two, so both fall through to the pointer. An Array key works,
-which is what makes this a missing pair of variants rather than a missing
-mechanism. Executable record:
+structural forms for String, Array, Range, Regexp and the whole numeric tower
+and none for Hash. What the missing one needs beyond a variant: ruby's
+`Hash#hash` is order-INSENSITIVE while the projection's derived `PartialEq`
+over a `Vec` is order-sensitive, so a naive variant would hash two
+equal-but-differently-ordered hashes alike and then compare them unequal --
+worse than today. Executable record:
 [`tests/gaps/hash_and_regexp_as_hash_keys.rb`](../tests/gaps/hash_and_regexp_as_hash_keys.rb).
 
 ### `Random::Formatter` carries its whole surface from the start
