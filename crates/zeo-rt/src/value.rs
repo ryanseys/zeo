@@ -1475,6 +1475,19 @@ pub(crate) fn cmp_or_raise(a: &RubyValue, b: &RubyValue) -> Result<i64, crate::S
 /// same way -- so both an `Object` pattern and a `Class` one go through
 /// dispatch. A `Class` still resolves to `Module#===`'s ancestry check when
 /// nothing overrides it, so the common `when Integer` keeps its meaning.
+/// A range endpoint as ruby stores it. An explicit `nil` IS the open end, so
+/// `nil..5` and `..5` are the SAME range -- equal, identically inspected, and
+/// alike beginless. Normalizing once at construction is what keeps `first`,
+/// `min`, `size`, `==` and `inspect` from each having to ask twice; without it
+/// `(1..nil).min` reads a bounded range and iterates forever.
+#[inline]
+pub fn range_endpoint(v: RubyValue) -> Option<Box<RubyValue>> {
+    match v {
+        RubyValue::Nil => None,
+        other => Some(Box::new(other)),
+    }
+}
+
 /// The RangeError `Range#first`/`#last` raise when the endpoint they want is
 /// open -- one function so the two messages stay a matched pair.
 pub fn range_endpoint_error(first: bool) -> crate::Signal {

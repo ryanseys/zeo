@@ -159,9 +159,9 @@ pub use thread::{
     thread_new, thread_outcome,
 };
 pub use value::RubyValue;
-pub use value::range_endpoint_error;
 pub use value::rb_eq_checked;
 pub use value::{case_eq, case_eq_any};
+pub use value::{range_endpoint, range_endpoint_error};
 
 /// The interruption checkpoint generated code plants at loop back-edges and
 /// method prologues: ONE relaxed load of the process-wide pending counter

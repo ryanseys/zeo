@@ -1,0 +1,51 @@
+beginless-lit inspect: "..5"
+beginless-lit endpoints: [nil, 5, false]
+beginless-lit first: [RangeError, "cannot get the first element of beginless range"]
+beginless-lit last: 5
+beginless-lit size: [TypeError, "can't iterate from NilClass"]
+beginless-lit cover: true
+beginless-lit min: [RangeError, "cannot get the minimum of beginless range"]
+nil-begin inspect: "..5"
+nil-begin endpoints: [nil, 5, false]
+nil-begin first: [RangeError, "cannot get the first element of beginless range"]
+nil-begin last: 5
+nil-begin size: [TypeError, "can't iterate from NilClass"]
+nil-begin cover: true
+nil-begin min: [RangeError, "cannot get the minimum of beginless range"]
+endless-lit inspect: "1.."
+endless-lit endpoints: [1, nil, false]
+endless-lit first: 1
+endless-lit last: [RangeError, "cannot get the last element of endless range"]
+endless-lit size: Infinity
+endless-lit cover: true
+endless-lit min: 1
+nil-end inspect: "1.."
+nil-end endpoints: [1, nil, false]
+nil-end first: 1
+nil-end last: [RangeError, "cannot get the last element of endless range"]
+nil-end size: Infinity
+nil-end cover: true
+nil-end min: 1
+both-nil inspect: "nil..nil"
+both-nil endpoints: [nil, nil, false]
+both-nil first: [RangeError, "cannot get the first element of beginless range"]
+both-nil last: [RangeError, "cannot get the last element of endless range"]
+both-nil size: [TypeError, "can't iterate from NilClass"]
+both-nil cover: true
+both-nil min: [RangeError, "cannot get the minimum of beginless range"]
+eq begin: true
+eq end: true
+eq excl: true
+both-nil is neither: [false, false]
+new: "1..5"
+new excl: "1...5"
+new truthy excl: true
+new nil begin: "..5"
+new nil end: "1.."
+new both nil: "nil..nil"
+new equals literal: true
+new strings: ["a", "b", "c", "d", "e"]
+new bad pair: [ArgumentError, "bad value for range"]
+new too few: [ArgumentError, "wrong number of arguments (given 1, expected 2..3)"]
+new too many: [ArgumentError, "wrong number of arguments (given 4, expected 2..3)"]
+pattern: [:low, :high]

@@ -82,6 +82,25 @@ ruby_class! {
             };
             return crate::runtime_meta::runtime_module_new(body);
         }
+        // `Range.new(begin, end, exclude_end = false)` -- the literal `a..b`
+        // under another name, so the endpoints normalize the same way and the
+        // two endpoints must be comparable (`Range.new(1, "a")` is the
+        // ArgumentError a literal could never reach).
+        if cid == zeo_abi::RANGE_CLASS {
+            crate::builtins::check_arity(args.len(), 2, Some(3))?;
+            let excl = args.get(2).is_some_and(|v| v.truthy());
+            let (b, e) = (args[0].clone(), args[1].clone());
+            if !matches!((&b, &e), (RubyValue::Nil, _) | (_, RubyValue::Nil))
+                && b.rb_cmp(&e).is_none()
+            {
+                return Err(crate::builtins::arg_error!("bad value for range"));
+            }
+            return Ok(RubyValue::Range(
+                crate::range_endpoint(b),
+                crate::range_endpoint(e),
+                excl,
+            ));
+        }
         // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
         // runtime allocator; parse deliberately skips the
         // static `New` node for it so the block arrives here.

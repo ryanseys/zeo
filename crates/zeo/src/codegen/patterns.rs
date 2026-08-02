@@ -221,7 +221,7 @@ fn emit_range_pattern(
     let bound = |n: Option<NodeId>| match n {
         Some(n) => {
             let e = emit_expr(cx, n);
-            quote! { Some(Box::new(#e)) }
+            quote! { zeo_rt::range_endpoint(#e) }
         }
         None => quote! { None },
     };
