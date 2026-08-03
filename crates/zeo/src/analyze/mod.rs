@@ -52,8 +52,8 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
     compiler.shell_kinds = shell_kinds;
     compiler.assigned_const_names = collect_assigned_const_names(&compiler.hir);
-    (compiler.runtime_redefs, compiler.runtime_redefs_any_name) =
-        collect_runtime_redefs(&compiler.hir);
+    (compiler.runtime_patches, compiler.runtime_patches_any_name) =
+        collect_runtime_patches(&compiler.hir);
 
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
@@ -1511,21 +1511,36 @@ fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> 
 }
 
 /// The runtime definition verbs -- the calls that install a method body the
-/// overlay holds and only DYNAMIC dispatch consults. A literal-name
-/// `define_method`/`define_singleton_method` inside a class body never reaches
-/// here: lowering already desugared it into a `DefMethod`, so what survives as
-/// a `Call` is exactly the runtime half.
+/// overlay holds and only DYNAMIC dispatch consults. Each names ONE method,
+/// in its first argument. A literal-name `define_method`/
+/// `define_singleton_method` inside a class body never reaches here: lowering
+/// already desugared it into a `DefMethod`, so what survives as a `Call` is
+/// exactly the runtime half.
 const REDEF_VERBS: &[&str] = &["define_method", "define_singleton_method", "alias_method"];
+
+/// The runtime VISIBILITY verbs. Visibility is a runtime property in ruby --
+/// `private :name` re-marks a method that already exists -- and these take a
+/// LIST, so every argument names a method. A class-body `private :m` never
+/// reaches here either: `lower::defs` turns it into a `MethodVisibility` node
+/// or retags the `def` in place.
+const VIS_VERBS: &[&str] = &[
+    "private",
+    "public",
+    "protected",
+    "private_class_method",
+    "public_class_method",
+    "module_function",
+];
 
 /// The `send` family, which reaches a verb above through a symbol argument
 /// (`Node.send(:define_method, name)`) and so shifts every argument by one.
 const SEND_VERBS: &[&str] = &["send", "__send__", "public_send"];
 
-/// Read-only scan populating [`Compiler::runtime_redefs`] and
-/// [`Compiler::runtime_redefs_any_name`]. Flat over the whole arena, like
+/// Read-only scan populating [`Compiler::runtime_patches`] and
+/// [`Compiler::runtime_patches_any_name`]. Flat over the whole arena, like
 /// [`collect_assigned_const_names`]: a site on a dead branch still counts,
-/// because the answer is "could this name be replaced?".
-fn collect_runtime_redefs(hir: &Hir) -> (std::collections::HashSet<String>, bool) {
+/// because the answer is "could this name change under us?".
+fn collect_runtime_patches(hir: &Hir) -> (std::collections::HashSet<String>, bool) {
     let mut names = std::collections::HashSet::new();
     let mut any = false;
     for node in hir.all_nodes() {
@@ -1541,27 +1556,40 @@ fn collect_runtime_redefs(hir: &Hir) -> (std::collections::HashSet<String>, bool
         let HirNode::Call { name, args, .. } = node else {
             continue;
         };
-        // The defined name is the verb's FIRST argument, one slot later when
-        // the verb itself arrives as `send`'s first argument.
-        let at = if REDEF_VERBS.contains(&name.as_str()) {
-            0
+        // The names start at the verb's first argument, one slot later when the
+        // verb itself arrives as `send`'s first argument.
+        let verb = |v: &str| REDEF_VERBS.contains(&v) || VIS_VERBS.contains(&v);
+        let (at, verb_name) = if verb(name) {
+            (0, name.as_str())
         } else if SEND_VERBS.contains(&name.as_str())
-            && matches!(args.first(), Some(ArrayElem::Single(a))
-                if hir.sent_name(*a).is_some_and(|v| REDEF_VERBS.contains(&v)))
+            && let Some(ArrayElem::Single(a)) = args.first()
+            && let Some(sent) = hir.sent_name(*a).filter(|v| verb(v))
         {
-            1
+            (1, sent)
         } else {
             continue;
         };
-        match args.get(at) {
-            Some(ArrayElem::Single(a)) => match hir.sent_name(*a) {
-                Some(defined) => {
-                    names.insert(defined.to_owned());
-                }
-                None => any = true,
-            },
-            // A splat, or no argument at all: nothing to read the name from.
-            _ => any = true,
+        // A definition verb names one method; a visibility verb names a list.
+        let named = match VIS_VERBS.contains(&verb_name) {
+            true => &args[at.min(args.len())..],
+            false => &args[at.min(args.len())..(at + 1).min(args.len())],
+        };
+        // No argument at all: a bare `private` sets the DEFAULT for later defs,
+        // which names nothing this scan can read.
+        if named.is_empty() {
+            any = true;
+        }
+        for arg in named {
+            match arg {
+                ArrayElem::Single(a) => match hir.sent_name(*a) {
+                    Some(patched) => {
+                        names.insert(patched.to_owned());
+                    }
+                    None => any = true,
+                },
+                // A splat: nothing to read the names from.
+                _ => any = true,
+            }
         }
     }
     (names, any)

@@ -1921,7 +1921,7 @@ pub fn emit_call(
                 return err;
             }
             let is_static = cx.compiler.class_method_in_chain(target, name).is_some()
-                && !cx.compiler.may_be_redefined_at_runtime(name);
+                && !cx.compiler.may_be_patched_at_runtime(name);
             if is_static {
                 if safe {
                     return crate::codegen::unsupported(
@@ -1966,7 +1966,7 @@ pub fn emit_call(
                 return quote! { { let _ = #recv_expr; #ctor } };
             }
             if cx.compiler.class_method_in_chain(target, name).is_some()
-                && !cx.compiler.may_be_redefined_at_runtime(name)
+                && !cx.compiler.may_be_patched_at_runtime(name)
             {
                 let recv_expr = emit_expr(cx, recv_id);
                 let call = reflect::emit_class_method_call_on(
@@ -3330,12 +3330,12 @@ fn dispatch(
     // (Path 1). This is the common case -- `method_in_chain` mirrors
     // `comp_method_in_chain` exactly (compiler.c:404).
     // ...unless a guarded `undef` in the chain may have retracted the name by
-    // the time this runs, or a runtime definition site may have REPLACED it --
-    // either way only the dynamic path can see the overlay. See
-    // `ClassInfo::runtime_undefs` and `Compiler::runtime_redefs`.
+    // the time this runs, or a runtime site may have replaced its body or
+    // re-marked its visibility -- either way only the dynamic path can see the
+    // overlay. See `ClassInfo::runtime_undefs` and `Compiler::runtime_patches`.
     if let Some(cid) = recv_class.filter(|&c| {
         !cx.compiler.may_be_undefined_at_runtime(c, name)
-            && !cx.compiler.may_be_redefined_at_runtime(name)
+            && !cx.compiler.may_be_patched_at_runtime(name)
     }) {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
             let scope = cx.compiler.scope(sid);
