@@ -4123,8 +4123,19 @@ fn send_value_in_reason(
         // `Math`'s module functions reach here too when `Math` is mixed in
         // (`include Math` -> a private `sqrt(x)`), as an ordinary `class_table`
         // hit on its registered instance table -- no special arm needed.
+        let live = crate::runtime_meta::is_live();
         let n = name.name_str();
         for &anc in ancestors_of_value(cid) {
+            // A runtime `define_method` REPLACES, so within one ancestor the
+            // overlay outranks both the reopen and the builtin table -- the
+            // placement `send_in_reason` gives an object receiver through
+            // `resolve_dynamic`. PER ancestor, not ahead of the whole walk:
+            // `Enumerable.define_method(:map)` must not beat `Array#map`.
+            if live {
+                if let Some(p) = crate::runtime_meta::overlay_value_body(anc, name) {
+                    return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
+                }
+            }
             if let Some(f) = value_method(anc, box_id, name) {
                 return f(recv, args, block);
             }

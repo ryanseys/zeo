@@ -222,16 +222,23 @@ fn mark_inline_iter_sites(
     // so a prepended module or an inherited override (`Numeric#step`) counts
     // too. The literal fast paths obey the same verdict via the two
     // `Compiler` flags below.
+    //
+    // A RUNTIME redefinition counts the same way: a fused loop is not a call
+    // at all, so unlike an ordinary Path 1 site there is nothing for
+    // `may_be_patched_at_runtime` to de-optimize later -- the nomination has
+    // to be withheld here. `runtime_patches` is already populated (it is
+    // collected before this pass runs).
     let reopened = |cname: &str, m: &str| {
-        compiler.resolve_class(cname, &[], 0).is_some_and(|cid| {
-            mro::compute_ancestors(compiler, cid).iter().any(|&a| {
-                compiler
-                    .class(a)
-                    .own_methods
-                    .iter()
-                    .any(|&s| compiler.scope(s).name == m)
+        compiler.may_be_patched_at_runtime(m)
+            || compiler.resolve_class(cname, &[], 0).is_some_and(|cid| {
+                mro::compute_ancestors(compiler, cid).iter().any(|&a| {
+                    compiler
+                        .class(a)
+                        .own_methods
+                        .iter()
+                        .any(|&s| compiler.scope(s).name == m)
+                })
             })
-        })
     };
     use InlineIterKind as K;
     let sup: Vec<(K, bool)> = vec![

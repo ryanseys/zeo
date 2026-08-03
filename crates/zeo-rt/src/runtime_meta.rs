@@ -75,6 +75,13 @@ struct OverlayEntry {
     /// `MethodImpl` can't carry -- so these are the raw `RProc`, invoked via
     /// `call_with_self(class_value, args)`.
     class_methods: FMap<Symbol, RProc>,
+    /// The raw `RProc` behind whichever of `methods` above a `define_method`
+    /// installed. `MethodImpl::call` takes an `RObj`, and a BUILTIN receiver
+    /// (`5`, `[1, 2]`, a Range) has none -- so value dispatch calls the proc
+    /// with the value itself as self. Only `define_method` fills this: an
+    /// `attr_*`, an alias, or a copy from a `Method` object has no proc behind
+    /// it and stays object-only.
+    value_bodies: FMap<Symbol, RProc>,
     /// Which of `class_methods` above an `extend` copied in, rather than a
     /// `def self.x`/`define_singleton_method`/`module_function` writing here.
     /// The copies are indistinguishable once installed, and only
@@ -110,6 +117,7 @@ impl Default for OverlayEntry {
             methods_vis: FMap::default(),
             class_methods_vis: FMap::default(),
             class_methods: FMap::default(),
+            value_bodies: FMap::default(),
             extended_class_methods: FSet::default(),
             constructor: None,
             undefs: FSet::default(),
@@ -703,12 +711,13 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
         return runtime_define_singleton_method(&owner, name, body);
     }
     crate::method_meta::record_runtime_params(id, crate::MethodKind::Instance, name, &body);
-    let m = dynamic_from_proc(id, name, body);
+    let m = dynamic_from_proc(id, name, body.clone());
     let frame = current_frame_for(id);
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, m);
+        e.value_bodies.insert(name, body);
         e.undefs.remove(&name);
         match frame {
             // Outside a class body a runtime definition is public -- drop any
@@ -1791,6 +1800,44 @@ pub fn overlay_instance_method_names(
 /// The overlay's own CLASS-method names for `id` -- the class-level counterpart
 /// of [`overlay_instance_method_names`], and likewise invisible to the frozen
 /// registry that `dispatch::class_method_names` otherwise reads.
+/// The runtime `define_method` body `id` ITSELF holds for `name`. Value-shaped:
+/// see [`OverlayEntry::value_bodies`] for why an `RObj` receiver takes a
+/// different route.
+///
+/// Own-only, because the caller interleaves it with the registry and builtin
+/// probes ancestor by ancestor -- ruby's placement rule. A whole-ancestry walk
+/// here would let `Enumerable.define_method(:map)` beat `Array`'s own `map`,
+/// which it must not.
+pub fn overlay_value_body(id: ClassId, name: Symbol) -> Option<RProc> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .and_then(|e| e.value_bodies.get(&name).cloned())
+}
+
+/// Run an [`overlay_value_body`] with the method frame around it.
+///
+/// Not just `body.call_with_self_and_block`: `dynamic_from_proc`'s wrapper is
+/// what pushes `METHOD_FRAMES`, and a bare `super` inside a runtime-defined
+/// method reads exactly that. Calling the proc raw made prism's
+/// `Module.new { def unpack1(..) ... super ... }` raise "super called outside
+/// of method" the moment String dispatch started consulting the overlay.
+pub fn call_value_body(
+    defining: ClassId,
+    name: Symbol,
+    body: &RProc,
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    push_method_frame(defining, name);
+    let out = body.call_with_self_and_block(recv, args, block);
+    pop_method_frame();
+    out
+}
+
 /// `own_only` drops the names an `extend` copied in, which is
 /// `singleton_methods(false)`'s narrowing -- see
 /// [`OverlayEntry::extended_class_methods`].
