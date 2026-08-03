@@ -450,7 +450,9 @@ fn process_top_stmt(
         } else {
             // Ruby announces it as `Object.method_added(:foo)`, at this
             // position. See `Compiler::top_level_defs`.
+            let seq = next_def_seq(compiler);
             compiler.top_level_defs.push(crate::compiler::SiteDef {
+                seq,
                 at: main_statements.len(),
                 node: stmt,
                 name: name.clone(),
@@ -2128,12 +2130,15 @@ fn register_class(
                 // `DefMethod` nodes, one per generated name and in order, so
                 // ruby's "`attr_accessor :c` reports `:c` then `:c=`" needs
                 // nothing extra here.
+                let name = name.clone();
+                let is_class_method = *is_class_method;
                 let def = crate::compiler::SiteDef {
+                    seq: next_def_seq(compiler),
                     at: compiler.class_body_sites[site_idx].stmts.len(),
                     node: stmt,
-                    name: name.clone(),
+                    name,
                     event: crate::compiler::DefEvent::Added,
-                    singleton: *is_class_method,
+                    singleton: is_class_method,
                 };
                 compiler.class_body_sites[site_idx].defs.push(def);
                 register_body_def_method(compiler, class_id, stmt)?;
@@ -2174,7 +2179,15 @@ fn register_class(
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
-                        compiler.classes[class_id.0 as usize].includes.push(target);
+                        // A module that overrides the PRIMITIVE decides for
+                        // itself whether the mixin happens at all -- so the
+                        // ancestry edit stops being a compile-time fact and
+                        // codegen sends `append_features` at this position instead.
+                        if compiler.overrides_mixin_primitive(target, "append_features") {
+                            defer_mixin_to_runtime(compiler, target);
+                        } else {
+                            compiler.classes[class_id.0 as usize].includes.push(target);
+                        }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
@@ -2235,6 +2248,7 @@ fn register_class(
                 let at = compiler.class_body_sites[site_idx].stmts.len();
                 for name in &names {
                     let def = crate::compiler::SiteDef {
+                        seq: next_def_seq(compiler),
                         at,
                         node: stmt,
                         name: name.clone(),
@@ -2259,12 +2273,14 @@ fn register_class(
                 // An alias IS a definition, and ruby reports the NEW name.
                 // (The resolvable form never reaches here -- lowering turns it
                 // into a second `DefMethod`, which the arm above records.)
+                let (new_name_owned, singleton) = (new_name.clone(), *is_class_method);
                 let def = crate::compiler::SiteDef {
+                    seq: next_def_seq(compiler),
                     at: compiler.class_body_sites[site_idx].stmts.len(),
                     node: stmt,
-                    name: new_name.clone(),
+                    name: new_name_owned,
                     event: crate::compiler::DefEvent::Added,
-                    singleton: *is_class_method,
+                    singleton,
                 };
                 compiler.class_body_sites[site_idx].defs.push(def);
                 compiler.classes[class_id.0 as usize]
@@ -2308,7 +2324,15 @@ fn register_class(
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
-                        compiler.classes[class_id.0 as usize].prepends.push(target);
+                        // A module that overrides the PRIMITIVE decides for
+                        // itself whether the mixin happens at all -- so the
+                        // ancestry edit stops being a compile-time fact and
+                        // codegen sends `prepend_features` at this position instead.
+                        if compiler.overrides_mixin_primitive(target, "prepend_features") {
+                            defer_mixin_to_runtime(compiler, target);
+                        } else {
+                            compiler.classes[class_id.0 as usize].prepends.push(target);
+                        }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
@@ -2365,6 +2389,28 @@ fn register_class(
         }
     }
     Ok(())
+}
+
+/// A mixin whose module overrides the PRIMITIVE is no longer a compile-time
+/// ancestry fact: whether it happens at all is decided at run time. The
+/// ancestry itself is handled -- `splice_mixin` writes the overlay chain that
+/// `ancestors_of_value` prefers -- but a call folded at COMPILE time would
+/// still reach the class's own body, so the module's method names have to
+/// leave the fold. That is exactly what `runtime_patches` is for.
+fn defer_mixin_to_runtime(compiler: &mut Compiler, module: ClassId) {
+    let names: Vec<String> = compiler.classes[module.0 as usize]
+        .own_methods
+        .iter()
+        .map(|&s| compiler.scopes[s.0 as usize].name.clone())
+        .collect();
+    compiler.runtime_patches.extend(names);
+}
+
+/// The next [`crate::compiler::SiteDef::seq`]. The walk visits bodies in the
+/// order they run, so a plain counter IS execution order.
+fn next_def_seq(compiler: &mut Compiler) -> u32 {
+    compiler.def_seq += 1;
+    compiler.def_seq
 }
 
 /// Files one registered method `Scope` under its class's own-method list --

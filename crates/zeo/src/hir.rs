@@ -1742,6 +1742,12 @@ pub enum HirNode {
         hook: String,
         /// The defined method's name, passed as the hook's one Symbol argument.
         name: String,
+        /// Instance methods of `class` that are still in the FUTURE here.
+        /// Ruby's hook sees a half-built class; zeo has every table installed
+        /// before the first statement runs, so the reflection rows subtract
+        /// this set for as long as the hook body is on the stack. Empty for
+        /// the last definition in a class, which is the common case.
+        pending: Vec<String>,
     },
     /// `refine Target do ... end` in a module body. The block's `def`s lower
     /// into a HOLDER module (a `ClassDef` pushed immediately before this

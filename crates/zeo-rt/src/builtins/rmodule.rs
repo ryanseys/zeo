@@ -618,12 +618,15 @@ ruby_class! {
     // reject inclusion into a module and undefining `extend_object` so that
     // `obj.extend(Singleton)` cannot work at all -- and `undef_method` needs
     // the name to EXIST before it can take it away.
+    // These are the SPLICE itself, not the public verb -- `include` calls this,
+    // never the reverse. Routing back through `Module#include` would be an
+    // infinite regress the moment a module overrides one and calls `super`.
     private def "append_features" (recv, arg) {
-        crate::runtime_meta::runtime_include(arg, std::slice::from_ref(recv))?;
+        crate::runtime_meta::splice_mixin(arg, recv, false)?;
         Ok(recv.clone())
     }
     private def "prepend_features" (recv, arg) {
-        crate::runtime_meta::runtime_prepend(arg, std::slice::from_ref(recv))?;
+        crate::runtime_meta::splice_mixin(arg, recv, true)?;
         Ok(recv.clone())
     }
     private def "extend_object" (recv, arg) {

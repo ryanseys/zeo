@@ -7,15 +7,17 @@
 //! [`crate::compiler::ClassBodySite::defs`] holds each consumed definition
 //! until this pass, which runs after `mro::materialize` (it needs
 //! `class_methods` flattened over the ancestry) and splices a
-//! [`HirNode::DefHook`] back into the statement list for the ones that speak.
+//! [`HirNode::DefHook`] back into the statement list at exactly the index the
+//! definition held.
 //!
-//! The gate is the one `emit_inherited_hook` already uses: emit nothing unless
-//! the compiler can SEE a hook body. `Module`'s own rows are no-ops, and
-//! `class_method_in_chain` searches user scopes only, so they never satisfy it.
-//! A program that defines no hook comes out of this pass byte-identical.
+//! The gate is `emit_inherited_hook`'s: emit nothing unless the compiler can
+//! SEE a hook body. `Module`'s own rows are no-ops, and `class_method_in_chain`
+//! searches user scopes only, so they never satisfy it. A program that defines
+//! no hook comes out of this pass byte-identical.
 
-use crate::compiler::{ClassId, Compiler, SiteDef};
+use crate::compiler::{ClassId, Compiler, DefEvent, SiteDef};
 use crate::hir::{HirNode, NodeId};
+use std::collections::HashMap;
 
 /// The seven names. A definition of one of these ON `Module`/`Class` (the
 /// `method_*` trio and `const_added`) or on `BasicObject` (the
@@ -32,45 +34,119 @@ const HOOKS: [&str; 7] = [
 ];
 
 pub fn resolve(compiler: &mut Compiler, main_statements: &mut Vec<NodeId>) {
-    let global = global_hooks(compiler);
-    if !global.is_empty() {
-        for hook in &global {
-            compiler.global_def_hooks.insert((*hook).to_string());
-        }
+    for hook in global_hooks(compiler) {
+        compiler.global_def_hooks.insert(hook.to_string());
     }
+    let global: Vec<&'static str> = HOOKS
+        .into_iter()
+        .filter(|h| compiler.global_def_hooks.contains(*h))
+        .collect();
 
-    // Top level first: its definitions land on `Object`, whose hook every
-    // class inherits, so this is also the widest gate in the program.
-    let top = std::mem::take(&mut compiler.top_level_defs);
-    let sends = surviving(compiler, crate::compiler::OBJECT_CLASS, &top, &global);
-    splice(compiler, main_statements, crate::compiler::OBJECT_CLASS, sends);
-
+    // Take every class's definitions out first, so the watermark below can see
+    // a class's WHOLE program-wide sequence -- a reopen adds methods the hook
+    // in the first body has not seen yet.
+    let mut taken: Vec<(ClassId, Vec<SiteDef>, Option<usize>)> = Vec::new();
+    taken.push((
+        crate::compiler::OBJECT_CLASS,
+        std::mem::take(&mut compiler.top_level_defs),
+        None,
+    ));
     for i in 0..compiler.class_body_sites.len() {
-        let defs = std::mem::take(&mut compiler.class_body_sites[i].defs);
         let class = compiler.class_body_sites[i].class;
-        let sends = surviving(compiler, class, &defs, &global);
+        let defs = std::mem::take(&mut compiler.class_body_sites[i].defs);
+        taken.push((class, defs, Some(i)));
+    }
+    let future = future_names(&taken);
+
+    for (class, defs, site) in taken {
+        let sends = surviving(compiler, class, &defs, &global, &future);
         if sends.is_empty() {
             continue;
         }
-        let mut stmts = std::mem::take(&mut compiler.class_body_sites[i].stmts);
-        splice(compiler, &mut stmts, class, sends);
-        compiler.class_body_sites[i].stmts = stmts;
+        match site {
+            None => splice(compiler, main_statements, class, sends),
+            Some(i) => {
+                let mut stmts = std::mem::take(&mut compiler.class_body_sites[i].stmts);
+                splice(compiler, &mut stmts, class, sends);
+                compiler.class_body_sites[i].stmts = stmts;
+            }
+        }
     }
 }
 
-/// A `(at, hook, name)` per definition that will announce itself.
-type Send = (usize, &'static str, String);
+/// One definition that will announce itself: where to splice it, the hook, the
+/// defined name, and the names of `class` not yet defined at that point.
+struct Send {
+    at: usize,
+    hook: &'static str,
+    name: String,
+    pending: Vec<String>,
+}
+
+/// Per definition (keyed by [`SiteDef::seq`]), the names of its own class that
+/// are still in the FUTURE when it announces itself.
+///
+/// Ruby's hook sees a half-built class: at `method_added(:a)`,
+/// `instance_methods(false)` is `[:a]` alone. zeo has every method table
+/// installed before the program's first statement runs, so the announcement
+/// carries this set and the reflection rows subtract it.
+///
+/// Keyed on FIRST definition: `def x; end; def x; end` announces twice, and at
+/// the first announcement `x` already exists, so a later redefinition must not
+/// hide it.
+fn future_names(taken: &[(ClassId, Vec<SiteDef>, Option<usize>)]) -> HashMap<u32, Vec<String>> {
+    let mut by_class: HashMap<ClassId, Vec<&SiteDef>> = HashMap::new();
+    for (class, defs, _) in taken {
+        by_class.entry(*class).or_default().extend(defs.iter());
+    }
+    let mut out = HashMap::new();
+    for defs in by_class.values_mut() {
+        defs.sort_by_key(|d| d.seq);
+        // A class's own instance methods, in the order they come into being.
+        // A `def self.x` adds no instance method, and neither does an `undef`.
+        let mut first_at: Vec<(&str, usize)> = Vec::new();
+        for d in defs.iter() {
+            if d.event == DefEvent::Added
+                && !d.singleton
+                && !first_at.iter().any(|(n, _)| *n == d.name)
+            {
+                first_at.push((&d.name, first_at.len()));
+            }
+        }
+        let mut installed = 0usize;
+        for d in defs.iter() {
+            if d.event == DefEvent::Added && !d.singleton {
+                installed += 1;
+            }
+            let pending: Vec<String> = first_at
+                .iter()
+                .filter(|(_, i)| *i >= installed)
+                .map(|(n, _)| (*n).to_string())
+                .collect();
+            if !pending.is_empty() {
+                out.insert(d.seq, pending);
+            }
+        }
+    }
+    out
+}
 
 fn surviving(
     compiler: &Compiler,
     class: ClassId,
     defs: &[SiteDef],
     global: &[&'static str],
+    future: &HashMap<u32, Vec<String>>,
 ) -> Vec<Send> {
     defs.iter()
         .filter_map(|d| {
             let hook = d.event.hook(d.singleton);
-            fires(compiler, class, d, hook, global).then(|| (d.at, hook, d.name.clone()))
+            fires(compiler, class, d, hook, global).then(|| Send {
+                at: d.at,
+                hook,
+                name: d.name.clone(),
+                pending: future.get(&d.seq).cloned().unwrap_or_default(),
+            })
         })
         .collect()
 }
@@ -115,14 +191,15 @@ fn fires(
 /// compile time would keep reaching the original. Only the names a hook is
 /// actually told about lose their fold, and only in a program that has one.
 fn splice(compiler: &mut Compiler, stmts: &mut Vec<NodeId>, class: ClassId, sends: Vec<Send>) {
-    for (at, hook, name) in sends.into_iter().rev() {
-        compiler.runtime_patches.insert(name.clone());
+    for send in sends.into_iter().rev() {
+        compiler.runtime_patches.insert(send.name.clone());
         let node = compiler.hir.push(HirNode::DefHook {
             class: class.0,
-            hook: hook.to_string(),
-            name,
+            hook: send.hook.to_string(),
+            name: send.name,
+            pending: send.pending,
         });
-        stmts.insert(at, node);
+        stmts.insert(send.at, node);
     }
 }
 

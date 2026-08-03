@@ -1953,6 +1953,9 @@ pub fn method_defined(recv_class: ClassId, name: Symbol) -> bool {
 /// accessors), skipping the ancestor walk. A private own method still answers
 /// false, matching the inherit-true contract.
 pub fn method_defined_inherit(recv_class: ClassId, name: Symbol, inherit: bool) -> bool {
+    if crate::runtime_meta::not_yet_defined(recv_class, name) {
+        return false;
+    }
     if inherit {
         return method_defined(recv_class, name);
     }
@@ -1992,6 +1995,11 @@ fn is_notimplement_row(cid: ClassId, name: Symbol) -> bool {
 }
 
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
+    // A definition hook on the stack has not seen the rest of its class yet --
+    // see `runtime_meta::not_yet_defined`.
+    if crate::runtime_meta::not_yet_defined(recv_class, name) {
+        return false;
+    }
     // A SINGLETON class's instance methods ARE its owner's class methods --
     // the same redirection `instance_method_visibility` makes, so
     // `Foo.singleton_class.instance_method(:a)` finds `def self.a`.
@@ -2271,6 +2279,13 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
     };
     let reg = REGISTRY.get();
     let mut seen = HashSet::new();
+    // What a definition hook on the stack has not seen defined yet. Claimed
+    // like an `undef` tombstone -- marked SEEN so no layer can put the name
+    // back. `pending_defs_for` has already ruled out the names an ANCESTOR
+    // defines, which do exist.
+    for n in crate::runtime_meta::pending_defs_for(class, inherit) {
+        seen.insert(n);
+    }
     let mut out = Vec::new();
     for anc in chain {
         // The overlay first, and it CLAIMS every name it has an opinion about
@@ -2340,6 +2355,11 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
 /// method. Backs `private_method_defined?`/`public_method_defined?`/
 /// `protected_method_defined?`.
 pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<MethodVisibility> {
+    // A definition hook on the stack has not seen the rest of its class yet --
+    // this is what backs `public_method_defined?` and friends.
+    if crate::runtime_meta::not_yet_defined(class, name) {
+        return None;
+    }
     // `Foo.singleton_class`'s instance methods ARE `Foo`'s class methods, so
     // its visibility is theirs -- the table `def self.x` and
     // `private_class_method` actually write to.

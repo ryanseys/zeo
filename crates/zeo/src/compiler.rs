@@ -380,6 +380,8 @@ pub struct Compiler {
     /// cannot see one: such a reopen registers an ordinary instance method
     /// whose owner is the very class the no-op default lives on.
     pub global_def_hooks: std::collections::HashSet<String>,
+    /// Hands out [`SiteDef::seq`].
+    pub def_seq: u32,
     /// The same record for TOP-LEVEL definitions, which have no site: a bare
     /// `def foo` is a private instance method of `Object`, and ruby announces
     /// it as `Object.method_added(:foo)`. `at` indexes `main_statements`.
@@ -581,6 +583,13 @@ pub struct ClassBodySite {
 
 /// One consumed definition, and where its report would go.
 pub struct SiteDef {
+    /// Where this definition sits in the program's EXECUTION order, counted
+    /// across every site and the top level. The analyze walk visits bodies in
+    /// the order they run, so a plain counter is exact -- which raw spans are
+    /// not, since a spliced `require` puts another file's statements in the
+    /// middle of this one. [`crate::analyze::def_hooks`] orders a class's own
+    /// definitions by this to work out which are still in the future.
+    pub seq: u32,
     /// The index in the site's `stmts` the report belongs BEFORE.
     pub at: usize,
     /// The definition's own node, whose span decides whether a hook installed
@@ -660,6 +669,7 @@ impl Compiler {
             box_surrogates: HashMap::new(),
             class_body_sites: Vec::new(),
             global_def_hooks: Default::default(),
+            def_seq: 0,
             top_level_defs: Vec::new(),
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
@@ -1419,6 +1429,23 @@ impl Compiler {
             }
         }
         false
+    }
+
+    /// Whether `module`'s OWN body supplies one of the three mix-in
+    /// PRIMITIVES -- `append_features`/`prepend_features`/`extend_object`,
+    /// which `include`/`prepend`/`extend` are defined in terms of and which a
+    /// module overrides to police how it is mixed in.
+    ///
+    /// Asked during the analyze walk, before `mro::materialize` has flattened
+    /// anything, so it reads `own_class_methods` rather than the inherited
+    /// view: an override is written as a `def self.append_features` in the
+    /// module's own body, and a module must be defined before it is mixed in.
+    /// One inherited from an `extend`ed module is missed, and stays folded.
+    pub fn overrides_mixin_primitive(&self, module: ClassId, primitive: &str) -> bool {
+        self.classes[module.0 as usize]
+            .own_class_methods
+            .iter()
+            .any(|&s| self.scopes[s.0 as usize].name == primitive)
     }
 
     /// Same idea as `method_in_chain`, over `class_methods` instead of

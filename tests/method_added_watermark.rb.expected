@@ -1,0 +1,17 @@
+first: own=[:first] defined?(later)=false respond_to=false
+later: own=[:first, :later] defined?(later)=true respond_to=true
+last: own=[:first, :last, :later] defined?(later)=true respond_to=true
+-- once the class is built, everything is visible again
+[[:first, :last, :later], true]
+-- instance_method raises for a name that does not exist yet
+  NameError: undefined method 'two' for class 'R'
+-- visibility predicates follow the same watermark
+  public?=false private?=false
+-- an INHERITED name is not hidden: it exists, whatever this class reached
+  shared defined?=true own=[:own]
+-- a redefinition does not hide the name it already defined
+  x: defined?=true
+  x: defined?=true
+-- a runtime definition needs no watermark: it really is the last one
+  runtime a: own=[:a]
+  runtime b: own=[:a, :b]

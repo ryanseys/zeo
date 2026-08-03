@@ -91,6 +91,11 @@ struct OverlayEntry {
     /// name, so re-defining over a mixin makes it own again.
     extended_class_methods: FSet<Symbol>,
     constructor: Option<ConstructorFn>,
+    /// Methods a PREPENDED module supplies, kept apart from `methods` so a
+    /// later definition on the target cannot displace them -- ruby puts a
+    /// prepended module in its own layer ahead of the class, and `prepend M`
+    /// followed by `def m` leaves M's `m` winning. Probed before `methods`.
+    prepended: FMap<Symbol, MethodImpl>,
     /// Names `undef_method` removed. An ENTRY, not a deletion: it TERMINATES
     /// the MRO walk here, so an ancestor's still-live definition can't answer
     /// for a descendant that undef'd the name. Mirrors the frozen registry's
@@ -114,6 +119,7 @@ impl Default for OverlayEntry {
             is_module: false,
             ancestors: &[],
             methods: FMap::default(),
+            prepended: FMap::default(),
             methods_vis: FMap::default(),
             class_methods_vis: FMap::default(),
             class_methods: FMap::default(),
@@ -1225,7 +1231,9 @@ fn snapshot_from(id: ClassId, name: Symbol, skip_overlay: bool) -> Option<Method
     for &anc in ancestors_of_value(id) {
         if !skip_overlay {
             let c = maps().classes.read().unwrap();
-            if let Some(m) = c.get(&anc.0).and_then(|e| e.methods.get(&name).cloned()) {
+            if let Some(m) = c.get(&anc.0).and_then(|e| {
+                e.prepended.get(&name).or_else(|| e.methods.get(&name)).cloned()
+            }) {
                 return Some(m);
             }
         }
@@ -1654,6 +1662,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
     Ok(recv.clone())
 }
 
+
 /// `Module#include(M, ...)` reached AT RUNTIME on a Class/Module receiver --
 /// e.g. `Class.new { include M }`. Splices each module (and its own ancestors
 /// not already present) into the receiver's overlay ancestry right after the
@@ -1704,6 +1713,10 @@ fn mix_in(
         Placement::After => modules.iter().rev().collect(),
         Placement::Before => modules.iter().collect(),
     };
+    let (primitive, hook) = match placement {
+        Placement::Before => ("prepend_features", "prepended"),
+        Placement::After => ("append_features", "included"),
+    };
     for module_val in ordered {
         let RubyValue::Class(mid) = module_val else {
             return Err(type_error!(
@@ -1711,18 +1724,88 @@ fn mix_in(
                 crate::builtins::class_name_of(module_val)
             ));
         };
-        splice_module_into(*cid, *mid, placement);
-        let hook = if placement == Placement::Before {
-            "prepended"
-        } else {
-            "included"
-        };
+        // `Module#include` is DEFINED IN TERMS of `append_features` and does no
+        // splicing itself (`eval.c`'s `rb_mod_include`), which is what lets a
+        // module police how it is mixed in -- the `singleton` gem overrides
+        // this very method to reject inclusion into a module. An override that
+        // omits `super` therefore skips the mixin entirely, and `included`
+        // still fires. Both oracle-verified.
+        match overrides_mixin_primitive(*mid, primitive) {
+            true => {
+                crate::dispatch::send_value(
+                    module_val,
+                    Symbol::intern(primitive),
+                    std::slice::from_ref(recv),
+                    None,
+                )?;
+            }
+            false => splice_module_into(*cid, *mid, placement),
+        }
         fire_mixin_hook(module_val, hook, recv)?;
     }
     mark_ancestry_mutated();
     patch_class(*cid);
     mark_live();
     Ok(recv.clone())
+}
+
+/// Whether `module` supplies its own body for one of the three mix-in
+/// PRIMITIVES, as opposed to inheriting `Module`'s. The defaults are the splice
+/// itself, so reaching them through a send would be an infinite regress --
+/// `Module#append_features` calls the splice directly for exactly that reason.
+pub(crate) fn overrides_mixin_primitive(module: ClassId, primitive: &str) -> bool {
+    crate::dispatch::class_method_owner(module, Symbol::intern(primitive)).is_some()
+}
+
+/// The splice `Module#prepend_features`/`#append_features` performs -- the
+/// primitive, with no notification hook of its own.
+pub fn splice_mixin(target: &RubyValue, module: &RubyValue, before: bool) -> Result<(), Signal> {
+    let (RubyValue::Class(cid), RubyValue::Class(mid)) = (target, module) else {
+        return Err(type_error!(
+            "wrong argument type {} (expected Module)",
+            crate::builtins::class_name_of(target)
+        ));
+    };
+    if crate::dispatch::class_frozen(*cid) {
+        return Err(crate::dispatch::frozen_class_error(*cid));
+    }
+    let placement = match before {
+        true => Placement::Before,
+        false => Placement::After,
+    };
+    splice_module_into(*cid, *mid, placement);
+    if before {
+        overlay_prepended_methods(*cid, *mid);
+    }
+    mark_ancestry_mutated();
+    patch_class(*cid);
+    mark_live();
+    Ok(())
+}
+
+/// A PREPEND has to outrank the target's OWN methods, and `send_in` resolves an
+/// object through a flattened per-class table before it walks any ancestry --
+/// so splicing the chain alone leaves the class's own body still winning.
+///
+/// Copy the module's methods into the target's overlay, which IS probed first.
+/// The copies come from the module's value-method container, whose bodies take
+/// their receiver as an argument, so one copy serves every instance -- unlike a
+/// compiled class method, which is laid out per class. Only the module's OWN
+/// methods; one it inherited in turn stays on the ancestry walk.
+fn overlay_prepended_methods(cid: ClassId, mid: ClassId) {
+    let names = crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::All, false);
+    let installs: Vec<(Symbol, MethodImpl)> = names
+        .into_iter()
+        .filter_map(|n| crate::dispatch::registry_value_method_impl(mid, n).map(|m| (n, m)))
+        .collect();
+    if installs.is_empty() {
+        return;
+    }
+    let mut w = maps().classes.write().unwrap();
+    let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+    for (name, m) in installs {
+        e.prepended.insert(name, m);
+    }
 }
 
 /// Ruby's mixin hook, run right after the ancestry edit: `M.included(target)`,
@@ -1852,6 +1935,94 @@ pub(crate) fn fire_def_hook(
     // still runs.
     crate::dispatch::send_value(&recv, hook, &[RubyValue::Symbol(name)], None)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The definition watermark
+// ---------------------------------------------------------------------------
+//
+// Ruby's definition hook sees a HALF-BUILT class: at `method_added(:a)`,
+// `instance_methods(false)` answers `[:a]` alone, and `method_defined?(:b)` is
+// false for a `def b` written below. zeo installs every method table before the
+// program's first statement runs, so there is no such moment to observe.
+//
+// Rather than defer registration -- which would cost every program -- the
+// compiler works out which names are still in the future at each announcement
+// (it knows them statically) and hands them over for the duration of the hook
+// body. The reflection rows subtract the set; DISPATCH deliberately does not,
+// so calling a not-yet-defined method from inside a hook succeeds here and
+// raises `NoMethodError` in ruby. Truncating dispatch would put a thread-local
+// check on the hot path for a case no real code exercises; it is recorded as
+// `tests/gaps/method_added_calls_later_method.rb`.
+
+thread_local! {
+    /// One frame per definition hook currently on the stack. A hook body that
+    /// defines another method nests, which is why this is a stack.
+    static PENDING_DEFS: std::cell::RefCell<Vec<(ClassId, Vec<Symbol>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A hook body has run at least once with a non-empty pending set. Until it
+/// flips, every reflection row's check is one relaxed load -- and it never
+/// flips in a program that defines no hook, which is nearly all of them.
+static ANY_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Runs `f` -- a definition hook's send -- with `names` marked as not yet
+/// defined on `class`.
+pub fn with_pending_defs<R>(class: ClassId, names: &[Symbol], f: impl FnOnce() -> R) -> R {
+    ANY_PENDING.store(true, Ordering::Release);
+    PENDING_DEFS.with(|p| p.borrow_mut().push((class, names.to_vec())));
+    let out = f();
+    PENDING_DEFS.with(|p| {
+        p.borrow_mut().pop();
+    });
+    out
+}
+
+/// Whether `name` is a method of `class` that the definition hook now running
+/// has not seen defined yet.
+#[inline]
+pub fn not_yet_defined(class: ClassId, name: Symbol) -> bool {
+    ANY_PENDING.load(Ordering::Acquire) && listed_pending(class, name) && !inherited(class, name)
+}
+
+/// Every name of `class` the running hook has not seen defined, for the callers
+/// that enumerate rather than ask. Empty (and free) outside a hook body.
+///
+/// `inherit` picks which question is being asked, and the two differ. "Does
+/// this name exist AT ALL?" -- `instance_methods(true)`, `method_defined?` --
+/// is answered by an ancestor's copy, so a pending name an ancestor also
+/// defines is not hidden. "Is it defined DIRECTLY here?" --
+/// `instance_methods(false)` -- is not: `Sub#shared` written below the hook is
+/// absent from Sub's OWN list even though `Base#shared` exists.
+pub fn pending_defs_for(class: ClassId, inherit: bool) -> Vec<Symbol> {
+    if !ANY_PENDING.load(Ordering::Acquire) {
+        return Vec::new();
+    }
+    PENDING_DEFS.with(|p| {
+        p.borrow()
+            .iter()
+            .filter(|(c, _)| *c == class)
+            .flat_map(|(_, ns)| ns.iter().copied())
+            .filter(|&n| !inherit || !inherited(class, n))
+            .collect()
+    })
+}
+
+fn listed_pending(class: ClassId, name: Symbol) -> bool {
+    PENDING_DEFS.with(|p| {
+        p.borrow()
+            .iter()
+            .any(|(c, ns)| *c == class && ns.contains(&name))
+    })
+}
+
+/// An ANCESTOR beyond `class` defines `name` too, so it exists no matter what
+/// this class has reached: ruby hides only what does not exist ANYWHERE yet,
+/// and a `Sub#to_s` written below the hook still leaves `Object#to_s`
+/// reachable. Only ever asked inside a hook body.
+fn inherited(class: ClassId, name: Symbol) -> bool {
+    crate::dispatch::method_owner_after(class, class, name).is_some()
 }
 
 /// `Module#const_added` -- ruby announces a constant right after it becomes
@@ -2037,6 +2208,7 @@ pub fn overlay_instance_method_names(
     let named: HashSet<Symbol> = e
         .methods
         .keys()
+        .chain(e.prepended.keys())
         .chain(e.methods_vis.keys())
         .copied()
         .filter(|n| !e.undefs.contains(n))
@@ -2545,9 +2717,11 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         // walk; here we only add the overlay deltas, self-first.
         let chain = ancestors_of_value(id);
         let c = maps().classes.read().unwrap();
-        chain
-            .iter()
-            .find_map(|anc| c.get(&anc.0).and_then(|e| e.methods.get(&name).cloned()))
+        chain.iter().find_map(|anc| {
+            c.get(&anc.0)
+                .and_then(|e| e.prepended.get(&name).or_else(|| e.methods.get(&name)))
+                .cloned()
+        })
     }
 }
 
@@ -2567,7 +2741,9 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
             if entry.is_some_and(|e| e.undefs.contains(&name)) {
                 return None;
             }
-            if let Some(m) = entry.and_then(|e| e.methods.get(&name).cloned()) {
+            if let Some(m) = entry.and_then(|e| {
+                e.prepended.get(&name).or_else(|| e.methods.get(&name)).cloned()
+            }) {
                 return Some(m);
             }
         }
@@ -2636,7 +2812,7 @@ pub fn overlay_has_instance_method(id: ClassId, name: Symbol) -> bool {
         .read()
         .unwrap()
         .get(&id.0)
-        .is_some_and(|e| e.methods.contains_key(&name))
+        .is_some_and(|e| e.methods.contains_key(&name) || e.prepended.contains_key(&name))
 }
 
 /// A runtime class's leaked ancestor chain -- `None` for a frozen id or a pure

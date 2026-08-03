@@ -1435,13 +1435,22 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // extend-on-include idiom (ActiveSupport::Concern and every DSL after
         // it) gives the base its class-side methods. Module's own default hook
         // is a no-op, so nothing is emitted unless the module defines one.
-        HirNode::Include(m) | HirNode::Extend(m) | HirNode::Prepend(m) => {
-            let hook = match &cx.compiler.hir[id] {
-                HirNode::Include(_) => "included",
-                HirNode::Extend(_) => "extended",
-                _ => "prepended",
-            };
-            emit_mixin_hook(cx, m, hook)
+        HirNode::Include(_) | HirNode::Extend(_) | HirNode::Prepend(_) => {
+            let (m, hook, primitive) = mixin_parts(&cx.compiler.hir[id]).expect("a mixin node");
+            // The primitive FIRST when the module overrides it -- it is what
+            // performs the mixin, and analyze suppressed the static edit on the
+            // strength of it. The notification follows either way, exactly as
+            // ruby fires `included` even when an override skipped the splice.
+            let overridden = primitive.filter(|p| {
+                cx.resolve_class(m)
+                    .is_some_and(|mid| cx.compiler.overrides_mixin_primitive(mid, p))
+            });
+            let splice = overridden.map(|p| emit_mixin_hook(cx, m, p));
+            let notify = emit_mixin_hook(cx, m, hook);
+            match splice {
+                Some(splice) => quote! { { #splice; #notify } },
+                None => notify,
+            }
         }
         // A definition report -- `Klass.method_added(:name)` and its five
         // siblings -- spliced back in at the position of a `def` the analyze
@@ -1449,14 +1458,34 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // answers, so this always emits a real send. `send_value`, not a
         // visibility-checked call: ruby reaches its hooks through an FCALL, so
         // a `private def self.method_added` still runs.
-        HirNode::DefHook { class, hook, name } => {
+        HirNode::DefHook {
+            class,
+            hook,
+            name,
+            pending,
+        } => {
             let (cid, sym, arg) = (*class, super::pooled_sym(hook), super::pooled_sym(name));
-            quote! {
+            let send = quote! {
                 zeo_rt::send_value(
                     &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)),
                     #sym,
                     &[zeo_rt::RubyValue::Symbol(#arg)],
                     None,
+                )
+            };
+            // The half-built view the hook body must see -- see
+            // `HirNode::DefHook::pending`. Omitted entirely when nothing is
+            // left in the future, so the last definition in a class pays
+            // nothing for it.
+            if pending.is_empty() {
+                return quote! { #send? };
+            }
+            let names = pending.iter().map(|n| super::pooled_sym(n));
+            quote! {
+                zeo_rt::with_pending_defs(
+                    zeo_rt::ClassId(#cid),
+                    &[#(#names),*],
+                    || #send,
                 )?
             }
         }
@@ -1591,16 +1620,31 @@ pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCau
 /// "path statement drops value" warning out of every program that mixes in a
 /// module.
 pub(super) fn mixin_hook_runs(cx: &Ctx, node: &HirNode) -> bool {
-    let (module, hook) = match node {
-        HirNode::Include(m) => (m, "included"),
-        HirNode::Extend(m) => (m, "extended"),
-        HirNode::Prepend(m) => (m, "prepended"),
-        _ => return false,
+    let Some((module, hook, primitive)) = mixin_parts(node) else {
+        return false;
+    };
+    let Some(mid) = cx.resolve_class(module) else {
+        return false;
     };
     cx.defining_class.is_some()
-        && cx
-            .resolve_class(module)
-            .is_some_and(|mid| cx.compiler.class_method_in_chain(mid, hook).is_some())
+        && (cx.compiler.class_method_in_chain(mid, hook).is_some()
+            // The PRIMITIVE too: when a module overrides it, analyze suppressed
+            // the compile-time ancestry edit and this node is what performs the
+            // mixin at all. Dropping it as pure would silently lose the module.
+            || primitive.is_some_and(|p| cx.compiler.overrides_mixin_primitive(mid, p)))
+}
+
+/// `(module name, notification hook, mix-in primitive)` for the three mixin
+/// nodes -- `include` is `append_features` then `included`, and its two
+/// siblings follow the same shape (`eval.c`'s `rb_mod_include`).
+fn mixin_parts(node: &HirNode) -> Option<(&String, &'static str, Option<&'static str>)> {
+    match node {
+        HirNode::Include(m) => Some((m, "included", Some("append_features"))),
+        HirNode::Prepend(m) => Some((m, "prepended", Some("prepend_features"))),
+        // `extend` deliberately has no primitive here -- see `Kernel#extend`.
+        HirNode::Extend(m) => Some((m, "extended", None)),
+        _ => None,
+    }
 }
 
 fn emit_mixin_hook(cx: &Ctx, module: &str, hook: &str) -> TokenStream {
@@ -1608,7 +1652,12 @@ fn emit_mixin_hook(cx: &Ctx, module: &str, hook: &str) -> TokenStream {
     let (Some(mid), Some(target)) = (cx.resolve_class(module), cx.defining_class) else {
         return nil;
     };
-    if cx.compiler.class_method_in_chain(mid, hook).is_none() {
+    // The notification is skipped when nobody defines it (Module's default is a
+    // no-op). A PRIMITIVE is never skipped: it is reached only when the module
+    // overrides it, and it is what performs the mixin.
+    if cx.compiler.class_method_in_chain(mid, hook).is_none()
+        && !cx.compiler.overrides_mixin_primitive(mid, hook)
+    {
         return nil;
     }
     let (m, t) = (mid.0, target.0);
