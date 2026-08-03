@@ -74,6 +74,9 @@ struct Entry {
     /// makes that copy private, which is why `Math.instance_methods(false)` is
     /// empty while `Math.private_instance_methods(false)` has 28.
     is_private: bool,
+    /// `protected def` -- reachable only from a receiver the caller is a kind
+    /// of. Never set by `module_function`, which splits private/public only.
+    is_protected: bool,
 }
 
 fn expand(spec: &ClassSpec) -> TokenStream2 {
@@ -148,6 +151,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         // ordinary method lands in exactly one, chosen by `def` vs `def self.`.
         let derived = method.derived_arity();
         let declared_private = method.visibility == zeo_dsl::Visibility::Private;
+        let declared_protected = method.visibility == zeo_dsl::Visibility::Protected;
         for name in &method.names {
             let entry = Entry {
                 ruby: name.ruby.clone(),
@@ -155,6 +159,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 arity: name.arity.unwrap_or(derived),
                 attrs: method.attrs.clone(),
                 is_private: declared_private,
+                is_protected: declared_protected,
             };
             if method.is_module_function {
                 // CRuby's `module_function` splits the visibility: the instance
@@ -191,6 +196,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     arity: t.arity,
                     attrs: t.attrs.clone(),
                     is_private: t.is_private,
+                    is_protected: t.is_protected,
                 };
                 // Mirror the target's bucket.
                 if class.iter().any(|e| e.ruby == alias.old_name) {
@@ -400,6 +406,7 @@ fn gen_method_table(
     let names_fn = format_ident!("{names}");
     let arity_fn = format_ident!("{arity}");
     let private_fn = format_ident!("{lookup}_is_private");
+    let protected_fn = format_ident!("{lookup}_is_protected");
 
     let lookup_arms = entries.iter().map(|e| {
         let (ruby, fn_ident, attrs) = (&e.ruby, &e.fn_ident, &e.attrs);
@@ -417,6 +424,10 @@ fn gen_method_table(
     // `false`, which is every class that declares no `module_function` and no
     // `private def`.
     let private_arms = entries.iter().filter(|e| e.is_private).map(|e| {
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        quote! { #( #attrs )* #ruby => true, }
+    });
+    let protected_arms = entries.iter().filter(|e| e.is_protected).map(|e| {
         let (ruby, attrs) = (&e.ruby, &e.attrs);
         quote! { #( #attrs )* #ruby => true, }
     });
@@ -446,6 +457,13 @@ fn gen_method_table(
                 _ => false,
             }
         }
+        #[allow(dead_code)]
+        pub(crate) fn #protected_fn(name: &str) -> bool {
+            match name {
+                #( #protected_arms )*
+                _ => false,
+            }
+        }
     };
     let table = quote! {
         Some(crate::builtins::MethodTable {
@@ -453,6 +471,7 @@ fn gen_method_table(
             names: #names_fn,
             arity: #arity_fn,
             is_private: #private_fn,
+            is_protected: #protected_fn,
         })
     };
     (items, table)

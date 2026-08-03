@@ -113,6 +113,10 @@ pub struct MethodTable {
     /// invisible to `respond_to?` and to reflection. `false` for all but the
     /// `module_function` instance copies today.
     pub is_private: fn(&str) -> bool,
+    /// CRuby-protected: reachable only from a receiver the CALLER is a kind
+    /// of. A separate fn rather than a widened `is_private`, because the two
+    /// readers ask the two questions separately.
+    pub is_protected: fn(&str) -> bool,
 }
 
 /// One builtin class/module's tables, registered by the `ruby_class!`/
@@ -237,6 +241,15 @@ pub(crate) fn class_method_is_private(id: ClassId, name: &str) -> bool {
     registered_table(id)
         .and_then(|t| t.instance.as_ref())
         .is_some_and(|m| (m.is_private)(name))
+}
+
+/// Whether the builtin instance method `name` on `id` is CRuby-PROTECTED --
+/// `Pathname#path` is the whole population, made protected so `#to_s` is the
+/// way to spell a path out loud.
+pub(crate) fn class_method_is_protected(id: ClassId, name: &str) -> bool {
+    registered_table(id)
+        .and_then(|t| t.instance.as_ref())
+        .is_some_and(|m| (m.is_protected)(name))
 }
 
 /// The same question for a builtin CLASS-method row (`private def self."x"`)

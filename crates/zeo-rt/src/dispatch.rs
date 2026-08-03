@@ -1962,6 +1962,16 @@ fn is_notimplement_row(cid: ClassId, name: Symbol) -> bool {
 }
 
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
+    // A SINGLETON class's instance methods ARE its owner's class methods --
+    // the same redirection `instance_method_visibility` makes, so
+    // `Foo.singleton_class.instance_method(:a)` finds `def self.a`.
+    if crate::runtime_meta::is_live() {
+        if let Some(owner) = crate::runtime_meta::singleton_class_owner(recv_class) {
+            if class_receiver_responds(owner, name) {
+                return include_all || !class_method_is_private(owner, name);
+            }
+        }
+    }
     let n = name.name();
     let n = n.as_str();
     let overlay_live = crate::runtime_meta::is_live();
@@ -2009,10 +2019,13 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
                 // `initialize`, every `module_function`'s instance copy) is
                 // reachable via implicit self / `send` / `super` -- all
                 // through the table -- but `respond_to?`'s default ignores
-                // privates, so it answers false unless `include_all`.
+                // privates, so it answers false unless `include_all`. A
+                // PROTECTED row (`Pathname#path`) is hidden the same way:
+                // CRuby's default `respond_to?` reports public only.
                 if !include_all
                     && (is_hidden_builtin_private(anc, n)
-                        || crate::builtins::class_method_is_private(anc, n))
+                        || crate::builtins::class_method_is_private(anc, n)
+                        || crate::builtins::class_method_is_protected(anc, n))
                 {
                     continue;
                 }
@@ -2263,6 +2276,8 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
                 || is_hidden_builtin_private(anc, n)
             {
                 MethodVisibility::Private
+            } else if crate::builtins::class_method_is_protected(anc, n) {
+                MethodVisibility::Protected
             } else {
                 MethodVisibility::Public
             };
@@ -2350,12 +2365,15 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         // IS defined, so `private_method_defined?` must say so, and the walk
         // must not keep looking for a public copy farther up.
         if crate::builtins::class_table_names(*anc).contains(&name_str) {
-            let private = is_hidden_builtin_private(*anc, name_str)
-                || crate::builtins::class_method_is_private(*anc, name_str);
-            return Some(match private {
-                true => MethodVisibility::Private,
-                false => MethodVisibility::Public,
-            });
+            if is_hidden_builtin_private(*anc, name_str)
+                || crate::builtins::class_method_is_private(*anc, name_str)
+            {
+                return Some(MethodVisibility::Private);
+            }
+            if crate::builtins::class_method_is_protected(*anc, name_str) {
+                return Some(MethodVisibility::Protected);
+            }
+            return Some(MethodVisibility::Public);
         }
     }
     None

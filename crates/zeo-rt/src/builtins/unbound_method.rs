@@ -87,6 +87,19 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
     })))
 }
 
+/// The class an `#owner` reports. A SINGLETON lookup lives on the owner's
+/// singleton class -- `Foo.method(:a).owner` is `#<Class:Foo>`, not `Foo` --
+/// which is also where `def self.a` actually put it. Shared with `Method`,
+/// whose two kinds answer the same way.
+pub(crate) fn owner_value(owner: ClassId, kind: MethodKind) -> Result<RubyValue, crate::Signal> {
+    match kind {
+        MethodKind::Instance => Ok(RubyValue::Class(owner)),
+        MethodKind::Singleton => {
+            crate::runtime_meta::runtime_singleton_class(&RubyValue::Class(owner))
+        }
+    }
+}
+
 fn recv_unbound(recv: &RubyValue) -> &RUnboundMethod {
     let RubyValue::Object(o) = recv else {
         unreachable!("the UnboundMethod table only dispatches on UNBOUND_METHOD_CLASS receivers")
@@ -138,7 +151,7 @@ ruby_class! {
     // ancestry (may differ from the class the unbound method was fetched from).
     def "owner"(recv) {
         let um = recv_unbound(recv);
-        Ok(RubyValue::Class(um.owner().unwrap_or(um.home)))
+        owner_value(um.owner().unwrap_or(um.home), um.kind)
     }
     def "source_location"(recv) {
         let um = recv_unbound(recv);

@@ -31,6 +31,7 @@ pub mod builtins {
         pub names: fn() -> &'static [&'static str],
         pub arity: fn(&str) -> Option<i64>,
         pub is_private: fn(&str) -> bool,
+        pub is_protected: fn(&str) -> bool,
     }
 
     pub struct BuiltinClassTable {
@@ -109,6 +110,9 @@ mod comparable {
 
         // A `module_function` is emitted into BOTH the instance and class
         // tables (like `Math.sqrt` / `include Math; sqrt`).
+        protected def "guarded" (_recv) {
+            Ok(RubyValue::Int(5))
+        }
         module_function def "mf" (_recv) {
             Ok(RubyValue::Int(77))
         }
@@ -166,6 +170,18 @@ fn a_module_function_is_private_as_an_instance_method() {
     assert!(!comparable::lookup_class_is_private("mf"));
     // A plain def is public in both directions.
     assert!(!comparable::lookup_is_private("opt"));
+}
+
+#[test]
+fn a_protected_def_is_its_own_state_not_a_flavour_of_private() {
+    // The table carried ONE bit for years, so `protected` collapsed into
+    // public: the row answered an outside caller and reflection listed it as
+    // public. It is a third state now, and `private` must not absorb it.
+    assert!(comparable::lookup_is_protected("guarded"));
+    assert!(!comparable::lookup_is_private("guarded"));
+    // ...and neither of the other two shapes is protected.
+    assert!(!comparable::lookup_is_protected("mf"));
+    assert!(!comparable::lookup_is_protected("opt"));
 }
 
 #[test]

@@ -316,7 +316,7 @@ ruby_class! {
     // class, not the class itself).
     def "owner"(recv) {
         let m = recv_method(recv);
-        Ok(RubyValue::Class(m.owner().unwrap_or(m.home)))
+        crate::builtins::unbound_method::owner_value(m.owner().unwrap_or(m.home), m.kind)
     }
     // `Method#original_name` -- the name the method was DEFINED under, which
     // differs from `#name` only for one reached through an alias.
