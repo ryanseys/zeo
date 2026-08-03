@@ -3,9 +3,42 @@
 //! `range_covers` (the `Range#===` fix that makes `case x when 1..5` real).
 //! The remaining Tier A rows land in stage E.
 
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+
+use crate::builtins::enumerable::{self, own_row};
 use crate::builtins::{arg_error, block_or_enum, inherited_row, range_error, type_error};
-use crate::{RubyValue, Signal};
+use crate::{RProc, RubyValue, Signal};
 use zeo_macros::ruby_class;
+
+/// The values a BOUNDED range covers, walked by the builtin `each` fetched
+/// straight from Range's own table -- never through dispatch, so a runtime
+/// `Range#each` override cannot reach a row ruby owns on Range (`#count`,
+/// `#minmax`, `#reverse_each`, `#to_set`). CRuby's C bodies read the endpoints
+/// or walk integers directly and never call `each` either.
+///
+/// `None` for an endless or beginless range: it has no finite storage, so its
+/// rows keep sending `each` exactly as before.
+pub(crate) fn finite_values(recv: &RubyValue) -> Option<Vec<RubyValue>> {
+    let (start, end, _) = range_parts(recv);
+    start?;
+    match end {
+        None => return None,
+        Some(RubyValue::Float(f)) if f.is_infinite() && *f > 0.0 => return None,
+        Some(_) => {}
+    }
+    let each = crate::builtins::class_table(zeo_abi::RANGE_CLASS)?("each")?;
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let out2 = out.clone();
+    let collect = RProc::new(move |yielded: &[RubyValue]| {
+        out2.lock().push(crate::builtins::enumerable::pack(yielded));
+        Ok(RubyValue::Nil)
+    });
+    each(recv, &[], Some(RubyValue::Proc(collect))).ok()?;
+    let items = std::mem::take(&mut *out.lock());
+    Some(items)
+}
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
     match recv {
@@ -601,10 +634,10 @@ ruby_class! {
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
     def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
-    def "count" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "count", recv, __args, block) }
-    def "minmax" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "minmax", recv, __args, block) }
-    def "reverse_each" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reverse_each", recv, __args, block) }
-    def "to_set" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "to_set", recv, __args, block) }
+    def "count" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::count_own(s, __args, block)) }
+    def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
+    def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
+    def "to_set" cfunc (recv, *_args, &_block) { own_row!(recv, |s| enumerable::to_set_own(s, __args, None)) }
 }
 
 #[cfg(test)]

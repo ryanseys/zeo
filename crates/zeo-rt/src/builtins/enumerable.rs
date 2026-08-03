@@ -83,19 +83,124 @@ pub(crate) fn pack(args: &[RubyValue]) -> RubyValue {
     }
 }
 
-/// Drives `recv`'s `each` with `f` as the block; `f` returning
-/// `Err(Signal::Break(_))` terminates iteration early and is swallowed
-/// here (the `rb_iter_break()` analogue -- results travel through captured
-/// state, never the break payload). Any other signal (a raise, a `break`
-/// from the USER's block targeting the enclosing call, `Signal::Return`)
-/// propagates untouched.
+/// Where one of these bodies gets its elements.
+///
+/// `Enumerable#map` on an arbitrary object must SEND `each` -- that is the
+/// whole contract of the module. But a row ruby declares on the class itself
+/// walks that class's own storage: `rb_ary_collect` never calls `each`, so a
+/// runtime `Array#each` override must not reach `Array#map`. The two share
+/// every body here and differ only in this.
+#[derive(Clone, Copy)]
+pub(crate) struct Src<'a> {
+    /// Always the real receiver -- an enumerator built for a missing block,
+    /// and a row answering `recv`, both need it whichever way iteration goes.
+    pub(crate) recv: &'a RubyValue,
+    own: Option<&'a Own>,
+}
+
+impl<'a> Src<'a> {
+    pub(crate) fn sending(recv: &'a RubyValue) -> Src<'a> {
+        Src { recv, own: None }
+    }
+
+    pub(crate) fn own(recv: &'a RubyValue, own: &'a Own) -> Src<'a> {
+        Src {
+            recv,
+            own: Some(own),
+        }
+    }
+}
+
+/// Storage a row reads directly instead of sending `each`.
+pub(crate) enum Own {
+    /// A LIVE view of an Array, re-read per index -- `rb_ary_collect` tests
+    /// `RARRAY_LEN` every iteration, so appending from inside the block
+    /// iterates the appended tail and shrinking stops early. `Array#each`
+    /// works the same way, and for the same reason: a whole-Vec snapshot per
+    /// call made every Enumerable method driving it quadratic.
+    Array(crate::RArray),
+    /// A materialized list -- a Hash's pairs, or a bounded Range's values.
+    /// Both are snapshots in CRuby too (a Hash raises outright if the block
+    /// mutates it; a Range has no storage to mutate).
+    List(Vec<RubyValue>),
+}
+
+/// The storage a receiver's OWN rows iterate, or `None` for a receiver with
+/// none to read -- which sends `each` instead, exactly as before.
+///
+/// A Hash pair arrives as one two-element Array rather than two yielded
+/// values. `pack` collapses the two shapes to the same thing and a block
+/// autosplats either, so no body can tell them apart.
+///
+/// An endless or beginless Range has no finite storage, so it stays on `each`.
+pub(crate) fn own_elements(recv: &RubyValue) -> Option<Own> {
+    match recv {
+        RubyValue::Array(a) => Some(Own::Array(a.clone())),
+        RubyValue::Hash(h) => Some(Own::List(
+            crate::collections::hash_pairs_snapshot(h)
+                .into_iter()
+                .map(|(k, v)| RubyValue::Array(array_new(vec![k, v])))
+                .collect(),
+        )),
+        RubyValue::Range(..) => crate::builtins::range::finite_values(recv).map(Own::List),
+        _ => None,
+    }
+}
+
+/// Run an Enumerable body over the receiver's OWN storage -- the body of a
+/// row ruby declares on the class itself rather than inheriting.
+///
+/// `$call` is the shared implementation, given a `Src` bound as `$src`. A
+/// receiver with no readable storage (an endless Range) falls back to sending
+/// `each`, which is what every one of these rows did before.
+macro_rules! own_row {
+    ($recv:expr, |$src:ident| $call:expr) => {{
+        let __own = $crate::builtins::enumerable::own_elements($recv);
+        let $src = match &__own {
+            Some(elems) => $crate::builtins::enumerable::Src::own($recv, elems),
+            None => $crate::builtins::enumerable::Src::sending($recv),
+        };
+        $call
+    }};
+}
+pub(crate) use own_row;
+
+/// Drives iteration with `f` as the block; `f` returning
+/// `Err(Signal::Break(_))` terminates early and is swallowed here (the
+/// `rb_iter_break()` analogue -- results travel through captured state, never
+/// the break payload). Any other signal (a raise, a `break` from the USER's
+/// block targeting the enclosing call, `Signal::Return`) propagates untouched.
 fn for_each(
-    recv: &RubyValue,
+    src: Src<'_>,
     f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
 ) -> Result<(), Signal> {
+    if let Some(own) = src.own {
+        // The lock is never held across the block call, so a block that reads
+        // or writes the receiver cannot deadlock -- `Array#each`'s rule.
+        let mut i = 0usize;
+        loop {
+            let e = match own {
+                Own::Array(a) => match a.lock().get(i) {
+                    Some(e) => e.clone(),
+                    None => break,
+                },
+                Own::List(v) => match v.get(i) {
+                    Some(e) => e.clone(),
+                    None => break,
+                },
+            };
+            match f(std::slice::from_ref(&e)) {
+                Ok(_) => {}
+                Err(Signal::Break(_)) => return Ok(()),
+                Err(other) => return Err(other),
+            }
+            i += 1;
+        }
+        return Ok(());
+    }
     let proc_: RProc = RProc::new(f);
     match send_value(
-        recv,
+        src.recv,
         crate::symbol::wk::each(),
         &[],
         Some(RubyValue::Proc(proc_)),
@@ -117,7 +222,7 @@ fn for_each(
 pub fn each_values(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
-    for_each(recv, move |yielded| {
+    for_each(Src::sending(recv), move |yielded| {
         out2.lock().push(pack(yielded));
         Ok(RubyValue::Nil)
     })?;
@@ -164,20 +269,20 @@ fn reject_args(args: &[RubyValue], method: &str, what: &str) {
 /// sees the raw values; the RESULT array collects the PACKED element
 /// (enum.c:483/591 -- `Hash#select` through generic Enumerable returns an
 /// Array of `[k, v]` pairs).
-fn select(
-    recv: &RubyValue,
+pub(crate) fn select(
+    src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
     keep: bool,
 ) -> Result<RubyValue, Signal> {
     let method = if keep { "select" } else { "reject" };
     reject_args(args, method, "arguments");
-    let blk = block_or_enum!(recv, method, args, block);
+    let blk = block_or_enum!(src.recv, method, args, block);
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let brk2 = brk.clone();
-    for_each(recv, move |yielded| {
+    for_each(src, move |yielded| {
         if yield_block(&blk, yielded, &brk2)?.truthy() == keep {
             out2.lock().push(pack(yielded));
         }
@@ -190,7 +295,7 @@ fn select(
     Ok(RubyValue::Array(array_new(items)))
 }
 
-enum Quantifier {
+pub(crate) enum Quantifier {
     Any,
     All,
     None,
@@ -203,8 +308,8 @@ enum Quantifier {
 /// `[].all?`/`[].none?` are true, `[].any?`/`[].one?` are false. The
 /// pattern-arg (`===`) forms are rejected (no case-equality dispatch
 /// surface exists here yet).
-fn any_all(
-    recv: &RubyValue,
+pub(crate) fn any_all(
+    src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
     q: Quantifier,
@@ -236,7 +341,7 @@ fn any_all(
         Quantifier::Any => {
             let hit = Arc::new(Mutex::new(false));
             let hit2 = hit.clone();
-            for_each(recv, move |yielded| {
+            for_each(src, move |yielded| {
                 if test(yielded)? {
                     *hit2.lock() = true;
                     return Err(Signal::Break(RubyValue::Nil));
@@ -249,7 +354,7 @@ fn any_all(
         Quantifier::All => {
             let ok = Arc::new(Mutex::new(true));
             let ok2 = ok.clone();
-            for_each(recv, move |yielded| {
+            for_each(src, move |yielded| {
                 if !test(yielded)? {
                     *ok2.lock() = false;
                     return Err(Signal::Break(RubyValue::Nil));
@@ -262,7 +367,7 @@ fn any_all(
         Quantifier::None => {
             let ok = Arc::new(Mutex::new(true));
             let ok2 = ok.clone();
-            for_each(recv, move |yielded| {
+            for_each(src, move |yielded| {
                 if test(yielded)? {
                     *ok2.lock() = false;
                     return Err(Signal::Break(RubyValue::Nil));
@@ -277,7 +382,7 @@ fn any_all(
             // break; never-truthy -> false (enum.c:1933-1943).
             let state = Arc::new(Mutex::new(0u8)); // 0=none, 1=one, 2=many
             let state2 = state.clone();
-            for_each(recv, move |yielded| {
+            for_each(src, move |yielded| {
                 if test(yielded)? {
                     let mut s = state2.lock();
                     *s += 1;
@@ -299,8 +404,8 @@ fn any_all(
 /// `(candidate, current)` and must return a negative/zero/positive Int.
 /// First element seeds; empty -> nil. The `n`-smallest/largest forms are
 /// rejected (zeo limitation).
-fn min_max(
-    recv: &RubyValue,
+pub(crate) fn min_max(
+    src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
     want_min: bool,
@@ -316,7 +421,7 @@ fn min_max(
         }
         let items: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
         let items2 = items.clone();
-        for_each(recv, move |yielded| {
+        for_each(src, move |yielded| {
             items2.lock().push(pack(yielded));
             Ok(RubyValue::Nil)
         })?;
@@ -334,7 +439,7 @@ fn min_max(
     };
     let best: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let best2 = best.clone();
-    for_each(recv, move |yielded| {
+    for_each(src, move |yielded| {
         let elem = pack(yielded);
         let mut b = best2.lock();
         let replace = match &*b {
@@ -376,10 +481,10 @@ struct Element {
     packed: RubyValue,
 }
 
-fn collect_elements(recv: &RubyValue) -> Result<Vec<Element>, Signal> {
+fn collect_elements(src: Src<'_>) -> Result<Vec<Element>, Signal> {
     let out: Arc<Mutex<Vec<Element>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
-    for_each(recv, move |yielded| {
+    for_each(src, move |yielded| {
         out2.lock().push(Element {
             raw: yielded.to_vec(),
             packed: pack(yielded),
@@ -390,8 +495,8 @@ fn collect_elements(recv: &RubyValue) -> Result<Vec<Element>, Signal> {
     Ok(items)
 }
 
-fn collect_packed(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
-    Ok(collect_elements(recv)?
+fn collect_packed(src: Src<'_>) -> Result<Vec<RubyValue>, Signal> {
+    Ok(collect_elements(src)?
         .into_iter()
         .map(|e| e.packed)
         .collect())
@@ -418,7 +523,7 @@ fn min_max_by(
         }
     };
     let blk = block_or_enum!(recv, name, &[], block);
-    let items = collect_elements(recv)?;
+    let items = collect_elements(Src::sending(recv))?;
 
     if let Some(n) = count {
         let mut keyed: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
@@ -477,7 +582,7 @@ pub(crate) fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Sign
     Ok(*n as usize)
 }
 
-fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyValue, Signal> {
+pub(crate) fn take_drop(src: Src<'_>, args: &[RubyValue], take: bool) -> Result<RubyValue, Signal> {
     let n = &crate::builtins::convert::to_index(args.first().unwrap_or(&RubyValue::Nil))?;
     if *n < 0 {
         // CRuby names the actual method: `drop(-1)` says "drop", not "take".
@@ -494,7 +599,7 @@ fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyVal
         }
         let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
         let out2 = out.clone();
-        for_each(recv, move |yielded| {
+        for_each(src, move |yielded| {
             let mut o = out2.lock();
             o.push(pack(yielded));
             if o.len() >= cap {
@@ -505,13 +610,13 @@ fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyVal
         let items = std::mem::take(&mut *out.lock());
         return Ok(RubyValue::Array(array_new(items)));
     }
-    let items = collect_packed(recv)?;
+    let items = collect_packed(src)?;
     let n = (*n as usize).min(items.len());
     Ok(RubyValue::Array(array_new(items[n..].to_vec())))
 }
 
-fn take_drop_while(
-    recv: &RubyValue,
+pub(crate) fn take_drop_while(
+    src: Src<'_>,
     args: &[RubyValue],
     block: Option<RubyValue>,
     take: bool,
@@ -522,12 +627,12 @@ fn take_drop_while(
         "arguments",
     );
     let blk = block_or_enum!(
-        recv,
+        src.recv,
         if take { "take_while" } else { "drop_while" },
         args,
         block
     );
-    let items = collect_elements(recv)?;
+    let items = collect_elements(src)?;
     let mut boundary = items.len();
     for (i, e) in items.iter().enumerate() {
         if !blk.call(&e.raw)?.truthy() {
@@ -608,7 +713,7 @@ fn grep(
         panic!("Enumerable#{name} takes exactly one pattern argument");
     }
     let mut out = Vec::new();
-    for e in collect_packed(recv)? {
+    for e in collect_packed(Src::sending(recv))? {
         if case_eq(&args[0], &e)? != keep {
             continue;
         }
@@ -642,7 +747,7 @@ fn chunk_while(
     let name = if cut_on { "slice_when" } else { "chunk_while" };
     reject_args(args, name, "arguments");
     let blk = block_or_enum!(recv, name, args, block);
-    let items = collect_packed(recv)?;
+    let items = collect_packed(Src::sending(recv))?;
     let mut out: Vec<RubyValue> = Vec::new();
     let mut cur: Vec<RubyValue> = Vec::new();
     for e in items {
@@ -699,7 +804,7 @@ fn slice_before_after(
         }
         _ => panic!("Enumerable#{name} takes exactly one pattern argument OR a block"),
     };
-    for e in collect_packed(recv)? {
+    for e in collect_packed(Src::sending(recv))? {
         let hit = test(&e)?;
         if before && hit && !cur.is_empty() {
             out.push(RubyValue::Array(array_new(std::mem::take(&mut cur))));
@@ -724,10 +829,10 @@ fn slice_before_after(
 /// `Enumerable#to_a` as a plain fn: drive `#each` and collect. Shared by the
 /// `to_a`/`entries` rows and by the sort/uniq/group rows that need the whole
 /// materialized sequence internally (they can't call the mangled row fn).
-fn collect_to_a(recv: &RubyValue) -> Result<RubyValue, Signal> {
+fn collect_to_a(src: Src<'_>) -> Result<RubyValue, Signal> {
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
-    for_each(recv, move |yielded| {
+    for_each(src, move |yielded| {
         out2.lock().push(pack(yielded));
         Ok(RubyValue::Nil)
     })?;
@@ -822,38 +927,189 @@ impl SumAcc {
     }
 }
 
+pub(crate) fn map_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    reject_args(args, "map", "arguments");
+    let blk = block_or_enum!(src.recv, "map", args, block);
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let out2 = out.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
+    for_each(src, move |yielded| {
+        let v = yield_block(&blk, yielded, &brk2)?;
+        out2.lock().push(v);
+        Ok(RubyValue::Nil)
+    })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
+    let items = std::mem::take(&mut *out.lock());
+    Ok(RubyValue::Array(array_new(items)))
+}
+
+pub(crate) fn count_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let n = Arc::new(Mutex::new(0i64));
+    let n2 = n.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    match (args.len(), block) {
+        (0, None) => for_each(src, move |_| {
+            *n2.lock() += 1;
+            Ok(RubyValue::Nil)
+        })?,
+        (0, Some(RubyValue::Proc(blk))) => {
+            let brk2 = brk.clone();
+            for_each(src, move |yielded| {
+                if yield_block(&blk, yielded, &brk2)?.truthy() {
+                    *n2.lock() += 1;
+                }
+                Ok(RubyValue::Nil)
+            })?
+        }
+        (1, _) => {
+            let item = args[0].clone();
+            for_each(src, move |yielded| {
+                if pack(yielded).rb_eq(&item) {
+                    *n2.lock() += 1;
+                }
+                Ok(RubyValue::Nil)
+            })?
+        }
+        _ => panic!("Enumerable#count takes at most one argument"),
+    }
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
+    let result = *n.lock();
+    Ok(RubyValue::Int(result))
+}
+
+pub(crate) fn find_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let ifnone = args.first().cloned();
+    let blk = block_or_enum!(src.recv, "find", &[], block);
+    let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let hit2 = hit.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
+    for_each(src, move |yielded| {
+        if yield_block(&blk, yielded, &brk2)?.truthy() {
+            *hit2.lock() = Some(pack(yielded));
+            return Err(Signal::Break(RubyValue::Nil));
+        }
+        Ok(RubyValue::Nil)
+    })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
+    let found = hit.lock().take();
+    match found {
+        Some(v) => Ok(v),
+        None => match ifnone {
+            Some(p) => p.as_proc_unchecked().call(&[]),
+            None => Ok(RubyValue::Nil),
+        },
+    }
+}
+
+pub(crate) fn sum_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let init = match args.len() {
+        0 => RubyValue::Int(0),
+        1 => args[0].clone(),
+        _ => panic!("Enumerable#sum takes at most one argument"),
+    };
+    let acc = Arc::new(Mutex::new(Some(SumAcc::new(init))));
+    let blk = match block {
+        Some(RubyValue::Proc(p)) => Some(p),
+        _ => None,
+    };
+    let acc2 = acc.clone();
+    for_each(src, move |yielded| {
+        let mut elem = pack(yielded);
+        if let Some(b) = &blk {
+            elem = b.call(&[elem])?;
+        }
+        let current = acc2.lock().take().expect("accumulator always present");
+        let next = current.add(elem)?;
+        *acc2.lock() = Some(next);
+        Ok(RubyValue::Nil)
+    })?;
+    let result = acc
+        .lock()
+        .take()
+        .expect("accumulator always present")
+        .finish();
+    Ok(result)
+}
+
+pub(crate) fn minmax_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    reject_args(args, "minmax", "arguments");
+    let lo = min_max(src, &[], block.clone(), true)?;
+    let hi = min_max(src, &[], block, false)?;
+    Ok(RubyValue::Array(array_new(vec![lo, hi])))
+}
+
+pub(crate) fn reverse_each_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    reject_args(args, "reverse_each", "arguments");
+    let blk = block_or_enum!(src.recv, "reverse_each", args, block);
+    let items = collect_elements(src)?;
+    for e in items.iter().rev() {
+        blk.call(&e.raw)?;
+    }
+    Ok(src.recv.clone())
+}
+
+pub(crate) fn to_set_own(
+    src: Src<'_>,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    reject_args(args, "to_set", "arguments");
+    let RubyValue::Array(all) = collect_to_a(src)? else {
+        unreachable!("to_a always answers an Array")
+    };
+    let items = all.lock().clone();
+    Ok(crate::builtins::set::set_from(items))
+}
+
 ruby_module! {
     Enumerable = zeo_abi::ENUMERABLE_CLASS;
 
     // map/collect: the user block receives the RAW yielded values
     // (`rb_yield_values2`, enum.c:631-633); results collect into an Array.
     def "map" arity 0 | "collect" arity 0 (recv, *args, &block) {
-        reject_args(args, "map", "arguments");
-        let blk = block_or_enum!(recv, args, block);
-        let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
-        let out2 = out.clone();
-        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
-        let brk2 = brk.clone();
-        for_each(recv, move |yielded| {
-            let v = yield_block(&blk, yielded, &brk2)?;
-            out2.lock().push(v);
-            Ok(RubyValue::Nil)
-        })?;
-        if let Some(v) = user_break(&brk) {
-            return Ok(v);
-        }
-        let items = std::mem::take(&mut *out.lock());
-        Ok(RubyValue::Array(array_new(items)))
+        map_own(Src::sending(recv), args, block)
     }
     def "select" arity 0 | "filter" arity 0 | "find_all" arity 0 (recv, *args, &block) {
-        select(recv, args, block, true)
+        select(Src::sending(recv), args, block, true)
     }
     def "reject" arity 0 (recv, *args, &block) {
-        select(recv, args, block, false)
+        select(Src::sending(recv), args, block, false)
     }
     def "to_a" | "entries"(recv, *args, &_block) {
         reject_args(args, "to_a", "arguments (forwarding them to #each)");
-        collect_to_a(recv)
+        collect_to_a(Src::sending(recv))
     }
     // `==`-based membership (`rb_equal`, enum.c:2960) with break-on-hit.
     def "include?" arity 1 | "member?" arity 1 (recv, *args, &_block) {
@@ -863,7 +1119,7 @@ ruby_module! {
         let needle = args[0].clone();
         let found = Arc::new(Mutex::new(false));
         let found2 = found.clone();
-        for_each(recv, move |yielded| {
+        for_each(Src::sending(recv), move |yielded| {
             if pack(yielded).rb_eq(&needle) {
                 *found2.lock() = true;
                 return Err(Signal::Break(RubyValue::Nil));
@@ -878,81 +1134,26 @@ ruby_module! {
     // CRuby warns "given block not used", enum.c:320). Always iterates
     // (Enumerable#count has no size fast path -- enum.c:302-328).
     def "count"(recv, *args, &block) {
-        let n = Arc::new(Mutex::new(0i64));
-        let n2 = n.clone();
-        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
-        match (args.len(), block) {
-            (0, None) => for_each(recv, move |_| {
-                *n2.lock() += 1;
-                Ok(RubyValue::Nil)
-            })?,
-            (0, Some(RubyValue::Proc(blk))) => {
-                let brk2 = brk.clone();
-                for_each(recv, move |yielded| {
-                    if yield_block(&blk, yielded, &brk2)?.truthy() {
-                        *n2.lock() += 1;
-                    }
-                    Ok(RubyValue::Nil)
-                })?
-            }
-            (1, _) => {
-                let item = args[0].clone();
-                for_each(recv, move |yielded| {
-                    if pack(yielded).rb_eq(&item) {
-                        *n2.lock() += 1;
-                    }
-                    Ok(RubyValue::Nil)
-                })?
-            }
-            _ => panic!("Enumerable#count takes at most one argument"),
-        }
-        if let Some(v) = user_break(&brk) {
-            return Ok(v);
-        }
-        let result = *n.lock();
-        Ok(RubyValue::Int(result))
+        count_own(Src::sending(recv), args, block)
     }
     def "any?"(recv, *args, &block) {
-        any_all(recv, args, block, Quantifier::Any)
+        any_all(Src::sending(recv), args, block, Quantifier::Any)
     }
     def "all?"(recv, *args, &block) {
-        any_all(recv, args, block, Quantifier::All)
+        any_all(Src::sending(recv), args, block, Quantifier::All)
     }
     def "none?"(recv, *args, &block) {
-        any_all(recv, args, block, Quantifier::None)
+        any_all(Src::sending(recv), args, block, Quantifier::None)
     }
     def "one?"(recv, *args, &block) {
-        any_all(recv, args, block, Quantifier::One)
+        any_all(Src::sending(recv), args, block, Quantifier::One)
     }
     // find/detect: first PACKED element whose raw-yield block result is truthy.
     // The optional `ifnone` callable argument is invoked (with no arguments) only
     // when NO element matches, and its result becomes the answer; a match --
     // including a `nil` element -- ignores it. With no `ifnone` and no match, nil.
     def "find" | "detect"(recv, *args, &block) {
-        let ifnone = args.first().cloned();
-        let blk = block_or_enum!(recv, &[], block);
-        let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
-        let hit2 = hit.clone();
-        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
-        let brk2 = brk.clone();
-        for_each(recv, move |yielded| {
-            if yield_block(&blk, yielded, &brk2)?.truthy() {
-                *hit2.lock() = Some(pack(yielded));
-                return Err(Signal::Break(RubyValue::Nil));
-            }
-            Ok(RubyValue::Nil)
-        })?;
-        if let Some(v) = user_break(&brk) {
-            return Ok(v);
-        }
-        let found = hit.lock().take();
-        match found {
-            Some(v) => Ok(v),
-            None => match ifnone {
-                Some(p) => p.as_proc_unchecked().call(&[]),
-                None => Ok(RubyValue::Nil),
-            },
-        }
+        find_own(Src::sending(recv), args, block)
     }
     // first / first(n): break-on-first(-nth) yield; `first(0)` returns `[]`
     // WITHOUT calling `each` at all (enum.c:3585); `first` on empty -> nil.
@@ -961,7 +1162,7 @@ ruby_module! {
             0 => {
                 let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
                 let hit2 = hit.clone();
-                for_each(recv, move |yielded| {
+                for_each(Src::sending(recv), move |yielded| {
                     *hit2.lock() = Some(pack(yielded));
                     Err(Signal::Break(RubyValue::Nil))
                 })?;
@@ -981,7 +1182,7 @@ ruby_module! {
                 }
                 let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
                 let out2 = out.clone();
-                for_each(recv, move |yielded| {
+                for_each(Src::sending(recv), move |yielded| {
                     let mut o = out2.lock();
                     o.push(pack(yielded));
                     if o.len() as i64 >= n {
@@ -1028,7 +1229,7 @@ ruby_module! {
         let acc2 = acc.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
         let brk2 = brk.clone();
-        for_each(recv, move |yielded| {
+        for_each(Src::sending(recv), move |yielded| {
             let elem = pack(yielded);
             let mut a = acc2.lock();
             let next = match a.take() {
@@ -1070,7 +1271,7 @@ ruby_module! {
         let idx2 = idx.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
         let brk2 = brk.clone();
-        for_each(recv, move |yielded| {
+        for_each(Src::sending(recv), move |yielded| {
             let i = {
                 let mut n = idx2.lock();
                 let i = *n;
@@ -1092,50 +1293,24 @@ ruby_module! {
     // (sticking there). The optional block is applied to the PACKED element
     // (single argument -- `rb_yield(i)`, enum.c:4712-4746).
     def "sum"(recv, *args, &block) {
-        let init = match args.len() {
-            0 => RubyValue::Int(0),
-            1 => args[0].clone(),
-            _ => panic!("Enumerable#sum takes at most one argument"),
-        };
-        let acc = Arc::new(Mutex::new(Some(SumAcc::new(init))));
-        let blk = match block {
-            Some(RubyValue::Proc(p)) => Some(p),
-            _ => None,
-        };
-        let acc2 = acc.clone();
-        for_each(recv, move |yielded| {
-            let mut elem = pack(yielded);
-            if let Some(b) = &blk {
-                elem = b.call(&[elem])?;
-            }
-            let current = acc2.lock().take().expect("accumulator always present");
-            let next = current.add(elem)?;
-            *acc2.lock() = Some(next);
-            Ok(RubyValue::Nil)
-        })?;
-        let result = acc
-            .lock()
-            .take()
-            .expect("accumulator always present")
-            .finish();
-        Ok(result)
+        sum_own(Src::sending(recv), args, block)
     }
     def "min"(recv, *args, &block) {
-        min_max(recv, args, block, true)
+        min_max(Src::sending(recv), args, block, true)
     }
     def "max"(recv, *args, &block) {
-        min_max(recv, args, block, false)
+        min_max(Src::sending(recv), args, block, false)
     }
     def "sort" arity 0 (recv, *args, &block) {
         reject_args(args, "sort", "arguments");
-        let mut items = collect_packed(recv)?;
+        let mut items = collect_packed(Src::sending(recv))?;
         crate::builtins::array::sort_items(&mut items, &block)?;
         Ok(RubyValue::Array(array_new(items)))
     }
     def "sort_by" arity 0 (recv, *args, &block) {
         reject_args(args, "sort_by", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         // Decorate-sort-undecorate, keys ordered by rb_cmp.
         let mut decorated: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
         for e in items {
@@ -1164,15 +1339,12 @@ ruby_module! {
         min_max_by(recv, args, block, false)
     }
     def "minmax" arity 0 (recv, *args, &block) {
-        reject_args(args, "minmax", "arguments");
-        let lo = min_max(recv, &[], block.clone(), true)?;
-        let hi = min_max(recv, &[], block, false)?;
-        Ok(RubyValue::Array(array_new(vec![lo, hi])))
+        minmax_own(Src::sending(recv), args, block)
     }
     def "group_by" arity 0 (recv, *args, &block) {
         reject_args(args, "group_by", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         let groups = crate::hash_new(Vec::new());
         for e in items {
             let key = blk.call(&e.raw)?;
@@ -1192,7 +1364,7 @@ ruby_module! {
     def "partition" arity 0 (recv, *args, &block) {
         reject_args(args, "partition", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         let (mut yes, mut no) = (Vec::new(), Vec::new());
         for e in items {
             if blk.call(&e.raw)?.truthy() {
@@ -1209,7 +1381,7 @@ ruby_module! {
     def "flat_map" arity 0 | "collect_concat" arity 0 (recv, *args, &block) {
         reject_args(args, "flat_map", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         let mut out = Vec::new();
         for e in items {
             match blk.call(&e.raw)? {
@@ -1223,7 +1395,7 @@ ruby_module! {
     def "filter_map" arity 0 (recv, *args, &block) {
         reject_args(args, "filter_map", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         let mut out = Vec::new();
         for e in items {
             let mapped = blk.call(&e.raw)?;
@@ -1236,7 +1408,7 @@ ruby_module! {
     def "each_slice" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_slice")?;
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_packed(recv)?;
+        let items = collect_packed(Src::sending(recv))?;
         for chunk in items.chunks(n) {
             blk.call(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
         }
@@ -1246,7 +1418,7 @@ ruby_module! {
     def "each_cons" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_cons")?;
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_packed(recv)?;
+        let items = collect_packed(Src::sending(recv))?;
         if items.len() >= n {
             for window in items.windows(n) {
                 blk.call(&[RubyValue::Array(array_new(window.to_vec()))])?;
@@ -1269,7 +1441,7 @@ ruby_module! {
         let memo2 = memo.clone();
         let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
         let brk2 = brk.clone();
-        for_each(recv, move |yielded| {
+        for_each(Src::sending(recv), move |yielded| {
             yield_block(&blk, &[pack(yielded), memo2.clone()], &brk2)?;
             Ok(RubyValue::Nil)
         })?;
@@ -1279,20 +1451,20 @@ ruby_module! {
         Ok(memo)
     }
     def "take" arity 1 (recv, *args, &_block) {
-        take_drop(recv, args, true)
+        take_drop(Src::sending(recv), args, true)
     }
     def "drop" arity 1 (recv, *args, &_block) {
-        take_drop(recv, args, false)
+        take_drop(Src::sending(recv), args, false)
     }
     def "take_while" arity 0 (recv, *args, &block) {
-        take_drop_while(recv, args, block, true)
+        take_drop_while(Src::sending(recv), args, block, true)
     }
     def "drop_while" arity 0 (recv, *args, &block) {
-        take_drop_while(recv, args, block, false)
+        take_drop_while(Src::sending(recv), args, block, false)
     }
     // `find_index(value)` / `find_index { |e| ... }`.
     def "find_index"(recv, *args, &block) {
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         if let Some(RubyValue::Proc(p)) = &block {
             for (i, e) in items.iter().enumerate() {
                 if p.call(&e.raw)?.truthy() {
@@ -1319,7 +1491,7 @@ ruby_module! {
             None => crate::hash_new(Vec::new()),
             Some(v) => crate::builtins::convert::to_rhash(v)?,
         };
-        let items = collect_packed(recv)?;
+        let items = collect_packed(Src::sending(recv))?;
         for e in items {
             let n = match crate::hash_get(&counts, &e) {
                 RubyValue::Int(n) => n + 1,
@@ -1331,7 +1503,7 @@ ruby_module! {
     }
     def "uniq" arity 0 (recv, *args, &_block) {
         reject_args(args, "uniq", "arguments");
-        let items = collect_packed(recv)?;
+        let items = collect_packed(Src::sending(recv))?;
         let mut out: Vec<RubyValue> = Vec::new();
         for e in items {
             if !out.iter().any(|x| e.rb_eq(x)) {
@@ -1342,18 +1514,12 @@ ruby_module! {
     }
     def "to_h"(recv, *args, &block) {
         reject_args(args, "to_h", "arguments");
-        let items = collect_elements(recv)?;
+        let items = collect_elements(Src::sending(recv))?;
         let pairs = to_h_pairs(items.iter().map(|e| (e.raw.as_slice(), &e.packed)), &block)?;
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     def "reverse_each"(recv, *args, &block) {
-        reject_args(args, "reverse_each", "arguments");
-        let blk = block_or_enum!(recv, args, block);
-        let items = collect_elements(recv)?;
-        for e in items.iter().rev() {
-            blk.call(&e.raw)?;
-        }
-        Ok(recv.clone())
+        reverse_each_own(Src::sending(recv), args, block)
     }
     def "grep" arity 1 (recv, *args, &block) {
         grep(recv, args, block, true)
@@ -1381,7 +1547,7 @@ ruby_module! {
         let blk = block_or_enum!(recv, args, block);
         let mut lo: Option<(RubyValue, RubyValue)> = None;
         let mut hi: Option<(RubyValue, RubyValue)> = None;
-        for e in collect_packed(recv)? {
+        for e in collect_packed(Src::sending(recv))? {
             let k = blk.call(std::slice::from_ref(&e))?;
             if lo
                 .as_ref()
@@ -1412,7 +1578,7 @@ ruby_module! {
     def "each_entry"(recv, *args, &block) {
         reject_args(args, "each_entry", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        for e in collect_packed(recv)? {
+        for e in collect_packed(Src::sending(recv))? {
             blk.call(&[e])?;
         }
         Ok(recv.clone())
@@ -1424,7 +1590,7 @@ ruby_module! {
     def "chunk" arity 0 (recv, *args, &block) {
         reject_args(args, "chunk", "arguments");
         let blk = block_or_enum!(recv, args, block);
-        let items = collect_packed(recv)?;
+        let items = collect_packed(Src::sending(recv))?;
         let mut out: Vec<RubyValue> = Vec::new();
         let mut cur_key: Option<RubyValue> = None;
         let mut cur: Vec<RubyValue> = Vec::new();
@@ -1463,7 +1629,7 @@ ruby_module! {
     // element of every `other` (nil past an `other`'s end), returning the Array
     // of tuples, or yielding each tuple to a block and answering nil.
     def "zip"(recv, *args, &block) {
-        let RubyValue::Array(base) = collect_to_a(recv)? else {
+        let RubyValue::Array(base) = collect_to_a(Src::sending(recv))? else {
             unreachable!("to_a always answers an Array")
         };
         let base = base.lock().clone();
@@ -1504,7 +1670,7 @@ ruby_module! {
     // `compact` -- the receiver's elements as an Array with every `nil` dropped.
     def "compact" arity 0 (recv, *args, &_block) {
         reject_args(args, "compact", "arguments");
-        let RubyValue::Array(all) = collect_to_a(recv)? else {
+        let RubyValue::Array(all) = collect_to_a(Src::sending(recv))? else {
             unreachable!("to_a always answers an Array")
         };
         let kept: Vec<RubyValue> = all.lock().iter().filter(|e| !e.is_nil()).cloned().collect();
@@ -1519,7 +1685,7 @@ ruby_module! {
             Some(v) => Some(crate::builtins::convert::to_index(v)?),
         };
         let p = block_or_enum!(recv, args, block);
-        let RubyValue::Array(all) = collect_to_a(recv)? else {
+        let RubyValue::Array(all) = collect_to_a(Src::sending(recv))? else {
             unreachable!("to_a always answers an Array")
         };
         let items = all.lock().clone();
@@ -1552,12 +1718,7 @@ ruby_module! {
     }
     // `to_set` -- a `Set` of the receiver's elements (deduplicated on insert).
     def "to_set"(recv, *args, &_block) {
-        reject_args(args, "to_set", "arguments");
-        let RubyValue::Array(all) = collect_to_a(recv)? else {
-            unreachable!("to_a always answers an Array")
-        };
-        let items = all.lock().clone();
-        Ok(crate::builtins::set::set_from(items))
+        to_set_own(Src::sending(recv), args, None)
     }
     def "lazy" arity 0 (recv, *_args, &_block) {
         Ok(crate::builtins::lazy::make_lazy(recv))

@@ -3,6 +3,7 @@
 //! to CRuby's real TypeError); the Tier A breadth lands in stage E.
 
 use crate::RubyValue;
+use crate::builtins::enumerable::{self, own_row};
 use crate::builtins::{
     arg_error, arg_int, block_or_enum, convert, index_error, inherited_row, type_error,
 };
@@ -1502,24 +1503,24 @@ ruby_class! {
     // inherited, so the two can never drift apart. The parameter lists are
     // the oracle's, which is why some take a splat where the ancestor's
     // signature is narrower.
-    def "map" arity 0 | "collect" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "map", recv, __args, block) }
-    def "select" arity 0 | "filter" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "select", recv, __args, block) }
-    def "reject" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reject", recv, __args, block) }
-    def "find" | "detect" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "find", recv, __args, block) }
-    def "all?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "all?", recv, __args, block) }
-    def "any?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "any?", recv, __args, block) }
-    def "none?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "none?", recv, __args, block) }
-    def "one?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "one?", recv, __args, block) }
-    def "count" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "count", recv, __args, block) }
-    def "sum" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "sum", recv, __args, block) }
-    def "max" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "max", recv, __args, block) }
-    def "min" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "min", recv, __args, block) }
-    def "minmax" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "minmax", recv, __args, block) }
-    def "take" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "take", recv, __args, block) }
-    def "drop" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "drop", recv, __args, block) }
-    def "take_while" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "take_while", recv, __args, block) }
-    def "drop_while" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "drop_while", recv, __args, block) }
-    def "reverse_each" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reverse_each", recv, __args, block) }
+    def "map" arity 0 | "collect" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::map_own(s, __args, block)) }
+    def "select" arity 0 | "filter" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::select(s, __args, block, true)) }
+    def "reject" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::select(s, __args, block, false)) }
+    def "find" | "detect" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::find_own(s, __args, block)) }
+    def "all?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::All)) }
+    def "any?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::Any)) }
+    def "none?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::None)) }
+    def "one?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::One)) }
+    def "count" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::count_own(s, __args, block)) }
+    def "sum" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::sum_own(s, __args, block)) }
+    def "max" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::min_max(s, __args, block, false)) }
+    def "min" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::min_max(s, __args, block, true)) }
+    def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
+    def "take" arity 1 (recv, *_args, &_block) { own_row!(recv, |s| enumerable::take_drop(s, __args, true)) }
+    def "drop" arity 1 (recv, *_args, &_block) { own_row!(recv, |s| enumerable::take_drop(s, __args, false)) }
+    def "take_while" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::take_drop_while(s, __args, block, true)) }
+    def "drop_while" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::take_drop_while(s, __args, block, false)) }
+    def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
     def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
     def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }

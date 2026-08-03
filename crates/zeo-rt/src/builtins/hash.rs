@@ -2,6 +2,7 @@
 //! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
 
 use crate::RubyValue;
+use crate::builtins::enumerable::{self, own_row};
 use crate::builtins::{
     arg_error, block_or_enum, convert, frozen_error, inherited_row, recv_hash, type_error,
 };
@@ -655,7 +656,7 @@ ruby_class! {
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
-    def "any?" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "any?", recv, __args, block) }
+    def "any?" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::any_all(s, __args, block, enumerable::Quantifier::Any)) }
     def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
     def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
