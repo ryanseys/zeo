@@ -245,6 +245,56 @@ fn lenient_to_i(text: &str, base: u32) -> RubyValue {
     }
 }
 
+/// Ruby REFUSES a String operation that has to READ characters when the
+/// receiver's bytes are not valid in its own encoding -- `rb_enc_check` and
+/// the `str_enc_get` callers raise before doing any work. zeo's `StrBuf`
+/// renders a bad byte as U+FFFD, which would silently answer instead.
+///
+/// The gate is selective, exactly as CRuby's is: `#length`, `#chars`,
+/// `#reverse`, `#lstrip`, `#index` and friends all count or move by bytes and
+/// answer fine on a broken string, so they take no guard. Only a row that
+/// interprets a character gets one.
+///
+/// Three shapes, all oracle-verified against ruby 4.0.6, because CRuby
+/// reaches this from three different places.
+fn guard_valid(recv: &RubyValue) -> Result<(), crate::Signal> {
+    match broken_encoding(recv) {
+        None => Ok(()),
+        Some(enc) => Err(arg_error!("invalid byte sequence in {enc}")),
+    }
+}
+
+/// The receiver's encoding name when its bytes are NOT valid in it, `None`
+/// when they are. Takes the lock and RELEASES it before the caller raises --
+/// a message that inspects the receiver would take it again, and these are
+/// not reentrant.
+fn broken_encoding(recv: &RubyValue) -> Option<&'static str> {
+    let s = recv_str!(recv).lock();
+    (!s.valid_encoding()).then(|| s.encoding().name())
+}
+
+/// [`guard_valid`] for the case-mapping family, which raises from Onigmo's
+/// case-fold pass and so words it differently.
+fn guard_valid_case(recv: &RubyValue) -> Result<(), crate::Signal> {
+    match recv_str!(recv).lock().valid_encoding() {
+        true => Ok(()),
+        false => Err(arg_error!("input string invalid")),
+    }
+}
+
+/// [`guard_valid`] for `#strip`/`#rstrip`, which scan BACKWARD from the end
+/// and so reach the check through `rb_enc_check` -- a different class, same
+/// message. (`#lstrip` scans forward and does not raise at all.)
+fn guard_valid_compat(recv: &RubyValue) -> Result<(), crate::Signal> {
+    match broken_encoding(recv) {
+        None => Ok(()),
+        Some(enc) => Err(crate::dispatch::raise_error(
+            "Encoding::CompatibilityError",
+            format!("invalid byte sequence in {enc}"),
+        )),
+    }
+}
+
 /// The `Encoding::CompatibilityError` a concatenation of two
 /// differently-encoded non-7-bit strings raises, message shaped exactly
 /// like CRuby's (receiver's encoding first, `inspect_name` forms --
@@ -284,6 +334,15 @@ fn str_value(s: String) -> RubyValue {
 /// not come from `src` to begin with.
 fn str_value_like(src: &StrBuf, text: &str) -> RubyValue {
     str_value_in(src.encoding(), text)
+}
+
+/// [`str_value_like`] for a row that answers a BYTE slice of its receiver --
+/// what a trim has to do, since decoding would rewrite an invalid byte.
+fn bytes_value_like(src: &StrBuf, bytes: &[u8]) -> RubyValue {
+    RubyValue::Str(crate::string_wrap(StrBuf::from_bytes(
+        bytes.to_vec(),
+        src.encoding(),
+    )))
 }
 
 /// [`str_value_in`] for callers outside this module -- `regexp.rs` builds
@@ -1777,28 +1836,39 @@ ruby_class! {
     // (unchanged), ASCII-only for BINARY/US-ASCII, Latin-1's own case map for
     // ISO-8859-1 -- and the result keeps the receiver's encoding.
     def "upcase" cfunc (recv) {
+        guard_valid_case(recv)?;
         Ok(RubyValue::Str(crate::string_wrap(rstr.lock().upcased())))
     }
     def "downcase" cfunc (recv) {
+        guard_valid_case(recv)?;
         Ok(RubyValue::Str(crate::string_wrap(rstr.lock().downcased())))
     }
     def "capitalize" cfunc (recv) {
+        guard_valid_case(recv)?;
         Ok(RubyValue::Str(crate::string_wrap(rstr.lock().capitalized())))
     }
     def "swapcase" cfunc (recv) {
+        guard_valid_case(recv)?;
         Ok(RubyValue::Str(crate::string_wrap(rstr.lock().swapcased())))
     }
     def "strip" cfunc (recv) {
+        guard_valid_compat(recv)?;
         let s = rstr;
         let buf = s.lock();
         Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_matches(is_rb_strip)))
     }
     def "lstrip" cfunc (recv) {
-        let s = rstr;
-        let buf = s.lock();
-        Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_start_matches(is_rb_strip)))
+        // By BYTES, not through `to_utf8_lossy`: every byte this trims is
+        // ASCII, so there is nothing to decode -- and decoding would rewrite
+        // an invalid byte as U+FFFD, where ruby returns it untouched.
+        // (`#strip`/`#rstrip` scan backward and raise instead; see their rows.)
+        let buf = rstr.lock();
+        let b = buf.bytes();
+        let at = b.iter().position(|c| !is_rb_strip_byte(*c)).unwrap_or(b.len());
+        Ok(bytes_value_like(&buf, &b[at..]))
     }
     def "rstrip" cfunc (recv) {
+        guard_valid_compat(recv)?;
         let s = rstr;
         let buf = s.lock();
         Ok(str_value_like(&buf, buf.to_utf8_lossy().trim_end_matches(is_rb_strip)))
@@ -1863,6 +1933,7 @@ ruby_class! {
     // `unicode_normalized?(form = :nfc)` tests whether the receiver already is
     // in that form. An unknown form raises ArgumentError.
     def "unicode_normalize"(recv, arg?) {
+        guard_valid(recv)?;
         let text = rstr.lock().to_utf8_lossy().into_owned();
         Ok(str_value(normalize_form(&text, arg)?))
     }
@@ -1895,6 +1966,7 @@ ruby_class! {
     // (`> 0`, tail kept whole), keeps trailing empties (`< 0`), or drops
     // them (`0`/omitted).
     def "split"(recv, arg1?, arg2?, &block) {
+        guard_valid(recv)?;
         let (text, enc) = {
             let s = rstr;
             let g = s.lock();
@@ -1974,32 +2046,36 @@ ruby_class! {
         Ok(result)
     }
     def "chomp"(recv, arg?) {
-        let text = rstr.lock().to_utf8_lossy().into_owned();
-        let out = match arg {
+        // By BYTES, like `#lstrip`: the separator is ASCII and an explicit
+        // suffix is compared verbatim, so nothing here needs decoding -- and
+        // decoding would both rewrite an invalid byte as U+FFFD and lose the
+        // receiver's encoding (this row used to answer UTF-8 whatever it got).
+        let buf = rstr.lock();
+        let b = buf.bytes();
+        let out: &[u8] = match arg {
             // `chomp("")` is paragraph mode: strip EVERY trailing newline record
             // (`\n`/`\r\n`), but keep a lone trailing `\r` (CRuby's rb_str_chomp).
-            Some(RubyValue::Str(suffix)) if suffix.lock().to_utf8_lossy().is_empty() => {
-                let mut t = text.as_str();
-                while let Some(rest) = t.strip_suffix('\n') {
-                    t = rest.strip_suffix('\r').unwrap_or(rest);
+            Some(RubyValue::Str(suffix)) if suffix.lock().bytes().is_empty() => {
+                let mut t = b;
+                while let Some(rest) = t.strip_suffix(b"\n") {
+                    t = rest.strip_suffix(b"\r").unwrap_or(rest);
                 }
-                t.to_string()
+                t
             }
             Some(RubyValue::Str(suffix)) => {
-                let suffix = suffix.lock().to_utf8_lossy().into_owned();
-                text.strip_suffix(&suffix).unwrap_or(&text).to_string()
+                let s = suffix.lock();
+                b.strip_suffix(s.bytes()).unwrap_or(b)
             }
             // `chomp(nil)` is a no-op (CRuby returns the string unchanged),
             // distinct from the no-arg form which strips the line separator.
-            Some(RubyValue::Nil) => text,
-            _ => text
-                .strip_suffix("\r\n")
-                .or_else(|| text.strip_suffix('\n'))
-                .or_else(|| text.strip_suffix('\r'))
-                .unwrap_or(&text)
-                .to_string(),
+            Some(RubyValue::Nil) => b,
+            _ => b
+                .strip_suffix(b"\r\n")
+                .or_else(|| b.strip_suffix(b"\n"))
+                .or_else(|| b.strip_suffix(b"\r"))
+                .unwrap_or(b),
         };
-        Ok(str_value(out))
+        Ok(bytes_value_like(&buf, out))
     }
     def "chop" (recv) {
         let s = rstr;
@@ -2106,6 +2182,7 @@ ruby_class! {
     // The integer codepoints of each character (`each_codepoint` is the
     // block/enumerator form over the same values).
     def "codepoints" (recv, &block) {
+        guard_valid(recv)?;
         let cps: Vec<i64> = {
             let s = rstr;
             let buf = s.lock();
@@ -2378,6 +2455,7 @@ ruby_class! {
         Ok(RubyValue::Int(a.cmp(&b) as i64))
     }
     def "casecmp?" (recv, arg) {
+        guard_valid_case(recv)?;
         let RubyValue::Str(o) = arg else { return Ok(RubyValue::Nil) };
         let a = rstr.lock().to_utf8_lossy().to_lowercase();
         let b = o.lock().to_utf8_lossy().to_lowercase();
@@ -2401,9 +2479,11 @@ ruby_class! {
     }
     // `sub`/`gsub`: String or Regexp pattern; String replacement or block.
     def "sub"(recv, *args, &block) {
+        guard_valid(recv)?;
         sub_gsub(recv, args, block, false)
     }
     def "gsub"(recv, *args, &block) {
+        guard_valid(recv)?;
         sub_gsub(recv, args, block, true)
     }
     def "start_with?"(recv, *args, &_block) {
@@ -2442,6 +2522,7 @@ ruby_class! {
     // `tr(from, to)` with `a-z` range expansion; a short `to` repeats its
     // last character (CRuby's rule).
     def "tr" (recv, arg1, arg2) {
+        guard_valid(recv)?;
         let (from, from_neg) = tr_charset(&arg_str!(arg1).lock().to_utf8_lossy());
         let to = expand_charset(&arg_str!(arg2).lock().to_utf8_lossy());
         let recv_handle = rstr;
@@ -2494,6 +2575,7 @@ ruby_class! {
     // only when it satisfies EVERY spec (CRuby's intersection rule), each of
     // which may itself be negated with a leading `^` or use `a-z` ranges.
     def "delete"(recv, *args, &_block) {
+        guard_valid(recv)?;
         let sets = charset_specs(args)?;
         let s = rstr;
         let buf = s.lock();
@@ -2504,6 +2586,7 @@ ruby_class! {
         Ok(str_value_like(&buf, &out))
     }
     def "squeeze"(recv, *args, &_block) {
+        guard_valid(recv)?;
         // CRuby accepts MULTIPLE charset args: only chars in the INTERSECTION
         // of every set are squeezable. No args squeezes every run (unlike
         // count/delete, squeeze permits zero arguments).
@@ -2527,6 +2610,7 @@ ruby_class! {
         Ok(str_value_like(&buf, &out))
     }
     def "count"(recv, *args, &_block) {
+        guard_valid(recv)?;
         // A no-arg `count` raises ArgumentError; CRuby attributes it to the
         // 'String#count' C-frame, so surface that in the backtrace.
         let _frame = crate::frames::synthetic_c_frame("String#count");
@@ -2611,6 +2695,21 @@ ruby_class! {
         undump_str(&rstr.lock())
     }
     def "to_sym" | "intern" (recv) {
+        // A symbol carries its bytes, so ruby refuses to mint one it could
+        // not spell back. The message names the encoding and echoes the
+        // would-be symbol in `:"..."` form.
+        // The lock is DROPPED before the message is built: `inspect_string`
+        // takes it again, and these are not reentrant.
+        let broken = {
+            let s = rstr.lock();
+            (!s.valid_encoding()).then(|| s.encoding().name())
+        };
+        if let Some(enc) = broken {
+            return Err(crate::dispatch::raise_error(
+                "EncodingError",
+                format!("invalid symbol in encoding {enc} :{}", recv.inspect_string()),
+            ));
+        }
         Ok(RubyValue::Symbol(crate::Symbol::intern(
             &rstr.lock().to_utf8_lossy(),
         )))
@@ -2738,6 +2837,7 @@ ruby_class! {
     // negative); a position outside the string means "no match" without even
     // running the engine.
     def "match" cfunc (recv, arg1, arg2?, &block) {
+        guard_valid(recv)?;
         let re = to_regexp(arg1)?;
         let (text, enc) = {
             let s = rstr;
@@ -2768,6 +2868,7 @@ ruby_class! {
         }))
     }
     def "scan" (recv, arg, &block) {
+        guard_valid(recv)?;
         let (text, enc) = {
             let s = rstr;
             let g = s.lock();
@@ -3423,6 +3524,12 @@ fn kw_encoding(opts: Option<&RubyValue>) -> Result<Option<crate::encoding::Encod
 /// Unicode spaces, unlike `str::trim`).
 fn is_rb_strip(c: char) -> bool {
     matches!(c, '\0' | '\t' | '\n' | '\x0B' | '\x0C' | '\r' | ' ')
+}
+
+/// [`is_rb_strip`] over one BYTE -- every character it strips is ASCII, so a
+/// row that trims can work on the bytes and leave an invalid one alone.
+fn is_rb_strip_byte(b: u8) -> bool {
+    matches!(b, 0 | b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ')
 }
 
 /// `unpack`/`unpack1`'s `offset:` keyword: the byte index to start decoding

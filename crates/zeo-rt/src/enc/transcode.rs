@@ -259,11 +259,25 @@ pub(crate) fn decode_utf8_spans(bytes: &[u8]) -> Vec<(Unit, usize)> {
                 // `#incomplete_input?` reports) rather than a plainly wrong
                 // byte. The multibyte decoders already draw this distinction;
                 // UTF-8 discarded it.
-                let style = match e.error_len() {
-                    Some(_) => crate::enc::mb::InvalidStyle::Plain,
-                    None => crate::enc::mb::InvalidStyle::Incomplete,
-                };
                 let bad_len = e.error_len().unwrap_or(rest.len() - good).max(1);
+                let bad = &rest[good..good + bad_len];
+                // CRuby's third form: when the bad bytes are a valid PREFIX of
+                // a multi-byte sequence, it names the byte that broke it --
+                // `"\xC3" followed by " "`. A byte that is no lead at all
+                // (`\xFF`, a stray continuation, an overlong `\xC0`) is plain,
+                // and so is a prefix at end-of-string, which is incomplete
+                // above. `error_len() > 1` is always a valid prefix; at 1 the
+                // lead byte itself decides. All oracle-verified, including the
+                // overlong and surrogate leads rust rejects one byte early.
+                let style = match e.error_len() {
+                    None => crate::enc::mb::InvalidStyle::Incomplete,
+                    Some(_) => match rest.get(good + bad_len) {
+                        Some(&next) if matches!(bad[0], 0xC2..=0xF4) => {
+                            crate::enc::mb::InvalidStyle::FollowedBy(next)
+                        }
+                        _ => crate::enc::mb::InvalidStyle::Plain,
+                    },
+                };
                 units.push((
                     Unit::Invalid(rest[good..good + bad_len].to_vec(), style),
                     bad_len,
