@@ -1,0 +1,14 @@
+== UnboundMethod#bind
+"wrapped(orig)"
+== UnboundMethod#bind_call
+"w(orig)"
+== Object#method
+["orig", "new"]
+== unbind and rebind still carries the frozen entry
+["orig", "new"]
+== the whole wrap-and-redefine hook, which is the point
+["<1st>", "<2nd:7>"]
+== super_method still resolves down the chain
+["sub+base", "base", Sub, Base]
+== an alias keeps its own entry
+["second", "first"]

@@ -2,12 +2,12 @@
 //! not yet bound to a receiver. `#bind(obj)` re-binds it into a `Method` (obj
 //! must be an instance of the owning class or a subclass); `#bind_call(obj,
 //! *args)` binds and calls in one step. Its sibling `Method` lives in
-//! `method.rs`, from which this file borrows `method_value` (the bind result)
-//! and the shared `resolve_method_name`.
+//! `method.rs`, from which this file borrows `method_value_with` (the bind
+//! result) and the shared `resolve_method_name`.
 
 use std::sync::Arc;
 
-use crate::builtins::method::{method_value, resolve_method_name};
+use crate::builtins::method::resolve_method_name;
 use crate::builtins::{inherited_row, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::method_meta::MethodKind;
@@ -27,6 +27,10 @@ pub struct RUnboundMethod {
     /// only drives the super walk and the metadata lookup.
     pub home: ClassId,
     pub kind: MethodKind,
+    /// The frozen LAYER -- see [`crate::builtins::method::FrozenEntry`]. It is
+    /// deliberately not the resolved body: `#bind` may be handed an instance of
+    /// a SUBCLASS, whose compiled copy of the method has a different layout.
+    pub(crate) snapshot: Option<crate::builtins::method::FrozenEntry>,
 }
 
 impl RUnboundMethod {
@@ -62,6 +66,7 @@ impl RubyObject for RUnboundMethod {
             name: self.name,
             home: self.home,
             kind: self.kind,
+            snapshot: self.snapshot.clone(),
         })
     }
 }
@@ -84,6 +89,7 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
         // reached through `Foo.singleton_class.instance_method(:bar)`.
         home: crate::dispatch::method_owner(cid, name).unwrap_or(cid),
         kind: MethodKind::Instance,
+        snapshot: Some(crate::builtins::method::freeze_entry(cid, name)),
     })))
 }
 
@@ -141,7 +147,15 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
             ),
         });
     }
-    Ok(method_value(obj.clone(), um.name, um.home, um.kind))
+    // The bound Method inherits the UNBOUND one's frozen entry: `#bind` must
+    // not re-resolve a name that has been redefined since.
+    Ok(crate::builtins::method::method_value_with(
+        obj.clone(),
+        um.name,
+        um.home,
+        um.kind,
+        um.snapshot.clone(),
+    ))
 }
 
 ruby_class! {
@@ -168,6 +182,12 @@ ruby_class! {
         let um = recv_unbound(recv);
         // The receiver must still be a valid bind target.
         bind_target(um, receiver)?;
+        // Then the FROZEN entry, exactly as `#bind(obj).call` would.
+        if let (Some(frozen), RubyValue::Object(o)) = (&um.snapshot, receiver) {
+            if let Some(out) = frozen.call_on(o, um.name, args, blk.clone()) {
+                return out;
+            }
+        }
         crate::dispatch::send_value(receiver, um.name, args, blk)
     }
     // `UnboundMethod#owner` -- the defining class/module in the owning class's
@@ -201,6 +221,9 @@ ruby_class! {
                 name: um.name,
                 home,
                 kind: um.kind,
+                // A `#super_method` re-seat picks a position the ordinary walk
+                // would not reach, so it keeps the resolve-and-send path.
+                snapshot: None,
             })),
             None => RubyValue::Nil,
         })

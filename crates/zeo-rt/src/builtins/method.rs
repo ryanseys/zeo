@@ -34,6 +34,62 @@ pub struct RMethod {
     /// qualifying the owner (`Sub(Base)#greet` vs. a plain `Base#greet`).
     pub home: ClassId,
     pub kind: MethodKind,
+    /// The method entry as it resolved WHEN THIS OBJECT WAS MADE.
+    ///
+    /// CRuby copies the entry (`rb_method_entry_clone`), so a later
+    /// redefinition cannot change what an already-taken Method calls. That is
+    /// what makes the wrap-and-redefine idiom terminate -- the canonical thing
+    /// a `method_added` hook is written to do:
+    ///
+    /// ```ruby
+    /// orig = instance_method(name)
+    /// define_method(name) { |*a| orig.bind(self).call(*a) }
+    /// ```
+    ///
+    /// Re-dispatching by name instead finds the wrapper and recurses forever.
+    ///
+    /// `None` for the shapes a freeze cannot serve: a class-method lookup
+    /// (whose body is an `RProc` keyed on a `Class` receiver, not an `RObj`),
+    /// a non-object receiver, and a `#super_method` re-seat -- all of which
+    /// keep the ordinary resolve-and-send.
+    pub(crate) snapshot: Option<FrozenEntry>,
+}
+
+/// Which LAYER answered when a `Method`/`UnboundMethod` was taken.
+///
+/// Keeping the resolved `MethodImpl` itself would be wrong: zeo materializes a
+/// layout-correct copy of a compiled method PER CLASS, so `Foo#b`'s body
+/// cannot run against a `Sub` instance -- it downcasts the receiver to Foo's
+/// generated struct. Freezing the layer, and re-resolving from that layer for
+/// the actual receiver, is both redefinition-proof and layout-correct.
+#[derive(Clone)]
+pub(crate) enum FrozenEntry {
+    /// A runtime `define_method` body. Its `RProc` takes the receiver as an
+    /// argument, so this one copy binds to any instance and is kept verbatim.
+    Overlay(crate::dispatch::MethodImpl),
+    /// A compiled body, or a builtin row. Re-resolved per receiver with the
+    /// overlay skipped, so a later `define_method` cannot capture it.
+    BelowOverlay,
+}
+
+impl FrozenEntry {
+    /// Runs the frozen entry against `recv`, or `None` when the name no longer
+    /// resolves below the overlay at all (an `undef` since it was taken).
+    pub(crate) fn call_on(
+        &self,
+        recv: &RObj,
+        name: Symbol,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Option<Result<RubyValue, Signal>> {
+        match self {
+            FrozenEntry::Overlay(m) => Some(m.call(recv, args, block)),
+            FrozenEntry::BelowOverlay => {
+                crate::runtime_meta::snapshot_below_overlay(recv.class_id(), name)
+                    .map(|m| m.call(recv, args, block))
+            }
+        }
+    }
 }
 
 impl RMethod {
@@ -73,19 +129,62 @@ pub(crate) fn home_of(recv: &RubyValue, name: Symbol) -> (ClassId, MethodKind) {
     }
 }
 
-/// A bound `Method` value over an already-resolved lookup position.
+/// A bound `Method` value over an already-resolved lookup position, taking the
+/// entry snapshot [`RMethod::snapshot`] documents.
 pub(crate) fn method_value(
     recv: RubyValue,
     name: Symbol,
     home: ClassId,
     kind: MethodKind,
 ) -> RubyValue {
+    let snapshot = entry_snapshot(&recv, name, home, kind);
+    method_value_with(recv, name, home, kind, snapshot)
+}
+
+/// [`method_value`] over an entry frozen ELSEWHERE -- `UnboundMethod#bind`,
+/// which must hand on the copy the unbound method already froze rather than
+/// re-resolving a name that may have been redefined since.
+pub(crate) fn method_value_with(
+    recv: RubyValue,
+    name: Symbol,
+    home: ClassId,
+    kind: MethodKind,
+    snapshot: Option<FrozenEntry>,
+) -> RubyValue {
     RubyValue::Object(Arc::new(RMethod {
         recv,
         name,
         home,
         kind,
+        snapshot,
     }))
+}
+
+/// The entry to freeze into a new `Method`/`UnboundMethod` -- see
+/// [`RMethod::snapshot`] for why, and for the shapes that get `None`.
+pub(crate) fn entry_snapshot(
+    recv: &RubyValue,
+    name: Symbol,
+    home: ClassId,
+    kind: MethodKind,
+) -> Option<FrozenEntry> {
+    if kind != MethodKind::Instance || !matches!(recv, RubyValue::Object(_)) {
+        return None;
+    }
+    // A `#super_method` re-seat has already picked a position the ordinary
+    // walk would not reach; leave it on `send_as_defined_in`.
+    (home == recv.class_id()).then(|| freeze_entry(recv.class_id(), name))
+}
+
+/// The layer that answers `name` for instances of `id`, right now.
+pub(crate) fn freeze_entry(id: ClassId, name: Symbol) -> FrozenEntry {
+    match crate::runtime_meta::resolves_through_overlay(id, name) {
+        true => match crate::runtime_meta::snapshot_instance_method(id, name) {
+            Some(m) => FrozenEntry::Overlay(m),
+            None => FrozenEntry::BelowOverlay,
+        },
+        false => FrozenEntry::BelowOverlay,
+    }
 }
 
 /// A bound `Method` over a fresh lookup (`obj.method(:name)`).
@@ -117,6 +216,7 @@ impl RubyObject for RMethod {
             name: self.name,
             home: self.home,
             kind: self.kind,
+            snapshot: self.snapshot.clone(),
         })
     }
 }
@@ -254,6 +354,14 @@ ruby_class! {
     // find the override it was reached through and recurse.
     def "call" | "[]" | "===" (recv, *args, &blk) {
         let m = recv_method(recv);
+        // The frozen entry first: re-resolving by name would find whatever
+        // holds the name NOW, which for a wrapped method is the wrapper
+        // itself. See `RMethod::snapshot`.
+        if let (Some(frozen), RubyValue::Object(o)) = (&m.snapshot, &m.recv) {
+            if let Some(out) = frozen.call_on(o, m.name, args, blk.clone()) {
+                return out;
+            }
+        }
         if m.home == m.chain() {
             return crate::dispatch::send_value(&m.recv, m.name, args, blk);
         }
@@ -309,6 +417,9 @@ ruby_class! {
             name: m.name,
             home: m.owner().unwrap_or(m.home),
             kind: m.kind,
+            // Unbinding does not re-resolve: the entry stays the one this
+            // Method froze.
+            snapshot: m.snapshot.clone(),
         })))
     }
     // `Method#owner` -- the class or module in the receiver's ancestry that

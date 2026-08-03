@@ -1202,11 +1202,28 @@ pub fn runtime_class_method_visibility(
 /// resulting alias serves `RObj` dispatch, which is where the overlay is
 /// probed). A compile-time builtin-alias row resolves through its target
 /// (rows are terminal, so the single recursion can't loop).
-fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+pub(crate) fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    snapshot_from(id, name, false)
+}
+
+/// [`snapshot_instance_method`] with the overlay layer skipped on EVERY
+/// ancestor -- the body that answered before any runtime `define_method` did.
+///
+/// This is how a `Method`/`UnboundMethod` re-finds the entry it froze. It
+/// cannot simply keep the `MethodImpl`: zeo materializes a LAYOUT-CORRECT copy
+/// of a compiled method per class, so `Foo#b`'s body cannot run against a `Sub`
+/// instance. Freezing which LAYER answered, and re-resolving from that layer
+/// for the actual receiver's class, is both redefinition-proof and
+/// layout-correct.
+pub(crate) fn snapshot_below_overlay(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    snapshot_from(id, name, true)
+}
+
+fn snapshot_from(id: ClassId, name: Symbol, skip_overlay: bool) -> Option<MethodImpl> {
     let n = name.name();
     let n = n.as_str();
     for &anc in ancestors_of_value(id) {
-        {
+        if !skip_overlay {
             let c = maps().classes.read().unwrap();
             if let Some(m) = c.get(&anc.0).and_then(|e| e.methods.get(&name).cloned()) {
                 return Some(m);
@@ -1226,7 +1243,30 @@ fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
             )));
         }
     }
-    crate::dispatch::alias_target(id, name).and_then(|old| snapshot_instance_method(id, old))
+    crate::dispatch::alias_target(id, name).and_then(|old| snapshot_from(id, old, skip_overlay))
+}
+
+/// Whether `name` currently resolves for instances of `id` through the
+/// OVERLAY -- a runtime `define_method` body. See [`snapshot_below_overlay`].
+pub(crate) fn resolves_through_overlay(id: ClassId, name: Symbol) -> bool {
+    if !is_live() {
+        return false;
+    }
+    for &anc in ancestors_of_value(id) {
+        {
+            let c = maps().classes.read().unwrap();
+            if c.get(&anc.0).is_some_and(|e| e.methods.contains_key(&name)) {
+                return true;
+            }
+        }
+        if registry_lookup_cloned(anc, name).is_some()
+            || crate::dispatch::registry_value_method_impl(anc, name).is_some()
+            || crate::builtins::class_table(anc).is_some_and(|t| t(name.name_str()).is_some())
+        {
+            return false;
+        }
+    }
+    false
 }
 
 /// `Module#module_function(*names)` reached at RUNTIME -- fileutils calls
