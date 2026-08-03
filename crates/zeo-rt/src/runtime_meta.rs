@@ -751,6 +751,22 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     }
     patch_class(id);
     mark_live();
+    // A hook name defined on Module/Class/BasicObject itself applies to every
+    // class; nothing downstream could infer that from the owner id.
+    if global_def_hook_owner(id, name) {
+        mark_global_def_hook(name.name_str());
+    }
+    fire_def_hook(DefTarget::Class(id), DefEvent::Added, name)?;
+    // `module_function` adds a module method too, and ruby reports BOTH: the
+    // instance copy through `method_added`, then the module copy through
+    // `singleton_method_added`.
+    if frame.is_some_and(|f| f.module_function) {
+        fire_def_hook(
+            DefTarget::Singleton(&RubyValue::Class(id)),
+            DefEvent::Added,
+            name,
+        )?;
+    }
     Ok(RubyValue::Symbol(name))
 }
 
@@ -820,6 +836,12 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
     }
     patch_class(id);
     mark_live();
+    // One hook per generated name, reader before writer -- ruby reports
+    // `attr_accessor :c` as `method_added(:c)` then `method_added(:c=)`.
+    for sym in &defined {
+        let RubyValue::Symbol(sym) = sym else { continue };
+        fire_def_hook(DefTarget::Class(id), DefEvent::Added, *sym)?;
+    }
     Ok(RubyValue::Array(crate::array_new(defined)))
 }
 
@@ -895,6 +917,7 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
+    let mut undefined = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
         if !crate::dispatch::responds_to(id, name, true) {
@@ -904,13 +927,19 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
                 crate::dispatch::class_name(id).unwrap_or_else(|| "?".to_string())
             ));
         }
-        let mut w = maps().classes.write().unwrap();
-        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
-        e.undefs.insert(name);
-        e.methods.remove(&name);
+        {
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+            e.undefs.insert(name);
+            e.methods.remove(&name);
+        }
+        undefined.push(name);
     }
     patch_class(id);
     mark_live();
+    for name in undefined {
+        fire_def_hook(DefTarget::Class(id), DefEvent::Undefined, name)?;
+    }
     Ok(RubyValue::Class(id))
 }
 
@@ -920,10 +949,13 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
+    let mut removed_names = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
-        let mut w = maps().classes.write().unwrap();
-        let removed = w
+        let removed = maps()
+            .classes
+            .write()
+            .unwrap()
             .get_mut(&id.0)
             .and_then(|e| e.methods.remove(&name))
             .is_some();
@@ -934,9 +966,13 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
                 crate::dispatch::class_name(id).unwrap_or_else(|| "?".to_string())
             ));
         }
+        removed_names.push(name);
     }
     patch_class(id);
     mark_live();
+    for name in removed_names {
+        fire_def_hook(DefTarget::Class(id), DefEvent::Removed, name)?;
+    }
     Ok(RubyValue::Class(id))
 }
 
@@ -1013,6 +1049,8 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
     meta.register();
     patch_class(id);
     mark_live();
+    // An alias is a definition: ruby reports the NEW name, once.
+    fire_def_hook(DefTarget::Class(id), DefEvent::Added, new)?;
     Ok(RubyValue::Symbol(new))
 }
 
@@ -1083,6 +1121,15 @@ pub fn runtime_set_visibility(
     }
     patch_class(id);
     mark_live();
+    // `private :m` on an INHERITED method is a definition -- CRuby synthesizes
+    // a `ZSUPER` entry through `rb_add_method`, which fires the hook
+    // (`vm_method.c:2318-2336`). On the class's OWN method the visibility is
+    // set in place and nothing fires. Oracle-verified both ways.
+    for &sym in &syms {
+        if crate::dispatch::method_owner(id, sym) != Some(id) {
+            fire_def_hook(DefTarget::Class(id), DefEvent::Added, sym)?;
+        }
+    }
     Ok(result)
 }
 
@@ -1225,6 +1272,17 @@ pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyVa
     }
     patch_class(id);
     mark_live();
+    // Only the module-method half is new here -- the instance copy already
+    // existed and merely turned private, so ruby reports just the singleton.
+    // (The BARE `module_function` mode reports both, from the `def` that
+    // follows it; see `runtime_define_method`.)
+    for &sym in &syms {
+        fire_def_hook(
+            DefTarget::Singleton(&RubyValue::Class(id)),
+            DefEvent::Added,
+            sym,
+        )?;
+    }
     Ok(match syms.as_slice() {
         [one] => RubyValue::Symbol(*one),
         many => RubyValue::Array(crate::array_new(
@@ -1275,6 +1333,7 @@ pub fn runtime_define_method_from_method(
     }
     patch_class(id);
     mark_live();
+    fire_def_hook(DefTarget::Class(id), DefEvent::Added, name)?;
     Ok(RubyValue::Symbol(name))
 }
 
@@ -1331,6 +1390,9 @@ pub fn runtime_define_singleton_from_method(
             e.extended_class_methods.remove(&name);
             mark_singletons();
             mark_live();
+            // A singleton definition reports to the OBJECT, not to its
+            // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
+            fire_def_hook(DefTarget::Singleton(recv), DefEvent::Added, name)?;
             Ok(RubyValue::Symbol(name))
         }
         RubyValue::Object(o) => {
@@ -1345,6 +1407,9 @@ pub fn runtime_define_singleton_from_method(
                 .insert(name, m);
             mark_singletons();
             mark_live();
+            // A singleton definition reports to the OBJECT, not to its
+            // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
+            fire_def_hook(DefTarget::Singleton(recv), DefEvent::Added, name)?;
             Ok(RubyValue::Symbol(name))
         }
         // Only an ordinary object, unlike `runtime_define_singleton_method`
@@ -1386,6 +1451,9 @@ pub fn runtime_define_singleton_method(
             }
             mark_singletons();
             mark_live();
+            // A singleton definition reports to the OBJECT, not to its
+            // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
+            fire_def_hook(DefTarget::Singleton(recv), DefEvent::Added, name)?;
             Ok(RubyValue::Symbol(name))
         }
         RubyValue::Object(o) => {
@@ -1402,6 +1470,9 @@ pub fn runtime_define_singleton_method(
             }
             mark_singletons();
             mark_live();
+            // A singleton definition reports to the OBJECT, not to its
+            // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
+            fire_def_hook(DefTarget::Singleton(recv), DefEvent::Added, name)?;
             Ok(RubyValue::Symbol(name))
         }
         other => {
@@ -1424,6 +1495,9 @@ pub fn runtime_define_singleton_method(
             }
             mark_singletons();
             mark_live();
+            // A singleton definition reports to the OBJECT, not to its
+            // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
+            fire_def_hook(DefTarget::Singleton(recv), DefEvent::Added, name)?;
             Ok(RubyValue::Symbol(name))
         }
     }
@@ -1628,6 +1702,129 @@ pub(crate) fn fire_mixin_hook(
     }
     crate::dispatch::send_value(module, sym, std::slice::from_ref(target), None)?;
     Ok(())
+}
+
+/// Which of Ruby's three definition events happened. The hook's NAME is this
+/// plus the target's shape: the same event is `method_added` on a class and
+/// `singleton_method_added` on a singleton.
+#[derive(Clone, Copy)]
+pub(crate) enum DefEvent {
+    Added,
+    Removed,
+    Undefined,
+}
+
+/// Where a definition landed. CRuby reads this off the target class's
+/// `RCLASS_SINGLETON_P` bit and then rewrites the receiver to the attached
+/// object (`vm_method.c`'s `CALL_METHOD_HOOK`). zeo's runtime writers already
+/// know which of the two they are -- a singleton definition never reaches a
+/// shared class's method table -- so they say so rather than making this
+/// re-derive it from an id.
+pub(crate) enum DefTarget<'a> {
+    Class(ClassId),
+    Singleton(&'a RubyValue),
+}
+
+/// Hook names reopened onto `Module`/`Class`/`BasicObject`, which apply to
+/// EVERY class in the program. No per-class owner scan can see one: the reopen
+/// registers an ordinary instance method whose owner id is the very id the
+/// no-op default carries, so the two are indistinguishable by owner. Recorded
+/// explicitly instead, by whoever installs it.
+static ANY_GLOBAL_DEF_HOOK: AtomicBool = AtomicBool::new(false);
+static GLOBAL_DEF_HOOKS: OnceLock<RwLock<FSet<Symbol>>> = OnceLock::new();
+
+/// `hook` was defined on `Module`/`Class`/`BasicObject` itself. Called by
+/// codegen for a compiled reopen and by [`runtime_define_method`] for a
+/// runtime one.
+pub fn mark_global_def_hook(hook: &str) {
+    GLOBAL_DEF_HOOKS
+        .get_or_init(|| RwLock::new(FSet::default()))
+        .write()
+        .unwrap()
+        .insert(Symbol::intern(hook));
+    ANY_GLOBAL_DEF_HOOK.store(true, Ordering::Release);
+}
+
+fn global_def_hook(hook: Symbol) -> bool {
+    ANY_GLOBAL_DEF_HOOK.load(Ordering::Acquire)
+        && GLOBAL_DEF_HOOKS
+            .get()
+            .is_some_and(|h| h.read().unwrap().contains(&hook))
+}
+
+/// Whether a body the USER wrote will answer `hook`, as opposed to the no-op
+/// default. Every caller reaches this from a runtime definition, which already
+/// pays a write lock and an O(#classes) `patch_class`, so an MRO scan here
+/// costs nothing worth latching around.
+fn def_hook_runs(target: &DefTarget<'_>, hook: Symbol) -> bool {
+    if global_def_hook(hook) {
+        return true;
+    }
+    match target {
+        // `class_method_owner` finds a `def self.method_added` and an
+        // `extend`ed module's copy of one, and deliberately does NOT find
+        // `Module`'s own no-op row: that is an INSTANCE method of Module, and
+        // this scan walks class-method tables. So the default costs nothing.
+        DefTarget::Class(cid) | DefTarget::Singleton(RubyValue::Class(cid)) => {
+            crate::dispatch::class_method_owner(*cid, hook).is_some()
+        }
+        // `singleton_method_added` IS an instance method of `BasicObject`, so
+        // here the scan does reach the default and it has to be ruled out by
+        // owner. `Numeric`'s override -- which refuses a singleton on a number
+        // at all -- resolves to `Numeric` and passes.
+        DefTarget::Singleton(v) => {
+            singleton_method_names(v).contains(&hook)
+                || crate::dispatch::method_owner(v.class_id(), hook)
+                    .is_some_and(|owner| owner != zeo_abi::BASIC_OBJECT_CLASS)
+        }
+    }
+}
+
+/// Ruby's definition hook: `Klass.method_added(:name)`, or its singleton twin
+/// on the attached object. Run right after the definition lands, which is
+/// CRuby's order -- the method is already callable when the hook sees its name.
+///
+/// Call this with every overlay lock DROPPED. A hook body that defines another
+/// method is the whole point of the hook, and it takes the write lock again.
+pub(crate) fn fire_def_hook(
+    target: DefTarget<'_>,
+    event: DefEvent,
+    name: Symbol,
+) -> Result<(), Signal> {
+    let hook = match (&target, event) {
+        (DefTarget::Class(_), DefEvent::Added) => "method_added",
+        (DefTarget::Class(_), DefEvent::Removed) => "method_removed",
+        (DefTarget::Class(_), DefEvent::Undefined) => "method_undefined",
+        (DefTarget::Singleton(_), DefEvent::Added) => "singleton_method_added",
+        (DefTarget::Singleton(_), DefEvent::Removed) => "singleton_method_removed",
+        (DefTarget::Singleton(_), DefEvent::Undefined) => "singleton_method_undefined",
+    };
+    let hook = Symbol::intern(hook);
+    if !def_hook_runs(&target, hook) {
+        return Ok(());
+    }
+    let recv = match target {
+        DefTarget::Class(cid) => RubyValue::Class(cid),
+        DefTarget::Singleton(v) => v.clone(),
+    };
+    // `send_value`, not a visibility-checked call: CRuby reaches its hooks
+    // through `rb_funcallv`, an FCALL, so a `private def self.method_added`
+    // still runs.
+    crate::dispatch::send_value(&recv, hook, &[RubyValue::Symbol(name)], None)?;
+    Ok(())
+}
+
+/// The six hook names that become GLOBAL when defined on `Module`/`Class`
+/// (the `method_*` trio) or on `BasicObject` (the `singleton_method_*` trio).
+pub fn global_def_hook_owner(id: ClassId, name: Symbol) -> bool {
+    match name.name_str() {
+        "method_added" | "method_removed" | "method_undefined" => {
+            id == zeo_abi::MODULE_CLASS || id == zeo_abi::CLASS_CLASS
+        }
+        "singleton_method_added" | "singleton_method_removed"
+        | "singleton_method_undefined" => id == zeo_abi::BASIC_OBJECT_CLASS,
+        _ => false,
+    }
 }
 
 /// Splices `mid`'s ancestry into `cid`'s, at `cid`'s own position, skipping any

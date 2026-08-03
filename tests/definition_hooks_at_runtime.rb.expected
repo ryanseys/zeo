@@ -1,0 +1,33 @@
+s_added singleton_method_added
+-- define_method
+added a
+-- attr_accessor reports the reader, then the writer
+added c
+added c=
+-- alias_method reports the NEW name
+added d
+-- define_singleton_method
+s_added sing
+-- define_method from a Method object
+added e
+-- remove_method
+removed d
+-- undef_method
+undefined a
+-- private, own vs inherited
+added own
+added inspect
+-- per-object singleton
+o s_added singleton_method_added
+o s_added bar
+o s_added written_as_a_def
+o s_added written_in_a_singleton_class
+-- module_function
+M s_added singleton_method_added
+M added mm
+M s_added mm
+-- Numeric refuses a singleton
+numeric: can't define singleton method "frob" for Deg
+numeric: can't define singleton method "frob" for Deg
+-- include and extend report nothing
+done
