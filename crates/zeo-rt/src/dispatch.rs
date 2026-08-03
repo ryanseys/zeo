@@ -2394,7 +2394,13 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         // Answering `Private` rather than falling through matters: the name
         // IS defined, so `private_method_defined?` must say so, and the walk
         // must not keep looking for a public copy farther up.
-        if crate::builtins::class_table_names(*anc).contains(&name_str) {
+        // The generated `lookup`, not a linear scan of `names`: this walk is
+        // the explicit-receiver barrier's, and `String`/`Array` carry ~200
+        // rows each, so `contains` was up to a few hundred string compares per
+        // ancestor on every call the inline cache did not serve. `lookup` is a
+        // match rustc lowers to a length switch, and the macro builds both
+        // from the same def list, so they answer the same question.
+        if crate::builtins::class_table(*anc).is_some_and(|f| f(name_str).is_some()) {
             if is_hidden_builtin_private(*anc, name_str)
                 || crate::builtins::class_method_is_private(*anc, name_str)
             {
