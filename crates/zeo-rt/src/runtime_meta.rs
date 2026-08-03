@@ -34,7 +34,7 @@ use crate::{FMap, FSet};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use zeo_abi::RUNTIME_CLASS_ID_BASE;
 
@@ -182,7 +182,20 @@ struct OverlayMaps {
     next_id: AtomicU32,
 }
 
-static OVERLAY_LIVE: AtomicBool = AtomicBool::new(false);
+/// The two gates the dispatch fast path reads, in ONE atomic:
+///
+/// * [`GATE_OVERLAY`] -- something has been defined at runtime, so the overlay
+///   may answer where the frozen tables would not.
+/// * [`GATE_PENDING`] -- a definition hook is running with names still ahead of
+///   it, so a resolved entry may not exist yet (see [`with_pending_defs`]).
+///
+/// One word rather than two `AtomicBool`s because [`is_live`] asks about both
+/// and must stay a single load and a single compare against zero. As a second
+/// flag beside the first, the pending gate measured +2.6% on a loop whose body
+/// is nothing but a cached dynamic send; folded in here it is free.
+static GATES: AtomicU8 = AtomicU8::new(0);
+const GATE_OVERLAY: u8 = 1;
+const GATE_PENDING: u8 = 2;
 static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
@@ -198,11 +211,17 @@ fn maps() -> &'static OverlayMaps {
     })
 }
 
-/// The dispatch hot-path gate: `true` once anything has been defined at
-/// runtime. Read before any overlay probe.
+/// The dispatch hot-path gate: `true` while the frozen tables may not be the
+/// whole answer -- either something has been defined at runtime, or a
+/// definition hook is running and part of its class is not installed yet.
+///
+/// Every reader wants that union, not one gate or the other: each of them
+/// guards a shortcut that only a completely settled program may take. So this
+/// asks whether ANY bit is set, which keeps it the one load and one
+/// compare-against-zero it was when the overlay was the only gate.
 #[inline(always)]
 pub fn is_live() -> bool {
-    OVERLAY_LIVE.load(Ordering::Acquire)
+    GATES.load(Ordering::Acquire) != 0
 }
 
 /// The typed-iterator fusion gate (`codegen`'s `emit_typed_iter_inline`): a
@@ -309,7 +328,7 @@ fn mark_ancestry_mutated() {
 }
 
 fn mark_live() {
-    OVERLAY_LIVE.store(true, Ordering::Release);
+    GATES.fetch_or(GATE_OVERLAY, Ordering::Release);
 }
 
 /// The object identity a per-object singleton table is keyed by: the `Arc`'s
@@ -1996,28 +2015,47 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// A hook body has run at least once with a non-empty pending set. Until it
-/// flips, every reflection row's check is one relaxed load -- and it never
-/// flips in a program that defines no hook, which is nearly all of them.
-static ANY_PENDING: AtomicBool = AtomicBool::new(false);
+/// How many hook frames are live across ALL threads. [`GATE_PENDING`] tracks
+/// whether this is non-zero, so the gate lifts again once the last hook
+/// returns rather than de-optimizing the rest of the program.
+///
+/// Two threads defining methods at the same time can interleave the decrement
+/// and the increment such that the gate clears while the other thread is still
+/// inside a hook. The consequence is exactly the behaviour zeo had before the
+/// truncation existed -- that thread's hook body resolves a method it has not
+/// been told about -- and no shape zeo compiles today fires definition hooks on
+/// two threads at once. The thread-local stack stays the authority for WHICH
+/// names are pending; this word only decides whether asking is worthwhile.
+static PENDING_DEPTH: AtomicUsize = AtomicUsize::new(0);
 
 /// Runs `f` -- a definition hook's send -- with `names` marked as not yet
 /// defined on `class`.
 pub fn with_pending_defs<R>(class: ClassId, names: &[Symbol], f: impl FnOnce() -> R) -> R {
-    ANY_PENDING.store(true, Ordering::Release);
+    PENDING_DEPTH.fetch_add(1, Ordering::AcqRel);
+    GATES.fetch_or(GATE_PENDING, Ordering::Release);
     PENDING_DEFS.with(|p| p.borrow_mut().push((class, names.to_vec())));
     let out = f();
     PENDING_DEFS.with(|p| {
         p.borrow_mut().pop();
     });
+    if PENDING_DEPTH.fetch_sub(1, Ordering::AcqRel) == 1 {
+        GATES.fetch_and(!GATE_PENDING, Ordering::Release);
+    }
     out
+}
+
+/// Whether a definition hook is running with a non-empty pending set -- the
+/// gate every truncation site reads before touching the thread-local.
+#[inline(always)]
+pub fn any_pending() -> bool {
+    GATES.load(Ordering::Acquire) & GATE_PENDING != 0
 }
 
 /// Whether `name` is a method of `class` that the definition hook now running
 /// has not seen defined yet.
 #[inline]
 pub fn not_yet_defined(class: ClassId, name: Symbol) -> bool {
-    ANY_PENDING.load(Ordering::Acquire) && listed_pending(class, name) && !inherited(class, name)
+    any_pending() && listed_pending(class, name) && !inherited(class, name)
 }
 
 /// Every name of `class` the running hook has not seen defined, for the callers
@@ -2030,7 +2068,7 @@ pub fn not_yet_defined(class: ClassId, name: Symbol) -> bool {
 /// `instance_methods(false)` -- is not: `Sub#shared` written below the hook is
 /// absent from Sub's OWN list even though `Base#shared` exists.
 pub fn pending_defs_for(class: ClassId, inherit: bool) -> Vec<Symbol> {
-    if !ANY_PENDING.load(Ordering::Acquire) {
+    if !any_pending() {
         return Vec::new();
     }
     PENDING_DEFS.with(|p| {
@@ -2041,6 +2079,16 @@ pub fn pending_defs_for(class: ClassId, inherit: bool) -> Vec<Symbol> {
             .filter(|&n| !inherit || !inherited(class, n))
             .collect()
     })
+}
+
+/// Whether `class` itself has a `def name` still ahead of the running hook --
+/// [`not_yet_defined`] without the ancestor rule, which is the question DISPATCH
+/// asks. The two differ on an override: `Sub#shared` written below the hook is
+/// not installed yet, so a call resolves to `Base#shared` rather than missing,
+/// while `method_defined?(:shared)` was already true through `Base`.
+#[inline]
+pub fn pending_here(class: ClassId, name: Symbol) -> bool {
+    any_pending() && listed_pending(class, name)
 }
 
 fn listed_pending(class: ClassId, name: Symbol) -> bool {
@@ -2084,8 +2132,9 @@ pub fn global_def_hook_owner(id: ClassId, name: Symbol) -> bool {
         "method_added" | "method_removed" | "method_undefined" | "const_added" => {
             id == zeo_abi::MODULE_CLASS || id == zeo_abi::CLASS_CLASS
         }
-        "singleton_method_added" | "singleton_method_removed"
-        | "singleton_method_undefined" => id == zeo_abi::BASIC_OBJECT_CLASS,
+        "singleton_method_added" | "singleton_method_removed" | "singleton_method_undefined" => {
+            id == zeo_abi::BASIC_OBJECT_CLASS
+        }
         _ => false,
     }
 }
@@ -2776,7 +2825,10 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
                 return None;
             }
             if let Some(m) = entry.and_then(|e| {
-                e.prepended.get(&name).or_else(|| e.methods.get(&name)).cloned()
+                e.prepended
+                    .get(&name)
+                    .or_else(|| e.methods.get(&name))
+                    .cloned()
             }) {
                 return Some(m);
             }

@@ -4286,6 +4286,10 @@ pub fn send_value_cached(
     // or the cache is even read: it resolves through a class-method arm of its
     // own further down, so a site that only ever sees one (`Math.sin`) would
     // otherwise pay the lookup on every call and never fill.
+    // `is_live` also covers a running definition hook, whose class is only
+    // part-built: a filled cache line would answer for a method that does not
+    // exist yet. Sending the whole call down the slow route while a hook runs
+    // puts that question where it is already asked (`send_in_reason`).
     if !matches!(recv, RubyValue::Class(_)) && box_id == 0 && !crate::runtime_meta::is_live() {
         let id = recv.class_id();
         if let Some((cached, target)) = site.hit.get() {
@@ -4429,6 +4433,19 @@ fn send_in_reason(
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
     note_dispatch(name);
+    // A definition hook sees the class only as far as it has been built, and
+    // that governs DISPATCH as well as reflection: a method written below the
+    // `def` the hook is reporting is not installed yet. Resolution therefore
+    // resumes ABOVE this class, exactly as `super` does -- an inherited copy
+    // still answers (`Base#shared` while `Sub#shared` is still ahead), and
+    // nothing above is an ordinary miss. Outside a hook body -- every program
+    // that defines none -- this is one relaxed atomic load.
+    if crate::runtime_meta::pending_here(id, name) {
+        return match method_owner_after(id, id, name) {
+            Some(_) => send_super_from(&RubyValue::Object(recv.clone()), id, name, args, block),
+            None => method_missing_or_raise(recv, id, name, args, block, reason),
+        };
+    }
     // Runtime metaprogramming: a per-object singleton, a runtime
     // `define_method` override, or a runtime-class instance's own/inherited
     // methods -- probed first (Ruby: a runtime `define_method` REPLACES), but
@@ -4551,6 +4568,20 @@ fn send_in_reason(
     if let Some(old) = alias_target(id, name) {
         return send_in_reason(box_id, recv, old, args, block, reason);
     }
+    method_missing_or_raise(recv, id, name, args, block, reason)
+}
+
+/// The tail every unresolved send shares: `method_missing` if the receiver has
+/// one, else CRuby's raise. Also where a send truncated by the definition
+/// watermark lands, so a class with its own `method_missing` still gets it.
+fn method_missing_or_raise(
+    recv: &RObj,
+    id: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    reason: MissingReason,
+) -> Result<RubyValue, Signal> {
     // method_missing fallback, with `name` prepended to args (mirrors
     // CRuby's own protocol) -- AFTER every real method, per real Ruby.
     let mm = crate::symbol::wk::method_missing();
@@ -4572,7 +4603,7 @@ fn send_in_reason(
     // top-level uncaught handler otherwise. Shares the one method-missing
     // raiser with every other failure mode.
     Err(raise_method_missing(
-        &boxed,
+        &RubyValue::Object(recv.clone()),
         &name.to_string(),
         args,
         reason,

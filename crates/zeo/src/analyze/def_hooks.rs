@@ -175,7 +175,10 @@ fn fires(
     // one, so raw offsets do not order across files. `<=`, not `<`, because a
     // `def self.singleton_method_added` DOES report itself (oracle-verified).
     let where_ = |n: Option<NodeId>| n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known());
-    let (installed, defined) = (where_(compiler.scope(scope).def_node), where_(Some(def.node)));
+    let (installed, defined) = (
+        where_(compiler.scope(scope).def_node),
+        where_(Some(def.node)),
+    );
     match (installed, defined) {
         (Some(i), Some(d)) if i.file == d.file => i.start <= d.start,
         _ => true,

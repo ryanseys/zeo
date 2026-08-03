@@ -1659,6 +1659,21 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     }
                 }
             }
+            // A definition hook's pending names take the SAME walk `super`
+            // does: the class's own copy is not installed yet while the hook
+            // runs, so a call resolves through an ancestor -- and an
+            // ancestor's registered trampoline downcasts to ITS struct, so it
+            // needs the receiver-generic bridge. Precise, like the pair scan:
+            // only the names one hook was told are still ahead, and only over
+            // that class's own chain.
+            crate::hir::HirNode::DefHook { class, pending, .. } => {
+                let ancestors = &compiler.class(ClassId(*class)).ancestors;
+                for p in pending {
+                    for &d in ancestors {
+                        super_pairs.insert((d, p.as_str()));
+                    }
+                }
+            }
             _ => {}
         }
     }
