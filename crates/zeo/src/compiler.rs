@@ -397,6 +397,20 @@ pub struct Compiler {
     /// stays a compile error -- deferring that one would silently DROP the
     /// mixin, since zeo's compiled classes dispatch off a static MRO.
     pub assigned_const_names: std::collections::HashSet<String>,
+    /// Every method name a RUNTIME definition site could install or replace --
+    /// a `define_method`/`define_singleton_method`/`alias_method` that survived
+    /// lowering as a real call rather than desugaring into a `DefMethod`. Such
+    /// a call reaches the overlay, which only DYNAMIC dispatch consults, so a
+    /// direct call to one of these names would keep answering with the
+    /// compiled body. Collected by a flat arena scan, dead branches included:
+    /// this only ever answers "could this name be replaced?", and
+    /// over-answering `true` costs speed, not correctness.
+    pub runtime_redefs: std::collections::HashSet<String>,
+    /// One of those sites names its method with something other than a literal
+    /// (`Node.send(:define_method, computed)`), so NO name is safe to fold.
+    /// Kept apart from the set above because it is the expensive answer: it
+    /// de-optimizes every direct call in the program.
+    pub runtime_redefs_any_name: bool,
     /// `class_in_scope`'s lazily-drained (box, lexical_parent) -> name -> id
     /// index, replacing its linear whole-`classes` scan (the profiled
     /// hot spot at gem scale: every bare-constant classification paid
@@ -585,6 +599,8 @@ impl Compiler {
             class_body_sites: Vec::new(),
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
+            runtime_redefs: std::collections::HashSet::new(),
+            runtime_redefs_any_name: false,
             class_index: std::cell::RefCell::new(HashMap::new()),
             indexed_upto: std::cell::Cell::new(0),
             frozen_crefs: None,
@@ -1014,6 +1030,15 @@ impl Compiler {
         std::iter::once(&cid)
             .chain(self.class(cid).ancestors.iter())
             .any(|&anc| self.class(anc).runtime_undefs.contains(name))
+    }
+
+    /// Whether a runtime definition site could REPLACE `name` before a call
+    /// runs -- see [`Compiler::runtime_redefs`]. Program-wide rather than
+    /// per-class: the receiver of a `define_method` is an ordinary expression,
+    /// and resolving it would be a second analysis that still could not decide
+    /// the interesting cases.
+    pub fn may_be_redefined_at_runtime(&self, name: &str) -> bool {
+        self.runtime_redefs_any_name || self.runtime_redefs.contains(name)
     }
 
     /// The LEAF segment of `cid`'s name -- what CRuby puts in a class-body

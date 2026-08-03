@@ -52,6 +52,8 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
     compiler.shell_kinds = shell_kinds;
     compiler.assigned_const_names = collect_assigned_const_names(&compiler.hir);
+    (compiler.runtime_redefs, compiler.runtime_redefs_any_name) =
+        collect_runtime_redefs(&compiler.hir);
 
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
@@ -1506,6 +1508,76 @@ fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> 
             _ => None,
         })
         .collect()
+}
+
+/// The runtime definition verbs -- the calls that install a method body the
+/// overlay holds and only DYNAMIC dispatch consults. A literal-name
+/// `define_method`/`define_singleton_method` inside a class body never reaches
+/// here: lowering already desugared it into a `DefMethod`, so what survives as
+/// a `Call` is exactly the runtime half.
+const REDEF_VERBS: &[&str] = &["define_method", "define_singleton_method", "alias_method"];
+
+/// The `send` family, which reaches a verb above through a symbol argument
+/// (`Node.send(:define_method, name)`) and so shifts every argument by one.
+const SEND_VERBS: &[&str] = &["send", "__send__", "public_send"];
+
+/// Read-only scan populating [`Compiler::runtime_redefs`] and
+/// [`Compiler::runtime_redefs_any_name`]. Flat over the whole arena, like
+/// [`collect_assigned_const_names`]: a site on a dead branch still counts,
+/// because the answer is "could this name be replaced?".
+fn collect_runtime_redefs(hir: &Hir) -> (std::collections::HashSet<String>, bool) {
+    let mut names = std::collections::HashSet::new();
+    let mut any = false;
+    for node in hir.all_nodes() {
+        // A `def` inside a BLOCK installs when the block runs, not when the
+        // class body does -- `N.class_eval { def e; end }`, and the same
+        // desugared `define_method(:e) { }`. The subtree walk reaches a def
+        // nested several blocks deep.
+        if let HirNode::Lambda { body, .. } | HirNode::Block { body, .. } = node {
+            for &id in body {
+                names.extend(defs_in_subtree(hir, id));
+            }
+        }
+        let HirNode::Call { name, args, .. } = node else {
+            continue;
+        };
+        // The defined name is the verb's FIRST argument, one slot later when
+        // the verb itself arrives as `send`'s first argument.
+        let at = if REDEF_VERBS.contains(&name.as_str()) {
+            0
+        } else if SEND_VERBS.contains(&name.as_str())
+            && matches!(args.first(), Some(ArrayElem::Single(a))
+                if hir.sent_name(*a).is_some_and(|v| REDEF_VERBS.contains(&v)))
+        {
+            1
+        } else {
+            continue;
+        };
+        match args.get(at) {
+            Some(ArrayElem::Single(a)) => match hir.sent_name(*a) {
+                Some(defined) => {
+                    names.insert(defined.to_owned());
+                }
+                None => any = true,
+            },
+            // A splat, or no argument at all: nothing to read the name from.
+            _ => any = true,
+        }
+    }
+    (names, any)
+}
+
+/// Every `def`/desugared `define_method` name in `root`'s subtree.
+fn defs_in_subtree(hir: &Hir, root: NodeId) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if let HirNode::DefMethod { name, .. } = &hir[id] {
+            out.push(name.clone());
+        }
+        hir[id].for_each_child(&mut |child| stack.push(child));
+    }
+    out
 }
 
 /// Read-only scan populating `Compiler::shell_kinds`: records every
