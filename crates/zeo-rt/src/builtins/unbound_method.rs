@@ -111,12 +111,35 @@ fn recv_unbound(recv: &RubyValue) -> &RUnboundMethod {
 
 /// The shared `bind` check: `obj` must be an instance of the unbound method's
 /// owning class (or a descendant).
+///
+/// A SINGLETON unbind is owned by `#<Class:C>`, whose instances are `C` and
+/// `C`'s subclasses -- so the argument has to be a class in that ancestry,
+/// not an instance of it. CRuby words that refusal differently, because it
+/// reaches the same test through a singleton `methclass`.
 fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal> {
-    if !crate::dispatch::is_a(obj.class_id(), um.class_id) {
-        return Err(type_error!(
-            "bind argument must be an instance of {}",
-            crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string())
-        ));
+    let ok = match um.kind {
+        // `is_a_value`, not `is_a`: reaching a class method through
+        // `Foo.singleton_class.instance_method(:a)` gives an INSTANCE-kind
+        // unbound method whose class is that singleton, and `Foo` instantiates
+        // it without being an instance of any ordinary class in its ancestry.
+        MethodKind::Instance => crate::dispatch::is_a_value(obj, um.class_id),
+        MethodKind::Singleton => {
+            matches!(obj, RubyValue::Class(cid) if crate::dispatch::is_a(*cid, um.class_id))
+        }
+    };
+    if !ok {
+        // CRuby picks the wording from the OWNER, not the lookup kind: any
+        // singleton `methclass` gets the "different object" message.
+        let singleton = um.kind == MethodKind::Singleton
+            || (crate::runtime_meta::is_live()
+                && crate::runtime_meta::singleton_owner_value(um.class_id).is_some());
+        return Err(match singleton {
+            true => type_error!("singleton method called for a different object"),
+            false => type_error!(
+                "bind argument must be an instance of {}",
+                crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string())
+            ),
+        });
     }
     Ok(method_value(obj.clone(), um.name, um.home, um.kind))
 }

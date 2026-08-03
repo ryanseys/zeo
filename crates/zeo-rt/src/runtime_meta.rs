@@ -75,6 +75,14 @@ struct OverlayEntry {
     /// `MethodImpl` can't carry -- so these are the raw `RProc`, invoked via
     /// `call_with_self(class_value, args)`.
     class_methods: FMap<Symbol, RProc>,
+    /// Which of `class_methods` above an `extend` copied in, rather than a
+    /// `def self.x`/`define_singleton_method`/`module_function` writing here.
+    /// The copies are indistinguishable once installed, and only
+    /// `singleton_methods(false)` needs them apart: an extended module sits in
+    /// the singleton class's SUPER chain in CRuby, so the narrow list skips it
+    /// while the wide one reports it. Every own-definition write clears the
+    /// name, so re-defining over a mixin makes it own again.
+    extended_class_methods: FSet<Symbol>,
     constructor: Option<ConstructorFn>,
     /// Names `undef_method` removed. An ENTRY, not a deletion: it TERMINATES
     /// the MRO walk here, so an ancestor's still-live definition can't answer
@@ -102,6 +110,7 @@ impl Default for OverlayEntry {
             methods_vis: FMap::default(),
             class_methods_vis: FMap::default(),
             class_methods: FMap::default(),
+            extended_class_methods: FSet::default(),
             constructor: None,
             undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
@@ -728,6 +737,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
             let mut w = maps().classes.write().unwrap();
             let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
             e.class_methods.insert(name, wrapper);
+            e.extended_class_methods.remove(&name);
         }
     }
     patch_class(id);
@@ -1087,10 +1097,16 @@ pub(crate) fn overlay_method_visibility(
 /// singleton class's instance-method reflection answer from the owner's
 /// CLASS-method tables, which is where `def self.x` really lives.
 pub fn singleton_class_owner(id: ClassId) -> Option<ClassId> {
-    match maps().singleton_owner.read().unwrap().get(&id.0) {
-        Some(RubyValue::Class(cid)) => Some(*cid),
+    match singleton_owner_value(id) {
+        Some(RubyValue::Class(cid)) => Some(cid),
         _ => None,
     }
+}
+
+/// [`singleton_class_owner`] without the class narrowing -- the VALUE a
+/// singleton-class id was minted for, whatever its kind.
+pub fn singleton_owner_value(id: ClassId) -> Option<RubyValue> {
+    maps().singleton_owner.read().unwrap().get(&id.0).cloned()
 }
 
 /// Whether a runtime `private_class_method`/`public_class_method` marked class
@@ -1193,6 +1209,7 @@ pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyVa
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         for (sym, proc_) in installs {
             e.class_methods.insert(sym, proc_);
+            e.extended_class_methods.remove(&sym);
             e.methods_vis
                 .insert(sym, crate::dispatch::MethodVisibility::Private);
         }
@@ -1300,10 +1317,9 @@ pub fn runtime_define_singleton_from_method(
                 true,
             );
             let mut w = maps().classes.write().unwrap();
-            w.entry(cid.0)
-                .or_insert_with(OverlayEntry::delta)
-                .class_methods
-                .insert(name, wrapped);
+            let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+            e.class_methods.insert(name, wrapped);
+            e.extended_class_methods.remove(&name);
             mark_singletons();
             mark_live();
             Ok(RubyValue::Symbol(name))
@@ -1355,10 +1371,9 @@ pub fn runtime_define_singleton_method(
             );
             {
                 let mut w = maps().classes.write().unwrap();
-                w.entry(cid.0)
-                    .or_insert_with(OverlayEntry::delta)
-                    .class_methods
-                    .insert(name, body);
+                let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+                e.class_methods.insert(name, body);
+                e.extended_class_methods.remove(&name);
             }
             mark_singletons();
             mark_live();
@@ -1472,6 +1487,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
                 // A later `extend` layers ABOVE an earlier one (CRuby ancestry),
                 // so it wins on a name collision between two mixins.
                 entry.class_methods.insert(name, proc_);
+                entry.extended_class_methods.insert(name);
             }
         }
         other => {
@@ -1775,13 +1791,22 @@ pub fn overlay_instance_method_names(
 /// The overlay's own CLASS-method names for `id` -- the class-level counterpart
 /// of [`overlay_instance_method_names`], and likewise invisible to the frozen
 /// registry that `dispatch::class_method_names` otherwise reads.
-pub fn overlay_class_method_names(id: ClassId) -> Vec<Symbol> {
+/// `own_only` drops the names an `extend` copied in, which is
+/// `singleton_methods(false)`'s narrowing -- see
+/// [`OverlayEntry::extended_class_methods`].
+pub fn overlay_class_method_names(id: ClassId, own_only: bool) -> Vec<Symbol> {
     maps()
         .classes
         .read()
         .unwrap()
         .get(&id.0)
-        .map(|e| e.class_methods.keys().copied().collect())
+        .map(|e| {
+            e.class_methods
+                .keys()
+                .copied()
+                .filter(|n| !own_only || !e.extended_class_methods.contains(n))
+                .collect()
+        })
         .unwrap_or_default()
 }
 

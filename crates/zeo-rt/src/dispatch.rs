@@ -1438,12 +1438,17 @@ impl ClassRegistry {
     }
 
     /// This class's OWN `def self.x` names -- the registry half of
-    /// `SomeClass.singleton_methods`/`.methods`.
-    fn own_class_method_names(&self, id: ClassId) -> Vec<Symbol> {
-        self.entries
-            .get(&id.0)
-            .map(|e| e.class_methods.keys().copied().collect())
-            .unwrap_or_default()
+    /// `SomeClass.singleton_methods`/`.methods`. `own_only` narrows to the
+    /// names written HERE (`singleton_methods(false)`); the wide form is the
+    /// materialized map, which already carries every inherited class method.
+    fn own_class_method_names(&self, id: ClassId, own_only: bool) -> Vec<Symbol> {
+        let Some(e) = self.entries.get(&id.0) else {
+            return Vec::new();
+        };
+        match own_only {
+            true => e.own_class_methods.iter().copied().collect(),
+            false => e.class_methods.keys().copied().collect(),
+        }
     }
 
     /// The `(caller's box, name)` probe with the root fallback -- CRuby's
@@ -1515,7 +1520,32 @@ pub(crate) fn class_extends(cid: ClassId) -> &'static [ClassId] {
 /// `ClassCheck` pattern) goes through here. `is_a` itself stays for the
 /// internal checks that hold a class id and nothing else.
 pub fn is_a_value(recv: &RubyValue, target: ClassId) -> bool {
-    is_a(recv.class_id(), target) || crate::runtime_meta::value_extends(recv, target)
+    is_a(recv.class_id(), target)
+        || crate::runtime_meta::value_extends(recv, target)
+        || is_a_singleton_class(recv, target)
+}
+
+/// `Foo.is_a?(Foo.singleton_class)` -- true in CRuby, because `CLASS_OF(Foo)`
+/// IS that singleton class. zeo mints singleton classes on demand instead of
+/// threading the parallel `#<Class:Sub> < #<Class:Foo>` chain, so the relation
+/// is answered from the id's OWNER: a class instantiates its own singleton
+/// class and every ancestor's, and any other value only its own.
+fn is_a_singleton_class(recv: &RubyValue, target: ClassId) -> bool {
+    if !crate::runtime_meta::is_live() {
+        return false;
+    }
+    match crate::runtime_meta::singleton_owner_value(target) {
+        Some(RubyValue::Class(owner)) => {
+            matches!(recv, RubyValue::Class(cid) if is_a(*cid, owner))
+        }
+        // An object's singleton class has exactly one instance, so this is
+        // identity, not equality.
+        Some(owner) => {
+            let key = crate::runtime_meta::value_identity(&owner);
+            key.is_some() && key == crate::runtime_meta::value_identity(recv)
+        }
+        None => false,
+    }
 }
 
 /// `rescue *list => e` matching: does the raised `exc` match any class in the
@@ -2421,6 +2451,15 @@ pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
 /// deduped -- backs `SomeClass.singleton_methods` and the class-method half
 /// of `SomeClass.methods`.
 pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
+    class_method_names_in(class, true)
+}
+
+/// [`class_method_names`] with the `inherit` flag `singleton_methods(false)`
+/// passes. Narrowing has to reach all three sources: the overlay stops
+/// walking ancestors, the registry answers from `own_class_methods` instead
+/// of the flattened map materialization filled, and a builtin table is a
+/// class's own by construction.
+pub fn class_method_names_in(class: ClassId, inherit: bool) -> Vec<Symbol> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     // A class minted at runtime keeps its `def self.x`/`define_singleton_method`/
@@ -2429,8 +2468,12 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
         // Ancestors included, so the listing agrees with what dispatch actually
         // answers -- see `class_receiver_responds` for why only the overlay
         // half needs the walk.
-        for &anc in ancestors_of_value(class) {
-            for name in crate::runtime_meta::overlay_class_method_names(anc) {
+        let chain: &[ClassId] = match inherit {
+            true => ancestors_of_value(class),
+            false => std::slice::from_ref(&class),
+        };
+        for &anc in chain {
+            for name in crate::runtime_meta::overlay_class_method_names(anc, !inherit) {
                 if seen.insert(name) {
                     out.push(name);
                 }
@@ -2438,7 +2481,7 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
         }
     }
     if let Some(r) = REGISTRY.get() {
-        for name in r.own_class_method_names(class) {
+        for name in r.own_class_method_names(class, !inherit) {
             if seen.insert(name) {
                 out.push(name);
             }
@@ -2456,8 +2499,8 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
 /// [`class_method_names`] without the ones `private_class_method` marked --
 /// what `singleton_methods` and the class-method half of `methods` report,
 /// both of which list public names only.
-pub fn public_class_method_names(class: ClassId) -> Vec<Symbol> {
-    class_method_names(class)
+pub fn public_class_method_names(class: ClassId, inherit: bool) -> Vec<Symbol> {
+    class_method_names_in(class, inherit)
         .into_iter()
         .filter(|&n| !class_method_is_private(class, n))
         .collect()
@@ -3578,8 +3621,12 @@ pub fn coerce_raise_arg_with_message(
 /// `initialize`.
 fn build_exception(value: &RubyValue, msg: &[RubyValue]) -> Result<RubyValue, Signal> {
     let exception = Symbol::intern("exception");
+    // The REACHABILITY test, not `class_method_owner`: the latter is a
+    // reflection-grade ancestor scan, and class-method dispatch does not walk
+    // ancestors -- so an id an ancestor merely OWNS `exception` on would be
+    // sent a call it cannot answer.
     let has_own = match value {
-        RubyValue::Class(cid) => class_method_owner(*cid, exception).is_some(),
+        RubyValue::Class(cid) => class_receiver_responds(*cid, exception),
         _ => true,
     };
     let name = if has_own {

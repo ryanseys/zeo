@@ -1,0 +1,23 @@
+"ft"
+true
+[:frozen_tag]
+[:sub_tag]
+[:sub_tag]
+[:frozen_tag, :sub_tag]
+[:frozen_tag, :sub_tag]
+[:sub_tag]
+[]
+[]
+"tagged"
+true
+[]
+[]
+[]
+"m"
+[:minted]
+[]
+[]
+[]
+false
+[]
+false

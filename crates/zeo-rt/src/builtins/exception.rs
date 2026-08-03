@@ -32,6 +32,7 @@ use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{
     ClassRegistry, ConstructorFn, RObj, RubyObject, class_name, downcast_robj, run_initialize, send,
 };
+use crate::method_meta::ParamKind;
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -963,6 +964,17 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
     }
 }
 
+/// The `#arity`/`#parameters` shape of a hand-registered exception CLASS
+/// method. These bypass the `ruby_class!` DSL, so they reach no arity table --
+/// and once the owner mark below is in place, the accidental answer they used
+/// to get from `Module`'s row is gone too. Parameters are unnamed, the way
+/// CRuby reports every C method's.
+fn class_method_signature(id: ClassId, name: &str, kinds: &[crate::method_meta::ParamKind]) {
+    crate::method_meta::MethodMeta::singleton(id.0, name)
+        .with_params(kinds.iter().map(|&k| (k, None)).collect())
+        .register();
+}
+
 /// `NameError#local_variables` -- CRuby fills this with the caller's locals at
 /// the point a bare name missed. zeo raises from native code, which has no Ruby
 /// scope to walk, so the list is empty.
@@ -1861,6 +1873,10 @@ pub fn register_exception_subclass(
         // On every descendant, not just the owner: class-method lookup does
         // not walk ancestors, so `Errno::ENOENT === x` needs its own row.
         registry.define_class_method(id, Symbol::intern("==="), syscall_error_eqq);
+        if id == SYSTEM_CALL_ERROR_CLASS {
+            registry.mark_own_class_method(id, Symbol::intern("==="));
+            class_method_signature(id, "===", &[ParamKind::Req]);
+        }
     }
     if is_local_jump {
         registry.define_method_own(id, Symbol::intern("reason"), exc_reason);
@@ -1890,9 +1906,18 @@ pub fn register_exception_subclass(
         registry.define_method_own(id, Symbol::intern("signm"), exc_signm);
     }
     // Class methods, registered per-id (class-method lookup doesn't walk
-    // ancestors -- see `dispatch`'s Class-value arm).
+    // ancestors -- see `dispatch`'s Class-value arm). The OWN mark goes on
+    // `Exception` alone, the same split `mark_own` makes on the instance side:
+    // every id needs a row to dispatch, only the owner may list one in
+    // `singleton_methods(false)`.
     registry.define_class_method(id, Symbol::intern("exception"), exc_class_exception);
     registry.define_class_method(id, Symbol::intern("to_tty?"), exc_class_to_tty);
+    if id == EXCEPTION_CLASS {
+        registry.mark_own_class_method(id, Symbol::intern("exception"));
+        registry.mark_own_class_method(id, Symbol::intern("to_tty?"));
+        class_method_signature(id, "exception", &[ParamKind::Rest]);
+        class_method_signature(id, "to_tty?", &[]);
+    }
     if carries_result {
         registry.define_method_own(id, Symbol::intern("__set_result"), stop_set_result);
         registry.define_method_own(id, Symbol::intern("result"), stop_result);

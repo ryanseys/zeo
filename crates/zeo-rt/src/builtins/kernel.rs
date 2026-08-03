@@ -35,6 +35,22 @@ fn dedup_syms(names: Vec<Symbol>) -> Vec<Symbol> {
     names.into_iter().filter(|s| seen.insert(*s)).collect()
 }
 
+/// The shared reading of reflection's optional `inherit` argument: absent
+/// means true, and `false`/`nil` are the only ways to narrow.
+fn truthy_arg(arg: Option<&RubyValue>) -> bool {
+    !matches!(arg, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil))
+}
+
+/// The methods installed on this value BY IDENTITY -- what both
+/// `singleton_methods(false)` and `methods(false)` report for a receiver that
+/// is not a class.
+fn own_singleton_names(recv: &RubyValue) -> Vec<Symbol> {
+    match recv {
+        RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid, false),
+        _ => crate::runtime_meta::singleton_method_names(recv),
+    }
+}
+
 /// A stable per-identity Integer. Objects use their `Arc` pointer; immediates
 /// use CRuby's fixed/derived shapes (Integers `2n+1`, nil/true/false their
 /// reserved slots). Strings/Arrays/Hashes use their cell pointer -- identity,
@@ -656,13 +672,31 @@ ruby_module! {
     // receiver) that class's own `def self.` methods. A builtin's list is a
     // subset of CRuby's (this runtime implements a subset), so callers assert
     // membership; a plain user object's list is exact.
-    def "methods" | "public_methods"(recv, arg?) {
-        let inherit = !matches!(arg, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
+    def "methods"(recv, arg?) {
+        // `methods(false)` IS `singleton_methods(false)` in CRuby: the class's
+        // instance methods drop out entirely rather than narrowing to the own
+        // list, which is why this cannot share `public_methods`' body.
+        if !truthy_arg(arg) {
+            return Ok(syms_to_array(own_singleton_names(recv)));
+        }
         let mut names = Vec::new();
         if let RubyValue::Class(cid) = recv {
-            names.extend(crate::dispatch::public_class_method_names(*cid));
+            names.extend(crate::dispatch::public_class_method_names(*cid, true));
         }
         // `Object#methods` returns public AND protected names.
+        names.extend(crate::dispatch::instance_method_names(
+            recv.class_id(),
+            crate::dispatch::VisFilter::NotPrivate,
+            true,
+        ));
+        Ok(syms_to_array(dedup_syms(names)))
+    }
+    def "public_methods"(recv, arg?) {
+        let inherit = truthy_arg(arg);
+        let mut names = Vec::new();
+        if let RubyValue::Class(cid) = recv {
+            names.extend(crate::dispatch::public_class_method_names(*cid, inherit));
+        }
         names.extend(crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::NotPrivate,
@@ -671,7 +705,7 @@ ruby_module! {
         Ok(syms_to_array(dedup_syms(names)))
     }
     def "private_methods"(recv, arg?) {
-        let inherit = !matches!(arg, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
+        let inherit = truthy_arg(arg);
         let names = crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::Private,
@@ -680,7 +714,7 @@ ruby_module! {
         Ok(syms_to_array(names))
     }
     def "protected_methods"(recv, arg?) {
-        let inherit = !matches!(arg, Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
+        let inherit = truthy_arg(arg);
         let names = crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::Protected,
@@ -691,12 +725,14 @@ ruby_module! {
     // A class/module receiver's own singleton methods are its `def self.`
     // methods; other receivers have no per-object singletons in this runtime's
     // value model, so they report an empty list.
-    def "singleton_methods"(recv, _arg?) {
+    def "singleton_methods"(recv, arg?) {
         // A class's singleton methods are its class methods; any other
         // receiver's are the ones installed on it BY IDENTITY at runtime.
-        let names = match recv {
-            RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid),
-            _ => crate::runtime_meta::singleton_method_names(recv),
+        let names = match (recv, truthy_arg(arg)) {
+            (RubyValue::Class(cid), inherit) => {
+                crate::dispatch::public_class_method_names(*cid, inherit)
+            }
+            _ => own_singleton_names(recv),
         };
         Ok(syms_to_array(names))
     }
