@@ -374,6 +374,16 @@ pub struct Compiler {
     /// head exactly as before. A NESTED `ClassDef` appears as a marker in
     /// its parent's site list, so inner bodies run mid-parent-body.
     pub class_body_sites: Vec<ClassBodySite>,
+    /// Definition-hook names the program defined on `Module`/`Class`/
+    /// `BasicObject` themselves, which makes them answer for EVERY class.
+    /// Codegen hands these to the runtime, whose own per-class owner scan
+    /// cannot see one: such a reopen registers an ordinary instance method
+    /// whose owner is the very class the no-op default lives on.
+    pub global_def_hooks: std::collections::HashSet<String>,
+    /// The same record for TOP-LEVEL definitions, which have no site: a bare
+    /// `def foo` is a private instance method of `Object`, and ruby announces
+    /// it as `Object.method_added(:foo)`. `at` indexes `main_statements`.
+    pub top_level_defs: Vec<SiteDef>,
     /// Whole-program map `(box_id, fully-qualified name) -> is_module`, built
     /// by `analyze` from a read-only scan of EVERY `class`/`module` definition
     /// (all `if` branches included -- it is only a lookup table). Lets
@@ -559,6 +569,51 @@ pub struct ClassBodySite {
     pub def_node: Option<crate::hir::NodeId>,
     pub class: ClassId,
     pub stmts: Vec<crate::hir::NodeId>,
+    /// Every definition this site's walk CONSUMED -- a `def`, one name of an
+    /// `attr_*` expansion, an alias, an `undef` -- in source order. None of
+    /// them reaches `stmts`, because zeo compiles a definition into a method
+    /// table rather than running it. Ruby still announces each one at its
+    /// position, so [`crate::analyze::def_hooks`] keeps them here until it
+    /// knows whether any hook body will answer, and splices a
+    /// [`crate::hir::HirNode::DefHook`] into `stmts` for the ones that will.
+    pub defs: Vec<SiteDef>,
+}
+
+/// One consumed definition, and where its report would go.
+pub struct SiteDef {
+    /// The index in the site's `stmts` the report belongs BEFORE.
+    pub at: usize,
+    /// The definition's own node, whose span decides whether a hook installed
+    /// later in the same file ever saw it.
+    pub node: crate::hir::NodeId,
+    pub name: String,
+    pub event: DefEvent,
+    /// A `def self.x` / `class << self` definition, which reports through
+    /// `singleton_method_added` on the class object rather than `method_added`.
+    pub singleton: bool,
+}
+
+/// Which of Ruby's three definition events a [`SiteDef`] is.
+#[derive(Clone, Copy, PartialEq)]
+pub enum DefEvent {
+    Added,
+    Removed,
+    Undefined,
+}
+
+impl DefEvent {
+    /// The hook this event fires, for a definition on a class (`singleton`
+    /// false) or on its singleton (`singleton` true).
+    pub fn hook(self, singleton: bool) -> &'static str {
+        match (self, singleton) {
+            (DefEvent::Added, false) => "method_added",
+            (DefEvent::Removed, false) => "method_removed",
+            (DefEvent::Undefined, false) => "method_undefined",
+            (DefEvent::Added, true) => "singleton_method_added",
+            (DefEvent::Removed, true) => "singleton_method_removed",
+            (DefEvent::Undefined, true) => "singleton_method_undefined",
+        }
+    }
 }
 
 impl Compiler {
@@ -604,6 +659,8 @@ impl Compiler {
             scopes: Vec::new(),
             box_surrogates: HashMap::new(),
             class_body_sites: Vec::new(),
+            global_def_hooks: Default::default(),
+            top_level_defs: Vec::new(),
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
             runtime_patches: std::collections::HashSet::new(),

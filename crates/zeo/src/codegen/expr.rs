@@ -474,6 +474,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Prepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
+        | HirNode::DefHook { .. }
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -1435,6 +1436,23 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 _ => "prepended",
             };
             emit_mixin_hook(cx, m, hook)
+        }
+        // A definition report -- `Klass.method_added(:name)` and its five
+        // siblings -- spliced back in at the position of a `def` the analyze
+        // walk consumed. `analyze::def_hooks` already proved a hook body
+        // answers, so this always emits a real send. `send_value`, not a
+        // visibility-checked call: ruby reaches its hooks through an FCALL, so
+        // a `private def self.method_added` still runs.
+        HirNode::DefHook { class, hook, name } => {
+            let (cid, sym, arg) = (*class, super::pooled_sym(hook), super::pooled_sym(name));
+            quote! {
+                zeo_rt::send_value(
+                    &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)),
+                    #sym,
+                    &[zeo_rt::RubyValue::Symbol(#arg)],
+                    None,
+                )?
+            }
         }
         // `using M` is spent entirely at compile time: the activation it
         // records already decided which call sites route through the

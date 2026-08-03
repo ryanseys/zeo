@@ -8,6 +8,7 @@
 //! walks the whole program and mutates a `Compiler`) is exactly what a real
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
 
+pub(crate) mod def_hooks;
 mod locals;
 pub(crate) mod mro;
 pub(crate) mod share;
@@ -122,6 +123,11 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // already exist (same "defined earlier in the file" rule `superclass`
     // resolution already enforces). See `mro`'s module docs.
     mro::materialize(&mut compiler, &main_statements)?;
+
+    // Which compiled definitions announce themselves. Runs here because it
+    // needs `class_methods` flattened over the ancestry to see the hook, and
+    // before `mark_inline_iter_sites` because it feeds `runtime_patches`.
+    def_hooks::resolve(&mut compiler, &mut main_statements);
 
     let main_local_types = locals::infer_locals(&compiler, None, 0, &main_statements);
 
@@ -442,6 +448,15 @@ fn process_top_stmt(
             });
             main_statements.push(call);
         } else {
+            // Ruby announces it as `Object.method_added(:foo)`, at this
+            // position. See `Compiler::top_level_defs`.
+            compiler.top_level_defs.push(crate::compiler::SiteDef {
+                at: main_statements.len(),
+                node: stmt,
+                name: name.clone(),
+                event: crate::compiler::DefEvent::Added,
+                singleton: false,
+            });
             let sid = register_method(
                 compiler,
                 OBJECT_CLASS,
@@ -931,6 +946,7 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::Prepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
+        | HirNode::DefHook { .. }
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -2089,6 +2105,7 @@ fn register_class(
             def_node,
             class: class_id,
             stmts: Vec::new(),
+            defs: Vec::new(),
         });
 
     // Expand any dead-rescue `begin` (a resolved `require` guard) so a fallback
@@ -2099,7 +2116,26 @@ fn register_class(
     let body = splice_decidable_ifs(compiler, &body, &child_cref, box_id);
     for &stmt in &body {
         match &compiler.hir[stmt] {
-            HirNode::DefMethod { .. } => {
+            HirNode::DefMethod {
+                name,
+                is_class_method,
+                ..
+            } => {
+                // The definition is consumed -- it emits nothing here. Its
+                // REPORT still belongs at this position, so record it; see
+                // `ClassBodySite::defs`. `attr_*` and a resolvable `alias`
+                // reach this arm too: lowering expands both into ordinary
+                // `DefMethod` nodes, one per generated name and in order, so
+                // ruby's "`attr_accessor :c` reports `:c` then `:c=`" needs
+                // nothing extra here.
+                let def = crate::compiler::SiteDef {
+                    at: compiler.class_body_sites[site_idx].stmts.len(),
+                    node: stmt,
+                    name: name.clone(),
+                    event: crate::compiler::DefEvent::Added,
+                    singleton: *is_class_method,
+                };
+                compiler.class_body_sites[site_idx].defs.push(def);
                 register_body_def_method(compiler, class_id, stmt)?;
             }
             // A nested `class`/`module` definition -- registered
@@ -2196,6 +2232,17 @@ fn register_class(
             // `mro::materialize_methods`. See `HirNode::Undef`.
             HirNode::Undef(names) => {
                 let names = names.clone();
+                let at = compiler.class_body_sites[site_idx].stmts.len();
+                for name in &names {
+                    let def = crate::compiler::SiteDef {
+                        at,
+                        node: stmt,
+                        name: name.clone(),
+                        event: crate::compiler::DefEvent::Undefined,
+                        singleton: false,
+                    };
+                    compiler.class_body_sites[site_idx].defs.push(def);
+                }
                 compiler.classes[class_id.0 as usize]
                     .undefined
                     .extend(names);
@@ -2209,6 +2256,17 @@ fn register_class(
                 is_class_method,
             } => {
                 let entry = (new_name.clone(), old_name.clone(), *is_class_method);
+                // An alias IS a definition, and ruby reports the NEW name.
+                // (The resolvable form never reaches here -- lowering turns it
+                // into a second `DefMethod`, which the arm above records.)
+                let def = crate::compiler::SiteDef {
+                    at: compiler.class_body_sites[site_idx].stmts.len(),
+                    node: stmt,
+                    name: new_name.clone(),
+                    event: crate::compiler::DefEvent::Added,
+                    singleton: *is_class_method,
+                };
+                compiler.class_body_sites[site_idx].defs.push(def);
                 compiler.classes[class_id.0 as usize]
                     .pending_aliases
                     .push(entry);
@@ -2963,6 +3021,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Prepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
+        | HirNode::DefHook { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -3239,6 +3298,7 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Prepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
+        | HirNode::DefHook { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }

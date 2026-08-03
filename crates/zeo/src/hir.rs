@@ -1712,6 +1712,23 @@ pub enum HirNode {
     /// the class itself in the linearized `ancestors` list, so its methods
     /// take precedence over the class's own (reachable via `super`).
     Prepend(String),
+    /// A definition REPORT: `Klass.method_added(:name)`, or one of its five
+    /// siblings. Ruby announces every definition to the class it landed on, and
+    /// the announcement runs at the definition's own position -- but zeo
+    /// consumes a class-body `def` at analyze time and emits nothing there. So
+    /// `analyze::def_hooks` splices one of these back in at that position, and
+    /// only when a hook body will actually answer. Never produced by lowering:
+    /// a program that defines no hook carries none of these at all.
+    DefHook {
+        /// The receiver of the report -- the class for `method_added`, and for
+        /// `singleton_method_added` too, since a compiled singleton definition
+        /// is always a class method (`def self.x`, `class << self`).
+        class: u32,
+        /// The hook's name, already resolved for the definition's shape.
+        hook: String,
+        /// The defined method's name, passed as the hook's one Symbol argument.
+        name: String,
+    },
     /// `refine Target do ... end` in a module body. The block's `def`s lower
     /// into a HOLDER module (a `ClassDef` pushed immediately before this
     /// marker, named `#refinement:Target` so it claims no Ruby constant);
@@ -2269,6 +2286,10 @@ impl HirNode {
             // in a class body, and it edits nothing about the class -- it is
             // an ordinary statement whose only effect is compile-time.
             | HirNode::Using(_)
+            // A definition REPORT is not a directive: it edits nothing about
+            // the class and runs as an ordinary send at its position, which is
+            // exactly what the runtime-class-body rewrite wants of it.
+            | HirNode::DefHook { .. }
             | HirNode::FlipFlop { .. } => false,
         }
     }
@@ -2533,6 +2554,7 @@ impl HirNode {
                 holder: _,
             }
             | HirNode::Using(_)
+            | HirNode::DefHook { .. }
             | HirNode::Undef(_)
             | HirNode::AliasGlobal(_, _)
             | HirNode::AliasMethod {

@@ -2062,6 +2062,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         quote! { #vm #cm #vis }
     });
 
+    // Sorted so the generated source is stable across runs (the set is a hash
+    // set). Almost always empty -- reopening `Module` to hook every definition
+    // in the program is a rare and deliberate thing to write.
+    let global_def_hooks: Vec<TokenStream> = {
+        let mut names: Vec<&String> = compiler.global_def_hooks.iter().collect();
+        names.sort();
+        names
+            .into_iter()
+            .map(|n| quote! { zeo_rt::mark_global_def_hook(#n); })
+            .collect()
+    };
+
     let program = quote! {
         // Lints that mirror RUBY-source properties, not codegen defects: an
         // unused Ruby assignment (or a hoisted local never read), code after
@@ -2122,6 +2134,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // Every `def`'s reflection facts, from the one static table at
             // the bottom of this file (see `push_method_meta_row`).
             zeo_rt::register_meta_rows(__META_ROWS);
+            // Definition hooks the program put on `Module`/`Class`/
+            // `BasicObject` themselves, which answer for every class. The
+            // runtime's per-class owner scan cannot infer these -- see
+            // `Compiler::global_def_hooks`.
+            #(#global_def_hooks)*
             // Seed the CORE constants (`Float::INFINITY`, `Encoding::UTF_8`,
             // `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
             // `Process::CLOCK_*`) -- their owners resolved at compile time;

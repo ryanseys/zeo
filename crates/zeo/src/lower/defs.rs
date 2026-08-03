@@ -764,14 +764,21 @@ fn promote_to_module_function(hir: &mut Hir, id: NodeId, out: &mut Vec<NodeId>) 
     if !out.contains(&id) {
         out.push(id);
     }
-    out.push(hir.push(HirNode::DefMethod {
-        name,
-        params,
-        body,
-        is_class_method: true,
-        visibility: Visibility::Public,
-        is_def: true,
-    }));
+    // `push_from`, not `push`: the module copy is the SAME definition, so ruby
+    // reports the `def`'s own line for both halves (oracle-verified). Under a
+    // plain `push` the copy inherited the enclosing module's span, which made
+    // `Mod.method(:m).source_location` name the `module` line.
+    out.push(hir.push_from(
+        HirNode::DefMethod {
+            name,
+            params,
+            body,
+            is_class_method: true,
+            visibility: Visibility::Public,
+            is_def: true,
+        },
+        id,
+    ));
     true
 }
 

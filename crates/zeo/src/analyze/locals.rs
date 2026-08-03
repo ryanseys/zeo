@@ -475,6 +475,7 @@ fn track_node(
         | HirNode::Prepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
+        | HirNode::DefHook { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }
