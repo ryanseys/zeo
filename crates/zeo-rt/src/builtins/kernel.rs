@@ -597,6 +597,25 @@ ruby_module! {
         Ok(RubyValue::Bool(crate::dispatch::responds_to_or_missing(
             recv, sym, include_all)?))
     }
+    // The copy hooks, all three PRIVATE and owned by `Kernel` -- not by
+    // `Object`, where a top-level `def initialize_copy` in the prelude used to
+    // put the first one (which also made it the only name in
+    // `Object.private_instance_methods(false)`, where ruby answers `[]`).
+    //
+    // Each is a no-op that answers the receiver: the runtime `clone`/`dup` has
+    // already made the shallow ivar copy by the time the user-overridable hook
+    // runs. `initialize_dup`/`initialize_clone` are what CRuby's `dup`/`clone`
+    // call, and both reach `initialize_copy` from there, so a user override of
+    // the one hook still sees both paths.
+    private def "initialize_copy"(recv, _orig) {
+        Ok(recv.clone())
+    }
+    private def "initialize_dup"(recv, orig) {
+        inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)
+    }
+    private def "initialize_clone" cfunc (recv, orig, *_opts) {
+        inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)
+    }
     // `Object#respond_to_missing?` default: false for every name -- what a
     // user override's `super` reaches (CRuby's
     // `rb_obj_respond_to_missing`). Hidden-private, like `initialize`.

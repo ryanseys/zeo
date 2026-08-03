@@ -802,6 +802,25 @@ fn pattern_key_error_initialize(
     exc_initialize(recv, args, blk)
 }
 
+/// `FrozenError.new(msg = nil, receiver: nil)` -- unlike the pattern-key pair,
+/// the positional MESSAGE still counts here, so the trailing keyword Hash is
+/// split off and the rest handed to `Exception#initialize` unchanged.
+fn frozen_error_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let mut positional = args;
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        let v = crate::hash_get(h, &RubyValue::Symbol(Symbol::intern("receiver")));
+        if !matches!(v, RubyValue::Nil) {
+            exc(recv).set_detail("receiver", v);
+            positional = &args[..args.len() - 1];
+        }
+    }
+    exc_initialize(recv, positional, blk)
+}
+
 /// `Exception#backtrace_locations` -- `#backtrace`'s object form. The stored
 /// lines are the ones `frames::format_frame` wrote, so parsing them back is
 /// exact rather than a guess; storing the triples twice would cost every raise
@@ -912,14 +931,35 @@ fn mark_owned_names(registry: &mut ClassRegistry, id: ClassId) {
     // `Exception`'s three PRIVATE rows. The mark goes on every id -- flat
     // dispatch put a row on each, and without it
     // `RuntimeError.new.respond_to?(:initialize)` answers true. Only
-    // `Exception` OWNS them, though, so only `Exception` lists them in
-    // `private_instance_methods(false)`.
+    // `Exception` OWNS `method_missing`/`respond_to_missing?`, so only it
+    // lists those in `private_instance_methods(false)`.
     for name in ["initialize", "method_missing", "respond_to_missing?"] {
         let sym = Symbol::intern(name);
         registry.mark_private(id, sym);
-        if id == EXCEPTION_CLASS {
+        if id == EXCEPTION_CLASS && name != "initialize" {
             registry.mark_own(id, sym);
         }
+    }
+    // `initialize` is different: every class below takes ARGUMENTS `Exception`
+    // does not, so CRuby declares one on each and reflection has to say so.
+    // (`Interrupt` pins SIGINT, `KeyError` takes `key:`/`receiver:`, and so
+    // on -- each already has its own body registered further down.)
+    const OWN_INITIALIZE: &[fn() -> ClassId] = &[
+        || EXCEPTION_CLASS,
+        || FROZEN_ERROR_CLASS,
+        || zeo_abi::INTERRUPT_CLASS,
+        || KEY_ERROR_CLASS,
+        || NAME_ERROR_CLASS,
+        || zeo_abi::NO_MATCHING_PATTERN_KEY_ERROR_CLASS,
+        || NO_METHOD_ERROR_CLASS,
+        || SIGNAL_EXCEPTION_CLASS,
+        || zeo_abi::SYNTAX_ERROR_CLASS,
+        || SYSTEM_CALL_ERROR_CLASS,
+        || SYSTEM_EXIT_CLASS,
+        || UNCAUGHT_THROW_ERROR_CLASS,
+    ];
+    if OWN_INITIALIZE.iter().any(|owner| owner() == id) {
+        registry.mark_own(id, Symbol::intern("initialize"));
     }
 }
 
@@ -1743,6 +1783,7 @@ pub fn register_exception_subclass(
         registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
     }
     if is_frozen_error {
+        registry.define_method_own(id, Symbol::intern("initialize"), frozen_error_initialize);
         registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
     }
     // `Ractor::RemoteError#ractor` -- the ractor whose failure was relayed.

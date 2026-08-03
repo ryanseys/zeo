@@ -3,8 +3,8 @@
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
 # absent-module: 19
 # constant: 7
-# owner: 60
-# unreachable: 85
+# owner: 50
+# unreachable: 81
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
@@ -51,18 +51,13 @@ owner	Fiber	p	initialize
 owner	File	p	initialize
 owner	File::Stat	p	initialize
 owner	File::Stat	p	initialize_copy
-owner	FrozenError	p	initialize
 owner	Hash	p	initialize
 owner	Hash	p	initialize_copy
 owner	IO	p	initialize
 owner	IO	p	initialize_copy
-owner	Interrupt	p	initialize
-owner	KeyError	p	initialize
 owner	MatchData	p	initialize_copy
 owner	Module	p	initialize
-owner	NameError	p	initialize
-owner	NoMatchingPatternKeyError	p	initialize
-owner	NoMethodError	p	initialize
+owner	Module	p	initialize_clone
 owner	Pathname	p	initialize
 owner	Ractor	i	inspect
 owner	Ractor	i	send
@@ -76,13 +71,9 @@ owner	Regexp	p	initialize
 owner	Regexp	p	initialize_copy
 owner	Set	p	initialize
 owner	Set	p	initialize_copy
-owner	SignalException	p	initialize
 owner	String	p	initialize
 owner	String	p	initialize_copy
 owner	Struct	p	initialize_copy
-owner	SyntaxError	p	initialize
-owner	SystemCallError	p	initialize
-owner	SystemExit	p	initialize
 owner	Thread	p	initialize
 owner	Thread::ConditionVariable	p	initialize
 owner	Thread::Mutex	p	initialize
@@ -90,7 +81,6 @@ owner	Thread::Queue	p	initialize
 owner	Thread::SizedQueue	p	initialize
 owner	Time	p	initialize
 owner	Time	p	initialize_copy
-owner	UncaughtThrowError	p	initialize
 unreachable	BasicObject	p	singleton_method_added
 unreachable	BasicObject	p	singleton_method_removed
 unreachable	BasicObject	p	singleton_method_undefined
@@ -115,9 +105,6 @@ unreachable	Enumerator::Lazy	p	_enumerable_with_index
 unreachable	Enumerator::Lazy	p	_enumerable_zip
 unreachable	Kernel	p	binding
 unreachable	Kernel	p	block_given?
-unreachable	Kernel	p	initialize_clone
-unreachable	Kernel	p	initialize_copy
-unreachable	Kernel	p	initialize_dup
 unreachable	Kernel	p	instance_variables_to_inspect
 unreachable	Kernel	p	iterator?
 unreachable	Kernel	p	local_variables
@@ -127,7 +114,6 @@ unreachable	Kernel	s	iterator?
 unreachable	Kernel	s	local_variables
 unreachable	Marshal	p	dump
 unreachable	Module	p	const_added
-unreachable	Module	p	initialize_clone
 unreachable	Module	p	method_added
 unreachable	Module	p	method_removed
 unreachable	Module	p	method_undefined

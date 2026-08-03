@@ -137,13 +137,6 @@ end
 # spell.
 module Errno
 end
-# Object's default copy hook: a no-op -- the runtime clone/dup already
-# performed the shallow ivar copy before this user-overridable hook runs. A
-# top-level `def` lands in Object's own_methods, exactly where `super`'s
-# compile-time ancestor walk resolves a user `initialize_copy`'s bare `super`.
-def initialize_copy(orig)
-  self
-end
 "##;
 
 /// Returns the built `Hir` plus the id of its `Program` root -- `Hir` itself
