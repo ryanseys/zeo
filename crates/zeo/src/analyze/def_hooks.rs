@@ -17,13 +17,15 @@
 use crate::compiler::{ClassId, Compiler, SiteDef};
 use crate::hir::{HirNode, NodeId};
 
-/// The six names. A definition of one of these ON `Module`/`Class`
-/// (the `method_*` trio) or on `BasicObject` (the `singleton_method_*` trio)
-/// applies to every class in the program, which no per-class scan can see.
-const HOOKS: [&str; 6] = [
+/// The seven names. A definition of one of these ON `Module`/`Class` (the
+/// `method_*` trio and `const_added`) or on `BasicObject` (the
+/// `singleton_method_*` trio) applies to every class in the program, which no
+/// per-class scan can see.
+const HOOKS: [&str; 7] = [
     "method_added",
     "method_removed",
     "method_undefined",
+    "const_added",
     "singleton_method_added",
     "singleton_method_removed",
     "singleton_method_undefined",

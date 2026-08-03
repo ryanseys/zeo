@@ -388,6 +388,20 @@ impl Hir {
         self.span_stack.pop();
     }
 
+    /// The span a `push` would stamp right now -- the prism node currently
+    /// lowering. For a lowering that hands a SYNTHESIZED SOURCE STRING to
+    /// `parse_and_lower_into`: the offsets that parse produces index that
+    /// string, not the file, so a node built from them must be re-stamped with
+    /// the position the user actually wrote. See [`Self::set_span`].
+    pub(crate) fn current_span(&self) -> Span {
+        self.span_stack.last().copied().unwrap_or(Span::SYNTH)
+    }
+
+    /// Corrects `id`'s provenance after the fact. See [`Self::current_span`].
+    pub(crate) fn set_span(&mut self, id: NodeId, span: Span) {
+        self.spans[id.0 as usize] = span;
+    }
+
     /// Every node lowered so far, for the rare pass that must ask a
     /// whole-arena question mid-lowering (see `parse::const_is_assigned`).
     pub fn nodes(&self) -> &[HirNode] {

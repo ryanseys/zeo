@@ -265,6 +265,7 @@ ruby_class! {
             }
         };
         crate::constants::const_set(cid.0, &name, (*arg2).clone());
+        crate::runtime_meta::fire_const_added(cid, &name)?;
         Ok((*arg2).clone())
     }
     // `Module#private_constant(:A, ...)` / `Module#public_constant(:A, ...)` --
@@ -843,9 +844,13 @@ ruby_class! {
             .lock()
             .to_utf8_lossy()
             .into_owned();
+        // Ruby announces an autoload at DECLARATION time, not when the file
+        // finally loads (`rb_autoload_str`, `variable.c:2890`) -- and on every
+        // declaration, re-declaring the same name included (oracle-verified).
         pending_autoloads()
             .lock()
-            .insert((recv_cid(recv).0, name), path);
+            .insert((recv_cid(recv).0, name.clone()), path);
+        crate::runtime_meta::fire_const_added(recv_cid(recv), &name)?;
         Ok(RubyValue::Nil)
     }
     def "autoload?" cfunc (recv, sym, inherit?) {

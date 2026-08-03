@@ -1123,7 +1123,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `RubyValue` (`zeo_rt::const_set`'s own signature).
             let v = box_if_object_typed(cx, *value, v);
             let write = emit_const_write_stmt(cx, scope.as_deref(), name, quote! { __v.clone() });
-            quote! { { let __v: zeo_rt::RubyValue = #v; #write __v } }
+            // Ruby announces the constant AFTER the write, so the hook body can
+            // already read it -- and on every assignment, re-assignment
+            // included (oracle-verified).
+            let announce = const_owner_id_opt(cx, scope.as_deref(), name).map(|owner| {
+                super::emit_const_added(cx.compiler, crate::compiler::ClassId(owner), name, Some(id))
+            });
+            quote! { { let __v: zeo_rt::RubyValue = #v; #write #announce __v } }
         }
         // Brace-wrapped into a single Rust block EXPRESSION, not spliced as
         // bare statements: every `emit_expr` caller assumes one expression,

@@ -687,12 +687,19 @@ pub(crate) fn synthesize_struct_class(
         "class {name} < Struct\n  attr_accessor {accessors}\n  \
          def initialize({params})\n{assigns}  end\nend\n"
     );
+    // The offsets `parse_and_lower_into` produces index `src`, not the file
+    // being lowered, so the class would claim a position it never occupied --
+    // one that reads as EARLIER than everything above it. Re-stamp it with the
+    // `NAME = Struct.new(...)` the user actually wrote, which is where ruby
+    // reports the class as declared and where `const_added` announces it.
+    let written_at = hir.current_span();
     let nodes = parse_and_lower_into(hir, &src)?;
     let [class_def] = nodes[..] else {
         return Err(crate::lower_error::LowerError::syntax(
             "a synthesized struct class must lower to exactly one ClassDef",
         ));
     };
+    hir.set_span(class_def, written_at);
     hir.struct_members.insert(class_def, members.to_vec());
     Ok(class_def)
 }

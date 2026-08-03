@@ -2298,10 +2298,15 @@ pub(crate) fn emit_class_body_site(
         let id = cid.0;
         quote! { zeo_rt::validate_class_aliases(zeo_rt::ClassId(#id))?; }
     });
+    // `class Foo; end` DEFINES a constant, so ruby announces it -- before
+    // `inherited` and before the body, which is the order `vm_declare_class`
+    // hard-codes (`declare_under` sets the constant, then `rb_class_inherited`,
+    // then the body runs).
+    let const_added = emit_declaration_const_added(compiler, site);
     let inherited_hook = emit_inherited_hook(compiler, site);
     let stmts = &site.stmts;
     if stmts.is_empty() {
-        return quote! { #alias_check #inherited_hook };
+        return quote! { #alias_check #const_added #inherited_hook };
     }
     let label_counter = Cell::new(0u32);
     // A class body is an ordinary Ruby scope with ordinary locals, and an
@@ -2401,7 +2406,99 @@ pub(crate) fn emit_class_body_site(
         }
         None => quote! {},
     };
-    quote! { #inherited_hook { #frame #body }?; #alias_check }
+    quote! { #const_added #inherited_hook { #frame #body }?; #alias_check }
+}
+
+/// The `const_added` a `class Foo` / `module M` fires for its OWN name, on the
+/// lexically enclosing module. Only the FIRST of a class's sites declares
+/// anything -- a reopen finds the constant already there and creates nothing,
+/// the same rule `emit_inherited_hook` follows.
+fn emit_declaration_const_added(
+    compiler: &Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> TokenStream {
+    let nil = quote! {};
+    // A site with no source position is a synthetic registration -- the
+    // built-in exception prelude, a pinned surrogate. Nothing declared those in
+    // Ruby, and in CRuby they exist before the program's first statement runs.
+    if site.def_node.is_none() {
+        return nil;
+    }
+    let cid = site.class;
+    let first = compiler
+        .class_body_sites
+        .iter()
+        .find(|s| s.class == cid)
+        .is_some_and(|s| std::ptr::eq(s, site));
+    if !first {
+        return nil;
+    }
+    let owner = compiler
+        .class(cid)
+        .lexical_parent
+        .unwrap_or(crate::compiler::OBJECT_CLASS);
+    emit_const_added(compiler, owner, compiler.leaf_name(cid), site.def_node)
+}
+
+/// Whether the hook body `hook` was already installed at position `at`.
+///
+/// A hook INSTALLED after the thing it would report never saw it. minitest
+/// reopens `Runnable` at the very end of its main file purely to add
+/// `inherited`, so that the `Test`/`Result` subclasses defined above stay out
+/// of the runnables registry -- fire it for them and `Result`, which implements
+/// no `runnable_methods`, joins the run and raises.
+///
+/// Compared by SPAN, and only within one file: `doc_order` numbers class-body
+/// statements, and a `def` is not one of those (it is hoisted into the class's
+/// method table). Two positions in different files are left alone -- a spliced
+/// `require` puts another file's statements in the middle of this one, so raw
+/// offsets do not order across files -- as is anything span-less. All of those
+/// keep firing.
+fn hook_installed_before(
+    compiler: &Compiler,
+    hook: crate::compiler::ScopeId,
+    at: Option<crate::hir::NodeId>,
+) -> bool {
+    let where_ = |n: Option<crate::hir::NodeId>| {
+        n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known())
+    };
+    match (where_(compiler.scope(hook).def_node), where_(at)) {
+        (Some(installed), Some(at)) if installed.file == at.file => installed.start <= at.start,
+        _ => true,
+    }
+}
+
+/// `Module#const_added` -- Ruby announces a constant the moment it becomes
+/// readable, on the module it was set on, with its own leaf name. Emits
+/// nothing unless the owner's chain defines the hook (`Module`'s default is a
+/// no-op), so a program without one is unchanged.
+pub(crate) fn emit_const_added(
+    compiler: &Compiler,
+    owner: crate::compiler::ClassId,
+    name: &str,
+    at: Option<crate::hir::NodeId>,
+) -> TokenStream {
+    let nil = quote! {};
+    // A `class Module; def const_added` reopen answers for every module, and no
+    // per-class scan can see it -- see `Compiler::global_def_hooks`.
+    if !compiler.global_def_hooks.contains("const_added") {
+        let Some((_, hook)) = compiler.class_method_in_chain(owner, "const_added") else {
+            return nil;
+        };
+        if !hook_installed_before(compiler, hook, at) {
+            return nil;
+        }
+    }
+    let o = owner.0;
+    let (sym, arg) = (pooled_sym("const_added"), pooled_sym(name));
+    quote! {
+        zeo_rt::send_value(
+            &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#o)),
+            #sym,
+            &[zeo_rt::RubyValue::Symbol(#arg)],
+            None,
+        )?;
+    }
 }
 
 /// `Class#inherited` -- Ruby runs `Super.inherited(C)` when the class is
@@ -2425,27 +2522,8 @@ fn emit_inherited_hook(compiler: &Compiler, site: &crate::compiler::ClassBodySit
     let Some((_, hook)) = compiler.class_method_in_chain(parent, "inherited") else {
         return nil;
     };
-    // A hook INSTALLED after this subclass was defined never saw it. minitest
-    // reopens `Runnable` at the very end of its main file purely to add
-    // `inherited`, so that the `Test`/`Result` subclasses defined above stay
-    // out of the runnables registry -- fire it for them and `Result`, which
-    // implements no `runnable_methods`, joins the run and raises.
-    //
-    // Compared by SPAN, and only within one file: `doc_order` numbers
-    // class-body statements, and a `def` is not one of those (it is hoisted
-    // into the class's method table). Two positions in different files are
-    // left alone -- a spliced `require` puts another file's statements in the
-    // middle of this one, so raw offsets do not order across files -- as is
-    // anything span-less. All of those keep firing, the whole-program answer
-    // this had before.
-    let where_ = |n: Option<crate::hir::NodeId>| {
-        n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known())
-    };
-    let (installed, defined) = (where_(compiler.scope(hook).def_node), where_(site.def_node));
-    if let (Some(installed), Some(defined)) = (installed, defined) {
-        if installed.file == defined.file && installed.start > defined.start {
-            return nil;
-        }
+    if !hook_installed_before(compiler, hook, site.def_node) {
+        return nil;
     }
     let (p, c) = (parent.0, cid.0);
     let sym = pooled_sym("inherited");

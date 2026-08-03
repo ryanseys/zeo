@@ -1814,11 +1814,29 @@ pub(crate) fn fire_def_hook(
     Ok(())
 }
 
-/// The six hook names that become GLOBAL when defined on `Module`/`Class`
+/// `Module#const_added` -- ruby announces a constant right after it becomes
+/// readable, on the module it was set on. Unlike the `method_*` family this one
+/// has no singleton rerouting: a constant set inside `class << K` announces on
+/// `#<Class:K>` itself (oracle-verified).
+pub fn fire_const_added(owner: ClassId, name: &str) -> Result<(), Signal> {
+    let hook = Symbol::intern("const_added");
+    if !global_def_hook(hook) && crate::dispatch::class_method_owner(owner, hook).is_none() {
+        return Ok(());
+    }
+    crate::dispatch::send_value(
+        &RubyValue::Class(owner),
+        hook,
+        &[RubyValue::Symbol(Symbol::intern(name))],
+        None,
+    )?;
+    Ok(())
+}
+
+/// The seven hook names that become GLOBAL when defined on `Module`/`Class`
 /// (the `method_*` trio) or on `BasicObject` (the `singleton_method_*` trio).
 pub fn global_def_hook_owner(id: ClassId, name: Symbol) -> bool {
     match name.name_str() {
-        "method_added" | "method_removed" | "method_undefined" => {
+        "method_added" | "method_removed" | "method_undefined" | "const_added" => {
             id == zeo_abi::MODULE_CLASS || id == zeo_abi::CLASS_CLASS
         }
         "singleton_method_added" | "singleton_method_removed"
