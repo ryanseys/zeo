@@ -219,12 +219,9 @@ ruby_module! {
     // receiver's singleton. The bare `extend Mod` STATEMENT form (no receiver)
     // is a separate parse-level mixin; this row is the method-call form only.
     def "extend" cfunc (recv, first, *rest, &_block) {
-        // NOT through `extend_object`, unlike `include`'s route through
-        // `append_features` -- see `runtime_meta::mix_in`. Routing it reaches
-        // optparse's `Arguable.extend_object`, whose `super` is followed by
-        // `obj.instance_eval { @optparse = nil }`, and zeo has no ivar storage
-        // for a bare Array. That gap is real and separable; until it closes,
-        // an `extend_object` override stays ignored.
+        // Each goes through `Module#extend_object` when the module overrides
+        // it, the same route `include` takes through `append_features` -- see
+        // `runtime_meta::runtime_extend`.
         for m in std::iter::once(first).chain(rest) {
             crate::runtime_meta::runtime_extend(recv, m)?;
         }

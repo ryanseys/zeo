@@ -845,7 +845,9 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
     // One hook per generated name, reader before writer -- ruby reports
     // `attr_accessor :c` as `method_added(:c)` then `method_added(:c=)`.
     for sym in &defined {
-        let RubyValue::Symbol(sym) = sym else { continue };
+        let RubyValue::Symbol(sym) = sym else {
+            continue;
+        };
         fire_def_hook(DefTarget::Class(id), DefEvent::Added, *sym)?;
     }
     Ok(RubyValue::Array(crate::array_new(defined)))
@@ -1232,7 +1234,10 @@ fn snapshot_from(id: ClassId, name: Symbol, skip_overlay: bool) -> Option<Method
         if !skip_overlay {
             let c = maps().classes.read().unwrap();
             if let Some(m) = c.get(&anc.0).and_then(|e| {
-                e.prepended.get(&name).or_else(|| e.methods.get(&name)).cloned()
+                e.prepended
+                    .get(&name)
+                    .or_else(|| e.methods.get(&name))
+                    .cloned()
             }) {
                 return Some(m);
             }
@@ -1566,7 +1571,39 @@ pub fn runtime_define_singleton_method(
 ///
 /// An existing singleton/class method (`def self.x`) is never clobbered -- own
 /// singletons outrank an extended module, exactly as in CRuby's ancestry.
+///
+/// `Object#extend` is DEFINED IN TERMS of `Module#extend_object` and does no
+/// mixing itself (`eval.c`'s `rb_obj_extend`), the same shape `include` has
+/// around `append_features`. A module that overrides the primitive therefore
+/// controls what `extend` does to the receiver -- and an override that omits
+/// `super` skips the mixin entirely while `extended` still fires. The default
+/// primitive lands back in [`extend_object_default`], which is this function's
+/// body minus the routing and the hook.
 pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyValue, Signal> {
+    let RubyValue::Class(mid) = module_val else {
+        return Err(type_error!(
+            "wrong argument type {} (expected Module)",
+            crate::builtins::class_name_of(module_val)
+        ));
+    };
+    match overrides_mixin_primitive(*mid, "extend_object") {
+        true => {
+            crate::dispatch::send_value(
+                module_val,
+                Symbol::intern("extend_object"),
+                std::slice::from_ref(recv),
+                None,
+            )?;
+        }
+        false => extend_object_default(recv, module_val)?,
+    }
+    fire_mixin_hook(module_val, "extended", recv)?;
+    Ok(recv.clone())
+}
+
+/// `Module#extend_object`'s default body -- the mixin itself, without the
+/// `extended` notification its caller owns. See [`runtime_extend`].
+pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result<(), Signal> {
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
             "wrong argument type {} (expected Module)",
@@ -1576,10 +1613,9 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
     // A repeat `extend` re-ranks nothing: the module keeps the position its
     // FIRST one gave it, so re-copying its methods would wrongly promote it
     // over a module extended in between. The `extended` hook still fires each
-    // time (both oracle-verified).
+    // time -- which it does, because the caller owns it (both oracle-verified).
     if extended_modules(recv).contains(mid) {
-        fire_mixin_hook(module_val, "extended", recv)?;
-        return Ok(recv.clone());
+        return Ok(());
     }
     let names = module_extendable_method_names(*mid);
     match recv {
@@ -1658,10 +1694,8 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
     mark_singletons();
     mark_ancestry_mutated();
     mark_live();
-    fire_mixin_hook(module_val, "extended", recv)?;
-    Ok(recv.clone())
+    Ok(())
 }
-
 
 /// `Module#include(M, ...)` reached AT RUNTIME on a Class/Module receiver --
 /// e.g. `Class.new { include M }`. Splices each module (and its own ancestors

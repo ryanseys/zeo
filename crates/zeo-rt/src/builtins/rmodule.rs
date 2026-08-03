@@ -630,7 +630,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     private def "extend_object" (recv, arg) {
-        crate::runtime_meta::runtime_extend(arg, recv)?;
+        crate::runtime_meta::extend_object_default(arg, recv)?;
         Ok((*arg).clone())
     }
     // Ruby tells a module what was just defined in it. These four are the

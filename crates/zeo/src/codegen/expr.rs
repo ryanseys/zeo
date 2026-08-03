@@ -1127,7 +1127,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // already read it -- and on every assignment, re-assignment
             // included (oracle-verified).
             let announce = const_owner_id_opt(cx, scope.as_deref(), name).map(|owner| {
-                super::emit_const_added(cx.compiler, crate::compiler::ClassId(owner), name, Some(id))
+                super::emit_const_added(
+                    cx.compiler,
+                    crate::compiler::ClassId(owner),
+                    name,
+                    Some(id),
+                )
             });
             quote! { { let __v: zeo_rt::RubyValue = #v; #write #announce __v } }
         }
@@ -1641,8 +1646,7 @@ fn mixin_parts(node: &HirNode) -> Option<(&String, &'static str, Option<&'static
     match node {
         HirNode::Include(m) => Some((m, "included", Some("append_features"))),
         HirNode::Prepend(m) => Some((m, "prepended", Some("prepend_features"))),
-        // `extend` deliberately has no primitive here -- see `Kernel#extend`.
-        HirNode::Extend(m) => Some((m, "extended", None)),
+        HirNode::Extend(m) => Some((m, "extended", Some("extend_object"))),
         _ => None,
     }
 }

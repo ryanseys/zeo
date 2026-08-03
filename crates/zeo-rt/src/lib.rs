@@ -49,6 +49,7 @@ mod symbol;
 mod thread;
 mod tramp;
 mod value;
+mod value_ivars;
 
 pub use arith::*;
 pub use bootstrap::{install_core_constants, register_builtins};
@@ -147,9 +148,10 @@ pub use ractor::{
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
-    class_maybe_patched, fire_const_added, iter_inline_ok, iter_inline_ok_for, mark_global_def_hook, with_pending_defs,
-    name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
-    runtime_define_singleton_method, send_super_dynamic, value_extends,
+    class_maybe_patched, fire_const_added, iter_inline_ok, iter_inline_ok_for,
+    mark_global_def_hook, name_runtime_class_if_anonymous, runtime_class_new,
+    runtime_define_method, runtime_define_singleton_method, send_super_dynamic, value_extends,
+    with_pending_defs,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
 pub use symbol::Symbol;

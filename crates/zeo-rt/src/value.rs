@@ -1235,7 +1235,7 @@ impl RubyValue {
     ///   (oracle-verified; see `fiber::dup_uninitialized`).
     pub fn dup_value(&self, copy_frozen: bool) -> Result<RubyValue, crate::Signal> {
         let keep_frozen = copy_frozen && self.is_frozen();
-        Ok(match self {
+        let copy = match self {
             RubyValue::Nil
             | RubyValue::Bool(_)
             | RubyValue::Int(_)
@@ -1338,7 +1338,14 @@ impl RubyValue {
             RubyValue::Ractor(_) => {
                 return Err(type_error!("allocator undefined for Ractor"));
             }
-        })
+        };
+        // A bare heap value's ivars live BESIDE it (see `value_ivars`), so the
+        // copy has to be told about them -- Ruby carries ivars across both
+        // `dup` and `clone`; only singletons are `clone`-only. Here rather than
+        // in `Kernel#dup` because codegen folds a `dup` with no user override
+        // straight to this call and never reaches the row.
+        crate::value_ivars::copy(self, &copy);
+        Ok(copy)
     }
 
     /// `case`/`when`'s and `case`/`in`'s value-pattern matching escape hatch

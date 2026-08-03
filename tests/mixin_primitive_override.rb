@@ -9,10 +9,6 @@
 # overrides one and omits `super` skips the mixin entirely -- and `included`
 # still fires, because the two calls are unconditional. That is what lets a
 # module police how it is mixed in; the `singleton` gem is built on it.
-#
-# `extend_object` is deliberately NOT routed yet: optparse overrides it, and its
-# `super` is followed by `obj.instance_eval { @optparse = nil }` on ARGV, which
-# needs ivar storage for a bare Array that zeo does not have. See `Kernel#extend`.
 
 puts "== prepend_features with super"
 module PF
@@ -65,6 +61,44 @@ class H5
   include Plain
 end
 p [H5.ancestors.include?(Plain), H5.new.plain]
+
+puts "== extend_object"
+module EO
+  def self.extend_object(obj) = (puts("EO.extend_object(#{obj.class})"); super)
+  def self.extended(obj) = puts("EO.extended(#{obj.class})")
+  def tagged = "from EO"
+end
+o = Object.new
+o.extend(EO)
+p [o.tagged, o.is_a?(EO)]
+# The optparse shape: the primitive's `super` is followed by setting an ivar
+# on the receiver, which for a bare Array needs storage beside the value.
+module Tagger
+  def self.extend_object(obj)
+    super
+    obj.instance_eval { @tag = "set" }
+  end
+  def tag = @tag
+end
+arr = [1, 2]
+arr.extend(Tagger)
+p [arr.tag, arr.instance_variables, arr.is_a?(Tagger), arr]
+
+puts "== extend_object without super skips the mixin, but still notifies"
+module EN
+  def self.extend_object(obj) = puts("EN.extend_object, no super")
+  def self.extended(obj) = puts("EN.extended")
+  def missing = 1
+end
+o2 = Object.new
+o2.extend(EN)
+p [o2.respond_to?(:missing), o2.is_a?(EN)]
+
+puts "== a class body `extend` routes through it too"
+class H6
+  extend EO
+end
+p [H6.tagged, H6.singleton_class.include?(EO)]
 
 puts "== the runtime shapes route through the primitive too"
 # A prepend has to outrank the target's OWN method even when that method is

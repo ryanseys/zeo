@@ -14,6 +14,19 @@ AN.append_features, no super
 [false, false]
 == a module with NO override is still folded at compile time
 [true, 1]
+== extend_object
+EO.extend_object(Object)
+EO.extended(Object)
+["from EO", true]
+["set", [:@tag], true, [1, 2]]
+== extend_object without super skips the mixin, but still notifies
+EN.extend_object, no super
+EN.extended
+[false, false]
+== a class body `extend` routes through it too
+EO.extend_object(Class)
+EO.extended(Class)
+["from EO", true]
 == the runtime shapes route through the primitive too
 PF.prepend_features(#<Class:0xADDR>)
 PF.prepended(#<Class:0xADDR>)

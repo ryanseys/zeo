@@ -435,10 +435,10 @@ pub fn is_main_object(o: &RObj) -> bool {
 /// rather than an `Arc<Concrete>` (top level, or a block whose self
 /// `instance_exec` may rebind). `name` excludes the `@`.
 ///
-/// A non-Object receiver (`5.instance_exec { @x }`) answers nil rather than
-/// raising: real Ruby lets you READ an ivar off any object, and immediates
-/// simply never have one. An Object whose class declares no such ivar is the
-/// same never-assigned case.
+/// A receiver that never had `@name` assigned answers nil rather than raising,
+/// which is Ruby's rule for reading any unset ivar. An immediate has nowhere to
+/// store one and so is always in that case; a bare heap value has the
+/// identity-keyed `value_ivars` store and may well have one.
 pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
     match recv {
         RubyValue::Object(o) => o.ivar_get_named(name).unwrap_or(RubyValue::Nil),
@@ -448,7 +448,8 @@ pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
         // id codegen usually emits -- e.g. `def self.x; [1].each { @n } end`,
         // where the block captures `self` as a plain `RubyValue::Class`.
         RubyValue::Class(cid) => crate::civars::class_ivar_get(cid.0, name),
-        _ => RubyValue::Nil,
+        // `[].instance_eval { @x }` -- see `value_ivars`.
+        _ => crate::value_ivars::get(recv, name).unwrap_or(RubyValue::Nil),
     }
 }
 
@@ -503,13 +504,21 @@ pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyVa
             crate::civars::class_ivar_set(cid.0, name, v.clone())?;
             Ok(v)
         }
-        // Real Ruby raises here (immediates are frozen and have no ivar
-        // table), and the message names the receiver's class.
-        _ => Err(frozen_error!(
-            "can't modify frozen {}: {}",
-            crate::builtins::class_name_of(recv),
-            recv.inspect_string()
-        )),
+        // An unfrozen heap value (`[].instance_eval { @x = 1 }`) gets the
+        // identity-keyed store; the permanently-frozen tier (immediates, and
+        // `Range`) has nowhere to put one and raises, naming the class the way
+        // CRuby's `rb_check_frozen` does.
+        _ => {
+            crate::builtins::check_frozen(recv)?;
+            if !crate::value_ivars::set(recv, name, v.clone()) {
+                return Err(frozen_error!(
+                    "can't modify frozen {}: {}",
+                    crate::builtins::class_name_of(recv),
+                    recv.inspect_string()
+                ));
+            }
+            Ok(v)
+        }
     }
 }
 
@@ -1654,7 +1663,7 @@ pub fn instance_variable_get(recv: &RubyValue, name_arg: &RubyValue) -> Result<R
     Ok(match recv {
         RubyValue::Object(o) => o.ivar_get_named(&name).unwrap_or(RubyValue::Nil),
         RubyValue::Class(cid) => crate::civars::class_ivar_get(cid.0, &name),
-        _ => RubyValue::Nil,
+        _ => crate::value_ivars::get(recv, &name).unwrap_or(RubyValue::Nil),
     })
 }
 
@@ -1676,10 +1685,11 @@ pub fn instance_variable_set(
         }
         RubyValue::Class(cid) => crate::civars::class_ivar_set(cid.0, &name, v.clone())?,
         // A frozen builtin (immediates always; a frozen Str/Array/Hash)
-        // raises like CRuby; an UNFROZEN builtin keeps the documented
-        // no-generic-ivar-storage no-op.
-        other if other.is_frozen() => crate::builtins::check_frozen(other)?,
-        _ => {}
+        // raises like CRuby; an unfrozen one gets the identity-keyed store.
+        other => {
+            crate::builtins::check_frozen(other)?;
+            crate::value_ivars::set(other, &name, v.clone());
+        }
     }
     Ok(v)
 }
@@ -1700,7 +1710,11 @@ pub fn remove_instance_variable(
                 None => Err(name_error!("instance variable @{name} not defined")),
             }
         }
-        _ => Err(name_error!("instance variable @{name} not defined")),
+        _ => {
+            crate::builtins::check_frozen(recv)?;
+            crate::value_ivars::remove(recv, &name)
+                .ok_or_else(|| name_error!("instance variable @{name} not defined"))
+        }
     }
 }
 
@@ -1733,7 +1747,10 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
             .into_iter()
             .map(|n| RubyValue::Symbol(Symbol::intern(&format!("@{n}"))))
             .collect(),
-        _ => Vec::new(),
+        _ => crate::value_ivars::names(recv)
+            .into_iter()
+            .map(|n| RubyValue::Symbol(Symbol::intern(&format!("@{n}"))))
+            .collect(),
     };
     RubyValue::Array(crate::array_new(names))
 }

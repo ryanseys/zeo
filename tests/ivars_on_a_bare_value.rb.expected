@@ -1,0 +1,40 @@
+== the heap kinds accept one
+[Array, 1, [:@x], true]
+[String, 1, [:@x], true]
+[Hash, 1, [:@x], true]
+[Proc, 1, [:@x], true]
+[Regexp, 1, [:@x], true]
+[MatchData, 1, [:@x], true]
+== the frozen tier raises
+Integer: FrozenError
+Float: FrozenError
+Symbol: FrozenError
+NilClass: FrozenError
+TrueClass: FrozenError
+Range: FrozenError
+Array: FrozenError
+== assignment order, and a second write keeps its place
+[[:@b, :@a], 9]
+== two values of the same kind do not share
+[[:@k], [], nil]
+== remove
+9
+[:@a]
+instance variable @b not defined
+== instance_eval and instance_exec reach the same store
+[[:@y], 5]
+7
+== an unset ivar reads nil, it does not raise
+[nil, nil]
+== dup and clone carry them
+[[:@z], [:@z], 9]
+[9, 100]
+== the value itself is unchanged -- inspect and == ignore ivars
+"str"
+[true, [], true]
+== a module mixed in with extend can read them
+42
+== defined?
+"method"
+"instance-variable"
+nil

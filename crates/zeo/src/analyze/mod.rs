@@ -2197,7 +2197,14 @@ fn register_class(
                 let m = m.clone();
                 match resolve_module_target(compiler, &m, &child_cref, box_id)? {
                     Some(target) => {
-                        compiler.classes[class_id.0 as usize].extends.push(target);
+                        // Same rule as `Include`'s: an `extend_object` override
+                        // owns the decision, so the static edit gives way to a
+                        // send at this position.
+                        if compiler.overrides_mixin_primitive(target, "extend_object") {
+                            defer_mixin_to_runtime(compiler, target);
+                        } else {
+                            compiler.classes[class_id.0 as usize].extends.push(target);
+                        }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),

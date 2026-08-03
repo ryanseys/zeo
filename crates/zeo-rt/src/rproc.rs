@@ -116,6 +116,14 @@ pub struct ProcParamMeta {
 pub struct RProc(Arc<ProcData>);
 
 impl RProc {
+    /// This proc's identity -- the address of its shared payload, which two
+    /// handles to the SAME proc agree on and two distinct procs never do. The
+    /// `Arc` is private, so the identity-keyed side tables (`value_ivars`) ask
+    /// for it here rather than reaching for the field.
+    pub(crate) fn identity(&self) -> usize {
+        Arc::as_ptr(&self.0) as *const () as usize
+    }
+
     /// A runtime-internal proc: var-args arity (`-1`), not a lambda. Its
     /// body has no Ruby `self` to speak of (Enumerator shuttles,
     /// `Symbol#to_proc`, ...), so it ignores the receiver and reports nil as
