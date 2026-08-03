@@ -1,0 +1,17 @@
+[:append_features, :const_added, :extend_object, :method_added, :method_removed, :method_undefined, :prepend_features]
+[:initialize, :method_missing, :singleton_method_added, :singleton_method_removed, :singleton_method_undefined]
+[true, false]
+1
+explicit: private method 'prepend_features' called for module Comparable
+method_added -> nil
+method_removed -> nil
+method_undefined -> nil
+const_added -> nil
+singleton_method_added -> nil
+singleton_method_removed -> nil
+singleton_method_undefined -> nil
+[true, "hi from M"]
+[true, "yo from N"]
+"extended"
+Sub saw :manual, super -> nil
+nil

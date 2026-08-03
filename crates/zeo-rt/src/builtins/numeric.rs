@@ -762,7 +762,7 @@ ruby_class! {
     //
     // Present and correct when CALLED, but nothing calls it yet: zeo has no
     // `singleton_method_added` hook, so `def n.foo` on a Numeric still
-    // succeeds. `tests/gaps/numeric_singleton_method_added.rb` records that.
+    // succeeds. `tests/gaps/numeric_subclass_limits.rb` records that.
     def "singleton_method_added" (recv, name) {
         let name = match name {
             RubyValue::Symbol(s) => s.name_str().to_string(),

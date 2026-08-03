@@ -2207,12 +2207,14 @@ impl VisFilter {
 /// Builtin-table methods that CRuby defines as PRIVATE, so they are reachable
 /// via implicit self / `send` / `super` (all of which go through the table)
 /// but are invisible to `respond_to?` and raise `NoMethodError: private
-/// method` on an explicit-receiver call. The table itself carries no
-/// visibility metadata, so this is the one place the runtime knows.
+/// method` on an explicit-receiver call.
 ///
-/// `initialize` (`BasicObject`'s, `object.c`'s `rb_obj_dummy`) is the load-
-/// bearing case: `super` from any `initialize` must reach it, but
-/// `obj.initialize` must raise. Kernel's print family is the same shape.
+/// A row that knows it is private says so (`private def`). What is left here
+/// is the set no single row can declare, because MANY tables define the name
+/// and every one of them is private. `initialize` (`BasicObject`'s,
+/// `object.c`'s `rb_obj_dummy`) is the load-bearing case: `super` from any
+/// `initialize` must reach it, but `obj.initialize` must raise. Kernel's
+/// print family is the same shape.
 fn is_hidden_builtin_private(owner: ClassId, name: &str) -> bool {
     // Private on EVERY class, wherever a table defines one.
     if matches!(
@@ -2231,10 +2233,7 @@ fn is_hidden_builtin_private(owner: ClassId, name: &str) -> bool {
             "puts" | "print" | "p" | "pp" | "warn" | "system" | "spawn" | "`" | "raise" | "fail"
         );
     }
-    // Module's mix-in primitives: `include`/`Object#extend` call them, an
-    // override policing how a module is mixed in reaches them through
-    // `super`, but they are not part of a module's public surface.
-    owner == zeo_abi::MODULE_CLASS && matches!(name, "append_features" | "extend_object")
+    false
 }
 
 /// The instance-method names of `class` and -- when `inherit` -- its

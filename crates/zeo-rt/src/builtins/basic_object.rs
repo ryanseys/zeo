@@ -118,6 +118,25 @@ ruby_class! {
             blk.call_with_self(recv, std::slice::from_ref(recv))
         })
     }
+    // Ruby tells an OBJECT what was just defined on its singleton class. They
+    // live on `BasicObject`, not `Module`, which is what lets `def
+    // o.singleton_method_added(n)` work on any object at all.
+    //
+    // CRuby reaches these through one macro (`vm_method.c`'s
+    // `CALL_METHOD_HOOK`): a definition landing on a singleton class reroutes
+    // to the ATTACHED OBJECT under the `singleton_` name. These are the no-op
+    // defaults that rerouting arrives at; `Numeric` overrides the first to
+    // refuse a singleton entirely. `runtime_meta::fire_def_hook` does the
+    // rerouting.
+    private def "singleton_method_added" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
+    private def "singleton_method_removed" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
+    private def "singleton_method_undefined" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
 }
 
 /// The block argument `instance_exec`/`instance_eval` (and their

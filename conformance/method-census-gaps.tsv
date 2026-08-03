@@ -4,7 +4,7 @@
 # absent-module: 19
 # constant: 7
 # owner: 50
-# unreachable: 81
+# unreachable: 73
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
@@ -81,9 +81,6 @@ owner	Thread::Queue	p	initialize
 owner	Thread::SizedQueue	p	initialize
 owner	Time	p	initialize
 owner	Time	p	initialize_copy
-unreachable	BasicObject	p	singleton_method_added
-unreachable	BasicObject	p	singleton_method_removed
-unreachable	BasicObject	p	singleton_method_undefined
 unreachable	Complex	p	marshal_dump
 unreachable	Enumerator::Lazy	p	_enumerable_collect
 unreachable	Enumerator::Lazy	p	_enumerable_collect_concat
@@ -113,11 +110,6 @@ unreachable	Kernel	s	block_given?
 unreachable	Kernel	s	iterator?
 unreachable	Kernel	s	local_variables
 unreachable	Marshal	p	dump
-unreachable	Module	p	const_added
-unreachable	Module	p	method_added
-unreachable	Module	p	method_removed
-unreachable	Module	p	method_undefined
-unreachable	Module	p	prepend_features
 unreachable	Module	p	refine
 unreachable	Module	p	using
 unreachable	Pathname	p	add_trailing_separator

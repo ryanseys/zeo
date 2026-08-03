@@ -617,13 +617,40 @@ ruby_class! {
     // reject inclusion into a module and undefining `extend_object` so that
     // `obj.extend(Singleton)` cannot work at all -- and `undef_method` needs
     // the name to EXIST before it can take it away.
-    def "append_features" (recv, arg) {
+    private def "append_features" (recv, arg) {
         crate::runtime_meta::runtime_include(arg, std::slice::from_ref(recv))?;
         Ok(recv.clone())
     }
-    def "extend_object" (recv, arg) {
+    private def "prepend_features" (recv, arg) {
+        crate::runtime_meta::runtime_prepend(arg, std::slice::from_ref(recv))?;
+        Ok(recv.clone())
+    }
+    private def "extend_object" (recv, arg) {
         crate::runtime_meta::runtime_extend(arg, recv)?;
         Ok((*arg).clone())
+    }
+    // Ruby tells a module what was just defined in it. These four are the
+    // no-op defaults an override's `super` reaches -- `Class#inherited`'s
+    // siblings, and the reason a bare `def self.method_added(n)` needs no
+    // `super` guard. What CALLS them is the interesting half: see
+    // `runtime_meta::fire_def_hook` for the runtime definitions and
+    // `codegen::emit_class_body_site` for the compiled ones.
+    //
+    // The firing side must NOT dispatch these: a hook whose owner resolves to
+    // `Module` is this no-op, and paying a send per definition to reach it
+    // would tax every program. `fire_def_hook` checks the owner for exactly
+    // that reason.
+    private def "method_added" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
+    private def "method_removed" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
+    private def "method_undefined" (_recv, _arg) {
+        Ok(RubyValue::Nil)
+    }
+    private def "const_added" (_recv, _arg) {
+        Ok(RubyValue::Nil)
     }
     // The literal class-body forms of these four expand to real `def`s at
     // compile time; these rows serve `Class.new { }` and `class_eval { }`.
