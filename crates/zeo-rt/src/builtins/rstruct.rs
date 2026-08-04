@@ -392,13 +392,17 @@ pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     // class reports a `#<Class:0x..>` placeholder from `class_name` -- treat
     // that as anonymous.
     let named = match class_name(recv_class_id(recv)) {
-        Some(n) if !n.is_empty() && !n.starts_with("#<Class:") => format!("{n} "),
+        Some(n) if !n.is_empty() && !n.starts_with("#<Class:") => format!(" {n}"),
         _ => String::new(),
     };
-    Ok(RubyValue::Str(string_new(format!(
-        "#<{kind} {named}{}>",
-        parts.join(", ")
-    ))))
+    // The separator goes BETWEEN the pieces, never ahead of the list: a
+    // memberless Data is `#<data Empty>`, not `#<data Empty >`.
+    let body = if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", parts.join(", "))
+    };
+    Ok(RubyValue::Str(string_new(format!("#<{kind}{named}{body}>"))))
 }
 
 pub(crate) fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
@@ -552,6 +556,20 @@ fn frozen_error(recv: &RubyValue) -> Signal {
     )
 }
 
+/// Leading positional arguments with a trailing all-symbol-keyed Hash --
+/// `P.new(1, y: 2)`. Refused rather than treated as a short form, since the
+/// keywords route to a keyword initializer that takes no positionals.
+fn mixes_positional_and_keywords(args: &[RubyValue]) -> bool {
+    if args.len() < 2 {
+        return false;
+    }
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return false;
+    };
+    let g = h.lock();
+    !g.is_empty() && g.values().all(|(k, _)| matches!(k, RubyValue::Symbol(_)))
+}
+
 /// The default member-setter shared by `Struct#initialize`/`Data#initialize`:
 /// bind constructor args to slots. Positional (nil-filling for a plain Struct,
 /// exact-arity for keyword_init/Data) or by keyword (a trailing Hash).
@@ -618,19 +636,11 @@ pub(crate) fn bind_members(
     // Hash alongside leading positional args is an illegal mix for Data and
     // keyword_init Structs -- CRuby routes keywords to the keyword initializer,
     // which accepts no positional args, so it reports "given N, expected 0".
-    if (is_data || meta.keyword_init == Some(true)) && args.len() > 1 {
-        if let Some(RubyValue::Hash(h)) = args.last() {
-            let all_symbol_keys = {
-                let g = h.lock();
-                !g.is_empty() && g.values().all(|(k, _)| matches!(k, RubyValue::Symbol(_)))
-            };
-            if all_symbol_keys {
-                return Err(arg_error!(
-                    "wrong number of arguments (given {}, expected 0)",
-                    args.len()
-                ));
-            }
-        }
+    if (is_data || meta.keyword_init == Some(true)) && mixes_positional_and_keywords(args) {
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 0)",
+            args.len()
+        ));
     }
 
     // Positional. A plain Struct nil-fills a short arg list; keyword_init and
@@ -685,6 +695,36 @@ pub fn struct_construct(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let meta = meta_of(class_id).expect("struct construct on a class with no meta");
+    // `Data`'s two constructor forms are the SAME constructor: ruby zips
+    // positional arguments against the member list in `new` (`rb_data_s_new`),
+    // so `initialize` -- the default one below or a user override -- only ever
+    // sees keywords, and a SHORTFALL is reported as a missing keyword rather
+    // than as an arity error. Refusing an incomplete instance is the whole
+    // reason Data exists; Struct, its mutable half, really does allow the
+    // short form and keeps its own message.
+    let zipped;
+    let args = if meta.is_data && !matches!(args, [RubyValue::Hash(_)]) {
+        // Positionals AND keywords together is not a short form -- it is an
+        // illegal mix, and must be refused before the zip below turns the
+        // trailing hash into a member's value.
+        if mixes_positional_and_keywords(args) {
+            return Err(arg_error!(
+                "wrong number of arguments (given {}, expected 0)",
+                args.len()
+            ));
+        }
+        crate::builtins::check_arity(args.len(), 0, Some(meta.members.len()))?;
+        zipped = [RubyValue::Hash(hash_new(
+            meta.members
+                .iter()
+                .zip(args)
+                .map(|(m, v)| (RubyValue::Symbol(*m), v.clone()))
+                .collect(),
+        ))];
+        &zipped[..]
+    } else {
+        args
+    };
     // A COMPILED struct is an ordinary generated class: allocate through its
     // own registered allocator, so the instance is the Rust struct its
     // accessors and its `initialize` were compiled against. Building a
