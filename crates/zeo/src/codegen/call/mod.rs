@@ -2203,6 +2203,19 @@ fn dispatch(
         }
     }
 
+    /// Whether `!recv` may still fold to a truthiness test. A program where
+    /// nobody defines `!` folds everywhere; one that does still folds at a
+    /// site whose receiver class is known not to define it.
+    fn bang_folds(cx: &Ctx, recv_id: NodeId) -> bool {
+        if cx.compiler.may_be_patched_at_runtime("!") {
+            return false;
+        }
+        if !cx.compiler.defines_bang() {
+            return true;
+        }
+        infer_class(cx, recv_id).is_some_and(|cid| cx.compiler.method_in_chain(cid, "!").is_none())
+    }
+
     // Every fast path below (operators, collection `[]`/`length`, `.times`)
     // is a fixed, positional-only shape that has nowhere to put a keyword
     // argument -- gated on `kwargs.is_empty()` so a call that actually
@@ -2214,7 +2227,10 @@ fn dispatch(
     // `!`/`not` -- Ruby truthiness on ANY value, not an `Int`-specific
     // operator (`!0`, `!""`, `!nil` are all valid and not equivalent),
     // so this is handled separately from the numeric tables below.
-    if no_kwargs && name == "!" && args.is_empty() {
+    // Declined where a user body could answer instead: see
+    // `Compiler::defines_bang`. A plain truthiness test (`x ? a : b`) is
+    // not this node and keeps folding, which is ruby's rule too.
+    if no_kwargs && name == "!" && args.is_empty() && bang_folds(cx, recv_id) {
         let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
         return quote! { zeo_rt::RubyValue::Bool(!(#recv_boxed).truthy()) };
     }

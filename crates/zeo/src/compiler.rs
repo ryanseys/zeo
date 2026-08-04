@@ -488,6 +488,9 @@ pub struct Compiler {
     /// call site would otherwise repeat. Per-`Compiler`, so it cannot go stale
     /// across the many programs one test process compiles.
     traces_calls: std::cell::OnceCell<bool>,
+    /// Memo for [`Compiler::defines_bang`] -- a whole-arena scan every `!x`
+    /// fold would otherwise repeat, and `!` is everywhere.
+    defines_bang: std::cell::OnceCell<bool>,
 }
 
 /// See [`Compiler::inline_iter_sites`].
@@ -688,6 +691,7 @@ impl Compiler {
             times_literal_suppressed: false,
             range_each_literal_suppressed: false,
             traces_calls: std::cell::OnceCell::new(),
+            defines_bang: std::cell::OnceCell::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -1113,6 +1117,23 @@ impl Compiler {
     /// second analysis that still could not decide the interesting cases.
     pub fn may_be_patched_at_runtime(&self, name: &str) -> bool {
         self.runtime_patches_any_name || self.runtime_patches.contains(name)
+    }
+
+    /// Whether ANY class in this program gives `!` a body. `!` is an
+    /// ordinary overridable method (`BasicObject#!`, a real method since
+    /// 1.9 precisely so a null-object wrapper can decide its own
+    /// truthiness), so folding `!x` to a truthiness test is sound only
+    /// while nobody has overridden it.
+    ///
+    /// The question is the PROGRAM's, not the receiver's: `!x` on a
+    /// statically unknown receiver has no class to ask. CRuby decides the
+    /// same thing per call through an inline cache -- `vm_opt_not` inlines
+    /// only when the resolved entry is literally `rb_obj_not` -- and zeo
+    /// decides it once, ahead of time.
+    pub fn defines_bang(&self) -> bool {
+        *self
+            .defines_bang
+            .get_or_init(|| self.scopes.iter().any(|s| s.name == "!"))
     }
 
     /// The LEAF segment of `cid`'s name -- what CRuby puts in a class-body
