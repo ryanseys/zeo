@@ -521,21 +521,10 @@ ruby_class! {
             None | Some(RubyValue::Nil) => -1,
             Some(v) => arg_int!(v),
         };
-        fn go(items: &[RubyValue], depth: i64, out: &mut Vec<RubyValue>) {
-            for e in items {
-                match e {
-                    RubyValue::Array(inner) if depth != 0 => {
-                        let inner = inner.lock().clone();
-                        go(&inner, depth - 1, out);
-                    }
-                    other => out.push(other.clone()),
-                }
-            }
-        }
         let items = rary.lock().clone();
-        let mut out = Vec::new();
-        go(&items, depth, &mut out);
-        Ok(RubyValue::Array(crate::array_new(out)))
+        Ok(RubyValue::Array(crate::array_new(flatten_to_depth(
+            &items, depth,
+        )?)))
     }
     def "compact" (recv) {
         let out = rary
@@ -1468,7 +1457,7 @@ ruby_class! {
         let cell = rary;
         check_frozen(cell, recv)?;
         let before = cell.lock().clone();
-        let after = flatten_to_depth(&before, depth);
+        let after = flatten_to_depth(&before, depth)?;
         if after.len() == before.len()
             && after.iter().zip(before.iter()).all(|(a, b)| a.rb_eq(b))
         {
@@ -1931,19 +1920,47 @@ fn take_items_via_each(src: &RubyValue, n: usize) -> Result<Vec<RubyValue>, crat
 }
 
 /// Flattens nested arrays up to `depth` levels (`-1` = fully). Shared by
-/// `flatten` and `flatten!`.
-pub(crate) fn flatten_to_depth(items: &[RubyValue], depth: i64) -> Vec<RubyValue> {
+/// `flatten`, `flatten!` and `Hash#flatten`.
+pub(crate) fn flatten_to_depth(
+    items: &[RubyValue],
+    depth: i64,
+) -> Result<Vec<RubyValue>, crate::Signal> {
+    flatten_into(items, depth, &mut Vec::new())
+}
+
+/// `seen` is the traversal STACK of arrays currently being flattened -- pushed
+/// on descent and popped on ascent, so a genuine cycle raises while a merely
+/// SHARED sub-array (`[b, b]`) still flattens twice. That is CRuby's rule and
+/// its bookkeeping (`rb_ary_flatten`'s ident-hash memo, `rb_hash_delete` on
+/// the way back up), and like CRuby the guard runs only at unlimited depth:
+/// `a.flatten(1)` stops before re-entry and must not raise.
+fn flatten_into(
+    items: &[RubyValue],
+    depth: i64,
+    seen: &mut Vec<usize>,
+) -> Result<Vec<RubyValue>, crate::Signal> {
     let mut out = Vec::new();
     for e in items {
         match e {
             RubyValue::Array(inner) if depth != 0 => {
-                let inner = inner.lock().clone();
-                out.extend(flatten_to_depth(&inner, depth - 1));
+                let guarded = depth < 0;
+                let id = std::sync::Arc::as_ptr(inner) as usize;
+                if guarded {
+                    if seen.contains(&id) {
+                        return Err(arg_error!("tried to flatten recursive array"));
+                    }
+                    seen.push(id);
+                }
+                let nested = inner.lock().clone();
+                out.extend(flatten_into(&nested, depth - 1, seen)?);
+                if guarded {
+                    seen.pop();
+                }
             }
             other => out.push(other.clone()),
         }
     }
-    out
+    Ok(out)
 }
 
 /// `arr[start, len] = value` / `arr[range] = value` -- CRuby's

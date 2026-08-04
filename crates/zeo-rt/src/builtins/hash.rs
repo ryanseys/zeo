@@ -328,7 +328,7 @@ ruby_class! {
             .values()
             .map(|(k, v)| RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])))
             .collect();
-        let out = crate::builtins::array::flatten_to_depth(&pairs, depth);
+        let out = crate::builtins::array::flatten_to_depth(&pairs, depth)?;
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     // `compact` drops nil-valued entries into a new Hash; `compact!` does it

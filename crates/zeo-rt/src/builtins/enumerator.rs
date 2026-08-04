@@ -191,13 +191,27 @@ static NEXT_ITER_ID: AtomicU64 = AtomicU64::new(1);
 /// (`rb_enumeratorize`): captures the receiver, the method to re-invoke,
 /// and the trailing args -- nothing else.
 pub(crate) fn enumerator_for(recv: &RubyValue, meth: &str, args: &[RubyValue]) -> RubyValue {
+    enumerator_for_with_size(recv, meth, args, None)
+}
+
+/// `to_enum`/`enum_for` with the optional block that SUPPLIES the size
+/// lazily. CRuby writes the reified block straight into the same `size` slot
+/// an Integer would occupy (`obj_to_enum`), and `#size` probes it with `call`
+/// -- one field, no type dispatch, and the count is computed only if someone
+/// asks.
+pub(crate) fn enumerator_for_with_size(
+    recv: &RubyValue,
+    meth: &str,
+    args: &[RubyValue],
+    size_hint: Option<RubyValue>,
+) -> RubyValue {
     RubyValue::Enumerator(Arc::new(EnumeratorData {
         source: EnumSource::Method {
             recv: recv.clone(),
             meth: meth.to_string(),
             args: args.to_vec(),
         },
-        size_hint: None,
+        size_hint,
         state: Mutex::new(ExternState::default()),
         frozen: std::sync::atomic::AtomicBool::new(false),
     }))
@@ -368,6 +382,26 @@ fn recv_enum(recv: &RubyValue) -> &REnumerator {
     }
 }
 
+/// `StopIteration` raised inside a producer block ENDS the sequence; it is not
+/// an error. `Enumerator.produce` has no length and no terminating predicate,
+/// so raising it is the only way to say the sequence is over -- CRuby wraps the
+/// whole generation in `rb_rescue2(..., rb_eStopIteration)` (`producer_each`)
+/// and answers the exception's `result`. Subclasses count, exactly as a
+/// `rescue StopIteration` clause would; every other signal passes through, so a
+/// `break` from a consumer still unwinds and a real error still raises.
+fn ended_by_stop_iteration(sig: Signal) -> Result<RubyValue, Signal> {
+    let Signal::Raise(exc) = &sig else {
+        return Err(sig);
+    };
+    let RubyValue::Object(o) = exc else {
+        return Err(sig);
+    };
+    if !crate::dispatch::is_a(o.class_id(), zeo_abi::STOP_ITERATION_CLASS) {
+        return Err(sig);
+    }
+    send_value(exc, Symbol::intern("result"), &[], None)
+}
+
 /// One internal iteration pass: re-invoke the captured method with
 /// `block`, or hand the generator a fresh Yielder wrapping it. Returns
 /// the underlying call's return value (what `StopIteration#result`
@@ -386,14 +420,17 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
             block: generator,
         } => {
             let each_block = block.as_proc_unchecked();
-            let mut cur = match initial {
-                Some(v) => v.clone(),
-                None => generator.call(&[RubyValue::Nil])?,
+            let produce = || -> Result<RubyValue, Signal> {
+                let mut cur = match initial {
+                    Some(v) => v.clone(),
+                    None => generator.call(&[RubyValue::Nil])?,
+                };
+                loop {
+                    each_block.call(&[cur.clone()])?;
+                    cur = generator.call(&[cur])?;
+                }
             };
-            loop {
-                each_block.call(&[cur.clone()])?;
-                cur = generator.call(&[cur])?;
-            }
+            produce().or_else(ended_by_stop_iteration)
         }
         EnumSource::Chain { sources } => {
             for src in sources {
@@ -726,7 +763,16 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
     // CRuby calls it too.
     if let Some(hint) = &e.size_hint {
         return match hint {
-            RubyValue::Proc(p) => p.call(&[]).unwrap_or(RubyValue::Nil),
+            // The captured arguments are forwarded to a size callable, so
+            // `to_enum(:pairs, n) { n }` can read them back -- CRuby passes
+            // `e->args` through the same `call` probe.
+            RubyValue::Proc(p) => {
+                let args = match &e.source {
+                    EnumSource::Method { args, .. } => args.as_slice(),
+                    _ => &[],
+                };
+                p.call(args).unwrap_or(RubyValue::Nil)
+            }
             v => v.clone(),
         };
     }
@@ -735,12 +781,12 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
         // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
         EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
         EnumSource::Method { recv, meth, args } => match meth.as_str() {
-            "each" | "map" | "collect" | "select" | "filter" | "find_all" | "reject"
-            | "sort_by" | "min_by" | "max_by" | "group_by" | "partition" | "flat_map"
-            | "collect_concat" | "each_with_index" | "each_with_object" | "with_index"
-            | "with_object" | "each_char" | "each_key" | "each_value" | "each_pair"
-            | "each_index" | "map!" | "select!" | "reject!" | "transform_keys"
-            | "transform_values" => receiver_size(recv),
+            "each" | "each_entry" | "map" | "collect" | "select" | "filter" | "find_all"
+            | "reject" | "sort_by" | "min_by" | "max_by" | "group_by" | "partition"
+            | "flat_map" | "collect_concat" | "each_with_index" | "each_with_object"
+            | "with_index" | "with_object" | "each_char" | "each_key" | "each_value"
+            | "each_pair" | "each_index" | "map!" | "select!" | "reject!"
+            | "transform_keys" | "transform_values" => receiver_size(recv),
             "times" => recv.clone(),
             "upto" | "downto" => int_span(recv, args.first(), meth == "upto"),
             "each_slice" | "each_cons" => {

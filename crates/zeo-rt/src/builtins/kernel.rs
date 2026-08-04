@@ -789,10 +789,11 @@ ruby_module! {
         }
     }
     // `x.to_enum(:meth, *args)` -- captures exactly (receiver, method,
-    // args), CRuby's obj_to_enum. The block-as-size-proc
-    // form is Tier B (rare; the stored-size Enumerator.new form covers
-    // the practical cases).
-    def "to_enum" | "enum_for"(recv, *args, &_block) {
+    // args), CRuby's obj_to_enum. An optional block SUPPLIES the size, and is
+    // stored unevaluated: `def each(&b) = block_given? ? ... : to_enum(:each)
+    // { @items.size }` is the documented way to write `each`, and the block
+    // exists so the count is computed only if someone asks for it.
+    def "to_enum" | "enum_for"(recv, *args, &block) {
         let meth = match args.first() {
             None => "each".to_string(),
             Some(RubyValue::Symbol(s)) => s.name().as_str().to_string(),
@@ -802,7 +803,10 @@ ruby_module! {
             }
         };
         let rest = if args.is_empty() { &[] } else { &args[1..] };
-        Ok(crate::builtins::enumerator::enumerator_for(recv, &meth, rest))
+        let size = block.filter(|b| matches!(b, RubyValue::Proc(_)));
+        Ok(crate::builtins::enumerator::enumerator_for_with_size(
+            recv, &meth, rest, size,
+        ))
     }
     // The line-input family. CRuby reads these from ARGF, which -- with no
     // file arguments -- IS `$stdin`. zeo has no ARGF, so they forward to
