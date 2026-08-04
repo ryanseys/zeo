@@ -243,6 +243,10 @@ struct Ctx<'a> {
     /// that lexical context check `self_is_dynamic` first instead -- see
     /// `boxed_implicit_self` and `IvarRead`.
     runtime_super_params: Option<std::rc::Rc<crate::hir::Params>>,
+    /// Whether that runtime method body came from `define_method` rather
+    /// than a `def`. A BARE `super` is an error in the first and ordinary in
+    /// the second -- see `call::super_calls::emit_super`.
+    defined_by_define_method: bool,
 }
 
 /// The local-type map a scope emits under, given its `binding_names`. An
@@ -252,6 +256,16 @@ struct Ctx<'a> {
 /// the unboxed `Arc<Concrete>` the cell no longer holds. Dropping the type
 /// routes those through ordinary dynamic dispatch instead, which is what the
 /// value in the cell supports.
+/// Whether `scope`'s body came from a literal `define_method(:name) { .. }`
+/// rather than a `def`. A BARE `super` is an error in the first and
+/// ordinary in the second -- see `call::super_calls::emit_super`.
+fn scope_is_define_method(compiler: &Compiler, scope: &crate::compiler::Scope) -> bool {
+    matches!(
+        scope.def_node.map(|n| &compiler.hir[n]),
+        Some(crate::hir::HirNode::DefMethod { is_def: false, .. })
+    )
+}
+
 fn binding_scope_local_types<'a>(
     binding_names: Option<&std::rc::Rc<Vec<String>>>,
     captured: &HashSet<String>,
@@ -1999,6 +2013,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         self_slots: false,
         shared_body: false,
         runtime_super_params: None,
+        defined_by_define_method: false,
         block_depth: 0,
         has_blk_binding: false,
     };
@@ -2388,6 +2403,7 @@ pub(crate) fn emit_class_body_site(
         self_slots: false,
         shared_body: false,
         runtime_super_params: None,
+        defined_by_define_method: false,
         block_depth: 0,
         has_blk_binding: false,
     };
@@ -2679,6 +2695,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         class_self: scope.class,
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
+        defined_by_define_method: scope_is_define_method(compiler, scope),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &no_captures.locals,
@@ -2949,6 +2966,7 @@ fn emit_value_self_method_fn(
         class_self: None,
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
+        defined_by_define_method: scope_is_define_method(compiler, scope),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,
@@ -3041,6 +3059,7 @@ pub(crate) fn emit_instance_method_body(
         class_self: None,
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
+        defined_by_define_method: scope_is_define_method(compiler, scope),
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,

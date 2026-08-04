@@ -1408,6 +1408,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // that class).
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+            body_cx.defined_by_define_method = !is_def;
             // The body IS this method's body, however it is installed, so
             // `__method__`/`__callee__` name it rather than reporting whatever
             // encloses the `def` -- `nil` at the top level, which is what a

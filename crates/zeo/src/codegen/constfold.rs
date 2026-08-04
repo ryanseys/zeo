@@ -264,6 +264,7 @@ mod tests {
                 self_slots: false,
                 shared_body: false,
                 runtime_super_params: None,
+                defined_by_define_method: false,
                 block_depth: 0,
                 has_blk_binding: false,
             }

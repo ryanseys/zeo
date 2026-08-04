@@ -37,6 +37,30 @@ pub fn emit_super(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
 ) -> TokenStream {
+    // A BARE `super` from a `define_method` body is an error in ruby
+    // (`vm_insnhelper.c`): a zsuper forwards the CURRENT values of the
+    // method's parameters, and a block-shaped body has no parameter list to
+    // forward from, so ruby refuses rather than guessing. Running it as
+    // though `super()` had been written means a macro-written wrapper
+    // forwards nothing where the author expected the arguments to carry
+    // through -- which fails later, at the callee.
+    //
+    // Ahead of BOTH resolution paths below, because the body reaches a
+    // different one depending on where it was written -- a `Class.new`
+    // block resolves at runtime, a named class body splices at compile
+    // time -- and ruby refuses in either. Raised at DISPATCH time, not
+    // compile time: the method may never be called. An ordinary `def`
+    // written in the same place keeps its bare `super`.
+    if zsuper && cx.defined_by_define_method {
+        let msg = "implicit argument passing of super from method defined by \
+                   define_method() is not supported. Specify all arguments explicitly.";
+        return quote! {
+            Err::<zeo_rt::RubyValue, zeo_rt::Signal>(
+                zeo_rt::raise_error("RuntimeError", #msg.to_string()),
+            )?
+        };
+    }
+
     // A `super` inside a RUNTIME-defined method body (a `def`/`define_method`
     // installed in a `Class.new`/`Struct.new`/`Data.define` block) has no
     // compile-time defining class -- the class is minted at runtime. `emit_expr`
@@ -72,7 +96,10 @@ pub fn emit_super(
     ) else {
         let err =
             super::raise::emit_simple_error(cx, "NoMethodError", "super called outside of method");
-        return quote! { Err(zeo_rt::Signal::Raise(#err))? };
+        // Typed, like every other raise emitted into an expression slot: in
+        // string interpolation the bare `Err(..)?` gave rustc no way to infer
+        // `T`, so a program that should raise at run time failed to COMPILE.
+        return quote! { Err::<zeo_rt::RubyValue, zeo_rt::Signal>(zeo_rt::Signal::Raise(#err))? };
     };
     // Which pool a `super` search consults, per the note above.
     let own_pool = |compiler: &crate::compiler::Compiler, anc: crate::compiler::ClassId| {

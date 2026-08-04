@@ -1,0 +1,3 @@
+"dyn(base[9])"
+bare: RuntimeError: implicit argument passing of super from method defined by define_method() is not supported. Specify all arguments explicitly.
+"lit(base[1])"
