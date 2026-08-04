@@ -212,38 +212,75 @@ ruby_class! {
         }
         Ok(RubyValue::Nil)
     }
-    def "gets" as gets (recv, arg?) {
-        let sep = match arg {
-            None | Some(RubyValue::Nil) => "\n".to_string(),
-            Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
-            Some(other) => other.to_display_string(),
-        };
+    // `gets([sep][, limit][, chomp:])`. The argument shape is IO's, parsed by
+    // IO's own `line_opts` -- StringIO is meant to be drop-in, so the two must
+    // not drift. The bytes are sliced here rather than reused from IO because a
+    // StringIO remembers its buffer's encoding.
+    def "gets" as gets (recv, _sep?, _limit?, **_opts, &_blk) {
+        let opts = crate::builtins::io::line_opts(__args);
         let mut s = io_of(recv).state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
         }
         let rest = &s.bytes[s.pos..];
-        let end = find_sub(rest, sep.as_bytes())
-            .map(|i| s.pos + i + sep.len())
-            .unwrap_or(s.bytes.len());
-        let line = s.bytes[s.pos..end].to_vec();
+        let mut end = match &opts.sep {
+            // A nil separator slurps the rest.
+            None => s.bytes.len(),
+            Some(sep) if sep.is_empty() => s.bytes.len(),
+            Some(sep) => find_sub(rest, sep)
+                .map(|i| s.pos + i + sep.len())
+                .unwrap_or(s.bytes.len()),
+        };
+        if let Some(limit) = opts.limit {
+            end = end.min(s.pos + limit);
+        }
+        let mut line = s.bytes[s.pos..end].to_vec();
         s.pos = end;
+        crate::builtins::io::chomp_line(&mut line, &opts);
         Ok(bytes_to_str(&line, s.enc))
     }
-    def "each_line" | "each" cfunc (recv, &block) {
+    def "each_line" | "each" cfunc (recv, _sep?, _limit?, **_opts, &block) {
         // Blockless, this is an Enumerator over the same lines -- Ruby's rule
         // for every `each_*`, and what `each_line.to_a` (csv's reader) needs.
+        // The Enumerator has to carry the arguments, or `each_line(chomp: true)
+        // .to_a` would replay the walk without them.
         let Some(RubyValue::Proc(p)) = block else {
-            return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_line", &[]));
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "each_line", __args));
         };
         loop {
-            let line = gets(recv, &[], None)?;
+            let line = gets(recv, __args, None)?;
             if matches!(line, RubyValue::Nil) {
                 break;
             }
             p.call(&[line])?;
         }
         Ok(recv.clone())
+    }
+    // `each_char` -- yield each character; blockless, an Enumerator.
+    def "each_char" (recv, &block) {
+        let p = crate::builtins::block_or_enum!(recv, __args, block);
+        loop {
+            let ch = {
+                let mut s = io_of(recv).state.lock();
+                if s.pos >= s.bytes.len() {
+                    break;
+                }
+                let len = char_len(s.enc, s.bytes[s.pos]).min(s.bytes.len() - s.pos);
+                let ch = s.bytes[s.pos..s.pos + len].to_vec();
+                s.pos += len;
+                bytes_to_str(&ch, s.enc)
+            };
+            p.call(&[ch])?;
+        }
+        Ok(recv.clone())
+    }
+    // `printf(fmt, *args)`. Without a row here the name resolves to the
+    // PRIVATE `Kernel#printf`, so an explicit receiver is refused -- which is
+    // exactly what a StringIO is for.
+    def "printf" cfunc (recv, fmt, *args, &_blk) {
+        let s = crate::builtins::format::sprintf(&fmt.try_display_string()?, args)?;
+        write_at(&mut io_of(recv).state.lock(), s.as_bytes());
+        Ok(RubyValue::Nil)
     }
     def "eof?" | "eof" (recv) {
         let s = io_of(recv).state.lock();
@@ -328,15 +365,15 @@ ruby_class! {
         s.pos += 1;
         Ok(RubyValue::Int(i64::from(b)))
     }
-    // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
-    def "readline" (recv, _sep?) {
+    // `readline([sep][, limit][, chomp:])` -- `gets`, but raising at end.
+    def "readline" (recv, _sep?, _limit?, **_opts, &_blk) {
         match gets(recv, __args, None)? {
             RubyValue::Nil => Err(eof_error!("end of file reached")),
             line => Ok(line),
         }
     }
-    // `readlines(sep = "\n")` -- every remaining line as an Array.
-    def "readlines" (recv, _sep?) {
+    // `readlines([sep][, limit][, chomp:])` -- every remaining line as an Array.
+    def "readlines" (recv, _sep?, _limit?, **_opts, &_blk) {
         let mut lines = Vec::new();
         loop {
             match gets(recv, __args, None)? {

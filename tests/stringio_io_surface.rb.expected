@@ -1,11 +1,6 @@
-"h"
-"é"
-"!"
-nil
-"cd"
-"f"
-"c"
-"one\n"
-["two\n", "three"]
-EOFError: end of file reached
-"hello"
+["a", "b"]
+["a", "b"]
+"00042"
+["a", "b"]
+["a\n", "b\n"]
+["a\n", "b"]

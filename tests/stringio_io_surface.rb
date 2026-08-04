@@ -1,33 +1,32 @@
-require "stringio"
+# `StringIO` is meant to be drop-in for an `IO`, which is what makes it the
+# standard way to capture output or feed a parser in a test. Three of IO's
+# methods are missing or mis-scoped on it:
+#
+#   * `each_line(chomp: true)` -- the keyword is rejected as a positional arg
+#     ("wrong number of arguments (given 1, expected 0)"). `readlines`/`gets`
+#     take it too.
+#   * `printf` -- resolves to the PRIVATE `Kernel#printf` rather than a public
+#     `IO#printf`, so an explicit receiver is refused.
+#   * `each_char` -- absent entirely.
+#
+# The shared cause is that zeo's StringIO carries its own hand-written row set
+# rather than inheriting IO's, so a name IO has and StringIO's list omits simply
+# is not there. `each_line` and `readlines` DO exist; only their `chomp:`
+# keyword is unmodelled.
 
-# getc reads one character at a time (UTF-8 aware); nil at EOF.
-io = StringIO.new("hé!")
-p io.getc
-p io.getc
-p io.getc
-p io.getc
+require 'stringio'
 
-# seek repositions by SEEK_SET (0), SEEK_CUR (1), or SEEK_END (2).
-buf = StringIO.new("abcdef")
-buf.seek(2)
-p buf.read(2)
-buf.seek(-1, IO::SEEK_END)
-p buf.read
-buf.seek(1, IO::SEEK_SET)
-buf.seek(1, IO::SEEK_CUR)
-p buf.read(1)
+s = StringIO.new("a\nb\n")
+p s.each_line(chomp: true).to_a
 
-# readline raises EOFError past the end; readlines gathers the rest.
-lines = StringIO.new("one\ntwo\nthree")
-p lines.readline
-p lines.readlines
-begin
-  lines.readline
-rescue EOFError => e
-  puts "EOFError: #{e.message}"
-end
+p StringIO.new("a\nb\n").readlines(chomp: true)
 
-# truncate resizes the buffer.
-t = StringIO.new("hello world")
-t.truncate(5)
-p t.string
+out = StringIO.new
+out.printf("%05d", 42)
+p out.string
+
+p StringIO.new("ab").each_char.to_a
+
+# What already works, so a fix must not disturb it.
+p StringIO.new("a\nb\n").each_line.to_a
+p StringIO.new("a\nb").readlines

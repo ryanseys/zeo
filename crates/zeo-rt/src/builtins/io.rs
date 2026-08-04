@@ -982,17 +982,17 @@ fn io_read_val(
 /// How `gets`/`readline`/`each_line`/`readlines` split their input: the line
 /// separator (`None` = slurp the whole rest, i.e. `gets(nil)`), an optional
 /// byte limit, and whether to strip the terminator (`chomp:`).
-struct LineOpts {
-    sep: Option<Vec<u8>>,
-    limit: Option<usize>,
-    chomp: bool,
+pub(crate) struct LineOpts {
+    pub sep: Option<Vec<u8>>,
+    pub limit: Option<usize>,
+    pub chomp: bool,
 }
 
 /// Parse the shared `(sep = $/, limit = nil, chomp: false)` argument shape.
 /// A leading Integer is the limit (separator stays `"\n"`); a leading String
 /// is the separator, with an Integer that follows as the limit; a leading nil
 /// slurps. The trailing keyword Hash carries `chomp:`.
-fn line_opts(args: &[RubyValue]) -> LineOpts {
+pub(crate) fn line_opts(args: &[RubyValue]) -> LineOpts {
     let mut sep: Option<Vec<u8>> = Some(b"\n".to_vec());
     let mut limit = None;
     let mut chomp = false;
@@ -1041,21 +1041,28 @@ fn read_line_bytes(io: &RIo, f: &mut std::fs::File, opts: &LineOpts) -> std::io:
 }
 
 /// Turn a line's bytes into the String `gets` answers, honoring `chomp:`.
-fn line_string(bytes: Vec<u8>, opts: &LineOpts) -> RubyValue {
-    let mut s = String::from_utf8_lossy(&bytes).into_owned();
-    if opts.chomp {
-        // `chomp` strips one trailing "\r\n"/"\n"/"\r" (or the custom sep).
-        if let Some(sep) = &opts.sep {
-            let sep = String::from_utf8_lossy(sep);
-            if s.ends_with(sep.as_ref()) {
-                s.truncate(s.len() - sep.len());
-            }
-        }
-        while s.ends_with('\n') || s.ends_with('\r') {
-            s.pop();
+fn line_string(mut bytes: Vec<u8>, opts: &LineOpts) -> RubyValue {
+    chomp_line(&mut bytes, opts);
+    RubyValue::Str(crate::collections::string_new(
+        String::from_utf8_lossy(&bytes).into_owned(),
+    ))
+}
+
+/// `chomp:`'s rule, on the raw bytes so an encoding-carrying caller
+/// (`StringIO`) can apply it without going through UTF-8: strip one trailing
+/// custom separator, then any trailing `"\r\n"`/`"\n"`/`"\r"`.
+pub(crate) fn chomp_line(bytes: &mut Vec<u8>, opts: &LineOpts) {
+    if !opts.chomp {
+        return;
+    }
+    if let Some(sep) = &opts.sep {
+        if !sep.is_empty() && bytes.ends_with(sep) {
+            bytes.truncate(bytes.len() - sep.len());
         }
     }
-    RubyValue::Str(crate::collections::string_new(s))
+    while bytes.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
+        bytes.pop();
+    }
 }
 
 fn bump_lineno(recv: &RubyValue) {
