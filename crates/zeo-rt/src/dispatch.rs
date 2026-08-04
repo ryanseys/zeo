@@ -2038,14 +2038,11 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             // A PER-OBJECT singleton (`def obj.x`) is identity-keyed, so the
             // class-id walk below cannot see it -- the singleton class has no
             // rows of its own.
-            Some(owner) => {
-                if crate::runtime_meta::object_has_singleton_method(&owner, name) {
-                    return include_all
-                        || value_singleton_visibility(recv_class, name)
-                            == MethodVisibility::Public;
-                }
+            Some(owner) if crate::runtime_meta::object_has_singleton_method(&owner, name) => {
+                return include_all
+                    || value_singleton_visibility(recv_class, name) == MethodVisibility::Public;
             }
-            None => {}
+            _ => {}
         }
     }
     let n = name.name();
