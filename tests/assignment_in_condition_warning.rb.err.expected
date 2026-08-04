@@ -1,0 +1,3 @@
+assignment_in_condition_warning.rb:15: warning: found '= literal' in conditional, should be ==
+assignment_in_condition_warning.rb:19: warning: found '= literal' in conditional, should be ==
+assignment_in_condition_warning.rb:23: warning: found '= literal' in conditional, should be ==

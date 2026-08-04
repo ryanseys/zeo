@@ -1859,11 +1859,17 @@ fn collect_parse_warnings(
 /// zeo has no `-w` to justify the verbose tier -- so the shapes worth
 /// forwarding are named here explicitly.
 ///
-/// Only the duplicated-key warning so far. Of prism's ten other default-level
-/// shapes, two (`literal in condition`) render IDENTICALLY to a verbose-level
-/// one, so a message-keyed filter cannot tell those apart -- and forwarding a
-/// verbose-only warning by mistake is worse than forwarding none. Reading the
-/// real level would need the binding to expose `pm_diagnostic_t::level`.
+/// A message is safe to forward only when NO verbose-level diagnostic renders
+/// the same text. `literal in condition` is the shape that fails that test:
+/// prism's default and verbose rows share the format `%sliteral in %s`, so a
+/// message-keyed filter cannot tell them apart, and forwarding a verbose-only
+/// warning by mistake is worse than forwarding none. Reading the real level
+/// would need the binding to expose `pm_diagnostic_t::level`.
+///
+/// The two shapes below have no such twin: `equal_in_conditional` (`= literal`
+/// in a conditional -- the classic `if x = 1` typo) is spelled two ways, one
+/// per parser version, and both rows are default-level.
 fn is_default_level(message: &str) -> bool {
     message.starts_with("key ") && message.contains(" is duplicated and overwritten on line ")
+        || message.ends_with("literal' in conditional, should be ==")
 }
