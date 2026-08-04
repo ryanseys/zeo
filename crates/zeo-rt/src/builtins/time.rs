@@ -309,6 +309,55 @@ fn offset_str(off: i32, with_seconds: bool) -> String {
     }
 }
 
+/// strftime's `%z` family, rendered CRuby's way (`strftime.c:546`): the offset
+/// runs through the same signed width/precision macro every numeric directive
+/// uses, which is how the pad flags reach it at all.
+///
+/// That is also why the flagged answers look like artifacts rather than
+/// intent, and they are still what the oracle prints:
+///
+/// * `_` pads the HOUR field with a space, which costs the field a digit --
+///   `+0530` becomes ` +530`.
+/// * `-` flips the sign of a UTC offset, so `%-z` on a UTC time is `-0000`.
+///   Only a `utc?` Time, never a numeric `+00:00`, which is why this needs
+///   `gmt` rather than a test on the offset being zero.
+///
+/// `left` is sticky (any `-` among the flags) while `pad` is last-wins, which
+/// is what makes `%-_z` (` -000`) and `%_-z` (`-0000`) differ.
+fn offset_str_flagged(off: i32, colons: usize, pad: Option<char>, left: bool, gmt: bool) -> String {
+    let negative = off < 0 || (gmt && left);
+    let a = off.abs();
+    let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+    let signed_h = if negative { -(h as i64) } else { h as i64 };
+    let space = pad == Some('_');
+    let mut out = if space {
+        format!("{signed_h:+3}")
+    } else {
+        format!("{signed_h:+03}")
+    };
+    // An offset smaller than an hour has no sign of its own to carry (`-0` is
+    // `0`), so a negative one is written over the field's rendered `+`.
+    if negative && h == 0 {
+        let at = usize::from(space);
+        out.replace_range(at..=at, "-");
+    }
+    // `%:::z` stops at the coarsest field that leaves no remainder.
+    if colons == 3 && m == 0 && s == 0 {
+        return out;
+    }
+    if colons >= 1 {
+        out.push(':');
+    }
+    out.push_str(&format!("{m:02}"));
+    if colons == 3 && s == 0 {
+        return out;
+    }
+    if colons >= 2 {
+        out.push_str(&format!(":{s:02}"));
+    }
+    out
+}
+
 /// strftime's colon-offset directives: `%:z` -> `+HH:MM`, `%::z` ->
 /// `+HH:MM:SS`, `%:::z` -> the minimal colon form.
 fn offset_str_colon(off: i32, colons: usize) -> String {
@@ -477,9 +526,16 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         let mut pad: Option<char> = None;
         let mut colons = 0usize;
         let (mut upcase, mut swapcase) = (false, false);
+        // `-` is remembered on its own as well as in `pad`: `%z` reads it as a
+        // sign flip independently of which pad character came last, which is
+        // what makes `%-_z` and `%_-z` differ.
+        let mut left = false;
         while let Some(&f) = chars.peek() {
             match f {
-                '-' | '0' | '_' => pad = Some(f),
+                '-' | '0' | '_' => {
+                    pad = Some(f);
+                    left |= f == '-';
+                }
                 '^' => upcase = true,
                 '#' => swapcase = true,
                 ':' => colons += 1,
@@ -501,9 +557,14 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         // directive's own default pad applies (an explicit `%<n>X` width
         // overrides the directive's default WIDTH the same way).
         let num_pad = |v: i64, default_width: usize, default_pad: char| -> String {
+            // `-` wins wherever it appears among the flags, so `%-_5Y` and
+            // `%_-5Y` both drop the padding; `_` and `0` are last-wins between
+            // themselves (`%_0m` zero-pads, `%0_m` space-pads).
+            if left {
+                return v.to_string();
+            }
             let w = width.unwrap_or(default_width);
             match pad.unwrap_or(default_pad) {
-                '-' => v.to_string(),
                 '_' | ' ' => format!("{:>w$}", v, w = w),
                 _ => format!("{:0w$}", v, w = w),
             }
@@ -566,8 +627,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'S' => num(tm.tm_sec as i64, 2),
             'L' => frac(width.unwrap_or(3)),
             'N' => frac(width.unwrap_or(9)),
-            'z' if colons > 0 => offset_str_colon(c.offset, colons),
-            'z' => offset_str(c.offset, false),
+            'z' => offset_str_flagged(c.offset, colons, pad, left, t.is_utc()),
             'Z' => c.zone.clone(),
             'a' => DAY_NAMES[tm.tm_wday as usize][..3].to_string(),
             'A' => DAY_NAMES[tm.tm_wday as usize].to_string(),
