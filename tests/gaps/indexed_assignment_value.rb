@@ -13,9 +13,16 @@
 # `[]=` answers `self` for chaining silently changes the meaning of every
 # assignment that uses it.
 
+# (A setter cannot be written in the endless form -- ruby rejects
+# `def []=(k, v) = ...` outright -- so these carry ordinary bodies.)
 class Store
-  def []=(k, v) = :ignored_return
-  def value=(v) = :also_ignored
+  def []=(k, v)
+    :ignored_return
+  end
+
+  def value=(v)
+    :also_ignored
+  end
 end
 
 s = Store.new
