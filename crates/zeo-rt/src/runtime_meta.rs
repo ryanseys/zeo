@@ -487,9 +487,27 @@ pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
     list.iter().copied().any(reaches)
 }
 
+/// The real parent class of `cid` -- the first non-module entry after it in
+/// the linearization, which is what `Class#superclass` answers.
+fn superclass_of(cid: ClassId) -> Option<ClassId> {
+    crate::dispatch::ancestors_of_value(cid)
+        .iter()
+        .skip_while(|&&a| a != cid)
+        .skip(1)
+        .copied()
+        .find(|&a| !crate::dispatch::class_is_module(a).unwrap_or(false))
+}
+
 /// The chain BELOW a receiver's singleton class: each extended module (newest
 /// first, carrying its own ancestors) ahead of the receiver class's own chain.
 /// That is CRuby's `obj.singleton_class.ancestors` without the singleton head.
+///
+/// A CLASS receiver takes one more step first. Ruby runs a whole parallel
+/// hierarchy of singleton classes (`class.c`'s `make_metaclass`):
+/// `#<Class:Sub>`'s superclass is `#<Class:Base>`, not `Class`, and it is that
+/// chain -- minted the rest of the way here, as `ENSURE_EIGENCLASS` does --
+/// which makes a class method inherit. It ends at `BasicObject`, whose
+/// singleton's superclass is `Class` itself, where the ordinary chain resumes.
 fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
     let mut chain: Vec<ClassId> = Vec::new();
     fn push(id: ClassId, chain: &mut Vec<ClassId>) {
@@ -504,10 +522,30 @@ fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
             push(a, &mut chain);
         }
     }
+    // A MODULE has no superclass, so it has no parallel chain either: its
+    // singleton sits straight on `Module`.
+    if let RubyValue::Class(cid) = recv
+        && !crate::dispatch::class_is_module(*cid).unwrap_or(false)
+    {
+        let mut parent = superclass_of(*cid);
+        while let Some(p) = parent {
+            push(singleton_class_id_of(p), &mut chain);
+            parent = superclass_of(p);
+        }
+    }
     for &a in crate::dispatch::ancestors_of_value(recv.class_id()) {
         push(a, &mut chain);
     }
     chain
+}
+
+/// `cid`'s singleton class, minting it if this is the first ask. Holds NO
+/// lock, so the recursion up the superclass chain cannot deadlock.
+fn singleton_class_id_of(cid: ClassId) -> ClassId {
+    match runtime_singleton_class(&RubyValue::Class(cid)) {
+        Ok(RubyValue::Class(sid)) => sid,
+        _ => unreachable!("a Class always has a singleton class"),
+    }
 }
 
 /// Rebuild an ALREADY-MINTED singleton class's ancestry after an `extend`.
