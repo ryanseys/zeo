@@ -481,11 +481,10 @@ pub fn block_auto_splat(args: Vec<RubyValue>) -> Result<Vec<RubyValue>, Signal> 
             // `rb_check_array_type`: a `to_ary` answering a non-Array is
             // simply not a coercion (no TypeError here, unlike a splice's
             // explicit conversion) -- the value binds as one argument.
-            if crate::dispatch::responds_to(v.class_id(), to_ary, false) {
-                if let RubyValue::Array(a) = crate::dispatch::send_value(v, to_ary, &[], None)? {
+            if crate::dispatch::responds_to(v.class_id(), to_ary, false)
+                && let RubyValue::Array(a) = crate::dispatch::send_value(v, to_ary, &[], None)? {
                     return Ok(a.lock().to_vec());
                 }
-            }
             Ok(args)
         }
     }

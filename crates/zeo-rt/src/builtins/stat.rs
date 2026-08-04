@@ -21,6 +21,10 @@ use zeo_macros::ruby_class;
 /// the whole object is a plain value behind the `Arc` every `RObj` needs.
 pub struct RStat {
     st: libc::stat,
+    /// Creation time as `(secs, nanos)`. macOS reads it off the stat itself;
+    /// Linux captures it separately via `statx(2)` at construction, and a
+    /// filesystem without a recorded btime leaves it `None`.
+    birth: Option<(i64, i64)>,
 }
 
 impl RubyObject for RStat {
@@ -43,13 +47,30 @@ impl RubyObject for RStat {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RStat { st: self.st })
+        Arc::new(RStat {
+            st: self.st,
+            birth: self.birth,
+        })
     }
 }
 
 /// Wrap a `libc::stat` as a `File::Stat` value.
-fn stat_value(st: libc::stat) -> RubyValue {
-    RubyValue::Object(Arc::new(RStat { st }))
+fn stat_value(st: libc::stat, birth: Option<(i64, i64)>) -> RubyValue {
+    RubyValue::Object(Arc::new(RStat { st, birth }))
+}
+
+/// The creation time `stat(2)` itself cannot carry on Linux: `statx(2)` with
+/// `STATX_BTIME`, `None` when the filesystem does not record one.
+#[cfg(target_os = "linux")]
+fn statx_birth(dirfd: libc::c_int, path: &std::ffi::CStr, flags: libc::c_int) -> Option<(i64, i64)> {
+    let mut x: libc::statx = unsafe { std::mem::zeroed() };
+    // SAFETY: `path` is a valid NUL-terminated string; `x` is a live buffer.
+    let rc = unsafe { libc::statx(dirfd, path.as_ptr(), flags, libc::STATX_BTIME, &mut x) };
+    if rc == 0 && (x.stx_mask & libc::STATX_BTIME) != 0 {
+        Some((x.stx_btime.tv_sec, x.stx_btime.tv_nsec as i64))
+    } else {
+        None
+    }
 }
 
 /// `File.stat(path)` (follows a final symlink) / `File.lstat(path)` (doesn't).
@@ -72,7 +93,15 @@ pub fn stat_from_path(path: &str, follow: bool) -> Result<RubyValue, Signal> {
             path,
         ));
     }
-    Ok(stat_value(st))
+    #[cfg(target_vendor = "apple")]
+    let birth = Some((st.st_birthtime, st.st_birthtime_nsec));
+    #[cfg(target_os = "linux")]
+    let birth = statx_birth(
+        libc::AT_FDCWD,
+        &c,
+        if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW },
+    );
+    Ok(stat_value(st, birth))
 }
 
 /// `File#stat` -- a `fstat(2)` on the open descriptor.
@@ -87,7 +116,11 @@ pub fn stat_from_fd(fd: i32) -> Result<RubyValue, Signal> {
             "",
         ));
     }
-    Ok(stat_value(st))
+    #[cfg(target_vendor = "apple")]
+    let birth = Some((st.st_birthtime, st.st_birthtime_nsec));
+    #[cfg(target_os = "linux")]
+    let birth = statx_birth(fd, c"", libc::AT_EMPTY_PATH);
+    Ok(stat_value(st, birth))
 }
 
 fn recv_stat(recv: &RubyValue) -> Result<&RStat, Signal> {
@@ -145,8 +178,13 @@ ruby_class! {
         Ok(stat_time(st.st_ctime, st.st_ctime_nsec))
     }
     def "birthtime"(recv) {
-        let st = &recv_stat(recv)?.st;
-        Ok(stat_time(st.st_birthtime, st.st_birthtime_nsec))
+        match recv_stat(recv)?.birth {
+            Some((secs, nsec)) => Ok(stat_time(secs, nsec)),
+            None => Err(crate::dispatch::raise_error(
+                "NotImplementedError",
+                "birthtime() function is unimplemented on this machine".to_string(),
+            )),
+        }
     }
     def "mode"(recv) {
         Ok(RubyValue::Int(recv_stat(recv)?.st.st_mode as i64))

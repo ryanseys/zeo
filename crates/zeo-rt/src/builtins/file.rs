@@ -126,11 +126,10 @@ fn read_encodings(
     let resolve = |name: &str| {
         crate::encoding::find(name).ok_or_else(|| arg_error!("unknown encoding name - {name}"))
     };
-    if let RubyValue::Str(m) = get("mode") {
-        if m.lock().to_utf8_lossy().contains('b') {
+    if let RubyValue::Str(m) = get("mode")
+        && m.lock().to_utf8_lossy().contains('b') {
             ext = crate::encoding::ASCII_8BIT;
         }
-    }
     match get("encoding") {
         RubyValue::Str(s) => {
             let name = s.lock().to_utf8_lossy().into_owned();

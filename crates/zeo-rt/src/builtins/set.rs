@@ -276,8 +276,8 @@ ruby_class! {
     // `Set.new` / `Set.new(enum)` / `Set.new(enum) { |o| transform(o) }`.
     def self."new"(_recv, arg?, &block) {
         let out = empty_set();
-        if let Some(source) = arg {
-            if !source.is_nil() {
+        if let Some(source) = arg
+            && !source.is_nil() {
                 let s = set_of(&out);
                 for e in arg_elements(source)? {
                     let e = match &block {
@@ -289,7 +289,6 @@ ruby_class! {
                     s.insert(e);
                 }
             }
-        }
         Ok(out)
     }
     // `Set[a, b, c]` -- every argument is a member (deduplicated).

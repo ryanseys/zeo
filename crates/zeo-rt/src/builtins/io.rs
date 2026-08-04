@@ -440,11 +440,10 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
 /// `write` send for anything else (`$stdout = <duck>` redirection --
 /// CRuby's own contract is "any object responding to `write`").
 pub fn write_str(target: &RubyValue, s: &str) -> Result<(), Signal> {
-    if let RubyValue::Object(o) = target {
-        if let Some(io) = o.as_any().downcast_ref::<RIo>() {
+    if let RubyValue::Object(o) = target
+        && let Some(io) = o.as_any().downcast_ref::<RIo>() {
             return write_rio(io, s.as_bytes());
         }
-    }
     crate::dispatch::send_value(
         target,
         crate::symbol::wk::write(),
@@ -460,11 +459,10 @@ pub fn write_str(target: &RubyValue, s: &str) -> Result<(), Signal> {
 /// accumulators, `putc`'s single byte). A duck target receives it as a
 /// BINARY string -- the honest tag for bytes with no other provenance.
 pub fn write_bytes(target: &RubyValue, bytes: &[u8]) -> Result<(), Signal> {
-    if let RubyValue::Object(o) = target {
-        if let Some(io) = o.as_any().downcast_ref::<RIo>() {
+    if let RubyValue::Object(o) = target
+        && let Some(io) = o.as_any().downcast_ref::<RIo>() {
             return write_rio(io, bytes);
         }
-    }
     crate::dispatch::send_value(
         target,
         crate::symbol::wk::write(),
@@ -489,12 +487,11 @@ pub fn write_value(target: &RubyValue, v: &RubyValue) -> Result<i64, Signal> {
             let b = s.lock();
             b.bytes().to_vec()
         };
-        if let RubyValue::Object(o) = target {
-            if let Some(io) = o.as_any().downcast_ref::<RIo>() {
+        if let RubyValue::Object(o) = target
+            && let Some(io) = o.as_any().downcast_ref::<RIo>() {
                 write_rio(io, &bytes)?;
                 return Ok(bytes.len() as i64);
             }
-        }
         crate::dispatch::send_value(
             target,
             crate::symbol::wk::write(),
@@ -1020,20 +1017,18 @@ pub(crate) fn line_opts(args: &[RubyValue]) -> LineOpts {
 fn read_line_bytes(io: &RIo, f: &mut std::fs::File, opts: &LineOpts) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
     loop {
-        if let Some(lim) = opts.limit {
-            if out.len() >= lim {
+        if let Some(lim) = opts.limit
+            && out.len() >= lim {
                 break;
             }
-        }
         match buffered_byte(io, f)? {
             None => break,
             Some(b) => {
                 out.push(b);
-                if let Some(s) = &opts.sep {
-                    if !s.is_empty() && out.ends_with(s) {
+                if let Some(s) = &opts.sep
+                    && !s.is_empty() && out.ends_with(s) {
                         break;
                     }
-                }
             }
         }
     }
@@ -1055,11 +1050,10 @@ pub(crate) fn chomp_line(bytes: &mut Vec<u8>, opts: &LineOpts) {
     if !opts.chomp {
         return;
     }
-    if let Some(sep) = &opts.sep {
-        if !sep.is_empty() && bytes.ends_with(sep) {
+    if let Some(sep) = &opts.sep
+        && !sep.is_empty() && bytes.ends_with(sep) {
             bytes.truncate(bytes.len() - sep.len());
         }
-    }
     while bytes.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
         bytes.pop();
     }
@@ -1313,11 +1307,10 @@ fn getc_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
 /// `#getbyte`'s value -- `#readbyte` is this plus an EOF raise.
 fn getbyte_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
     // A byte pushed back with `#ungetbyte` is returned before the stream.
-    if let Some(io) = as_rio(recv) {
-        if let Some(byte) = io.unget.lock().pop() {
+    if let Some(io) = as_rio(recv)
+        && let Some(byte) = io.unget.lock().pop() {
             return Ok(RubyValue::Int(byte as i64));
         }
-    }
     let b = with_buffered_file(recv, |io, f, path| {
         buffered_byte(io, f).map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))
     })?;
@@ -1356,15 +1349,14 @@ fn close_io(recv: &RubyValue) -> Result<RubyValue, Signal> {
         }
         drop(backend);
         let pid = io.child_pid.swap(0, std::sync::atomic::Ordering::Relaxed);
-        if pid != 0 {
-            if let Ok(Some((reaped, raw))) =
+        if pid != 0
+            && let Ok(Some((reaped, raw))) =
                 crate::gvl::without_gvl(|| crate::builtins::process::raw_waitpid(pid, 0))
             {
                 crate::builtins::process::set_last_child_status(
                     crate::builtins::process::new_status(reaped, raw),
                 );
             }
-        }
     }
     Ok(RubyValue::Nil)
 }
@@ -2246,8 +2238,8 @@ ruby_class! {
             }
         };
         // The combined `"UTF-8:BINARY"` spelling, which only a String can carry.
-        if __args.len() == 1 {
-            if let RubyValue::Str(sp) = &__args[0] {
+        if __args.len() == 1
+            && let RubyValue::Str(sp) = &__args[0] {
                 let spec = sp.lock().to_utf8_lossy().into_owned();
                 if let Some((ext, int)) = spec.split_once(':') {
                     let ext = crate::builtins::encoding::arg_encoding(&RubyValue::Str(
@@ -2260,7 +2252,6 @@ ruby_class! {
                     return Ok(recv.clone());
                 }
             }
-        }
         let ext = parse(&__args[0])?;
         let int = match __args.get(1) {
             Some(v) => parse(v)?,

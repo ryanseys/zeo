@@ -172,11 +172,10 @@ ruby_class! {
         // `Array.new(other_array)` is the COPY form (CRuby `rb_ary_initialize`):
         // a shallow copy of the given array, ignoring any block. Only when the
         // sole argument is an Array -- otherwise the arg is a size below.
-        if fill.is_none() {
-            if let Some(RubyValue::Array(a)) = size {
+        if fill.is_none()
+            && let Some(RubyValue::Array(a)) = size {
                 return Ok(RubyValue::Array(crate::array_new(a.lock().to_vec())));
             }
-        }
         let size = match size {
             None => 0,
             Some(v) => arg_int!(v),
@@ -557,21 +556,19 @@ ruby_class! {
         // is still held deadlocks a non-reentrant Mutex. `product` below has
         // taken this shape all along.
         for e in crate::collections::array_snapshot(rary) {
-            if let RubyValue::Array(inner) = &e {
-                if inner.lock().first().is_some_and(|k| k.rb_eq(arg)) {
+            if let RubyValue::Array(inner) = &e
+                && inner.lock().first().is_some_and(|k| k.rb_eq(arg)) {
                     return Ok(e);
                 }
-            }
         }
         Ok(RubyValue::Nil)
     }
     def "rassoc" (recv, arg) {
         for e in crate::collections::array_snapshot(rary) {
-            if let RubyValue::Array(inner) = &e {
-                if inner.lock().get(1).is_some_and(|v| v.rb_eq(arg)) {
+            if let RubyValue::Array(inner) = &e
+                && inner.lock().get(1).is_some_and(|v| v.rb_eq(arg)) {
                     return Ok(e);
                 }
-            }
         }
         Ok(RubyValue::Nil)
     }
@@ -1616,11 +1613,10 @@ fn join_into(
     sep: Option<&crate::enc::StrBuf>,
 ) -> Result<(), crate::Signal> {
     for (i, e) in elems.iter().enumerate() {
-        if i > 0 {
-            if let Some(sep) = sep {
+        if i > 0
+            && let Some(sep) = sep {
                 push_or_raise(out, sep)?;
             }
-        }
         match e {
             RubyValue::Array(inner) => join_into(out, &inner.lock().clone(), sep)?,
             RubyValue::Str(s) => push_or_raise(out, &s.lock().clone())?,

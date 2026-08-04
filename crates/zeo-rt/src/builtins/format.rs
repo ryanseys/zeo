@@ -107,11 +107,10 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
         'd' | 'i' | 'u' => {
             let n = to_int_for_format(arg)?;
             let mut body = n.magnitude().to_string();
-            if let Some(p) = spec.precision {
-                if body.len() < p {
+            if let Some(p) = spec.precision
+                && body.len() < p {
                     body = "0".repeat(p - body.len()) + &body;
                 }
-            }
             Rendered {
                 head: sign_prefix(spec, n.sign() == num_bigint::Sign::Minus),
                 body,
@@ -298,11 +297,10 @@ fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
     if signed {
         // Signed magnitude: leading "-" (and "0b" after it under `#`).
         let mut body = radix_digits(&(-&n), radix, upper);
-        if let Some(p) = spec.precision {
-            if body.len() < p {
+        if let Some(p) = spec.precision
+            && body.len() < p {
                 body = "0".repeat(p - body.len()) + &body;
             }
-        }
         let mut head = "-".to_string();
         if spec.alt {
             head.push_str(prefix);

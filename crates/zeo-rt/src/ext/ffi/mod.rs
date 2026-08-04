@@ -152,13 +152,12 @@ impl RPointer {
         if len > 0 && self.base.is_null() {
             return Err(null_pointer_error());
         }
-        if let Some(size) = self.size {
-            if off + len > size {
+        if let Some(size) = self.size
+            && off + len > size {
                 return Err(index_error!(
                     "Memory access offset={off} size={len} out of bounds (total {size})"
                 ));
             }
-        }
         Ok(())
     }
 
@@ -471,17 +470,7 @@ pub fn type_size(sym: &str) -> Option<usize> {
     })
 }
 
-/// The C `errno` slot for this thread.
-fn errno_location() -> *mut libc::c_int {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        libc::__error()
-    }
-    #[cfg(not(target_os = "macos"))]
-    unsafe {
-        libc::__errno_location()
-    }
-}
+use crate::errno_ptr;
 
 zeo_macros::ruby_module! {
     FFI = zeo_abi::FFI_MODULE;
@@ -489,11 +478,11 @@ zeo_macros::ruby_module! {
     // `FFI.errno` / `FFI.errno=` -- the saved C errno; fiddle's `last_error`
     // reads through this.
     def self."errno"(_recv) {
-        Ok(RubyValue::Int(unsafe { *errno_location() } as i64))
+        Ok(RubyValue::Int(unsafe { *errno_ptr() } as i64))
     }
     def self."errno="(_recv, arg) {
         let v = crate::ffi::to_i64(arg)?;
-        unsafe { *errno_location() = v as libc::c_int };
+        unsafe { *errno_ptr() = v as libc::c_int };
         Ok((*arg).clone())
     }
 }

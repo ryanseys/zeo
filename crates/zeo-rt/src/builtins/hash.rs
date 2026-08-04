@@ -195,11 +195,10 @@ ruby_class! {
         }
         // A block supplies the return value when the key is ABSENT
         // (`h.delete(:z) { |k| ... }`), instead of the default nil.
-        if !crate::hash_has_key(h, arg) {
-            if let Some(RubyValue::Proc(p)) = block {
+        if !crate::hash_has_key(h, arg)
+            && let Some(RubyValue::Proc(p)) = block {
                 return p.call(&[(*arg).clone()]);
             }
-        }
         Ok(crate::hash_delete(h, arg))
     }
     def "key?" | "has_key?" | "include?" | "member?" (recv, arg) {
@@ -685,11 +684,10 @@ fn map_transform_key(
     blk: &Option<crate::RProc>,
     k: RubyValue,
 ) -> Result<RubyValue, crate::Signal> {
-    if let Some(m) = mapping {
-        if crate::hash_has_key(m, &k) {
+    if let Some(m) = mapping
+        && crate::hash_has_key(m, &k) {
             return Ok(crate::hash_get(m, &k));
         }
-    }
     if let Some(p) = blk {
         return p.call(std::slice::from_ref(&k));
     }

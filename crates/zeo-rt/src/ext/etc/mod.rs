@@ -32,17 +32,7 @@ fn str_val(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
-/// Portable pointer to the thread's `errno`.
-unsafe fn errno_ptr() -> *mut libc::c_int {
-    #[cfg(target_os = "macos")]
-    {
-        unsafe { libc::__error() }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        unsafe { libc::__errno_location() }
-    }
-}
+pub(crate) use crate::errno_ptr;
 
 /// A libc C string to an owned Rust `String` (empty for NULL).
 unsafe fn cstr(p: *const libc::c_char) -> String {

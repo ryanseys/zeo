@@ -250,12 +250,11 @@ ruby_module! {
     // immediate (Integer/Symbol/nil/...) is a `TypeError`, like CRuby.
     def "define_singleton_method" cfunc (recv, name, body?, &block) {
         let name = crate::runtime_meta::coerce_method_name(Some(name))?;
-        if let Some(src) = body {
-            if let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
+        if let Some(src) = body
+            && let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
                 return crate::runtime_meta::runtime_define_singleton_from_method(
                     recv, name, owner, src_name);
             }
-        }
         let body = crate::runtime_meta::coerce_method_body(body, &block)?;
         crate::runtime_define_singleton_method(recv, name, body)
     }
@@ -1129,14 +1128,13 @@ pub(crate) fn parse_integer_strict(text: &str, base: Option<u32>) -> Option<Ruby
     } else {
         (base.unwrap_or(10), lower)
     };
-    if let Some(b) = base {
-        if b != radix && !(b == 10 && radix == 10) {
+    if let Some(b) = base
+        && b != radix && !(b == 10 && radix == 10) {
             // An explicit base must agree with an explicit prefix.
             if radix != b {
                 return None;
             }
         }
-    }
     if digits.is_empty()
         || digits.starts_with('_')
         || digits.ends_with('_')
@@ -1601,11 +1599,10 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 .all(|(k, _)| k.rb_eq(&cat_key) || k.rb_eq(&up_key));
         if is_kwargs {
             msgs = &args[..args.len() - 1];
-            if let RubyValue::Symbol(s) = crate::hash_get(h, &cat_key) {
-                if s.name() == "deprecated" {
+            if let RubyValue::Symbol(s) = crate::hash_get(h, &cat_key)
+                && s.name() == "deprecated" {
                     return Ok(RubyValue::Nil);
                 }
-            }
         }
     }
     let mut buf = Vec::new();

@@ -136,11 +136,10 @@ pub(crate) fn verify_certificate_identity(cert: &openssl::x509::X509Ref, hostnam
             if entry.object().nid() != openssl::nid::Nid::COMMONNAME {
                 continue;
             }
-            if let Ok(cn) = entry.data().to_string() {
-                if hostname_matches(hostname, &cn) {
+            if let Ok(cn) = entry.data().to_string()
+                && hostname_matches(hostname, &cn) {
                     return true;
                 }
-            }
         }
     }
     false

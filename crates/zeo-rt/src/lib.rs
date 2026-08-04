@@ -184,6 +184,18 @@ pub fn check_ints() -> Result<(), Signal> {
     Ok(())
 }
 
+/// The C `errno` slot for this thread (the accessor's name is per-libc).
+pub(crate) fn errno_ptr() -> *mut libc::c_int {
+    #[cfg(target_vendor = "apple")]
+    unsafe {
+        libc::__error()
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    unsafe {
+        libc::__errno_location()
+    }
+}
+
 /// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a
 /// GENERATED program's own crate, not this one) can reference
 /// `$crate::parking_lot::Mutex` without that program's own `Cargo.toml`

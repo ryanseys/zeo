@@ -779,11 +779,10 @@ fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
         (5, 0, 60),
     ];
     for (i, lo, hi) in ranges {
-        if let Some(&v) = parts.get(i) {
-            if v < lo || v > hi {
+        if let Some(&v) = parts.get(i)
+            && (v < lo || v > hi) {
                 return Err(arg_error!("argument out of range"));
             }
-        }
     }
     Ok(())
 }
@@ -1350,13 +1349,12 @@ ruby_class! {
     }
     def "-" (recv, other) {
         let t = recv_time(recv);
-        if let RubyValue::Object(o) = other {
-            if let Some(other) = o.as_any().downcast_ref::<RTime>() {
+        if let RubyValue::Object(o) = other
+            && let Some(other) = o.as_any().downcast_ref::<RTime>() {
                 let a = t.sec() as f64 + t.nsec() as f64 / 1e9;
                 let b = other.sec() as f64 + other.nsec() as f64 / 1e9;
                 return Ok(RubyValue::Float(a - b));
             }
-        }
         shift(t, other, -1)
     }
     // Drives Comparable (`<`, `between?`, `clamp`) -- see the module docs.
@@ -1381,13 +1379,12 @@ ruby_class! {
     }
     def "==" | "eql?" (recv, other) {
         let t = recv_time(recv);
-        if let RubyValue::Object(o) = other {
-            if let Some(other) = o.as_any().downcast_ref::<RTime>() {
+        if let RubyValue::Object(o) = other
+            && let Some(other) = o.as_any().downcast_ref::<RTime>() {
                 // The canonical (reduced) fields compare directly -- see
                 // `time_exact`.
                 return Ok(RubyValue::Bool(t.num == other.num && t.den == other.den));
             }
-        }
         Ok(RubyValue::Bool(false))
     }
     def "hash" (recv) {

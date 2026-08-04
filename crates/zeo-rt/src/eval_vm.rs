@@ -460,11 +460,10 @@ mod imp {
             // A `Binding`'s cref first (`binding.eval("K")` inside `module M`
             // finds `M::K`), then the root -- an eval'd chunk with no captured
             // lexical scope resolves against `Object`, class id 0.
-            if let Some(cref) = env.cref {
-                if let Some(v) = crate::constants::const_get(cref.0, &name) {
+            if let Some(cref) = env.cref
+                && let Some(v) = crate::constants::const_get(cref.0, &name) {
                     return Ok(v);
                 }
-            }
             return const_lookup(0, &name);
         }
         if let Some(cp) = node.as_constant_path_node() {
@@ -972,14 +971,13 @@ mod imp {
         if let Some(r) = rest {
             // A named `*rest` collects the leftover middle; an anonymous `*`
             // has no name to bind, so it simply absorbs them.
-            if let Some(rp) = r.as_rest_parameter_node() {
-                if let Some(name) = rp.name() {
+            if let Some(rp) = r.as_rest_parameter_node()
+                && let Some(name) = rp.name() {
                     let collected: Vec<RubyValue> = positional[cursor..mid_end].to_vec();
                     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
                     env.scope
                         .set(&name, RubyValue::Array(crate::array_new(collected)));
                 }
-            }
         }
         for (i, p) in posts.iter().enumerate() {
             let name = required_name(p)?;
@@ -990,13 +988,12 @@ mod imp {
             bind_keywords(&keywords, params.keyword_rest().is_some(), &kwargs, env)?;
         }
 
-        if let Some(bp) = params.block() {
-            if let Some(name) = bp.name() {
+        if let Some(bp) = params.block()
+            && let Some(name) = bp.name() {
                 let name = String::from_utf8_lossy(name.as_slice()).into_owned();
                 env.scope
                     .set(&name, block.clone().unwrap_or(RubyValue::Nil));
             }
-        }
         Ok(())
     }
 
@@ -1380,17 +1377,15 @@ mod imp {
             env.scope
                 .set(&name, effective.get(i).cloned().unwrap_or(RubyValue::Nil));
         }
-        if let Some(rest) = params.rest() {
-            if let Some(rp) = rest.as_rest_parameter_node() {
-                if let Some(name) = rp.name() {
+        if let Some(rest) = params.rest()
+            && let Some(rp) = rest.as_rest_parameter_node()
+                && let Some(name) = rp.name() {
                     let collected: Vec<RubyValue> =
                         effective.iter().skip(reqs.len()).cloned().collect();
                     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
                     env.scope
                         .set(&name, RubyValue::Array(crate::array_new(collected)));
                 }
-            }
-        }
         Ok(())
     }
 
@@ -1473,11 +1468,10 @@ mod imp {
     /// bakes a bare class NAME in at compile time, so nothing ever `const_set`s
     /// one and only the top level can answer for it.
     fn top_level_class(owner: u32, name: &str) -> Result<RubyValue, Signal> {
-        if owner == 0 {
-            if let Some(cid) = crate::dispatch::class_id_by_name(name) {
+        if owner == 0
+            && let Some(cid) = crate::dispatch::class_id_by_name(name) {
                 return Ok(RubyValue::Class(cid));
             }
-        }
         Err(name_error!("uninitialized constant {name}"))
     }
 

@@ -127,11 +127,10 @@ pub fn seal_master_constants() {
 /// name that was already there when [`seal_master_constants`] ran. Before the
 /// seal (or in a program that never calls it) this is plain [`const_get`].
 pub fn const_get_master(name: &str) -> Option<RubyValue> {
-    if let Some(master) = MASTER.lock().as_ref() {
-        if !master.contains(name) {
+    if let Some(master) = MASTER.lock().as_ref()
+        && !master.contains(name) {
             return None;
         }
-    }
     const_get(0, name)
 }
 

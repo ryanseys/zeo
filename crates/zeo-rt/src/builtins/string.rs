@@ -66,15 +66,14 @@ pub(crate) fn succ_str(s: &str) -> String {
     let mut carry_char = '1';
     for i in (0..n).rev() {
         let c = chars[i];
-        if prev_was_nonchar {
-            if let Some(w) = last_wrapped {
+        if prev_was_nonchar
+            && let Some(w) = last_wrapped {
                 let flip = (w.is_ascii_alphabetic() && c.is_ascii_digit())
                     || (w.is_ascii_digit() && c.is_ascii_alphabetic());
                 if flip {
                     break;
                 }
             }
-        }
         if !c.is_ascii_alphanumeric() {
             prev_was_nonchar = true;
             continue;
@@ -133,15 +132,14 @@ pub(crate) fn succ_bytes(s: &[u8]) -> Vec<u8> {
     let mut carry_byte = b'1';
     for i in (0..n).rev() {
         let c = bytes[i];
-        if prev_was_nonchar {
-            if let Some(w) = last_wrapped {
+        if prev_was_nonchar
+            && let Some(w) = last_wrapped {
                 let flip = (w.is_ascii_alphabetic() && c.is_ascii_digit())
                     || (w.is_ascii_digit() && c.is_ascii_alphabetic());
                 if flip {
                     break;
                 }
             }
-        }
         if !c.is_ascii_alphanumeric() {
             prev_was_nonchar = true;
             continue;
@@ -527,8 +525,8 @@ fn dump_str(buf: &StrBuf) -> crate::collections::RStr {
                 i += 1;
             }
             _ => {
-                if u8enc && c > 0x7F {
-                    if let Some((cp, len)) = decode_utf8_char(&bytes[i..]) {
+                if u8enc && c > 0x7F
+                    && let Some((cp, len)) = decode_utf8_char(&bytes[i..]) {
                         if cp <= 0xFFFF {
                             out.push_str(&format!("\\u{cp:04X}"));
                         } else {
@@ -537,7 +535,6 @@ fn dump_str(buf: &StrBuf) -> crate::collections::RStr {
                         i += len;
                         continue;
                     }
-                }
                 out.push_str(&format!("\\x{c:02X}"));
                 i += 1;
             }
@@ -3169,13 +3166,12 @@ fn lines_from_args(
     opts: Option<&RubyValue>,
 ) -> Vec<RubyValue> {
     let mut chomp = false;
-    if let Some(RubyValue::Hash(h)) = opts {
-        if let RubyValue::Bool(b) =
+    if let Some(RubyValue::Hash(h)) = opts
+        && let RubyValue::Bool(b) =
             crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp")))
         {
             chomp = b;
         }
-    }
     let sep = match sep {
         Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
         _ => "\n".to_string(),

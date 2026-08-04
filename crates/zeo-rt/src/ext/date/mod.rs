@@ -262,14 +262,13 @@ ruby_class! {
     // day difference (CRuby's result type).
     def "-" (recv, other) {
         let d = date_of(recv);
-        if let RubyValue::Object(o) = other {
-            if let Some(other) = o.as_any().downcast_ref::<RDate>() {
+        if let RubyValue::Object(o) = other
+            && let Some(other) = o.as_any().downcast_ref::<RDate>() {
                 return crate::builtins::rational::rational_new(
                     num_bigint::BigInt::from(d.jdn - other.jdn),
                     num_bigint::BigInt::from(1),
                 );
             }
-        }
         let n = day_count(other).ok_or_else(|| type_error!("expected numeric or date"))?;
         Ok(RubyValue::Object(RDate::new(d.jdn - n, d.class_id)))
     }

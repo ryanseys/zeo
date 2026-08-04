@@ -370,11 +370,10 @@ pub fn attach_cause(exc_value: &RubyValue) {
     };
     // A bare re-raise of the exception being handled must not become its own
     // cause.
-    if let RubyValue::Object(cur_obj) = &current {
-        if Arc::ptr_eq(cur_obj, o) {
+    if let RubyValue::Object(cur_obj) = &current
+        && Arc::ptr_eq(cur_obj, o) {
             return;
         }
-    }
     let mut slot = e.cause.lock();
     if matches!(*slot, RubyValue::Nil) {
         *slot = current;

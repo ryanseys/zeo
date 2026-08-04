@@ -141,14 +141,13 @@ ruby_class! {
     }
     def self."find"(_recv, arg) {
         // `Encoding.find("internal")` returns nil when unset rather than raising.
-        if let RubyValue::Str(s) = arg {
-            if s.lock().to_utf8_lossy().eq_ignore_ascii_case("internal") {
+        if let RubyValue::Str(s) = arg
+            && s.lock().to_utf8_lossy().eq_ignore_ascii_case("internal") {
                 return Ok(match encoding::default_internal() {
                     Some(id) => encoding_value(id),
                     None => RubyValue::Nil,
                 });
             }
-        }
         Ok(encoding_value(arg_encoding(arg)?))
     }
     def self."compatible?"(_recv, arg1, arg2) {

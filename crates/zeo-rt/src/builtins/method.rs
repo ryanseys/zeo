@@ -357,11 +357,10 @@ ruby_class! {
         // The frozen entry first: re-resolving by name would find whatever
         // holds the name NOW, which for a wrapped method is the wrapper
         // itself. See `RMethod::snapshot`.
-        if let (Some(frozen), RubyValue::Object(o)) = (&m.snapshot, &m.recv) {
-            if let Some(out) = frozen.call_on(o, m.name, args, blk.clone()) {
+        if let (Some(frozen), RubyValue::Object(o)) = (&m.snapshot, &m.recv)
+            && let Some(out) = frozen.call_on(o, m.name, args, blk.clone()) {
                 return out;
             }
-        }
         if m.home == m.chain() {
             return crate::dispatch::send_value(&m.recv, m.name, args, blk);
         }

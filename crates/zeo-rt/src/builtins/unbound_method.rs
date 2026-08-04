@@ -183,11 +183,10 @@ ruby_class! {
         // The receiver must still be a valid bind target.
         bind_target(um, receiver)?;
         // Then the FROZEN entry, exactly as `#bind(obj).call` would.
-        if let (Some(frozen), RubyValue::Object(o)) = (&um.snapshot, receiver) {
-            if let Some(out) = frozen.call_on(o, um.name, args, blk.clone()) {
+        if let (Some(frozen), RubyValue::Object(o)) = (&um.snapshot, receiver)
+            && let Some(out) = frozen.call_on(o, um.name, args, blk.clone()) {
                 return out;
             }
-        }
         crate::dispatch::send_value(receiver, um.name, args, blk)
     }
     // `UnboundMethod#owner` -- the defining class/module in the owning class's

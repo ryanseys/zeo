@@ -68,13 +68,11 @@ pub fn to_pointer(v: &RubyValue) -> Result<*mut c_void, Signal> {
     }
     // An `FFI::Struct` (or anything answering `to_ptr`) passes its own memory,
     // exactly as the gem auto-converts a struct given for a `:pointer` argument.
-    if let RubyValue::Object(_) = v {
-        if let Ok(p) = crate::dispatch::send_value(v, crate::Symbol::intern("to_ptr"), &[], None) {
-            if let Some(addr) = crate::ext::ffi::address_of(&p) {
+    if let RubyValue::Object(_) = v
+        && let Ok(p) = crate::dispatch::send_value(v, crate::Symbol::intern("to_ptr"), &[], None)
+            && let Some(addr) = crate::ext::ffi::address_of(&p) {
                 return Ok(addr as *mut c_void);
             }
-        }
-    }
     Err(type_err("pointer", v))
 }
 

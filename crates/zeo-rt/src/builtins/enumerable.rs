@@ -751,11 +751,10 @@ fn chunk_while(
     let mut out: Vec<RubyValue> = Vec::new();
     let mut cur: Vec<RubyValue> = Vec::new();
     for e in items {
-        if let Some(prev) = cur.last().cloned() {
-            if blk.call(&[prev, e.clone()])?.truthy() == cut_on {
+        if let Some(prev) = cur.last().cloned()
+            && blk.call(&[prev, e.clone()])?.truthy() == cut_on {
                 out.push(RubyValue::Array(array_new(std::mem::take(&mut cur))));
             }
-        }
         cur.push(e);
     }
     if !cur.is_empty() {

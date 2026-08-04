@@ -751,15 +751,14 @@ pub fn copy_hash_meta(src: &RHash, dst: &RHash) {
 /// `hash_index`.
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
     let g = h.lock();
-    if let RubyValue::Str(s) = key {
-        if !g.compare_by_identity {
+    if let RubyValue::Str(s) = key
+        && !g.compare_by_identity {
             let sb = s.lock();
             return g
                 .get(&StrProbe(sb.bytes(), sb.hash_key_tag()))
                 .map(|(_, v)| v.clone())
                 .unwrap_or(RubyValue::Nil);
         }
-    }
     let k = hash_key_in(key, g.compare_by_identity);
     g.get(&k).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
 }
@@ -828,8 +827,8 @@ fn snapshot_key(key: RubyValue, by_identity: bool) -> RubyValue {
 /// [`snapshot_key`] a single edit rather than an audit.
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
     let mut g = h.lock();
-    if let RubyValue::Str(s) = &key {
-        if !g.compare_by_identity {
+    if let RubyValue::Str(s) = &key
+        && !g.compare_by_identity {
             // Probe borrowed first: a re-assigned string key (the common
             // accumulate-into-hash loop) skips the byte-buffer projection
             // entirely. The guard must drop before `snapshot_key` re-locks
@@ -846,7 +845,6 @@ pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
                 return value;
             }
         }
-    }
     let k = hash_key_in(&key, g.compare_by_identity);
     let key = snapshot_key(key, g.compare_by_identity);
     g.insert(k, (key, value.clone()));
@@ -864,12 +862,11 @@ pub fn hash_len(h: &RHash) -> i64 {
 /// a `hash_get(...).is_nil()`-based check alone couldn't distinguish.
 pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
     let g = h.lock();
-    if let RubyValue::Str(s) = key {
-        if !g.compare_by_identity {
+    if let RubyValue::Str(s) = key
+        && !g.compare_by_identity {
             let sb = s.lock();
             return g.contains_key(&StrProbe(sb.bytes(), sb.hash_key_tag()));
         }
-    }
     let k = hash_key_in(key, g.compare_by_identity);
     g.contains_key(&k)
 }
@@ -880,14 +877,13 @@ pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
 /// entries' insertion order, Ruby's own guarantee.
 pub fn hash_delete(h: &RHash, key: &RubyValue) -> RubyValue {
     let mut g = h.lock();
-    if let RubyValue::Str(s) = key {
-        if !g.compare_by_identity {
+    if let RubyValue::Str(s) = key
+        && !g.compare_by_identity {
             let sb = s.lock();
             let probe = StrProbe(sb.bytes(), sb.hash_key_tag());
             let removed = g.shift_remove(&probe);
             return removed.map(|(_, v)| v).unwrap_or(RubyValue::Nil);
         }
-    }
     let k = hash_key_in(key, g.compare_by_identity);
     g.shift_remove(&k).map(|(_, v)| v).unwrap_or(RubyValue::Nil)
 }

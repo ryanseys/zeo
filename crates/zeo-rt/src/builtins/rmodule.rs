@@ -589,12 +589,11 @@ ruby_class! {
         let name = crate::runtime_meta::coerce_method_name(Some(name))?;
         // A `Method`/`UnboundMethod` second argument installs that method's
         // own definition under `name` (not a Proc body).
-        if let Some(src) = body {
-            if let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
+        if let Some(src) = body
+            && let Some((owner, src_name)) = crate::builtins::method::method_source(src) {
                 return crate::runtime_meta::runtime_define_method_from_method(
                     recv_cid(recv), name, owner, src_name);
             }
-        }
         let body = crate::runtime_meta::coerce_method_body(body, &block)?;
         crate::runtime_define_method(recv_cid(recv), name, body)
     }

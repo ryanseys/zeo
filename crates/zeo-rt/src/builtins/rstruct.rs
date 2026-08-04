@@ -768,12 +768,11 @@ fn parse_members(args: &[RubyValue], is_data: bool) -> Result<ParsedMembers, Sig
         // `Struct.new(:a, :b, keyword_init: true)` -- a trailing options hash.
         if let Some(RubyValue::Hash(h)) = rest.last() {
             for (k, v) in h.lock().values() {
-                if let RubyValue::Symbol(s) = k {
-                    if s.name() == "keyword_init" {
+                if let RubyValue::Symbol(s) = k
+                    && s.name() == "keyword_init" {
                         keyword_init = Some(v.truthy());
                         continue;
                     }
-                }
                 return Err(arg_error!("unknown keyword"));
             }
             rest = &rest[..rest.len() - 1];

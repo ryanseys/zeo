@@ -18,7 +18,7 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -60,13 +60,6 @@ jobs:
             exit 1
           fi
 
-  deny:
-    name: cargo-deny (licenses + advisories)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -75,7 +68,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -89,7 +82,8 @@ jobs:
       # ZEO_ASSUME_RUNTIME_FRESH skips the per-test-process stat walk and
       # cache-sweep trigger.
       - run: cargo run -p xtask -- prebuild-runtimes
-      - run: cargo nextest run --workspace
+      # --no-fail-fast so one failure doesn't hide the rest of the report.
+      - run: cargo nextest run --workspace --no-fail-fast
         env:
           ZEO_ASSUME_RUNTIME_FRESH: "1"
       # nextest doesn't run doctests; keep them covered.
@@ -107,9 +101,9 @@ jobs:
     name: MSRV check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.87"
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features

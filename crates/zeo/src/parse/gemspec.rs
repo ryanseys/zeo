@@ -403,10 +403,14 @@ end
                 if path.extension().is_none_or(|x| x != "gemspec") {
                     continue;
                 }
+                // Skip unreadable entries (CI runners ship broken symlinks in
+                // the system Ruby's specifications dir).
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
                 checked += 1;
                 // The stub header would satisfy `parse_file`, so exercise the
                 // body parser explicitly -- it is the weaker of the two.
-                let bytes = std::fs::read(&path).expect("readable");
                 let text = String::from_utf8_lossy(&bytes);
                 if let Err(e) = parse_body(&text) {
                     failures.push(format!("{}: {e}", path.display()));

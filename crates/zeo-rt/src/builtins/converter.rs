@@ -511,11 +511,10 @@ enum Side {
 /// `Converter.new`'s encoding argument: a String or an `Encoding`, never a
 /// Symbol (CRuby refuses that with the `to_str` message).
 fn arg_side(v: &RubyValue) -> Result<Side, Signal> {
-    if let RubyValue::Object(o) = v {
-        if o.class_id() == zeo_abi::ENCODING_CLASS {
+    if let RubyValue::Object(o) = v
+        && o.class_id() == zeo_abi::ENCODING_CLASS {
             return Ok(Side::Enc(arg_encoding(v)?));
         }
-    }
     // CRuby takes a String or an `Encoding` here and nothing else -- a
     // Symbol gets the plain `to_str` refusal rather than a name lookup.
     if matches!(v, RubyValue::Symbol(_)) {
@@ -561,11 +560,10 @@ fn converter_construct(
     if let Some(same) = src.filter(|_| src == dst) {
         return Err(not_found(same.name(), same.name(), flags));
     }
-    if let (Some(s), Some(d)) = (src, dst) {
-        if convpath(s, d).is_none() {
+    if let (Some(s), Some(d)) = (src, dst)
+        && convpath(s, d).is_none() {
             return Err(not_found(s.name(), d.name(), flags));
         }
-    }
     // Two newline decorators cannot both apply.
     let newline_bits = [UNIVERSAL_NEWLINE, CRLF_NEWLINE, CR_NEWLINE]
         .iter()
@@ -825,14 +823,13 @@ ruby_class! {
         if let RubyValue::Str(s) = src {
             s.lock().replace_bytes(Vec::new(), c.src.unwrap_or(encoding::ASCII_8BIT));
         }
-        if let Some(off) = dst_offset {
-            if !matches!(off, RubyValue::Nil) {
+        if let Some(off) = dst_offset
+            && !matches!(off, RubyValue::Nil) {
                 let at = crate::builtins::arg_int!(off) as usize;
                 let kept: Vec<u8> = dst_str.lock().bytes().iter().take(at).copied().collect();
                 let enc = dst_str.lock().encoding();
                 dst_str.lock().replace_bytes(kept, enc);
             }
-        }
         let limit = match dst_bytesize {
             Some(v) if !matches!(v, RubyValue::Nil) => Some(crate::builtins::arg_int!(v) as usize),
             _ => None,
@@ -852,13 +849,12 @@ ruby_class! {
             Err(_) => state.errinfo.result != Some("incomplete_input"),
             _ => true,
         };
-        if give_back {
-            if let RubyValue::Str(s) = src {
+        if give_back
+            && let RubyValue::Str(s) = src {
                 let rest = std::mem::take(&mut state.pending);
                 s.lock()
                     .replace_bytes(rest, c.src.unwrap_or(encoding::ASCII_8BIT));
             }
-        }
         // A refusal is NAMED here rather than raised; `run` has already
         // recorded it for `#last_error` and `#primitive_errinfo`.
         let name = match stopped {

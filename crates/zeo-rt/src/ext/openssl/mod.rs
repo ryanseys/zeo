@@ -93,11 +93,10 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
 pub(crate) fn md_from_value(
     v: &RubyValue,
 ) -> Result<(openssl::hash::MessageDigest, String), Signal> {
-    if let RubyValue::Object(o) = v {
-        if let Some(d) = o.as_any().downcast_ref::<digest::RDigest>() {
+    if let RubyValue::Object(o) = v
+        && let Some(d) = o.as_any().downcast_ref::<digest::RDigest>() {
             return md_by_name(&d.algo_name());
         }
-    }
     let name = crate::builtins::convert::to_rstr(v)?
         .lock()
         .to_utf8_lossy()

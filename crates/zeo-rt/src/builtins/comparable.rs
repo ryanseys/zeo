@@ -92,23 +92,20 @@ ruby_module! {
             }
             (lo.as_deref().cloned(), hi.as_deref().cloned())
         };
-        if let (Some(lo), Some(hi)) = (&lo, &hi) {
-            if cmp_or_fail(lo, hi)? > 0 {
+        if let (Some(lo), Some(hi)) = (&lo, &hi)
+            && cmp_or_fail(lo, hi)? > 0 {
                 return Err(arg_error!(
                     "min argument must be less than or equal to max argument"
                 ));
             }
-        }
-        if let Some(lo) = &lo {
-            if cmp_or_fail(recv, lo)? < 0 {
+        if let Some(lo) = &lo
+            && cmp_or_fail(recv, lo)? < 0 {
                 return Ok(lo.clone());
             }
-        }
-        if let Some(hi) = &hi {
-            if cmp_or_fail(recv, hi)? > 0 {
+        if let Some(hi) = &hi
+            && cmp_or_fail(recv, hi)? > 0 {
                 return Ok(hi.clone());
             }
-        }
         Ok(recv.clone())
     }
 }

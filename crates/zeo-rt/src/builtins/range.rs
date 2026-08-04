@@ -596,11 +596,10 @@ ruby_class! {
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:
         if !args.is_empty() {
-            if let Some(RubyValue::Int(n)) = args.first() {
-                if *n < 0 {
+            if let Some(RubyValue::Int(n)) = args.first()
+                && *n < 0 {
                     return Err(arg_error!("negative array size (or size too big)"));
                 }
-            }
             return crate::builtins::enumerable::enumerable_send(recv, "first", args, None)
                 .expect("Enumerable implements first(n)");
         }
@@ -631,11 +630,10 @@ ruby_class! {
             // ENDLESS range has one (returned here without iterating, which
             // would loop forever); a Float-bounded range returns the begin, or
             // nil for an empty range (begin > end).
-            if let Some(s) = start {
-                if end.is_none() {
+            if let Some(s) = start
+                && end.is_none() {
                     return Ok(s.clone());
                 }
-            }
             let is_float = matches!(start, Some(RubyValue::Float(_)))
                 || matches!(end, Some(RubyValue::Float(_)));
             if is_float {
@@ -661,11 +659,10 @@ ruby_class! {
             || matches!(end, Some(RubyValue::Float(_)));
         if args.is_empty() && block.is_none() && is_float {
             let Some(e) = end else { return Ok(RubyValue::Nil) };
-            if let Some(s) = start {
-                if s.rb_cmp(e).is_some_and(|c| c > 0) {
+            if let Some(s) = start
+                && s.rb_cmp(e).is_some_and(|c| c > 0) {
                     return Ok(RubyValue::Nil);
                 }
-            }
             // An exclusive float end has no maximum element -- CRuby's exact
             // TypeError (only an Integer end can be decremented).
             if exclusive {

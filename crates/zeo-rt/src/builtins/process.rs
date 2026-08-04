@@ -31,8 +31,11 @@ ruby_module! {
     const CLOCK_PROCESS_CPUTIME_ID = RubyValue::Int(libc::CLOCK_PROCESS_CPUTIME_ID as i64);
     const CLOCK_THREAD_CPUTIME_ID = RubyValue::Int(libc::CLOCK_THREAD_CPUTIME_ID as i64);
     const CLOCK_MONOTONIC_RAW = RubyValue::Int(libc::CLOCK_MONOTONIC_RAW as i64);
+    #[cfg(target_vendor = "apple")]
     const CLOCK_MONOTONIC_RAW_APPROX = RubyValue::Int(libc::CLOCK_MONOTONIC_RAW_APPROX as i64);
+    #[cfg(target_vendor = "apple")]
     const CLOCK_UPTIME_RAW = RubyValue::Int(libc::CLOCK_UPTIME_RAW as i64);
+    #[cfg(target_vendor = "apple")]
     const CLOCK_UPTIME_RAW_APPROX = RubyValue::Int(libc::CLOCK_UPTIME_RAW_APPROX as i64);
     const PRIO_PROCESS = RubyValue::Int(libc::PRIO_PROCESS as i64);
     const PRIO_PGRP = RubyValue::Int(libc::PRIO_PGRP as i64);
@@ -209,9 +212,9 @@ ruby_module! {
     module_function def getpriority(_recv, arg1, arg2) {
         let which = int_arg(arg1)? as libc::c_int;
         let who = int_arg(arg2)? as libc::id_t;
-        unsafe { *libc::__error() = 0 };
-        let prio = unsafe { libc::getpriority(which, who) };
-        if prio == -1 && unsafe { *libc::__error() } != 0 {
+        unsafe { *crate::errno_ptr() = 0 };
+        let prio = unsafe { libc::getpriority(which as _, who) };
+        if prio == -1 && unsafe { *crate::errno_ptr() } != 0 {
             return Err(raise_error("Errno::ESRCH", "No such process".to_string()));
         }
         Ok(RubyValue::Int(prio as i64))
@@ -280,7 +283,7 @@ ruby_module! {
         let which = int_arg(arg1)? as libc::c_int;
         let who = int_arg(arg2)? as libc::id_t;
         let prio = int_arg(arg3)? as libc::c_int;
-        if unsafe { libc::setpriority(which, who, prio) } != 0 {
+        if unsafe { libc::setpriority(which as _, who, prio) } != 0 {
             return Err(errno_fail("setpriority"));
         }
         Ok(RubyValue::Int(0))
@@ -327,7 +330,7 @@ ruby_module! {
             .iter()
             .map(|v| int_arg(v).map(|n| n as libc::gid_t))
             .collect::<Result<_, _>>()?;
-        if unsafe { libc::setgroups(gids.len() as libc::c_int, gids.as_ptr()) } != 0 {
+        if unsafe { libc::setgroups(gids.len() as _, gids.as_ptr()) } != 0 {
             return Err(errno_fail("setgroups"));
         }
         Ok((*arg).clone())
@@ -402,7 +405,7 @@ ruby_module! {
         let gid = int_arg(arg2)? as libc::c_int;
         let cuser = std::ffi::CString::new(user.lock().to_utf8_lossy().into_owned())
             .map_err(|_| arg_error!("string contains null byte"))?;
-        if unsafe { libc::initgroups(cuser.as_ptr(), gid) } != 0 {
+        if unsafe { libc::initgroups(cuser.as_ptr(), gid as _) } != 0 {
             return Err(errno_fail("initgroups"));
         }
         Ok(current_groups())
@@ -1498,11 +1501,10 @@ pub(crate) fn build_spawn_command(args: &[RubyValue]) -> Result<Command, Signal>
 
     // `:unsetenv_others` wipes the inherited environment before the explicit
     // pairs are applied; a nil value unsets a single variable.
-    if let Some(RubyValue::Hash(o)) = &opts {
-        if hash_truthy(o, "unsetenv_others") {
+    if let Some(RubyValue::Hash(o)) = &opts
+        && hash_truthy(o, "unsetenv_others") {
             cmd.env_clear();
         }
-    }
     if let Some(RubyValue::Hash(e)) = &env {
         for (k, v) in crate::collections::hash_pairs(e) {
             let key = cmd_str(&k)?;
@@ -1632,16 +1634,14 @@ fn apply_spawn_options(cmd: &mut Command, opts: &crate::collections::RHash) -> R
 
     // fd->fd merges resolve against whatever the other stream became, whichever
     // order the keys appeared in.
-    if err_to_out {
-        if let Some(f) = &out {
+    if err_to_out
+        && let Some(f) = &out {
             err = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
         }
-    }
-    if out_to_err {
-        if let Some(f) = &err {
+    if out_to_err
+        && let Some(f) = &err {
             out = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
         }
-    }
     if let Some(f) = out {
         cmd.stdout(Stdio::from(f));
     }
