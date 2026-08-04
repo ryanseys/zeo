@@ -1326,22 +1326,29 @@ fn walk(
                 }
             }
         }
-        // A `def`/literal `define_method` INSIDE an escaping block
-        // (e.g. `Class.new { define_method(:x) { ... } }`) compiles to
+        // A `def`/literal `define_method` compiles to
         // `self.define_method(:name, ->(params){ body })` (see
         // `codegen::expr`'s `DefMethod` arm): it USES `self` (the install
-        // target) and its body is a nested escaping proc. Outside an escaping
-        // block it's an ordinary method definition with its own scope --
-        // nothing to capture -- so this only fires when `in_escaping`.
+        // target) and its body is an escaping proc.
+        //
+        // A `define_method` body is a CLOSURE over this scope, so what it reads
+        // is captured wherever the definition sits -- including at the top
+        // level of a block, which is the ordinary class-macro shape
+        // (`class_exec(5) { |n| define_method(:n) { n } }`) and the one
+        // position an `in_escaping`-only test misses.
+        //
+        // A real `def` body is a scope of its own and cannot see an enclosing
+        // local at all, so it captures nothing by itself; it is still walked
+        // inside an escaping block, where it needs `self`.
         HirNode::DefMethod {
             name: _,
             params,
             body,
             is_class_method: _,
             visibility: _,
-            is_def: _,
+            is_def,
         } => {
-            if in_escaping {
+            if in_escaping || !is_def {
                 caps.self_captured = true;
                 let next_exclusions: HashSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
