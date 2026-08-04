@@ -253,7 +253,11 @@ fn case_in_with_no_matching_arm_and_no_else_raises() {
     assert!(
         result
             .stderr
-            .contains("in '<main>': no matching pattern (NoMatchingPatternError)"),
+            // The message names the value and the sub-test that rejected it,
+            // which is the whole diagnostic for a `case/in` -- oracle-verified.
+            .contains(
+                "in '<main>': 5: String === 5 does not return true (NoMatchingPatternError)"
+            ),
         "stderr: {}",
         result.stderr
     );

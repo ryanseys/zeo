@@ -59,9 +59,11 @@ pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, comple
 pub use builtins::enumerable::each_values;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::exception::{
-    apply_custom_backtrace, attach_backtrace, backtrace_lines, pattern_key_miss_clear,
-    pattern_key_miss_record, pattern_match_error, register_exception_subclass, register_exceptions,
-    report_uncaught, set_backtrace_lines, set_explicit_cause,
+    apply_custom_backtrace, attach_backtrace, backtrace_lines, pattern_fail_case_eq,
+    pattern_fail_deconstruct, pattern_fail_find, pattern_fail_guard, pattern_fail_length,
+    pattern_fail_not_empty, pattern_key_miss_clear, pattern_key_miss_record, pattern_match_error,
+    pattern_match_error_bare, register_exception_subclass, register_exceptions, report_uncaught,
+    set_backtrace_lines, set_explicit_cause,
 };
 pub use builtins::format::sprintf;
 pub use builtins::kernel::{

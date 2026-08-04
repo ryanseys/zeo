@@ -52,13 +52,17 @@ pub fn emit_case_in(
 
     // Boxed arms, same reasoning as `emit_if` (the whole `case/in` types
     // `Poly`; every arm must agree on `RubyValue`).
+    // With MORE THAN ONE `in` clause, ruby names only the subject: no single
+    // failing sub-test describes a match that had several branches to try, so
+    // it declines to guess. One clause has exactly one story to tell, and gets
+    // the detailed message (and the key error) the `expr => pattern` form does.
+    let single_pattern = arms.len() == 1;
+    let boxed_subject =
+        super::expr::box_if_object_typed(cx, subject, quote! { __subject.clone() });
     let mut chain = match else_body {
         Some(body) => super::stmt::emit_body_boxed(cx, body),
-        None => emit_no_matching_pattern_raise(super::expr::box_if_object_typed(
-            cx,
-            subject,
-            quote! { __subject.clone() },
-        )),
+        None if single_pattern => emit_no_matching_pattern_raise(boxed_subject),
+        None => quote! { return Err(zeo_rt::pattern_match_error_bare(&(#boxed_subject))); },
     };
 
     for arm in arms.iter().rev() {
@@ -76,7 +80,13 @@ pub fn emit_case_in(
                 } else {
                     quote! { (#g_expr).truthy() }
                 };
-                quote! { (#cond) && (#g_check) }
+                // A guard that rejects is its own reason: the pattern matched
+                // and the condition did not.
+                let recorded = recording(
+                    g_check,
+                    quote! { zeo_rt::pattern_fail_guard(); },
+                );
+                quote! { (#cond) && (#recorded) }
             }
         };
         let body_val = super::stmt::emit_body_boxed(&arm_cx, &arm.body);
@@ -85,7 +95,37 @@ pub fn emit_case_in(
         };
     }
 
-    quote! { { let __subject = #subject_expr; #chain } }
+    // Arming costs one thread-local write, so only the shape that will READ a
+    // record pays for clearing it.
+    let arm = single_pattern
+        .then(|| quote! { zeo_rt::pattern_key_miss_clear(); })
+        .unwrap_or_default();
+    quote! { { let __subject = #subject_expr; #arm #chain } }
+}
+
+/// Wrap a sub-pattern's boolean check so a FAILURE records what rejected the
+/// value. `||` rather than a statement: the check keeps its type and its `?`,
+/// and a matching pattern never enters the block.
+fn recording(check: TokenStream, record: TokenStream) -> TokenStream {
+    quote! { ((#check) || { #record false }) }
+}
+
+/// A `pattern === value` test, recording `"P === v does not return true"` when
+/// it rejects. Every leaf pattern with a nameable left-hand side goes through
+/// here (value, pin, range, and a class check that has a class VALUE to name),
+/// so the message ruby builds and the test zeo runs cannot drift apart.
+fn emit_case_eq_check(pattern: TokenStream, scrutinee: &TokenStream) -> TokenStream {
+    // The pattern is bound once: a constant read can reach `const_missing`,
+    // and the record must not run it a second time.
+    quote! {
+        {
+            let __pat = #pattern;
+            ((zeo_rt::case_eq(&__pat, &(#scrutinee))?) || {
+                zeo_rt::pattern_fail_case_eq(&__pat, &(#scrutinee));
+                false
+            })
+        }
+    }
 }
 
 /// `expr in pattern` -- boolean one-liner, never raises. Any binding the
@@ -162,11 +202,11 @@ fn emit_pattern_match(
         // failed to compile.
         Pattern::Value(node) => {
             let value_expr = super::expr::box_if_object_typed(cx, *node, emit_expr(cx, *node));
-            quote! { zeo_rt::case_eq(&(#value_expr), &(#scrutinee))? }
+            emit_case_eq_check(value_expr, scrutinee)
         }
         Pattern::Pin(node) => {
             let pin_expr = super::expr::box_if_object_typed(cx, *node, emit_expr(cx, *node));
-            quote! { zeo_rt::case_eq(&(#pin_expr), &(#scrutinee))? }
+            emit_case_eq_check(pin_expr, scrutinee)
         }
         Pattern::ClassCheck(name) => emit_class_check(cx, name, scrutinee_ty, scrutinee),
         Pattern::Range {
@@ -239,18 +279,60 @@ fn emit_range_pattern(
     };
     let start_b = bound(start);
     let end_b = bound(end);
-    quote! {
-        zeo_rt::case_eq(
-            &zeo_rt::RubyValue::Range(#start_b, #end_b, #exclusive),
-            &(#scrutinee),
-        )?
-    }
+    emit_case_eq_check(
+        quote! { zeo_rt::RubyValue::Range(#start_b, #end_b, #exclusive) },
+        scrutinee,
+    )
 }
 
 /// `in Integer` / `in SomeClass` (also used for an `Array`/`Hash`/`Find`
 /// pattern's optional CONSTANT guard, e.g. `Point[x, y]`) -- resolves both
 /// built-in primitive names and user-defined classes.
 fn emit_class_check(
+    cx: &Ctx,
+    name: &str,
+    scrutinee_ty: TyKind,
+    scrutinee: &TokenStream,
+) -> TokenStream {
+    let check = emit_class_check_inner(cx, name, scrutinee_ty, scrutinee);
+    // A refusal reports the same sentence a value pattern does -- the class is
+    // the left-hand side of the `===` ruby names. The unresolvable arm below
+    // records for itself (it goes through `emit_case_eq_check`), so only the
+    // resolvable ones are wrapped here.
+    match cx.resolve_class(name) {
+        Some(cid) => {
+            let id = cid.0;
+            let reported = scrutinee_value(cx, scrutinee_ty, scrutinee);
+            recording(
+                check,
+                quote! {
+                    zeo_rt::pattern_fail_case_eq(
+                        &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)),
+                        &(#reported),
+                    );
+                },
+            )
+        }
+        None => check,
+    }
+}
+
+/// The scrutinee as a `RubyValue`. An Object-typed one is an unboxed
+/// `Arc<Concrete>` here (that is the point of the static type), and the
+/// failure record reports values -- so the cold path, and only it, boxes.
+fn scrutinee_value(cx: &Ctx, scrutinee_ty: TyKind, scrutinee: &TokenStream) -> TokenStream {
+    match scrutinee_ty {
+        TyKind::Object(cid) => {
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
+            quote! {
+                zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#scrutinee)))
+            }
+        }
+        _ => quote! { #scrutinee },
+    }
+}
+
+fn emit_class_check_inner(
     cx: &Ctx,
     name: &str,
     scrutinee_ty: TyKind,
@@ -268,7 +350,7 @@ fn emit_class_check(
         // constant raises NameError from the read, matching CRuby's
         // evaluate-the-pattern's-constant-when-checked rule.
         let const_read = super::expr::emit_const_read(cx, None, name);
-        return quote! { zeo_rt::case_eq(&(#const_read), &(#scrutinee))? };
+        return emit_case_eq_check(const_read, scrutinee);
     };
     match scrutinee_ty {
         // The receiver's class is already statically known -- constant-folds
@@ -526,7 +608,10 @@ fn emit_array_binding(
                         zeo_rt::send_value(__v, #dec, &[], None)?
                             .as_array_unchecked().lock().to_vec()
                     }
-                    _ => break #label false,
+                    __v => {
+                        zeo_rt::pattern_fail_deconstruct(__v, false);
+                        break #label false
+                    }
                 };
             })
         }
@@ -602,7 +687,7 @@ fn emit_hash_binding(
                         zeo_rt::send_value(__v, #dk, &[zeo_rt::RubyValue::Nil], None)?
                             .as_hash_unchecked()
                     }
-                    _ => break #label false,
+                    __v => { zeo_rt::pattern_fail_deconstruct(__v, true); break #label false }
                 };
             })
         }
@@ -634,10 +719,21 @@ fn emit_array_pattern(
     });
 
     let min_len = pre.len() + post.len();
-    let arity_ok = if rest.is_some() {
+    let open = rest.is_some();
+    let arity_ok = if open {
         quote! { #arr_ident.len() >= #min_len }
     } else {
         quote! { #arr_ident.len() == #min_len }
+    };
+    // The length mismatch names the DECONSTRUCTED array, not the original
+    // scrutinee -- `#<P>: [1] length mismatch ...` for an object that
+    // deconstructs to one element.
+    let arity_record = quote! {
+        zeo_rt::pattern_fail_length(
+            &zeo_rt::RubyValue::Array(zeo_rt::array_new(#arr_ident.clone())),
+            #min_len,
+            #open,
+        );
     };
 
     let pre_checks = pre.iter().enumerate().map(|(i, p)| {
@@ -672,7 +768,7 @@ fn emit_array_pattern(
         #label: {
             #class_check
             #arr_binding
-            if !(#arity_ok) { break #label false; }
+            if !(#arity_ok) { #arity_record break #label false; }
             #(#pre_checks)*
             #(#post_checks)*
             #rest_bind
@@ -745,7 +841,15 @@ fn emit_find_pattern(
             #class_check
             #arr_binding
             let __mid_len: usize = #mid_len;
+            // Too short to hold the window at all is a LENGTH mismatch, not a
+            // failed search -- ruby words the two differently, and the window
+            // is the minimum the pattern needs.
             if #arr_ident.len() < __mid_len {
+                zeo_rt::pattern_fail_length(
+                    &zeo_rt::RubyValue::Array(zeo_rt::array_new(#arr_ident.clone())),
+                    #mid_len,
+                    true,
+                );
                 break #label false;
             }
             let mut #start_ident: usize = 0;
@@ -759,6 +863,9 @@ fn emit_find_pattern(
                 #start_ident += 1;
             };
             if !__found {
+                zeo_rt::pattern_fail_find(
+                    &zeo_rt::RubyValue::Array(zeo_rt::array_new(#arr_ident.clone())),
+                );
                 break #label false;
             }
             #pre_bind
@@ -819,9 +926,46 @@ fn emit_hash_pattern(
         }
     });
 
+    // `in {}` is NOT the lenient form. A hash pattern with declared keys
+    // ignores the ones it did not name, but an EMPTY one asks for an empty
+    // hash -- ruby's one exception to that leniency, and the only way to
+    // spell "no entries at all" without `**nil`.
+    let empty_pattern_check = (pairs.is_empty()
+        && matches!(rest, HashPatternRest::None))
+    .then(|| {
+        quote! {
+            if zeo_rt::hash_len(&#h_ident) != 0 {
+                zeo_rt::pattern_fail_not_empty(
+                    &zeo_rt::RubyValue::Hash(#h_ident.clone()), false,
+                );
+                break #label false;
+            }
+        }
+    });
+
+    // `**nil` beside declared keys asks that nothing else remain. Ruby words
+    // it differently from the empty-pattern case above, and names the
+    // LEFTOVERS rather than the whole hash.
     let no_more_keys_check = matches!(rest, HashPatternRest::NoMoreKeys).then(|| {
         let n = pairs.len();
-        quote! { if zeo_rt::hash_len(&#h_ident) as usize != #n { break #label false; } }
+        let key_lits: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
+        let record = if n == 0 {
+            quote! {
+                zeo_rt::pattern_fail_not_empty(
+                    &zeo_rt::RubyValue::Hash(#h_ident.clone()), false,
+                );
+            }
+        } else {
+            quote! {
+                zeo_rt::pattern_fail_not_empty(
+                    &zeo_rt::RubyValue::Hash(zeo_rt::hash_except_keys(&#h_ident, &[#(#key_lits),*])),
+                    true,
+                );
+            }
+        };
+        quote! {
+            if zeo_rt::hash_len(&#h_ident) as usize != #n { #record break #label false; }
+        }
     });
 
     let rest_bind = match rest {
@@ -842,6 +986,7 @@ fn emit_hash_pattern(
         #label: {
             #class_check
             #h_binding
+            #empty_pattern_check
             #no_more_keys_check
             #(#key_checks)*
             #rest_bind

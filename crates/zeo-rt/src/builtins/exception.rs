@@ -1935,11 +1935,129 @@ pub fn register_exception_subclass(
 thread_local! {
     static PATTERN_KEY_MISS: std::cell::RefCell<Option<(RubyValue, RubyValue)>> =
         const { std::cell::RefCell::new(None) };
+    static PATTERN_FAIL: std::cell::RefCell<Option<PatternFail>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// WHY a sub-pattern rejected the value, in the shapes ruby's
+/// `NoMatchingPatternError` message is built from. The detail is the whole
+/// diagnostic: a `case/in` with nested sub-patterns gives no other clue about
+/// which sub-test rejected the value, and ruby's message points straight at it
+/// (Bug #17925) rather than staying generic.
+pub enum PatternFail {
+    /// `String === 1 does not return true`
+    CaseEq(RubyValue, RubyValue),
+    /// `[1] length mismatch (given 1, expected 2)`, `2+` with a rest.
+    Length { matchee: RubyValue, expected: usize, open: bool },
+    /// `#<Object> does not respond to #deconstruct[_keys]`
+    NoDeconstruct { matchee: RubyValue, keys: bool },
+    /// `{a: 1} is not empty` / `rest of {b: 2} is not empty`
+    NotEmpty { matchee: RubyValue, rest: bool },
+    /// `[1, 2, 3] does not match to find pattern`
+    Find(RubyValue),
+    /// `guard clause does not return true`
+    Guard,
+}
+
+impl PatternFail {
+    fn message(&self) -> String {
+        match self {
+            PatternFail::CaseEq(pattern, matchee) => format!(
+                "{} === {} does not return true",
+                pattern.inspect_string(),
+                matchee.inspect_string()
+            ),
+            PatternFail::Length {
+                matchee,
+                expected,
+                open,
+            } => {
+                let given = match matchee {
+                    RubyValue::Array(a) => a.lock().len(),
+                    _ => 0,
+                };
+                let plus = if *open { "+" } else { "" };
+                format!(
+                    "{} length mismatch (given {given}, expected {expected}{plus})",
+                    matchee.inspect_string()
+                )
+            }
+            PatternFail::NoDeconstruct { matchee, keys } => {
+                let suffix = if *keys { "_keys" } else { "" };
+                format!(
+                    "{} does not respond to #deconstruct{suffix}",
+                    matchee.inspect_string()
+                )
+            }
+            PatternFail::NotEmpty { matchee, rest } => {
+                if *rest {
+                    format!("rest of {} is not empty", matchee.inspect_string())
+                } else {
+                    format!("{} is not empty", matchee.inspect_string())
+                }
+            }
+            PatternFail::Find(matchee) => {
+                format!("{} does not match to find pattern", matchee.inspect_string())
+            }
+            PatternFail::Guard => "guard clause does not return true".to_string(),
+        }
+    }
 }
 
 /// Arm a required match: forget any earlier miss.
 pub fn pattern_key_miss_clear() {
     PATTERN_KEY_MISS.with(|m| *m.borrow_mut() = None);
+    PATTERN_FAIL.with(|m| *m.borrow_mut() = None);
+}
+
+/// Record why a sub-pattern rejected its value. Recorded on FAILURE only, so a
+/// matching pattern pays nothing, and the LAST record before the raise is the
+/// one reported -- which is where ruby's own error-string slot ends up, since
+/// it overwrites the slot per sub-test as the match walks.
+pub fn pattern_fail_record(fail: PatternFail) {
+    PATTERN_FAIL.with(|m| *m.borrow_mut() = Some(fail));
+}
+
+pub fn pattern_fail_case_eq(pattern: &RubyValue, matchee: &RubyValue) {
+    pattern_fail_record(PatternFail::CaseEq(pattern.clone(), matchee.clone()));
+}
+
+pub fn pattern_fail_length(matchee: &RubyValue, expected: usize, open: bool) {
+    pattern_fail_record(PatternFail::Length {
+        matchee: matchee.clone(),
+        expected,
+        open,
+    });
+}
+
+pub fn pattern_fail_deconstruct(matchee: &RubyValue, keys: bool) {
+    pattern_fail_record(PatternFail::NoDeconstruct {
+        matchee: matchee.clone(),
+        keys,
+    });
+}
+
+pub fn pattern_fail_not_empty(matchee: &RubyValue, rest: bool) {
+    pattern_fail_record(PatternFail::NotEmpty {
+        matchee: matchee.clone(),
+        rest,
+    });
+}
+
+pub fn pattern_fail_find(matchee: &RubyValue) {
+    pattern_fail_record(PatternFail::Find(matchee.clone()));
+}
+
+pub fn pattern_fail_guard() {
+    pattern_fail_record(PatternFail::Guard);
+}
+
+/// A `case/in` with MORE THAN ONE `in` clause names only the value: with
+/// several branches, each with its own sub-patterns, no single failing test
+/// describes the whole match, so ruby declines to guess and reports the
+/// subject alone. It is also the plain parent class there, never the key error.
+pub fn pattern_match_error_bare(subject: &RubyValue) -> crate::Signal {
+    crate::dispatch::raise_error("NoMatchingPatternError", subject.inspect_string())
 }
 
 /// Record that `key` was absent from `matchee`. The LAST miss wins, which is
@@ -1955,11 +2073,16 @@ pub fn pattern_key_miss_record(key: &RubyValue, matchee: &RubyValue) {
 /// which is what ruby puts in the message even when `matchee` is a nested hash.
 pub fn pattern_match_error(subject: &RubyValue) -> crate::Signal {
     let miss = PATTERN_KEY_MISS.with(|m| m.borrow_mut().take());
+    let fail = PATTERN_FAIL.with(|m| m.borrow_mut().take());
     let Some((key, matchee)) = miss else {
-        return crate::dispatch::raise_error(
-            "NoMatchingPatternError",
-            "no matching pattern".to_string(),
-        );
+        // `"%p: %s"` -- the subject, then the sentence naming the sub-test
+        // that rejected it. Without a recorded reason the subject stands
+        // alone, which is also what ruby prints.
+        let message = match fail {
+            Some(f) => format!("{}: {}", subject.inspect_string(), f.message()),
+            None => subject.inspect_string(),
+        };
+        return crate::dispatch::raise_error("NoMatchingPatternError", message);
     };
     let message = format!(
         "{}: key not found: {}",
