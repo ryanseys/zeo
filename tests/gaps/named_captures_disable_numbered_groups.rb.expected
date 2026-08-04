@@ -1,0 +1,8 @@
+"123bar"
+"bar"
+"bar"
+["tail"]
+["bar"]
+{"tail" => "bar"}
+6
+["123", "bar"]

@@ -1,0 +1,3 @@
+gaps/warn_with_uplevel.rb:5: warning: inside helper
+gaps/warn_with_uplevel.rb:9: warning: callers fault
+no uplevel control
