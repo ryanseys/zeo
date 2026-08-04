@@ -149,17 +149,35 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
             let f = to_f64_for_format(arg)?;
             let abs = f.abs();
             let e_char = if spec.conv == 'G' { 'E' } else { 'e' };
-            let body = if abs != 0.0 && !(1e-4..1e6).contains(&abs) {
-                let e = format!("{abs:e}");
-                let (mant, exp) = e.split_once('e').expect("exponent");
-                let (exp_sign, exp_digits) = match exp.strip_prefix('-') {
+            // `%g` shows a fixed number of SIGNIFICANT digits -- six by
+            // default -- and picks its presentation from where the decimal
+            // point lands, which is why the precision decides `%e` vs `%f`
+            // and not just the digit count. CRuby delegates to its bundled
+            // BSD `vfprintf`; this is that routine's rule.
+            // `.max(1)`: `%.0g` behaves as `%.1g`, because the significant-
+            // digit count reaches `dtoa` in a mode that reads a non-positive
+            // request as one digit. Oracle-verified across the precision
+            // range -- it is not visible in `vfprintf`'s own switch.
+            let prec = spec.precision.unwrap_or(6).max(1);
+            // Rounding to `prec` significant digits and reading back the
+            // base-10 exponent in one step. `expt` is the decimal point's
+            // position (value = 0.d1d2... x 10^expt), which is what the
+            // BSD switch below is written against.
+            let rounded = format!("{:.*e}", prec.saturating_sub(1), abs);
+            let (mant, exp) = rounded.split_once('e').expect("{:e} has an exponent");
+            let expt: i32 = exp.parse::<i32>().expect("{:e}'s exponent is an integer") + 1;
+            let body = if expt <= -4 || (expt > prec as i32 && expt > 1) {
+                let (sign, digits) = match exp.strip_prefix('-') {
                     Some(d) => ('-', d),
                     None => ('+', exp),
                 };
-                format!("{mant}{e_char}{exp_sign}{:0>2}", exp_digits)
+                let mant = trim_g(mant, spec.alt);
+                format!("{mant}{e_char}{sign}{digits:0>2}")
             } else {
-                let s = format!("{abs}");
-                s.trim_end_matches(".0").to_string()
+                // Fixed style keeps `prec` significant digits, so the number
+                // of DECIMALS depends on where the point sits.
+                let decimals = (prec as i32 - expt).max(0) as usize;
+                trim_g(&format!("{abs:.decimals$}"), spec.alt)
             };
             Rendered {
                 head: sign_prefix(spec, f.is_sign_negative()),
@@ -358,6 +376,25 @@ fn twos_complement_digits(n: &num_bigint::BigInt, radix: u32, upper: bool) -> St
         }
     }
     digits.iter().rev().map(|&d| digit_char(d, upper)).collect()
+}
+
+/// `%g`'s trailing-zero rule. Plain `%g` strips them and the bare decimal
+/// point with them -- that is what makes it the readable directive. `%#g`
+/// keeps both, and keeps the point even where there are no decimals at all
+/// (`%#.3g` of 100.0 is `"100."`), which is the whole of what the flag does
+/// here.
+fn trim_g(digits: &str, alt: bool) -> String {
+    if alt {
+        return if digits.contains('.') {
+            digits.to_string()
+        } else {
+            format!("{digits}.")
+        };
+    }
+    if !digits.contains('.') {
+        return digits.to_string();
+    }
+    digits.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 fn sign_prefix(spec: &Spec, negative: bool) -> String {
