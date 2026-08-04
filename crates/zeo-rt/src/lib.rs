@@ -52,7 +52,7 @@ mod value;
 mod value_ivars;
 
 pub use arith::*;
-pub use bootstrap::{install_core_constants, register_builtins};
+pub use bootstrap::{install_core_constants, install_data_section, register_builtins};
 pub use builtins::BuiltinMethodFn;
 pub use builtins::binding::{LocalCell, RBinding, binding_new};
 pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, complex_new};

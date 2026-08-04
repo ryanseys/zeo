@@ -91,6 +91,31 @@ impl ClassRegistry {
     }
 }
 
+/// Bind `DATA` to the bytes after the script's `__END__` marker: an open
+/// `File` on the source, seeked past the marker, exactly as ruby leaves it.
+/// Emitted into startup only for a program that HAS an `__END__`.
+///
+/// A real handle on the source, not the bytes copied into the binary, because
+/// that is what `DATA` is: `rewind` seeks to offset 0 of the file and reads the
+/// program's own text back. The cost is that the source must still be readable
+/// at run time -- unlike everything else in an AOT binary. When it is not,
+/// `DATA` stays undefined, so the program gets the same rescuable `NameError`
+/// a program with no `__END__` gets rather than dying at startup.
+pub fn install_data_section(path: &str, offset: u64) {
+    use std::io::Seek;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return;
+    };
+    if f.seek(std::io::SeekFrom::Start(offset)).is_err() {
+        return;
+    }
+    crate::constants::const_set(
+        zeo_abi::OBJECT_CLASS.0,
+        "DATA",
+        crate::builtins::io::file_value(f, Some(path.to_string())),
+    );
+}
+
 /// Seed the CORE constants a generated program reads (`Float::INFINITY`,
 /// `Encoding::UTF_8`, `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
 /// `Process::CLOCK_*`). Their owners resolve at compile time; only the values

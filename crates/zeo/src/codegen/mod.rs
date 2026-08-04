@@ -2063,6 +2063,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         quote! { zeo_rt::emit_parse_warnings(&[#(#lines),*]); }
     });
 
+    // `DATA` -- emitted only for a script that has an `__END__`, so every other
+    // binary neither carries the path nor opens anything at startup.
+    let data_section = compiler.hir.data_section.as_ref().map(|d| {
+        let (path, offset) = (&d.path, d.offset);
+        quote! { zeo_rt::install_data_section(#path, #offset); }
+    });
+
     // User-module method bridges (see `emit_user_module_bridges`): their value-
     // method registrations ride `__VM_ROWS`, applied after every module's own
     // `__registry.register` above has created the entry they attach to.
@@ -2185,6 +2192,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // collected by the front end and replayed before the program's
             // first line -- where CRuby prints them.
             #parse_warnings
+            #data_section
             // The runtime raises real, catchable exceptions (NoMethodError,
             // ArgumentError, TypeError, StopIteration, ...) by constructing
             // them itself from the registered classes -- see

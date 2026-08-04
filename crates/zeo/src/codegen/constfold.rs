@@ -119,6 +119,13 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             if cx.resolve_class(name).is_some() {
                 return Some(true);
             }
+            // `DATA` is a genuine top-level constant for a script with an
+            // `__END__`, but nothing in the program body assigns it -- it is
+            // installed at startup (`zeo_rt::install_data_section`), so the
+            // body scan below cannot see it.
+            if name == "DATA" && cx.compiler.hir.data_section.is_some() {
+                return Some(true);
+            }
             Some(
                 scopes
                     .iter()

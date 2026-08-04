@@ -46,6 +46,18 @@ impl Span {
     }
 }
 
+/// Where a script's `__END__` DATA section starts. Ruby exposes those bytes as
+/// an open `File` in `DATA`, seeked past the marker -- so what travels to the
+/// runtime is a path plus an offset, not the bytes: `DATA.rewind` seeks to
+/// offset 0 of the SOURCE file, which only a real handle on it can do.
+///
+/// The path is absolutized at compile time, since the binary can run from any
+/// directory.
+pub struct DataSection {
+    pub path: String,
+    pub offset: u64,
+}
+
 /// One registered source file: the name diagnostics display (the path as
 /// given, `"-e"`, ...) plus the full source text a renderer excerpts from.
 pub struct SourceFile {
@@ -157,6 +169,10 @@ pub struct Hir {
     /// [`CompileWarning`](crate::diagnostics::CompileWarning). Codegen emits
     /// them into the binary's startup.
     pub warnings: Vec<crate::diagnostics::CompileWarning>,
+    /// The main script's `__END__` DATA section: its absolute path and the
+    /// byte offset of the first byte AFTER the marker line. `None` when the
+    /// script has no `__END__`, which is what leaves `DATA` undefined.
+    pub data_section: Option<DataSection>,
     /// Registered source files (`Span::file` indexes here).
     pub files: Vec<SourceFile>,
     /// The file whose source is currently being lowered -- the drivers (the

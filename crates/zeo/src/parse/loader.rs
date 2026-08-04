@@ -221,6 +221,7 @@ pub(super) fn lower_main_file(
     }
     let main_name = input_path.map_or_else(|| "-e".to_string(), |p| p.display().to_string());
     collect_parse_warnings(hir, &result, &main_name, source);
+    hir.data_section = input_path.and_then(|p| data_section(&result, p));
     let program = result
         .node()
         .as_program_node()
@@ -1822,6 +1823,34 @@ fn glob_pattern_text(node: &ruby_prism::Node<'_>, dir: Option<&Path>) -> Option<
         out.push_str(dir?.to_str()?);
     }
     Some(out)
+}
+
+/// Where the main script's `DATA` starts, if it has an `__END__` marker.
+///
+/// prism's `data_loc` spans the marker AND the bytes after it, so the offset
+/// is past `__END__` plus its line terminator -- CRuby skips at most one `\r`
+/// and one `\n` there (`ruby.c:2287`), never more, so a blank line after the
+/// marker is DATA's first line.
+///
+/// A source with no `__END__` answers `None`, which is what leaves `DATA`
+/// undefined rather than empty.
+fn data_section(
+    result: &ruby_prism::ParseResult<'_>,
+    path: &std::path::Path,
+) -> Option<crate::hir::DataSection> {
+    const MARKER: usize = "__END__".len();
+    let loc = result.data_loc()?;
+    let after_marker = &result.as_slice(&loc)[MARKER..];
+    let terminator = usize::from(after_marker.starts_with(b"\r")) + 1;
+    Some(crate::hir::DataSection {
+        // Absolute: the compiled binary can run from anywhere, and this path is
+        // reopened at startup.
+        path: std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string(),
+        offset: (loc.start_offset() + MARKER + terminator) as u64,
+    })
 }
 
 /// Ruby's own parse-time warnings for one file, as prism reports them --
