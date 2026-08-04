@@ -142,10 +142,11 @@ fn lower_array_elem_or_anon(
     node: &Node<'_>,
 ) -> PResult<ArrayElem> {
     if let Some(splat) = node.as_splat_node()
-        && splat.expression().is_none() {
-            return Ok(ArrayElem::Splat(
-                hir.push(HirNode::LocalRead("__anon_rest".to_string())),
-            ));
-        }
+        && splat.expression().is_none()
+    {
+        return Ok(ArrayElem::Splat(
+            hir.push(HirNode::LocalRead("__anon_rest".to_string())),
+        ));
+    }
     lower_array_elem(result, hir, node)
 }

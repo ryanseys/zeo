@@ -213,9 +213,10 @@ fn escape_special_suffix(name: &str) -> Option<String> {
     }
     for (suffix, marker) in MARKERS {
         if let Some(base) = name.strip_suffix(suffix)
-            && is_ident_like(base) {
-                return Some(format!("{base}{marker}"));
-            }
+            && is_ident_like(base)
+        {
+            return Some(format!("{base}{marker}"));
+        }
     }
     if is_ident_like(name) && MARKERS.iter().any(|(_, m)| name.ends_with(m)) {
         return Some(format!("{name}_"));

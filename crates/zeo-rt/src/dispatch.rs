@@ -1300,9 +1300,10 @@ impl ClassRegistry {
     /// prepend-shadowed own def), after all registration/delta rows landed.
     pub fn promote_own_impl(&mut self, id: ClassId, name: Symbol) {
         if let Some(e) = self.entries.get_mut(&id.0)
-            && let Some(m) = e.methods.get(&name).cloned() {
-                e.own_impls.insert(name, m);
-            }
+            && let Some(m) = e.methods.get(&name).cloned()
+        {
+            e.own_impls.insert(name, m);
+        }
     }
 
     /// Registers a dynamic-self free function as an own `super` target --
@@ -1465,9 +1466,10 @@ impl ClassRegistry {
     fn lookup_value_method(&self, id: ClassId, box_id: u32, name: Symbol) -> Option<ValueMethodFn> {
         let entry = self.entries.get(&id.0)?;
         if box_id != 0
-            && let Some(f) = entry.value_methods.get(&(box_id, name)) {
-                return Some(*f);
-            }
+            && let Some(f) = entry.value_methods.get(&(box_id, name))
+        {
+            return Some(*f);
+        }
         entry.value_methods.get(&(0, name)).copied()
     }
 
@@ -1795,11 +1797,12 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     // of which the instance-method MRO walk over Class/Module below can see.
     // Mirrors the class-receiver dispatch order in `send_value_in`.
     if let RubyValue::Class(cid) = recv
-        && class_receiver_responds(*cid, name) {
-            // A `private_class_method` one is invisible to the default
-            // `respond_to?`, the same rule the instance walk below applies.
-            return include_all || !class_method_is_private(*cid, name);
-        }
+        && class_receiver_responds(*cid, name)
+    {
+        // A `private_class_method` one is invisible to the default
+        // `respond_to?`, the same rule the instance walk below applies.
+        return include_all || !class_method_is_private(*cid, name);
+    }
     responds_to(recv.class_id(), name, include_all)
 }
 
@@ -1825,9 +1828,10 @@ pub fn responds_to_or_missing(
     let id = recv.class_id();
     if let RubyValue::Object(o) = recv {
         if crate::runtime_meta::is_live()
-            && let Some(m) = crate::runtime_meta::resolve_dynamic(o, id, rtm) {
-                return Ok(m.call(o, &args, None)?.truthy());
-            }
+            && let Some(m) = crate::runtime_meta::resolve_dynamic(o, id, rtm)
+        {
+            return Ok(m.call(o, &args, None)?.truthy());
+        }
         if let Some(f) = registry().lookup_mro(id, rtm) {
             return Ok(f.call(o, &args, None)?.truthy());
         }
@@ -2083,23 +2087,24 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             }
         }
         if let Some(table) = crate::builtins::class_table(anc)
-            && table(n).is_some() {
-                // A builtin private (Kernel's print family, BasicObject's
-                // `initialize`, every `module_function`'s instance copy) is
-                // reachable via implicit self / `send` / `super` -- all
-                // through the table -- but `respond_to?`'s default ignores
-                // privates, so it answers false unless `include_all`. A
-                // PROTECTED row (`Pathname#path`) is hidden the same way:
-                // CRuby's default `respond_to?` reports public only.
-                if !include_all
-                    && (is_hidden_builtin_private(anc, n)
-                        || crate::builtins::class_method_is_private(anc, n)
-                        || crate::builtins::class_method_is_protected(anc, n))
-                {
-                    continue;
-                }
-                return true;
+            && table(n).is_some()
+        {
+            // A builtin private (Kernel's print family, BasicObject's
+            // `initialize`, every `module_function`'s instance copy) is
+            // reachable via implicit self / `send` / `super` -- all
+            // through the table -- but `respond_to?`'s default ignores
+            // privates, so it answers false unless `include_all`. A
+            // PROTECTED row (`Pathname#path`) is hidden the same way:
+            // CRuby's default `respond_to?` reports public only.
+            if !include_all
+                && (is_hidden_builtin_private(anc, n)
+                    || crate::builtins::class_method_is_private(anc, n)
+                    || crate::builtins::class_method_is_protected(anc, n))
+            {
+                continue;
             }
+            return true;
+        }
     }
     // A builtin-alias row answers through its SOURCE name -- which also
     // carries the source's visibility (a Ruby alias copies it): `dup!` for
@@ -2170,9 +2175,10 @@ fn scan_owner(recv_class: ClassId, skip: usize, name: Symbol) -> Option<ClassId>
             }
         }
         if let Some(table) = crate::builtins::class_table(anc)
-            && table(n).is_some() {
-                return Some(anc);
-            }
+            && table(n).is_some()
+        {
+            return Some(anc);
+        }
     }
     None
 }
@@ -2191,9 +2197,10 @@ pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
     // `is_live`, so a program that never mutates a hierarchy pays one
     // relaxed load.
     if crate::runtime_meta::is_live()
-        && let Some(chain) = crate::runtime_meta::overlay_ancestors(id) {
-            return chain;
-        }
+        && let Some(chain) = crate::runtime_meta::overlay_ancestors(id)
+    {
+        return chain;
+    }
     // `REGISTRY` is a `static OnceLock`, so `get()` hands out `&'static`
     // borrows directly -- no lifetime gymnastics needed.
     if let Some(r) = REGISTRY.get() {
@@ -2378,13 +2385,14 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         // but `alias_method :gems, :specs` defines `gems` as far as Ruby is
         // concerned, and reflection has to say so. Aliases are public.
         if filter.matches(MethodVisibility::Public)
-            && let Some(r) = reg {
-                for new in r.alias_names(anc) {
-                    if seen.insert(new) {
-                        out.push(new);
-                    }
+            && let Some(r) = reg
+        {
+            for new in r.alias_names(anc) {
+                if seen.insert(new) {
+                    out.push(new);
                 }
             }
+        }
     }
     out
 }
@@ -2490,9 +2498,10 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
 pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
     for anc in ancestors_of_value(class) {
         if crate::runtime_meta::is_live()
-            && let Some(private) = crate::runtime_meta::overlay_class_method_private(*anc, name) {
-                return private;
-            }
+            && let Some(private) = crate::runtime_meta::overlay_class_method_private(*anc, name)
+        {
+            return private;
+        }
         if REGISTRY
             .get()
             .and_then(|r| r.entries.get(&anc.0))
@@ -2511,9 +2520,10 @@ pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
         // own definition does.
         let n = name.name();
         if let Some(lookup) = crate::builtins::class_method_table(*anc)
-            && lookup(n.as_str()).is_some() {
-                return crate::builtins::builtin_class_method_is_private(*anc, n.as_str());
-            }
+            && lookup(n.as_str()).is_some()
+        {
+            return crate::builtins::builtin_class_method_is_private(*anc, n.as_str());
+        }
     }
     false
 }
@@ -2685,9 +2695,10 @@ pub fn send_as_defined_in(
 ) -> Result<RubyValue, Signal> {
     if let RubyValue::Object(obj) = recv {
         if crate::runtime_meta::is_live()
-            && let Some(m) = crate::runtime_meta::overlay_own_method(owner, name) {
-                return m.call(obj, args, block);
-            }
+            && let Some(m) = crate::runtime_meta::overlay_own_method(owner, name)
+        {
+            return m.call(obj, args, block);
+        }
         if let Some(m) = registry().super_target(owner, name) {
             return m.call(obj, args, block);
         }
@@ -2741,9 +2752,10 @@ fn send_walking(
         }
         if let Some(obj) = &obj {
             if crate::runtime_meta::is_live()
-                && let Some(m) = crate::runtime_meta::overlay_own_method(anc, name) {
-                    return m.call(obj, args, block);
-                }
+                && let Some(m) = crate::runtime_meta::overlay_own_method(anc, name)
+            {
+                return m.call(obj, args, block);
+            }
             if let Some(m) = registry().super_target(anc, name) {
                 return m.call(obj, args, block);
             }
@@ -2826,9 +2838,10 @@ fn send_class_walking(
             continue;
         }
         if crate::runtime_meta::is_live()
-            && let Some(p) = crate::runtime_meta::overlay_class_method(anc, name) {
-                return p.call_with_self_and_block(&recv, args, block);
-            }
+            && let Some(p) = crate::runtime_meta::overlay_class_method(anc, name)
+        {
+            return p.call_with_self_and_block(&recv, args, block);
+        }
         if let Some(f) = registry()
             .entries
             .get(&anc.0)
@@ -2888,9 +2901,10 @@ pub fn call_singleton_super_target(
         }
     } else {
         if crate::runtime_meta::is_live()
-            && let Some(p) = crate::runtime_meta::overlay_class_method(target, name) {
-                return p.call_with_self_and_block(&recv, args, block);
-            }
+            && let Some(p) = crate::runtime_meta::overlay_class_method(target, name)
+        {
+            return p.call_with_self_and_block(&recv, args, block);
+        }
         if let Some(f) = registry()
             .entries
             .get(&target.0)
@@ -3200,9 +3214,10 @@ pub(crate) fn call_user_method(
     // forwarder) -- so `p`/interpolation honour it, not just `send`. THIS
     // class only, no ancestor walk (see the reentrancy note below).
     if crate::runtime_meta::is_live()
-        && let Some(m) = crate::runtime_meta::overlay_own_method(id, Symbol::intern(name)) {
-            return Some(m.call(recv, args, None));
-        }
+        && let Some(m) = crate::runtime_meta::overlay_own_method(id, Symbol::intern(name))
+    {
+        return Some(m.call(recv, args, None));
+    }
     // A RUNTIME-RESIDENT class (`Time`, `File`, ... -- plan P-B) is an
     // `Object(RObj)` with no registry entry, but it does have a builtin
     // table. Without this probe its own `to_s`/`inspect`/`hash` would be
@@ -3272,10 +3287,10 @@ pub fn run_initialize(
     if crate::runtime_meta::is_live()
         && let Some(f) =
             crate::runtime_meta::runtime_class_method(class, crate::symbol::wk::initialize())
-        {
-            f.call(recv, args, block)?;
-            return Ok(());
-        }
+    {
+        f.call(recv, args, block)?;
+        return Ok(());
+    }
     // No user `initialize` at all, so the inherited `Object#initialize`
     // takes no arguments. A RAISE, not a panic (plan G1): real Ruby resolves
     // arity at runtime and the error is rescuable -- `rescue ArgumentError`
@@ -3800,9 +3815,10 @@ pub fn define_in_default_definee(
 /// read), so the fold stays a plain expression.
 pub fn value_class(recv: &RubyValue) -> RubyValue {
     if let RubyValue::Object(o) = recv
-        && let Some(v) = crate::builtins::rstruct::member_value_named(o, "class") {
-            return v;
-        }
+        && let Some(v) = crate::builtins::rstruct::member_value_named(o, "class")
+    {
+        return v;
+    }
     RubyValue::Class(recv.class_id())
 }
 
@@ -3815,9 +3831,10 @@ pub(crate) fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
     let r = REGISTRY.get()?;
     for &anc in ancestors_of_value(id) {
         if let Some(e) = r.entries.get(&anc.0)
-            && let Some(&old) = e.aliases.get(&name) {
-                return Some(old);
-            }
+            && let Some(&old) = e.aliases.get(&name)
+        {
+            return Some(old);
+        }
     }
     None
 }
@@ -3926,14 +3943,15 @@ pub fn send_value_public_in(
     // A CLASS receiver's class methods have their own visibility table -- the
     // instance walk below reads Class/Module's, which says nothing about them.
     if let RubyValue::Class(cid) = recv
-        && class_method_is_private(*cid, name) {
-            return Err(raise_method_missing(
-                recv,
-                &name.to_string(),
-                args,
-                MissingReason::Private,
-            ));
-        }
+        && class_method_is_private(*cid, name)
+    {
+        return Err(raise_method_missing(
+            recv,
+            &name.to_string(),
+            args,
+            MissingReason::Private,
+        ));
+    }
     let reason = match instance_method_visibility(recv.class_id(), name) {
         Some(MethodVisibility::Private) => Some(MissingReason::Private),
         Some(MethodVisibility::Protected) => Some(MissingReason::Protected),
@@ -4080,9 +4098,10 @@ fn send_value_in_reason(
     // like every other overlay probe, only once something was defined at
     // runtime, so the ordinary path is untouched.
     if crate::runtime_meta::is_live()
-        && let Some(m) = crate::runtime_meta::value_singleton_method(recv, name) {
-            return m.call_with_self_and_block(recv, args, block);
-        }
+        && let Some(m) = crate::runtime_meta::value_singleton_method(recv, name)
+    {
+        return m.call_with_self_and_block(recv, args, block);
+    }
     note_dispatch(name);
     // `name_str` takes the interner's global mutex, and the flat one-probe
     // path below -- almost every send in almost every program -- resolves on
@@ -4100,13 +4119,14 @@ fn send_value_in_reason(
         // matching Ruby's "closest singleton" placement. Runs under the class
         // value itself. Only probed once something is defined at runtime.
         if crate::runtime_meta::is_live()
-            && let Some(p) = crate::runtime_meta::overlay_class_method(*cid, name) {
-                // The caller's block must ride along: `def M.wrap; yield; end`
-                // desugars to a method-body lambda whose `yield` reads the
-                // block the METHOD was called with. Dropping it here made
-                // `M.wrap { "hi" }` raise LocalJumpError.
-                return p.call_with_self_and_block(recv, args, block);
-            }
+            && let Some(p) = crate::runtime_meta::overlay_class_method(*cid, name)
+        {
+            // The caller's block must ride along: `def M.wrap; yield; end`
+            // desugars to a method-body lambda whose `yield` reads the
+            // block the METHOD was called with. Dropping it here made
+            // `M.wrap { "hi" }` raise LocalJumpError.
+            return p.call_with_self_and_block(recv, args, block);
+        }
         // A USER `def self.x` and the builtin Class/Module table, flattened
         // into one probe (user rows win -- real Ruby's placement rule: the
         // singleton method is strictly closer than one inherited from
@@ -4116,18 +4136,20 @@ fn send_value_in_reason(
             return f(recv, args, block);
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid)
-            && let Some(f) = lookup(name.name_str()) {
-                return f(recv, args, block);
-            }
+            && let Some(f) = lookup(name.name_str())
+        {
+            return f(recv, args, block);
+        }
         // Class methods on a MINTED native struct/data class (`Point.members`,
         // `Point[1, 2]`): these hang off `STRUCT_CLASS`/`DATA_CLASS` but are NOT
         // reached by the MRO walk below (which runs over the class VALUE's own
         // ancestry -- Class/Module -- not the struct's). Gated on the receiver
         // actually being a struct class, so no other class is affected.
         if crate::builtins::rstruct::is_struct_class(*cid)
-            && let Some(f) = crate::builtins::rstruct::class_lookup(name.name_str()) {
-                return f(recv, args, block);
-            }
+            && let Some(f) = crate::builtins::rstruct::class_lookup(name.name_str())
+        {
+            return f(recv, args, block);
+        }
         // An ANCESTOR's runtime class method -- what a `Base.extend Store` or a
         // `define_singleton_method` on a superclass installs. A subclass's
         // singleton class inherits its parent's in ruby, so `Sub.tag` answers;
@@ -4171,9 +4193,10 @@ fn send_value_in_reason(
                     return f(recv, args, block);
                 }
                 if let Some(table) = crate::builtins::class_table(anc)
-                    && let Some(f) = table(n) {
-                        return f(recv, args, block);
-                    }
+                    && let Some(f) = table(n)
+                {
+                    return f(recv, args, block);
+                }
             }
         }
     } else {
@@ -4188,17 +4211,17 @@ fn send_value_in_reason(
             // placement `send_in_reason` gives an object receiver through
             // `resolve_dynamic`. PER ancestor, not ahead of the whole walk:
             // `Enumerable.define_method(:map)` must not beat `Array#map`.
-            if live
-                && let Some(p) = crate::runtime_meta::overlay_value_body(anc, name) {
-                    return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
-                }
+            if live && let Some(p) = crate::runtime_meta::overlay_value_body(anc, name) {
+                return crate::runtime_meta::call_value_body(anc, name, &p, recv, args, block);
+            }
             if let Some(f) = value_method(anc, box_id, name) {
                 return f(recv, args, block);
             }
             if let Some(table) = crate::builtins::class_table(anc)
-                && let Some(f) = table(n) {
-                    return f(recv, args, block);
-                }
+                && let Some(f) = table(n)
+            {
+                return f(recv, args, block);
+            }
         }
     }
     // A builtin-alias row (`alias_method :dup!, :dup`): rewrite the name and
@@ -4465,9 +4488,10 @@ fn send_in_reason(
     // only once anything has been defined at runtime (`is_live`), so the frozen
     // lock-free fast path below is untouched for all existing code.
     if crate::runtime_meta::is_live()
-        && let Some(m) = crate::runtime_meta::resolve_dynamic(recv, id, name) {
-            return m.call(recv, args, block);
-        }
+        && let Some(m) = crate::runtime_meta::resolve_dynamic(recv, id, name)
+    {
+        return m.call(recv, args, block);
+    }
     // ENV's methods are probed by IDENTITY, not by class: `ENV.class` is
     // `Object` (real Ruby -- it is a lone singleton with Hash-shaped methods,
     // not a Hash). Its OWN explicitly-defined methods must be checked BEFORE
@@ -4481,10 +4505,9 @@ fn send_in_reason(
     // `lookup_mro` hit below -- the ~100%-hit path pays neither an Arc bump
     // nor a downcast.
     let is_env = crate::builtins::env::is_env_obj(recv);
-    if is_env
-        && let Some(f) = crate::builtins::env::lookup(name.name_str()) {
-            return f(&RubyValue::Object(recv.clone()), args, block);
-        }
+    if is_env && let Some(f) = crate::builtins::env::lookup(name.name_str()) {
+        return f(&RubyValue::Object(recv.clone()), args, block);
+    }
     if let Some(f) = registry().lookup_mro(id, name) {
         return f.call(recv, args, block);
     }
@@ -4528,16 +4551,18 @@ fn send_in_reason(
             // At the payload root, a BUILTIN hit runs against the wrapped
             // value and re-wraps a self-return (`push`/`<<`) back to the
             // subclass; reopen rows always run against the boxed receiver.
-            if hit.builtin && payload_root == Some(hit.owner)
-                && let Some(ref p) = payload {
-                    let result = (hit.f)(p, args, block)?;
-                    return Ok(crate::builtins::value_subclass::rewrap_self_return(
-                        result,
-                        p,
-                        recv,
-                        name.name_str(),
-                    ));
-                }
+            if hit.builtin
+                && payload_root == Some(hit.owner)
+                && let Some(ref p) = payload
+            {
+                let result = (hit.f)(p, args, block)?;
+                return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                    result,
+                    p,
+                    recv,
+                    name.name_str(),
+                ));
+            }
             return (hit.f)(&boxed, args, block);
         }
         // A genuine flat miss: straight to the alias tail below.
@@ -4552,19 +4577,21 @@ fn send_in_reason(
                 // ordinary `class_table` hit on Math's registered instance
                 // table.
                 if let Some(table) = crate::builtins::class_table(anc)
-                    && let Some(f) = table(n) {
-                        // At the payload root, run against the wrapped value
-                        // and re-wrap a self-return (`push`/`<<`) back to the
-                        // subclass.
-                        if payload_root == Some(anc)
-                            && let Some(ref p) = payload {
-                                let result = f(p, args, block)?;
-                                return Ok(crate::builtins::value_subclass::rewrap_self_return(
-                                    result, p, recv, n,
-                                ));
-                            }
-                        return f(&boxed, args, block);
+                    && let Some(f) = table(n)
+                {
+                    // At the payload root, run against the wrapped value
+                    // and re-wrap a self-return (`push`/`<<`) back to the
+                    // subclass.
+                    if payload_root == Some(anc)
+                        && let Some(ref p) = payload
+                    {
+                        let result = f(p, args, block)?;
+                        return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                            result, p, recv, n,
+                        ));
                     }
+                    return f(&boxed, args, block);
+                }
             }
         }
     }

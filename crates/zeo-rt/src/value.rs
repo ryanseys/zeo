@@ -268,12 +268,12 @@ impl RubyValue {
             && crate::dispatch::has_display_reopen(self.class_id())
             && let Some(f) =
                 crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::to_s())
-            {
-                return match f(self, &[], None)? {
-                    RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-                    other => other.display_with(seen),
-                };
-            }
+        {
+            return match f(self, &[], None)? {
+                RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+                other => other.display_with(seen),
+            };
+        }
         Ok(match self {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
@@ -450,12 +450,12 @@ impl RubyValue {
             && crate::dispatch::has_display_reopen(self.class_id())
             && let Some(f) =
                 crate::dispatch::value_method(self.class_id(), 0, crate::symbol::wk::inspect())
-            {
-                return match f(self, &[], None)? {
-                    RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-                    other => other.display_with(seen),
-                };
-            }
+        {
+            return match f(self, &[], None)? {
+                RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+                other => other.display_with(seen),
+            };
+        }
         Ok(match self {
             RubyValue::Nil => "nil".to_string(),
             // The parenthesized inspect forms (`(3/4)` / `(1+2i)`) vs the
@@ -841,13 +841,15 @@ impl RubyValue {
         // `eql?` need. A `==` EXPRESSION dispatches a user override first (via
         // `send`); this is the low-level fallback comparison.
         if let RubyValue::Object(o) = self
-            && let Some(p) = o.builtin_payload() {
-                return p.rb_eq_guarded(other, seen);
-            }
+            && let Some(p) = o.builtin_payload()
+        {
+            return p.rb_eq_guarded(other, seen);
+        }
         if let RubyValue::Object(o) = other
-            && let Some(p) = o.builtin_payload() {
-                return self.rb_eq_guarded(&p, seen);
-            }
+            && let Some(p) = o.builtin_payload()
+        {
+            return self.rb_eq_guarded(&p, seen);
+        }
         match (self, other) {
             (RubyValue::Nil, RubyValue::Nil) => true,
             (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
@@ -1286,10 +1288,9 @@ impl RubyValue {
             RubyValue::Object(o) => RubyValue::Object(o.dup_object(copy_frozen)),
             RubyValue::Mutex(_) => {
                 let fresh = crate::mutex_new();
-                if keep_frozen
-                    && let RubyValue::Mutex(m) = &fresh {
-                        m.set_frozen();
-                    }
+                if keep_frozen && let RubyValue::Mutex(m) = &fresh {
+                    m.set_frozen();
+                }
                 fresh
             }
             // A never-iterated (or finished) enumerator copies as a fresh

@@ -356,9 +356,10 @@ static DEFAULT: Mutex<Option<Arc<RandomObj>>> = Mutex::new(None);
 fn default_state() -> Arc<RandomObj> {
     let mut guard = DEFAULT.lock();
     if guard.is_none()
-        && let RubyValue::Object(o) = new_random(None).expect("clock seed") {
-            *guard = downcast_robj::<RandomObj>(&o);
-        }
+        && let RubyValue::Object(o) = new_random(None).expect("clock seed")
+    {
+        *guard = downcast_robj::<RandomObj>(&o);
+    }
     guard.clone().expect("default Random installed")
 }
 

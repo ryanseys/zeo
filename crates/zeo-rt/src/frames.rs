@@ -278,9 +278,10 @@ fn traced_pop() {
         Some(unsafe { *top })
     });
     if let Some(fr) = popped
-        && fr.end_line != 0 {
-            crate::ext::tracepoint::fire_exit(&fr);
-        }
+        && fr.end_line != 0
+    {
+        crate::ext::tracepoint::fire_exit(&fr);
+    }
 }
 
 /// A frame for a C-implemented callee: CRuby shows such frames at the

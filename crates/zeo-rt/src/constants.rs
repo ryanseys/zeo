@@ -128,9 +128,10 @@ pub fn seal_master_constants() {
 /// seal (or in a program that never calls it) this is plain [`const_get`].
 pub fn const_get_master(name: &str) -> Option<RubyValue> {
     if let Some(master) = MASTER.lock().as_ref()
-        && !master.contains(name) {
-            return None;
-        }
+        && !master.contains(name)
+    {
+        return None;
+    }
     const_get(0, name)
 }
 

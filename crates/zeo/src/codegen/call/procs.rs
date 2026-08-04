@@ -236,11 +236,11 @@ pub(crate) fn emit_proc_or_lambda_value(
         && let Some(outer_block_local) = own_only
             .iter()
             .find(|n| !block_caps.assigned.contains(n.as_str()))
-        {
-            return crate::codegen::unsupported(format!(
-                "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
-            ));
-        }
+    {
+        return crate::codegen::unsupported(format!(
+            "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
+        ));
+    }
 
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
     // A real `def` written inside a block still creates an ordinary method, and

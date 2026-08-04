@@ -183,38 +183,33 @@ fn mark_inline_iter_sites(
             ..
         } = &compiler.hir[id]
             && kwargs.is_empty()
-                && let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
-                    (&compiler.hir[*recv], &compiler.hir[*block])
-                    && plain_positional(params) {
-                        use InlineIterKind as K;
-                        let key = (locals.get(rn), name.as_str(), args.len());
-                        let kind = match (key, params.required.len()) {
-                            ((Some(TyKind::Int), "times", 0), 0 | 1) => Some(K::TimesInt),
-                            ((Some(TyKind::Int), "upto", 1), 0 | 1) => Some(K::UptoInt),
-                            ((Some(TyKind::Int), "downto", 1), 0 | 1) => Some(K::DowntoInt),
-                            ((Some(TyKind::Int), "step", 1 | 2), 0 | 1) => Some(K::StepInt),
-                            ((Some(TyKind::Range), "each", 0), 0 | 1) => Some(K::RangeEachInt),
-                            ((Some(TyKind::Array), "each", 0), 0 | 1) => Some(K::ArrayEach),
-                            ((Some(TyKind::Array), "each_with_index", 0), 1 | 2) => {
-                                Some(K::ArrayEachWithIndex)
-                            }
-                            ((Some(TyKind::Array), "map" | "collect", 0), 0 | 1) => {
-                                Some(K::ArrayMap)
-                            }
-                            ((Some(TyKind::Array), "select" | "filter" | "find_all", 0), 0 | 1) => {
-                                Some(K::ArraySelect)
-                            }
-                            ((Some(TyKind::Array), "reject", 0), 0 | 1) => Some(K::ArrayReject),
-                            ((Some(TyKind::Array), "sum", 0), 0 | 1) => Some(K::ArraySum),
-                            ((Some(TyKind::Hash), "each" | "each_pair", 0), 0..=2) => {
-                                Some(K::HashEach)
-                            }
-                            _ => None,
-                        };
-                        if let Some(k) = kind {
-                            out.insert(*block, k);
-                        }
-                    }
+            && let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
+                (&compiler.hir[*recv], &compiler.hir[*block])
+            && plain_positional(params)
+        {
+            use InlineIterKind as K;
+            let key = (locals.get(rn), name.as_str(), args.len());
+            let kind = match (key, params.required.len()) {
+                ((Some(TyKind::Int), "times", 0), 0 | 1) => Some(K::TimesInt),
+                ((Some(TyKind::Int), "upto", 1), 0 | 1) => Some(K::UptoInt),
+                ((Some(TyKind::Int), "downto", 1), 0 | 1) => Some(K::DowntoInt),
+                ((Some(TyKind::Int), "step", 1 | 2), 0 | 1) => Some(K::StepInt),
+                ((Some(TyKind::Range), "each", 0), 0 | 1) => Some(K::RangeEachInt),
+                ((Some(TyKind::Array), "each", 0), 0 | 1) => Some(K::ArrayEach),
+                ((Some(TyKind::Array), "each_with_index", 0), 1 | 2) => Some(K::ArrayEachWithIndex),
+                ((Some(TyKind::Array), "map" | "collect", 0), 0 | 1) => Some(K::ArrayMap),
+                ((Some(TyKind::Array), "select" | "filter" | "find_all", 0), 0 | 1) => {
+                    Some(K::ArraySelect)
+                }
+                ((Some(TyKind::Array), "reject", 0), 0 | 1) => Some(K::ArrayReject),
+                ((Some(TyKind::Array), "sum", 0), 0 | 1) => Some(K::ArraySum),
+                ((Some(TyKind::Hash), "each" | "each_pair", 0), 0..=2) => Some(K::HashEach),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                out.insert(*block, k);
+            }
+        }
         compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
     }
 
@@ -893,11 +888,12 @@ fn splice_decidable_ifs(
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
             if (branch_has_top_defs(compiler, &then_body)
                 || branch_has_top_defs(compiler, &else_body))
-                && let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond) {
-                    let branch = if taken { then_body } else { else_body };
-                    out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
-                    continue;
-                }
+                && let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond)
+            {
+                let branch = if taken { then_body } else { else_body };
+                out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
+                continue;
+            }
         }
         out.push(s);
     }
@@ -3392,9 +3388,10 @@ pub(crate) fn scan_contains_super_body(hir: &Hir, body: &[NodeId]) -> bool {
 /// referenced a field that was never declared.
 fn collect_ivar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
     if let crate::hir::MultiTarget::Ivar(name) = target
-        && !out.contains(name) {
-            out.push(name.clone());
-        }
+        && !out.contains(name)
+    {
+        out.push(name.clone());
+    }
 }
 
 pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {

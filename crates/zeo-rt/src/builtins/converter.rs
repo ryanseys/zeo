@@ -512,9 +512,10 @@ enum Side {
 /// Symbol (CRuby refuses that with the `to_str` message).
 fn arg_side(v: &RubyValue) -> Result<Side, Signal> {
     if let RubyValue::Object(o) = v
-        && o.class_id() == zeo_abi::ENCODING_CLASS {
-            return Ok(Side::Enc(arg_encoding(v)?));
-        }
+        && o.class_id() == zeo_abi::ENCODING_CLASS
+    {
+        return Ok(Side::Enc(arg_encoding(v)?));
+    }
     // CRuby takes a String or an `Encoding` here and nothing else -- a
     // Symbol gets the plain `to_str` refusal rather than a name lookup.
     if matches!(v, RubyValue::Symbol(_)) {
@@ -561,9 +562,10 @@ fn converter_construct(
         return Err(not_found(same.name(), same.name(), flags));
     }
     if let (Some(s), Some(d)) = (src, dst)
-        && convpath(s, d).is_none() {
-            return Err(not_found(s.name(), d.name(), flags));
-        }
+        && convpath(s, d).is_none()
+    {
+        return Err(not_found(s.name(), d.name(), flags));
+    }
     // Two newline decorators cannot both apply.
     let newline_bits = [UNIVERSAL_NEWLINE, CRLF_NEWLINE, CR_NEWLINE]
         .iter()

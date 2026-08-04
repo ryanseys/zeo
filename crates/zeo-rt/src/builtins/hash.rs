@@ -685,9 +685,10 @@ fn map_transform_key(
     k: RubyValue,
 ) -> Result<RubyValue, crate::Signal> {
     if let Some(m) = mapping
-        && crate::hash_has_key(m, &k) {
-            return Ok(crate::hash_get(m, &k));
-        }
+        && crate::hash_has_key(m, &k)
+    {
+        return Ok(crate::hash_get(m, &k));
+    }
     if let Some(p) = blk {
         return p.call(std::slice::from_ref(&k));
     }

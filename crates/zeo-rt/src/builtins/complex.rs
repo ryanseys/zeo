@@ -449,9 +449,10 @@ pub(crate) fn as_components(v: &RubyValue) -> (RubyValue, RubyValue) {
 /// Integer.
 fn canon(v: RubyValue) -> RubyValue {
     if let RubyValue::Rational(r) = &v
-        && r.den.is_one() {
-            return crate::builtins::integer::int_value(r.num.clone());
-        }
+        && r.den.is_one()
+    {
+        return crate::builtins::integer::int_value(r.num.clone());
+    }
     v
 }
 
@@ -478,27 +479,30 @@ fn real_operand(b: &RubyValue) -> bool {
 
 pub(crate) fn cpx_add(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     if let RubyValue::Complex(c) = a
-        && real_operand(b) {
-            return complex_new(comp_add(&c.real, b)?, c.imag.clone());
-        }
+        && real_operand(b)
+    {
+        return complex_new(comp_add(&c.real, b)?, c.imag.clone());
+    }
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
     complex_new(comp_add(&ar, &br)?, comp_add(&ai, &bi)?)
 }
 
 pub(crate) fn cpx_sub(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     if let RubyValue::Complex(c) = a
-        && real_operand(b) {
-            return complex_new(comp_sub(&c.real, b)?, c.imag.clone());
-        }
+        && real_operand(b)
+    {
+        return complex_new(comp_sub(&c.real, b)?, c.imag.clone());
+    }
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
     complex_new(comp_sub(&ar, &br)?, comp_sub(&ai, &bi)?)
 }
 
 pub(crate) fn cpx_mul(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     if let RubyValue::Complex(c) = a
-        && real_operand(b) {
-            return complex_new(comp_mul(&c.real, b)?, comp_mul(&c.imag, b)?);
-        }
+        && real_operand(b)
+    {
+        return complex_new(comp_mul(&c.real, b)?, comp_mul(&c.imag, b)?);
+    }
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
     // (ar + ai*i)(br + bi*i) = (ar*br - ai*bi) + (ar*bi + ai*br)i
     let real = comp_sub(&comp_mul(&ar, &br)?, &comp_mul(&ai, &bi)?)?;

@@ -30,24 +30,30 @@ pub(super) fn emit_universal_implicit_form(
     // `proc { ... }` -- Kernel#proc: the literal block AS a Proc value
     // (`lambda { ... }` desugars in parse to `HirNode::Lambda` already;
     // `proc`'s non-lambda semantics are exactly `emit_proc_value`'s).
-    if name == "proc" && args.is_empty() && kwargs.is_empty()
-        && let Some(b) = block {
-            return Some(super::procs::emit_proc_value(cx, b));
-        }
+    if name == "proc"
+        && args.is_empty()
+        && kwargs.is_empty()
+        && let Some(b) = block
+    {
+        return Some(super::procs::emit_proc_value(cx, b));
+    }
     // `at_exit { ... }` -- registers the handler (run in reverse order
     // at process exit; see `zeo_rt::exec::run_at_exit`), answering
     // the Proc, CRuby's return value.
-    if name == "at_exit" && args.is_empty() && kwargs.is_empty()
-        && let Some(b) = block {
-            let p = super::procs::emit_proc_value(cx, b);
-            return Some(quote! {
-                {
-                    let __h = #p;
-                    zeo_rt::at_exit_register(__h.clone());
-                    __h
-                }
-            });
-        }
+    if name == "at_exit"
+        && args.is_empty()
+        && kwargs.is_empty()
+        && let Some(b) = block
+    {
+        let p = super::procs::emit_proc_value(cx, b);
+        return Some(quote! {
+            {
+                let __h = #p;
+                zeo_rt::at_exit_register(__h.clone());
+                __h
+            }
+        });
+    }
     // `__method__`/`__callee__` -- the enclosing method's name as a Symbol,
     // `nil` at the top level (a compile-time constant here: codegen always
     // knows which method body it's emitting). The two differ under an alias:
@@ -75,18 +81,22 @@ pub(super) fn emit_universal_implicit_form(
     }
     // `method(:name)` -- a bound Method object on the implicit self,
     // dispatched through the Kernel row (see `builtins::method`).
-    if name == "method" && args.len() == 1 && kwargs.is_empty() && block.is_none()
-        && let Some(recv) = super::boxed_implicit_self(cx) {
-            let __bx = cx.box_id;
-            let arg = {
-                let e = emit_expr(cx, args[0]);
-                box_if_object_typed(cx, args[0], e)
-            };
-            let method_sym = super::super::pooled_sym("method");
-            return Some(quote! {
-                zeo_rt::send_value_in(#__bx, &#recv, #method_sym, &[#arg], None)?
-            });
-        }
+    if name == "method"
+        && args.len() == 1
+        && kwargs.is_empty()
+        && block.is_none()
+        && let Some(recv) = super::boxed_implicit_self(cx)
+    {
+        let __bx = cx.box_id;
+        let arg = {
+            let e = emit_expr(cx, args[0]);
+            box_if_object_typed(cx, args[0], e)
+        };
+        let method_sym = super::super::pooled_sym("method");
+        return Some(quote! {
+            zeo_rt::send_value_in(#__bx, &#recv, #method_sym, &[#arg], None)?
+        });
+    }
     None
 }
 /// The Kernel FUNCTIONS: the print family (multi-arg),

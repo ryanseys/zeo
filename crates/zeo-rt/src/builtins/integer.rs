@@ -233,10 +233,11 @@ pub fn int_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     // Small-small fast half.
     if let (RubyValue::Int(x), RubyValue::Int(y)) = (a, b)
         && *y >= 0
-            && let Ok(exp) = u32::try_from(*y)
-                && let Some(r) = x.checked_pow(exp) {
-                    return Ok(RubyValue::Int(r));
-                }
+        && let Ok(exp) = u32::try_from(*y)
+        && let Some(r) = x.checked_pow(exp)
+    {
+        return Ok(RubyValue::Int(r));
+    }
     let exp = to_bigint(b);
     if exp.is_negative() {
         // a ** -n == Rational(1, a ** n).
@@ -400,13 +401,14 @@ pub fn int_shl(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
         return Err(range_error!("shift width too big"));
     };
     if let RubyValue::Int(x) = a
-        && let Some(r) = x.checked_shl(amount) {
-            // checked_shl wraps the AMOUNT, not the value -- verify the
-            // round trip really was lossless before taking the fast path.
-            if amount < 64 && (r >> amount) == *x {
-                return Ok(RubyValue::Int(r));
-            }
+        && let Some(r) = x.checked_shl(amount)
+    {
+        // checked_shl wraps the AMOUNT, not the value -- verify the
+        // round trip really was lossless before taking the fast path.
+        if amount < 64 && (r >> amount) == *x {
+            return Ok(RubyValue::Int(r));
         }
+    }
     Ok(int_value(to_bigint(a) << amount as usize))
 }
 

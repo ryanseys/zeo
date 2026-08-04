@@ -546,20 +546,21 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
         // `include M` / `private` and friends are receiverless calls, not
         // their own node kinds.
         if let Some(call) = stmt.as_call_node()
-            && call.receiver().is_none() {
-                let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-                return !matches!(
-                    name.as_str(),
-                    "include"
-                        | "extend"
-                        | "prepend"
-                        | "private"
-                        | "public"
-                        | "protected"
-                        | "module_function"
-                        | "alias_method"
-                );
-            }
+            && call.receiver().is_none()
+        {
+            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+            return !matches!(
+                name.as_str(),
+                "include"
+                    | "extend"
+                    | "prepend"
+                    | "private"
+                    | "public"
+                    | "protected"
+                    | "module_function"
+                    | "alias_method"
+            );
+        }
         true
     })
 }
@@ -1407,14 +1408,13 @@ pub(crate) fn lower_class_body(
                     continue;
                 }
             }
-            if is_ffi_struct
-                && let Some(fields) = as_ffi_layout(stmt)? {
-                    // Replace `layout ...` in place with the synthesized accessors,
-                    // so any user methods after it can still override them.
-                    let source = synthesize_ffi_struct(&fields)?;
-                    out.extend(parse_and_lower_into(hir, &source)?);
-                    continue;
-                }
+            if is_ffi_struct && let Some(fields) = as_ffi_layout(stmt)? {
+                // Replace `layout ...` in place with the synthesized accessors,
+                // so any user methods after it can still override them.
+                let source = synthesize_ffi_struct(&fields)?;
+                out.extend(parse_and_lower_into(hir, &source)?);
+                continue;
+            }
             lower_class_body_statement(
                 result,
                 hir,
@@ -1489,37 +1489,25 @@ fn lower_class_body_statement(
     // lowering (they're class-body-only keywords). A dynamic predicate falls
     // through to the generic value-`if` path unchanged.
     if let Some(if_node) = node.as_if_node()
-        && let Some(cond) = static_guard(&if_node.predicate()) {
-            let chosen = if cond {
-                if_node.statements().map(|s| s.as_node())
-            } else {
-                if_node.subsequent()
-            };
-            return lower_class_body_selected(
-                result,
-                hir,
-                chosen,
-                visibility,
-                module_function,
-                out,
-            );
-        }
+        && let Some(cond) = static_guard(&if_node.predicate())
+    {
+        let chosen = if cond {
+            if_node.statements().map(|s| s.as_node())
+        } else {
+            if_node.subsequent()
+        };
+        return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
+    }
     if let Some(unless_node) = node.as_unless_node()
-        && let Some(cond) = static_guard(&unless_node.predicate()) {
-            let chosen = if !cond {
-                unless_node.statements().map(|s| s.as_node())
-            } else {
-                unless_node.else_clause().map(|e| e.as_node())
-            };
-            return lower_class_body_selected(
-                result,
-                hir,
-                chosen,
-                visibility,
-                module_function,
-                out,
-            );
-        }
+        && let Some(cond) = static_guard(&unless_node.predicate())
+    {
+        let chosen = if !cond {
+            unless_node.statements().map(|s| s.as_node())
+        } else {
+            unless_node.else_clause().map(|e| e.as_node())
+        };
+        return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
+    }
 
     if let Some(undef) = node.as_undef_node() {
         let names = undef
@@ -1583,35 +1571,36 @@ fn lower_class_body_statement(
     }
 
     if let Some(call) = node.as_call_node()
-        && call.receiver().is_none() {
-            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-            if matches!(name.as_str(), "private" | "public" | "protected") {
-                let new_vis = match name.as_str() {
-                    "private" => Visibility::Private,
-                    "protected" => Visibility::Protected,
-                    _ => Visibility::Public,
-                };
-                let arg_list: Vec<_> = call
-                    .arguments()
-                    .map(|a| a.arguments().iter().collect())
-                    .unwrap_or_default();
-                if arg_list.is_empty() {
-                    *visibility = new_vis;
-                    return Ok(());
-                }
-                if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
-                    let id = lower_node(result, hir, &arg_list[0])?;
-                    hir.set_method_visibility(id, new_vis);
-                    out.push(id);
-                    return Ok(());
-                }
-                if arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
-                    for n in &arg_list {
-                        let target = String::from_utf8_lossy(
-                            n.as_symbol_node().expect("checked above").unescaped(),
-                        )
-                        .into_owned();
-                        if let Some(&id) = out.iter().find(|&&id| {
+        && call.receiver().is_none()
+    {
+        let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+        if matches!(name.as_str(), "private" | "public" | "protected") {
+            let new_vis = match name.as_str() {
+                "private" => Visibility::Private,
+                "protected" => Visibility::Protected,
+                _ => Visibility::Public,
+            };
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if arg_list.is_empty() {
+                *visibility = new_vis;
+                return Ok(());
+            }
+            if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
+                let id = lower_node(result, hir, &arg_list[0])?;
+                hir.set_method_visibility(id, new_vis);
+                out.push(id);
+                return Ok(());
+            }
+            if arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                for n in &arg_list {
+                    let target = String::from_utf8_lossy(
+                        n.as_symbol_node().expect("checked above").unescaped(),
+                    )
+                    .into_owned();
+                    if let Some(&id) = out.iter().find(|&&id| {
                             matches!(&hir[id], HirNode::DefMethod { name: existing, .. } if *existing == target)
                         }) {
                             hir.set_method_visibility(id, new_vis);
@@ -1625,125 +1614,125 @@ fn lower_class_body_statement(
                                 visibility: new_vis,
                             }));
                         }
-                    }
-                    return Ok(());
                 }
-                // Falls through to the generic `Call` lowering below --
-                // a dynamic/computed argument (e.g. `private(*names)`).
+                return Ok(());
             }
-            // `private_class_method :a, :b` / `private_class_method def self.x`
-            // and their `public_` counterpart -- the class-method half of
-            // `private`/`public` above, and lowered the same two ways: the
-            // wrapped `def` is lowered on its own terms (so the running
-            // visibility default and `module_function` mode reach it exactly as
-            // a bare `def` does) and then retagged, while a name with no local
-            // `def` becomes a deferred override. Unlike `private`, there is no
-            // argument-less mode: Ruby has no running class-method default.
-            if matches!(
-                name.as_str(),
-                "private_class_method" | "public_class_method"
-            ) {
-                let new_vis = if name == "private_class_method" {
-                    Visibility::Private
-                } else {
-                    Visibility::Public
-                };
-                let arg_list: Vec<_> = call
-                    .arguments()
-                    .map(|a| a.arguments().iter().collect())
-                    .unwrap_or_default();
-                if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
-                    let before = out.len();
-                    lower_class_body_statement(
-                        result,
-                        hir,
-                        &arg_list[0],
-                        visibility,
-                        module_function,
-                        out,
-                    )?;
-                    for &id in &out[before..] {
-                        hir.set_method_visibility(id, new_vis);
-                    }
-                    return Ok(());
+            // Falls through to the generic `Call` lowering below --
+            // a dynamic/computed argument (e.g. `private(*names)`).
+        }
+        // `private_class_method :a, :b` / `private_class_method def self.x`
+        // and their `public_` counterpart -- the class-method half of
+        // `private`/`public` above, and lowered the same two ways: the
+        // wrapped `def` is lowered on its own terms (so the running
+        // visibility default and `module_function` mode reach it exactly as
+        // a bare `def` does) and then retagged, while a name with no local
+        // `def` becomes a deferred override. Unlike `private`, there is no
+        // argument-less mode: Ruby has no running class-method default.
+        if matches!(
+            name.as_str(),
+            "private_class_method" | "public_class_method"
+        ) {
+            let new_vis = if name == "private_class_method" {
+                Visibility::Private
+            } else {
+                Visibility::Public
+            };
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
+                let before = out.len();
+                lower_class_body_statement(
+                    result,
+                    hir,
+                    &arg_list[0],
+                    visibility,
+                    module_function,
+                    out,
+                )?;
+                for &id in &out[before..] {
+                    hir.set_method_visibility(id, new_vis);
                 }
-                if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
-                    for n in &arg_list {
-                        let target = String::from_utf8_lossy(
-                            n.as_symbol_node().expect("checked above").unescaped(),
-                        )
-                        .into_owned();
-                        let local = out.iter().find(|&&id| {
+                return Ok(());
+            }
+            if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                for n in &arg_list {
+                    let target = String::from_utf8_lossy(
+                        n.as_symbol_node().expect("checked above").unescaped(),
+                    )
+                    .into_owned();
+                    let local = out.iter().find(|&&id| {
                             matches!(&hir[id], HirNode::DefMethod { name: existing, is_class_method: true, .. } if *existing == target)
                         });
-                        match local {
-                            Some(&id) => hir.set_method_visibility(id, new_vis),
-                            None => out.push(hir.push(HirNode::ClassMethodVisibility {
-                                name: target,
-                                visibility: new_vis,
-                            })),
-                        }
+                    match local {
+                        Some(&id) => hir.set_method_visibility(id, new_vis),
+                        None => out.push(hir.push(HirNode::ClassMethodVisibility {
+                            name: target,
+                            visibility: new_vis,
+                        })),
                     }
-                    return Ok(());
                 }
+                return Ok(());
             }
-            // `private_constant :A, :B` / `public_constant :A` -- a class-body
-            // directive, not a call. The reference it must reject is a
-            // qualified `M::A` from outside `M`, which zeo resolves at compile
-            // time, so the names are carried to the compiler rather than left
-            // for a runtime flag nothing could consult. A dynamic argument
-            // falls through to the generic `Call` (still validated + recorded
-            // at run time, just not enforced statically).
-            if name == "private_constant" || name == "public_constant" {
-                let arg_list: Vec<_> = call
-                    .arguments()
-                    .map(|a| a.arguments().iter().collect())
-                    .unwrap_or_default();
-                if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
-                    let names = arg_list
-                        .iter()
-                        .map(|n| {
-                            String::from_utf8_lossy(
-                                n.as_symbol_node().expect("checked above").unescaped(),
-                            )
-                            .into_owned()
-                        })
-                        .collect();
-                    out.push(hir.push(HirNode::ConstantVisibility {
-                        names,
-                        private: name == "private_constant",
-                    }));
-                    return Ok(());
-                }
-            }
-            // `module_function` -- recognized in the same two forms as
-            // `private`/`public`/`protected`: (1) a bare call switches a mode
-            // so every subsequent `def` in this body becomes a MODULE method
-            // (`Mod.name`); (2) `module_function :a, :b` retroactively
-            // promotes already-defined method(s) of those names. Real Ruby
-            // ALSO keeps a private instance copy for `include`-mixin; zeo
-            // models only the module-method form (see
-            // `module_function_namespace.rb`), so promotion is an in-place
-            // retag to `is_class_method`, not an added copy -- which also
-            // lets an uncalled module function be dead-code-eliminated
-            // exactly like any other uncalled class method. A dynamic/
-            // computed argument falls through to a generic `Call`.
-            if name == "module_function" {
-                let arg_list: Vec<_> = call
-                    .arguments()
-                    .map(|a| a.arguments().iter().collect())
-                    .unwrap_or_default();
-                if arg_list.is_empty() {
-                    *module_function = true;
-                    return Ok(());
-                }
-                if arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
-                    for n in &arg_list {
-                        let target = String::from_utf8_lossy(
+        }
+        // `private_constant :A, :B` / `public_constant :A` -- a class-body
+        // directive, not a call. The reference it must reject is a
+        // qualified `M::A` from outside `M`, which zeo resolves at compile
+        // time, so the names are carried to the compiler rather than left
+        // for a runtime flag nothing could consult. A dynamic argument
+        // falls through to the generic `Call` (still validated + recorded
+        // at run time, just not enforced statically).
+        if name == "private_constant" || name == "public_constant" {
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                let names = arg_list
+                    .iter()
+                    .map(|n| {
+                        String::from_utf8_lossy(
                             n.as_symbol_node().expect("checked above").unescaped(),
                         )
-                        .into_owned();
-                        match out.iter().rev().find(|&&id| {
+                        .into_owned()
+                    })
+                    .collect();
+                out.push(hir.push(HirNode::ConstantVisibility {
+                    names,
+                    private: name == "private_constant",
+                }));
+                return Ok(());
+            }
+        }
+        // `module_function` -- recognized in the same two forms as
+        // `private`/`public`/`protected`: (1) a bare call switches a mode
+        // so every subsequent `def` in this body becomes a MODULE method
+        // (`Mod.name`); (2) `module_function :a, :b` retroactively
+        // promotes already-defined method(s) of those names. Real Ruby
+        // ALSO keeps a private instance copy for `include`-mixin; zeo
+        // models only the module-method form (see
+        // `module_function_namespace.rb`), so promotion is an in-place
+        // retag to `is_class_method`, not an added copy -- which also
+        // lets an uncalled module function be dead-code-eliminated
+        // exactly like any other uncalled class method. A dynamic/
+        // computed argument falls through to a generic `Call`.
+        if name == "module_function" {
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if arg_list.is_empty() {
+                *module_function = true;
+                return Ok(());
+            }
+            if arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                for n in &arg_list {
+                    let target = String::from_utf8_lossy(
+                        n.as_symbol_node().expect("checked above").unescaped(),
+                    )
+                    .into_owned();
+                    match out.iter().rev().find(|&&id| {
                             matches!(&hir[id], HirNode::DefMethod { name: existing, is_class_method: false, .. } if *existing == target)
                         }) {
                             Some(&id) => {
@@ -1753,185 +1742,185 @@ fn lower_class_body_statement(
                             // `include`, so only `mro` can find it.
                             None => out.push(hir.push(HirNode::ModuleFunction(target))),
                         }
-                    }
+                }
+                return Ok(());
+            }
+        }
+        // `alias_method :new, :old` -- the method-call spelling of the
+        // `alias` keyword, routed through the same `push_alias` (so an
+        // inherited source defers to `mro::resolve_aliases`). Only two
+        // literal symbol/string names; anything else falls through to a
+        // generic `Call`.
+        if name == "alias_method" {
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if arg_list.len() == 2 {
+                let names: Option<Vec<String>> = arg_list
+                    .iter()
+                    .map(|n| {
+                        n.as_symbol_node()
+                            .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+                            .or_else(|| {
+                                n.as_string_node()
+                                    .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+                            })
+                    })
+                    .collect();
+                if let Some(names) = names {
+                    push_alias(hir, out, names[0].clone(), names[1].clone());
                     return Ok(());
                 }
             }
-            // `alias_method :new, :old` -- the method-call spelling of the
-            // `alias` keyword, routed through the same `push_alias` (so an
-            // inherited source defers to `mro::resolve_aliases`). Only two
-            // literal symbol/string names; anything else falls through to a
-            // generic `Call`.
-            if name == "alias_method" {
-                let arg_list: Vec<_> = call
-                    .arguments()
-                    .map(|a| a.arguments().iter().collect())
-                    .unwrap_or_default();
-                if arg_list.len() == 2 {
-                    let names: Option<Vec<String>> = arg_list
-                        .iter()
-                        .map(|n| {
-                            n.as_symbol_node()
-                                .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
-                                .or_else(|| {
-                                    n.as_string_node().map(|s| {
-                                        String::from_utf8_lossy(s.unescaped()).into_owned()
-                                    })
-                                })
-                        })
-                        .collect();
-                    if let Some(names) = names {
-                        push_alias(hir, out, names[0].clone(), names[1].clone());
-                        return Ok(());
-                    }
-                }
-            }
-            // `include Mod`/`extend Mod`/`prepend Mod` -- one or more bare
-            // constant arguments, applied left-to-right (see `HirNode::
-            // Include`'s docs for the multi-arg ordering rule). Anything
-            // else (a non-constant argument, e.g. a computed module
-            // expression) falls through to an ordinary `Call`, a clean
-            // rejection at codegen time (zeo limitation: only a literal module
-            // name is resolvable to a `ClassId` at compile time anyway).
-            if matches!(name.as_str(), "include" | "extend" | "prepend")
-                && let Some(args) = call.arguments() {
-                    let arg_list: Vec<_> = args.arguments().iter().collect();
-                    // Only the all-constant form (`include Mod`) has a
-                    // compile-time module name. A non-constant argument
-                    // (`extend self`, a computed module expression) falls
-                    // through to a runtime `Call` -- e.g. `extend self` mixes a
-                    // module's own instance methods into its singleton at load.
-                    if let Ok(names) = arg_list
-                        .iter()
-                        .map(constant_path_name)
-                        .collect::<PResult<Vec<_>>>()
-                        && !names.is_empty() {
-                            // A single multi-arg `include`/`prepend` keeps its
-                            // arguments in SOURCE order in the ancestry
-                            // (`include A, B` -> [self, A, B]; `prepend A, B` ->
-                            // [A, B, self]). `analyze::mro` flattens the
-                            // registered mixin list with a uniform
-                            // "later-registered-is-closer" reversal -- correct
-                            // for SEPARATE statements (`include A; include B` ->
-                            // [self, B, A]) -- so one statement's args must be
-                            // registered in REVERSE to survive that reversal in
-                            // source order. `extend` uses a distinct singleton
-                            // path (`runtime_extend`) that already dispatches
-                            // first-arg-wins, so it keeps source order.
-                            let ordered: Vec<_> = if name == "extend" {
-                                names
-                            } else {
-                                names.into_iter().rev().collect()
-                            };
-                            // Stamped with the directive's OWN line, not the
-                            // enclosing class body's: an unresolvable target is
-                            // deferred to a runtime `NameError` raised from
-                            // right here (`analyze::defer_unresolved_directive`),
-                            // and a class-body span would put that frame on the
-                            // `class`/`module` line instead.
-                            hir.push_span(crate::lower::span_of(hir, node));
-                            out.extend(ordered.into_iter().map(|n| {
-                                hir.push(match name.as_str() {
-                                    "include" => HirNode::Include(n),
-                                    "extend" => HirNode::Extend(n),
-                                    _ => HirNode::Prepend(n),
-                                })
-                            }));
-                            hir.pop_span();
-                            return Ok(());
-                        }
-                }
-            // `refine Target do ... end` -- the block's `def`s become an
-            // ordinary class body on a HOLDER module named for the target,
-            // and a `Refine` marker records which class they refine. The
-            // holder is a real `ClassDef` so every existing mechanism
-            // (method registration, materialization, the module bridge that
-            // emits a module's own methods as `RubyValue`-self functions)
-            // carries it with no new machinery. Its name is unwritable as a
-            // constant, so it claims no name inside the enclosing module.
-            if name == "refine"
-                && let (Some(args), Some(block)) = (call.arguments(), call.block()) {
-                    let arg_list: Vec<_> = args.arguments().iter().collect();
-                    if let (1, Some(block)) = (arg_list.len(), block.as_block_node()) {
-                        let target = constant_path_name(&arg_list[0])?;
-                        let holder = refinement_holder_name(&target);
-                        let body =
-                            lower_class_body(result, hir, block.body(), None, Some(&holder))?;
-                        hir.push_span(crate::lower::span_of(hir, node));
-                        out.push(hir.push(HirNode::ClassDef {
-                            name: holder.clone(),
-                            superclass: None,
-                            body,
-                            is_module: true,
-                        }));
-                        out.push(hir.push(HirNode::Refine { target, holder }));
-                        hir.pop_span();
-                        return Ok(());
-                    }
-                }
-            if let Some(node) = lower_using(hir, node, &name, &call)? {
-                out.push(node);
+        }
+        // `include Mod`/`extend Mod`/`prepend Mod` -- one or more bare
+        // constant arguments, applied left-to-right (see `HirNode::
+        // Include`'s docs for the multi-arg ordering rule). Anything
+        // else (a non-constant argument, e.g. a computed module
+        // expression) falls through to an ordinary `Call`, a clean
+        // rejection at codegen time (zeo limitation: only a literal module
+        // name is resolvable to a `ClassId` at compile time anyway).
+        if matches!(name.as_str(), "include" | "extend" | "prepend")
+            && let Some(args) = call.arguments()
+        {
+            let arg_list: Vec<_> = args.arguments().iter().collect();
+            // Only the all-constant form (`include Mod`) has a
+            // compile-time module name. A non-constant argument
+            // (`extend self`, a computed module expression) falls
+            // through to a runtime `Call` -- e.g. `extend self` mixes a
+            // module's own instance methods into its singleton at load.
+            if let Ok(names) = arg_list
+                .iter()
+                .map(constant_path_name)
+                .collect::<PResult<Vec<_>>>()
+                && !names.is_empty()
+            {
+                // A single multi-arg `include`/`prepend` keeps its
+                // arguments in SOURCE order in the ancestry
+                // (`include A, B` -> [self, A, B]; `prepend A, B` ->
+                // [A, B, self]). `analyze::mro` flattens the
+                // registered mixin list with a uniform
+                // "later-registered-is-closer" reversal -- correct
+                // for SEPARATE statements (`include A; include B` ->
+                // [self, B, A]) -- so one statement's args must be
+                // registered in REVERSE to survive that reversal in
+                // source order. `extend` uses a distinct singleton
+                // path (`runtime_extend`) that already dispatches
+                // first-arg-wins, so it keeps source order.
+                let ordered: Vec<_> = if name == "extend" {
+                    names
+                } else {
+                    names.into_iter().rev().collect()
+                };
+                // Stamped with the directive's OWN line, not the
+                // enclosing class body's: an unresolvable target is
+                // deferred to a runtime `NameError` raised from
+                // right here (`analyze::defer_unresolved_directive`),
+                // and a class-body span would put that frame on the
+                // `class`/`module` line instead.
+                hir.push_span(crate::lower::span_of(hir, node));
+                out.extend(ordered.into_iter().map(|n| {
+                    hir.push(match name.as_str() {
+                        "include" => HirNode::Include(n),
+                        "extend" => HirNode::Extend(n),
+                        _ => HirNode::Prepend(n),
+                    })
+                }));
+                hir.pop_span();
                 return Ok(());
             }
-            if matches!(
-                name.as_str(),
-                "attr" | "attr_reader" | "attr_writer" | "attr_accessor"
-            )
-                && let Some(args) = call.arguments() {
-                    let arg_list: Vec<_> = args.arguments().iter().collect();
-                    if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some())
-                    {
-                        // The accessors this expands to are Ruby-visible
-                        // methods whose `source_location` is the
-                        // `attr_accessor` line -- an expansion that never
-                        // descends through `lower_node` has to stamp that
-                        // provenance itself.
-                        hir.push_span(crate::lower::span_of(hir, node));
-                        for n in &arg_list {
-                            let ivar = String::from_utf8_lossy(
-                                n.as_symbol_node().expect("checked above").unescaped(),
-                            )
-                            .into_owned();
-                            // `attr :x` == `attr_reader :x` (the symbol form):
-                            // getter for everything but attr_writer, setter only
-                            // for attr_writer/attr_accessor.
-                            if name != "attr_writer" {
-                                let read = hir.push(HirNode::IvarRead(ivar.clone()));
-                                let getter = hir.push(HirNode::DefMethod {
-                                    name: ivar.clone(),
-                                    params: Params::default(),
-                                    body: vec![read],
-                                    is_class_method: false,
-                                    visibility: *visibility,
-                                    is_def: true,
-                                });
-                                hir.attr_generated.insert(getter);
-                                out.push(getter);
-                            }
-                            if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
-                                let param = "value".to_string();
-                                let read_param = hir.push(HirNode::LocalRead(param.clone()));
-                                let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
-                                let setter = hir.push(HirNode::DefMethod {
-                                    name: format!("{ivar}="),
-                                    params: Params {
-                                        required: vec![param],
-                                        ..Params::default()
-                                    },
-                                    body: vec![write],
-                                    is_class_method: false,
-                                    visibility: *visibility,
-                                    is_def: true,
-                                });
-                                hir.attr_generated.insert(setter);
-                                out.push(setter);
-                            }
-                        }
-                        hir.pop_span();
-                        return Ok(());
+        }
+        // `refine Target do ... end` -- the block's `def`s become an
+        // ordinary class body on a HOLDER module named for the target,
+        // and a `Refine` marker records which class they refine. The
+        // holder is a real `ClassDef` so every existing mechanism
+        // (method registration, materialization, the module bridge that
+        // emits a module's own methods as `RubyValue`-self functions)
+        // carries it with no new machinery. Its name is unwritable as a
+        // constant, so it claims no name inside the enclosing module.
+        if name == "refine"
+            && let (Some(args), Some(block)) = (call.arguments(), call.block())
+        {
+            let arg_list: Vec<_> = args.arguments().iter().collect();
+            if let (1, Some(block)) = (arg_list.len(), block.as_block_node()) {
+                let target = constant_path_name(&arg_list[0])?;
+                let holder = refinement_holder_name(&target);
+                let body = lower_class_body(result, hir, block.body(), None, Some(&holder))?;
+                hir.push_span(crate::lower::span_of(hir, node));
+                out.push(hir.push(HirNode::ClassDef {
+                    name: holder.clone(),
+                    superclass: None,
+                    body,
+                    is_module: true,
+                }));
+                out.push(hir.push(HirNode::Refine { target, holder }));
+                hir.pop_span();
+                return Ok(());
+            }
+        }
+        if let Some(node) = lower_using(hir, node, &name, &call)? {
+            out.push(node);
+            return Ok(());
+        }
+        if matches!(
+            name.as_str(),
+            "attr" | "attr_reader" | "attr_writer" | "attr_accessor"
+        ) && let Some(args) = call.arguments()
+        {
+            let arg_list: Vec<_> = args.arguments().iter().collect();
+            if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                // The accessors this expands to are Ruby-visible
+                // methods whose `source_location` is the
+                // `attr_accessor` line -- an expansion that never
+                // descends through `lower_node` has to stamp that
+                // provenance itself.
+                hir.push_span(crate::lower::span_of(hir, node));
+                for n in &arg_list {
+                    let ivar = String::from_utf8_lossy(
+                        n.as_symbol_node().expect("checked above").unescaped(),
+                    )
+                    .into_owned();
+                    // `attr :x` == `attr_reader :x` (the symbol form):
+                    // getter for everything but attr_writer, setter only
+                    // for attr_writer/attr_accessor.
+                    if name != "attr_writer" {
+                        let read = hir.push(HirNode::IvarRead(ivar.clone()));
+                        let getter = hir.push(HirNode::DefMethod {
+                            name: ivar.clone(),
+                            params: Params::default(),
+                            body: vec![read],
+                            is_class_method: false,
+                            visibility: *visibility,
+                            is_def: true,
+                        });
+                        hir.attr_generated.insert(getter);
+                        out.push(getter);
+                    }
+                    if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
+                        let param = "value".to_string();
+                        let read_param = hir.push(HirNode::LocalRead(param.clone()));
+                        let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
+                        let setter = hir.push(HirNode::DefMethod {
+                            name: format!("{ivar}="),
+                            params: Params {
+                                required: vec![param],
+                                ..Params::default()
+                            },
+                            body: vec![write],
+                            is_class_method: false,
+                            visibility: *visibility,
+                            is_def: true,
+                        });
+                        hir.attr_generated.insert(setter);
+                        out.push(setter);
                     }
                 }
+                hir.pop_span();
+                return Ok(());
+            }
         }
+    }
     // An ordinary `def` gets the CURRENT default visibility -- the generic
     // `lower_node` path (reached below) always sets `Public` (it has no
     // notion of a class body's running default; see its own docs), so this

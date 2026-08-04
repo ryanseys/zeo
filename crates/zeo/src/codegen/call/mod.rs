@@ -484,17 +484,16 @@ fn emit_array_iter_splice(
     if let Some(p) = params.required.first() {
         loop_cx.local_types.to_mut().remove(p);
     }
-    if with_index
-        && let Some(p) = params.required.get(1) {
-            if nested_captured.contains(p) {
-                loop_cx.local_types.to_mut().remove(p);
-            } else {
-                loop_cx
-                    .local_types
-                    .to_mut()
-                    .insert(p.clone(), crate::types::TyKind::Int);
-            }
+    if with_index && let Some(p) = params.required.get(1) {
+        if nested_captured.contains(p) {
+            loop_cx.local_types.to_mut().remove(p);
+        } else {
+            loop_cx
+                .local_types
+                .to_mut()
+                .insert(p.clone(), crate::types::TyKind::Int);
         }
+    }
     for name in &params.block_locals {
         loop_cx.local_types.to_mut().remove(name);
     }
@@ -1201,18 +1200,21 @@ pub fn emit_call(
     // `binding.local_variable_get(:then)`). The receiver must be a bare
     // `binding` call; a stored Binding (`b = binding; b.local_variable_get`)
     // goes through the real object.
-    if name == "local_variable_get" && args.len() == 1
+    if name == "local_variable_get"
+        && args.len() == 1
         && let Some(rid) = receiver
-            && let HirNode::Call {
-                receiver: None,
-                name: bname,
-                args: bargs,
-                ..
-            } = &cx.compiler.hir[rid]
-                && bname == "binding" && bargs.is_empty()
-                    && let HirNode::SymbolLit(local) = &cx.compiler.hir[args[0]] {
-                        return super::hoisting::emit_local_read(cx, local);
-                    }
+        && let HirNode::Call {
+            receiver: None,
+            name: bname,
+            args: bargs,
+            ..
+        } = &cx.compiler.hir[rid]
+        && bname == "binding"
+        && bargs.is_empty()
+        && let HirNode::SymbolLit(local) = &cx.compiler.hir[args[0]]
+    {
+        return super::hoisting::emit_local_read(cx, local);
+    }
 
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
@@ -1366,9 +1368,10 @@ pub fn emit_call(
                 if !kernel_name_shadowed(cx, name)
                     && let Some(tokens) = kernel::emit_universal_implicit_form(
                         cx, name, args, kwargs, block, block_arg,
-                    ) {
-                        return tokens;
-                    }
+                    )
+                {
+                    return tokens;
+                }
                 let arg_exprs = args.iter().map(|&a| {
                     let e = emit_expr(cx, a);
                     box_if_object_typed(cx, a, e)
@@ -1426,26 +1429,30 @@ pub fn emit_call(
             // OTHER builtin alias (`dup!` -> `dup`) needs no static form:
             // the dynamic fallback below reaches the registry's alias row
             // (`register_alias`), which rewrites the name and re-dispatches.
-            if !cx.self_is_dynamic && block.is_none() && block_arg.is_none()
+            if !cx.self_is_dynamic
+                && block.is_none()
+                && block_arg.is_none()
                 && let Some(target) = cx.compiler.builtin_alias_target(cid, name)
-                    && (target == "raise" || target == "fail") {
-                        let cause = match kwargs {
-                            [] => Some(crate::hir::RaiseCause::Absent),
-                            [KwArg::Pair(k, v)]
-                                if matches!(&cx.compiler.hir[*k],
+                && (target == "raise" || target == "fail")
+            {
+                let cause = match kwargs {
+                    [] => Some(crate::hir::RaiseCause::Absent),
+                    [KwArg::Pair(k, v)]
+                        if matches!(&cx.compiler.hir[*k],
                                     HirNode::SymbolLit(s) if s == "cause") =>
-                            {
-                                Some(crate::hir::RaiseCause::Explicit(*v))
-                            }
-                            // Any other keyword is `raise`'s ArgumentError --
-                            // let the dynamic path report it at runtime.
-                            _ => None,
-                        };
-                        if let Some(cause) = cause
-                            && args.len() <= 3 {
-                                return super::expr::emit_raise(cx, args, &cause);
-                            }
+                    {
+                        Some(crate::hir::RaiseCause::Explicit(*v))
                     }
+                    // Any other keyword is `raise`'s ArgumentError --
+                    // let the dynamic path report it at runtime.
+                    _ => None,
+                };
+                if let Some(cause) = cause
+                    && args.len() <= 3
+                {
+                    return super::expr::emit_raise(cx, args, &cause);
+                }
+            }
         }
         // A no-receiver call from WITHIN another CLASS method's own body
         // (`current_class` is `None` there -- no concrete `self` receiver
@@ -1472,41 +1479,41 @@ pub fn emit_call(
         //     end; Ext.helped` answered "Helper", not "Ext".
         // Neither raised; both just quietly produced the wrong object.
         if cx.current_class.is_none()
-            && let Some(defining) = cx.class_self.or(cx.defining_class) {
-                if cx.compiler.class_method_in_chain(defining, name).is_some() {
-                    return reflect::emit_class_method_call_on(
-                        cx, defining, name, args, kwargs, block, block_arg,
-                    );
-                }
-                // A bare `new` inside a class method (`def self.create;
-                // new; end`) constructs the class itself -- `self` there IS
-                // the class, so `new` resolves like `Self.new` (real
-                // Ruby's rule; checked after the sibling lookup so a user
-                // `def self.new` override wins).
-                if name == "new"
-                    && !cx.compiler.class(defining).is_module
-                    && !cx.compiler.class(defining).is_builtin
-                    && kwargs.is_empty()
-                    && block.is_none()
-                    && block_arg.is_none()
-                {
-                    // Boxed: this Call node infers as `Poly` (only a
-                    // literal `HirNode::New` infers `Object(cid)`), so the
-                    // expression must be a `RubyValue`.
-                    let ctor =
-                        new::emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
-                    // A native-backed class has no struct to `new_handle`
-                    // -- `emit_new` already yields a fully-boxed `RubyValue`
-                    // built by the runtime.
-                    if cx.compiler.is_native_backed(defining) {
-                        return ctor;
-                    }
-                    let class_ident = super::ident::class_ident(cx.compiler, defining);
-                    return quote! {
-                        zeo_rt::RubyValue::Object(#class_ident::new_handle(#ctor))
-                    };
-                }
+            && let Some(defining) = cx.class_self.or(cx.defining_class)
+        {
+            if cx.compiler.class_method_in_chain(defining, name).is_some() {
+                return reflect::emit_class_method_call_on(
+                    cx, defining, name, args, kwargs, block, block_arg,
+                );
             }
+            // A bare `new` inside a class method (`def self.create;
+            // new; end`) constructs the class itself -- `self` there IS
+            // the class, so `new` resolves like `Self.new` (real
+            // Ruby's rule; checked after the sibling lookup so a user
+            // `def self.new` override wins).
+            if name == "new"
+                && !cx.compiler.class(defining).is_module
+                && !cx.compiler.class(defining).is_builtin
+                && kwargs.is_empty()
+                && block.is_none()
+                && block_arg.is_none()
+            {
+                // Boxed: this Call node infers as `Poly` (only a
+                // literal `HirNode::New` infers `Object(cid)`), so the
+                // expression must be a `RubyValue`.
+                let ctor = new::emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
+                // A native-backed class has no struct to `new_handle`
+                // -- `emit_new` already yields a fully-boxed `RubyValue`
+                // built by the runtime.
+                if cx.compiler.is_native_backed(defining) {
+                    return ctor;
+                }
+                let class_ident = super::ident::class_ident(cx.compiler, defining);
+                return quote! {
+                    zeo_rt::RubyValue::Object(#class_ident::new_handle(#ctor))
+                };
+            }
+        }
         // A TOP-LEVEL-defined method -- a private instance method on
         // `Object`, real Ruby's rule. Reachable via implicit self from the
         // top level (receiver: the runtime `main` object) and from a class
@@ -1522,33 +1529,32 @@ pub fn emit_call(
             && let Some((_, sid)) = cx
                 .compiler
                 .method_in_chain(crate::compiler::OBJECT_CLASS, name)
-            {
-                let scope = cx.compiler.scope(sid);
-                let mod_ident =
-                    super::ident::class_ident(cx.compiler, crate::compiler::OBJECT_CLASS);
-                let method_ident = safe_ident(name);
-                // `boxed_implicit_self` IS this rule ("self here, boxed"),
-                // including the subtle case where, inside an escaping
-                // block, it answers the block's own receiver, so a
-                // top-level def called from an `instance_exec`'d block runs
-                // against the rebound self rather than always `main`.
-                let recv = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
-                return super::params::emit_call_args_to(
-                    cx,
-                    &super::params::Callee::FreeFn {
-                        path: quote! { #mod_ident::#method_ident },
-                        recv,
-                    },
-                    name,
-                    &scope.params,
-                    args,
-                    kwargs,
-                    block,
-                    block_arg,
-                    scope.needs_block_param(),
-                    crate::codegen::scope_frame_guard(cx.compiler, scope, false),
-                );
-            }
+        {
+            let scope = cx.compiler.scope(sid);
+            let mod_ident = super::ident::class_ident(cx.compiler, crate::compiler::OBJECT_CLASS);
+            let method_ident = safe_ident(name);
+            // `boxed_implicit_self` IS this rule ("self here, boxed"),
+            // including the subtle case where, inside an escaping
+            // block, it answers the block's own receiver, so a
+            // top-level def called from an `instance_exec`'d block runs
+            // against the rebound self rather than always `main`.
+            let recv = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
+            return super::params::emit_call_args_to(
+                cx,
+                &super::params::Callee::FreeFn {
+                    path: quote! { #mod_ident::#method_ident },
+                    recv,
+                },
+                name,
+                &scope.params,
+                args,
+                kwargs,
+                block,
+                block_arg,
+                scope.needs_block_param(),
+                crate::codegen::scope_frame_guard(cx.compiler, scope, false),
+            );
+        }
         // The Kernel FUNCTIONS: the print family (multi-arg
         // now), conversions, rand/srand, throw, sleep, exit/abort --
         // checked AFTER sibling method resolution (a user `def puts`/`def
@@ -1560,17 +1566,20 @@ pub fn emit_call(
         if !kernel_name_shadowed(cx, name)
             && let Some(tokens) =
                 kernel::emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
-            {
-                return tokens;
-            }
+        {
+            return tokens;
+        }
         // `catch(:tag) { ... }` -- the one Kernel function that takes its
         // block as a first-class value.
-        if name == "catch" && args.len() == 1 && kwargs.is_empty()
-            && let Some(b) = block {
-                let tag = emit_expr(cx, args[0]);
-                let blk = procs::emit_proc_value(cx, b);
-                return quote! { zeo_rt::kernel_catch(#tag, #blk)? };
-            }
+        if name == "catch"
+            && args.len() == 1
+            && kwargs.is_empty()
+            && let Some(b) = block
+        {
+            let tag = emit_expr(cx, args[0]);
+            let blk = procs::emit_proc_value(cx, b);
+            return quote! { zeo_rt::kernel_catch(#tag, #blk)? };
+        }
         // `to_enum(:meth, *args)` / `enum_for` on the implicit self:
         // routed through dynamic dispatch, whose Kernel row builds
         // the Enumerator over the boxed receiver -- what the Struct
@@ -1682,242 +1691,239 @@ pub fn emit_call(
         _ => None,
     };
     if let Some(target_name) = class_target
-        && !safe && kwargs.is_empty() {
-            match (target_name, name) {
-                // `Proc.new { ... }` IS its block (CRuby: `proc_new` just
-                // wraps the given block) -- the same value `proc { ... }`
-                // builds, so it routes to the same emitter and carries the
-                // same arity/lambda? metadata. Blockless `Proc.new` is an
-                // ArgumentError in real Ruby; it falls through to the
-                // builtin-`.new` rejection below rather than miscompiling.
-                ("Proc", "new") if block.is_some() && args.is_empty() => {
-                    return procs::emit_proc_value(cx, block.expect("checked is_some"));
-                }
-                ("Fiber", "new") => {
-                    let Some(block_id) = block else {
-                        if block_arg.is_some() {
-                            return crate::codegen::unsupported(
-                                "`Fiber.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)",
-                            );
-                        }
-                        return raise::emit_missing_block_raise(cx, "Fiber");
-                    };
-                    let proc = procs::emit_proc_value(cx, block_id);
-                    return quote! { zeo_rt::fiber_new(#proc) };
-                }
-                ("Fiber", "yield") if block.is_none() && block_arg.is_none() => {
-                    let arg_exprs: Vec<TokenStream> = args
-                        .iter()
-                        .map(|&a| {
-                            let e = emit_expr(cx, a);
-                            super::expr::box_if_object_typed(cx, a, e)
-                        })
-                        .collect();
-                    let root_error =
-                        raise::emit_fiber_error(cx, "attempt to yield on a not resumed fiber");
-                    return quote! {
-                        match zeo_rt::fiber_yield(vec![#(#arg_exprs),*]) {
-                            zeo_rt::FiberYield::Value(__v) => __v,
-                            // `Fiber#raise` injected an exception at this yield.
-                            zeo_rt::FiberYield::Raise(__e) => return Err(zeo_rt::Signal::Raise(__e)),
-                            zeo_rt::FiberYield::Root => return Err(zeo_rt::Signal::Raise(#root_error)),
-                        }
-                    };
-                }
-                // `Thread.new(*args) { |*params| }` -- constructor args pass
-                // through to the block's params, matching CRuby.
-                ("Thread", "new") => {
-                    // `&proc` is the same conversion every other call site's
-                    // block argument goes through -- drb's
-                    // `Thread.new(&method(:main_loop))` needs it -- so a
-                    // missing block is the only remaining error.
-                    let proc = match (block, block_arg) {
-                        (Some(block_id), _) => procs::emit_proc_value(cx, block_id),
-                        (None, Some(arg)) => {
-                            let v = emit_expr(cx, arg);
-                            let v = box_if_object_typed(cx, arg, v);
-                            // `&nil` is "no block", which `Thread.new` rejects
-                            // exactly as a missing literal one does.
-                            let missing = raise::emit_simple_error(
-                                cx,
-                                "ThreadError",
-                                "must be called with a block",
-                            );
-                            quote! {
-                                match zeo_rt::block_arg_to_proc(#v)? {
-                                    Some(__p) => __p,
-                                    None => Err(zeo_rt::Signal::Raise(#missing))?,
-                                }
+        && !safe
+        && kwargs.is_empty()
+    {
+        match (target_name, name) {
+            // `Proc.new { ... }` IS its block (CRuby: `proc_new` just
+            // wraps the given block) -- the same value `proc { ... }`
+            // builds, so it routes to the same emitter and carries the
+            // same arity/lambda? metadata. Blockless `Proc.new` is an
+            // ArgumentError in real Ruby; it falls through to the
+            // builtin-`.new` rejection below rather than miscompiling.
+            ("Proc", "new") if block.is_some() && args.is_empty() => {
+                return procs::emit_proc_value(cx, block.expect("checked is_some"));
+            }
+            ("Fiber", "new") => {
+                let Some(block_id) = block else {
+                    if block_arg.is_some() {
+                        return crate::codegen::unsupported(
+                            "`Fiber.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)",
+                        );
+                    }
+                    return raise::emit_missing_block_raise(cx, "Fiber");
+                };
+                let proc = procs::emit_proc_value(cx, block_id);
+                return quote! { zeo_rt::fiber_new(#proc) };
+            }
+            ("Fiber", "yield") if block.is_none() && block_arg.is_none() => {
+                let arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| {
+                        let e = emit_expr(cx, a);
+                        super::expr::box_if_object_typed(cx, a, e)
+                    })
+                    .collect();
+                let root_error =
+                    raise::emit_fiber_error(cx, "attempt to yield on a not resumed fiber");
+                return quote! {
+                    match zeo_rt::fiber_yield(vec![#(#arg_exprs),*]) {
+                        zeo_rt::FiberYield::Value(__v) => __v,
+                        // `Fiber#raise` injected an exception at this yield.
+                        zeo_rt::FiberYield::Raise(__e) => return Err(zeo_rt::Signal::Raise(__e)),
+                        zeo_rt::FiberYield::Root => return Err(zeo_rt::Signal::Raise(#root_error)),
+                    }
+                };
+            }
+            // `Thread.new(*args) { |*params| }` -- constructor args pass
+            // through to the block's params, matching CRuby.
+            ("Thread", "new") => {
+                // `&proc` is the same conversion every other call site's
+                // block argument goes through -- drb's
+                // `Thread.new(&method(:main_loop))` needs it -- so a
+                // missing block is the only remaining error.
+                let proc = match (block, block_arg) {
+                    (Some(block_id), _) => procs::emit_proc_value(cx, block_id),
+                    (None, Some(arg)) => {
+                        let v = emit_expr(cx, arg);
+                        let v = box_if_object_typed(cx, arg, v);
+                        // `&nil` is "no block", which `Thread.new` rejects
+                        // exactly as a missing literal one does.
+                        let missing = raise::emit_simple_error(
+                            cx,
+                            "ThreadError",
+                            "must be called with a block",
+                        );
+                        quote! {
+                            match zeo_rt::block_arg_to_proc(#v)? {
+                                Some(__p) => __p,
+                                None => Err(zeo_rt::Signal::Raise(#missing))?,
                             }
                         }
-                        (None, None) => return raise::emit_missing_block_raise(cx, "Thread"),
-                    };
-                    let arg_exprs: Vec<TokenStream> = args
-                        .iter()
-                        .map(|&a| {
-                            let e = emit_expr(cx, a);
-                            super::expr::box_if_object_typed(cx, a, e)
-                        })
-                        .collect();
-                    return quote! { zeo_rt::thread_new(#proc, vec![#(#arg_exprs),*]) };
-                }
-                // `Module.nesting` -- the lexical class/module chain at THIS
-                // call site, innermost first. It is compile-time knowledge and
-                // nothing else: a builtin row runs with no view of its
-                // caller's lexical scope, so folding here is the only way to
-                // answer anything but `[]`. `cref_chain` is outermost-first.
-                ("Module", "nesting") if args.is_empty() && block.is_none() => {
-                    let ids = cx.cref_chain().iter().rev().map(|c| {
-                        let id = c.0;
-                        quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
-                    });
-                    return quote! {
-                        zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![#(#ids),*]))
-                    };
-                }
-                ("Mutex", "new") if args.is_empty() && block.is_none() => {
-                    return quote! { zeo_rt::mutex_new() };
-                }
-                ("Queue", "new") if args.is_empty() && block.is_none() => {
-                    return quote! { zeo_rt::queue_new() };
-                }
-                ("SizedQueue", "new") if args.len() == 1 && block.is_none() => {
-                    let n = emit_expr(cx, args[0]);
-                    return quote! {
-                        zeo_rt::sized_queue_new((#n).as_int_unchecked())
-                    };
-                }
-                // `Ractor.new(*args) { |*params| }` -- block
-                // ISOLATION is enforced HERE, at compile time (the capture
-                // set is statically known), strictly earlier than CRuby's
-                // own Proc-creation-time `Ractor::IsolationError`. Args
-                // cross the boundary at runtime (shareable-by-reference or
-                // deep-copied; a rejection raises `RactorError`).
-                ("Ractor", "new") => {
-                    let Some(block_id) = block else {
-                        if block_arg.is_some() {
-                            return crate::codegen::unsupported(
-                                "`Ractor.new` requires a literal block (zeo limitation)",
-                            );
-                        }
-                        return raise::emit_missing_block_raise(cx, "Ractor");
-                    };
-                    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-                        panic!(
-                            "internal error: a Block node should only be reached via the Call that invokes it"
-                        );
-                    };
-                    let block_caps = super::captures::block_captures(
-                        cx.compiler,
-                        params,
-                        body,
-                        cx.current_class,
-                    );
-                    // `block_captures` reports every referenced non-param
-                    // name, INCLUDING the block's own locals (`msg =
-                    // Ractor.receive` -- found the hard way). An outer-scope
-                    // access is a name that's either a genuine shared
-                    // capture (in `cx.captured_locals`) or one this block
-                    // never assigns itself (an enclosing param/block-local).
-                    let mut assigned_here = Vec::new();
-                    for &n in body {
-                        super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
                     }
-                    let assigned_here: std::collections::HashSet<&String> =
-                        assigned_here.iter().collect();
-                    if let Some(outer) = block_caps
-                        .locals
-                        .iter()
-                        .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
-                        .min()
-                    {
-                        return crate::codegen::unsupported(format!(
-                            "can not isolate a Proc because it accesses outer variables ({outer})"
-                        ));
-                    }
-                    if block_caps.self_captured {
-                        return crate::codegen::unsupported(
-                            "can not isolate a Proc because it accesses instance variables of the enclosing object",
-                        );
-                    }
-                    let proc = procs::emit_proc_value(cx, block_id);
-                    let arg_exprs: Vec<TokenStream> = args
-                        .iter()
-                        .map(|&a| {
-                            let e = emit_expr(cx, a);
-                            super::expr::box_if_object_typed(cx, a, e)
-                        })
-                        .collect();
-                    let ractor_error = raise::emit_ractor_error(cx);
-                    return quote! {
-                        match zeo_rt::ractor_new(#proc, vec![#(#arg_exprs),*]) {
-                            Ok(__r) => __r,
-                            Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
-                        }
-                    };
-                }
-                ("Ractor", "receive") if args.is_empty() && block.is_none() => {
-                    return quote! { zeo_rt::ractor_receive() };
-                }
-                ("Ractor", "make_shareable") if args.len() == 1 && block.is_none() => {
-                    let v = emit_expr(cx, args[0]);
-                    let v = super::expr::box_if_object_typed(cx, args[0], v);
-                    let ractor_error = raise::emit_ractor_error(cx);
-                    return quote! {
-                        match zeo_rt::make_shareable(&(#v)) {
-                            Ok(__v) => __v,
-                            Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
-                        }
-                    };
-                }
-                ("Ractor", "shareable?") if args.len() == 1 && block.is_none() => {
-                    let v = emit_expr(cx, args[0]);
-                    let v = super::expr::box_if_object_typed(cx, args[0], v);
-                    return quote! {
-                        zeo_rt::RubyValue::Bool(zeo_rt::shareable(&(#v)))
-                    };
-                }
-                _ => {}
+                    (None, None) => return raise::emit_missing_block_raise(cx, "Thread"),
+                };
+                let arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| {
+                        let e = emit_expr(cx, a);
+                        super::expr::box_if_object_typed(cx, a, e)
+                    })
+                    .collect();
+                return quote! { zeo_rt::thread_new(#proc, vec![#(#arg_exprs),*]) };
             }
+            // `Module.nesting` -- the lexical class/module chain at THIS
+            // call site, innermost first. It is compile-time knowledge and
+            // nothing else: a builtin row runs with no view of its
+            // caller's lexical scope, so folding here is the only way to
+            // answer anything but `[]`. `cref_chain` is outermost-first.
+            ("Module", "nesting") if args.is_empty() && block.is_none() => {
+                let ids = cx.cref_chain().iter().rev().map(|c| {
+                    let id = c.0;
+                    quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
+                });
+                return quote! {
+                    zeo_rt::RubyValue::Array(zeo_rt::array_new(vec![#(#ids),*]))
+                };
+            }
+            ("Mutex", "new") if args.is_empty() && block.is_none() => {
+                return quote! { zeo_rt::mutex_new() };
+            }
+            ("Queue", "new") if args.is_empty() && block.is_none() => {
+                return quote! { zeo_rt::queue_new() };
+            }
+            ("SizedQueue", "new") if args.len() == 1 && block.is_none() => {
+                let n = emit_expr(cx, args[0]);
+                return quote! {
+                    zeo_rt::sized_queue_new((#n).as_int_unchecked())
+                };
+            }
+            // `Ractor.new(*args) { |*params| }` -- block
+            // ISOLATION is enforced HERE, at compile time (the capture
+            // set is statically known), strictly earlier than CRuby's
+            // own Proc-creation-time `Ractor::IsolationError`. Args
+            // cross the boundary at runtime (shareable-by-reference or
+            // deep-copied; a rejection raises `RactorError`).
+            ("Ractor", "new") => {
+                let Some(block_id) = block else {
+                    if block_arg.is_some() {
+                        return crate::codegen::unsupported(
+                            "`Ractor.new` requires a literal block (zeo limitation)",
+                        );
+                    }
+                    return raise::emit_missing_block_raise(cx, "Ractor");
+                };
+                let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+                    panic!(
+                        "internal error: a Block node should only be reached via the Call that invokes it"
+                    );
+                };
+                let block_caps =
+                    super::captures::block_captures(cx.compiler, params, body, cx.current_class);
+                // `block_captures` reports every referenced non-param
+                // name, INCLUDING the block's own locals (`msg =
+                // Ractor.receive` -- found the hard way). An outer-scope
+                // access is a name that's either a genuine shared
+                // capture (in `cx.captured_locals`) or one this block
+                // never assigns itself (an enclosing param/block-local).
+                let mut assigned_here = Vec::new();
+                for &n in body {
+                    super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
+                }
+                let assigned_here: std::collections::HashSet<&String> =
+                    assigned_here.iter().collect();
+                if let Some(outer) = block_caps
+                    .locals
+                    .iter()
+                    .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
+                    .min()
+                {
+                    return crate::codegen::unsupported(format!(
+                        "can not isolate a Proc because it accesses outer variables ({outer})"
+                    ));
+                }
+                if block_caps.self_captured {
+                    return crate::codegen::unsupported(
+                        "can not isolate a Proc because it accesses instance variables of the enclosing object",
+                    );
+                }
+                let proc = procs::emit_proc_value(cx, block_id);
+                let arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| {
+                        let e = emit_expr(cx, a);
+                        super::expr::box_if_object_typed(cx, a, e)
+                    })
+                    .collect();
+                let ractor_error = raise::emit_ractor_error(cx);
+                return quote! {
+                    match zeo_rt::ractor_new(#proc, vec![#(#arg_exprs),*]) {
+                        Ok(__r) => __r,
+                        Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
+                    }
+                };
+            }
+            ("Ractor", "receive") if args.is_empty() && block.is_none() => {
+                return quote! { zeo_rt::ractor_receive() };
+            }
+            ("Ractor", "make_shareable") if args.len() == 1 && block.is_none() => {
+                let v = emit_expr(cx, args[0]);
+                let v = super::expr::box_if_object_typed(cx, args[0], v);
+                let ractor_error = raise::emit_ractor_error(cx);
+                return quote! {
+                    match zeo_rt::make_shareable(&(#v)) {
+                        Ok(__v) => __v,
+                        Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
+                    }
+                };
+            }
+            ("Ractor", "shareable?") if args.len() == 1 && block.is_none() => {
+                let v = emit_expr(cx, args[0]);
+                let v = super::expr::box_if_object_typed(cx, args[0], v);
+                return quote! {
+                    zeo_rt::RubyValue::Bool(zeo_rt::shareable(&(#v)))
+                };
+            }
+            _ => {}
         }
+    }
 
     if let Some(target_path) = super::expr::const_path_of(cx, recv_id)
-        && let Some(target) = cx.resolve_class(&target_path) {
-            // `const_get`/`const_defined?` with a literal name fold against
-            // the compile-time registry (a literal-constant receiver has no
-            // side effects to preserve).
-            if let Some(folded) =
-                reflect::try_const_reflection(cx, target, name, args, kwargs, block, block_arg)
-            {
-                return folded;
-            }
-            // Path 1 only when the class actually DEFINES a matching class
-            // method. Anything else falls through to the generic dynamic path
-            // with the receiver as a first-class Class VALUE:
-            // `Widget == Widget`, `Widget.name`, `Widget.ancestors` resolve
-            // in `send_value`'s Class arm, and a genuinely unknown method is a
-            // real runtime NoMethodError ("for class Widget") -- real Ruby's
-            // behavior.
-            // Checked BEFORE the resolution below, because
-            // `private_class_method :new` marks a name no body defines.
-            if let Some(err) =
-                visibility::enforce_class_method_visibility(cx, recv_id, target, name)
-            {
-                return err;
-            }
-            let is_static = cx.compiler.class_method_in_chain(target, name).is_some()
-                && !cx.compiler.may_be_patched_at_runtime(name);
-            if is_static {
-                if safe {
-                    return crate::codegen::unsupported(
-                        "safe-navigation on a class-method call isn't supported yet (zeo limitation)",
-                    );
-                }
-                return reflect::emit_class_method_call_on(
-                    cx, target, name, args, kwargs, block, block_arg,
+        && let Some(target) = cx.resolve_class(&target_path)
+    {
+        // `const_get`/`const_defined?` with a literal name fold against
+        // the compile-time registry (a literal-constant receiver has no
+        // side effects to preserve).
+        if let Some(folded) =
+            reflect::try_const_reflection(cx, target, name, args, kwargs, block, block_arg)
+        {
+            return folded;
+        }
+        // Path 1 only when the class actually DEFINES a matching class
+        // method. Anything else falls through to the generic dynamic path
+        // with the receiver as a first-class Class VALUE:
+        // `Widget == Widget`, `Widget.name`, `Widget.ancestors` resolve
+        // in `send_value`'s Class arm, and a genuinely unknown method is a
+        // real runtime NoMethodError ("for class Widget") -- real Ruby's
+        // behavior.
+        // Checked BEFORE the resolution below, because
+        // `private_class_method :new` marks a name no body defines.
+        if let Some(err) = visibility::enforce_class_method_visibility(cx, recv_id, target, name) {
+            return err;
+        }
+        let is_static = cx.compiler.class_method_in_chain(target, name).is_some()
+            && !cx.compiler.may_be_patched_at_runtime(name);
+        if is_static {
+            if safe {
+                return crate::codegen::unsupported(
+                    "safe-navigation on a class-method call isn't supported yet (zeo limitation)",
                 );
             }
+            return reflect::emit_class_method_call_on(
+                cx, target, name, args, kwargs, block, block_arg,
+            );
         }
+    }
 
     // A receiver STATICALLY TYPED as a class value (`x = Widget;
     // x.new(...)` / `x.some_class_method`): same Path 1
@@ -2168,54 +2174,54 @@ fn dispatch(
     // ...), which reach their builtin table through the ordinary MRO walk.
     if let Some(cid) = infer_class(cx, recv_id)
         && cx.compiler.is_blank_slate(cid)
-            && cx.compiler.method_in_chain(cid, name).is_none()
-            && !crate::compiler::is_basic_object_method(name)
-        {
-            // The name is provably absent from the chain, so this IS a miss --
-            // and a miss is `method_missing`'s whole job. A blank slate is
-            // where that matters most: `BasicObject` has seven methods, so
-            // catching the rest is what the class is FOR, and `respond_to?` is
-            // itself one of the names that must arrive at the hook rather than
-            // being answered universally.
-            //
-            // Dispatched here rather than left to the runtime because falling
-            // through would reach the universal fast paths below, which answer
-            // `class`/`inspect`/`respond_to?` from static type info without
-            // ever walking the chain that does not contain them.
-            if cx.compiler.method_in_chain(cid, "method_missing").is_some() {
-                let mm = super::pooled_sym("method_missing");
-                let name_sym = super::pooled_sym(name);
-                let arg_exprs = args.iter().map(|&a| {
-                    let e = crate::codegen::expr::emit_expr(cx, a);
-                    crate::codegen::expr::box_if_object_typed(cx, a, e)
-                });
-                let blk = emit_block_option(cx, block, block_arg);
-                // A statically-typed receiver is a bare `Arc<Concrete>`; the
-                // dynamic channel takes a `RubyValue`.
-                let class_ident = super::ident::class_ident(cx.compiler, cid);
-                return quote! {
-                    zeo_rt::send_value_in(#__bx,
-                        &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
-                        #mm,
-                        &[zeo_rt::RubyValue::Symbol(#name_sym), #(#arg_exprs),*],
-                        #blk,
-                    )?
-                };
-            }
-            let describe = format!("an instance of {}", cx.compiler.class(cid).name);
-            let msg = format!("undefined method '{name}' for {describe}");
-            // Typed `?`-propagation rather than a bare `return`: this
-            // expression can appear as the RECEIVER of a further call
-            // (`a.dup.own`), where codegen takes a reference to it -- and
-            // `&!` does not coerce to `&RubyValue`, so a diverging `return`
-            // fails to type-check there. Naming the type keeps it usable in
-            // every position while still carrying the raise outward.
+        && cx.compiler.method_in_chain(cid, name).is_none()
+        && !crate::compiler::is_basic_object_method(name)
+    {
+        // The name is provably absent from the chain, so this IS a miss --
+        // and a miss is `method_missing`'s whole job. A blank slate is
+        // where that matters most: `BasicObject` has seven methods, so
+        // catching the rest is what the class is FOR, and `respond_to?` is
+        // itself one of the names that must arrive at the hook rather than
+        // being answered universally.
+        //
+        // Dispatched here rather than left to the runtime because falling
+        // through would reach the universal fast paths below, which answer
+        // `class`/`inspect`/`respond_to?` from static type info without
+        // ever walking the chain that does not contain them.
+        if cx.compiler.method_in_chain(cid, "method_missing").is_some() {
+            let mm = super::pooled_sym("method_missing");
+            let name_sym = super::pooled_sym(name);
+            let arg_exprs = args.iter().map(|&a| {
+                let e = crate::codegen::expr::emit_expr(cx, a);
+                crate::codegen::expr::box_if_object_typed(cx, a, e)
+            });
+            let blk = emit_block_option(cx, block, block_arg);
+            // A statically-typed receiver is a bare `Arc<Concrete>`; the
+            // dynamic channel takes a `RubyValue`.
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             return quote! {
-                Err::<zeo_rt::RubyValue, zeo_rt::Signal>(
-                    zeo_rt::raise_error("NoMethodError", #msg.to_string()),
+                zeo_rt::send_value_in(#__bx,
+                    &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
+                    #mm,
+                    &[zeo_rt::RubyValue::Symbol(#name_sym), #(#arg_exprs),*],
+                    #blk,
                 )?
             };
         }
+        let describe = format!("an instance of {}", cx.compiler.class(cid).name);
+        let msg = format!("undefined method '{name}' for {describe}");
+        // Typed `?`-propagation rather than a bare `return`: this
+        // expression can appear as the RECEIVER of a further call
+        // (`a.dup.own`), where codegen takes a reference to it -- and
+        // `&!` does not coerce to `&RubyValue`, so a diverging `return`
+        // fails to type-check there. Naming the type keeps it usable in
+        // every position while still carrying the raise outward.
+        return quote! {
+            Err::<zeo_rt::RubyValue, zeo_rt::Signal>(
+                zeo_rt::raise_error("NoMethodError", #msg.to_string()),
+            )?
+        };
+    }
 
     /// Whether `!recv` may still fold to a truthiness test. A program where
     /// nobody defines `!` folds everywhere; one that does still folds at a
@@ -2257,85 +2263,88 @@ fn dispatch(
     // receiver's class is statically known (the common Path 1 case);
     // otherwise falls back to a runtime `zeo_rt::is_a` check against the
     // receiver's actual runtime `class_id()`.
-    if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1
-        && let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
-            // A top-level anchor `::Name` carries the scope "Object" (the
-            // root); its name is an ordinary top-level class, so fall back to
-            // resolving the tail when `Object::Name` doesn't resolve directly.
-            let resolved = cx.resolve_class(&target_name).or_else(|| {
-                target_name
-                    .strip_prefix("Object::")
-                    .and_then(|t| cx.resolve_class(t))
-            });
-            let Some(target) = resolved else {
-                // A constant bound to a RUNTIME class (`Foo = Class.new`), or
-                // one ALIASING a compiled class (`ALIAS = Base`): read the
-                // constant -- through the owner its own PATH names, so a
-                // qualified `M::ALIAS` is looked up under `M` -- and
-                // ancestry-check the id it holds.
-                let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
-                let (scope, leaf) = super::expr::split_const_path(&target_name);
-                let read = super::expr::emit_const_read(cx, scope, leaf);
-                return quote! {
-                    {
-                        let __rtc = #read;
-                        match __rtc {
-                            zeo_rt::RubyValue::Class(__tid) => zeo_rt::RubyValue::Bool(
-                                zeo_rt::is_a_value(&(#recv_boxed), __tid)),
-                            _ => return Err(zeo_rt::raise_error("TypeError", "class or module required".to_string())),
-                        }
-                    }
-                };
-            };
-            let target_id = target.0;
-            // `infer_any_class` (not `infer_class`): a statically-known
-            // BUILT-IN-typed receiver (e.g. `TyKind::Int`) must also
-            // constant-fold here, not fall through to the runtime branch
-            // below, which assumes `#recv_expr` is an actual `RubyValue` it
-            // can call `.class_id()` on at runtime -- true either way now
-            // (see the universal `RubyValue::class_id`), but the static
-            // fold is strictly cheaper and matches every other statically-
-            // known-class case in this function.
+    if no_kwargs
+        && (name == "is_a?" || name == "kind_of?")
+        && args.len() == 1
+        && let Some(target_name) = super::expr::const_path_of(cx, args[0])
+    {
+        // A top-level anchor `::Name` carries the scope "Object" (the
+        // root); its name is an ordinary top-level class, so fall back to
+        // resolving the tail when `Object::Name` doesn't resolve directly.
+        let resolved = cx.resolve_class(&target_name).or_else(|| {
+            target_name
+                .strip_prefix("Object::")
+                .and_then(|t| cx.resolve_class(t))
+        });
+        let Some(target) = resolved else {
+            // A constant bound to a RUNTIME class (`Foo = Class.new`), or
+            // one ALIASING a compiled class (`ALIAS = Base`): read the
+            // constant -- through the owner its own PATH names, so a
+            // qualified `M::ALIAS` is looked up under `M` -- and
+            // ancestry-check the id it holds.
             let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
-            return match infer_any_class(cx, recv_id) {
-                Some(recv_class) => {
-                    let result = cx.compiler.class(recv_class).ancestors.contains(&target);
-                    // A statically-FALSE verdict against a MODULE is not final:
-                    // `obj.extend(M)` files M on one object's singleton and
-                    // leaves its class alone, so the compile-time ancestry
-                    // cannot see it. Only that one case falls back, and
-                    // `value_extends` answers it from a relaxed load in a
-                    // program that never extends anything. A class target
-                    // needs no fallback -- `extend` refuses a Class.
-                    if !result && cx.compiler.class(target).is_module {
-                        return quote! {
-                            zeo_rt::RubyValue::Bool(zeo_rt::value_extends(
-                                &(#recv_boxed),
-                                zeo_rt::ClassId(#target_id),
-                            ))
-                        };
+            let (scope, leaf) = super::expr::split_const_path(&target_name);
+            let read = super::expr::emit_const_read(cx, scope, leaf);
+            return quote! {
+                {
+                    let __rtc = #read;
+                    match __rtc {
+                        zeo_rt::RubyValue::Class(__tid) => zeo_rt::RubyValue::Bool(
+                            zeo_rt::is_a_value(&(#recv_boxed), __tid)),
+                        _ => return Err(zeo_rt::raise_error("TypeError", "class or module required".to_string())),
                     }
-                    // The `true`/`false` verdict is fully compile-time-known
-                    // here, but `recv_expr` itself must still be EVALUATED --
-                    // it may be an arbitrary expression with side effects
-                    // (`log_and_get(x).is_a?(Integer)`), and real Ruby always
-                    // evaluates a method call's receiver regardless of what
-                    // the call itself does with it. `let _ = ...;` forces
-                    // that evaluation without actually using the (statically
-                    // already-known) value, and as a side benefit keeps a
-                    // receiver-only-ever-used-via-`is_a?` local from
-                    // generating a spurious "value assigned but never read"
-                    // warning in the GENERATED program.
-                    quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Bool(#result) } }
                 }
-                None => quote! {
-                    zeo_rt::RubyValue::Bool(zeo_rt::is_a_value(
-                        &(#recv_boxed),
-                        zeo_rt::ClassId(#target_id),
-                    ))
-                },
             };
-        }
+        };
+        let target_id = target.0;
+        // `infer_any_class` (not `infer_class`): a statically-known
+        // BUILT-IN-typed receiver (e.g. `TyKind::Int`) must also
+        // constant-fold here, not fall through to the runtime branch
+        // below, which assumes `#recv_expr` is an actual `RubyValue` it
+        // can call `.class_id()` on at runtime -- true either way now
+        // (see the universal `RubyValue::class_id`), but the static
+        // fold is strictly cheaper and matches every other statically-
+        // known-class case in this function.
+        let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+        return match infer_any_class(cx, recv_id) {
+            Some(recv_class) => {
+                let result = cx.compiler.class(recv_class).ancestors.contains(&target);
+                // A statically-FALSE verdict against a MODULE is not final:
+                // `obj.extend(M)` files M on one object's singleton and
+                // leaves its class alone, so the compile-time ancestry
+                // cannot see it. Only that one case falls back, and
+                // `value_extends` answers it from a relaxed load in a
+                // program that never extends anything. A class target
+                // needs no fallback -- `extend` refuses a Class.
+                if !result && cx.compiler.class(target).is_module {
+                    return quote! {
+                        zeo_rt::RubyValue::Bool(zeo_rt::value_extends(
+                            &(#recv_boxed),
+                            zeo_rt::ClassId(#target_id),
+                        ))
+                    };
+                }
+                // The `true`/`false` verdict is fully compile-time-known
+                // here, but `recv_expr` itself must still be EVALUATED --
+                // it may be an arbitrary expression with side effects
+                // (`log_and_get(x).is_a?(Integer)`), and real Ruby always
+                // evaluates a method call's receiver regardless of what
+                // the call itself does with it. `let _ = ...;` forces
+                // that evaluation without actually using the (statically
+                // already-known) value, and as a side benefit keeps a
+                // receiver-only-ever-used-via-`is_a?` local from
+                // generating a spurious "value assigned but never read"
+                // warning in the GENERATED program.
+                quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Bool(#result) } }
+            }
+            None => quote! {
+                zeo_rt::RubyValue::Bool(zeo_rt::is_a_value(
+                    &(#recv_boxed),
+                    zeo_rt::ClassId(#target_id),
+                ))
+            },
+        };
+    }
 
     // `==`/`!=` on an OBJECT receiver with no matching user definition
     //: real Ruby's `Object#==` default (reference identity)
@@ -2350,61 +2359,65 @@ fn dispatch(
         && block.is_none()
         && block_arg.is_none()
         && let TyKind::Object(cid) = infer(cx, recv_id)
-            && cx.compiler.method_in_chain(cid, name).is_none() {
-                let recv_boxed = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
-                let arg = emit_expr(cx, args[0]);
-                let arg = super::expr::box_if_object_typed(cx, args[0], arg);
-                let negate = name == "!=";
-                return quote! {
-                    zeo_rt::RubyValue::Bool(zeo_rt::rb_eq_checked(&(#recv_boxed), &(#arg))? != #negate)
-                };
-            }
+        && cx.compiler.method_in_chain(cid, name).is_none()
+    {
+        let recv_boxed = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
+        let arg = emit_expr(cx, args[0]);
+        let arg = super::expr::box_if_object_typed(cx, args[0], arg);
+        let negate = name == "!=";
+        return quote! {
+            zeo_rt::RubyValue::Bool(zeo_rt::rb_eq_checked(&(#recv_boxed), &(#arg))? != #negate)
+        };
+    }
 
     // `instance_of?` against a literal class/module constant
     // -- EXACT class identity, not ancestry (`w.instance_of?(Object)` is
     // false for a Widget); same static-fold-else-runtime shape as
     // `is_a?`/`kind_of?` above. A non-constant argument falls through to
     // the dynamic path (`send`/`send_value`'s Class-argument arms).
-    if no_kwargs && name == "instance_of?" && args.len() == 1
-        && let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
-            // A top-level anchor `::Name` carries the scope "Object" (the
-            // root); its name is an ordinary top-level class, so fall back to
-            // resolving the tail when `Object::Name` doesn't resolve directly.
-            let resolved = cx.resolve_class(&target_name).or_else(|| {
-                target_name
-                    .strip_prefix("Object::")
-                    .and_then(|t| cx.resolve_class(t))
-            });
-            let Some(target) = resolved else {
-                // A constant bound to a RUNTIME class (`Foo = Class.new`):
-                // resolve it at runtime and check EXACT class identity.
-                let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
-                return quote! {
-                    {
-                        let __rtc = zeo_rt::const_get(0, #target_name).ok_or_else(|| {
-                            zeo_rt::raise_error("NameError", format!("uninitialized constant {}", #target_name))
-                        })?;
-                        match __rtc {
-                            zeo_rt::RubyValue::Class(__tid) => zeo_rt::RubyValue::Bool(
-                                (#recv_boxed).class_id() == __tid),
-                            _ => return Err(zeo_rt::raise_error("TypeError", "class or module required".to_string())),
-                        }
+    if no_kwargs
+        && name == "instance_of?"
+        && args.len() == 1
+        && let Some(target_name) = super::expr::const_path_of(cx, args[0])
+    {
+        // A top-level anchor `::Name` carries the scope "Object" (the
+        // root); its name is an ordinary top-level class, so fall back to
+        // resolving the tail when `Object::Name` doesn't resolve directly.
+        let resolved = cx.resolve_class(&target_name).or_else(|| {
+            target_name
+                .strip_prefix("Object::")
+                .and_then(|t| cx.resolve_class(t))
+        });
+        let Some(target) = resolved else {
+            // A constant bound to a RUNTIME class (`Foo = Class.new`):
+            // resolve it at runtime and check EXACT class identity.
+            let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+            return quote! {
+                {
+                    let __rtc = zeo_rt::const_get(0, #target_name).ok_or_else(|| {
+                        zeo_rt::raise_error("NameError", format!("uninitialized constant {}", #target_name))
+                    })?;
+                    match __rtc {
+                        zeo_rt::RubyValue::Class(__tid) => zeo_rt::RubyValue::Bool(
+                            (#recv_boxed).class_id() == __tid),
+                        _ => return Err(zeo_rt::raise_error("TypeError", "class or module required".to_string())),
                     }
-                };
-            };
-            let target_id = target.0;
-            return match infer_any_class(cx, recv_id) {
-                Some(recv_class) => {
-                    let result = recv_class == target;
-                    quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Bool(#result) } }
                 }
-                None => quote! {
-                    zeo_rt::RubyValue::Bool(
-                        (#recv_expr).class_id() == zeo_rt::ClassId(#target_id),
-                    )
-                },
             };
-        }
+        };
+        let target_id = target.0;
+        return match infer_any_class(cx, recv_id) {
+            Some(recv_class) => {
+                let result = recv_class == target;
+                quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Bool(#result) } }
+            }
+            None => quote! {
+                zeo_rt::RubyValue::Bool(
+                    (#recv_expr).class_id() == zeo_rt::ClassId(#target_id),
+                )
+            },
+        };
+    }
 
     // `.class` -- universal, same override-respecting shape
     // as `freeze`/`dup` below (`class` is an ordinary overridable method
@@ -2979,41 +2992,45 @@ fn dispatch(
     // operands stay boxed `&RubyValue`s since the bignum migration -- the
     // `int_*` family's inline small-small fast half keeps the hot path
     // cheap, and overflow promotes instead of panicking.
-    if no_kwargs && args.len() == 1
-        && let Some(&(_, rt_fn, kind)) = ops::INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
-            let recv_ty = infer(cx, recv_id);
-            let arg_ty = infer(cx, args[0]);
-            if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
-                let arg_expr = emit_expr(cx, args[0]);
-                let func = format_ident!("{rt_fn}");
-                return match kind {
-                    ops::IntOpKind::Value => {
-                        quote! { zeo_rt::#func(&(#recv_expr), &(#arg_expr)) }
-                    }
-                    ops::IntOpKind::Fallible => {
-                        quote! { zeo_rt::#func(&(#recv_expr), &(#arg_expr))? }
-                    }
-                    ops::IntOpKind::DivMod => {
-                        ops::emit_int_div_or_mod_checked(cx, rt_fn, recv_expr.clone(), arg_expr)
-                    }
-                    ops::IntOpKind::Bool => quote! {
-                        zeo_rt::RubyValue::Bool(zeo_rt::#func(&(#recv_expr), &(#arg_expr)))
-                    },
-                    ops::IntOpKind::Cmp => quote! {
-                        zeo_rt::RubyValue::Int(zeo_rt::#func(&(#recv_expr), &(#arg_expr)))
-                    },
-                };
-            }
+    if no_kwargs
+        && args.len() == 1
+        && let Some(&(_, rt_fn, kind)) = ops::INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
+    {
+        let recv_ty = infer(cx, recv_id);
+        let arg_ty = infer(cx, args[0]);
+        if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
+            let arg_expr = emit_expr(cx, args[0]);
+            let func = format_ident!("{rt_fn}");
+            return match kind {
+                ops::IntOpKind::Value => {
+                    quote! { zeo_rt::#func(&(#recv_expr), &(#arg_expr)) }
+                }
+                ops::IntOpKind::Fallible => {
+                    quote! { zeo_rt::#func(&(#recv_expr), &(#arg_expr))? }
+                }
+                ops::IntOpKind::DivMod => {
+                    ops::emit_int_div_or_mod_checked(cx, rt_fn, recv_expr.clone(), arg_expr)
+                }
+                ops::IntOpKind::Bool => quote! {
+                    zeo_rt::RubyValue::Bool(zeo_rt::#func(&(#recv_expr), &(#arg_expr)))
+                },
+                ops::IntOpKind::Cmp => quote! {
+                    zeo_rt::RubyValue::Int(zeo_rt::#func(&(#recv_expr), &(#arg_expr)))
+                },
+            };
         }
+    }
 
     // Native `Int` unary operators (`-@`/`+@`/`~`), same eligibility rule
     // (all three return `RubyValue` -- negation can promote `-i64::MIN`).
-    if no_kwargs && args.is_empty()
+    if no_kwargs
+        && args.is_empty()
         && let Some(&(_, rt_fn)) = ops::INT_UNARY_OPS.iter().find(|(op, _)| *op == name)
-            && infer(cx, recv_id) == TyKind::Int {
-                let func = format_ident!("{rt_fn}");
-                return quote! { zeo_rt::#func(&(#recv_expr)) };
-            }
+        && infer(cx, recv_id) == TyKind::Int
+    {
+        let func = format_ident!("{rt_fn}");
+        return quote! { zeo_rt::#func(&(#recv_expr)) };
+    }
 
     // Native `Float` arithmetic/comparison, INCLUDING mixed `Int`/`Float`
     // operands (Ruby's own numeric-tower promotion: `1 + 2.0` promotes the
@@ -3080,14 +3097,16 @@ fn dispatch(
 
     // Native `Float` unary operators (`-@`/`+@` -- no `~`, real Ruby's
     // `Float` has none), same eligibility rule.
-    if no_kwargs && args.is_empty()
+    if no_kwargs
+        && args.is_empty()
         && let Some(&(_, rt_fn)) = ops::FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name)
-            && infer(cx, recv_id) == TyKind::Float {
-                let func = format_ident!("{rt_fn}");
-                return quote! {
-                    zeo_rt::RubyValue::Float(zeo_rt::#func((#recv_expr).as_float_unchecked()))
-                };
-            }
+        && infer(cx, recv_id) == TyKind::Float
+    {
+        let func = format_ident!("{rt_fn}");
+        return quote! {
+            zeo_rt::RubyValue::Float(zeo_rt::#func((#recv_expr).as_float_unchecked()))
+        };
+    }
 
     // A REOPENED builtin's method on a statically-typed builtin receiver
     //: a direct call to the generated free function (`__bm_
@@ -3100,30 +3119,32 @@ fn dispatch(
     // never reach this arm).
     if let Some(cid) = infer_any_class(cx, recv_id)
         && cx.compiler.class(cid).is_builtin
-            && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
-                let scope = cx.compiler.scope(sid);
-                if !bypass_visibility
-                    && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name) {
-                        return err;
-                    }
-                let mod_ident = super::ident::class_ident(cx.compiler, cid);
-                let method_ident = safe_ident(name);
-                return super::params::emit_call_args_to(
-                    cx,
-                    &super::params::Callee::FreeFn {
-                        path: quote! { #mod_ident::#method_ident },
-                        recv: recv_expr.clone(),
-                    },
-                    name,
-                    &scope.params,
-                    args,
-                    kwargs,
-                    block,
-                    block_arg,
-                    scope.needs_block_param(),
-                    crate::codegen::scope_frame_guard(cx.compiler, scope, false),
-                );
-            }
+        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name)
+    {
+        let scope = cx.compiler.scope(sid);
+        if !bypass_visibility
+            && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name)
+        {
+            return err;
+        }
+        let mod_ident = super::ident::class_ident(cx.compiler, cid);
+        let method_ident = safe_ident(name);
+        return super::params::emit_call_args_to(
+            cx,
+            &super::params::Callee::FreeFn {
+                path: quote! { #mod_ident::#method_ident },
+                recv: recv_expr.clone(),
+            },
+            name,
+            &scope.params,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            scope.needs_block_param(),
+            crate::codegen::scope_frame_guard(cx.compiler, scope, false),
+        );
+    }
 
     if no_kwargs {
         if let Some(tokens) = builtins::try_collection_dispatch(cx, recv_id, name, args, recv_expr)
@@ -3152,20 +3173,21 @@ fn dispatch(
     // block form.
     if let Some(block_id) =
         block.filter(|_| is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
-        && let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
-            let n = *n;
-            // `Integer#times` evaluates to its receiver (MRI), not nil --
-            // matters in expression position (`x = 5.times {}`).
-            return emit_counted_block_splice(
-                cx,
-                block_id,
-                quote! { 0i64 },
-                quote! { __i >= #n },
-                quote! { 1i64 },
-                "times",
-                quote! { zeo_rt::RubyValue::Int(#n) },
-            );
-        }
+        && let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id]
+    {
+        let n = *n;
+        // `Integer#times` evaluates to its receiver (MRI), not nil --
+        // matters in expression position (`x = 5.times {}`).
+        return emit_counted_block_splice(
+            cx,
+            block_id,
+            quote! { 0i64 },
+            quote! { __i >= #n },
+            quote! { 1i64 },
+            "times",
+            quote! { zeo_rt::RubyValue::Int(#n) },
+        );
+    }
 
     // `(a..b).each { |i| }` on a LITERAL Int-bounded range: the same native
     // counted loop `.times` fuses to (the generic path allocates a real
@@ -3178,39 +3200,40 @@ fn dispatch(
             end: Some(e),
             exclusive,
         } = &cx.compiler.hir[recv_id]
-            && let (HirNode::IntegerLit(s), HirNode::IntegerLit(e)) =
-                (&cx.compiler.hir[*s], &cx.compiler.hir[*e])
-            {
-                let (s, e, exclusive) = (*s, *e, *exclusive);
-                let done = if exclusive {
-                    quote! { __i >= #e }
-                } else {
-                    quote! { __i > #e }
-                };
-                return emit_counted_block_splice(
-                    cx,
-                    block_id,
-                    quote! { #s },
-                    done,
-                    quote! { 1i64 },
-                    "range_each",
-                    quote! {
-                        zeo_rt::RubyValue::Range(
-                            Some(Box::new(zeo_rt::RubyValue::Int(#s))),
-                            Some(Box::new(zeo_rt::RubyValue::Int(#e))),
-                            #exclusive,
-                        )
-                    },
-                );
-            }
+        && let (HirNode::IntegerLit(s), HirNode::IntegerLit(e)) =
+            (&cx.compiler.hir[*s], &cx.compiler.hir[*e])
+    {
+        let (s, e, exclusive) = (*s, *e, *exclusive);
+        let done = if exclusive {
+            quote! { __i >= #e }
+        } else {
+            quote! { __i > #e }
+        };
+        return emit_counted_block_splice(
+            cx,
+            block_id,
+            quote! { #s },
+            done,
+            quote! { 1i64 },
+            "range_each",
+            quote! {
+                zeo_rt::RubyValue::Range(
+                    Some(Box::new(zeo_rt::RubyValue::Int(#s))),
+                    Some(Box::new(zeo_rt::RubyValue::Int(#e))),
+                    #exclusive,
+                )
+            },
+        );
+    }
 
     // Typed-receiver iterator fusion (`Compiler::inline_iter_sites`): the
     // literal shapes above never nominate (their receivers aren't locals),
     // so ordering is free. See `emit_typed_iter_inline` for the guard rule.
     if let Some(block_id) = block
-        && let Some(&kind) = cx.compiler.inline_iter_sites.get(&block_id) {
-            return emit_typed_iter_inline(cx, kind, recv_id, args, block_id, name, block_arg);
-        }
+        && let Some(&kind) = cx.compiler.inline_iter_sites.get(&block_id)
+    {
+        return emit_typed_iter_inline(cx, kind, recv_id, args, block_id, name, block_arg);
+    }
 
     let recv_class = infer_class(cx, recv_id);
 
@@ -3259,41 +3282,42 @@ fn dispatch(
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
             if let Some(cid) = recv_class
-                && let Some((_, sid)) = cx.compiler.method_in_chain(cid, &target) {
-                    // `public_send` -- unlike `send` -- only ever calls
-                    // `Public` methods, with NO self-receiver/protected-
-                    // relatedness relaxation at all (stricter than an
-                    // ordinary explicit-receiver call, matching real Ruby).
-                    // Checked HERE (not via `enforce_visibility`, whose
-                    // rules are deliberately looser) before recursing.
-                    // `public_send` -- unlike `send` -- only ever calls
-                    // `Public` methods, with NO self-receiver/protected-
-                    // relatedness relaxation at all (stricter than an
-                    // ordinary explicit-receiver call, matching real Ruby).
-                    //
-                    // A non-public target is NOT a compile error, though:
-                    // real Ruby resolves visibility at CALL time and raises a
-                    // rescuable NoMethodError. So decline the Path-1
-                    // shortcut and fall through to the dynamic path, whose
-                    // `send_value_public_in` performs exactly that check --
-                    // keeping the rule in ONE place rather than duplicating
-                    // the message here.
-                    let public_ok = name != "public_send"
-                        || cx.compiler.scope(sid).visibility == Visibility::Public;
-                    if public_ok {
-                        return dispatch(
-                            cx,
-                            recv_id,
-                            &target,
-                            &args[1..],
-                            kwargs,
-                            block,
-                            block_arg,
-                            recv_expr,
-                            true,
-                        );
-                    }
+                && let Some((_, sid)) = cx.compiler.method_in_chain(cid, &target)
+            {
+                // `public_send` -- unlike `send` -- only ever calls
+                // `Public` methods, with NO self-receiver/protected-
+                // relatedness relaxation at all (stricter than an
+                // ordinary explicit-receiver call, matching real Ruby).
+                // Checked HERE (not via `enforce_visibility`, whose
+                // rules are deliberately looser) before recursing.
+                // `public_send` -- unlike `send` -- only ever calls
+                // `Public` methods, with NO self-receiver/protected-
+                // relatedness relaxation at all (stricter than an
+                // ordinary explicit-receiver call, matching real Ruby).
+                //
+                // A non-public target is NOT a compile error, though:
+                // real Ruby resolves visibility at CALL time and raises a
+                // rescuable NoMethodError. So decline the Path-1
+                // shortcut and fall through to the dynamic path, whose
+                // `send_value_public_in` performs exactly that check --
+                // keeping the rule in ONE place rather than duplicating
+                // the message here.
+                let public_ok = name != "public_send"
+                    || cx.compiler.scope(sid).visibility == Visibility::Public;
+                if public_ok {
+                    return dispatch(
+                        cx,
+                        recv_id,
+                        &target,
+                        &args[1..],
+                        kwargs,
+                        block,
+                        block_arg,
+                        recv_expr,
+                        true,
+                    );
                 }
+            }
         }
         // Keyword args ride as one trailing Hash (the G2 convention) --
         // the callee's trampoline pops and binds it.
@@ -3345,40 +3369,41 @@ fn dispatch(
     if let Some(cid) = recv_class.filter(|&c| {
         !cx.compiler.may_be_undefined_at_runtime(c, name)
             && !cx.compiler.may_be_patched_at_runtime(name)
-    })
-        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
-            let scope = cx.compiler.scope(sid);
-            if !bypass_visibility
-                && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name) {
-                    return err;
-                }
-            if let Some(inlined) =
-                emit_inline_accessor(cx, cid, scope, recv_expr, args, kwargs, block, block_arg)
-            {
-                return inlined;
-            }
-            // An `attr_*` accessor is iseq-less in CRuby and appears in no
-            // backtrace, so a wrong-arity call to one -- the only thing that
-            // reaches this line for an accessor -- must report the caller's
-            // frame alone (oracle-verified against a hand-written `def x=(v)`,
-            // which does get its own).
-            let frame = match cx.compiler.accessor_shape(cid, scope) {
-                Some(a) if a.attr_generated => quote! {},
-                _ => crate::codegen::scope_frame_guard(cx.compiler, scope, false),
-            };
-            return super::params::emit_call_args(
-                cx,
-                recv_expr,
-                name,
-                &scope.params,
-                args,
-                kwargs,
-                block,
-                block_arg,
-                scope.needs_block_param(),
-                frame,
-            );
+    }) && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name)
+    {
+        let scope = cx.compiler.scope(sid);
+        if !bypass_visibility
+            && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name)
+        {
+            return err;
         }
+        if let Some(inlined) =
+            emit_inline_accessor(cx, cid, scope, recv_expr, args, kwargs, block, block_arg)
+        {
+            return inlined;
+        }
+        // An `attr_*` accessor is iseq-less in CRuby and appears in no
+        // backtrace, so a wrong-arity call to one -- the only thing that
+        // reaches this line for an accessor -- must report the caller's
+        // frame alone (oracle-verified against a hand-written `def x=(v)`,
+        // which does get its own).
+        let frame = match cx.compiler.accessor_shape(cid, scope) {
+            Some(a) if a.attr_generated => quote! {},
+            _ => crate::codegen::scope_frame_guard(cx.compiler, scope, false),
+        };
+        return super::params::emit_call_args(
+            cx,
+            recv_expr,
+            name,
+            &scope.params,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            scope.needs_block_param(),
+            frame,
+        );
+    }
 
     // Runtime-checked fallback for a built-in `Int` operator whose
     // operand(s) couldn't be statically proven `Int`/`Float` -- most
@@ -3664,27 +3689,27 @@ fn dispatch(
                 .class(cid)
                 .ancestors
                 .contains(&crate::compiler::COMPARABLE_CLASS))
-        {
-            let class_ident = super::ident::class_ident(cx.compiler, cid);
-            let name_expr = super::pooled_sym(name);
-            let arg_exprs = args.iter().map(|&a| {
-                let e = emit_expr(cx, a);
-                box_if_object_typed(cx, a, e)
-            });
-            // Keyword args ride as one trailing Hash (the G2 convention).
-            let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
-            let block_value = emit_block_option(cx, block, block_arg);
-            let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
-            return quote! {
-                zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
-                    &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
-                    #name_expr,
-                    &[#(#arg_exprs,)* #(#kw_hash,)*],
-                    #block_value,
-                    #caller,
-                ))?
-            };
-        }
+    {
+        let class_ident = super::ident::class_ident(cx.compiler, cid);
+        let name_expr = super::pooled_sym(name);
+        let arg_exprs = args.iter().map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        });
+        // Keyword args ride as one trailing Hash (the G2 convention).
+        let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
+        let block_value = emit_block_option(cx, block, block_arg);
+        let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
+        return quote! {
+            zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
+                &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
+                #name_expr,
+                &[#(#arg_exprs,)* #(#kw_hash,)*],
+                #block_value,
+                #caller,
+            ))?
+        };
+    }
 
     // No static form matched. Dispatch through the runtime rather than
     // rejecting: the receiver's class may still provide the method via an

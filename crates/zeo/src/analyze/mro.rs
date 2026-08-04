@@ -413,9 +413,9 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
             .map(|&a| &compiler.class(a).hidden_ivars)
             .find(|h| !h.is_empty())
             .cloned()
-        {
-            compiler.classes[class_id.0 as usize].hidden_ivars = inherited;
-        }
+    {
+        compiler.classes[class_id.0 as usize].hidden_ivars = inherited;
+    }
     let hidden = compiler.class(class_id).hidden_ivars.clone();
     if !hidden.is_empty() {
         ivars.retain(|iv| !hidden.contains(iv));

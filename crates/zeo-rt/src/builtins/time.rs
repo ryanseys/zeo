@@ -780,9 +780,10 @@ fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
     ];
     for (i, lo, hi) in ranges {
         if let Some(&v) = parts.get(i)
-            && (v < lo || v > hi) {
-                return Err(arg_error!("argument out of range"));
-            }
+            && (v < lo || v > hi)
+        {
+            return Err(arg_error!("argument out of range"));
+        }
     }
     Ok(())
 }

@@ -470,9 +470,9 @@ pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
             .iter()
             .copied()
             .any(reaches)
-        {
-            return true;
-        }
+    {
+        return true;
+    }
     if !ANY_EXTENDED.load(Ordering::Acquire) {
         return false;
     }
@@ -804,12 +804,13 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     // The module-method half is built with the overlay lock DROPPED:
     // `extended_class_method` reads the overlay itself.
     if frame.is_some_and(|f| f.module_function)
-        && let Some(wrapper) = extended_class_method(id, name) {
-            let mut w = maps().classes.write().unwrap();
-            let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
-            e.class_methods.insert(name, wrapper);
-            e.extended_class_methods.remove(&name);
-        }
+        && let Some(wrapper) = extended_class_method(id, name)
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.class_methods.insert(name, wrapper);
+        e.extended_class_methods.remove(&name);
+    }
     patch_class(id);
     mark_live();
     // A hook name defined on Module/Class/BasicObject itself applies to every
@@ -2461,9 +2462,10 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let real = recv.class_id();
     let owner = recv.clone();
     if let Some(k) = cache_key
-        && let Some(&sid) = maps().singleton_classes.read().unwrap().get(&k) {
-            return Ok(RubyValue::Class(sid));
-        }
+        && let Some(&sid) = maps().singleton_classes.read().unwrap().get(&k)
+    {
+        return Ok(RubyValue::Class(sid));
+    }
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
     let new_id = ClassId(id_num);
     // The chain carries every module `extend` mixed in, ahead of the receiver
@@ -2825,9 +2827,10 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
     {
         let s = maps().singletons.read().unwrap();
         if !s.is_empty()
-            && let Some(m) = s.get(&obj_identity(recv)).and_then(|t| t.get(&name)) {
-                return Some(m.clone());
-            }
+            && let Some(m) = s.get(&obj_identity(recv)).and_then(|t| t.get(&name))
+        {
+            return Some(m.clone());
+        }
     }
     if id.0 >= RUNTIME_CLASS_ID_BASE {
         // 2a. Runtime class: walk its ancestors (overlay methods, then frozen

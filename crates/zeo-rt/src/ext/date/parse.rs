@@ -299,10 +299,10 @@ fn parse_time(rest: &mut String, f: &mut Fields) {
         if let (Ok(num), Ok(den)) = (
             frac.parse::<BigInt>(),
             format!("1{}", "0".repeat(frac.len())).parse::<BigInt>(),
-        )
-            && let Ok(v) = rational_new(num, den) {
-                f.pairs.push(("sec_fraction", v));
-            }
+        ) && let Ok(v) = rational_new(num, den)
+        {
+            f.pairs.push(("sec_fraction", v));
+        }
     }
     let span = m.get(0).expect("group 0 always matches").range();
     rest.replace_range(span, " ");
@@ -364,9 +364,10 @@ fn parse_named_month(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
     }
     f.int("mon", mon);
     if let Some(d) = &mday
-        && let Ok(v) = d.digits.parse::<i64>() {
-            f.int("mday", v);
-        }
+        && let Ok(v) = d.digits.parse::<i64>()
+    {
+        f.int("mday", v);
+    }
     rest.clear();
     true
 }

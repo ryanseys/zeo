@@ -153,11 +153,12 @@ impl RPointer {
             return Err(null_pointer_error());
         }
         if let Some(size) = self.size
-            && off + len > size {
-                return Err(index_error!(
-                    "Memory access offset={off} size={len} out of bounds (total {size})"
-                ));
-            }
+            && off + len > size
+        {
+            return Err(index_error!(
+                "Memory access offset={off} size={len} out of bounds (total {size})"
+            ));
+        }
         Ok(())
     }
 

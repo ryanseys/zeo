@@ -1129,12 +1129,14 @@ pub(crate) fn parse_integer_strict(text: &str, base: Option<u32>) -> Option<Ruby
         (base.unwrap_or(10), lower)
     };
     if let Some(b) = base
-        && b != radix && !(b == 10 && radix == 10) {
-            // An explicit base must agree with an explicit prefix.
-            if radix != b {
-                return None;
-            }
+        && b != radix
+        && !(b == 10 && radix == 10)
+    {
+        // An explicit base must agree with an explicit prefix.
+        if radix != b {
+            return None;
         }
+    }
     if digits.is_empty()
         || digits.starts_with('_')
         || digits.ends_with('_')
@@ -1600,9 +1602,10 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         if is_kwargs {
             msgs = &args[..args.len() - 1];
             if let RubyValue::Symbol(s) = crate::hash_get(h, &cat_key)
-                && s.name() == "deprecated" {
-                    return Ok(RubyValue::Nil);
-                }
+                && s.name() == "deprecated"
+            {
+                return Ok(RubyValue::Nil);
+            }
         }
     }
     let mut buf = Vec::new();

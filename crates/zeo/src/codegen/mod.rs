@@ -2631,9 +2631,10 @@ fn inline_class_markers(
         match &compiler.hir[s] {
             crate::hir::HirNode::ClassDef { .. } => {
                 if seen.insert(s)
-                    && let Some(site) = site_by_marker.get(&s) {
-                        work.extend(site.stmts.iter().copied());
-                    }
+                    && let Some(site) = site_by_marker.get(&s)
+                {
+                    work.extend(site.stmts.iter().copied());
+                }
             }
             crate::hir::HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
             // Every other statement container -- a `begin`, an `if`, a `case`,

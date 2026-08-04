@@ -216,11 +216,13 @@ fn name_of(table: &[(i32, &str)], v: i32) -> Option<String> {
 /// The value half of `#inspect`: the linger pair, the socktype name for
 /// SO_TYPE, else the plain int, else the raw bytes inspected.
 fn inspect_value(o: &RSockOpt) -> String {
-    if o.level == libc::SOL_SOCKET && o.optname == libc::SO_LINGER
-        && let Some((onoff, secs)) = linger_pair(o) {
-            let state = if onoff != 0 { "on" } else { "off" };
-            return format!("{state} {secs}sec");
-        }
+    if o.level == libc::SOL_SOCKET
+        && o.optname == libc::SO_LINGER
+        && let Some((onoff, secs)) = linger_pair(o)
+    {
+        let state = if onoff != 0 { "on" } else { "off" };
+        return format!("{state} {secs}sec");
+    }
     match data_int(o) {
         Ok(n) if o.level == libc::SOL_SOCKET && o.optname == libc::SO_TYPE => match n {
             libc::SOCK_STREAM => "SOCK_STREAM".to_string(),

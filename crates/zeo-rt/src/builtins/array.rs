@@ -1614,9 +1614,10 @@ fn join_into(
 ) -> Result<(), crate::Signal> {
     for (i, e) in elems.iter().enumerate() {
         if i > 0
-            && let Some(sep) = sep {
-                push_or_raise(out, sep)?;
-            }
+            && let Some(sep) = sep
+        {
+            push_or_raise(out, sep)?;
+        }
         match e {
             RubyValue::Array(inner) => join_into(out, &inner.lock().clone(), sep)?,
             RubyValue::Str(s) => push_or_raise(out, &s.lock().clone())?,

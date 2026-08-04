@@ -202,9 +202,10 @@ pub(crate) fn build_ctx(st: &CtxState) -> Result<SslContext, Signal> {
     if st.ca_file.is_none() || st.default_paths {
         b.set_default_verify_paths().map_err(err)?;
         if st.ca_file.is_none()
-            && let Some(bundle) = fallback_bundle() {
-                b.set_ca_file(bundle).map_err(err)?;
-            }
+            && let Some(bundle) = fallback_bundle()
+        {
+            b.set_ca_file(bundle).map_err(err)?;
+        }
     }
     if let Some(v) = st.min_version.and_then(version_of) {
         b.set_min_proto_version(Some(v)).map_err(err)?;

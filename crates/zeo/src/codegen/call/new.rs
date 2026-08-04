@@ -112,36 +112,37 @@ pub fn emit_new(
     }
     let ci = cx.compiler.class(cid);
     if cx.compiler.has_generated_struct(cid)
-        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
-            let scope = cx.compiler.scope(sid);
-            let ctor = emit_ctor_struct(cx, cid);
-            // `initialize` takes `self: Arc<Self>` BY VALUE (see
-            // `ruby_class!`'s docs), so it would move `__obj` -- clone the
-            // handle (a refcount bump) to keep `__obj` returnable. UFCS, not
-            // `.clone()` method syntax, which a user Ruby method named
-            // `clone` (an inherent fn on the struct) would hijack.
-            //
-            // A literal block passed to `.new` is forwarded to `initialize`
-            // (so `yield`/`block_given?` inside it see it) -- but only when
-            // that `initialize` HAS a block slot. Ruby lets any call carry a
-            // block the callee never looks at; the generated signature has no
-            // parameter for one, so passing it anyway is an arity error on the
-            // generated program.
-            let takes_block = scope.needs_block_param();
-            let init = crate::codegen::params::emit_call_args_to(
-                cx,
-                &crate::codegen::params::Callee::Method(quote! { Clone::clone(&__obj) }),
-                "initialize",
-                &scope.params,
-                args,
-                kwargs,
-                block.filter(|_| takes_block),
-                None,
-                takes_block,
-                crate::codegen::scope_frame_guard(cx.compiler, scope, false),
-            );
-            return quote! { { let __obj = #ctor; #init; __obj } };
-        }
+        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize")
+    {
+        let scope = cx.compiler.scope(sid);
+        let ctor = emit_ctor_struct(cx, cid);
+        // `initialize` takes `self: Arc<Self>` BY VALUE (see
+        // `ruby_class!`'s docs), so it would move `__obj` -- clone the
+        // handle (a refcount bump) to keep `__obj` returnable. UFCS, not
+        // `.clone()` method syntax, which a user Ruby method named
+        // `clone` (an inherent fn on the struct) would hijack.
+        //
+        // A literal block passed to `.new` is forwarded to `initialize`
+        // (so `yield`/`block_given?` inside it see it) -- but only when
+        // that `initialize` HAS a block slot. Ruby lets any call carry a
+        // block the callee never looks at; the generated signature has no
+        // parameter for one, so passing it anyway is an arity error on the
+        // generated program.
+        let takes_block = scope.needs_block_param();
+        let init = crate::codegen::params::emit_call_args_to(
+            cx,
+            &crate::codegen::params::Callee::Method(quote! { Clone::clone(&__obj) }),
+            "initialize",
+            &scope.params,
+            args,
+            kwargs,
+            block.filter(|_| takes_block),
+            None,
+            takes_block,
+            crate::codegen::scope_frame_guard(cx.compiler, scope, false),
+        );
+        return quote! { { let __obj = #ctor; #init; __obj } };
+    }
     // Boxed via `box_if_object_typed`: `initialize`'s own Rust parameters
     // are always plain `RubyValue` (see that function's docs) -- an
     // Object-typed constructor ARGUMENT (e.g. passing one class instance

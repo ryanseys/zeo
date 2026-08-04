@@ -137,9 +137,10 @@ pub(crate) fn verify_certificate_identity(cert: &openssl::x509::X509Ref, hostnam
                 continue;
             }
             if let Ok(cn) = entry.data().to_string()
-                && hostname_matches(hostname, &cn) {
-                    return true;
-                }
+                && hostname_matches(hostname, &cn)
+            {
+                return true;
+            }
         }
     }
     false

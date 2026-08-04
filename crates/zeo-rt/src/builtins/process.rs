@@ -1502,9 +1502,10 @@ pub(crate) fn build_spawn_command(args: &[RubyValue]) -> Result<Command, Signal>
     // `:unsetenv_others` wipes the inherited environment before the explicit
     // pairs are applied; a nil value unsets a single variable.
     if let Some(RubyValue::Hash(o)) = &opts
-        && hash_truthy(o, "unsetenv_others") {
-            cmd.env_clear();
-        }
+        && hash_truthy(o, "unsetenv_others")
+    {
+        cmd.env_clear();
+    }
     if let Some(RubyValue::Hash(e)) = &env {
         for (k, v) in crate::collections::hash_pairs(e) {
             let key = cmd_str(&k)?;
@@ -1634,14 +1635,12 @@ fn apply_spawn_options(cmd: &mut Command, opts: &crate::collections::RHash) -> R
 
     // fd->fd merges resolve against whatever the other stream became, whichever
     // order the keys appeared in.
-    if err_to_out
-        && let Some(f) = &out {
-            err = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
-        }
-    if out_to_err
-        && let Some(f) = &err {
-            out = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
-        }
+    if err_to_out && let Some(f) = &out {
+        err = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
+    }
+    if out_to_err && let Some(f) = &err {
+        out = Some(f.try_clone().map_err(|e| spawn_error(&e))?);
+    }
     if let Some(f) = out {
         cmd.stdout(Stdio::from(f));
     }

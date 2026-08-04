@@ -743,23 +743,24 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // matching `::`'s lookup for a class/module scope). optparse's
         // `self.class::Reason`.
         if let Some(parent) = cp.parent()
-            && constant_path_name(&parent).is_err() {
-                let name = cp.name().ok_or(
+            && constant_path_name(&parent).is_err()
+        {
+            let name = cp.name().ok_or(
                     "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
                 )?;
-                let name = String::from_utf8_lossy(name.as_slice()).into_owned();
-                let scope = lower_node(result, hir, &parent)?;
-                let sym = hir.push(HirNode::SymbolLit(name));
-                return Ok(hir.push(HirNode::Call {
-                    receiver: Some(scope),
-                    name: "const_get".to_string(),
-                    args: vec![ArrayElem::Single(sym)],
-                    kwargs: Vec::new(),
-                    block: None,
-                    block_arg: None,
-                    safe: false,
-                }));
-            }
+            let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+            let scope = lower_node(result, hir, &parent)?;
+            let sym = hir.push(HirNode::SymbolLit(name));
+            return Ok(hir.push(HirNode::Call {
+                receiver: Some(scope),
+                name: "const_get".to_string(),
+                args: vec![ArrayElem::Single(sym)],
+                kwargs: Vec::new(),
+                block: None,
+                block_arg: None,
+                safe: false,
+            }));
+        }
         let (scope, name) = constant_path_scope_and_name(&cp)?;
         return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
     }
@@ -1392,124 +1393,122 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .filter(|r| {
                     r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some()
                 })
-            {
-                // `box::Widget.new(...)`: the ordinary static
-                // `New`, resolved inside the box.
-                let box_ctx = box_rooted_path(&recv);
-                let class_name = match &box_ctx {
-                    Some((_, path)) => path.clone(),
-                    None => constant_path_name(&recv)?,
-                };
-                // `Enumerator.new { |y| ... }` joins the block-keeping set
-                //: it falls through to the generic `Call`
-                // lowering so the block reaches the runtime allocator via
-                // the dynamic Class#new arm. `Proc.new { ... }` is in the
-                // set for the same reason -- its block IS the value it
-                // answers, and `HirNode::New` has no slot to carry one.
-                // `Array.new(n) { |i| ... }` likewise: its block computes
-                // each element, and routing it through `HirNode::New` would
-                // silently DROP the block and answer `[nil, nil, ...]`.
-                // A `*args` positional splat or `**h` double-splat can't bind
-                // on the STATIC `New` path (`New.args` is `Vec<NodeId>`, no
-                // runtime arg-vector, and a `**h`'s keys aren't known until
-                // runtime). Fall through to the generic `Call` lowering, which
-                // evaluates the constant to a `RubyValue::Class` and dispatches
-                // `new` through the runtime constructor (the same path a
-                // non-literal `x.new` receiver already takes).
-                let has_dynamic_args = call
-                    .arguments()
-                    .map(|a| {
-                        a.arguments().iter().any(|n| {
-                            n.as_splat_node().is_some()
-                                || n.as_keyword_hash_node().is_some_and(|kw| {
-                                    kw.elements()
-                                        .iter()
-                                        .any(|e| e.as_assoc_splat_node().is_some())
-                                })
-                        })
+        {
+            // `box::Widget.new(...)`: the ordinary static
+            // `New`, resolved inside the box.
+            let box_ctx = box_rooted_path(&recv);
+            let class_name = match &box_ctx {
+                Some((_, path)) => path.clone(),
+                None => constant_path_name(&recv)?,
+            };
+            // `Enumerator.new { |y| ... }` joins the block-keeping set
+            //: it falls through to the generic `Call`
+            // lowering so the block reaches the runtime allocator via
+            // the dynamic Class#new arm. `Proc.new { ... }` is in the
+            // set for the same reason -- its block IS the value it
+            // answers, and `HirNode::New` has no slot to carry one.
+            // `Array.new(n) { |i| ... }` likewise: its block computes
+            // each element, and routing it through `HirNode::New` would
+            // silently DROP the block and answer `[nil, nil, ...]`.
+            // A `*args` positional splat or `**h` double-splat can't bind
+            // on the STATIC `New` path (`New.args` is `Vec<NodeId>`, no
+            // runtime arg-vector, and a `**h`'s keys aren't known until
+            // runtime). Fall through to the generic `Call` lowering, which
+            // evaluates the constant to a `RubyValue::Class` and dispatches
+            // `new` through the runtime constructor (the same path a
+            // non-literal `x.new` receiver already takes).
+            let has_dynamic_args = call
+                .arguments()
+                .map(|a| {
+                    a.arguments().iter().any(|n| {
+                        n.as_splat_node().is_some()
+                            || n.as_keyword_hash_node().is_some_and(|kw| {
+                                kw.elements()
+                                    .iter()
+                                    .any(|e| e.as_assoc_splat_node().is_some())
+                            })
                     })
-                    .unwrap_or(false);
-                // A LITERAL block (`Foo.new(x) { ... }`) is captured and
-                // forwarded to `initialize`; a block-PASS (`&p`) has no
-                // `.as_block_node()` and falls through to the generic `Call`
-                // lowering (its dynamic `new` dispatch threads the block arg).
-                let block_pass = call.block().is_some_and(|b| b.as_block_node().is_none());
-                if !has_dynamic_args
-                    && !block_pass
-                    && !matches!(
-                        // An absolute `::Proc`/`::Fiber` path names the same
-                        // builtin; match on the leaf so it keeps its block too.
-                        class_name.strip_prefix("::").unwrap_or(class_name.as_str()),
-                        // `Class.new(Super) { body }` keeps its block --
-                        // the block IS the anonymous class's body; `HirNode::New`
-                        // has no slot for it, so it falls through to the generic
-                        // `Call` and the runtime `Class#new`.
-                        // `Struct.new(...)` (and `Data.define`, which uses
-                        // `.define` and never enters this `.new` path) MINTS A
-                        // CLASS at runtime (`rstruct::struct_new`) in EVERY
-                        // position -- Batch E: whether anonymous (a local/inline
-                        // value) or bound to a constant (`Name = Struct.new(...)`,
-                        // an ordinary constant write whose value is this call).
-                        // It must reach the generic dynamic `new` dispatch rather
-                        // than a static `New`; its block is the new class's body,
-                        // kept the same way `Class.new`'s is.
-                        "Fiber"
-                            | "Thread"
-                            | "Mutex"
-                            | "Queue"
-                            | "SizedQueue"
-                            | "Ractor"
-                            | "Enumerator"
-                            | "Proc"
-                            | "Array"
-                            | "Hash"
-                            | "Set"
-                            | "Class"
-                            | "Module"
-                            | "Struct"
-                    )
-                {
-                    // A trailing keyword hash lands in `kwargs`, kept apart
-                    // from the positionals exactly as an ordinary call's is,
-                    // so `initialize`'s keyword params bind as keywords.
-                    // A callee declaring NO keyword params still sees the
-                    // options hash it expects --
-                    // `emit_call_args_to` converts trailing keywords back to
-                    // one positional Hash in that case, which is Ruby's own
-                    // rule and what keyword_init Structs bind through.
-                    let mut args = Vec::new();
-                    let mut kwargs = Vec::new();
-                    if let Some(a) = call.arguments() {
-                        for n in a.arguments().iter() {
-                            if let Some(kw) = n.as_keyword_hash_node() {
-                                let elements: Vec<Node<'_>> = kw.elements().iter().collect();
-                                kwargs = lower_kwargs(result, hir, &elements)?;
-                                continue;
-                            }
-                            args.push(lower_node(result, hir, &n)?);
+                })
+                .unwrap_or(false);
+            // A LITERAL block (`Foo.new(x) { ... }`) is captured and
+            // forwarded to `initialize`; a block-PASS (`&p`) has no
+            // `.as_block_node()` and falls through to the generic `Call`
+            // lowering (its dynamic `new` dispatch threads the block arg).
+            let block_pass = call.block().is_some_and(|b| b.as_block_node().is_none());
+            if !has_dynamic_args
+                && !block_pass
+                && !matches!(
+                    // An absolute `::Proc`/`::Fiber` path names the same
+                    // builtin; match on the leaf so it keeps its block too.
+                    class_name.strip_prefix("::").unwrap_or(class_name.as_str()),
+                    // `Class.new(Super) { body }` keeps its block --
+                    // the block IS the anonymous class's body; `HirNode::New`
+                    // has no slot for it, so it falls through to the generic
+                    // `Call` and the runtime `Class#new`.
+                    // `Struct.new(...)` (and `Data.define`, which uses
+                    // `.define` and never enters this `.new` path) MINTS A
+                    // CLASS at runtime (`rstruct::struct_new`) in EVERY
+                    // position -- Batch E: whether anonymous (a local/inline
+                    // value) or bound to a constant (`Name = Struct.new(...)`,
+                    // an ordinary constant write whose value is this call).
+                    // It must reach the generic dynamic `new` dispatch rather
+                    // than a static `New`; its block is the new class's body,
+                    // kept the same way `Class.new`'s is.
+                    "Fiber"
+                        | "Thread"
+                        | "Mutex"
+                        | "Queue"
+                        | "SizedQueue"
+                        | "Ractor"
+                        | "Enumerator"
+                        | "Proc"
+                        | "Array"
+                        | "Hash"
+                        | "Set"
+                        | "Class"
+                        | "Module"
+                        | "Struct"
+                )
+            {
+                // A trailing keyword hash lands in `kwargs`, kept apart
+                // from the positionals exactly as an ordinary call's is,
+                // so `initialize`'s keyword params bind as keywords.
+                // A callee declaring NO keyword params still sees the
+                // options hash it expects --
+                // `emit_call_args_to` converts trailing keywords back to
+                // one positional Hash in that case, which is Ruby's own
+                // rule and what keyword_init Structs bind through.
+                let mut args = Vec::new();
+                let mut kwargs = Vec::new();
+                if let Some(a) = call.arguments() {
+                    for n in a.arguments().iter() {
+                        if let Some(kw) = n.as_keyword_hash_node() {
+                            let elements: Vec<Node<'_>> = kw.elements().iter().collect();
+                            kwargs = lower_kwargs(result, hir, &elements)?;
+                            continue;
                         }
+                        args.push(lower_node(result, hir, &n)?);
                     }
-                    let block = match call.block() {
-                        Some(b) if b.as_block_node().is_some() => {
-                            Some(lower_block(result, hir, &b)?)
-                        }
-                        _ => None,
-                    };
-                    let new_id = hir.push(HirNode::New {
-                        class_name,
-                        args,
-                        kwargs,
-                        block,
-                    });
-                    return Ok(match box_ctx {
-                        Some((bx, _)) => hir.push(HirNode::BoxScope {
-                            box_id: bx,
-                            body: vec![new_id],
-                        }),
-                        None => new_id,
-                    });
                 }
+                let block = match call.block() {
+                    Some(b) if b.as_block_node().is_some() => Some(lower_block(result, hir, &b)?),
+                    _ => None,
+                };
+                let new_id = hir.push(HirNode::New {
+                    class_name,
+                    args,
+                    kwargs,
+                    block,
+                });
+                return Ok(match box_ctx {
+                    Some((bx, _)) => hir.push(HirNode::BoxScope {
+                        box_id: bx,
+                        body: vec![new_id],
+                    }),
+                    None => new_id,
+                });
             }
+        }
 
         // `define_method(:literal) { block }` -- desugars to a plain
         // `DefMethod`, identical treatment to `def`, mirroring zeo's
@@ -1519,77 +1518,80 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // zeo has no runtime "define a method on any class from
         // arbitrary code" path, only the two forms zeo itself supports
         // plus the literal-and-desugared one.
-        if name == "define_method" && receiver.is_none()
-            && let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
-                let arg_list: Vec<_> = args.arguments().iter().collect();
-                if arg_list.len() == 1
-                    && let Some(sym) = arg_list[0].as_symbol_node() {
-                        let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
-                        // `define_method(:name, &:other)` -- a symbol-to-proc
-                        // block argument rather than a literal block.
-                        //
-                        // In CRuby the `&` conversion happens at the CALL SITE,
-                        // before `rb_mod_define_method` ever runs (proc.c:2872,
-                        // which rejects a bare Symbol as its second positional
-                        // argument), so the method body is the symbol proc:
-                        // `->(recv, *rest) { recv.other(*rest) }`. That is why
-                        // the defined method takes its RECEIVER as the first
-                        // argument -- `w.as_str(7)` answers `7.to_s`.
-                        if let Some(target) = block_node
-                            .as_block_argument_node()
-                            .and_then(|b| b.expression())
-                            .and_then(|e| e.as_symbol_node())
-                        {
-                            let target = String::from_utf8_lossy(target.unescaped()).into_owned();
-                            let recv = hir.push(HirNode::LocalRead("__sp_recv".to_string()));
-                            let rest = hir.push(HirNode::LocalRead("__sp_args".to_string()));
-                            let call = hir.push(HirNode::Call {
-                                receiver: Some(recv),
-                                name: target,
-                                args: vec![ArrayElem::Splat(rest)],
-                                kwargs: Vec::new(),
-                                block: None,
-                                block_arg: None,
-                                safe: false,
-                            });
-                            return Ok(hir.push(HirNode::DefMethod {
-                                name: method_name,
-                                params: Params {
-                                    required: vec!["__sp_recv".to_string()],
-                                    rest: Some(Some("__sp_args".to_string())),
-                                    ..Params::default()
-                                },
-                                body: vec![call],
-                                is_class_method: false,
-                                visibility: Visibility::Public,
-                                // An explicit `define_method` call, not a `def`.
-                                is_def: false,
-                            }));
-                        }
-                        let block = block_node
-                            .as_block_node()
-                            .ok_or("define_method's second argument must be a block")?;
-                        let params = match block.parameters() {
-                            None => Params::default(),
-                            Some(p) => {
-                                let bp = p
-                                    .as_block_parameters_node()
-                                    .ok_or("unsupported block parameter form")?;
-                                lower_params(result, hir, bp.parameters())?
-                            }
-                        };
-                        let body = lower_body(result, hir, block.body())?;
-                        return Ok(hir.push(HirNode::DefMethod {
-                            name: method_name,
-                            params,
-                            body,
-                            is_class_method: false,
-                            visibility: Visibility::Public,
-                            // An explicit `define_method` call, not a `def`.
-                            is_def: false,
-                        }));
+        if name == "define_method"
+            && receiver.is_none()
+            && let (Some(args), Some(block_node)) = (call.arguments(), call.block())
+        {
+            let arg_list: Vec<_> = args.arguments().iter().collect();
+            if arg_list.len() == 1
+                && let Some(sym) = arg_list[0].as_symbol_node()
+            {
+                let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
+                // `define_method(:name, &:other)` -- a symbol-to-proc
+                // block argument rather than a literal block.
+                //
+                // In CRuby the `&` conversion happens at the CALL SITE,
+                // before `rb_mod_define_method` ever runs (proc.c:2872,
+                // which rejects a bare Symbol as its second positional
+                // argument), so the method body is the symbol proc:
+                // `->(recv, *rest) { recv.other(*rest) }`. That is why
+                // the defined method takes its RECEIVER as the first
+                // argument -- `w.as_str(7)` answers `7.to_s`.
+                if let Some(target) = block_node
+                    .as_block_argument_node()
+                    .and_then(|b| b.expression())
+                    .and_then(|e| e.as_symbol_node())
+                {
+                    let target = String::from_utf8_lossy(target.unescaped()).into_owned();
+                    let recv = hir.push(HirNode::LocalRead("__sp_recv".to_string()));
+                    let rest = hir.push(HirNode::LocalRead("__sp_args".to_string()));
+                    let call = hir.push(HirNode::Call {
+                        receiver: Some(recv),
+                        name: target,
+                        args: vec![ArrayElem::Splat(rest)],
+                        kwargs: Vec::new(),
+                        block: None,
+                        block_arg: None,
+                        safe: false,
+                    });
+                    return Ok(hir.push(HirNode::DefMethod {
+                        name: method_name,
+                        params: Params {
+                            required: vec!["__sp_recv".to_string()],
+                            rest: Some(Some("__sp_args".to_string())),
+                            ..Params::default()
+                        },
+                        body: vec![call],
+                        is_class_method: false,
+                        visibility: Visibility::Public,
+                        // An explicit `define_method` call, not a `def`.
+                        is_def: false,
+                    }));
+                }
+                let block = block_node
+                    .as_block_node()
+                    .ok_or("define_method's second argument must be a block")?;
+                let params = match block.parameters() {
+                    None => Params::default(),
+                    Some(p) => {
+                        let bp = p
+                            .as_block_parameters_node()
+                            .ok_or("unsupported block parameter form")?;
+                        lower_params(result, hir, bp.parameters())?
                     }
+                };
+                let body = lower_body(result, hir, block.body())?;
+                return Ok(hir.push(HirNode::DefMethod {
+                    name: method_name,
+                    params,
+                    body,
+                    is_class_method: false,
+                    visibility: Visibility::Public,
+                    // An explicit `define_method` call, not a `def`.
+                    is_def: false,
+                }));
             }
+        }
 
         // `define_singleton_method(:literal) { block }` -- desugars to a
         // `def self.name` on the target class. The target comes from the
@@ -1601,68 +1603,69 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // capturing block that this desugar can't model falls through to the
         // generic (unsupported) `Call`.
         if name == "define_singleton_method"
-            && let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
-                let arg_list: Vec<_> = args.arguments().iter().collect();
-                if let (1, Some(sym)) = (
-                    arg_list.len(),
-                    arg_list.first().and_then(|a| a.as_symbol_node()),
-                ) {
-                    let target = match &receiver {
-                        None => Some(None),
-                        Some(r) if r.as_self_node().is_some() => Some(None),
-                        // A constant receiver reopens that named class -- but
-                        // ONLY when the constant actually names one. A constant
-                        // the program ASSIGNS (`B = Box.new`, or even `Foo =
-                        // Class.new`) holds a value, not a compile-time class,
-                        // and reopening it here would mint a bogus empty class
-                        // named `B`: `B.class` then answered `Class` and the
-                        // installed method's `self` was that phantom class, so
-                        // its body couldn't reach the real object's methods.
-                        // Those fall through to the generic runtime
-                        // `define_singleton_method` call, which installs a
-                        // per-object singleton correctly.
-                        Some(r) => constant_path_name(r)
-                            .ok()
-                            .filter(|n| !const_is_assigned(hir, n))
-                            .map(Some),
+            && let (Some(args), Some(block_node)) = (call.arguments(), call.block())
+        {
+            let arg_list: Vec<_> = args.arguments().iter().collect();
+            if let (1, Some(sym)) = (
+                arg_list.len(),
+                arg_list.first().and_then(|a| a.as_symbol_node()),
+            ) {
+                let target = match &receiver {
+                    None => Some(None),
+                    Some(r) if r.as_self_node().is_some() => Some(None),
+                    // A constant receiver reopens that named class -- but
+                    // ONLY when the constant actually names one. A constant
+                    // the program ASSIGNS (`B = Box.new`, or even `Foo =
+                    // Class.new`) holds a value, not a compile-time class,
+                    // and reopening it here would mint a bogus empty class
+                    // named `B`: `B.class` then answered `Class` and the
+                    // installed method's `self` was that phantom class, so
+                    // its body couldn't reach the real object's methods.
+                    // Those fall through to the generic runtime
+                    // `define_singleton_method` call, which installs a
+                    // per-object singleton correctly.
+                    Some(r) => constant_path_name(r)
+                        .ok()
+                        .filter(|n| !const_is_assigned(hir, n))
+                        .map(Some),
+                };
+                if let Some(target) = target {
+                    let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
+                    let block = block_node
+                        .as_block_node()
+                        .ok_or("define_singleton_method's argument must be a block")?;
+                    let params = match block.parameters() {
+                        None => Params::default(),
+                        Some(p) => {
+                            let bp = p
+                                .as_block_parameters_node()
+                                .ok_or("unsupported block parameter form")?;
+                            lower_params(result, hir, bp.parameters())?
+                        }
                     };
-                    if let Some(target) = target {
-                        let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
-                        let block = block_node
-                            .as_block_node()
-                            .ok_or("define_singleton_method's argument must be a block")?;
-                        let params = match block.parameters() {
-                            None => Params::default(),
-                            Some(p) => {
-                                let bp = p
-                                    .as_block_parameters_node()
-                                    .ok_or("unsupported block parameter form")?;
-                                lower_params(result, hir, bp.parameters())?
-                            }
-                        };
-                        let body = lower_body(result, hir, block.body())?;
-                        let def = hir.push(HirNode::DefMethod {
-                            name: method_name,
-                            params,
-                            body,
-                            is_class_method: true,
-                            visibility: Visibility::Public,
-                            // A class-method desugar; installs via
-                            // define_singleton_method regardless of is_def.
-                            is_def: true,
-                        });
-                        return Ok(match target {
-                            None => def,
-                            Some(class_name) => hir.push(HirNode::ClassDef {
-                                name: class_name,
-                                superclass: None,
-                                body: vec![def],
-                                is_module: false,
-                            }),
-                        });
-                    }
+                    let body = lower_body(result, hir, block.body())?;
+                    let def = hir.push(HirNode::DefMethod {
+                        name: method_name,
+                        params,
+                        body,
+                        is_class_method: true,
+                        visibility: Visibility::Public,
+                        // A class-method desugar; installs via
+                        // define_singleton_method regardless of is_def.
+                        is_def: true,
+                    });
+                    return Ok(match target {
+                        None => def,
+                        Some(class_name) => hir.push(HirNode::ClassDef {
+                            name: class_name,
+                            superclass: None,
+                            body: vec![def],
+                            is_module: false,
+                        }),
+                    });
                 }
             }
+        }
 
         // `loop do ... end` -- `Kernel#loop` is an ordinary method call, not
         // syntax, so this is a lowering-time call-shape desugar exactly like
@@ -1678,43 +1681,44 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args
                 && let Some(block_node) = call.block()
-                    && let Some(block) = block_node.as_block_node() {
-                        let has_params = block
-                            .parameters()
-                            .is_some_and(|p| p.as_block_parameters_node().is_some());
-                        if !has_params {
-                            let body = lower_body(result, hir, block.body())?;
-                            // `Kernel#loop`'s REAL definition (CRuby
-                            // kernel.rb:151) rescues StopIteration and
-                            // returns its `result` -- desugared here into
-                            // the ordinary Begin/rescue machinery, so
-                            // `loop { e.next }` terminates
-                            // cleanly with the enumeration's result and a
-                            // manual `raise StopIteration` returns nil.
-                            let native_loop = hir.push(HirNode::Loop { body });
-                            let exc_read = hir.push(HirNode::LocalRead("__loop_stop".to_string()));
-                            let result_call = hir.push(HirNode::Call {
-                                receiver: Some(exc_read),
-                                name: "result".to_string(),
-                                args: Vec::new(),
-                                kwargs: Vec::new(),
-                                block: None,
-                                block_arg: None,
-                                safe: false,
-                            });
-                            return Ok(hir.push(HirNode::Begin {
-                                body: vec![native_loop],
-                                rescues: vec![crate::hir::RescueClause {
-                                    classes: vec!["StopIteration".to_string()],
-                                    splats: Vec::new(),
-                                    binding: Some("__loop_stop".to_string()),
-                                    body: vec![result_call],
-                                }],
-                                else_body: None,
-                                ensure_body: None,
-                            }));
-                        }
-                    }
+                && let Some(block) = block_node.as_block_node()
+            {
+                let has_params = block
+                    .parameters()
+                    .is_some_and(|p| p.as_block_parameters_node().is_some());
+                if !has_params {
+                    let body = lower_body(result, hir, block.body())?;
+                    // `Kernel#loop`'s REAL definition (CRuby
+                    // kernel.rb:151) rescues StopIteration and
+                    // returns its `result` -- desugared here into
+                    // the ordinary Begin/rescue machinery, so
+                    // `loop { e.next }` terminates
+                    // cleanly with the enumeration's result and a
+                    // manual `raise StopIteration` returns nil.
+                    let native_loop = hir.push(HirNode::Loop { body });
+                    let exc_read = hir.push(HirNode::LocalRead("__loop_stop".to_string()));
+                    let result_call = hir.push(HirNode::Call {
+                        receiver: Some(exc_read),
+                        name: "result".to_string(),
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                        block: None,
+                        block_arg: None,
+                        safe: false,
+                    });
+                    return Ok(hir.push(HirNode::Begin {
+                        body: vec![native_loop],
+                        rescues: vec![crate::hir::RescueClause {
+                            classes: vec!["StopIteration".to_string()],
+                            splats: Vec::new(),
+                            binding: Some("__loop_stop".to_string()),
+                            body: vec![result_call],
+                        }],
+                        else_body: None,
+                        ensure_body: None,
+                    }));
+                }
+            }
         }
 
         // `block_given?` -- an ordinary zero-arg `Kernel` method call at the
@@ -1802,15 +1806,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args
                 && let Some(block_node) = call.block()
-                    && let Some(block) = block_node.as_block_node() {
-                        let params = lower_block_like_params(result, hir, block.parameters())?;
-                        let body = lower_body(result, hir, block.body())?;
-                        return Ok(hir.push(HirNode::Lambda {
-                            params,
-                            body,
-                            method_body: false,
-                        }));
-                    }
+                && let Some(block) = block_node.as_block_node()
+            {
+                let params = lower_block_like_params(result, hir, block.parameters())?;
+                let body = lower_body(result, hir, block.body())?;
+                return Ok(hir.push(HirNode::Lambda {
+                    params,
+                    body,
+                    method_body: false,
+                }));
+            }
         }
 
         // `raise`/`fail` (exact synonyms) -- a zero/one/two positional-arg
@@ -1917,20 +1922,21 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // to the runtime `Kernel#require`, which answers `false` for an
             // already-loaded feature and raises `LoadError` otherwise.
             if matches!(name.as_str(), "require" | "require_relative")
-                && let Some(feature) = single_literal_string_arg(result, hir, &call)? {
-                    if name == "require" && features::is_builtin_feature(&feature) {
-                        let newly_loaded = hir
-                            .activated_features
-                            .insert(features::canonical_ext_feature(&feature).to_string());
-                        let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
-                        return Ok(hir.push(HirNode::BoolLit(first)));
-                    }
-                    let unresolvable =
-                        name == "require" && hir.unresolvable_requires.contains(&feature);
-                    if !unresolvable && !hir.deferred_requires.contains(&feature) {
-                        return Ok(hir.push(HirNode::BoolLit(true)));
-                    }
+                && let Some(feature) = single_literal_string_arg(result, hir, &call)?
+            {
+                if name == "require" && features::is_builtin_feature(&feature) {
+                    let newly_loaded = hir
+                        .activated_features
+                        .insert(features::canonical_ext_feature(&feature).to_string());
+                    let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
+                    return Ok(hir.push(HirNode::BoolLit(first)));
                 }
+                let unresolvable =
+                    name == "require" && hir.unresolvable_requires.contains(&feature);
+                if !unresolvable && !hir.deferred_requires.contains(&feature) {
+                    return Ok(hir.push(HirNode::BoolLit(true)));
+                }
+            }
             // `load`, or a `require` of a NON-literal (runtime-computed) target:
             // whole-program AOT can't splice a path it only learns at runtime.
             // Rather than fail the whole compile, FALL THROUGH to the ordinary
@@ -2008,19 +2014,21 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
             if arg_list.len() == 1
-                && let Some(s) = arg_list[0].as_string_node() {
-                    let src = String::from_utf8_lossy(s.unescaped()).into_owned();
-                    // Try the zero-cost AOT inline path. If the literal source
-                    // doesn't parse, or defines at the top level (which the
-                    // inline path can't express), DON'T fail the compile: fall
-                    // through to the runtime eval VM so the program still
-                    // builds and the error/behaviour surfaces at runtime,
-                    // catchably, exactly as CRuby's `eval` does.
-                    if let Ok(body) = parse_and_lower_into(hir, &src)
-                        && reject_top_level_defs(hir, &body).is_ok() {
-                            return Ok(hir.push(HirNode::Eval(body)));
-                        }
+                && let Some(s) = arg_list[0].as_string_node()
+            {
+                let src = String::from_utf8_lossy(s.unescaped()).into_owned();
+                // Try the zero-cost AOT inline path. If the literal source
+                // doesn't parse, or defines at the top level (which the
+                // inline path can't express), DON'T fail the compile: fall
+                // through to the runtime eval VM so the program still
+                // builds and the error/behaviour surfaces at runtime,
+                // catchably, exactly as CRuby's `eval` does.
+                if let Ok(body) = parse_and_lower_into(hir, &src)
+                    && reject_top_level_defs(hir, &body).is_ok()
+                {
+                    return Ok(hir.push(HirNode::Eval(body)));
                 }
+            }
         }
 
         let receiver = match receiver {

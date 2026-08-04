@@ -62,7 +62,11 @@ fn stat_value(st: libc::stat, birth: Option<(i64, i64)>) -> RubyValue {
 /// The creation time `stat(2)` itself cannot carry on Linux: `statx(2)` with
 /// `STATX_BTIME`, `None` when the filesystem does not record one.
 #[cfg(target_os = "linux")]
-fn statx_birth(dirfd: libc::c_int, path: &std::ffi::CStr, flags: libc::c_int) -> Option<(i64, i64)> {
+fn statx_birth(
+    dirfd: libc::c_int,
+    path: &std::ffi::CStr,
+    flags: libc::c_int,
+) -> Option<(i64, i64)> {
     let mut x: libc::statx = unsafe { std::mem::zeroed() };
     // SAFETY: `path` is a valid NUL-terminated string; `x` is a live buffer.
     let rc = unsafe { libc::statx(dirfd, path.as_ptr(), flags, libc::STATX_BTIME, &mut x) };

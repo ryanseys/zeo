@@ -170,9 +170,10 @@ fn to_mpi(n: &BigNum) -> Vec<u8> {
         mag.insert(0, 0);
     }
     if n.is_negative()
-        && let Some(first) = mag.first_mut() {
-            *first |= 0x80;
-        }
+        && let Some(first) = mag.first_mut()
+    {
+        *first |= 0x80;
+    }
     let mut out = (mag.len() as u32).to_be_bytes().to_vec();
     out.extend_from_slice(&mag);
     out

@@ -810,9 +810,10 @@ impl Compiler {
         if let Some(&innermost) = cref.last() {
             for &anc in &self.class(innermost).ancestors {
                 if anc != innermost
-                    && let Some(cid) = self.class_in_scope(Some(anc), name, box_id) {
-                        return Some(cid);
-                    }
+                    && let Some(cid) = self.class_in_scope(Some(anc), name, box_id)
+                {
+                    return Some(cid);
+                }
             }
         }
         if let Some(cid) = self
@@ -1061,9 +1062,10 @@ impl Compiler {
     /// see `Store` lexically -- see `ClassInfo::qualified_def`).
     pub fn cref_of(&self, defining: Option<ClassId>) -> Vec<ClassId> {
         if let (Some(cache), Some(cid)) = (&self.frozen_crefs, defining)
-            && let Some(chain) = cache.get(cid.0 as usize) {
-                return chain.clone();
-            }
+            && let Some(chain) = cache.get(cid.0 as usize)
+        {
+            return chain.clone();
+        }
         let mut chain = Vec::new();
         let mut cur = defining;
         while let Some(cid) = cur {
@@ -1085,9 +1087,10 @@ impl Compiler {
     /// error messages wherever real Ruby prints the qualified path.
     pub fn fq_name(&self, cid: ClassId) -> String {
         if let Some(cache) = &self.frozen_fq_names
-            && let Some(name) = cache.get(cid.0 as usize) {
-                return name.clone();
-            }
+            && let Some(name) = cache.get(cid.0 as usize)
+        {
+            return name.clone();
+        }
         let mut segments = vec![self.class(cid).name.clone()];
         let mut cur = self.class(cid).lexical_parent;
         while let Some(p) = cur {

@@ -325,9 +325,10 @@ fn strip_block_prefix(label: &str) -> &str {
         return rest;
     }
     if label.starts_with("block (")
-        && let Some(i) = label.find(") in ") {
-            return &label[i + 5..];
-        }
+        && let Some(i) = label.find(") in ")
+    {
+        return &label[i + 5..];
+    }
     label
 }
 

@@ -31,9 +31,10 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
     // this.
     if let (HirNode::LocalRead(name), Some((var, ty))) =
         (&cx.compiler.hir[id], &cx.for_var_override)
-        && name == var {
-            return *ty;
-        }
+        && name == var
+    {
+        return *ty;
+    }
     // `self`'s static type is the CURRENT method's own receiver class --
     // `types::infer_type_with_locals` has no notion of "current class" at
     // all (it's a context-free per-node classifier), so this is handled here
@@ -314,23 +315,24 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // resolved at compile time; only the membership test is deferred.
     if let HirNode::QualifiedConstRead(scope, name) = &cx.compiler.hir[id]
         && super::constfold::const_form_resolves(cx, id) != Some(true)
-            && let Some(scope_id) = cx.resolve_class(scope) {
-                let scope_id = scope_id.0;
-                let name = name.as_str();
-                // A `private_constant` is nil to `defined?`, even though
-                // `const_defined?` still answers true for it -- two different
-                // questions, and this is the one the scope operator gates.
-                // Checked at run time so a later `public_constant` restores it.
-                return quote! {
-                    if zeo_rt::const_is_private(#scope_id, #name) {
-                        zeo_rt::RubyValue::Nil
-                    } else if zeo_rt::const_defined_in(zeo_rt::ClassId(#scope_id), #name) {
-                        zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
-                    } else {
-                        zeo_rt::RubyValue::Nil
-                    }
-                };
+        && let Some(scope_id) = cx.resolve_class(scope)
+    {
+        let scope_id = scope_id.0;
+        let name = name.as_str();
+        // A `private_constant` is nil to `defined?`, even though
+        // `const_defined?` still answers true for it -- two different
+        // questions, and this is the one the scope operator gates.
+        // Checked at run time so a later `public_constant` restores it.
+        return quote! {
+            if zeo_rt::const_is_private(#scope_id, #name) {
+                zeo_rt::RubyValue::Nil
+            } else if zeo_rt::const_defined_in(zeo_rt::ClassId(#scope_id), #name) {
+                zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
+            } else {
+                zeo_rt::RubyValue::Nil
             }
+        };
+    }
     let global_var =
         quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("global-variable".to_string())) };
     // `defined?($g)` is `"global-variable"` only if the global has been

@@ -441,9 +441,10 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
 /// CRuby's own contract is "any object responding to `write`").
 pub fn write_str(target: &RubyValue, s: &str) -> Result<(), Signal> {
     if let RubyValue::Object(o) = target
-        && let Some(io) = o.as_any().downcast_ref::<RIo>() {
-            return write_rio(io, s.as_bytes());
-        }
+        && let Some(io) = o.as_any().downcast_ref::<RIo>()
+    {
+        return write_rio(io, s.as_bytes());
+    }
     crate::dispatch::send_value(
         target,
         crate::symbol::wk::write(),
@@ -460,9 +461,10 @@ pub fn write_str(target: &RubyValue, s: &str) -> Result<(), Signal> {
 /// BINARY string -- the honest tag for bytes with no other provenance.
 pub fn write_bytes(target: &RubyValue, bytes: &[u8]) -> Result<(), Signal> {
     if let RubyValue::Object(o) = target
-        && let Some(io) = o.as_any().downcast_ref::<RIo>() {
-            return write_rio(io, bytes);
-        }
+        && let Some(io) = o.as_any().downcast_ref::<RIo>()
+    {
+        return write_rio(io, bytes);
+    }
     crate::dispatch::send_value(
         target,
         crate::symbol::wk::write(),
@@ -488,10 +490,11 @@ pub fn write_value(target: &RubyValue, v: &RubyValue) -> Result<i64, Signal> {
             b.bytes().to_vec()
         };
         if let RubyValue::Object(o) = target
-            && let Some(io) = o.as_any().downcast_ref::<RIo>() {
-                write_rio(io, &bytes)?;
-                return Ok(bytes.len() as i64);
-            }
+            && let Some(io) = o.as_any().downcast_ref::<RIo>()
+        {
+            write_rio(io, &bytes)?;
+            return Ok(bytes.len() as i64);
+        }
         crate::dispatch::send_value(
             target,
             crate::symbol::wk::write(),
@@ -1018,17 +1021,20 @@ fn read_line_bytes(io: &RIo, f: &mut std::fs::File, opts: &LineOpts) -> std::io:
     let mut out = Vec::new();
     loop {
         if let Some(lim) = opts.limit
-            && out.len() >= lim {
-                break;
-            }
+            && out.len() >= lim
+        {
+            break;
+        }
         match buffered_byte(io, f)? {
             None => break,
             Some(b) => {
                 out.push(b);
                 if let Some(s) = &opts.sep
-                    && !s.is_empty() && out.ends_with(s) {
-                        break;
-                    }
+                    && !s.is_empty()
+                    && out.ends_with(s)
+                {
+                    break;
+                }
             }
         }
     }
@@ -1051,9 +1057,11 @@ pub(crate) fn chomp_line(bytes: &mut Vec<u8>, opts: &LineOpts) {
         return;
     }
     if let Some(sep) = &opts.sep
-        && !sep.is_empty() && bytes.ends_with(sep) {
-            bytes.truncate(bytes.len() - sep.len());
-        }
+        && !sep.is_empty()
+        && bytes.ends_with(sep)
+    {
+        bytes.truncate(bytes.len() - sep.len());
+    }
     while bytes.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
         bytes.pop();
     }
@@ -1308,9 +1316,10 @@ fn getc_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
 fn getbyte_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
     // A byte pushed back with `#ungetbyte` is returned before the stream.
     if let Some(io) = as_rio(recv)
-        && let Some(byte) = io.unget.lock().pop() {
-            return Ok(RubyValue::Int(byte as i64));
-        }
+        && let Some(byte) = io.unget.lock().pop()
+    {
+        return Ok(RubyValue::Int(byte as i64));
+    }
     let b = with_buffered_file(recv, |io, f, path| {
         buffered_byte(io, f).map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))
     })?;
@@ -1352,11 +1361,11 @@ fn close_io(recv: &RubyValue) -> Result<RubyValue, Signal> {
         if pid != 0
             && let Ok(Some((reaped, raw))) =
                 crate::gvl::without_gvl(|| crate::builtins::process::raw_waitpid(pid, 0))
-            {
-                crate::builtins::process::set_last_child_status(
-                    crate::builtins::process::new_status(reaped, raw),
-                );
-            }
+        {
+            crate::builtins::process::set_last_child_status(crate::builtins::process::new_status(
+                reaped, raw,
+            ));
+        }
     }
     Ok(RubyValue::Nil)
 }
