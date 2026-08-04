@@ -3666,6 +3666,11 @@ pub fn coerce_raise_arg(value: RubyValue) -> Result<RubyValue, Signal> {
             build_exception(&value, &[])?
         }
         RubyValue::Str(s) => build("RuntimeError", s.lock().to_utf8_lossy().into_owned()),
+        // Any object answering #exception may be raised (CRuby's
+        // rb_make_exception protocol); the hook must return an Exception.
+        _ if responds_to_value(&value, Symbol::intern("exception"), false) => {
+            checked_exception_hook(&value, &[])?
+        }
         _ => build("TypeError", "exception class/object expected".to_string()),
     })
 }
@@ -3686,12 +3691,31 @@ pub fn coerce_raise_arg_with_message(
         _ => false,
     };
     if !is_exc {
+        // Any object answering #exception may be raised (CRuby's
+        // rb_make_exception protocol); the hook must return an Exception.
+        if responds_to_value(&value, Symbol::intern("exception"), false) {
+            return checked_exception_hook(&value, msg);
+        }
         return Err(raise_error(
             "TypeError",
             "exception class/object expected".to_string(),
         ));
     }
     build_exception(&value, msg)
+}
+
+/// Dispatch a NON-Exception receiver's `#exception` hook and validate the
+/// result: CRuby raises `TypeError: exception object expected` when the hook
+/// answers anything that isn't an Exception instance.
+fn checked_exception_hook(value: &RubyValue, msg: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let built = send_value(value, Symbol::intern("exception"), msg, None)?;
+    match &built {
+        RubyValue::Object(o) if is_a(o.class_id(), zeo_abi::EXCEPTION_CLASS) => Ok(built),
+        _ => Err(raise_error(
+            "TypeError",
+            "exception object expected".to_string(),
+        )),
+    }
 }
 
 /// `obj.exception(msg)` -- the constructor `raise` reaches an Exception class

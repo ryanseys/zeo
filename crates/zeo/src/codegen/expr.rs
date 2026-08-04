@@ -1748,8 +1748,12 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         // (`klass.exception(msg)`), and the operand is evaluated FIRST, so an
         // undefined constant raises its own `uninitialized constant` before
         // the message is ever consulted -- Ruby's order.
-        let class_expr = emit_expr(cx, node);
-        let msg_expr = emit_expr(cx, msg_id);
+        //
+        // Boxed like the message: `raise obj, "msg"` where obj's static type
+        // is a generated struct (a class overriding #exception) would
+        // otherwise hand the raw Arc to a RubyValue parameter and fail rustc.
+        let class_expr = box_if_object_typed(cx, node, emit_expr(cx, node));
+        let msg_expr = box_if_object_typed(cx, msg_id, emit_expr(cx, msg_id));
         return quote! {
             zeo_rt::coerce_raise_arg_with_message(#class_expr, #msg_expr)?
         };
