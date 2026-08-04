@@ -2064,7 +2064,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             }
         };
         let is_vcall = call.is_variable_call();
-        let node = hir.push(HirNode::Call {
+        let built = HirNode::Call {
             receiver,
             name,
             args,
@@ -2072,7 +2072,14 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             block,
             block_arg,
             safe: call.is_safe_navigation(),
-        });
+        };
+        // prism flags the call it built out of assignment syntax -- `s.x = v`
+        // and `s[i] = v` are both plain `CallNode`s, distinguished from an
+        // explicit `s.[]=(i, v)` by nothing else.
+        if call.is_attribute_write() {
+            return Ok(assign::push_assignment_call(hir, built));
+        }
+        let node = hir.push(built);
         if is_vcall {
             hir.vcall_nodes.insert(node);
         }

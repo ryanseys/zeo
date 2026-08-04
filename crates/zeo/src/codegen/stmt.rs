@@ -150,6 +150,21 @@ fn tail_nil(wrap_ok: bool) -> TokenStream {
 /// follows it (see `emit_expr`'s `LocalWrite`/`MultiWrite` arms for the
 /// sub-expression case, which does return the assigned value, matching
 /// Ruby's real assignment-as-expression semantics).
+/// A `Seq` whose last element reads back a COMPILER-introduced local, and
+/// so carries a value only an expression position would use -- the shape
+/// `lower::assign::push_assignment_call` builds. Answers the statements
+/// worth emitting without it.
+fn statement_without_value_readback<'a>(cx: &'a Ctx, stmt: NodeId) -> Option<&'a [NodeId]> {
+    let HirNode::Seq(body) = &cx.compiler.hir[stmt] else {
+        return None;
+    };
+    let (&last, rest) = body.split_last()?;
+    let HirNode::LocalRead(name) = &cx.compiler.hir[last] else {
+        return None;
+    };
+    crate::hir::is_internal_local(name).then_some(rest)
+}
+
 fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> TokenStream {
     if let HirNode::ClassDef { .. } = &cx.compiler.hir[stmt] {
         // A class/module definition SITE: its body statements run right
@@ -258,6 +273,17 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
                 // Unannotated: `box_for_local_storage` leaves a `Shadowed`
                 // local's RHS as the bare `Arc<Concrete>` its slot holds.
                 return quote! { { let __v = #v; #write } };
+            }
+            // The same reasoning one step out: a setter call reached from
+            // assignment syntax reads its captured value back only so the
+            // EXPRESSION has ruby's value (`lower::assign::
+            // push_assignment_call`). Nothing consumes it here.
+            if let Some(rest) = statement_without_value_readback(cx, stmt) {
+                let stmts = rest
+                    .iter()
+                    .map(|&n| emit_statement(cx, n, false, false))
+                    .collect::<Vec<_>>();
+                return quote! { #(#stmts)* };
             }
         }
         let e = emit_expr(cx, stmt);

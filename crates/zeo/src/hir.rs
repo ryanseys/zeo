@@ -99,6 +99,16 @@ pub fn magic_frozen_string_literal(source: &str) -> bool {
     false
 }
 
+/// A local the COMPILER introduced -- an evaluate-once receiver/index
+/// binding, an assignment's captured right-hand side, a destructuring
+/// param's slot. Ruby's `local_variables` reports only names the source
+/// wrote, so these must never appear there.
+pub fn is_internal_local(name: &str) -> bool {
+    Hir::INTERNAL_LOCAL_PREFIXES
+        .iter()
+        .any(|p| name.starts_with(p))
+}
+
 #[derive(Default)]
 pub struct Hir {
     nodes: Vec<HirNode>,
@@ -463,7 +473,19 @@ impl Hir {
     /// calling this before pushing anything for the current desugar gives a
     /// suffix no earlier OR later desugar in the same file can ever collide
     /// with.
+    /// Every prefix [`gensym`](Hir::gensym) is called with, plus the
+    /// destructuring-param slot that is built without it. See
+    /// [`is_internal_local`], which is what keeps them out of
+    /// `local_variables`.
+    pub const INTERNAL_LOCAL_PREFIXES: &'static [&'static str] =
+        &["__recv", "__idx", "__asgn", "__mval", "__destr"];
+
     pub fn gensym(&self, prefix: &str) -> String {
+        debug_assert!(
+            Self::INTERNAL_LOCAL_PREFIXES.contains(&prefix),
+            "a new hidden-local prefix must be listed in INTERNAL_LOCAL_PREFIXES, \
+             or `local_variables` will report it as a Ruby local"
+        );
         format!("{prefix}{}", self.nodes.len())
     }
 

@@ -115,6 +115,44 @@ pub(crate) fn lower_and_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> No
     hir.push(HirNode::And(read, write))
 }
 
+/// Push a setter call reached from ASSIGNMENT SYNTAX, so the expression
+/// evaluates to the right-hand side rather than to whatever the setter
+/// answered. CRuby compiles `recv.x = v` to `setn` + `send` + `pop`
+/// (`compile_attrasgn`), which leaves the value on the stack across the
+/// call -- so a setter that answers `self` for chaining, or `false`, cannot
+/// change what an assignment using it means, and `a = b[0] = 1` gives every
+/// target the same value.
+///
+/// The right-hand side is captured IN PLACE, in the argument slot it
+/// already occupies, so the receiver and the index arguments still evaluate
+/// before it; only the read-back moves after the call.
+///
+/// Assignment syntax alone comes here. `s.send(:[]=, k, v)` and the
+/// explicit `s.[]=(k, v)` are ordinary calls that keep the setter's own
+/// return -- which is why this is applied per lowering site rather than
+/// keyed off the setter's name.
+pub(crate) fn push_assignment_call(hir: &mut Hir, mut call: HirNode) -> NodeId {
+    let HirNode::Call { args, .. } = &call else {
+        unreachable!("an assignment target lowers to a setter Call")
+    };
+    // No positional argument means no value to hand back -- unreachable from
+    // assignment syntax, but the shape is not this function's to enforce.
+    let Some(ArrayElem::Single(value)) = args.last() else {
+        return hir.push(call);
+    };
+    let value = *value;
+    let tmp = hir.gensym("__asgn");
+    let write = hir.push(HirNode::LocalWrite(tmp.clone(), value));
+    if let HirNode::Call { args, .. } = &mut call {
+        if let Some(slot) = args.last_mut() {
+            *slot = ArrayElem::Single(write);
+        }
+    }
+    let send = hir.push(call);
+    let read = hir.push(HirNode::LocalRead(tmp));
+    hir.push(HirNode::Seq(vec![send, read]))
+}
+
 /// At least one index argument. The COUNT is unrestricted: `[]`/`[]=` are
 /// ordinary methods, so `h[a, b] += 1` is just a two-argument `[]` paired with
 /// a three-argument `[]=`, and `Array#[]=` genuinely takes a `(start, length,
@@ -175,15 +213,18 @@ pub(crate) fn build_call_target_write(
     value: NodeId,
 ) -> NodeId {
     let write_recv = hir.push(HirNode::LocalRead(tmp.to_string()));
-    hir.push(HirNode::Call {
-        receiver: Some(write_recv),
-        name: write_name.to_string(),
-        args: vec![ArrayElem::Single(value)],
-        kwargs: Vec::new(),
-        block: None,
-        block_arg: None,
-        safe: false,
-    })
+    push_assignment_call(
+        hir,
+        HirNode::Call {
+            receiver: Some(write_recv),
+            name: write_name.to_string(),
+            args: vec![ArrayElem::Single(value)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        },
+    )
 }
 
 /// Same reasoning as `bind_call_target_once`, extended to BOTH the receiver
@@ -241,15 +282,18 @@ pub(crate) fn build_index_target_write(
         .map(|t| ArrayElem::Single(hir.push(HirNode::LocalRead(t.clone()))))
         .collect();
     args.push(ArrayElem::Single(value));
-    hir.push(HirNode::Call {
-        receiver: Some(write_recv),
-        name: "[]=".to_string(),
-        args,
-        kwargs: Vec::new(),
-        block: None,
-        block_arg: None,
-        safe: false,
-    })
+    push_assignment_call(
+        hir,
+        HirNode::Call {
+            receiver: Some(write_recv),
+            name: "[]=".to_string(),
+            args,
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        },
+    )
 }
 
 /// One `MultiTarget` -- a `MultiWriteNode`/nested `MultiTargetNode`'s own

@@ -219,14 +219,14 @@ pub fn binding_scope_names(
     let mut names: Vec<String> = params
         .bound_names()
         .into_iter()
-        .filter(|n| !n.starts_with("__destr"))
+        .filter(|n| !crate::hir::is_internal_local(n))
         .collect();
     let mut assigned = Vec::new();
     for &n in body {
         super::hoisting::collect_locals(compiler, n, &mut assigned);
     }
     for n in assigned {
-        if !names.contains(&n) {
+        if !crate::hir::is_internal_local(&n) && !names.contains(&n) {
             names.push(n);
         }
     }
