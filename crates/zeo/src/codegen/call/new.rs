@@ -187,6 +187,7 @@ fn emit_ctor_struct(cx: &Ctx, cid: crate::compiler::ClassId) -> TokenStream {
     let fields = quote! {
         __frozen: std::sync::atomic::AtomicBool::new(false),
         __ivars: zeo_rt::IvarCell::new(),
+        __class: #class_ident::CLASS_ID.0,
     };
     // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
     // holding this needs to be `Arc::clone()`-able on every re-read

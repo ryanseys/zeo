@@ -2597,6 +2597,22 @@ pub(crate) fn allocate_instance_of(id: ClassId) -> Option<RObj> {
     }
 }
 
+/// The `AllocatorFn` `id` itself registered -- only `ruby_class!`-generated
+/// (compiled user) classes register one, so a `Some` here identifies a class
+/// whose instances are real generated structs.
+pub(crate) fn registry_allocator(id: ClassId) -> Option<AllocatorFn> {
+    REGISTRY.get()?.entries.get(&id.0).and_then(|e| e.allocator)
+}
+
+/// The nearest ancestor of `id` (per the live chain, self included) that
+/// registered an `AllocatorFn` -- how a runtime subclass of a COMPILED class
+/// allocates instances that inherited compiled methods can downcast: the
+/// ancestor's struct, stamped with the SUBCLASS's id (see `ruby_class!`'s
+/// `__class` field).
+pub(crate) fn ancestor_allocator_of(id: ClassId) -> Option<AllocatorFn> {
+    ancestors_of_value(id).iter().find_map(|a| registry_allocator(*a))
+}
+
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
 /// `None` for modules, builtins without allocators, or a missing registry.
 pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {

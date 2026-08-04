@@ -313,6 +313,16 @@ macro_rules! ruby_class {
             pub __ivars: $crate::IvarCell<{
                 <[()]>::len(&[$($crate::ivar_unit!($ivar),)* $($crate::ivar_unit!($hidden),)*])
             }>,
+            /// The instance's ACTUAL class id -- `Self::CLASS_ID` for every
+            /// statically-constructed instance, and the runtime subclass's id
+            /// when `Class.new(CompiledBase)` allocates through this struct
+            /// (see `runtime_meta::compiled_subclass_construct`). One
+            /// generated struct type can back many class ids, the same
+            /// precedent `ValueSubclass`/`RubyException` set -- which is what
+            /// lets an inherited compiled method's trampoline downcast
+            /// successfully instead of aborting. Written once at
+            /// construction, never mutated.
+            pub __class: u32,
         }
 
         impl $name {
@@ -381,12 +391,15 @@ macro_rules! ruby_class {
             /// registered as this class's `AllocatorFn`. Builds the same
             /// zero-initialized struct `__construct` does (every ivar `Nil`,
             /// unfrozen) but stops there, so the caller gets a bare instance
-            /// to populate by hand. Ignores the passed id (uses its own
-            /// `Self::CLASS_ID`), matching `ConstructorFn`'s convention.
-            pub fn __allocate(_class: $crate::ClassId) -> $crate::RObj {
+            /// to populate by hand. The PASSED id is stored as the instance's
+            /// class: `Self::CLASS_ID` from every static path, the runtime
+            /// subclass's id when `Class.new(CompiledBase)` allocates its
+            /// instances through the compiled ancestor's struct.
+            pub fn __allocate(class: $crate::ClassId) -> $crate::RObj {
                 std::sync::Arc::new($name {
                     __frozen: std::sync::atomic::AtomicBool::new(false),
                     __ivars: $crate::IvarCell::new(),
+                    __class: class.0,
                 })
             }
 
@@ -404,7 +417,7 @@ macro_rules! ruby_class {
         }
 
         impl $crate::RubyObject for $name {
-            fn class_id(&self) -> $crate::ClassId { Self::CLASS_ID }
+            fn class_id(&self) -> $crate::ClassId { $crate::ClassId(self.__class) }
             fn as_any(&self) -> &dyn std::any::Any { self }
             fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> { self }
             fn is_frozen(&self) -> bool { self.__frozen.load(std::sync::atomic::Ordering::Relaxed) }
@@ -484,6 +497,8 @@ macro_rules! ruby_class {
                         copy_frozen && $crate::RubyObject::is_frozen(self),
                     ),
                     __ivars: self.__ivars.duplicate(),
+                    // A dup of a runtime-subclass instance stays that class.
+                    __class: self.__class,
                 })
             }
         }
@@ -641,6 +656,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Point::CLASS_ID.0,
         });
         p.__ivars.set(0, RubyValue::Int(x));
         p
@@ -650,6 +666,7 @@ mod tests {
         let t = std::sync::Arc::new(Temp {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Temp::CLASS_ID.0,
         });
         t.__ivars.set(0, RubyValue::Int(deg));
         RubyValue::Object(Temp::new_handle(t))
@@ -751,6 +768,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Point::CLASS_ID.0,
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
         match p.x().unwrap() {
@@ -793,6 +811,7 @@ mod tests {
         let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Point::CLASS_ID.0,
         })));
         assert!(!obj.is_frozen());
         obj.freeze_value().unwrap();
@@ -811,6 +830,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         }));
         let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
@@ -822,6 +842,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         }));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
@@ -847,6 +868,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Point::CLASS_ID.0,
         });
         RubyObject::set_frozen(&*p);
 
@@ -869,6 +891,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         }));
         let result = send(&g, Symbol::intern("dup"), &[], None).unwrap();
         let RubyValue::Object(copy) = result else {
@@ -921,6 +944,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         }));
         let g_class = send(&g, Symbol::intern("class"), &[], None).unwrap();
         assert!(g_class.rb_eq(&RubyValue::Class(Greeter::CLASS_ID)));
@@ -951,6 +975,7 @@ mod tests {
         let instance = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Point::CLASS_ID.0,
         })));
 
         assert!(point_class.rb_case_eq(&instance));
@@ -974,6 +999,7 @@ mod tests {
         let p: RObj = Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Point::CLASS_ID.0,
         }));
         let _ = send(&p, Symbol::intern("nope"), &[], None);
     }
@@ -1011,10 +1037,12 @@ mod tests {
         let g1 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         })));
         let g2 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         })));
         assert!(g1.rb_eq(&g1.clone()));
         assert!(!g1.rb_eq(&g2));
@@ -1030,6 +1058,7 @@ mod tests {
         let g = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
+            __class: Greeter::CLASS_ID.0,
         })));
         let s = g.to_display_string();
         assert!(s.starts_with("#<Greeter:0x") && s.ends_with('>'), "got {s}");

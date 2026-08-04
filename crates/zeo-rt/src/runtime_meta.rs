@@ -2657,6 +2657,14 @@ pub fn runtime_class_new(
         crate::builtins::value_subclass::value_subclass_construct
     } else if leaked.contains(&zeo_abi::EXCEPTION_CLASS) {
         crate::builtins::exception::exception_construct
+    } else if leaked
+        .iter()
+        .any(|&a| crate::dispatch::registry_allocator(a).is_some())
+    {
+        // `Class.new(CompiledBase)`: instances must be the compiled
+        // ancestor's real struct (stamped with the runtime id) or every
+        // inherited compiled method's downcast aborts.
+        compiled_subclass_construct
     } else {
         dyn_object_construct
     };
@@ -3020,7 +3028,15 @@ pub fn overlay_constructor(id: ClassId) -> Option<ConstructorFn> {
 /// `None` if `id` is not a known runtime class.
 pub fn runtime_allocate(id: ClassId) -> Option<RubyValue> {
     let known = maps().classes.read().unwrap().contains_key(&id.0);
-    known.then(|| RubyValue::Object(Arc::new(DynObject::new(id))))
+    known.then(|| {
+        // Mirror of `runtime_class_new`'s constructor pick: a runtime
+        // subclass of a compiled class allocates the ancestor's struct under
+        // its own id.
+        match crate::dispatch::ancestor_allocator_of(id) {
+            Some(alloc) => RubyValue::Object(alloc(id)),
+            None => RubyValue::Object(Arc::new(DynObject::new(id))),
+        }
+    })
 }
 
 /// Coerce a `define_method`/`define_singleton_method` NAME argument (a Symbol
@@ -3071,6 +3087,26 @@ fn immediate_kind(v: &RubyValue) -> &'static str {
 /// name-keyed object tagged with the class id, then run the class's own
 /// `initialize` if it defines one (mirroring `Class#new`). No user
 /// `initialize` + extra args is CRuby's `ArgumentError`.
+/// `Class.new(CompiledBase)`'s constructor: allocate through the nearest
+/// compiled ancestor's `AllocatorFn`, stamped with the RUNTIME class id, so
+/// every inherited compiled method's trampoline downcasts to the real
+/// ancestor struct instead of aborting on a `DynObject`. Named ivars a
+/// runtime body invents spill into `IvarCell`'s invented storage.
+/// `initialize` resolves through full dispatch, so a runtime-defined body
+/// wins over the inherited compiled one.
+fn compiled_subclass_construct(
+    id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let Some(alloc) = crate::dispatch::ancestor_allocator_of(id) else {
+        return dyn_object_construct(id, args, block);
+    };
+    let handle = alloc(id);
+    crate::dispatch::run_initialize(id, &handle, args, block)?;
+    Ok(RubyValue::Object(handle))
+}
+
 fn dyn_object_construct(
     id: ClassId,
     args: &[RubyValue],
