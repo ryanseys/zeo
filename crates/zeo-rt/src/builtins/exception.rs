@@ -1948,7 +1948,11 @@ pub enum PatternFail {
     /// `String === 1 does not return true`
     CaseEq(RubyValue, RubyValue),
     /// `[1] length mismatch (given 1, expected 2)`, `2+` with a rest.
-    Length { matchee: RubyValue, expected: usize, open: bool },
+    Length {
+        matchee: RubyValue,
+        expected: usize,
+        open: bool,
+    },
     /// `#<Object> does not respond to #deconstruct[_keys]`
     NoDeconstruct { matchee: RubyValue, keys: bool },
     /// `{a: 1} is not empty` / `rest of {b: 2} is not empty`
@@ -1997,7 +2001,10 @@ impl PatternFail {
                 }
             }
             PatternFail::Find(matchee) => {
-                format!("{} does not match to find pattern", matchee.inspect_string())
+                format!(
+                    "{} does not match to find pattern",
+                    matchee.inspect_string()
+                )
             }
             PatternFail::Guard => "guard clause does not return true".to_string(),
         }

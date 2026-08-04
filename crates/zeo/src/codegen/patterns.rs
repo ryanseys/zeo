@@ -57,8 +57,7 @@ pub fn emit_case_in(
     // it declines to guess. One clause has exactly one story to tell, and gets
     // the detailed message (and the key error) the `expr => pattern` form does.
     let single_pattern = arms.len() == 1;
-    let boxed_subject =
-        super::expr::box_if_object_typed(cx, subject, quote! { __subject.clone() });
+    let boxed_subject = super::expr::box_if_object_typed(cx, subject, quote! { __subject.clone() });
     let mut chain = match else_body {
         Some(body) => super::stmt::emit_body_boxed(cx, body),
         None if single_pattern => emit_no_matching_pattern_raise(boxed_subject),
@@ -82,10 +81,7 @@ pub fn emit_case_in(
                 };
                 // A guard that rejects is its own reason: the pattern matched
                 // and the condition did not.
-                let recorded = recording(
-                    g_check,
-                    quote! { zeo_rt::pattern_fail_guard(); },
-                );
+                let recorded = recording(g_check, quote! { zeo_rt::pattern_fail_guard(); });
                 quote! { (#cond) && (#recorded) }
             }
         };
@@ -97,9 +93,11 @@ pub fn emit_case_in(
 
     // Arming costs one thread-local write, so only the shape that will READ a
     // record pays for clearing it.
-    let arm = single_pattern
-        .then(|| quote! { zeo_rt::pattern_key_miss_clear(); })
-        .unwrap_or_default();
+    let arm = if single_pattern {
+        quote! { zeo_rt::pattern_key_miss_clear(); }
+    } else {
+        TokenStream::new()
+    };
     quote! { { let __subject = #subject_expr; #arm #chain } }
 }
 
@@ -930,18 +928,17 @@ fn emit_hash_pattern(
     // ignores the ones it did not name, but an EMPTY one asks for an empty
     // hash -- ruby's one exception to that leniency, and the only way to
     // spell "no entries at all" without `**nil`.
-    let empty_pattern_check = (pairs.is_empty()
-        && matches!(rest, HashPatternRest::None))
-    .then(|| {
-        quote! {
-            if zeo_rt::hash_len(&#h_ident) != 0 {
-                zeo_rt::pattern_fail_not_empty(
-                    &zeo_rt::RubyValue::Hash(#h_ident.clone()), false,
-                );
-                break #label false;
+    let empty_pattern_check =
+        (pairs.is_empty() && matches!(rest, HashPatternRest::None)).then(|| {
+            quote! {
+                if zeo_rt::hash_len(&#h_ident) != 0 {
+                    zeo_rt::pattern_fail_not_empty(
+                        &zeo_rt::RubyValue::Hash(#h_ident.clone()), false,
+                    );
+                    break #label false;
+                }
             }
-        }
-    });
+        });
 
     // `**nil` beside declared keys asks that nothing else remain. Ruby words
     // it differently from the empty-pattern case above, and names the

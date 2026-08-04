@@ -1,8 +1,14 @@
 //! `Complex` (CRuby complex.c) -- two components that KEEP their own
 //! numeric class (`Complex(1, 2)` holds Integers and inspects as
 //! `(1+2i)`; a Rational component renders `(2/25)*i` -- all
-//! oracle-verified). Components are constructor-restricted to
-//! Integer|Float|Rational; a Complex component never nests.
+//! oracle-verified). A component is any `Numeric`, including a user
+//! subclass; only a Complex is refused, because a Complex never nests.
+//!
+//! Integer, Float and Rational components are the NATIVE lanes, computed
+//! on directly. Every other component is reached by dispatch, at the same
+//! points CRuby's `f_add`/`f_abs`/`f_negative_p` helpers fall through to
+//! `rb_funcall` -- which is why `Complex(0, obj).inspect` can raise out of
+//! the subclass's own `<=>`.
 //!
 //! Internal component arithmetic uses QUO (exact rational division) with
 //! CRuby's canonicalization: an exact den==1 result demotes to Integer
@@ -10,7 +16,6 @@
 //! oracle-verified), unlike standalone Rational arithmetic which never
 //! demotes.
 
-use crate::builtins::numeric::{num_add_or_panic, num_mul_or_panic, num_sub_or_panic};
 use crate::builtins::{inherited_row, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
@@ -25,11 +30,159 @@ pub struct RComplexData {
 
 pub type RComplex = Arc<RComplexData>;
 
-fn is_component(v: &RubyValue) -> bool {
+/// The component lanes this file computes on DIRECTLY. Every other
+/// component routes through `send_value`, exactly where CRuby's `f_add`
+/// and `f_abs` families fall through to `rb_funcall`.
+fn is_native_component(v: &RubyValue) -> bool {
     matches!(
         v,
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_)
     )
+}
+
+/// A value a Complex may HOLD. CRuby's internal constructor
+/// (`nucomp_s_new_internal`) checks nothing at all, so any `Numeric` is a
+/// component: `Numeric#i` on a user subclass builds a real Complex, and
+/// every routine that then touches the part dispatches. The one structural
+/// rule is that a Complex never nests.
+fn is_component(v: &RubyValue) -> bool {
+    is_native_component(v)
+        || (!matches!(v, RubyValue::Complex(_))
+            && crate::dispatch::is_a(v.class_id(), zeo_abi::NUMERIC_CLASS))
+}
+
+fn dispatch(recv: &RubyValue, meth: &str, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    crate::dispatch::send_value(recv, crate::Symbol::intern(meth), args, None)
+}
+
+/// One component binary operation -- CRuby's `f_add`/`f_sub`/`f_mul`
+/// family (complex.c's `binop`): the native lanes compute in place, and
+/// any other component takes an ordinary dispatch, so a user `Numeric`
+/// subclass supplies its own arithmetic.
+fn comp_op(
+    a: &RubyValue,
+    b: &RubyValue,
+    native: fn(&RubyValue, &RubyValue) -> Option<Result<RubyValue, Signal>>,
+    op: &str,
+) -> Result<RubyValue, Signal> {
+    match native(a, b) {
+        Some(r) => r,
+        None => dispatch(a, op, std::slice::from_ref(b)),
+    }
+}
+
+fn comp_add(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    comp_op(a, b, crate::builtins::numeric::num_add, "+")
+}
+
+fn comp_sub(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    comp_op(a, b, crate::builtins::numeric::num_sub, "-")
+}
+
+fn comp_mul(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    comp_op(a, b, crate::builtins::numeric::num_mul, "*")
+}
+
+/// CRuby's `f_negate`: `-x` asks the COMPONENT to negate itself. Spelling
+/// it `0 - x` instead would ask the zero to coerce, which a subclass that
+/// defines `-@` but no `coerce` cannot answer.
+fn comp_negate(v: &RubyValue) -> Result<RubyValue, Signal> {
+    match crate::builtins::numeric::num_sub(&RubyValue::Int(0), v) {
+        Some(r) => r,
+        None => dispatch(v, "-@", &[]),
+    }
+}
+
+/// CRuby's `f_signbit` (complex.c): a Float is negative by its SIGN BIT --
+/// `-0.0` counts and `NaN` never does -- and every other component answers
+/// `< 0`. For a non-native component that `<` is a real dispatch, which is
+/// how a `Numeric` subclass with no `<=>` reaches `Comparable#<` and
+/// raises there.
+fn comp_negative(v: &RubyValue) -> Result<bool, Signal> {
+    use num_bigint::Sign;
+    Ok(match v {
+        RubyValue::Float(f) => !f.is_nan() && f.is_sign_negative(),
+        RubyValue::Int(i) => *i < 0,
+        RubyValue::BigInt(b) => b.sign() == Sign::Minus,
+        RubyValue::Rational(r) => r.num.sign() == Sign::Minus,
+        other => dispatch(other, "<", &[RubyValue::Int(0)])?.truthy(),
+    })
+}
+
+/// CRuby's `f_abs`: the native lanes in place, anything else through its
+/// own `#abs`.
+fn comp_abs(v: &RubyValue) -> Result<RubyValue, Signal> {
+    if !is_native_component(v) {
+        return dispatch(v, "abs", &[]);
+    }
+    if comp_negative(v)? {
+        comp_negate(v)
+    } else {
+        Ok(v.clone())
+    }
+}
+
+/// CRuby's `f_zero_p`.
+fn comp_zero(v: &RubyValue) -> Result<bool, Signal> {
+    if is_native_component(v) {
+        return Ok(crate::builtins::numeric::num_eq(v, &RubyValue::Int(0)).unwrap_or(false));
+    }
+    Ok(dispatch(v, "==", &[RubyValue::Int(0)])?.truthy())
+}
+
+/// A component as `f64` -- the promotion every trigonometric path takes.
+/// A non-native component supplies it through its own `#to_f`.
+fn comp_to_f64(v: &RubyValue) -> Result<f64, Signal> {
+    if is_native_component(v) {
+        return Ok(crate::builtins::numeric::num_to_f64_unchecked(v));
+    }
+    let f = dispatch(v, "to_f", &[])?;
+    if !is_native_component(&f) {
+        return Err(type_error!(
+            "can't convert {} into Float",
+            crate::builtins::convert_name_of(v)
+        ));
+    }
+    Ok(crate::builtins::numeric::num_to_f64_unchecked(&f))
+}
+
+/// `Some(v.real?)` for a `Numeric`, `None` for anything else -- CRuby's
+/// `k_numeric_p(x) && f_real_p(x)` pair, kept together because both
+/// callers need to tell "not numeric" from "numeric but not real".
+pub(crate) fn is_real_numeric(v: &RubyValue) -> Result<Option<bool>, Signal> {
+    if is_native_component(v) {
+        return Ok(Some(true));
+    }
+    if matches!(v, RubyValue::Complex(_)) {
+        return Ok(Some(false));
+    }
+    if !crate::dispatch::is_a(v.class_id(), zeo_abi::NUMERIC_CLASS) {
+        return Ok(None);
+    }
+    Ok(Some(dispatch(v, "real?", &[])?.truthy()))
+}
+
+/// CRuby's `nucomp_real_check` (complex.c), the guard on the PUBLIC
+/// rectangular constructors. A native lane passes; a real-valued Complex
+/// contributes its own real part; anything else must be a `Numeric` that
+/// answers `real?` -- and that `real?` is a real dispatch, so a subclass
+/// which declines is refused like any non-numeric.
+pub(crate) fn real_check(v: &RubyValue) -> Result<RubyValue, Signal> {
+    if is_native_component(v) {
+        return Ok(v.clone());
+    }
+    if let RubyValue::Complex(c) = v {
+        if comp_zero(&c.imag)? {
+            return Ok(c.real.clone());
+        }
+        return Err(type_error!("not a real"));
+    }
+    if crate::dispatch::is_a(v.class_id(), zeo_abi::NUMERIC_CLASS)
+        && dispatch(v, "real?", &[])?.truthy()
+    {
+        return Ok(v.clone());
+    }
+    Err(type_error!("not a real"))
 }
 
 /// THE Complex constructor -- CRuby's "can't convert X into Complex"
@@ -256,13 +409,11 @@ fn decimal_to_rat(s: &str) -> (BigInt, BigInt) {
 /// preserving the exact magnitude when the angle is a right-angle multiple
 /// (`"1@0"` -> `(1+0.0i)`, `"1.0@#{PI}"` -> `(-1+0.0i)`).
 fn complex_new_polar(mag: RubyValue, angle: RubyValue) -> Result<RubyValue, Signal> {
-    use crate::builtins::numeric::num_to_f64_unchecked;
-    let is_zero = |v: &RubyValue| num_to_f64_unchecked(v) == 0.0;
-    if is_zero(&mag) || is_zero(&angle) {
+    if comp_to_f64(&mag)? == 0.0 || comp_to_f64(&angle)? == 0.0 {
         return complex_new(mag, RubyValue::Float(0.0));
     }
-    let arg = num_to_f64_unchecked(&angle);
-    let neg = |v: &RubyValue| num_sub_or_panic(&RubyValue::Int(0), v);
+    let arg = comp_to_f64(&angle)?;
+    let neg = |v: &RubyValue| comp_sub(&RubyValue::Int(0), v);
     if arg == std::f64::consts::PI {
         return complex_new(neg(&mag)?, RubyValue::Float(0.0));
     }
@@ -272,8 +423,8 @@ fn complex_new_polar(mag: RubyValue, angle: RubyValue) -> Result<RubyValue, Sign
     if arg == std::f64::consts::FRAC_PI_2 + std::f64::consts::PI {
         return complex_new(RubyValue::Float(0.0), neg(&mag)?);
     }
-    let re = num_mul_or_panic(&mag, &RubyValue::Float(arg.cos()))?;
-    let im = num_mul_or_panic(&mag, &RubyValue::Float(arg.sin()))?;
+    let re = comp_mul(&mag, &RubyValue::Float(arg.cos()))?;
+    let im = comp_mul(&mag, &RubyValue::Float(arg.sin()))?;
     complex_new(re, im)
 }
 
@@ -306,28 +457,56 @@ fn canon(v: RubyValue) -> RubyValue {
 }
 
 /// Component division: `quo` semantics (exact rational for exact
-/// operands, IEEE for float pairs), canonicalized.
+/// operands, IEEE for float pairs), canonicalized. CRuby's `f_quo`, so a
+/// non-native component answers with its own `#quo`.
 fn comp_quo(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
-    Ok(canon(crate::builtins::numeric::num_quo(a, b).expect(
-        "complex components are numeric by construction",
+    Ok(canon(comp_op(
+        a,
+        b,
+        crate::builtins::numeric::num_quo,
+        "quo",
     )?))
 }
 
+/// A right operand that is real, so `nucomp_add` and friends take their
+/// componentwise branch instead of promoting it to `(x, 0)` and running
+/// the full formula. The two agree on every native component; they part
+/// on a user `Numeric`, which would otherwise be asked to add or multiply
+/// a zero it never sees in ruby.
+fn real_operand(b: &RubyValue) -> bool {
+    !matches!(b, RubyValue::Complex(_)) && is_component(b)
+}
+
 pub(crate) fn cpx_add(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    if let RubyValue::Complex(c) = a {
+        if real_operand(b) {
+            return complex_new(comp_add(&c.real, b)?, c.imag.clone());
+        }
+    }
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
-    complex_new(num_add_or_panic(&ar, &br)?, num_add_or_panic(&ai, &bi)?)
+    complex_new(comp_add(&ar, &br)?, comp_add(&ai, &bi)?)
 }
 
 pub(crate) fn cpx_sub(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    if let RubyValue::Complex(c) = a {
+        if real_operand(b) {
+            return complex_new(comp_sub(&c.real, b)?, c.imag.clone());
+        }
+    }
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
-    complex_new(num_sub_or_panic(&ar, &br)?, num_sub_or_panic(&ai, &bi)?)
+    complex_new(comp_sub(&ar, &br)?, comp_sub(&ai, &bi)?)
 }
 
 pub(crate) fn cpx_mul(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    if let RubyValue::Complex(c) = a {
+        if real_operand(b) {
+            return complex_new(comp_mul(&c.real, b)?, comp_mul(&c.imag, b)?);
+        }
+    }
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
     // (ar + ai*i)(br + bi*i) = (ar*br - ai*bi) + (ar*bi + ai*br)i
-    let real = num_sub_or_panic(&num_mul_or_panic(&ar, &br)?, &num_mul_or_panic(&ai, &bi)?)?;
-    let imag = num_add_or_panic(&num_mul_or_panic(&ar, &bi)?, &num_mul_or_panic(&ai, &br)?)?;
+    let real = comp_sub(&comp_mul(&ar, &br)?, &comp_mul(&ai, &bi)?)?;
+    let imag = comp_add(&comp_mul(&ar, &bi)?, &comp_mul(&ai, &br)?)?;
     complex_new(real, imag)
 }
 
@@ -342,15 +521,15 @@ pub(crate) fn cpx_div(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
     }
     let (br, bi) = as_components(b);
     // (a / b) = (a * conj(b)) / |b|^2, componentwise via quo.
-    let denom = num_add_or_panic(&num_mul_or_panic(&br, &br)?, &num_mul_or_panic(&bi, &bi)?)?;
-    let real_num = num_add_or_panic(&num_mul_or_panic(&ar, &br)?, &num_mul_or_panic(&ai, &bi)?)?;
-    let imag_num = num_sub_or_panic(&num_mul_or_panic(&ai, &br)?, &num_mul_or_panic(&ar, &bi)?)?;
+    let denom = comp_add(&comp_mul(&br, &br)?, &comp_mul(&bi, &bi)?)?;
+    let real_num = comp_add(&comp_mul(&ar, &br)?, &comp_mul(&ai, &bi)?)?;
+    let imag_num = comp_sub(&comp_mul(&ai, &br)?, &comp_mul(&ar, &bi)?)?;
     complex_new(comp_quo(&real_num, &denom)?, comp_quo(&imag_num, &denom)?)
 }
 
 /// True for an exactly-zero numeric component (a `0` Integer or a `0/1`
 /// Rational) -- CRuby's `k_exact_zero_p`.
-fn is_exact_zero(v: &RubyValue) -> bool {
+pub(crate) fn is_exact_zero(v: &RubyValue) -> bool {
     match v {
         RubyValue::Int(0) => true,
         RubyValue::Rational(r) => r.num == BigInt::from(0),
@@ -402,10 +581,14 @@ pub(crate) fn cpx_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
         }
         // z^w = exp(w * log z), with log z = ln|z| + i*arg(z).
         _ => {
-            let f = crate::builtins::numeric::num_to_f64_unchecked;
             let (ar, ai) = as_components(a);
             let (br, bi) = as_components(b);
-            let (ar, ai, br, bi) = (f(&ar), f(&ai), f(&br), f(&bi));
+            let (ar, ai, br, bi) = (
+                comp_to_f64(&ar)?,
+                comp_to_f64(&ai)?,
+                comp_to_f64(&br)?,
+                comp_to_f64(&bi)?,
+            );
             let ln_r = ar.hypot(ai).ln();
             let theta = ai.atan2(ar);
             // w * log z
@@ -423,45 +606,44 @@ pub(crate) fn cpx_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
 /// Structural equality: componentwise `==` (a plain numeric compares as
 /// `(x, 0)` -- `Complex(2, 0) == 2` is true, oracle-verified).
 pub(crate) fn cpx_eq(a: &RubyValue, b: &RubyValue) -> bool {
+    // CRuby's `nucomp_eqeq_p` compares each component with `==`, so a
+    // non-native component answers for itself.
+    let eq = |x: &RubyValue, y: &RubyValue| {
+        crate::builtins::numeric::num_eq(x, y).unwrap_or_else(|| x.rb_eq(y))
+    };
     let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
-    crate::builtins::numeric::num_eq(&ar, &br).unwrap_or(false)
-        && crate::builtins::numeric::num_eq(&ai, &bi).unwrap_or(false)
+    eq(&ar, &br) && eq(&ai, &bi)
 }
 
-/// `to_s` is `"1+2i"` / `"1.5-2.5i"`; `inspect` wraps in parens and
-/// renders a Rational imag as `(2/25)*i` -- all oracle-verified. The
-/// imag's own sign supplies the `-`; a Rational/positive imag gets `+`.
-pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> String {
+/// CRuby's `f_format` (complex.c): render the real part, then the
+/// imaginary part's SIGN, then its ABSOLUTE VALUE, and separate the `i`
+/// with `*` whenever the text built so far does not end in a digit.
+///
+/// That last rule reads the rendered CHARACTERS, not the component's
+/// class, and it is the whole story behind `(1+(1/2)*i)` against
+/// `1+1/2i` -- one and the same Rational, `*` only where inspect's paren
+/// lands a `)` at the end -- and behind `0+Infinity*i`. The sign is
+/// removed by asking the component for its `#abs`, not by trimming a `-`
+/// off the text.
+///
+/// `to_s` uses the parts' `to_s` and `inspect` their `inspect`, so both
+/// can dispatch, and both can raise.
+pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> Result<String, Signal> {
     let render = |v: &RubyValue| {
         if inspect {
-            v.inspect_string()
+            v.try_inspect_string()
         } else {
-            v.to_display_string()
+            v.try_display_string()
         }
     };
-    let real = render(&c.real);
-    let imag = render(&c.imag);
-    // The imag's own sign supplies the `-`; a positive coefficient gets `+`. A
-    // negative Rational inspects as `(-1/2)`, so the sign hides just inside the
-    // paren -- CRuby lifts it out (`0-(1/2)*i`, not `0+(-1/2)*i`).
-    let (sign, imag) = if let Some(rest) = imag.strip_prefix('-') {
-        ("-", rest.to_string())
-    } else if let Some(rest) = imag.strip_prefix("(-") {
-        ("-", format!("({rest}"))
-    } else {
-        ("+", imag)
-    };
-    // CRuby separates the imaginary unit with `*` when the coefficient isn't a
-    // bare number: a Rational (`3/4*i`, inspect), or a non-finite Float whose
-    // rendering is a word (`Infinity*i`, `NaN*i`) -- in BOTH to_s and inspect.
-    let imag_nonfinite = matches!(&c.imag, RubyValue::Float(f) if !f.is_finite());
-    let star = if (matches!(c.imag, RubyValue::Rational(_)) && inspect) || imag_nonfinite {
-        "*"
-    } else {
-        ""
-    };
-    let body = format!("{real}{sign}{imag}{star}i");
-    if inspect { format!("({body})") } else { body }
+    let mut s = render(&c.real)?;
+    s.push(if comp_negative(&c.imag)? { '-' } else { '+' });
+    s.push_str(&render(&comp_abs(&c.imag)?)?);
+    if !s.ends_with(|ch: char| ch.is_ascii_digit()) {
+        s.push('*');
+    }
+    s.push('i');
+    Ok(if inspect { format!("({s})") } else { s })
 }
 
 #[cfg(test)]
@@ -541,15 +723,15 @@ mod tests {
         let RubyValue::Complex(c) = cpx(1, 2) else {
             panic!()
         };
-        assert_eq!(cpx_format(&c, false), "1+2i");
-        assert_eq!(cpx_format(&c, true), "(1+2i)");
+        assert_eq!(cpx_format(&c, false).unwrap(), "1+2i");
+        assert_eq!(cpx_format(&c, true).unwrap(), "(1+2i)");
         let RubyValue::Complex(c) = cpx(1, -2) else {
             panic!()
         };
-        assert_eq!(cpx_format(&c, false), "1-2i");
+        assert_eq!(cpx_format(&c, false).unwrap(), "1-2i");
         let r = cpx_div(&cpx(1, 2), &cpx(3, 4)).unwrap();
         let RubyValue::Complex(c) = r else { panic!() };
-        assert_eq!(cpx_format(&c, true), "((11/25)+(2/25)*i)");
+        assert_eq!(cpx_format(&c, true).unwrap(), "((11/25)+(2/25)*i)");
     }
 
     #[test]
@@ -576,12 +758,48 @@ fn abs_f64(c: &RComplexData) -> f64 {
         .hypot(crate::builtins::numeric::num_to_f64_unchecked(&c.imag))
 }
 
+fn complex_arg(c: &RComplexData) -> Result<f64, Signal> {
+    Ok(comp_to_f64(&c.imag)?.atan2(comp_to_f64(&c.real)?))
+}
+
 /// `Complex#abs`, preserving CRuby's component-class rule: when one component
 /// is numerically zero the magnitude is `|other|` in that component's own
 /// class -- Integer only when BOTH components are Integer-classed (so
 /// `Complex(0, 2).abs` -> `2`, but `Complex(2, 0.0).abs` -> `2.0`). With both
 /// components non-zero it is the ordinary Float hypotenuse.
-fn complex_abs_value(c: &RComplexData) -> RubyValue {
+///
+/// A non-native component takes `rb_complex_abs`'s own shape, which is the
+/// same rule reached by dispatch: `Complex(0, obj).abs` is `obj.abs`.
+fn complex_abs_value(c: &RComplexData) -> Result<RubyValue, Signal> {
+    if !is_native_component(&c.real) || !is_native_component(&c.imag) {
+        let (re_float, im_float) = (
+            matches!(c.real, RubyValue::Float(_)),
+            matches!(c.imag, RubyValue::Float(_)),
+        );
+        if comp_zero(&c.real)? {
+            let a = comp_abs(&c.imag)?;
+            return if re_float && !im_float {
+                Ok(RubyValue::Float(comp_to_f64(&a)?))
+            } else {
+                Ok(a)
+            };
+        }
+        if comp_zero(&c.imag)? {
+            let a = comp_abs(&c.real)?;
+            return if im_float && !re_float {
+                Ok(RubyValue::Float(comp_to_f64(&a)?))
+            } else {
+                Ok(a)
+            };
+        }
+        return Ok(RubyValue::Float(
+            comp_to_f64(&c.real)?.hypot(comp_to_f64(&c.imag)?),
+        ));
+    }
+    Ok(native_abs_value(c))
+}
+
+fn native_abs_value(c: &RComplexData) -> RubyValue {
     use crate::builtins::numeric::num_to_f64_unchecked;
     let re_zero = num_to_f64_unchecked(&c.real) == 0.0;
     let im_zero = num_to_f64_unchecked(&c.imag) == 0.0;
@@ -622,8 +840,11 @@ ruby_class! {
     // Kernel form). `Complex.polar` is a separate gap (its CRuby type-exact
     // trig is tracked with the numeric-exactness work).
     def self."rect" | "rectangular" cfunc (_recv, arg1, arg2?) {
-        let real = (*arg1).clone();
-        let imag = arg2.cloned().unwrap_or(RubyValue::Int(0));
+        let real = real_check(arg1)?;
+        let imag = match arg2 {
+            Some(v) => real_check(v)?,
+            None => RubyValue::Int(0),
+        };
         complex_new(real, imag)
     }
     // `Complex.polar(abs, arg = 0)`: the polar constructor -- `abs * (cos arg
@@ -640,8 +861,11 @@ ruby_class! {
     def "*" (recv, other) { num_op_row!(other, recv, num_mul, "*") }
     def "/" (recv, other) { num_op_row!(other, recv, num_div, "/") }
     def "**" (recv, other) { num_op_row!(other, recv, num_pow, "**") }
+    // CRuby's `rb_complex_uminus` negates each COMPONENT (`f_negate`), which
+    // is not `0 - self`: the zero would have to coerce.
     def "-@" (recv) {
-        cpx_sub(&complex_new(RubyValue::Int(0), RubyValue::Int(0))?, recv)
+        let c = recv_complex(recv);
+        complex_new(comp_negate(&c.real)?, comp_negate(&c.imag)?)
     }
     def "+@" (recv) {
         Ok(recv.clone())
@@ -660,30 +884,23 @@ ruby_class! {
         Ok(RubyValue::Bool(false))
     }
     def "abs" | "magnitude" (recv) {
-        Ok(complex_abs_value(recv_complex(recv)))
+        complex_abs_value(recv_complex(recv))
     }
     def "abs2" (recv) {
         let c = recv_complex(recv);
-        num_add_or_panic(
-            &num_mul_or_panic(&c.real, &c.real)?,
-            &num_mul_or_panic(&c.imag, &c.imag)?,
+        comp_add(
+            &comp_mul(&c.real, &c.real)?,
+            &comp_mul(&c.imag, &c.imag)?,
         )
     }
     def "arg" | "angle" | "phase" (recv) {
-        let c = recv_complex(recv);
-        Ok(RubyValue::Float(
-            crate::builtins::numeric::num_to_f64_unchecked(&c.imag)
-                .atan2(crate::builtins::numeric::num_to_f64_unchecked(&c.real)),
-        ))
+        Ok(RubyValue::Float(complex_arg(recv_complex(recv))?))
     }
     def "polar" (recv) {
         let c = recv_complex(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
-            complex_abs_value(c),
-            RubyValue::Float(
-                crate::builtins::numeric::num_to_f64_unchecked(&c.imag)
-                    .atan2(crate::builtins::numeric::num_to_f64_unchecked(&c.real)),
-            ),
+            complex_abs_value(c)?,
+            RubyValue::Float(complex_arg(c)?),
         ])))
     }
     def "rect" | "rectangular" (recv) {
@@ -695,7 +912,7 @@ ruby_class! {
     }
     def "conj" | "conjugate" (recv) {
         let c = recv_complex(recv);
-        let neg_imag = crate::builtins::numeric::num_sub_or_panic(&RubyValue::Int(0), &c.imag)?;
+        let neg_imag = comp_negate(&c.imag)?;
         complex_new(c.real.clone(), neg_imag)
     }
     def "to_c" (recv) {
@@ -790,10 +1007,9 @@ ruby_class! {
             ));
         }
         let c = recv_complex(recv);
-        let f = crate::builtins::numeric::num_to_f64_unchecked;
-        let (ar, ai) = (f(&c.real), f(&c.imag));
+        let (ar, ai) = (comp_to_f64(&c.real)?, comp_to_f64(&c.imag)?);
         let (br, bi) = as_components(arg);
-        let (br, bi) = (f(&br), f(&bi));
+        let (br, bi) = (comp_to_f64(&br)?, comp_to_f64(&bi)?);
         let denom = br * br + bi * bi;
         complex_new(
             RubyValue::Float((ar * br + ai * bi) / denom),

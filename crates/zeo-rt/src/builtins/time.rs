@@ -407,7 +407,7 @@ fn iso8601_weeknum(year: i64, yday: i32, wday: i32, mon: i32, mday: i32) -> i32 
         // Monday: the plain count is already the ISO week.
         1 => {}
         // Tue/Wed/Thu: Jan 1 falls in the week holding the first Thursday.
-        2 | 3 | 4 => weeknum += 1,
+        2..=4 => weeknum += 1,
         // Fri/Sat/Sun: those opening days belong to last year's final week.
         _ => {
             if weeknum == 0 {
@@ -548,10 +548,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             // Week-of-year: `%U` counts from Sunday, `%W` from Monday, and
             // `%V`/`%G` are the ISO week-date pair -- what a weekly rollup or
             // a report bucket keys on.
-            'U' => num(
-                weeknumber(tm.tm_yday, tm.tm_wday, false) as i64,
-                2,
-            ),
+            'U' => num(weeknumber(tm.tm_yday, tm.tm_wday, false) as i64, 2),
             'W' => num(weeknumber(tm.tm_yday, tm.tm_wday, true) as i64, 2),
             'V' => num(iso_week(tm) as i64, 2),
             // The ISO week-based YEAR, which is not the calendar year at the
@@ -605,8 +602,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         // per-case `BIT_OF(UPPER)`/`BIT_OF(LOWER)`), and every numeric and
         // compound directive ignores it outright. So `%#A` is "THURSDAY", not
         // "tHURSDAY".
-        let fold_upper = upcase
-            || (swapcase && matches!(d, 'a' | 'A' | 'b' | 'h' | 'B' | 'P'));
+        let fold_upper = upcase || (swapcase && matches!(d, 'a' | 'A' | 'b' | 'h' | 'B' | 'P'));
         let fold_lower = !upcase && swapcase && matches!(d, 'p' | 'Z');
         if fold_upper {
             piece = piece.to_uppercase();

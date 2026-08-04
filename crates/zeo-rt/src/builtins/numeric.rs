@@ -479,18 +479,6 @@ pub fn num_eq(a: &RubyValue, b: &RubyValue) -> Option<bool> {
     })
 }
 
-/// Infallible views for Complex's internal component arithmetic (whose
-/// operands are numeric by construction).
-pub(crate) fn num_add_or_panic(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
-    num_add(a, b).expect("complex components are numeric by construction")
-}
-pub(crate) fn num_sub_or_panic(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
-    num_sub(a, b).expect("complex components are numeric by construction")
-}
-pub(crate) fn num_mul_or_panic(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
-    num_mul(a, b).expect("complex components are numeric by construction")
-}
-
 // The GENERIC Numeric rows (CRuby's `Numeric` ownership: methods defined
 // once, driving the receiver's own core operations) -- found via the MRO
 // walk on any numeric receiver whose own class doesn't override them.

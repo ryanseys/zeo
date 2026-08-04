@@ -402,7 +402,9 @@ pub(crate) fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     } else {
         format!(" {}", parts.join(", "))
     };
-    Ok(RubyValue::Str(string_new(format!("#<{kind}{named}{body}>"))))
+    Ok(RubyValue::Str(string_new(format!(
+        "#<{kind}{named}{body}>"
+    ))))
 }
 
 pub(crate) fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {

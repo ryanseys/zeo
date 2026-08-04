@@ -394,7 +394,10 @@ fn trim_g(digits: &str, alt: bool) -> String {
     if !digits.contains('.') {
         return digits.to_string();
     }
-    digits.trim_end_matches('0').trim_end_matches('.').to_string()
+    digits
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 fn sign_prefix(spec: &Spec, negative: bool) -> String {

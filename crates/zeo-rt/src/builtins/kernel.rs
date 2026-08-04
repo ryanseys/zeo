@@ -1298,12 +1298,66 @@ pub(crate) fn rational_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// `Kernel#Complex(real, imag = 0)`. A single String argument is parsed as a
 /// complex literal (`"2+3i"`, `"3"`, `"-i"`).
 pub(crate) fn complex_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    if let (RubyValue::Str(s), None) = (&args[0], args.get(1)) {
-        let (real, imag) = parse_complex_string(&s.lock().to_utf8_lossy())?;
-        return crate::builtins::complex::complex_new(real, imag);
+    use crate::builtins::complex;
+
+    // A `nil` in either position is refused up front, before either
+    // component is examined, so it reports the conversion rather than
+    // `Complex.rect`'s "not a real" (CRuby `nucomp_convert`).
+    if matches!(args[0], RubyValue::Nil) || matches!(args.get(1), Some(RubyValue::Nil)) {
+        return Err(type_error!("can't convert nil into Complex"));
     }
-    let imag = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
-    crate::builtins::complex::complex_new(args[0].clone(), imag)
+    // A String component is parsed, in EITHER position.
+    let parse = |v: &RubyValue| -> Result<RubyValue, Signal> {
+        match v {
+            RubyValue::Str(s) => {
+                let (real, imag) = parse_complex_string(&s.lock().to_utf8_lossy())?;
+                complex::complex_new(real, imag)
+            }
+            other => Ok(other.clone()),
+        }
+    };
+    // A real-valued Complex contributes its own real part -- so
+    // `Complex(Complex(3, 0), 4)` is `(3+4i)`, not a nested component.
+    let unwrap_real = |v: RubyValue| match &v {
+        RubyValue::Complex(c) if complex::is_exact_zero(&c.imag) => c.real.clone(),
+        _ => v,
+    };
+    let a1 = unwrap_real(parse(&args[0])?);
+    let a2 = match args.get(1) {
+        Some(v) => Some(unwrap_real(parse(v)?)),
+        None => None,
+    };
+
+    // A Complex that survived the unwrap passes through whole, provided the
+    // imaginary argument would contribute nothing.
+    if matches!(a1, RubyValue::Complex(_)) && a2.as_ref().is_none_or(complex::is_exact_zero) {
+        return Ok(a1);
+    }
+    let Some(a2) = a2 else {
+        // One argument: a NON-real numeric is already the answer, and a
+        // non-numeric converts through `#to_c`.
+        return match complex::is_real_numeric(&a1)? {
+            Some(false) => Ok(a1),
+            Some(true) => complex::complex_new(a1, RubyValue::Int(0)),
+            None if crate::dispatch::responds_to_value(&a1, Symbol::intern("to_c"), false) => {
+                crate::dispatch::send_value(&a1, Symbol::intern("to_c"), &[], None)
+            }
+            None => Err(type_error!(
+                "can't convert {} into Complex",
+                crate::builtins::convert_name_of(&a1)
+            )),
+        };
+    };
+    // Two arguments, either of them non-real: the pair means `a1 + a2*i`,
+    // which is arithmetic on the components, not a rectangular build.
+    if matches!(complex::is_real_numeric(&a1)?, Some(r1) if !r1)
+        || matches!(complex::is_real_numeric(&a2)?, Some(r2) if !r2)
+    {
+        let unit = complex::complex_new(RubyValue::Int(0), RubyValue::Int(1))?;
+        let scaled = crate::dispatch::send_value(&a2, Symbol::intern("*"), &[unit], None)?;
+        return crate::dispatch::send_value(&a1, Symbol::intern("+"), &[scaled], None);
+    }
+    complex::complex_new(complex::real_check(&a1)?, complex::real_check(&a2)?)
 }
 
 /// The `ArgumentError` CRuby's numeric-string converters raise on an

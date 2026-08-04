@@ -785,8 +785,8 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
             | "reject" | "sort_by" | "min_by" | "max_by" | "group_by" | "partition"
             | "flat_map" | "collect_concat" | "each_with_index" | "each_with_object"
             | "with_index" | "with_object" | "each_char" | "each_key" | "each_value"
-            | "each_pair" | "each_index" | "map!" | "select!" | "reject!"
-            | "transform_keys" | "transform_values" => receiver_size(recv),
+            | "each_pair" | "each_index" | "map!" | "select!" | "reject!" | "transform_keys"
+            | "transform_values" => receiver_size(recv),
             "times" => recv.clone(),
             "upto" | "downto" => int_span(recv, args.first(), meth == "upto"),
             "each_slice" | "each_cons" => {

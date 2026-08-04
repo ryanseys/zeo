@@ -284,7 +284,7 @@ impl RubyValue {
             // `Rational#to_s` is "3/4"; `Complex#to_s` is "1+2i" -- the
             // parenthesized forms are inspect's (oracle-verified).
             RubyValue::Rational(r) => crate::builtins::rational::rat_to_s(r),
-            RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, false),
+            RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, false)?,
             RubyValue::Float(f) => float_to_display_string(*f),
             RubyValue::Symbol(s) => s.name(),
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
@@ -467,7 +467,7 @@ impl RubyValue {
             RubyValue::Rational(r) => {
                 format!("({})", crate::builtins::rational::rat_to_s(r))
             }
-            RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, true),
+            RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, true)?,
             RubyValue::Symbol(s) => crate::builtins::symbol::inspect_name(&s.name()),
             RubyValue::Str(s) => crate::encoding::inspect(&s.lock()),
             RubyValue::Array(a) => {
