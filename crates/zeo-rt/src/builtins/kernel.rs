@@ -47,7 +47,23 @@ fn truthy_arg(arg: Option<&RubyValue>) -> bool {
 fn own_singleton_names(recv: &RubyValue) -> Vec<Symbol> {
     match recv {
         RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid, false),
-        _ => crate::runtime_meta::singleton_method_names(recv),
+        // Both report the PUBLIC surface. `def obj.x` is public as written, so
+        // the filter only ever removes a name the singleton class was
+        // explicitly told to hide -- and that mark lives on the singleton
+        // class, which exists only if something named it.
+        _ => {
+            let names = crate::runtime_meta::singleton_method_names(recv);
+            let Some(sclass) = crate::runtime_meta::minted_singleton_class(recv) else {
+                return names;
+            };
+            names
+                .into_iter()
+                .filter(|&n| {
+                    crate::dispatch::value_singleton_visibility(sclass, n)
+                        != crate::dispatch::MethodVisibility::Private
+                })
+                .collect()
+        }
     }
 }
 

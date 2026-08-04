@@ -2011,6 +2011,14 @@ fn is_notimplement_row(cid: ClassId, name: Symbol) -> bool {
         .any(|(owner, stub)| *stub == n && ancestors_of_value(cid).contains(&owner()))
 }
 
+/// The visibility of a PER-OBJECT singleton method (`def obj.x`). Public as
+/// defined -- the identity-keyed table carries no visibility -- unless the
+/// singleton CLASS was told otherwise (`obj.singleton_class.send(:private,
+/// :x)`), which marks that class id's own overlay.
+pub(crate) fn value_singleton_visibility(sclass: ClassId, name: Symbol) -> MethodVisibility {
+    crate::runtime_meta::overlay_method_visibility(sclass, name).unwrap_or(MethodVisibility::Public)
+}
+
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
     // A definition hook on the stack has not seen the rest of its class yet --
     // see `runtime_meta::not_yet_defined`.
@@ -2021,10 +2029,23 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
     // the same redirection `instance_method_visibility` makes, so
     // `Foo.singleton_class.instance_method(:a)` finds `def self.a`.
     if crate::runtime_meta::is_live() {
-        if let Some(owner) = crate::runtime_meta::singleton_class_owner(recv_class) {
-            if class_receiver_responds(owner, name) {
-                return include_all || !class_method_is_private(owner, name);
+        match crate::runtime_meta::singleton_owner_value(recv_class) {
+            Some(RubyValue::Class(owner)) => {
+                if class_receiver_responds(owner, name) {
+                    return include_all || !class_method_is_private(owner, name);
+                }
             }
+            // A PER-OBJECT singleton (`def obj.x`) is identity-keyed, so the
+            // class-id walk below cannot see it -- the singleton class has no
+            // rows of its own.
+            Some(owner) => {
+                if crate::runtime_meta::object_has_singleton_method(&owner, name) {
+                    return include_all
+                        || value_singleton_visibility(recv_class, name)
+                            == MethodVisibility::Public;
+                }
+            }
+            None => {}
         }
     }
     let n = name.name();
@@ -2277,16 +2298,28 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
     // see `instance_method_visibility`, which resolves their visibility the
     // same way.
     if crate::runtime_meta::is_live() {
-        if let Some(owner) = crate::runtime_meta::singleton_class_owner(class) {
-            return class_method_names(owner)
-                .into_iter()
-                .filter(|&n| {
-                    filter.matches(match class_method_is_private(owner, n) {
-                        true => MethodVisibility::Private,
-                        false => MethodVisibility::Public,
+        match crate::runtime_meta::singleton_owner_value(class) {
+            Some(RubyValue::Class(owner)) => {
+                return class_method_names(owner)
+                    .into_iter()
+                    .filter(|&n| {
+                        filter.matches(match class_method_is_private(owner, n) {
+                            true => MethodVisibility::Private,
+                            false => MethodVisibility::Public,
+                        })
                     })
-                })
-                .collect();
+                    .collect();
+            }
+            // A PER-OBJECT singleton's methods live identity-keyed, which is
+            // the table `Object#singleton_methods` reads -- so without this the
+            // two views of the same method disagreed.
+            Some(owner) => {
+                return crate::runtime_meta::singleton_method_names(&owner)
+                    .into_iter()
+                    .filter(|&n| filter.matches(value_singleton_visibility(class, n)))
+                    .collect();
+            }
+            None => {}
         }
     }
     let chain: Vec<ClassId> = if inherit {
@@ -2381,19 +2414,28 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
     // its visibility is theirs -- the table `def self.x` and
     // `private_class_method` actually write to.
     if crate::runtime_meta::is_live() {
-        if let Some(owner) = crate::runtime_meta::singleton_class_owner(class) {
+        match crate::runtime_meta::singleton_owner_value(class) {
             // Only when the owner really HAS a class method by this name. A
             // singleton class also inherits `Class`/`Module`'s own instance
             // methods, and those carry their own visibility -- answering `None`
             // here read as "not private" and made
             // `C.singleton_class.method_defined?(:private)` true, where CRuby
             // says false because `Module#private` is private.
-            if class_receiver_responds(owner, name) {
+            Some(RubyValue::Class(owner)) if class_receiver_responds(owner, name) => {
                 return Some(match class_method_is_private(owner, name) {
                     true => MethodVisibility::Private,
                     false => MethodVisibility::Public,
                 });
             }
+            // A per-object singleton method. Same "only when it really has one"
+            // rule, for the same reason.
+            Some(owner)
+                if !matches!(owner, RubyValue::Class(_))
+                    && crate::runtime_meta::object_has_singleton_method(&owner, name) =>
+            {
+                return Some(value_singleton_visibility(class, name));
+            }
+            _ => {}
         }
     }
     let reg = REGISTRY.get()?;
