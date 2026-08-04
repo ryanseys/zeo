@@ -1,0 +1,3 @@
+dynamic block_given?: true
+dynamic binding: Binding
+dynamic local_variables: true

@@ -1,17 +1,14 @@
-# Four `Kernel` functions cannot be reached through `send`, because a method
-# row cannot see what they need.
+# Four `Kernel` functions cannot be reached through `send`, `method` or
+# `respond_to?` -- but every probe here uses a LITERAL symbol, so all of them
+# are mechanically fixable: a literal `send(:block_given?)` can fold into the
+# caller exactly like the direct spelling (the `is_sent_eval` precedent in
+# `codegen::captures`), `respond_to?`/`method` need only a raising row to
+# exist. Called DIRECTLY they all work already; the folds just don't
+# recognize the reflective spellings.
 #
-# `block_given?`/`iterator?` need the CALLER's block, and `binding`/
-# `local_variables` need the caller's local scope. Neither travels: a
-# builtin row receives its own call's block and no scope at all, and zeo's
-# `Frame` deliberately carries only `(file, line, label)` -- 40 bytes,
-# pushed on every call -- so widening it to carry a block handle and a scope
-# pointer would tax every call in the program for a reflection path almost
-# nothing takes.
-#
-# Called DIRECTLY they all work: `codegen::call::kernel` folds each into the
-# caller, where the block and the scope are right there. Only the `send`,
-# `method` and `respond_to?` forms are missing.
+# The genuinely hard shape -- `send(name)` with a name COMPUTED at runtime,
+# where no fold can see the caller's block or scope -- is split out into
+# `kernel_scope_intrinsics_dynamic_send.rb`.
 
 def show(label)
   puts "#{label}: #{yield.inspect}"
