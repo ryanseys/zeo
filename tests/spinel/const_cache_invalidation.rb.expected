@@ -1,0 +1,13 @@
+"first"
+"second"
+"shelf"
+"restocked"
+"uninitialized constant LATE"
+42
+1
+"uninitialized constant GONE"
+NameError
+"Box::Inner"
+"Box::Inner"
+"before"
+"after"
