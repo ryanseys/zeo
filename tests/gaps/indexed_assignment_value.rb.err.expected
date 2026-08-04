@@ -1,0 +1,19 @@
+gaps/indexed_assignment_value.rb: --> gaps/indexed_assignment_value.rb
+
+invalid method name; a setter method cannot be defined in an endless method definition
+
+  16  class Store
+> 17    def []=(k, v) = :ignored_return
+> 18    def value=(v) = :also_ignored
+  19  end
+
+gaps/indexed_assignment_value.rb:17: syntax errors found (SyntaxError)
+  15 | 
+  16 | class Store
+> 17 |   def []=(k, v) = :ignored_return
+     |       ^~~ invalid method name; a setter method cannot be defined in an endless method definition
+> 18 |   def value=(v) = :also_ignored
+     |       ^~~~~~ invalid method name; a setter method cannot be defined in an endless method definition
+  19 | end
+  20 | 
+

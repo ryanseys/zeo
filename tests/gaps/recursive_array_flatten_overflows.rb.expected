@@ -1,0 +1,4 @@
+"[1, [...]]"
+true
+ArgumentError: tried to flatten recursive array
+3

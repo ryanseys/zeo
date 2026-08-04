@@ -1,0 +1,5 @@
+ArgumentError: no keywords accepted
+1
+{b: 2}
+ArgumentError: no keywords accepted
+[1, {b: 2}]
