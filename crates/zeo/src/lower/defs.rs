@@ -980,19 +980,18 @@ pub(crate) fn lower_params(
         })
         .collect::<PResult<Vec<_>>>()?;
 
+    // `**nil` binds nothing, so it takes no `keyword_rest` slot; what it
+    // declares is recorded on `no_keywords` instead.
+    let no_keywords = params
+        .keyword_rest()
+        .is_some_and(|n| n.as_no_keywords_parameter_node().is_some());
     let keyword_rest = match params.keyword_rest() {
         None => None,
         // Bare `...` forwarding (a `ForwardingParameterNode` in this slot)
         // -- desugared to `**__fwd_kw` here; `rest`/`block` above already
         // synthesized their `__fwd_*` halves.
         Some(n) if n.as_forwarding_parameter_node().is_some() => Some(Some("__fwd_kw".to_string())),
-        Some(n) if n.as_no_keywords_parameter_node().is_some() => {
-            // `**nil` -- explicit "no extra keywords accepted". Treated the
-            // same as "no keyword_rest at all": real Ruby raises
-            // `ArgumentError` for an unexpected kwarg only when `**nil` is
-            // present, which needs exceptions to matter (zeo limitation).
-            None
-        }
+        Some(n) if n.as_no_keywords_parameter_node().is_some() => None,
         Some(n) => {
             let r = n
                 .as_keyword_rest_parameter_node()
@@ -1014,6 +1013,7 @@ pub(crate) fn lower_params(
         post,
         keywords,
         keyword_rest,
+        no_keywords,
         block,
         // Filled in by `lower_block_like_params` for a block: prism keeps
         // `|x; sum|`'s locals on the BlockParametersNode, not here on the

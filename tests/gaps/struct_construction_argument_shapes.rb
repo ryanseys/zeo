@@ -26,7 +26,9 @@
 #    the declared `keyword_init`, because the keyword-vs-positional-Hash flag
 #    ruby reads (`rb_keyword_given_p`) does not reach a builtin row here. A real
 #    positional Hash must keep working, which is why the shape alone cannot
-#    settle it; the flag has to travel.
+#    settle it; the flag has to travel. See
+#    `tests/gaps/keyword_given_flag_does_not_travel.rb`, which isolates that
+#    flag on `**nil` -- the same root cause with nothing else in the way.
 #
 # `keyword_init: true` is unaffected (it decides from the declaration), and so
 # is every arity shape ruby accepts.

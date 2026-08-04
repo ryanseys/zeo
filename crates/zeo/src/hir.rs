@@ -680,6 +680,14 @@ pub struct Params {
     pub keywords: Vec<KeywordParam>,
     /// Same `None`/`Some(None)`/`Some(Some(name))` shape as `rest`.
     pub keyword_rest: Option<Option<String>>,
+    /// `**nil` -- the method accepts NO keywords at all. Distinct from
+    /// "no `keyword_rest`": without a `**kwrest` a callee that declares no
+    /// keywords silently takes trailing ones as a positional options Hash, and
+    /// `**nil` (ruby 3.0) exists to forbid exactly that conversion. Passing
+    /// keywords anyway is `ArgumentError: no keywords accepted`, raised BEFORE
+    /// the arity check -- `nokw(1, 2, 3, b: 4)` reports the keywords, not the
+    /// count. An EMPTY `**{}` splat passes nothing, so it does not raise.
+    pub no_keywords: bool,
     /// `&blk` / anonymous `&` -- same `None`/`Some(None)`/`Some(Some(name))`
     /// shape as `rest`/`keyword_rest` again. Bound to `Nil` when the method
     /// is called with no block (real Ruby: an unyielded `&blk` is `nil`, not

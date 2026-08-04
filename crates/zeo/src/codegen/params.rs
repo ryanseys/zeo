@@ -457,8 +457,13 @@ pub fn emit_call_args_to(
     // keywords -- `m(a: 1)` raised `unknown keyword: :a` for a method that
     // has none to be unknown. A callee that DOES declare keywords keeps the
     // real check (`k(x: 1, zz: 2)` is still `unknown keyword: :zz`).
-    let kw_as_positional =
-        params.keywords.is_empty() && params.keyword_rest.is_none() && !kwargs.is_empty();
+    // `**nil` is precisely the declaration that this conversion must not
+    // happen, so it never applies there -- the refusal below reports the
+    // keywords instead.
+    let kw_as_positional = params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+        && !params.no_keywords
+        && !kwargs.is_empty();
     let (kwargs, kw_hash_arg) = if kw_as_positional {
         (&[][..], Some(super::collections::emit_hash_lit(cx, kwargs)))
     } else {
@@ -564,6 +569,11 @@ pub fn emit_call_args_to(
         }
     };
 
+    // `**nil` refuses keywords BEFORE the arity check, so `nokw(1, 2, 3, b: 4)`
+    // reports the keywords rather than the count (CRuby `vm_args.c:848`).
+    if params.no_keywords && !kwargs.is_empty() {
+        return raise_argument_error("no keywords accepted".to_string());
+    }
     if n_pos < min_positional || (!has_rest && n_pos > nreq + nopt + npost) {
         return raise_argument_error(format!(
             "wrong number of arguments (given {}, expected {})",
