@@ -185,13 +185,51 @@ impl Writer {
                     return Ok(());
                 }
                 self.register_link(ptr_of(v));
-                self.out.push(b'{');
+                // A hash's per-instance default travels WITH it, under its own
+                // tag and written after the entries (`marshal.c`'s
+                // `TYPE_HASH_DEF`). Dropping it is the worse of the two
+                // failures Marshal can have here: `Hash.new(0)` loads back
+                // bare and the first `h[k] += 1` raises, somewhere else and
+                // later. A proc default cannot cross at all.
+                let (default, has_proc) = {
+                    let g = h.lock();
+                    (g.default.clone(), g.default_proc.is_some())
+                };
+                if has_proc {
+                    return Err(type_error!("can't dump hash with default proc"));
+                }
+                let defaulted = !default.is_nil();
+                self.out.push(if defaulted { b'}' } else { b'{' });
                 let pairs = hash_pairs(h);
                 self.write_long(pairs.len() as i64);
                 for (k, val) in pairs {
                     self.write(&k)?;
                     self.write(&val)?;
                 }
+                if defaulted {
+                    self.write(&default)?;
+                }
+            }
+            // Ruby marshals a Range as an ordinary object carrying three
+            // ivars, through the generic `marshal_compat` hook `range.c`
+            // registers -- there is no Range arm in `w_object` at all. Without
+            // it a Range, and anything CONTAINING one, fails with a TypeError
+            // about a C-extension hook the caller never wrote.
+            RubyValue::Range(start, end, excl) => {
+                if self.check_link(ptr_of(v)) {
+                    return Ok(());
+                }
+                self.register_link(ptr_of(v));
+                self.out.push(b'o');
+                self.write_symbol("Range");
+                self.write_long(3);
+                // The write ORDER is ruby's: excl, begin, end.
+                self.write_symbol("excl");
+                self.write(&RubyValue::Bool(*excl))?;
+                self.write_symbol("begin");
+                self.write(start.as_deref().unwrap_or(&RubyValue::Nil))?;
+                self.write_symbol("end");
+                self.write(end.as_deref().unwrap_or(&RubyValue::Nil))?;
             }
             RubyValue::Class(cid) => {
                 if self.check_link(cid.0 as usize) {
@@ -585,7 +623,8 @@ impl Reader<'_> {
                 }
                 Ok(v)
             }
-            b'{' => {
+            // `}` is `{` plus a trailing default value.
+            tag @ (b'{' | b'}') => {
                 let h = hash_new(Vec::new());
                 let v = RubyValue::Hash(h.clone());
                 self.objects.push(v.clone());
@@ -594,6 +633,10 @@ impl Reader<'_> {
                     let k = self.read()?;
                     let val = self.read()?;
                     hash_set(&h, k, val);
+                }
+                if tag == b'}' {
+                    let default = self.read()?;
+                    h.lock().default = default;
                 }
                 Ok(v)
             }
@@ -847,6 +890,12 @@ impl Reader<'_> {
         let idx = self.objects.len();
         self.objects.push(RubyValue::Nil);
         let cls = self.read_symbol_name()?;
+        // Range is not an ordinary object on the way back either: ruby's
+        // `range_loader` reads the three ivars off the placeholder and
+        // rebuilds a real Range, which is what the loaded value has to be.
+        if cls == "Range" {
+            return self.read_range(idx);
+        }
         let cid =
             class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
         let obj = allocate_of(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
@@ -862,6 +911,31 @@ impl Reader<'_> {
             }
         }
         Ok(obj)
+    }
+
+    /// The `o:Range` body: three ivars in any order, reassembled into a real
+    /// `RubyValue::Range`. `range_endpoint` normalizes a nil bound to the
+    /// beginless/endless form, so `nil..5` loads back as `..5`.
+    fn read_range(&mut self, idx: usize) -> Result<RubyValue, Signal> {
+        let (mut start, mut end, mut excl) = (RubyValue::Nil, RubyValue::Nil, false);
+        let count = self.read_long()?;
+        for _ in 0..count {
+            let iname = self.read_symbol_name()?;
+            let value = self.read()?;
+            match iname.trim_start_matches('@') {
+                "begin" => start = value,
+                "end" => end = value,
+                "excl" => excl = value.truthy(),
+                _ => {}
+            }
+        }
+        let v = RubyValue::Range(
+            crate::value::range_endpoint(start),
+            crate::value::range_endpoint(end),
+            excl,
+        );
+        self.objects[idx] = v.clone();
+        Ok(v)
     }
 
     fn read_bignum(&mut self) -> Result<RubyValue, Signal> {
