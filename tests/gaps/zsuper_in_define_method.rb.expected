@@ -1,0 +1,4 @@
+"dm(base[1, 2])"
+RuntimeError: implicit argument passing of super from method defined by define_method() is not supported. Specify all arguments explicitly.
+RuntimeError: implicit argument passing of super from method defined by define_method() is not supported. Specify all arguments explicitly.
+"def(base[3])"

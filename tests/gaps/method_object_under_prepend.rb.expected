@@ -6,3 +6,4 @@ Base
 "base"
 Mixin
 Mixin
+["Mixin", "Sub", "Base"]

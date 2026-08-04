@@ -1,0 +1,6 @@
+:host
+NameError: uninitialized constant #<Class:Outer::Host>::HOST_C
+NameError: uninitialized constant Outer::Host::VAL
+:outer_val
+true
+:host

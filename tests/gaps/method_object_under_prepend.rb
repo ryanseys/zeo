@@ -1,8 +1,10 @@
 # A `Method` or `UnboundMethod` names ONE entry in the chain. Under `prepend`,
 # zeo loses which one:
 #
-#   * `super_method` does not advance past the prepended module, so walking the
-#     chain repeats `Mixin` instead of reaching `Sub` then `Base`.
+#   * `super_method` does not advance past the prepended module: it answers a
+#     Method with the SAME owner, so the idiomatic `while m; m = m.super_method;
+#     end` walk never terminates. The bounded loop below shows twenty repeats of
+#     `Mixin` where ruby reaches `Sub` then `Base` and stops.
 #   * `Base.instance_method(:greet).bind(sub)` re-dispatches from the top of the
 #     receiver's MRO -- answering "mixin+sub+base" -- where ruby runs `Base`'s
 #     body alone and answers "base".
@@ -38,3 +40,13 @@ p Base.instance_method(:greet).bind(Sub.new).call
 p Base.instance_method(:greet).bind_call(Sub.new)
 p Sub.instance_method(:greet).owner
 p Mixin.instance_method(:greet).owner
+
+# The chain walk, bounded so this file terminates under zeo.
+walk = []
+cur = Sub.new.method(:greet)
+20.times do
+  break unless cur
+  walk << cur.owner.to_s
+  cur = cur.super_method
+end
+p walk
