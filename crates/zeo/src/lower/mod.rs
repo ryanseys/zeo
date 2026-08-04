@@ -742,8 +742,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // runtime via `Module#const_get` (which walks the scope's ancestry --
         // matching `::`'s lookup for a class/module scope). optparse's
         // `self.class::Reason`.
-        if let Some(parent) = cp.parent() {
-            if constant_path_name(&parent).is_err() {
+        if let Some(parent) = cp.parent()
+            && constant_path_name(&parent).is_err() {
                 let name = cp.name().ok_or(
                     "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
                 )?;
@@ -760,7 +760,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     safe: false,
                 }));
             }
-        }
         let (scope, name) = constant_path_scope_and_name(&cp)?;
         return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
     }
@@ -1382,8 +1381,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // generic `Call` lowering below (receiver becomes an ordinary
         // `ClassRef(name)`) and are intercepted by
         // `codegen::call::emit_call`'s builtin-constructor dispatch.
-        if name == "new" {
-            if let Some(recv) = call
+        if name == "new"
+            && let Some(recv) = call
                 .receiver()
                 // Only a LITERAL constant/path receiver is a static `New`;
                 // any other receiver (`x.new` on a local holding a class
@@ -1511,7 +1510,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     });
                 }
             }
-        }
 
         // `define_method(:literal) { block }` -- desugars to a plain
         // `DefMethod`, identical treatment to `def`, mirroring zeo's
@@ -1521,11 +1519,11 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // zeo has no runtime "define a method on any class from
         // arbitrary code" path, only the two forms zeo itself supports
         // plus the literal-and-desugared one.
-        if name == "define_method" && receiver.is_none() {
-            if let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
+        if name == "define_method" && receiver.is_none()
+            && let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
                 let arg_list: Vec<_> = args.arguments().iter().collect();
-                if arg_list.len() == 1 {
-                    if let Some(sym) = arg_list[0].as_symbol_node() {
+                if arg_list.len() == 1
+                    && let Some(sym) = arg_list[0].as_symbol_node() {
                         let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
                         // `define_method(:name, &:other)` -- a symbol-to-proc
                         // block argument rather than a literal block.
@@ -1591,9 +1589,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             is_def: false,
                         }));
                     }
-                }
             }
-        }
 
         // `define_singleton_method(:literal) { block }` -- desugars to a
         // `def self.name` on the target class. The target comes from the
@@ -1604,8 +1600,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // inline `ClassDef`. A computed name, a computed receiver, or a
         // capturing block that this desugar can't model falls through to the
         // generic (unsupported) `Call`.
-        if name == "define_singleton_method" {
-            if let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
+        if name == "define_singleton_method"
+            && let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
                 let arg_list: Vec<_> = args.arguments().iter().collect();
                 if let (1, Some(sym)) = (
                     arg_list.len(),
@@ -1667,7 +1663,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     }
                 }
             }
-        }
 
         // `loop do ... end` -- `Kernel#loop` is an ordinary method call, not
         // syntax, so this is a lowering-time call-shape desugar exactly like
@@ -1681,9 +1676,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             let no_args = call
                 .arguments()
                 .is_none_or(|a| a.arguments().iter().next().is_none());
-            if no_args {
-                if let Some(block_node) = call.block() {
-                    if let Some(block) = block_node.as_block_node() {
+            if no_args
+                && let Some(block_node) = call.block()
+                    && let Some(block) = block_node.as_block_node() {
                         let has_params = block
                             .parameters()
                             .is_some_and(|p| p.as_block_parameters_node().is_some());
@@ -1720,8 +1715,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             }));
                         }
                     }
-                }
-            }
         }
 
         // `block_given?` -- an ordinary zero-arg `Kernel` method call at the
@@ -1807,9 +1800,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             let no_args = call
                 .arguments()
                 .is_none_or(|a| a.arguments().iter().next().is_none());
-            if no_args {
-                if let Some(block_node) = call.block() {
-                    if let Some(block) = block_node.as_block_node() {
+            if no_args
+                && let Some(block_node) = call.block()
+                    && let Some(block) = block_node.as_block_node() {
                         let params = lower_block_like_params(result, hir, block.parameters())?;
                         let body = lower_body(result, hir, block.body())?;
                         return Ok(hir.push(HirNode::Lambda {
@@ -1818,8 +1811,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             method_body: false,
                         }));
                     }
-                }
-            }
         }
 
         // `raise`/`fail` (exact synonyms) -- a zero/one/two positional-arg
@@ -1925,8 +1916,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // method body reaches (`Hir::deferred_requires`). Both fall through
             // to the runtime `Kernel#require`, which answers `false` for an
             // already-loaded feature and raises `LoadError` otherwise.
-            if matches!(name.as_str(), "require" | "require_relative") {
-                if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
+            if matches!(name.as_str(), "require" | "require_relative")
+                && let Some(feature) = single_literal_string_arg(result, hir, &call)? {
                     if name == "require" && features::is_builtin_feature(&feature) {
                         let newly_loaded = hir
                             .activated_features
@@ -1940,7 +1931,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         return Ok(hir.push(HirNode::BoolLit(true)));
                     }
                 }
-            }
             // `load`, or a `require` of a NON-literal (runtime-computed) target:
             // whole-program AOT can't splice a path it only learns at runtime.
             // Rather than fail the whole compile, FALL THROUGH to the ordinary
@@ -2017,8 +2007,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
-            if arg_list.len() == 1 {
-                if let Some(s) = arg_list[0].as_string_node() {
+            if arg_list.len() == 1
+                && let Some(s) = arg_list[0].as_string_node() {
                     let src = String::from_utf8_lossy(s.unescaped()).into_owned();
                     // Try the zero-cost AOT inline path. If the literal source
                     // doesn't parse, or defines at the top level (which the
@@ -2026,13 +2016,11 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     // through to the runtime eval VM so the program still
                     // builds and the error/behaviour surfaces at runtime,
                     // catchably, exactly as CRuby's `eval` does.
-                    if let Ok(body) = parse_and_lower_into(hir, &src) {
-                        if reject_top_level_defs(hir, &body).is_ok() {
+                    if let Ok(body) = parse_and_lower_into(hir, &src)
+                        && reject_top_level_defs(hir, &body).is_ok() {
                             return Ok(hir.push(HirNode::Eval(body)));
                         }
-                    }
                 }
-            }
         }
 
         let receiver = match receiver {

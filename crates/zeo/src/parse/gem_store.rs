@@ -239,11 +239,10 @@ fn dir_has_native_object(dir: &Path) -> bool {
             if dir_has_native_object(&path) {
                 return true;
             }
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if matches!(ext, "bundle" | "so" | "dylib") {
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && matches!(ext, "bundle" | "so" | "dylib") {
                 return true;
             }
-        }
     }
     false
 }

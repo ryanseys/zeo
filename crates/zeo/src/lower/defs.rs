@@ -545,8 +545,8 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
         }
         // `include M` / `private` and friends are receiverless calls, not
         // their own node kinds.
-        if let Some(call) = stmt.as_call_node() {
-            if call.receiver().is_none() {
+        if let Some(call) = stmt.as_call_node()
+            && call.receiver().is_none() {
                 let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
                 return !matches!(
                     name.as_str(),
@@ -560,7 +560,6 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
                         | "alias_method"
                 );
             }
-        }
         true
     })
 }
@@ -1408,15 +1407,14 @@ pub(crate) fn lower_class_body(
                     continue;
                 }
             }
-            if is_ffi_struct {
-                if let Some(fields) = as_ffi_layout(stmt)? {
+            if is_ffi_struct
+                && let Some(fields) = as_ffi_layout(stmt)? {
                     // Replace `layout ...` in place with the synthesized accessors,
                     // so any user methods after it can still override them.
                     let source = synthesize_ffi_struct(&fields)?;
                     out.extend(parse_and_lower_into(hir, &source)?);
                     continue;
                 }
-            }
             lower_class_body_statement(
                 result,
                 hir,
@@ -1490,8 +1488,8 @@ fn lower_class_body_statement(
     // executes, and an `alias`/`def` inside one has no ordinary value-`if`
     // lowering (they're class-body-only keywords). A dynamic predicate falls
     // through to the generic value-`if` path unchanged.
-    if let Some(if_node) = node.as_if_node() {
-        if let Some(cond) = static_guard(&if_node.predicate()) {
+    if let Some(if_node) = node.as_if_node()
+        && let Some(cond) = static_guard(&if_node.predicate()) {
             let chosen = if cond {
                 if_node.statements().map(|s| s.as_node())
             } else {
@@ -1506,9 +1504,8 @@ fn lower_class_body_statement(
                 out,
             );
         }
-    }
-    if let Some(unless_node) = node.as_unless_node() {
-        if let Some(cond) = static_guard(&unless_node.predicate()) {
+    if let Some(unless_node) = node.as_unless_node()
+        && let Some(cond) = static_guard(&unless_node.predicate()) {
             let chosen = if !cond {
                 unless_node.statements().map(|s| s.as_node())
             } else {
@@ -1523,7 +1520,6 @@ fn lower_class_body_statement(
                 out,
             );
         }
-    }
 
     if let Some(undef) = node.as_undef_node() {
         let names = undef
@@ -1586,8 +1582,8 @@ fn lower_class_body_statement(
         return Ok(());
     }
 
-    if let Some(call) = node.as_call_node() {
-        if call.receiver().is_none() {
+    if let Some(call) = node.as_call_node()
+        && call.receiver().is_none() {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
             if matches!(name.as_str(), "private" | "public" | "protected") {
                 let new_vis = match name.as_str() {
@@ -1797,8 +1793,8 @@ fn lower_class_body_statement(
             // expression) falls through to an ordinary `Call`, a clean
             // rejection at codegen time (zeo limitation: only a literal module
             // name is resolvable to a `ClassId` at compile time anyway).
-            if matches!(name.as_str(), "include" | "extend" | "prepend") {
-                if let Some(args) = call.arguments() {
+            if matches!(name.as_str(), "include" | "extend" | "prepend")
+                && let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
                     // Only the all-constant form (`include Mod`) has a
                     // compile-time module name. A non-constant argument
@@ -1809,8 +1805,7 @@ fn lower_class_body_statement(
                         .iter()
                         .map(constant_path_name)
                         .collect::<PResult<Vec<_>>>()
-                    {
-                        if !names.is_empty() {
+                        && !names.is_empty() {
                             // A single multi-arg `include`/`prepend` keeps its
                             // arguments in SOURCE order in the ancestry
                             // (`include A, B` -> [self, A, B]; `prepend A, B` ->
@@ -1845,9 +1840,7 @@ fn lower_class_body_statement(
                             hir.pop_span();
                             return Ok(());
                         }
-                    }
                 }
-            }
             // `refine Target do ... end` -- the block's `def`s become an
             // ordinary class body on a HOLDER module named for the target,
             // and a `Refine` marker records which class they refine. The
@@ -1856,8 +1849,8 @@ fn lower_class_body_statement(
             // emits a module's own methods as `RubyValue`-self functions)
             // carries it with no new machinery. Its name is unwritable as a
             // constant, so it claims no name inside the enclosing module.
-            if name == "refine" {
-                if let (Some(args), Some(block)) = (call.arguments(), call.block()) {
+            if name == "refine"
+                && let (Some(args), Some(block)) = (call.arguments(), call.block()) {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
                     if let (1, Some(block)) = (arg_list.len(), block.as_block_node()) {
                         let target = constant_path_name(&arg_list[0])?;
@@ -1876,7 +1869,6 @@ fn lower_class_body_statement(
                         return Ok(());
                     }
                 }
-            }
             if let Some(node) = lower_using(hir, node, &name, &call)? {
                 out.push(node);
                 return Ok(());
@@ -1884,8 +1876,8 @@ fn lower_class_body_statement(
             if matches!(
                 name.as_str(),
                 "attr" | "attr_reader" | "attr_writer" | "attr_accessor"
-            ) {
-                if let Some(args) = call.arguments() {
+            )
+                && let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
                     if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some())
                     {
@@ -1939,9 +1931,7 @@ fn lower_class_body_statement(
                         return Ok(());
                     }
                 }
-            }
         }
-    }
     // An ordinary `def` gets the CURRENT default visibility -- the generic
     // `lower_node` path (reached below) always sets `Public` (it has no
     // notion of a class body's running default; see its own docs), so this

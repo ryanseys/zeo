@@ -232,8 +232,8 @@ pub(crate) fn emit_proc_or_lambda_value(
     // which a `move` closure can't share correctly (fresh-declaring it
     // would silently read `nil` where real Ruby sees the outer block's
     // value). Reject that narrow case cleanly; everything else nests fine.
-    if cx.in_real_proc {
-        if let Some(outer_block_local) = own_only
+    if cx.in_real_proc
+        && let Some(outer_block_local) = own_only
             .iter()
             .find(|n| !block_caps.assigned.contains(n.as_str()))
         {
@@ -241,7 +241,6 @@ pub(crate) fn emit_proc_or_lambda_value(
                 "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
             ));
         }
-    }
 
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
     // A real `def` written inside a block still creates an ordinary method, and

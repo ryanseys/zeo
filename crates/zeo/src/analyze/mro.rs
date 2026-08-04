@@ -406,8 +406,8 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // `x`/`y` as members, not as ordinary ivars, or `to_a` on a `Point3` would
     // read nothing and `instance_variables` would report two names CRuby does
     // not. Nearest ancestor wins, and only a class with none of its own asks.
-    if compiler.class(class_id).hidden_ivars.is_empty() {
-        if let Some(inherited) = ancestors
+    if compiler.class(class_id).hidden_ivars.is_empty()
+        && let Some(inherited) = ancestors
             .iter()
             .skip(1)
             .map(|&a| &compiler.class(a).hidden_ivars)
@@ -416,7 +416,6 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         {
             compiler.classes[class_id.0 as usize].hidden_ivars = inherited;
         }
-    }
     let hidden = compiler.class(class_id).hidden_ivars.clone();
     if !hidden.is_empty() {
         ivars.retain(|iv| !hidden.contains(iv));

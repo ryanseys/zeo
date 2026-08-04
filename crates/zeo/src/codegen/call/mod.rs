@@ -484,8 +484,8 @@ fn emit_array_iter_splice(
     if let Some(p) = params.required.first() {
         loop_cx.local_types.to_mut().remove(p);
     }
-    if with_index {
-        if let Some(p) = params.required.get(1) {
+    if with_index
+        && let Some(p) = params.required.get(1) {
             if nested_captured.contains(p) {
                 loop_cx.local_types.to_mut().remove(p);
             } else {
@@ -495,7 +495,6 @@ fn emit_array_iter_splice(
                     .insert(p.clone(), crate::types::TyKind::Int);
             }
         }
-    }
     for name in &params.block_locals {
         loop_cx.local_types.to_mut().remove(name);
     }
@@ -1202,23 +1201,18 @@ pub fn emit_call(
     // `binding.local_variable_get(:then)`). The receiver must be a bare
     // `binding` call; a stored Binding (`b = binding; b.local_variable_get`)
     // goes through the real object.
-    if name == "local_variable_get" && args.len() == 1 {
-        if let Some(rid) = receiver {
-            if let HirNode::Call {
+    if name == "local_variable_get" && args.len() == 1
+        && let Some(rid) = receiver
+            && let HirNode::Call {
                 receiver: None,
                 name: bname,
                 args: bargs,
                 ..
             } = &cx.compiler.hir[rid]
-            {
-                if bname == "binding" && bargs.is_empty() {
-                    if let HirNode::SymbolLit(local) = &cx.compiler.hir[args[0]] {
+                && bname == "binding" && bargs.is_empty()
+                    && let HirNode::SymbolLit(local) = &cx.compiler.hir[args[0]] {
                         return super::hoisting::emit_local_read(cx, local);
                     }
-                }
-            }
-        }
-    }
 
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
@@ -1369,13 +1363,12 @@ pub fn emit_call(
                 // top-level) method body are Kernel calls, not methods of
                 // the receiver, and the dynamic fallback below would miss
                 // them at runtime.
-                if !kernel_name_shadowed(cx, name) {
-                    if let Some(tokens) = kernel::emit_universal_implicit_form(
+                if !kernel_name_shadowed(cx, name)
+                    && let Some(tokens) = kernel::emit_universal_implicit_form(
                         cx, name, args, kwargs, block, block_arg,
                     ) {
                         return tokens;
                     }
-                }
                 let arg_exprs = args.iter().map(|&a| {
                     let e = emit_expr(cx, a);
                     box_if_object_typed(cx, a, e)
@@ -1433,9 +1426,9 @@ pub fn emit_call(
             // OTHER builtin alias (`dup!` -> `dup`) needs no static form:
             // the dynamic fallback below reaches the registry's alias row
             // (`register_alias`), which rewrites the name and re-dispatches.
-            if !cx.self_is_dynamic && block.is_none() && block_arg.is_none() {
-                if let Some(target) = cx.compiler.builtin_alias_target(cid, name) {
-                    if target == "raise" || target == "fail" {
+            if !cx.self_is_dynamic && block.is_none() && block_arg.is_none()
+                && let Some(target) = cx.compiler.builtin_alias_target(cid, name)
+                    && (target == "raise" || target == "fail") {
                         let cause = match kwargs {
                             [] => Some(crate::hir::RaiseCause::Absent),
                             [KwArg::Pair(k, v)]
@@ -1448,14 +1441,11 @@ pub fn emit_call(
                             // let the dynamic path report it at runtime.
                             _ => None,
                         };
-                        if let Some(cause) = cause {
-                            if args.len() <= 3 {
+                        if let Some(cause) = cause
+                            && args.len() <= 3 {
                                 return super::expr::emit_raise(cx, args, &cause);
                             }
-                        }
                     }
-                }
-            }
         }
         // A no-receiver call from WITHIN another CLASS method's own body
         // (`current_class` is `None` there -- no concrete `self` receiver
@@ -1481,8 +1471,8 @@ pub fn emit_call(
         //   - `module H; def helped; name; end; end; class Ext; extend H;
         //     end; Ext.helped` answered "Helper", not "Ext".
         // Neither raised; both just quietly produced the wrong object.
-        if cx.current_class.is_none() {
-            if let Some(defining) = cx.class_self.or(cx.defining_class) {
+        if cx.current_class.is_none()
+            && let Some(defining) = cx.class_self.or(cx.defining_class) {
                 if cx.compiler.class_method_in_chain(defining, name).is_some() {
                     return reflect::emit_class_method_call_on(
                         cx, defining, name, args, kwargs, block, block_arg,
@@ -1517,7 +1507,6 @@ pub fn emit_call(
                     };
                 }
             }
-        }
         // A TOP-LEVEL-defined method -- a private instance method on
         // `Object`, real Ruby's rule. Reachable via implicit self from the
         // top level (receiver: the runtime `main` object) and from a class
@@ -1529,8 +1518,8 @@ pub fn emit_call(
         // (with `@ivar`s correctly landing on that class's own struct).
         // Checked BEFORE the Kernel functions below so a top-level
         // `def puts` overrides the built-in, same as a sibling method would.
-        if cx.current_class.is_none() {
-            if let Some((_, sid)) = cx
+        if cx.current_class.is_none()
+            && let Some((_, sid)) = cx
                 .compiler
                 .method_in_chain(crate::compiler::OBJECT_CLASS, name)
             {
@@ -1560,7 +1549,6 @@ pub fn emit_call(
                     crate::codegen::scope_frame_guard(cx.compiler, scope, false),
                 );
             }
-        }
         // The Kernel FUNCTIONS: the print family (multi-arg
         // now), conversions, rand/srand, throw, sleep, exit/abort --
         // checked AFTER sibling method resolution (a user `def puts`/`def
@@ -1569,22 +1557,20 @@ pub fn emit_call(
         // there's no ClassRef ambiguity.
         // ...unless the enclosing class defines the name itself -- see
         // [`kernel_name_shadowed`].
-        if !kernel_name_shadowed(cx, name) {
-            if let Some(tokens) =
+        if !kernel_name_shadowed(cx, name)
+            && let Some(tokens) =
                 kernel::emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
             {
                 return tokens;
             }
-        }
         // `catch(:tag) { ... }` -- the one Kernel function that takes its
         // block as a first-class value.
-        if name == "catch" && args.len() == 1 && kwargs.is_empty() {
-            if let Some(b) = block {
+        if name == "catch" && args.len() == 1 && kwargs.is_empty()
+            && let Some(b) = block {
                 let tag = emit_expr(cx, args[0]);
                 let blk = procs::emit_proc_value(cx, b);
                 return quote! { zeo_rt::kernel_catch(#tag, #blk)? };
             }
-        }
         // `to_enum(:meth, *args)` / `enum_for` on the implicit self:
         // routed through dynamic dispatch, whose Kernel row builds
         // the Enumerator over the boxed receiver -- what the Struct
@@ -1695,8 +1681,8 @@ pub fn emit_call(
         HirNode::QualifiedConstRead(scope, n) if scope == "Object" => Some(n.as_str()),
         _ => None,
     };
-    if let Some(target_name) = class_target {
-        if !safe && kwargs.is_empty() {
+    if let Some(target_name) = class_target
+        && !safe && kwargs.is_empty() {
             match (target_name, name) {
                 // `Proc.new { ... }` IS its block (CRuby: `proc_new` just
                 // wraps the given block) -- the same value `proc { ... }`
@@ -1894,10 +1880,9 @@ pub fn emit_call(
                 _ => {}
             }
         }
-    }
 
-    if let Some(target_path) = super::expr::const_path_of(cx, recv_id) {
-        if let Some(target) = cx.resolve_class(&target_path) {
+    if let Some(target_path) = super::expr::const_path_of(cx, recv_id)
+        && let Some(target) = cx.resolve_class(&target_path) {
             // `const_get`/`const_defined?` with a literal name fold against
             // the compile-time registry (a literal-constant receiver has no
             // side effects to preserve).
@@ -1933,7 +1918,6 @@ pub fn emit_call(
                 );
             }
         }
-    }
 
     // A receiver STATICALLY TYPED as a class value (`x = Widget;
     // x.new(...)` / `x.some_class_method`): same Path 1
@@ -2182,8 +2166,8 @@ fn dispatch(
     // A method the user actually defined still resolves normally, as do
     // BasicObject's own (`==`, `equal?`, `!`, `__send__`, `instance_eval`,
     // ...), which reach their builtin table through the ordinary MRO walk.
-    if let Some(cid) = infer_class(cx, recv_id) {
-        if cx.compiler.is_blank_slate(cid)
+    if let Some(cid) = infer_class(cx, recv_id)
+        && cx.compiler.is_blank_slate(cid)
             && cx.compiler.method_in_chain(cid, name).is_none()
             && !crate::compiler::is_basic_object_method(name)
         {
@@ -2232,7 +2216,6 @@ fn dispatch(
                 )?
             };
         }
-    }
 
     /// Whether `!recv` may still fold to a truthiness test. A program where
     /// nobody defines `!` folds everywhere; one that does still folds at a
@@ -2274,8 +2257,8 @@ fn dispatch(
     // receiver's class is statically known (the common Path 1 case);
     // otherwise falls back to a runtime `zeo_rt::is_a` check against the
     // receiver's actual runtime `class_id()`.
-    if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1 {
-        if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
+    if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1
+        && let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
             // A top-level anchor `::Name` carries the scope "Object" (the
             // root); its name is an ordinary top-level class, so fall back to
             // resolving the tail when `Object::Name` doesn't resolve directly.
@@ -2353,7 +2336,6 @@ fn dispatch(
                 },
             };
         }
-    }
 
     // `==`/`!=` on an OBJECT receiver with no matching user definition
     //: real Ruby's `Object#==` default (reference identity)
@@ -2367,9 +2349,8 @@ fn dispatch(
         && args.len() == 1
         && block.is_none()
         && block_arg.is_none()
-    {
-        if let TyKind::Object(cid) = infer(cx, recv_id) {
-            if cx.compiler.method_in_chain(cid, name).is_none() {
+        && let TyKind::Object(cid) = infer(cx, recv_id)
+            && cx.compiler.method_in_chain(cid, name).is_none() {
                 let recv_boxed = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
                 let arg = emit_expr(cx, args[0]);
                 let arg = super::expr::box_if_object_typed(cx, args[0], arg);
@@ -2378,16 +2359,14 @@ fn dispatch(
                     zeo_rt::RubyValue::Bool(zeo_rt::rb_eq_checked(&(#recv_boxed), &(#arg))? != #negate)
                 };
             }
-        }
-    }
 
     // `instance_of?` against a literal class/module constant
     // -- EXACT class identity, not ancestry (`w.instance_of?(Object)` is
     // false for a Widget); same static-fold-else-runtime shape as
     // `is_a?`/`kind_of?` above. A non-constant argument falls through to
     // the dynamic path (`send`/`send_value`'s Class-argument arms).
-    if no_kwargs && name == "instance_of?" && args.len() == 1 {
-        if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
+    if no_kwargs && name == "instance_of?" && args.len() == 1
+        && let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
             // A top-level anchor `::Name` carries the scope "Object" (the
             // root); its name is an ordinary top-level class, so fall back to
             // resolving the tail when `Object::Name` doesn't resolve directly.
@@ -2426,7 +2405,6 @@ fn dispatch(
                 },
             };
         }
-    }
 
     // `.class` -- universal, same override-respecting shape
     // as `freeze`/`dup` below (`class` is an ordinary overridable method
@@ -3001,8 +2979,8 @@ fn dispatch(
     // operands stay boxed `&RubyValue`s since the bignum migration -- the
     // `int_*` family's inline small-small fast half keeps the hot path
     // cheap, and overflow promotes instead of panicking.
-    if no_kwargs && args.len() == 1 {
-        if let Some(&(_, rt_fn, kind)) = ops::INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
+    if no_kwargs && args.len() == 1
+        && let Some(&(_, rt_fn, kind)) = ops::INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
             let recv_ty = infer(cx, recv_id);
             let arg_ty = infer(cx, args[0]);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
@@ -3027,18 +3005,15 @@ fn dispatch(
                 };
             }
         }
-    }
 
     // Native `Int` unary operators (`-@`/`+@`/`~`), same eligibility rule
     // (all three return `RubyValue` -- negation can promote `-i64::MIN`).
-    if no_kwargs && args.is_empty() {
-        if let Some(&(_, rt_fn)) = ops::INT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
-            if infer(cx, recv_id) == TyKind::Int {
+    if no_kwargs && args.is_empty()
+        && let Some(&(_, rt_fn)) = ops::INT_UNARY_OPS.iter().find(|(op, _)| *op == name)
+            && infer(cx, recv_id) == TyKind::Int {
                 let func = format_ident!("{rt_fn}");
                 return quote! { zeo_rt::#func(&(#recv_expr)) };
             }
-        }
-    }
 
     // Native `Float` arithmetic/comparison, INCLUDING mixed `Int`/`Float`
     // operands (Ruby's own numeric-tower promotion: `1 + 2.0` promotes the
@@ -3105,16 +3080,14 @@ fn dispatch(
 
     // Native `Float` unary operators (`-@`/`+@` -- no `~`, real Ruby's
     // `Float` has none), same eligibility rule.
-    if no_kwargs && args.is_empty() {
-        if let Some(&(_, rt_fn)) = ops::FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
-            if infer(cx, recv_id) == TyKind::Float {
+    if no_kwargs && args.is_empty()
+        && let Some(&(_, rt_fn)) = ops::FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name)
+            && infer(cx, recv_id) == TyKind::Float {
                 let func = format_ident!("{rt_fn}");
                 return quote! {
                     zeo_rt::RubyValue::Float(zeo_rt::#func((#recv_expr).as_float_unchecked()))
                 };
             }
-        }
-    }
 
     // A REOPENED builtin's method on a statically-typed builtin receiver
     //: a direct call to the generated free function (`__bm_
@@ -3125,15 +3098,14 @@ fn dispatch(
     // expression is already a boxed `RubyValue` for every builtin TyKind
     // (only `Object` receivers are unboxed `Arc<Concrete>`s, and those
     // never reach this arm).
-    if let Some(cid) = infer_any_class(cx, recv_id) {
-        if cx.compiler.class(cid).is_builtin {
-            if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
+    if let Some(cid) = infer_any_class(cx, recv_id)
+        && cx.compiler.class(cid).is_builtin
+            && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
                 let scope = cx.compiler.scope(sid);
-                if !bypass_visibility {
-                    if let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name) {
+                if !bypass_visibility
+                    && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name) {
                         return err;
                     }
-                }
                 let mod_ident = super::ident::class_ident(cx.compiler, cid);
                 let method_ident = safe_ident(name);
                 return super::params::emit_call_args_to(
@@ -3152,8 +3124,6 @@ fn dispatch(
                     crate::codegen::scope_frame_guard(cx.compiler, scope, false),
                 );
             }
-        }
-    }
 
     if no_kwargs {
         if let Some(tokens) = builtins::try_collection_dispatch(cx, recv_id, name, args, recv_expr)
@@ -3182,8 +3152,7 @@ fn dispatch(
     // block form.
     if let Some(block_id) =
         block.filter(|_| is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
-    {
-        if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
+        && let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
             // `Integer#times` evaluates to its receiver (MRI), not nil --
             // matters in expression position (`x = 5.times {}`).
@@ -3197,7 +3166,6 @@ fn dispatch(
                 quote! { zeo_rt::RubyValue::Int(#n) },
             );
         }
-    }
 
     // `(a..b).each { |i| }` on a LITERAL Int-bounded range: the same native
     // counted loop `.times` fuses to (the generic path allocates a real
@@ -3205,14 +3173,12 @@ fn dispatch(
     // there). `.each` answers the receiver range.
     if let Some(block_id) =
         block.filter(|_| is_range_each_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
-    {
-        if let HirNode::RangeLit {
+        && let HirNode::RangeLit {
             start: Some(s),
             end: Some(e),
             exclusive,
         } = &cx.compiler.hir[recv_id]
-        {
-            if let (HirNode::IntegerLit(s), HirNode::IntegerLit(e)) =
+            && let (HirNode::IntegerLit(s), HirNode::IntegerLit(e)) =
                 (&cx.compiler.hir[*s], &cx.compiler.hir[*e])
             {
                 let (s, e, exclusive) = (*s, *e, *exclusive);
@@ -3237,17 +3203,14 @@ fn dispatch(
                     },
                 );
             }
-        }
-    }
 
     // Typed-receiver iterator fusion (`Compiler::inline_iter_sites`): the
     // literal shapes above never nominate (their receivers aren't locals),
     // so ordering is free. See `emit_typed_iter_inline` for the guard rule.
-    if let Some(block_id) = block {
-        if let Some(&kind) = cx.compiler.inline_iter_sites.get(&block_id) {
+    if let Some(block_id) = block
+        && let Some(&kind) = cx.compiler.inline_iter_sites.get(&block_id) {
             return emit_typed_iter_inline(cx, kind, recv_id, args, block_id, name, block_arg);
         }
-    }
 
     let recv_class = infer_class(cx, recv_id);
 
@@ -3295,8 +3258,8 @@ fn dispatch(
     if send_resolves == SendTarget::Kernel && !args.is_empty() {
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
-            if let Some(cid) = recv_class {
-                if let Some((_, sid)) = cx.compiler.method_in_chain(cid, &target) {
+            if let Some(cid) = recv_class
+                && let Some((_, sid)) = cx.compiler.method_in_chain(cid, &target) {
                     // `public_send` -- unlike `send` -- only ever calls
                     // `Public` methods, with NO self-receiver/protected-
                     // relatedness relaxation at all (stricter than an
@@ -3331,7 +3294,6 @@ fn dispatch(
                         );
                     }
                 }
-            }
         }
         // Keyword args ride as one trailing Hash (the G2 convention) --
         // the callee's trampoline pops and binds it.
@@ -3383,14 +3345,13 @@ fn dispatch(
     if let Some(cid) = recv_class.filter(|&c| {
         !cx.compiler.may_be_undefined_at_runtime(c, name)
             && !cx.compiler.may_be_patched_at_runtime(name)
-    }) {
-        if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
+    })
+        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
             let scope = cx.compiler.scope(sid);
-            if !bypass_visibility {
-                if let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name) {
+            if !bypass_visibility
+                && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name) {
                     return err;
                 }
-            }
             if let Some(inlined) =
                 emit_inline_accessor(cx, cid, scope, recv_expr, args, kwargs, block, block_arg)
             {
@@ -3418,7 +3379,6 @@ fn dispatch(
                 frame,
             );
         }
-    }
 
     // Runtime-checked fallback for a built-in `Int` operator whose
     // operand(s) couldn't be statically proven `Int`/`Float` -- most
@@ -3693,8 +3653,8 @@ fn dispatch(
     // method on an Enumerable-including class surfaces at runtime instead
     // of compile time -- scoped to exactly the classes that opted into an
     // open-ended mixin.
-    if let Some(cid) = recv_class {
-        if cx
+    if let Some(cid) = recv_class
+        && (cx
             .compiler
             .class(cid)
             .ancestors
@@ -3703,7 +3663,7 @@ fn dispatch(
                 .compiler
                 .class(cid)
                 .ancestors
-                .contains(&crate::compiler::COMPARABLE_CLASS)
+                .contains(&crate::compiler::COMPARABLE_CLASS))
         {
             let class_ident = super::ident::class_ident(cx.compiler, cid);
             let name_expr = super::pooled_sym(name);
@@ -3725,7 +3685,6 @@ fn dispatch(
                 ))?
             };
         }
-    }
 
     // No static form matched. Dispatch through the runtime rather than
     // rejecting: the receiver's class may still provide the method via an

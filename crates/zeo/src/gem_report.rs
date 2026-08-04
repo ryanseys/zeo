@@ -158,15 +158,14 @@ pub fn emit_warnings(records: &[GemRecord], nowarn: &HashSet<String>) {
                     r.name
                 );
             }
-        } else if let Some(note) = substitution_note(&r.name) {
-            if seen.insert(r.name.as_str()) {
+        } else if let Some(note) = substitution_note(&r.name)
+            && seen.insert(r.name.as_str()) {
                 eprintln!(
                     "zeo: warning: '{}' is satisfied by zeo's built-in implementation \
                      ({note}) [{SUBSTITUTE_SLUG}]",
                     r.name
                 );
             }
-        }
     }
 }
 

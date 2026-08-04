@@ -212,11 +212,10 @@ fn escape_special_suffix(name: &str) -> Option<String> {
             && chars.all(|c| c.is_alphanumeric() || c == '_')
     }
     for (suffix, marker) in MARKERS {
-        if let Some(base) = name.strip_suffix(suffix) {
-            if is_ident_like(base) {
+        if let Some(base) = name.strip_suffix(suffix)
+            && is_ident_like(base) {
                 return Some(format!("{base}{marker}"));
             }
-        }
     }
     if is_ident_like(name) && MARKERS.iter().any(|(_, m)| name.ends_with(m)) {
         return Some(format!("{name}_"));

@@ -99,9 +99,9 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             // A path spelled as one name (`M::Hidden`) is still an explicit
             // scope, so the private-constant rule applies to it too.
             let path = crate::constpath::ConstPath::parse(name);
-            if let Some(scope) = path.scope() {
-                if let Some(sid) = cx.resolve_class(scope) {
-                    if cx
+            if let Some(scope) = path.scope()
+                && let Some(sid) = cx.resolve_class(scope)
+                    && cx
                         .compiler
                         .class(sid)
                         .private_constants
@@ -109,8 +109,6 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
                     {
                         return Some(false);
                     }
-                }
-            }
             let mut scopes = cx.cref_chain().to_vec();
             scopes.push(OBJECT_CLASS);
             if defined_only_later(cx, id, &scopes, name) {

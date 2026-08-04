@@ -31,11 +31,9 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
     // this.
     if let (HirNode::LocalRead(name), Some((var, ty))) =
         (&cx.compiler.hir[id], &cx.for_var_override)
-    {
-        if name == var {
+        && name == var {
             return *ty;
         }
-    }
     // `self`'s static type is the CURRENT method's own receiver class --
     // `types::infer_type_with_locals` has no notion of "current class" at
     // all (it's a context-free per-node classifier), so this is handled here
@@ -314,9 +312,9 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // defined?(::URI::Parser)` guards a constant it creates itself, so the
     // answer has to change over the program's life. The scope is still
     // resolved at compile time; only the membership test is deferred.
-    if let HirNode::QualifiedConstRead(scope, name) = &cx.compiler.hir[id] {
-        if super::constfold::const_form_resolves(cx, id) != Some(true) {
-            if let Some(scope_id) = cx.resolve_class(scope) {
+    if let HirNode::QualifiedConstRead(scope, name) = &cx.compiler.hir[id]
+        && super::constfold::const_form_resolves(cx, id) != Some(true)
+            && let Some(scope_id) = cx.resolve_class(scope) {
                 let scope_id = scope_id.0;
                 let name = name.as_str();
                 // A `private_constant` is nil to `defined?`, even though
@@ -333,8 +331,6 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
                     }
                 };
             }
-        }
-    }
     let global_var =
         quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("global-variable".to_string())) };
     // `defined?($g)` is `"global-variable"` only if the global has been

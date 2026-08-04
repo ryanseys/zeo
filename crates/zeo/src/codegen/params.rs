@@ -582,11 +582,10 @@ pub fn emit_call_args_to(
         ));
     }
     for kw in &params.keywords {
-        if let KeywordParam::Required(name) = kw {
-            if !kw_names.iter().any(|n| n.as_deref() == Some(name.as_str())) {
+        if let KeywordParam::Required(name) = kw
+            && !kw_names.iter().any(|n| n.as_deref() == Some(name.as_str())) {
                 return raise_argument_error(format!("missing keyword: :{name}"));
             }
-        }
     }
     if params.keyword_rest.is_none() {
         let declared = |n: &str| {

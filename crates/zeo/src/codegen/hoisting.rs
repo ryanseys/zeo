@@ -452,11 +452,10 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 // A rescue binding (`=> e`) leaks into the enclosing METHOD
                 // scope exactly like a `case/in` pattern's bound names do --
                 // same treatment as that arm just above.
-                if let Some(name) = &r.binding {
-                    if !out.contains(name) {
+                if let Some(name) = &r.binding
+                    && !out.contains(name) {
                         out.push(name.clone());
                     }
-                }
                 for &n in &r.body {
                     collect_locals(compiler, n, out);
                 }

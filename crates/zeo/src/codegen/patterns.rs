@@ -461,11 +461,10 @@ fn collect_narrowing(pattern: &Pattern) -> HashMap<String, TyKind> {
 fn collect_narrowing_into(pattern: &Pattern, out: &mut HashMap<String, TyKind>) {
     match pattern {
         Pattern::Capture(inner, name) => {
-            if let Pattern::ClassCheck(class_name) = inner.as_ref() {
-                if let Some(ty) = builtin_narrowed_type(class_name) {
+            if let Pattern::ClassCheck(class_name) = inner.as_ref()
+                && let Some(ty) = builtin_narrowed_type(class_name) {
                     out.insert(name.clone(), ty);
                 }
-            }
             collect_narrowing_into(inner, out);
         }
         Pattern::Or(pats) => {

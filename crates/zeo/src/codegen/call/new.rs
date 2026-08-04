@@ -111,8 +111,8 @@ pub fn emit_new(
         );
     }
     let ci = cx.compiler.class(cid);
-    if cx.compiler.has_generated_struct(cid) {
-        if let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
+    if cx.compiler.has_generated_struct(cid)
+        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
             let scope = cx.compiler.scope(sid);
             let ctor = emit_ctor_struct(cx, cid);
             // `initialize` takes `self: Arc<Self>` BY VALUE (see
@@ -142,7 +142,6 @@ pub fn emit_new(
             );
             return quote! { { let __obj = #ctor; #init; __obj } };
         }
-    }
     // Boxed via `box_if_object_typed`: `initialize`'s own Rust parameters
     // are always plain `RubyValue` (see that function's docs) -- an
     // Object-typed constructor ARGUMENT (e.g. passing one class instance

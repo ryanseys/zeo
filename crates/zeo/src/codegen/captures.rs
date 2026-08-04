@@ -1130,14 +1130,12 @@ fn walk(
                 }
                 // A rescue binding is a fresh name, same treatment as
                 // `LocalWrite`/a pattern's bound names just above.
-                if in_escaping {
-                    if let Some(name) = &r.binding {
-                        if !param_exclusions.contains(name) {
+                if in_escaping
+                    && let Some(name) = &r.binding
+                        && !param_exclusions.contains(name) {
                             caps.locals.insert(name.clone());
                             caps.assigned.insert(name.clone());
                         }
-                    }
-                }
                 for &n in &r.body {
                     walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
@@ -1173,8 +1171,8 @@ fn walk(
             }
             // A literal block forwarded to `initialize` is a real escaping
             // Proc -- same treatment as `super { ... }` below.
-            if let Some(b) = block {
-                if let HirNode::Block { params, body } = &compiler.hir[*b] {
+            if let Some(b) = block
+                && let HirNode::Block { params, body } = &compiler.hir[*b] {
                     nested_proc_binding_needs_self(compiler, in_escaping, caps);
                     let next_exclusions: HashSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
@@ -1182,7 +1180,6 @@ fn walk(
                         walk(compiler, n, true, &next_exclusions, caps, self_class);
                     }
                 }
-            }
         }
         HirNode::SuperCall {
             args,
@@ -1211,15 +1208,14 @@ fn walk(
             // A literal `super { ... }` block is always a real, escaping
             // Proc (no `.times`-style inline fast path exists for `super`)
             // -- same treatment as `Call`'s escaping-block arm above.
-            if let Some(b) = block {
-                if let HirNode::Block { params, body } = &compiler.hir[*b] {
+            if let Some(b) = block
+                && let HirNode::Block { params, body } = &compiler.hir[*b] {
                     let next_exclusions: HashSet<String> =
                         param_exclusions.union(&own_param_names(params)).cloned().collect();
                     for &n in body {
                         walk(compiler, n, true, &next_exclusions, caps, self_class);
                     }
                 }
-            }
         }
         HirNode::ArrayLit(elems) => {
             for e in elems {

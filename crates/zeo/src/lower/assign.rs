@@ -143,11 +143,10 @@ pub(crate) fn push_assignment_call(hir: &mut Hir, mut call: HirNode) -> NodeId {
     let value = *value;
     let tmp = hir.gensym("__asgn");
     let write = hir.push(HirNode::LocalWrite(tmp.clone(), value));
-    if let HirNode::Call { args, .. } = &mut call {
-        if let Some(slot) = args.last_mut() {
+    if let HirNode::Call { args, .. } = &mut call
+        && let Some(slot) = args.last_mut() {
             *slot = ArrayElem::Single(write);
         }
-    }
     let send = hir.push(call);
     let read = hir.push(HirNode::LocalRead(tmp));
     hir.push(HirNode::Seq(vec![send, read]))

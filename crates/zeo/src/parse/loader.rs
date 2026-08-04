@@ -379,8 +379,7 @@ impl Loader {
                 let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
                 if call.receiver().is_none()
                     && matches!(name.as_str(), "require" | "require_relative" | "load")
-                {
-                    if let Some(spliced) = self.lower_require_statement(
+                    && let Some(spliced) = self.lower_require_statement(
                         hir,
                         result,
                         &call,
@@ -395,7 +394,6 @@ impl Loader {
                     // A dynamic `load`/`require` (computed target): not spliced.
                     // Fall through to the general lowering so it becomes a
                     // runtime `Kernel#{require,load}` call (raises LoadError).
-                }
                 // `box.require "f"` / `box.require_relative` / `box.load`
                 // / `box.eval "src"` at top-level statement position
                 //: resolve like the receiver-less forms, splice
@@ -403,8 +401,8 @@ impl Loader {
                 // position `box.eval` may define classes (real Ruby's
                 // Box#eval compiles a top-level iseq); expression-position
                 // eval is `parse::mod`'s recognizer, defs rejected there.
-                if let Some(recv) = call.receiver() {
-                    if let Some(lv) = recv.as_local_variable_read_node() {
+                if let Some(recv) = call.receiver()
+                    && let Some(lv) = recv.as_local_variable_read_node() {
                         let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
                         if let Some(bx) = current_box_binding(&lname) {
                             if matches!(name.as_str(), "require" | "require_relative" | "load") {
@@ -431,14 +429,13 @@ impl Loader {
                             }
                         }
                     }
-                }
             }
             // `box = Ruby::Box.new` -- allocates a fresh compile-time box,
             // records the file-local binding, AND binds the local to the
             // handle VALUE (the box's top-level surrogate as a Class), so
             // `p box` works.
-            if let Some(lw) = n.as_local_variable_write_node() {
-                if crate::lower::eval_splice::is_ruby_box_new(&lw.value()) {
+            if let Some(lw) = n.as_local_variable_write_node()
+                && crate::lower::eval_splice::is_ruby_box_new(&lw.value()) {
                     let lname = String::from_utf8_lossy(lw.name().as_slice()).into_owned();
                     hir.boxes += 1;
                     let box_id = hir.boxes;
@@ -449,14 +446,13 @@ impl Loader {
                     own.push(id);
                     continue;
                 }
-            }
             // A top-level `include Mod` (constant arguments) mixes Mod into
             // `Object` -- the top-level self's class. Lowered to `HirNode::
             // Include` so `analyze` registers it on `Object` exactly as a
             // `class Object; include Mod; end` reopen would, rather than
             // emitting a (nonexistent) runtime `include` call on `main`.
-            if let Some(call) = n.as_call_node() {
-                if call.receiver().is_none() && call.name().as_slice() == b"include" {
+            if let Some(call) = n.as_call_node()
+                && call.receiver().is_none() && call.name().as_slice() == b"include" {
                     let arg_list: Vec<_> = call
                         .arguments()
                         .map(|a| a.arguments().iter().collect())
@@ -483,7 +479,6 @@ impl Loader {
                         continue;
                     }
                 }
-            }
             // Top-level `undef m` / `alias n m`, the same Object reopen the
             // `include` above is: top-level `def` is a private method ON
             // Object, so the keyword that undefines or aliases one targets
@@ -797,11 +792,10 @@ impl Loader {
         // begin/rescue installing one of two `gen_random` aliases) zeo can't
         // express -- and zeo ships securerandom natively anyway. See
         // `shims/gem_securerandom.rb`.
-        if let Some(shim) = vendored_shim_feature(&canonical) {
-            if let Some(spliced) = self.splice_synthetic_shim(hir, shim, current_box)? {
+        if let Some(shim) = vendored_shim_feature(&canonical)
+            && let Some(spliced) = self.splice_synthetic_shim(hir, shim, current_box)? {
                 return Ok(spliced);
             }
-        }
 
         if name != "load" {
             // Insert BEFORE lowering (CRuby's loading-table rule): a
@@ -1480,8 +1474,8 @@ struct RequireCollector<'a> {
 
 impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     fn visit_branch_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
-        if let Some(call) = node.as_call_node() {
-            if call.receiver().is_none()
+        if let Some(call) = node.as_call_node()
+            && call.receiver().is_none()
                 && matches!(call.name().as_slice(), b"require" | b"require_relative")
             {
                 if self.defs == 0 {
@@ -1492,7 +1486,6 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
                     self.deferred.push(call);
                 }
             }
-        }
     }
 
     // A method body does not run at load time, so a `require` there names a
@@ -1520,16 +1513,14 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     fn visit_if_node(&mut self, node: &ruby_prism::IfNode<'pr>) {
         self.visit(&node.predicate());
         let guard = eval_static_guard(&node.predicate());
-        if guard != Some(false) {
-            if let Some(stmts) = node.statements() {
+        if guard != Some(false)
+            && let Some(stmts) = node.statements() {
                 self.visit(&stmts.as_node());
             }
-        }
-        if guard != Some(true) {
-            if let Some(sub) = node.subsequent() {
+        if guard != Some(true)
+            && let Some(sub) = node.subsequent() {
                 self.visit(&sub);
             }
-        }
     }
 
     // `unless C` runs `statements` when C is FALSE and `else_clause` when TRUE
@@ -1537,16 +1528,14 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     fn visit_unless_node(&mut self, node: &ruby_prism::UnlessNode<'pr>) {
         self.visit(&node.predicate());
         let guard = eval_static_guard(&node.predicate());
-        if guard != Some(true) {
-            if let Some(stmts) = node.statements() {
+        if guard != Some(true)
+            && let Some(stmts) = node.statements() {
                 self.visit(&stmts.as_node());
             }
-        }
-        if guard != Some(false) {
-            if let Some(els) = node.else_clause() {
+        if guard != Some(false)
+            && let Some(els) = node.else_clause() {
                 self.visit(&els.as_node());
             }
-        }
     }
 }
 
@@ -1605,8 +1594,8 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
                 .and_then(|r| eval_static_guard(&r))
                 .map(|b| !b);
         }
-        if matches!(name, b"==" | b"!=") {
-            if let (Some(recv), Some(args)) = (call.receiver(), call.arguments()) {
+        if matches!(name, b"==" | b"!=")
+            && let (Some(recv), Some(args)) = (call.receiver(), call.arguments()) {
                 let arg_list: Vec<_> = args.arguments().iter().collect();
                 if let [only] = arg_list.as_slice() {
                     let eq =
@@ -1616,7 +1605,6 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
                     }
                 }
             }
-        }
     }
     None
 }
@@ -1658,11 +1646,10 @@ fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::
         if let Some(body) = sc.body() {
             collect_autoloads(&body, out);
         }
-    } else if let Some(call) = node.as_call_node() {
-        if call.receiver().is_none() && call.name().as_slice() == b"autoload" {
+    } else if let Some(call) = node.as_call_node()
+        && call.receiver().is_none() && call.name().as_slice() == b"autoload" {
             out.push(call);
         }
-    }
 }
 
 /// The `Dir.glob`/`Dir[]` calls whose block just requires each match --

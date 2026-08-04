@@ -182,12 +182,10 @@ fn mark_inline_iter_sites(
             block_arg: None,
             ..
         } = &compiler.hir[id]
-        {
-            if kwargs.is_empty() {
-                if let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
+            && kwargs.is_empty()
+                && let (HirNode::LocalRead(rn), HirNode::Block { params, .. }) =
                     (&compiler.hir[*recv], &compiler.hir[*block])
-                {
-                    if plain_positional(params) {
+                    && plain_positional(params) {
                         use InlineIterKind as K;
                         let key = (locals.get(rn), name.as_str(), args.len());
                         let kind = match (key, params.required.len()) {
@@ -217,9 +215,6 @@ fn mark_inline_iter_sites(
                             out.insert(*block, k);
                         }
                     }
-                }
-            }
-        }
         compiler.hir[id].for_each_child(&mut |n| scan(compiler, n, locals, out));
     }
 
@@ -896,15 +891,13 @@ fn splice_decidable_ifs(
         } = &compiler.hir[s]
         {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
-            if branch_has_top_defs(compiler, &then_body)
-                || branch_has_top_defs(compiler, &else_body)
-            {
-                if let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond) {
+            if (branch_has_top_defs(compiler, &then_body)
+                || branch_has_top_defs(compiler, &else_body))
+                && let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond) {
                     let branch = if taken { then_body } else { else_body };
                     out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
                     continue;
                 }
-            }
         }
         out.push(s);
     }
@@ -2906,11 +2899,10 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
             // block of their own) -- counted here so the method gets its
             // `__blk` param, which the emitted closure then clone-captures
             // (see `codegen::call::emit_proc_or_lambda_value`).
-            if let Some(b) = block {
-                if let HirNode::Block { body, .. } = &hir[*b] {
+            if let Some(b) = block
+                && let HirNode::Block { body, .. } = &hir[*b] {
                     found |= scan_bare_block_use_body(hir, body);
                 }
-            }
             found
         }
         HirNode::New { args, .. } => {
@@ -3206,11 +3198,10 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
             // block of their own) -- counted here so the method gets its
             // `__blk` param, which the emitted closure then clone-captures
             // (see `codegen::call::emit_proc_or_lambda_value`).
-            if let Some(b) = block {
-                if let HirNode::Block { body, .. } = &hir[*b] {
+            if let Some(b) = block
+                && let HirNode::Block { body, .. } = &hir[*b] {
                     found |= scan_contains_super_body(hir, body);
                 }
-            }
             found
         }
         HirNode::New { args, .. } => {
@@ -3400,11 +3391,10 @@ pub(crate) fn scan_contains_super_body(hir: &Hir, body: &[NodeId]) -> bool {
 /// sub-expression, so that traversal yields nothing), and the write then
 /// referenced a field that was never declared.
 fn collect_ivar_target(target: &crate::hir::MultiTarget, out: &mut Vec<String>) {
-    if let crate::hir::MultiTarget::Ivar(name) = target {
-        if !out.contains(name) {
+    if let crate::hir::MultiTarget::Ivar(name) = target
+        && !out.contains(name) {
             out.push(name.clone());
         }
-    }
 }
 
 pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
