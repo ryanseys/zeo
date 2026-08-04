@@ -1,0 +1,6 @@
+[:blank_mm, :anything, []]
+[:blank_mm, :with, [1, 2]]
+[:blank_mm, :respond_to?, [:whatever]]
+[:normal_mm, :anything, []]
+true
+[:!, :!=, :==, :__id__, :__send__, :equal?, :instance_eval, :instance_exec]

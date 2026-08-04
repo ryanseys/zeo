@@ -1,0 +1,8 @@
+2
+4
+6
+"#<Enumerator::Lazy: #<Enumerator::Lazy: 1..3>:map>"
+"#<Enumerator::Lazy: #<Enumerator::Lazy: 1..3>:select>"
+[1, 2]
+"#<Enumerator: [1, 2]:each>"
+[2, 4, 6]
