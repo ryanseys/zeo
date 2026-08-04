@@ -22,22 +22,19 @@ gives the house rule for all of them: oracle-verified, divergence-documented.
 ## Divergences (tracked as executable gaps)
 
 [`tests/gaps/`](../tests/gaps) is the real tracker; each file's header carries
-the cause. Current contents:
+the cause, and the suite fails the day a gap starts matching ruby. This file
+does not mirror the directory's contents — a table here rotted once already
+(it kept naming gaps that had long been promoted). `ls tests/gaps/*.rb` is
+the current list.
 
-| gap | what diverges |
-|---|---|
-| `issue_runtime_refinement_module.rb` | `using Module.new { refine C do … end }` — the last irb blocker |
-| `issue_set_trace_func_missing.rb` | `set_trace_func` is absent |
-| `issue_class_method_owner.rb` | `Method#owner` answers the class, not its singleton class |
-| `issue_subclass_runtime_extend.rb` | a subclass does not inherit runtime-extended class methods |
-| `issue_module_private_instance_methods.rb` | a bare `private` in a module body does not take |
-| `issue_singleton_class_include_after_extend.rb` | `singleton_class.include?(M)` false after a runtime `extend` |
-| `issue_continuation_missing.rb` | **declined** — `callcc` needs a restorable machine stack |
-
-`ripper` is declined too, but is no longer here: `require "prism"` is a real
-answer rather than an absence, so the `LoadError` now says so and an e2e test
-asserts it (`ripper_is_declined_and_the_load_error_says_so`). A golden could
-not: goldens are diffed against the oracle, and ruby loads ripper.
+Declined divergences do not live there either — the gaps README sends them to
+a passing test that documents the step-around. Current declined set: `callcc`
+(`tests/callcc_is_declined.rb` — needs a restorable machine stack),
+`ObjectSpace.each_object` (`tests/objectspace_each_object_is_declined.rb` —
+no heap enumeration), and `ripper`: `require "prism"` is a real answer rather
+than an absence, so the `LoadError` says so and an e2e test asserts it
+(`ripper_is_declined_and_the_load_error_says_so`). A golden could not: goldens
+are diffed against the oracle, and ruby loads ripper.
 
 ## Correctness
 

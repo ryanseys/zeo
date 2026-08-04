@@ -739,8 +739,9 @@ an unfinished feature.
   reachable, and deliberately not shipped: it would answer the common case
   and silently break re-entry, which is worse than a `LoadError` a caller can
   rescue. CRuby itself prints *"callcc is obsolete; use Fiber instead"* when
-  the extension loads, and zeo ships `Fiber`. Tracked as a divergence in
-  `tests/gaps/issue_continuation_missing.rb`, since ruby does load it.
+  the extension loads, and zeo ships `Fiber`. Documented as a declined
+  divergence in `tests/callcc_is_declined.rb` (a passing step-around test,
+  per the gaps README rule that declined divergences don't live in `gaps/`).
 - **`ripper`** exposes the reduction event stream of CRuby's `parse.y`. zeo's
   front end embeds prism, a different parser with a different event model, so
   a binding has nothing to bind to; matching ripper means re-implementing
