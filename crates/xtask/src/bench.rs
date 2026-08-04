@@ -124,11 +124,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut failures: Vec<String> = Vec::new();
     for rb in bench_programs(root) {
         let name = rb.file_stem().unwrap().to_string_lossy().into_owned();
-        if let Some(f) = &filter {
-            if !name.contains(f.as_str()) {
+        if let Some(f) = &filter
+            && !name.contains(f.as_str()) {
                 continue;
             }
-        }
         if resume && recorded.iter().any(|r| r.name == name) {
             progress(&format!("{name:<28} (resumed from baseline)"));
             continue;
@@ -424,14 +423,13 @@ fn resolve_ruby(root: &Path) -> PathBuf {
         .arg("ruby")
         .current_dir(root)
         .output();
-    if let Ok(out) = out {
-        if out.status.success() {
+    if let Ok(out) = out
+        && out.status.success() {
             let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
             if !path.is_empty() {
                 return PathBuf::from(path);
             }
         }
-    }
     PathBuf::from("ruby")
 }
 

@@ -132,13 +132,11 @@ fn resolve_ruby(cwd: &Path) -> PathBuf {
         .arg("ruby")
         .current_dir(cwd)
         .output()
-    {
-        if out.status.success() {
+        && out.status.success() {
             let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
             if !path.is_empty() {
                 return PathBuf::from(path);
             }
         }
-    }
     PathBuf::from("ruby")
 }

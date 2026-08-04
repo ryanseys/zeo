@@ -99,11 +99,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut rows: Vec<Row> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     for (name, rel) in PROGRAMS {
-        if let Some(f) = &filter {
-            if !name.contains(f.as_str()) {
+        if let Some(f) = &filter
+            && !name.contains(f.as_str()) {
                 continue;
             }
-        }
         let rb = if rel.is_empty() {
             hello.clone()
         } else {
