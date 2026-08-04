@@ -409,13 +409,22 @@ pub(crate) fn emit_proc_or_lambda_value(
     // already consumed the cell handles by the time the builder chain runs.
     let proc_binding =
         (cx.compiler.hir.uses_proc_binding() && cx.binding_names.is_some()).then(|| {
-            let (file, line) = proc_loc.unwrap_or_else(|| ("(eval)".to_string(), 0));
+            let (file, line) = proc_loc
+                .clone()
+                .unwrap_or_else(|| ("(eval)".to_string(), 0));
             let scope = crate::codegen::call::emit_binding_value(cx, &file, line);
             quote! { let __proc_binding = #scope; }
         });
     let with_binding = proc_binding
         .is_some()
         .then(|| quote! { .with_binding(__proc_binding) });
+    // `Proc#source_location`, and the middle of `#inspect` -- the same span
+    // `#binding` uses. Recorded unconditionally rather than behind a gate like
+    // the binding above: this is two static values, not a captured scope, so a
+    // program that never asks pays a word.
+    let with_location = proc_loc.as_ref().map(|(file, line)| {
+        quote! { .with_location(#file, #line) }
+    });
     // Three shapes:
     // - `with_self_and_block` whenever the body must see a CALL-SITE block --
     //   a METHOD-BODY lambda (the runtime install rebinds the receiver per
@@ -485,7 +494,7 @@ pub(crate) fn emit_proc_or_lambda_value(
             // `Thread.new ...; Thread.pass; t.raise` idiom relies on.
             if __out.is_ok() { zeo_rt::check_ints()?; }
             __out
-        }, #default_arg #arity, #is_lambda)#with_home #with_binding #with_params)
+        }, #default_arg #arity, #is_lambda)#with_home #with_binding #with_location #with_params)
     };
     // Braces exist to scope the capture-clone prelude; a capture-free proc
     // emits bare (a braced function argument draws rustc's

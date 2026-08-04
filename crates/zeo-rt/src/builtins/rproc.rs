@@ -92,15 +92,16 @@ ruby_class! {
     def "ruby2_keywords"(recv) {
         Ok(recv.clone())
     }
-    // `source_location` -> `[file, line]`. zeo is whole-program AOT and
-    // the conformance harness disables the line map, so a proc's exact
-    // origin isn't tracked; the pair's SHAPE and element types match CRuby
-    // (`[String, Integer]`), which is what proc introspection relies on.
+    // `source_location` -> `[file, line]` where the block was written, or
+    // `nil` for a runtime-internal proc -- CRuby's answer for a C-level Proc,
+    // which is what one of ours is.
     def "source_location"(recv) {
-        let _ = recv_proc(recv);
+        let Some((file, line)) = recv_proc(recv).location() else {
+            return Ok(RubyValue::Nil);
+        };
         Ok(RubyValue::Array(crate::array_new(vec![
-            RubyValue::Str(crate::string_new(String::new())),
-            RubyValue::Int(0),
+            RubyValue::Str(crate::string_new(file.to_string())),
+            RubyValue::Int(line as i64),
         ])))
     }
     // `parameters` -- `[[kind, name], ...]` from the static signature codegen
@@ -203,10 +204,30 @@ ruby_class! {
     def "clone"(recv) { inherited_row!(kernel, "clone", recv, __args, None) }
     def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
-    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
-    // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
-    // spell the two differently, so each goes to its own Kernel row.
-    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(proc_inspect(recv_proc(recv))))) }
+    // Genuinely the same string here -- oracle-verified -- unlike `Complex`,
+    // `Rational` and `Regexp`, which spell the two differently.
+    def "to_s"(recv) { Ok(RubyValue::Str(crate::string_new(proc_inspect(recv_proc(recv))))) }
+}
+
+/// `Proc#inspect`/`#to_s` -- what tells two procs apart: the identity, where
+/// it was written, and whether it is a lambda.
+///
+///     #<Proc:0x00000001234 file.rb:3>
+///     #<Proc:0x00000001234 file.rb:4 (lambda)>
+///     #<Proc:0x00000001234 (lambda)>        -- a runtime-internal proc
+///
+/// A proc with no recorded location is CRuby's C-level Proc, which prints the
+/// identity alone. (CRuby also tags a `Symbol#to_proc` with `(&:name)`, which
+/// needs the symbol carried on the proc; one is reported here as an ordinary
+/// locationless lambda.)
+fn proc_inspect(p: &crate::RProc) -> String {
+    let lambda = if p.is_lambda() { " (lambda)" } else { "" };
+    let addr = p.identity();
+    match p.location() {
+        Some((file, line)) => format!("#<Proc:0x{addr:016x} {file}:{line}{lambda}>"),
+        None => format!("#<Proc:0x{addr:016x}{lambda}>"),
+    }
 }
 
 /// One step of `Proc#curry`: a proc that either invokes the target (enough

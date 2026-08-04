@@ -89,6 +89,14 @@ pub struct ProcData {
     /// program (`Hir::uses_proc_binding`); `#binding` then answers CRuby's
     /// C-level-Proc `ArgumentError`.
     binding: Option<RubyValue>,
+    /// Where the block/lambda was WRITTEN -- `Proc#source_location`, and the
+    /// middle of `#inspect`. `None` for a runtime-internal proc, which is
+    /// CRuby's C-level Proc and reports `nil` for both.
+    ///
+    /// Two static values, so an unasked-for location costs a program nothing
+    /// beyond the word: codegen already has the span (it threads the same one
+    /// into `#binding`), and the file is a literal in the generated source.
+    location: Option<(&'static str, u32)>,
     /// `.frozen?` state -- Procs are freezable ordinary objects in Ruby
     /// (freezing one changes nothing observable beyond the flag: no mutating
     /// methods exist), and `dup`/`clone` follow the standard flag rule via
@@ -139,6 +147,7 @@ impl RProc {
             params: std::borrow::Cow::Borrowed(&[]),
             home: None,
             binding: None,
+            location: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -159,6 +168,7 @@ impl RProc {
             params: std::borrow::Cow::Borrowed(&[]),
             home: None,
             binding: None,
+            location: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -201,6 +211,7 @@ impl RProc {
             params: std::borrow::Cow::Borrowed(&[]),
             home: None,
             binding: None,
+            location: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -253,6 +264,19 @@ impl RProc {
     /// The defining scope this Proc captured, if codegen supplied one.
     pub fn binding(&self) -> Option<&RubyValue> {
         self.0.binding.as_ref()
+    }
+
+    /// Record where this block/lambda was written (see `ProcData::location`).
+    pub fn with_location(mut self, file: &'static str, line: u32) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.location = Some((file, line));
+        }
+        self
+    }
+
+    /// Where this Proc was written, if codegen supplied it.
+    pub fn location(&self) -> Option<(&'static str, u32)> {
+        self.0.location
     }
 
     /// Resolve a non-lambda Proc's `Signal::Return` against its captured home:
@@ -399,6 +423,7 @@ impl RProc {
             params: self.0.params.clone(),
             home: self.0.home.clone(),
             binding: self.0.binding.clone(),
+            location: self.0.location,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -412,6 +437,7 @@ impl RProc {
             params: self.0.params.clone(),
             home: self.0.home.clone(),
             binding: self.0.binding.clone(),
+            location: self.0.location,
             frozen: std::sync::atomic::AtomicBool::new(frozen),
         }))
     }
