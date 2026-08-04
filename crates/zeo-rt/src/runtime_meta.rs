@@ -33,7 +33,7 @@ use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
 use crate::{FMap, FSet};
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use zeo_abi::RUNTIME_CLASS_ID_BASE;
@@ -3120,7 +3120,14 @@ impl RubyObject for ClassSurrogate {
 struct DynObject {
     class_id: ClassId,
     frozen: AtomicBool,
-    ivars: parking_lot::Mutex<HashMap<String, RubyValue>>,
+    /// Insertion-ordered: ruby reports instance variables in FIRST-ASSIGNMENT
+    /// order, and that order is a property of the object rather than of its
+    /// class -- an ivar added after construction appears last. A compiled
+    /// class gets a generated struct whose fields are already in source order;
+    /// this is the same guarantee for a class minted at run time. It is what
+    /// makes `p obj` stable enough to diff, which is most of what `inspect` is
+    /// for.
+    ivars: parking_lot::Mutex<indexmap::IndexMap<String, RubyValue>>,
 }
 
 impl DynObject {
@@ -3128,7 +3135,7 @@ impl DynObject {
         DynObject {
             class_id,
             frozen: AtomicBool::new(false),
-            ivars: parking_lot::Mutex::new(HashMap::new()),
+            ivars: parking_lot::Mutex::new(indexmap::IndexMap::new()),
         }
     }
 }
@@ -3178,7 +3185,9 @@ impl RubyObject for DynObject {
     }
     fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
         // Name-keyed: a missing key is genuinely absent (CRuby's `NameError`).
-        self.ivars.lock().remove(name)
+        // `shift_remove`, not `remove`: the latter swaps the last entry into
+        // the hole, which would reorder the survivors.
+        self.ivars.lock().shift_remove(name)
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let d = DynObject::new(self.class_id);
