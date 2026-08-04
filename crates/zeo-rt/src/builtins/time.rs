@@ -378,6 +378,84 @@ const MONTH_NAMES: [&str; 12] = [
     "December",
 ];
 
+/// `%U`/`%W` -- CRuby's `weeknumber` (strftime.c): complete weeks elapsed
+/// since the year's first `firstweekday`, 00..53. `yday` is 0-based, as the
+/// `tm` field it reads is, and `wday` is 0=Sunday. `%U` counts from Sunday,
+/// `%W` from Monday -- which is the whole difference, expressed by rotating
+/// `wday` before the division.
+fn weeknumber(yday: i32, wday: i32, first_is_monday: bool) -> i32 {
+    let wday = if first_is_monday {
+        if wday == 0 { 6 } else { wday - 1 }
+    } else {
+        wday
+    };
+    ((yday + 7 - wday) / 7).max(0)
+}
+
+/// `%V` -- the ISO 8601 week number, CRuby's `iso8601wknum`. Weeks start on
+/// Monday and week 1 is the one holding the year's first Thursday, so a
+/// year's opening days can belong to the LAST week of the year before (the
+/// `weeknum == 0` recursion) and its closing days to week 1 of the next (the
+/// December fixup).
+fn iso8601_weeknum(year: i64, yday: i32, wday: i32, mon: i32, mday: i32) -> i32 {
+    let mut weeknum = weeknumber(yday, wday, true);
+    let mut jan1day = wday - (yday % 7);
+    if jan1day < 0 {
+        jan1day += 7;
+    }
+    match jan1day {
+        // Monday: the plain count is already the ISO week.
+        1 => {}
+        // Tue/Wed/Thu: Jan 1 falls in the week holding the first Thursday.
+        2 | 3 | 4 => weeknum += 1,
+        // Fri/Sat/Sun: those opening days belong to last year's final week.
+        _ => {
+            if weeknum == 0 {
+                let ly = year - 1;
+                let ly_wday = if jan1day == 0 { 6 } else { jan1day - 1 };
+                let ly_yday = 364 + i32::from(is_leap_year(ly));
+                weeknum = iso8601_weeknum(ly, ly_yday, ly_wday, 12, 31);
+            }
+        }
+    }
+    // A late-December Mon/Tue/Wed already sits in next year's week 1.
+    if mon == 12
+        && ((wday == 1 && (29..=31).contains(&mday))
+            || (wday == 2 && (mday == 30 || mday == 31))
+            || (wday == 3 && mday == 31))
+    {
+        weeknum = 1;
+    }
+    weeknum
+}
+
+fn is_leap_year(y: i64) -> bool {
+    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+}
+
+/// `%V` for a broken-down instant.
+fn iso_week(tm: &Tm) -> i32 {
+    iso8601_weeknum(
+        tm.tm_year as i64 + 1900,
+        tm.tm_yday,
+        tm.tm_wday,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+    )
+}
+
+/// `%G`/`%g` -- the year the ISO week belongs to. December in week 1 has
+/// already rolled over; January in week 52+ has not yet.
+fn iso_year(tm: &Tm) -> i64 {
+    let year = tm.tm_year as i64 + 1900;
+    let week = iso_week(tm);
+    match tm.tm_mon + 1 {
+        12 if week == 1 => year + 1,
+        1 if week >= 52 => year - 1,
+        _ => year,
+    }
+}
+
 /// Ruby's `strftime` -- hand-ported directive table (the Ruby-specific part;
 /// C's own strftime lacks Ruby's flags and several directives).
 ///
@@ -418,17 +496,22 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             out.push('%');
             break;
         };
-        // `num` applies the flag to a numeric directive: `-` drops padding,
-        // `_` pads with spaces, otherwise zero-padded to `width` (an explicit
-        // `%<n>X` width overrides the directive's default).
-        let num = |v: i64, default_width: usize| -> String {
+        // `num_pad` applies the flag to a numeric directive: `-` drops padding,
+        // `_` pads with spaces, `0` with zeros, and with no flag the
+        // directive's own default pad applies (an explicit `%<n>X` width
+        // overrides the directive's default WIDTH the same way).
+        let num_pad = |v: i64, default_width: usize, default_pad: char| -> String {
             let w = width.unwrap_or(default_width);
-            match pad {
-                Some('-') => v.to_string(),
-                Some('_') => format!("{:>w$}", v, w = w),
+            match pad.unwrap_or(default_pad) {
+                '-' => v.to_string(),
+                '_' | ' ' => format!("{:>w$}", v, w = w),
                 _ => format!("{:0w$}", v, w = w),
             }
         };
+        let num = |v: i64, default_width: usize| num_pad(v, default_width, '0');
+        // `%e`/`%k`/`%l` are the space-padded twins of `%d`/`%H`/`%I`. The pad
+        // is only their DEFAULT, so `%0e` still zero-pads.
+        let num_sp = |v: i64| num_pad(v, 2, ' ');
         // `%N`/`%L`'s fractional seconds to `digits` places: the 9-digit
         // nanosecond string, truncated or right-zero-padded to width.
         let frac = |digits: usize| -> String {
@@ -445,10 +528,10 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'C' => num((tm.tm_year as i64 + 1900) / 100, 2),
             'm' => num(tm.tm_mon as i64 + 1, 2),
             'd' => num(tm.tm_mday as i64, 2),
-            'e' => format!("{:>2}", tm.tm_mday),
+            'e' => num_sp(tm.tm_mday as i64),
             'j' => num(tm.tm_yday as i64 + 1, 3),
             'H' => num(tm.tm_hour as i64, 2),
-            'k' => format!("{:>2}", tm.tm_hour),
+            'k' => num_sp(tm.tm_hour as i64),
             'I' => num(
                 if tm.tm_hour % 12 == 0 {
                     12
@@ -457,14 +540,31 @@ fn strftime(t: &RTime, fmt: &str) -> String {
                 },
                 2,
             ),
-            'l' => format!(
-                "{:>2}",
-                if tm.tm_hour % 12 == 0 {
-                    12
-                } else {
-                    tm.tm_hour % 12
-                }
+            'l' => num_sp(if tm.tm_hour % 12 == 0 {
+                12
+            } else {
+                (tm.tm_hour % 12) as i64
+            }),
+            // Week-of-year: `%U` counts from Sunday, `%W` from Monday, and
+            // `%V`/`%G` are the ISO week-date pair -- what a weekly rollup or
+            // a report bucket keys on.
+            'U' => num(
+                weeknumber(tm.tm_yday, tm.tm_wday, false) as i64,
+                2,
             ),
+            'W' => num(weeknumber(tm.tm_yday, tm.tm_wday, true) as i64, 2),
+            'V' => num(iso_week(tm) as i64, 2),
+            // The ISO week-based YEAR, which is not the calendar year at the
+            // turn: late December can already belong to week 1 of the next,
+            // and early January to week 52/53 of the last.
+            'G' | 'g' => {
+                let y = iso_year(tm);
+                if d == 'G' {
+                    num(y, if y < 0 { 5 } else { 4 })
+                } else {
+                    num(y.rem_euclid(100), 2)
+                }
+            }
             'M' => num(tm.tm_min as i64, 2),
             'S' => num(tm.tm_sec as i64, 2),
             'L' => frac(width.unwrap_or(3)),
@@ -500,19 +600,18 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             // it does not raise).
             other => format!("%{other}"),
         };
-        if upcase {
+        // `^` upcases whatever the directive produced. `#` is NOT swapcase:
+        // each directive that honours it hardcodes a direction (strftime.c's
+        // per-case `BIT_OF(UPPER)`/`BIT_OF(LOWER)`), and every numeric and
+        // compound directive ignores it outright. So `%#A` is "THURSDAY", not
+        // "tHURSDAY".
+        let fold_upper = upcase
+            || (swapcase && matches!(d, 'a' | 'A' | 'b' | 'h' | 'B' | 'P'));
+        let fold_lower = !upcase && swapcase && matches!(d, 'p' | 'Z');
+        if fold_upper {
             piece = piece.to_uppercase();
-        } else if swapcase {
-            piece = piece
-                .chars()
-                .map(|c| {
-                    if c.is_uppercase() {
-                        c.to_ascii_lowercase()
-                    } else {
-                        c.to_ascii_uppercase()
-                    }
-                })
-                .collect();
+        } else if fold_lower {
+            piece = piece.to_lowercase();
         }
         out.push_str(&piece);
     }
