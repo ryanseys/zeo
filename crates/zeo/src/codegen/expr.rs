@@ -243,6 +243,15 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // presence here also flags this body as a bare-block user, so `__blk` is
     // in scope.)
     if matches!(&cx.compiler.hir[id], HirNode::Yield(_)) {
+        // Outside a method there is no `__blk` binding to test -- and no
+        // block either, which is the answer. `defined?(yield)` is legal
+        // anywhere (CRuby's `DEFINED_YIELD` reads the local EP's block
+        // handler), including where a bare `yield` is a SyntaxError, so
+        // this must answer rather than refuse: lowering it to the missing
+        // binding made the generated Rust fail to compile.
+        if !cx.has_blk_binding {
+            return quote! { zeo_rt::RubyValue::Nil };
+        }
         return quote! {
             if __blk.is_some() {
                 zeo_rt::RubyValue::Str(zeo_rt::string_new("yield".to_string()))
@@ -274,12 +283,29 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // `defined?` consults `respond_to_missing?` too (a method_missing
         // method answers "method"), but SWALLOWS a raise from it (returning
         // nil) -- `unwrap_or(false)`, not `?`, keeps that exception-safety.
+        //
+        // The RECEIVER gets the same protection, and needs it more: it is
+        // really evaluated (`defined?(side.size)` does call `side`), so a
+        // chain whose middle link is missing raises where the whole point
+        // of the idiom is to answer without a rescue. CRuby installs a
+        // catch entry over the entire expression with a push-nil handler
+        // (`compile.c` `defined_expr`), which swallows every raise, not
+        // just NoMethodError -- `defined?((1/0).to_s)` is nil too.
+        // Arguments are never emitted here at all, matching ruby:
+        // `defined?([].push(boom))` answers "method" without calling boom.
         return quote! {
-            if zeo_rt::responds_to_or_missing(&#recv, #name_sym, #include_all).unwrap_or(false) {
-                zeo_rt::RubyValue::Str(zeo_rt::string_new("method".to_string()))
-            } else {
-                zeo_rt::RubyValue::Nil
-            }
+            (|| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+                Ok(
+                    if zeo_rt::responds_to_or_missing(&#recv, #name_sym, #include_all)
+                        .unwrap_or(false)
+                    {
+                        zeo_rt::RubyValue::Str(zeo_rt::string_new("method".to_string()))
+                    } else {
+                        zeo_rt::RubyValue::Nil
+                    },
+                )
+            })()
+            .unwrap_or(zeo_rt::RubyValue::Nil)
         };
     }
     // `defined?(Scope::NAME)` where the scope is a known class/module but the
