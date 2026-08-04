@@ -47,6 +47,35 @@ fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, boo
     }
 }
 
+/// An endpoint that is absent -- `(1..)`, `(..5)`, and the `nil` spelling
+/// `range_endpoint` normalizes to the same thing.
+fn open_endpoint(v: Option<&RubyValue>) -> bool {
+    matches!(v, None | Some(RubyValue::Nil))
+}
+
+/// CRuby's `linear_object_p` (range.c): a value ordered densely enough that
+/// comparing the endpoints ANSWERS membership, so `include?` may take
+/// `cover?`'s shortcut. Every Numeric and every Time; nothing else.
+fn linear_endpoint(v: Option<&RubyValue>) -> bool {
+    match v {
+        None | Some(RubyValue::Nil) => false,
+        Some(v) => {
+            let cid = v.class_id();
+            cid == zeo_abi::TIME_CLASS || crate::dispatch::is_a(cid, zeo_abi::NUMERIC_CLASS)
+        }
+    }
+}
+
+/// CRuby's `range_integer_edge_p`: either endpoint converts with `to_int`,
+/// which makes the range integer-shaped even where neither end IS a Numeric.
+fn integer_edge(start: Option<&RubyValue>, end: Option<&RubyValue>) -> bool {
+    let convertible = |v: Option<&RubyValue>| match v {
+        None | Some(RubyValue::Nil) => false,
+        Some(v) => matches!(crate::builtins::convert::check_to_int(v), Ok(Some(_))),
+    };
+    convertible(start) || convertible(end)
+}
+
 /// `Range#step` and `Range#%`, which differ only in the name the
 /// `Enumerator::ArithmeticSequence` they answer prints back
 /// (`((1..10).step(2))` against `((1..10).%(2))`).
@@ -420,15 +449,39 @@ ruby_class! {
         }
         Ok(found.map_or(RubyValue::Nil, RubyValue::Int))
     }
-    // `Range#===` IS `#cover?`; `include?`/`member?` differ from `cover?`
-    // in real Ruby only for non-linear element types (String ranges walk
-    // succ) -- for the numeric/comparable cases this runtime supports the
-    // cover check is the faithful behavior for all four names.
-    def "===" | "include?" | "member?" (recv, other) {
+    // `Range#===` IS `#cover?` -- an endpoint comparison, whatever the
+    // element type (CRuby's `range_eqq` goes straight to `r_cover_p`).
+    def "===" (recv, other) {
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
             start, end, exclusive, other,
         )))
+    }
+    // `include?`/`member?` are NOT `===`. Ruby takes the endpoint shortcut
+    // only where the element type is dense enough for it to be exact
+    // (`range.c`'s `range_include_internal`) and WALKS otherwise -- which is
+    // why `("a".."e").include?("bb")` is false while `cover?("bb")` is true.
+    // The walk is `Enumerable#include?` over this range's own `each`, so a
+    // String range steps by `succ` exactly as ruby's `rb_str_upto_each` does.
+    def "include?" | "member?" (recv, other) {
+        let (start, end, exclusive) = range_parts(recv);
+        if linear_endpoint(start) || linear_endpoint(end) || integer_edge(start, end) {
+            return Ok(RubyValue::Bool(crate::value::range_covers(
+                start, end, exclusive, other,
+            )));
+        }
+        // Neither end is orderable-by-comparison, so membership needs the
+        // walk -- and an unbounded side has no walk to make.
+        if open_endpoint(start) && open_endpoint(end) {
+            return Ok(RubyValue::Bool(linear_endpoint(Some(other))));
+        }
+        if open_endpoint(start) || open_endpoint(end) {
+            return Err(type_error!(
+                "cannot determine inclusion in beginless/endless ranges"
+            ));
+        }
+        enumerable::enumerable_send(recv, "include?", __args, None)
+            .expect("Enumerable implements include?")
     }
     // `cover?` alone accepts a RANGE argument (range containment); `===`/
     // `include?`/`member?` treat a Range as an ordinary value (never covered).
@@ -634,7 +687,19 @@ ruby_class! {
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
     def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
-    def "count" cfunc (recv, *_args, &block) { own_row!(recv, |s| enumerable::count_own(s, __args, block)) }
+    // An unbounded range's count is `Infinity`, answered WITHOUT iterating --
+    // `range.c`'s `range_count`, which takes the shortcut only for the bare
+    // form. An argument or a block has to walk, and legitimately never
+    // terminates; ruby calls that odd rather than wrong.
+    def "count" cfunc (recv, *_args, &block) {
+        if __args.is_empty() && block.is_none() {
+            let (start, end, _) = range_parts(recv);
+            if open_endpoint(start) || open_endpoint(end) {
+                return Ok(RubyValue::Float(f64::INFINITY));
+            }
+        }
+        own_row!(recv, |s| enumerable::count_own(s, __args, block))
+    }
     def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
     def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
     def "to_set" cfunc (recv, *_args, &_block) { own_row!(recv, |s| enumerable::to_set_own(s, __args, None)) }
