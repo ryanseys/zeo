@@ -147,9 +147,19 @@ pub fn emit_begin(
 
     let rescue_chain = emit_rescue_chain(&closure_cx, rescues);
     let retry_label = fresh_label(cx, "retry");
+    // The ensure body runs with the propagating exception (if any) as `$!`, so
+    // a raise inside it takes that one as its `cause` and a bare `raise`
+    // re-raises it. The guard is dropped before `#settle` so the exception the
+    // ensure itself may raise is not its own cause -- see
+    // `zeo_rt::PropagatingGuard` for why it is a guard and not a push/pop pair.
     let ensure_tokens = ensure_body.as_ref().map(|stmts| {
         let e = super::stmt::emit_body(cx, stmts, false);
-        quote! { { #e }; }
+        quote! {
+            {
+                let __handling = zeo_rt::PropagatingGuard::enter(&__final);
+                { #e };
+            }
+        }
     });
 
     // Settle `__final`. Normally `?`-propagate (any `Signal` unwinds past this

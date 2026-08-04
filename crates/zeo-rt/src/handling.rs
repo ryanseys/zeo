@@ -7,15 +7,14 @@
 //! correctly restores the OUTER exception once the inner one's handling
 //! finishes, mirroring real Ruby's own nesting of `$!`.
 //!
-//! Explicit scope-cut: this does NOT drive automatic `.cause` chaining
-//! (setting a newly-raised exception's `cause` to whatever's currently being
-//! handled) -- that would need a way to set an arbitrary field on an
-//! arbitrary `RObj` by name at runtime, which this object model
-//! doesn't have (every ivar is a concrete, typed struct field, not a
-//! runtime name-keyed map). Left as a documented future item, not attempted
-//! here; likewise the explicit `raise ..., cause: e` override, already a
-//! documented lowering-time rejection (see `parse/mod.rs`'s `raise`
-//! recognizer).
+//! This is also what drives automatic `.cause` chaining: every raise channel
+//! reads [`current_exception`] through `exception::attach_cause`, so whatever
+//! is being handled here becomes the new exception's cause.
+//!
+//! An `ensure` running while an exception PROPAGATES is the second writer --
+//! ruby puts the in-flight exception in `$!` there too, which is what gives a
+//! raise inside an `ensure` its cause. [`PropagatingGuard`] is that push, held
+//! across the ensure body by `codegen::exceptions::emit_begin`.
 //!
 //! **Storage is `thread_local!`**: `$!`/rescue-nesting is per-EXECUTION-
 //! CONTEXT state, and every Ruby `Thread` is its own OS thread, so plain
@@ -59,6 +58,40 @@ pub fn pop_handling() {
 /// `codegen::expr::emit_raise`'s docs).
 pub fn current_exception() -> Option<RubyValue> {
     HANDLING.with(|h| h.borrow().last().cloned())
+}
+
+/// `$!` for the duration of an `ensure` body, when that `ensure` is running
+/// because an exception is propagating through it. Ruby puts the in-flight
+/// exception in `$!` there, so a raise inside the `ensure` takes it as its
+/// `cause` and a bare `raise` re-raises it.
+///
+/// A guard rather than a push/pop pair because the ensure body is emitted
+/// INLINE, not in a closure: a `break` or `return` written inside it compiles
+/// to a literal Rust jump out of this scope, and only `Drop` runs on every one
+/// of those paths. Same reason [`crate::FrameGuard`] is shaped this way.
+///
+/// Nothing is pushed for an `ensure` reached by `break`/`next`/`return`/
+/// `retry` -- `$!` is nil there, matching ruby, which tests the throw's tag
+/// rather than treating every unwind as an exception.
+pub struct PropagatingGuard(bool);
+
+impl PropagatingGuard {
+    /// `outcome` is the `begin`'s settled result, about to be propagated.
+    pub fn enter(outcome: &Result<RubyValue, crate::Signal>) -> PropagatingGuard {
+        let Err(crate::Signal::Raise(exc)) = outcome else {
+            return PropagatingGuard(false);
+        };
+        push_handling(exc.clone());
+        PropagatingGuard(true)
+    }
+}
+
+impl Drop for PropagatingGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            pop_handling();
+        }
+    }
 }
 
 /// Installs `new` as this execution context's handling stack and returns
