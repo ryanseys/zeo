@@ -159,23 +159,44 @@ fn reinfer_local_types(compiler: &mut Compiler) {
 /// search walks each ancestor's `own_methods` directly. A source that
 /// resolves nowhere is a clean compile error, mirroring real Ruby's
 /// `NameError: undefined method`.
+///
+/// An alias binds the body that existed WHEN IT RAN: on each ancestor,
+/// `method_history` entries older than the alias's seq are preferred over
+/// the final row, newest-first. That is the alias-chaining idiom (reopen,
+/// `alias_method :old, :m`, redefine `m` in terms of `old`) -- resolving
+/// against the final table bound the alias to the NEW body, and the compiled
+/// method called itself until the native stack overflowed. When no
+/// strictly-older entry exists the final row still wins, preserving the old
+/// behavior for an alias that names a method only defined later (ruby raises
+/// NameError there at class-body time; zeo's story for that shape is
+/// unchanged by this filter).
 fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
     let pending = std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_aliases);
-    for (new_name, old_name, is_class_method) in pending {
+    for (new_name, old_name, is_class_method, alias_seq) in pending {
         let ancestors = compiler.class(class_id).ancestors.clone();
         // A class-method alias (`class << self; alias split shellsplit`)
         // resolves against `own_class_methods`; an ordinary alias against
         // `own_methods`.
         let source = ancestors.iter().find_map(|&anc| {
             let anc = compiler.class(anc);
-            let list = if is_class_method {
-                &anc.own_class_methods
-            } else {
-                &anc.own_methods
-            };
-            list.iter()
-                .find(|&&s| compiler.scope(s).name == old_name)
-                .copied()
+            let historical = anc
+                .method_history
+                .iter()
+                .filter(|(n, cm, seq, _)| {
+                    *cm == is_class_method && *seq < alias_seq && *n == old_name
+                })
+                .max_by_key(|(_, _, seq, _)| *seq)
+                .map(|&(_, _, _, sid)| sid);
+            historical.or_else(|| {
+                let list = if is_class_method {
+                    &anc.own_class_methods
+                } else {
+                    &anc.own_methods
+                };
+                list.iter()
+                    .find(|&&s| compiler.scope(s).name == old_name)
+                    .copied()
+            })
         });
         let Some(sid) = source else {
             if is_class_method {
@@ -218,7 +239,9 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         // `def_node` is the SOURCE's, shared with the original method, so the
         // birth name can't be read off it -- record it on the new scope.
         compiler.scopes[new_sid.0 as usize].alias_of = Some(old_name);
-        super::add_own_method(compiler, class_id, new_sid, is_class_method);
+        // At the ALIAS's seq, not a fresh one: a later alias naming this one
+        // must see it as defined where the `alias` statement ran.
+        super::add_own_method_at(compiler, class_id, new_sid, is_class_method, alias_seq);
     }
     Ok(())
 }

@@ -45,6 +45,8 @@ ruby_module! {
     const WUNTRACED = RubyValue::Int(libc::WUNTRACED as i64);
     // `getrlimit`/`setrlimit` resources and the "no limit" sentinel. macOS has
     // no RLIM_SAVED_CUR/MAX distinct from RLIM_INFINITY, so all three coincide.
+    // The sentinel goes through `rlim_to_int`: Linux's RLIM_INFINITY is
+    // u64::MAX, which this runtime's i64 Integer cannot carry.
     const RLIMIT_AS = RubyValue::Int(libc::RLIMIT_AS as i64);
     const RLIMIT_CORE = RubyValue::Int(libc::RLIMIT_CORE as i64);
     const RLIMIT_CPU = RubyValue::Int(libc::RLIMIT_CPU as i64);
@@ -55,9 +57,9 @@ ruby_module! {
     const RLIMIT_NPROC = RubyValue::Int(libc::RLIMIT_NPROC as i64);
     const RLIMIT_RSS = RubyValue::Int(libc::RLIMIT_RSS as i64);
     const RLIMIT_STACK = RubyValue::Int(libc::RLIMIT_STACK as i64);
-    const RLIM_INFINITY = RubyValue::Int(libc::RLIM_INFINITY as i64);
-    const RLIM_SAVED_CUR = RubyValue::Int(libc::RLIM_INFINITY as i64);
-    const RLIM_SAVED_MAX = RubyValue::Int(libc::RLIM_INFINITY as i64);
+    const RLIM_INFINITY = RubyValue::Int(rlim_to_int(libc::RLIM_INFINITY));
+    const RLIM_SAVED_CUR = RubyValue::Int(rlim_to_int(libc::RLIM_INFINITY));
+    const RLIM_SAVED_MAX = RubyValue::Int(rlim_to_int(libc::RLIM_INFINITY));
 
     module_function def pid(_recv) {
         Ok(RubyValue::Int(std::process::id() as i64))
@@ -344,8 +346,8 @@ ruby_module! {
             return Err(errno_fail("getrlimit"));
         }
         Ok(RubyValue::Array(crate::array_new(vec![
-            RubyValue::Int(lim.rlim_cur as i64),
-            RubyValue::Int(lim.rlim_max as i64),
+            RubyValue::Int(rlim_to_int(lim.rlim_cur)),
+            RubyValue::Int(rlim_to_int(lim.rlim_max)),
         ])))
     }
     // `Process.setrlimit(resource, soft [, hard])` -- hard defaults to soft.
@@ -357,8 +359,8 @@ ruby_module! {
             None => cur,
         };
         let lim = libc::rlimit {
-            rlim_cur: cur as libc::rlim_t,
-            rlim_max: max as libc::rlim_t,
+            rlim_cur: int_to_rlim(cur),
+            rlim_max: int_to_rlim(max),
         };
         if unsafe { libc::setrlimit(res as _, &lim) } != 0 {
             return Err(errno_fail("setrlimit"));
@@ -782,6 +784,28 @@ ruby_module! {
 /// answers false wherever `setreuid` is present but flagged obsolete, which
 /// is every Darwin -- and there `re_exchange` raises rather than swapping.
 const RE_EXCHANGEABLE: bool = !cfg!(target_vendor = "apple");
+
+/// An rlimit value as a Ruby Integer. Linux's `RLIM_INFINITY` is `u64::MAX`,
+/// beyond this runtime's `i64` Integer, so the sentinel (and any saved-limit
+/// value at or past `i64::MAX`) saturates -- it stays the greatest
+/// representable value, which is the only property programs compare against.
+/// macOS's sentinel is already `i64::MAX`, so this is the identity there.
+fn rlim_to_int(v: libc::rlim_t) -> i64 {
+    if v >= i64::MAX as libc::rlim_t {
+        i64::MAX
+    } else {
+        v as i64
+    }
+}
+
+/// The inverse: `i64::MAX` back to the OS sentinel for `setrlimit`.
+fn int_to_rlim(v: i64) -> libc::rlim_t {
+    if v == i64::MAX {
+        libc::RLIM_INFINITY
+    } else {
+        v as libc::rlim_t
+    }
+}
 
 /// A syscall's `0`/`-1` result as the row's answer: `nil`, or the bare
 /// `Errno::*` CRuby's `rb_sys_fail(0)` raises -- the strerror text alone,

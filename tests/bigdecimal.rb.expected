@@ -1,0 +1,68 @@
+"4.1.2"
+[1000000000, 16]
+[256, 3, 0, 0]
+[0.15e1, "0.15e1", "0.15e1"]
+[-0.3e-2, 0.123456789123456789e9, 0.1e101]
+[0.0, -0.0, "0.0"]
+[Infinity, -Infinity, NaN]
+[0.42e2, -0.7e1, 0.1e31]
+[0.314e1, 0.314e1, 0.15e1, 0.1e101]
+0.33333e0
+[0.1e4, 0.15e1, 0.5e0, 0.15e4]
+[BigDecimal, true]
+["1234.5678", "0.12345678e4", "0.123 456 78e4", "+0.12345678e4", "1 234.567 8"]
+"0.000012345"
+"1000000000000000000000000000000.0"
+"-0.12345678e4"
+"-1234.5678"
+0.55e1
+0.7e1
+0.33333333333333333333333333333333e0
+0.33333333333333333333333333333333e1
+0.14285714285714285714285714285714e2
+0.3333333333333333333322222222222222222e0
+0.4115e0
+Infinity
+0.100000000000000000000000000000000000000000000000001e51
+[0.2896e1, 0.358e1, -0.1111e1]
+[3, 0.33333e1, Integer]
+[[3, 0.1e1], Integer, BigDecimal]
+[[-4, 0.2e1], 0.2e1, -0.1e1]
+[0.15e1, [3, 0.15e1]]
+[-1, true, true, true]
+[0.15e1, 0.25e1, 0.15e1, 0.2e1]
+[0.1e1, 0.15e1]
+[false, nil, true]
+[nil, false]
+[3, 0.2e1, 0.234e1]
+[0.1235e1, 120]
+[3, 4, -3]
+[BigDecimal, Integer, Integer]
+[0.3e1, 0.75e0, 0.15e1]
+[1, 1.5, (3/2)]
+[FloatDomainError, "Computation results in 'Infinity'"]
+[false, true, 0.15e1, nil]
+[true, true, -1]
+[-2, 1, 0, 3]
+[3, 5, 5]
+[21, 20, 3]
+[1, "12345", 10, 3]
+[5, 2]
+[ArgumentError, "invalid value for BigDecimal(): \"bogus\""]
+[TypeError, "can't convert nil into BigDecimal"]
+[ArgumentError, "precision too large."]
+[ArgumentError, "can't omit precision for a Rational."]
+[0.15e1, nil, nil]
+[FloatDomainError, "Divide by zero"]
+[FloatDomainError, "Computation results in 'NaN' (Not a Number)"]
+0
+0.33333e0
+0.31111e1
+0.333e0
+0
+0.27e1
+3
+7
+0.2e0
+0.15e1
+0.0

@@ -34,6 +34,12 @@
 //! whole suite stayed green. Adding the private column found 114 more rows on
 //! the day it landed, of which 56 are two patterns -- a private `initialize`
 //! (39 classes) and `initialize_copy` (17), each owned one class off.
+//!
+//! macOS-only: the committed oracle dump came from macOS ruby, and the
+//! platform surfaces genuinely differ (Linux has no Errno::EBADMACHO; its
+//! zeo build cfg-gates the macOS clock constants), so the diff is only
+//! meaningful on the platform the oracle ran on.
+#![cfg(target_os = "macos")]
 
 mod support;
 

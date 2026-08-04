@@ -500,9 +500,10 @@ fn process_top_stmt(
     } = &compiler.hir[stmt]
     {
         let entry = (new_name.clone(), old_name.clone(), *is_class_method);
+        let seq = next_def_seq(compiler);
         compiler.classes[OBJECT_CLASS.0 as usize]
             .pending_aliases
-            .push(entry);
+            .push((entry.0, entry.1, entry.2, seq));
     } else if let HirNode::If {
         cond,
         then_body,
@@ -2265,13 +2266,16 @@ fn register_class(
                 old_name,
                 is_class_method,
             } => {
-                let entry = (new_name.clone(), old_name.clone(), *is_class_method);
                 // An alias IS a definition, and ruby reports the NEW name.
                 // (The resolvable form never reaches here -- lowering turns it
                 // into a second `DefMethod`, which the arm above records.)
-                let (new_name_owned, singleton) = (new_name.clone(), *is_class_method);
+                let (new_name, old_name, singleton) =
+                    (new_name.clone(), old_name.clone(), *is_class_method);
+                let seq = next_def_seq(compiler);
+                let entry = (new_name.clone(), old_name, singleton, seq);
+                let new_name_owned = new_name;
                 let def = crate::compiler::SiteDef {
-                    seq: next_def_seq(compiler),
+                    seq,
                     at: compiler.class_body_sites[site_idx].stmts.len(),
                     node: stmt,
                     name: new_name_owned,
@@ -2417,11 +2421,30 @@ fn next_def_seq(compiler: &mut Compiler) -> u32 {
 /// so append-only registration would silently keep dispatching the OLD
 /// body). Instance and class methods are separate namespaces, hence the
 /// separate lists.
+///
+/// The superseded row is not lost: every registration also lands in
+/// `ClassInfo::method_history` in execution order, which is what lets a
+/// deferred alias bind the body that existed when it ran. See
+/// `mro::resolve_aliases`.
 fn add_own_method(
     compiler: &mut Compiler,
     class_id: ClassId,
     sid: crate::compiler::ScopeId,
     is_class_method: bool,
+) {
+    let seq = next_def_seq(compiler);
+    add_own_method_at(compiler, class_id, sid, is_class_method, seq);
+}
+
+/// [`add_own_method`] with an explicit history position -- used by
+/// `mro::resolve_aliases`, whose clone must sit at the ALIAS's own seq so a
+/// later alias of the alias resolves position-correctly.
+pub(crate) fn add_own_method_at(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    sid: crate::compiler::ScopeId,
+    is_class_method: bool,
+    seq: u32,
 ) {
     let mname = compiler.scope(sid).name.clone();
     let ci = &compiler.classes[class_id.0 as usize];
@@ -2441,6 +2464,7 @@ fn add_own_method(
         Some(i) => list[i] = sid,
         None => list.push(sid),
     }
+    ci.method_history.push((mname, is_class_method, seq, sid));
 }
 
 /// Registers one class/module-body `def` as an own method: builds its `Scope`

@@ -1,10 +1,11 @@
-//! Program entry: the generated program's top level runs directly on the
-//! REAL OS main thread, with its scheduling context installed and the
-//! process Gvl held for the duration (see `gvl` -- the Gvl is DISABLED by
-//! default, so "held" is free and Ruby `Thread`s run truly parallel;
-//! `ZEO_GVL=1` arms CRuby-fidelity serialized scheduling). Every
-//! `Thread.new` is its own OS thread (`thread`); `Fiber`'s corosensei
-//! coroutines nest inside whichever thread resumes them.
+//! Program entry: the generated program's top level runs on a dedicated
+//! big-stack thread (the OS main thread just joins it -- see `run_main`),
+//! with its scheduling context installed and the process Gvl held for the
+//! duration (see `gvl` -- the Gvl is DISABLED by default, so "held" is free
+//! and Ruby `Thread`s run truly parallel; `ZEO_GVL=1` arms CRuby-fidelity
+//! serialized scheduling). Every `Thread.new` is its own OS thread
+//! (`thread`); `Fiber`'s corosensei coroutines nest inside whichever thread
+//! resumes them.
 //!
 //! `Kernel#at_exit` handlers run in REVERSE registration order (CRuby's
 //! rule) after the top-level body finishes -- including via `exit` (see
@@ -34,7 +35,26 @@ pub fn run_main<F>(body: F) -> Result<RubyValue, Signal>
 where
     F: FnOnce() -> Result<RubyValue, Signal> + Send + 'static,
 {
-    let _ctx = crate::gvl::install_ctx();
-    let _held = crate::gvl::process_gvl().hold();
-    body()
+    // A dedicated thread rather than the OS main: the main thread's stack is
+    // a ulimit the program doesn't control (8MB typically), and unoptimized
+    // native frames blow through it at recursion depths CRuby handles
+    // routinely. 64MB keeps the depth platform-independent. `Thread.current`
+    // still answers the main-thread object here (`thread::CURRENT` is only
+    // set by `Thread.new` bodies), and the sole-thread ivar path stays valid
+    // because the real main only blocks in `join` and touches no Ruby object
+    // (so no `note_thread_spawn`, deliberately).
+    let main = std::thread::Builder::new()
+        .name("ruby-main".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            crate::gvl::mark_sole_thread();
+            let _ctx = crate::gvl::install_ctx();
+            let _held = crate::gvl::process_gvl().hold();
+            body()
+        })
+        .expect("spawn the ruby main thread");
+    match main.join() {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }

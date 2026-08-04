@@ -1,0 +1,26 @@
+true
+[false, nil, nil, nil, nil]
+"must open syslog before write"
+[1, 2, 8, 8, 152]
+[0, 3, 4, 7]
+[8, 15]
+true
+[true, "zeo_golden", 3, 8, 255]
+"<#Syslog: opened=true, ident=\"zeo_golden\", options=3, facility=8, mask=255>"
+"syslog already open"
+31
+true
+["zeo_golden2", 8, 152]
+[false, nil]
+"<#Syslog: opened=false>"
+"syslog not opened"
+["zeo_blk", true]
+[true, false]
+3
+1
+184
+3
+"0.4.0"
+15
+Syslog::Logger
+0

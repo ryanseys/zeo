@@ -121,13 +121,27 @@ pub struct ClassInfo {
     /// through dynamic dispatch, where the overlay's tombstone is consulted.
     /// Pay-per-use -- a program with no conditional `undef` is untouched.
     pub runtime_undefs: std::collections::HashSet<String>,
-    /// `(new, old, is_class_method)` aliases whose source method is INHERITED
-    /// (not defined in this class's own body) -- recorded by
-    /// `analyze::register_class` from a `HirNode::AliasMethod` and resolved by
-    /// `mro::resolve_aliases` once the ancestor chain is linearized.
+    /// `(new, old, is_class_method, seq)` aliases whose source method is
+    /// INHERITED or lives in another body of this class (not defined earlier
+    /// in the SAME body -- that form is cloned at lowering, see
+    /// `lower::defs::push_alias`) -- recorded by `analyze::register_class`
+    /// from a `HirNode::AliasMethod` and resolved by `mro::resolve_aliases`
+    /// once the ancestor chain is linearized. `seq` is the alias's
+    /// [`SiteDef::seq`] position: an alias binds the body that existed WHEN
+    /// IT RAN, so resolution filters `method_history` against it.
     /// `is_class_method` (an `alias` inside `class << self`) resolves against
     /// `own_class_methods`. See `HirNode::AliasMethod`'s docs.
-    pub pending_aliases: Vec<(String, String, bool)>,
+    pub pending_aliases: Vec<(String, String, bool, u32)>,
+    /// Every own-method registration in execution order:
+    /// `(name, is_class_method, seq, scope)`. Unlike `own_methods`, where a
+    /// redefinition REPLACES the earlier row (last-`def`-wins is what dispatch
+    /// wants), the history keeps superseded entries -- `compiler.scopes` is
+    /// append-only, so the older bodies are still there to clone. This is
+    /// what lets `resolve_aliases` bind the body that existed when the alias
+    /// ran instead of the final one (the alias-chaining idiom: reopen, alias,
+    /// redefine -- resolving against the final table made the alias call
+    /// itself and the compiled program abort on a native stack overflow).
+    pub method_history: Vec<(String, bool, u32, ScopeId)>,
     /// Names from a `module_function :m` whose `m` is INHERITED rather than
     /// defined in this body -- recorded by `analyze::register_class` from a
     /// `HirNode::ModuleFunction` and resolved by `mro::resolve_module_functions`
@@ -647,6 +661,7 @@ impl Compiler {
                 undefined: std::collections::HashSet::new(),
                 runtime_undefs: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
+                method_history: Vec::new(),
                 pending_module_functions: Vec::new(),
                 builtin_aliases: Vec::new(),
                 visibility_overrides: Vec::new(),
@@ -1164,6 +1179,7 @@ impl Compiler {
             undefined: std::collections::HashSet::new(),
             runtime_undefs: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
+            method_history: Vec::new(),
             pending_module_functions: Vec::new(),
             builtin_aliases: Vec::new(),
             visibility_overrides: Vec::new(),

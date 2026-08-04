@@ -421,6 +421,18 @@ pub fn run_golden(
     // test process's cwd); absolutize it so ruby/the binary find it after we
     // `current_dir(run_cwd)`, and so source-path normalization matches.
     let rb = &std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
+
+    // A `.macos-only` sidecar marks a golden whose source or expected output
+    // is inherently macOS-specific (a hardcoded ioctl number, the errno
+    // constant surface, per-platform dlopen flag values) -- Linux CRuby would
+    // diverge from the committed macOS-oracle `.expected` exactly as zeo
+    // does. The file's content states the reason.
+    if cfg!(not(target_os = "macos"))
+        && std::fs::metadata(format!("{}.macos-only", rb.display())).is_ok()
+    {
+        return Ok(());
+    }
+
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
 

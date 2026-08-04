@@ -1,0 +1,1 @@
+The Errno constant surface is per-platform; this test walks the full macOS set (EAUTH, EBADMACHO, ...), which Linux ruby does not define.

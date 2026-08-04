@@ -1252,7 +1252,9 @@ fn crypt_impl(recv: &RubyValue, salt_arg: &RubyValue) -> Result<RubyValue, Signa
     let salt_c = CString::new(salt_trunc).expect("salt truncated at first NUL");
 
     // `crypt(3)` is an XSI extension the `libc` crate doesn't declare on every
-    // target, so bind it directly (it resolves from libSystem/libcrypt).
+    // target, so bind it directly. macOS resolves it from libSystem; glibc
+    // ships it in the separate libcrypt.
+    #[cfg_attr(target_os = "linux", link(name = "crypt"))]
     unsafe extern "C" {
         fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
     }
