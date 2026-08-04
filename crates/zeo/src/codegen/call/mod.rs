@@ -2187,6 +2187,37 @@ fn dispatch(
             && cx.compiler.method_in_chain(cid, name).is_none()
             && !crate::compiler::is_basic_object_method(name)
         {
+            // The name is provably absent from the chain, so this IS a miss --
+            // and a miss is `method_missing`'s whole job. A blank slate is
+            // where that matters most: `BasicObject` has seven methods, so
+            // catching the rest is what the class is FOR, and `respond_to?` is
+            // itself one of the names that must arrive at the hook rather than
+            // being answered universally.
+            //
+            // Dispatched here rather than left to the runtime because falling
+            // through would reach the universal fast paths below, which answer
+            // `class`/`inspect`/`respond_to?` from static type info without
+            // ever walking the chain that does not contain them.
+            if cx.compiler.method_in_chain(cid, "method_missing").is_some() {
+                let mm = super::pooled_sym("method_missing");
+                let name_sym = super::pooled_sym(name);
+                let arg_exprs = args.iter().map(|&a| {
+                    let e = crate::codegen::expr::emit_expr(cx, a);
+                    crate::codegen::expr::box_if_object_typed(cx, a, e)
+                });
+                let blk = emit_block_option(cx, block, block_arg);
+                // A statically-typed receiver is a bare `Arc<Concrete>`; the
+                // dynamic channel takes a `RubyValue`.
+                let class_ident = super::ident::class_ident(cx.compiler, cid);
+                return quote! {
+                    zeo_rt::send_value_in(#__bx,
+                        &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
+                        #mm,
+                        &[zeo_rt::RubyValue::Symbol(#name_sym), #(#arg_exprs),*],
+                        #blk,
+                    )?
+                };
+            }
             let describe = format!("an instance of {}", cx.compiler.class(cid).name);
             let msg = format!("undefined method '{name}' for {describe}");
             // Typed `?`-propagation rather than a bare `return`: this
