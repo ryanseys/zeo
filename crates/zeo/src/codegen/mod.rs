@@ -522,7 +522,17 @@ pub(crate) fn scope_frame_guard(
     // The `def`'s `end` line, `TracePoint`'s `:return` lineno; a scope
     // located only through its body (no `def_node`) stays 0 = untraced.
     let end_line = scope.def_node.map_or(0, |n| source_end_line(compiler, n));
-    quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
+    // The stack probe rides the prologue, INSIDE the guard's initializer so
+    // this stays one statement (`zeo_tramp!` splices it as `$frame:stmt`):
+    // every compiled method checks its depth against the execution context's
+    // floor, making runaway recursion a rescuable SystemStackError instead
+    // of a native stack-overflow abort.
+    quote! {
+        let __frame = {
+            zeo_rt::stack_check()?;
+            zeo_rt::FrameGuard::push(#file, #label, #line, #end_line)
+        };
+    }
 }
 
 /// The frame label of the scope ENCLOSING the current emission position --

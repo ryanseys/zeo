@@ -202,9 +202,15 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
     let id = NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed);
     // The first input becomes the block's args -- or, if the very first thing
     // done to the fiber is `#raise`, the body raises before running at all.
-    let coro = crate::coroutine::new_fiber(move |first: FiberInput| match first {
-        FiberInput::Resume(args) | FiberInput::Transfer(args) => body.call(&args),
-        FiberInput::Raise(exc) => Err(Signal::Raise(exc)),
+    let coro = crate::coroutine::new_fiber(move |first: FiberInput| {
+        // Running on the coroutine's own (heap-allocated) stack now: the
+        // thread's pthread bounds are wrong here, so install this stack's
+        // own overflow floor before any compiled prologue checks it.
+        crate::stack_guard::set_floor(crate::stack_guard::fiber_floor_here());
+        match first {
+            FiberInput::Resume(args) | FiberInput::Transfer(args) => body.call(&args),
+            FiberInput::Raise(exc) => Err(Signal::Raise(exc)),
+        }
     });
     FIBERS.with(|f| f.borrow_mut().insert(id, coro));
     // Inherit the creating fiber's storage (CRuby copies it at creation).

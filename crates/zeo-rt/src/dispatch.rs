@@ -4130,6 +4130,10 @@ fn send_value_in_reason(
     block: Option<RubyValue>,
     reason: MissingReason,
 ) -> Result<RubyValue, Signal> {
+    // Recursion that never re-enters a compiled prologue (method_missing
+    // self-forwarding, builtin-row cycles) still deepens the native stack --
+    // check here as the prologues do.
+    crate::stack_guard::stack_check()?;
     if let RubyValue::Object(o) = recv {
         return send_in_reason(box_id, o, name, args, block, reason);
     }

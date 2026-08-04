@@ -362,7 +362,15 @@ pub(crate) fn emit_proc_or_lambda_value(
             };
             // end_line 0: a block frame fires no entry/exit trace events
             // (CRuby's `:b_call`/`:b_return`, which zeo does not ship).
-            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, 0); }
+            // The stack probe rides in the guard's initializer as in
+            // `scope_frame_guard`: a lambda recursing through a captured
+            // local never re-enters a method prologue.
+            quote! {
+                let __frame = {
+                    zeo_rt::stack_check()?;
+                    zeo_rt::FrameGuard::push(#file, #label, #line, 0)
+                };
+            }
         }
         None => quote! {},
     };

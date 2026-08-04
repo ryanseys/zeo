@@ -27,6 +27,10 @@ pub struct Ec {
     home_stack: Vec<crate::signal::ProcHome>,
     catch_tags: Vec<RubyValue>,
     frames: Vec<crate::frames::Frame>,
+    /// The stack-overflow check floor (`stack_guard`) -- each fiber runs on
+    /// its own coroutine stack with its own floor. `0` (a fresh context) =
+    /// unchecked until the fiber entry derives one.
+    stack_floor: usize,
 }
 
 /// Install `ec` as the ambient execution context, returning the previous
@@ -38,5 +42,6 @@ pub fn swap(ec: Ec) -> Ec {
         home_stack: crate::signal::swap_home_stack(ec.home_stack),
         catch_tags: crate::builtins::kernel::swap_catch_tags(ec.catch_tags),
         frames: crate::frames::swap_stack(ec.frames),
+        stack_floor: crate::stack_guard::set_floor(ec.stack_floor),
     }
 }

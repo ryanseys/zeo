@@ -45,6 +45,7 @@ mod regexp;
 mod rproc;
 mod runtime_meta;
 mod signal;
+mod stack_guard;
 mod symbol;
 mod thread;
 mod tramp;
@@ -156,6 +157,7 @@ pub use runtime_meta::{
     with_pending_defs,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
+pub use stack_guard::stack_check;
 pub use symbol::Symbol;
 pub use thread::{
     MutexData, QueueData, RMutex, RQueue, RThread, ThreadData, mutex_lock, mutex_locked, mutex_new,

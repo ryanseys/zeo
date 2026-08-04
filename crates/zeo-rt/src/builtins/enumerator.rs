@@ -530,6 +530,8 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     let id = NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed);
     let source = e.source.clone();
     let coro: EnumCoro = crate::coroutine::new_fiber(move |_: Vec<RubyValue>| {
+        // See `fiber_new`: the coroutine stack needs its own overflow floor.
+        crate::stack_guard::set_floor(crate::stack_guard::fiber_floor_here());
         let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
             // `y.yield` suspends, then returns the value `#feed` injected on the
             // resume (empty resume -> nil), so `got = y.yield(x)` sees it.

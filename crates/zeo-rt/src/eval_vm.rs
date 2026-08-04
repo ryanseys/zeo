@@ -365,6 +365,8 @@ mod imp {
     }
 
     fn eval_node(node: &Node<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
+        // The interpreter recurses on the native stack too.
+        crate::stack_guard::stack_check()?;
         // ---- literals -------------------------------------------------------
         if let Some(int) = node.as_integer_node() {
             // prism's own arbitrary-precision value (LSB-first u32 digits);
