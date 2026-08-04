@@ -244,6 +244,17 @@ pub(crate) fn emit_proc_or_lambda_value(
     }
 
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
+    // A real `def` written inside a block still creates an ordinary method, and
+    // ruby names a frame after the method it creates, never after where the
+    // `def` was written -- `Object#c1`, not `block (2 levels) in Object#c1`.
+    // The depth restarts here so blocks nested in the body count from the
+    // method (`block in Object#c1`). A `define_method` body is genuinely the
+    // block ruby labels it as (`block in <class:Named>`), so it keeps the
+    // enclosing depth.
+    let defines_a_method = method_body && !cx.defined_by_define_method;
+    if defines_a_method {
+        proc_cx.block_depth = 0;
+    }
     // Whether THIS closure's body has a `__blk` in scope, for nested blocks'
     // own forwarding captures: a method-body closure names its call-site
     // block param `__blk` when `needs_blk_param`; an ordinary closure has
@@ -345,6 +356,8 @@ pub(crate) fn emit_proc_or_lambda_value(
         Some((file, line)) => {
             let base = crate::codegen::enclosing_frame_label(cx);
             let label = match proc_cx.block_depth {
+                // Depth 0 is a `def`'s own body -- the method IS the frame.
+                0 => base,
                 1 => format!("block in {base}"),
                 n => format!("block ({n} levels) in {base}"),
             };
