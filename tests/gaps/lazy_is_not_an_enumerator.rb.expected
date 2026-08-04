@@ -1,0 +1,13 @@
+Enumerator
+[Enumerator::Lazy, Enumerator, Enumerable]
+first: Enumerable
+each: Enumerator
+to_a: Enumerable
+inspect: Enumerator
+size: Enumerator
+next: Enumerator
+peek: Enumerator
+rewind: Enumerator
+force: Enumerator::Lazy
+eager: Enumerator::Lazy
+"#<Enumerator::Lazy: #<Enumerator::Lazy: 1..3>:zip([1, 2, 3])>"

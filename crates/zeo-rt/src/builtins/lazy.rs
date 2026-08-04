@@ -19,12 +19,22 @@ use crate::builtins::arg_error;
 use crate::builtins::enumerator::{enumerator_for, pull_next};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
+use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::sync::Arc;
 use zeo_abi::LAZY_CLASS;
 use zeo_macros::ruby_class;
 
-/// One link in a lazy chain. Block-bearing ops store the block; `Take`/`Drop`
+/// One link in a lazy chain: the operation plus the NAME that built it.
+/// CRuby stores the same pair, which is why `inspect` can print the chain
+/// back as it was written -- `select` and `filter` share one implementation
+/// but are two different names to a reader.
+struct Link {
+    name: &'static str,
+    op: LazyOp,
+}
+
+/// What one link does. Block-bearing ops store the block; `Take`/`Drop`
 /// store a count; `Grep` stores its `===` pattern, whether to invert
 /// (`grep_v`), and an optional map block.
 enum LazyOp {
@@ -41,8 +51,10 @@ enum LazyOp {
     Uniq(Option<RProc>),
     Compact,
     /// Pairs each value with an incrementing index (`with_index([offset])`),
-    /// yielding `[value, index]`.
-    WithIndex(i64),
+    /// yielding `[value, index]`. WITH a block the block sees `(value, index)`
+    /// and the ORIGINAL value flows on -- the block observes, it does not map
+    /// (CRuby's `lazy_with_index`).
+    WithIndex(i64, Option<RProc>),
     /// Every window of `n` CONSECUTIVE values, as an Array. A source shorter
     /// than `n` yields nothing.
     EachCons(usize),
@@ -66,7 +78,7 @@ enum OpState {
 impl OpState {
     fn for_op(op: &LazyOp) -> OpState {
         match op {
-            LazyOp::Take(_) | LazyOp::Drop(_) | LazyOp::WithIndex(_) => OpState::Count(0),
+            LazyOp::Take(_) | LazyOp::Drop(_) | LazyOp::WithIndex(..) => OpState::Count(0),
             LazyOp::DropWhile(_) => OpState::Dropping(true),
             LazyOp::Uniq(_) => OpState::Seen(HashSet::new()),
             LazyOp::EachCons(_) | LazyOp::EachSlice(_) => OpState::Window(Vec::new()),
@@ -77,7 +89,13 @@ impl OpState {
 
 pub struct RLazy {
     source: RubyValue,
-    ops: Vec<LazyOp>,
+    links: Vec<Link>,
+    /// `next`/`peek`'s iteration, built on first use: an ordinary Enumerator
+    /// over this very lazy's `each`. CRuby gets external iteration for free
+    /// because `Enumerator::Lazy < Enumerator`; here one enumerator held on
+    /// the side buys the same thing, and the chain still only advances as far
+    /// as each `next` asks for.
+    external: Mutex<Option<RubyValue>>,
 }
 
 impl RubyObject for RLazy {
@@ -98,9 +116,12 @@ impl RubyObject for RLazy {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
+        // The copy starts un-iterated, like `Enumerator#dup` (`fresh_copy`):
+        // an in-flight fiber belongs to the object that started it.
         Arc::new(RLazy {
             source: self.source.clone(),
-            ops: clone_ops(&self.ops),
+            links: clone_links(&self.links),
+            external: Mutex::new(None),
         })
     }
 }
@@ -118,7 +139,8 @@ fn source_size(source: &RubyValue) -> RubyValue {
 pub(crate) fn make_lazy(source: &RubyValue) -> RubyValue {
     RubyValue::Object(Arc::new(RLazy {
         source: source.clone(),
-        ops: Vec::new(),
+        links: Vec::new(),
+        external: Mutex::new(None),
     }))
 }
 
@@ -132,36 +154,41 @@ fn lazy_of(recv: &RubyValue) -> &RLazy {
     }
 }
 
-fn clone_ops(ops: &[LazyOp]) -> Vec<LazyOp> {
-    ops.iter()
-        .map(|op| match op {
-            LazyOp::Map(p) => LazyOp::Map(p.clone()),
-            LazyOp::FlatMap(p) => LazyOp::FlatMap(p.clone()),
-            LazyOp::FilterMap(p) => LazyOp::FilterMap(p.clone()),
-            LazyOp::Select(p) => LazyOp::Select(p.clone()),
-            LazyOp::Reject(p) => LazyOp::Reject(p.clone()),
-            LazyOp::TakeWhile(p) => LazyOp::TakeWhile(p.clone()),
-            LazyOp::DropWhile(p) => LazyOp::DropWhile(p.clone()),
-            LazyOp::Take(n) => LazyOp::Take(*n),
-            LazyOp::Drop(n) => LazyOp::Drop(*n),
-            LazyOp::Grep(pat, inv, blk) => LazyOp::Grep(pat.clone(), *inv, blk.clone()),
-            LazyOp::Uniq(k) => LazyOp::Uniq(k.clone()),
-            LazyOp::Compact => LazyOp::Compact,
-            LazyOp::WithIndex(n) => LazyOp::WithIndex(*n),
-            LazyOp::EachCons(n) => LazyOp::EachCons(*n),
-            LazyOp::EachSlice(n) => LazyOp::EachSlice(*n),
+fn clone_links(links: &[Link]) -> Vec<Link> {
+    links
+        .iter()
+        .map(|l| Link {
+            name: l.name,
+            op: match &l.op {
+                LazyOp::Map(p) => LazyOp::Map(p.clone()),
+                LazyOp::FlatMap(p) => LazyOp::FlatMap(p.clone()),
+                LazyOp::FilterMap(p) => LazyOp::FilterMap(p.clone()),
+                LazyOp::Select(p) => LazyOp::Select(p.clone()),
+                LazyOp::Reject(p) => LazyOp::Reject(p.clone()),
+                LazyOp::TakeWhile(p) => LazyOp::TakeWhile(p.clone()),
+                LazyOp::DropWhile(p) => LazyOp::DropWhile(p.clone()),
+                LazyOp::Take(n) => LazyOp::Take(*n),
+                LazyOp::Drop(n) => LazyOp::Drop(*n),
+                LazyOp::Grep(pat, inv, blk) => LazyOp::Grep(pat.clone(), *inv, blk.clone()),
+                LazyOp::Uniq(k) => LazyOp::Uniq(k.clone()),
+                LazyOp::Compact => LazyOp::Compact,
+                LazyOp::WithIndex(n, blk) => LazyOp::WithIndex(*n, blk.clone()),
+                LazyOp::EachCons(n) => LazyOp::EachCons(*n),
+                LazyOp::EachSlice(n) => LazyOp::EachSlice(*n),
+            },
         })
         .collect()
 }
 
-/// A new lazy that is `recv` with `op` appended.
-fn extend(recv: &RubyValue, op: LazyOp) -> RubyValue {
+/// A new lazy that is `recv` with one more link appended.
+fn extend(recv: &RubyValue, name: &'static str, op: LazyOp) -> RubyValue {
     let l = lazy_of(recv);
-    let mut ops = clone_ops(&l.ops);
-    ops.push(op);
+    let mut links = clone_links(&l.links);
+    links.push(Link { name, op });
     RubyValue::Object(Arc::new(RLazy {
         source: l.source.clone(),
-        ops,
+        links,
+        external: Mutex::new(None),
     }))
 }
 
@@ -171,6 +198,49 @@ fn need_block(block: Option<RubyValue>, meth: &str) -> Result<RProc, Signal> {
         Some(RubyValue::Proc(p)) => Ok(p),
         _ => Err(arg_error!("tried to call lazy {meth} without a block")),
     }
+}
+
+/// A block where one is optional.
+fn opt_block(block: Option<RubyValue>) -> Option<RProc> {
+    match block {
+        Some(RubyValue::Proc(p)) => Some(p),
+        _ => None,
+    }
+}
+
+/// The three ops that answer to more than one name. The name reaches the
+/// chain (for `inspect`); the missing-block message keeps CRuby's canonical
+/// one, so `lazy.find_all` reports "lazy select".
+fn mapping(
+    recv: &RubyValue,
+    block: Option<RubyValue>,
+    name: &'static str,
+) -> Result<RubyValue, Signal> {
+    Ok(extend(recv, name, LazyOp::Map(need_block(block, "map")?)))
+}
+
+fn flat_mapping(
+    recv: &RubyValue,
+    block: Option<RubyValue>,
+    name: &'static str,
+) -> Result<RubyValue, Signal> {
+    Ok(extend(
+        recv,
+        name,
+        LazyOp::FlatMap(need_block(block, "flat_map")?),
+    ))
+}
+
+fn filtering(
+    recv: &RubyValue,
+    block: Option<RubyValue>,
+    name: &'static str,
+) -> Result<RubyValue, Signal> {
+    Ok(extend(
+        recv,
+        name,
+        LazyOp::Select(need_block(block, "select")?),
+    ))
 }
 
 fn count_arg(v: &RubyValue, meth: &str) -> Result<i64, Signal> {
@@ -188,13 +258,15 @@ enum Flow {
 }
 
 /// Where a driven value ends up: collected into a bounded buffer
-/// (`first`/`to_a`/`force`) or handed to a block (`each`).
+/// (`first`/`to_a`/`force`), handed to a block (`each`), or dropped -- the
+/// chain was run for a block's side effects alone (`each_with_index`).
 enum Sink<'a> {
     Collect {
         out: &'a mut Vec<RubyValue>,
         limit: Option<usize>,
     },
     Each(&'a RProc),
+    Drain,
 }
 
 impl Sink<'_> {
@@ -212,30 +284,31 @@ impl Sink<'_> {
                 p.call(std::slice::from_ref(&val))?;
                 Ok(Flow::Continue)
             }
+            Sink::Drain => Ok(Flow::Continue),
         }
     }
 }
 
-/// Pushes one value through `ops[idx..]` into `sink`. Returns `Stop` the
+/// Pushes one value through `links[idx..]` into `sink`. Returns `Stop` the
 /// moment nothing more should be pulled from the source.
 fn push(
-    ops: &[LazyOp],
+    links: &[Link],
     st: &mut [OpState],
     idx: usize,
     val: RubyValue,
     sink: &mut Sink,
 ) -> Result<Flow, Signal> {
-    if idx == ops.len() {
+    if idx == links.len() {
         return sink.accept(val);
     }
-    match &ops[idx] {
+    match &links[idx].op {
         LazyOp::Map(p) => {
             let v = p.call(std::slice::from_ref(&val))?;
-            push(ops, st, idx + 1, v, sink)
+            push(links, st, idx + 1, v, sink)
         }
         LazyOp::Select(p) => {
             if p.call(std::slice::from_ref(&val))?.truthy() {
-                push(ops, st, idx + 1, val, sink)
+                push(links, st, idx + 1, val, sink)
             } else {
                 Ok(Flow::Continue)
             }
@@ -244,13 +317,13 @@ fn push(
             if p.call(std::slice::from_ref(&val))?.truthy() {
                 Ok(Flow::Continue)
             } else {
-                push(ops, st, idx + 1, val, sink)
+                push(links, st, idx + 1, val, sink)
             }
         }
         LazyOp::FilterMap(p) => {
             let v = p.call(std::slice::from_ref(&val))?;
             if v.truthy() {
-                push(ops, st, idx + 1, v, sink)
+                push(links, st, idx + 1, v, sink)
             } else {
                 Ok(Flow::Continue)
             }
@@ -261,13 +334,13 @@ fn push(
                 RubyValue::Array(a) => {
                     let elems = a.lock().clone();
                     for e in elems {
-                        if push(ops, st, idx + 1, e, sink)? == Flow::Stop {
+                        if push(links, st, idx + 1, e, sink)? == Flow::Stop {
                             return Ok(Flow::Stop);
                         }
                     }
                     Ok(Flow::Continue)
                 }
-                other => push(ops, st, idx + 1, other, sink),
+                other => push(links, st, idx + 1, other, sink),
             }
         }
         LazyOp::Grep(pat, invert, blk) => {
@@ -279,7 +352,7 @@ fn push(
                     Some(p) => p.call(std::slice::from_ref(&val))?,
                     None => val,
                 };
-                push(ops, st, idx + 1, v, sink)
+                push(links, st, idx + 1, v, sink)
             } else {
                 Ok(Flow::Continue)
             }
@@ -288,10 +361,10 @@ fn push(
             if val.is_nil() {
                 Ok(Flow::Continue)
             } else {
-                push(ops, st, idx + 1, val, sink)
+                push(links, st, idx + 1, val, sink)
             }
         }
-        LazyOp::WithIndex(offset) => {
+        LazyOp::WithIndex(offset, blk) => {
             let i = match &mut st[idx] {
                 OpState::Count(c) => {
                     let cur = *c;
@@ -300,12 +373,23 @@ fn push(
                 }
                 _ => unreachable!("WithIndex state"),
             };
-            let paired = RubyValue::Array(array_new(vec![val, RubyValue::Int(offset + i)]));
-            push(ops, st, idx + 1, paired, sink)
+            let index = RubyValue::Int(offset + i);
+            match blk {
+                // The block is handed BOTH values and its answer is discarded;
+                // what flows on is the value itself.
+                Some(p) => {
+                    p.call(&[val.clone(), index])?;
+                    push(links, st, idx + 1, val, sink)
+                }
+                None => {
+                    let paired = RubyValue::Array(array_new(vec![val, index]));
+                    push(links, st, idx + 1, paired, sink)
+                }
+            }
         }
         LazyOp::TakeWhile(p) => {
             if p.call(std::slice::from_ref(&val))?.truthy() {
-                push(ops, st, idx + 1, val, sink)
+                push(links, st, idx + 1, val, sink)
             } else {
                 Ok(Flow::Stop)
             }
@@ -318,7 +402,7 @@ fn push(
                 }
                 st[idx] = OpState::Dropping(false);
             }
-            push(ops, st, idx + 1, val, sink)
+            push(links, st, idx + 1, val, sink)
         }
         LazyOp::Take(n) => {
             let (over, last) = match &mut st[idx] {
@@ -332,7 +416,7 @@ fn push(
             if over {
                 return Ok(Flow::Stop);
             }
-            let flow = push(ops, st, idx + 1, val, sink)?;
+            let flow = push(links, st, idx + 1, val, sink)?;
             Ok(if flow == Flow::Stop || last {
                 Flow::Stop
             } else {
@@ -351,7 +435,7 @@ fn push(
             if skip {
                 Ok(Flow::Continue)
             } else {
-                push(ops, st, idx + 1, val, sink)
+                push(links, st, idx + 1, val, sink)
             }
         }
         LazyOp::EachCons(n) => {
@@ -368,7 +452,13 @@ fn push(
                 }
                 _ => unreachable!("EachCons state"),
             };
-            push(ops, st, idx + 1, RubyValue::Array(array_new(window)), sink)
+            push(
+                links,
+                st,
+                idx + 1,
+                RubyValue::Array(array_new(window)),
+                sink,
+            )
         }
         LazyOp::EachSlice(n) => {
             let slice = match &mut st[idx] {
@@ -381,7 +471,7 @@ fn push(
                 }
                 _ => unreachable!("EachSlice state"),
             };
-            push(ops, st, idx + 1, RubyValue::Array(array_new(slice)), sink)
+            push(links, st, idx + 1, RubyValue::Array(array_new(slice)), sink)
         }
         LazyOp::Uniq(key) => {
             let probe = match key {
@@ -394,7 +484,7 @@ fn push(
                 _ => unreachable!("Uniq state"),
             };
             if fresh {
-                push(ops, st, idx + 1, val, sink)
+                push(links, st, idx + 1, val, sink)
             } else {
                 Ok(Flow::Continue)
             }
@@ -417,16 +507,16 @@ fn pack(mut vals: Vec<RubyValue>) -> RubyValue {
 /// short final run. `each_cons` holds a partial window, which is never a
 /// window, so it emits nothing. Runs left to right, so an earlier op's leftover
 /// reaches a later one before that one flushes in turn.
-fn flush(ops: &[LazyOp], st: &mut [OpState], sink: &mut Sink) -> Result<(), Signal> {
-    for idx in 0..ops.len() {
-        if !matches!(ops[idx], LazyOp::EachSlice(_)) {
+fn flush(links: &[Link], st: &mut [OpState], sink: &mut Sink) -> Result<(), Signal> {
+    for idx in 0..links.len() {
+        if !matches!(links[idx].op, LazyOp::EachSlice(_)) {
             continue;
         }
         let rest = match &mut st[idx] {
             OpState::Window(buf) if !buf.is_empty() => std::mem::take(buf),
             _ => continue,
         };
-        if push(ops, st, idx + 1, RubyValue::Array(array_new(rest)), sink)? == Flow::Stop {
+        if push(links, st, idx + 1, RubyValue::Array(array_new(rest)), sink)? == Flow::Stop {
             return Ok(());
         }
     }
@@ -442,13 +532,55 @@ fn drive(lazy: &RLazy, sink: &mut Sink) -> Result<(), Signal> {
     let RubyValue::Enumerator(e) = &src else {
         unreachable!("enumerator_for always builds an Enumerator");
     };
-    let mut st: Vec<OpState> = lazy.ops.iter().map(OpState::for_op).collect();
+    let mut st: Vec<OpState> = lazy.links.iter().map(|l| OpState::for_op(&l.op)).collect();
     while let Some(vals) = pull_next(e)? {
-        if push(&lazy.ops, &mut st, 0, pack(vals), sink)? == Flow::Stop {
+        if push(&lazy.links, &mut st, 0, pack(vals), sink)? == Flow::Stop {
             return Ok(());
         }
     }
-    flush(&lazy.ops, &mut st, sink)
+    flush(&lazy.links, &mut st, sink)
+}
+
+/// One link as `inspect` prints it: the method name, plus the arguments it
+/// captured for the ops that take any. A block is never shown -- CRuby prints
+/// `:select`, not the block it holds.
+fn link_label(link: &Link) -> String {
+    let args = match &link.op {
+        LazyOp::Take(n) | LazyOp::Drop(n) => format!("({n})"),
+        LazyOp::EachCons(n) | LazyOp::EachSlice(n) => format!("({n})"),
+        LazyOp::Grep(pat, ..) => format!("({})", pat.inspect_string()),
+        // `each_with_index` takes no offset, so only `with_index` shows one.
+        LazyOp::WithIndex(offset, _) if link.name == "with_index" => format!("({offset})"),
+        _ => String::new(),
+    };
+    format!("{}{args}", link.name)
+}
+
+/// The chain, printed outside-in: every link wraps what came before it, so
+/// `(1..3).lazy.map { }` reads as `#<Enumerator::Lazy: #<Enumerator::Lazy:
+/// 1..3>:map>`. CRuby builds the same string by recursion, because there each
+/// link IS a lazy holding the previous one.
+fn chain_inspect(lazy: &RLazy) -> Result<String, Signal> {
+    let mut s = format!("#<Enumerator::Lazy: {}>", lazy.source.try_inspect_string()?);
+    for link in &lazy.links {
+        s = format!("#<Enumerator::Lazy: {s}:{}>", link_label(link));
+    }
+    Ok(s)
+}
+
+/// The enumerator `next`/`peek`/`rewind` share -- one per lazy, built the
+/// first time external iteration asks for it.
+fn external_iter(recv: &RubyValue) -> RubyValue {
+    lazy_of(recv)
+        .external
+        .lock()
+        .get_or_insert_with(|| enumerator_for(recv, "each", &[]))
+        .clone()
+}
+
+/// Hands one external-iteration call to that enumerator.
+fn iterate(recv: &RubyValue, meth: &str) -> Result<RubyValue, Signal> {
+    crate::dispatch::send_value(&external_iter(recv), crate::Symbol::intern(meth), &[], None)
 }
 
 /// `each_cons`/`each_slice` -- one grouping op appended. WITH a block CRuby
@@ -467,14 +599,11 @@ fn each_group(
         args,
         if slice { "each_slice" } else { "each_cons" },
     )?;
-    let grouped = extend(
-        recv,
-        if slice {
-            LazyOp::EachSlice(n)
-        } else {
-            LazyOp::EachCons(n)
-        },
-    );
+    let grouped = if slice {
+        extend(recv, "each_slice", LazyOp::EachSlice(n))
+    } else {
+        extend(recv, "each_cons", LazyOp::EachCons(n))
+    };
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(grouped);
     };
@@ -504,8 +633,8 @@ ruby_class! {
     def "size"(recv) {
         let lz = lazy_of(recv);
         let mut size = source_size(&lz.source);
-        for op in &lz.ops {
-            size = match (op, size) {
+        for link in &lz.links {
+            size = match (&link.op, size) {
                 (LazyOp::Map(_) | LazyOp::Compact, s) => s,
                 (LazyOp::Take(n), RubyValue::Int(s)) => RubyValue::Int(s.min(*n)),
                 // `take` bounds even an endless source.
@@ -530,61 +659,69 @@ ruby_class! {
         Ok(size)
     }
 
-    def "map" | "collect"(recv, &block) {
-        Ok(extend(recv, LazyOp::Map(need_block(block, "map")?)))
-    }
-    // `with_index([offset]) { |item, idx| ... }` -- lazily pairs each value with
-    // an incrementing index; blockless it yields the `[item, idx]` pairs, with a
-    // block it maps each pair through it (the block auto-splats the pair).
-    def "with_index" | "each_with_index" arity 0 (recv, arg?, &block) {
+    // Each alias appends the name it was CALLED by, so `inspect` prints the
+    // chain the way it was written. The missing-block message does not follow
+    // suit: `lazy.filter` reports "lazy select", CRuby's own wording.
+    def "map"(recv, &block) { mapping(recv, block, "map") }
+    def "collect"(recv, &block) { mapping(recv, block, "collect") }
+    def "flat_map"(recv, &block) { flat_mapping(recv, block, "flat_map") }
+    def "collect_concat"(recv, &block) { flat_mapping(recv, block, "collect_concat") }
+    def "select"(recv, &block) { filtering(recv, block, "select") }
+    def "filter"(recv, &block) { filtering(recv, block, "filter") }
+    def "find_all"(recv, &block) { filtering(recv, block, "find_all") }
+
+    // `with_index([offset]) { |item, idx| ... }` -- lazily pairs each value
+    // with an incrementing index. Blockless it yields the `[item, idx]` pairs;
+    // WITH a block the block sees the two and the item itself flows on.
+    def "with_index"(recv, arg?, &block) {
         let offset = match arg {
             Some(v) => crate::builtins::convert::to_index(v)?,
             None => 0,
         };
-        let indexed = extend(recv, LazyOp::WithIndex(offset));
-        match block {
-            Some(RubyValue::Proc(p)) => Ok(extend(&indexed, LazyOp::Map(p))),
-            _ => Ok(indexed),
-        }
+        Ok(extend(recv, "with_index", LazyOp::WithIndex(offset, opt_block(block))))
     }
-    def "flat_map" | "collect_concat"(recv, &block) {
-        Ok(extend(recv, LazyOp::FlatMap(need_block(block, "flat_map")?)))
+    // Unlike `with_index`, ruby does NOT give this one a lazy override, so a
+    // block reaches `Enumerator`'s row: the whole chain runs at once for the
+    // block's side effects and the receiver comes back. Blockless it stays
+    // lazy, through the `to_enum` this class does override.
+    def "each_with_index"(recv, &block) {
+        let blk = opt_block(block);
+        let indexed = extend(recv, "each_with_index", LazyOp::WithIndex(0, blk.clone()));
+        if blk.is_none() {
+            return Ok(indexed);
+        }
+        drive(lazy_of(&indexed), &mut Sink::Drain)?;
+        Ok(recv.clone())
     }
     def "filter_map"(recv, &block) {
-        Ok(extend(recv, LazyOp::FilterMap(need_block(block, "filter_map")?)))
-    }
-    def "select" | "filter" | "find_all"(recv, &block) {
-        Ok(extend(recv, LazyOp::Select(need_block(block, "select")?)))
+        Ok(extend(recv, "filter_map", LazyOp::FilterMap(need_block(block, "filter_map")?)))
     }
     def "reject"(recv, &block) {
-        Ok(extend(recv, LazyOp::Reject(need_block(block, "reject")?)))
+        Ok(extend(recv, "reject", LazyOp::Reject(need_block(block, "reject")?)))
     }
     def "take_while"(recv, &block) {
-        Ok(extend(recv, LazyOp::TakeWhile(need_block(block, "take_while")?)))
+        Ok(extend(recv, "take_while", LazyOp::TakeWhile(need_block(block, "take_while")?)))
     }
     def "drop_while"(recv, &block) {
-        Ok(extend(recv, LazyOp::DropWhile(need_block(block, "drop_while")?)))
+        Ok(extend(recv, "drop_while", LazyOp::DropWhile(need_block(block, "drop_while")?)))
     }
     def "take"(recv, arg) {
-        Ok(extend(recv, LazyOp::Take(count_arg(arg, "take")?)))
+        Ok(extend(recv, "take", LazyOp::Take(count_arg(arg, "take")?)))
     }
     def "drop"(recv, arg) {
-        Ok(extend(recv, LazyOp::Drop(count_arg(arg, "drop")?)))
+        Ok(extend(recv, "drop", LazyOp::Drop(count_arg(arg, "drop")?)))
     }
     def "grep"(recv, arg, &block) {
-        let blk = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
-        Ok(extend(recv, LazyOp::Grep((*arg).clone(), false, blk)))
+        Ok(extend(recv, "grep", LazyOp::Grep((*arg).clone(), false, opt_block(block))))
     }
     def "grep_v"(recv, arg, &block) {
-        let blk = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
-        Ok(extend(recv, LazyOp::Grep((*arg).clone(), true, blk)))
+        Ok(extend(recv, "grep_v", LazyOp::Grep((*arg).clone(), true, opt_block(block))))
     }
     def "uniq"(recv, &block) {
-        let key = match block { Some(RubyValue::Proc(p)) => Some(p), _ => None };
-        Ok(extend(recv, LazyOp::Uniq(key)))
+        Ok(extend(recv, "uniq", LazyOp::Uniq(opt_block(block))))
     }
     def "compact"(recv) {
-        Ok(extend(recv, LazyOp::Compact))
+        Ok(extend(recv, "compact", LazyOp::Compact))
     }
     // `each_cons(n)` / `each_slice(n)` -- lazy since ruby 3.1, so an infinite
     // source stays workable.
@@ -608,11 +745,10 @@ ruby_class! {
         }
     }
     // `#eager` -- the same sequence as a NON-lazy Enumerator, so every later
-    // `map`/`select` evaluates at once. Forcing here and enumerating the array
-    // is what makes the rest of the chain eager.
+    // `map`/`select` evaluates at once. An ordinary Enumerator over this very
+    // lazy is exactly that, and it still costs nothing until someone iterates.
     def "eager"(recv) {
-        let forced = crate::dispatch::send_value(recv, crate::Symbol::intern("force"), &[], None)?;
-        crate::dispatch::send_value(&forced, crate::Symbol::intern("each"), &[], None)
+        Ok(enumerator_for(recv, "each", &[]))
     }
     def "to_a" | "force" | "entries" cfunc (recv) {
         Ok(RubyValue::Array(array_new(collect(lazy_of(recv), None)?)))
@@ -627,11 +763,26 @@ ruby_class! {
             _ => Ok(recv.clone()),
         }
     }
-    def "inspect" | "to_s"(recv) {
-        let _ = recv;
-        // CRuby renders the full source+ops chain; this stable placeholder
-        // avoids an address in the output (a documented simplification).
-        Ok(RubyValue::Str(crate::string_new("#<Enumerator::Lazy>".to_string())))
+    // `to_s` is deliberately NOT an alias of this: CRuby leaves a lazy's
+    // `to_s` as `Object#to_s`, so it prints the address form.
+    def "inspect"(recv) {
+        Ok(RubyValue::Str(crate::string_new(chain_inspect(lazy_of(recv))?)))
+    }
+
+    // External iteration. CRuby inherits all four from `Enumerator`; here they
+    // ride one enumerator over this lazy's own `each`, which is what keeps
+    // `(1..).lazy.map { }.next` advancing the source one element at a time.
+    def "next"(recv) { iterate(recv, "next") }
+    def "next_values"(recv) { iterate(recv, "next_values") }
+    def "peek"(recv) { iterate(recv, "peek") }
+    def "peek_values"(recv) { iterate(recv, "peek_values") }
+
+    // Answers the LAZY, not the enumerator doing the iterating.
+    def "rewind"(recv) {
+        if lazy_of(recv).external.lock().is_some() {
+            iterate(recv, "rewind")?;
+        }
+        Ok(recv.clone())
     }
 
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
