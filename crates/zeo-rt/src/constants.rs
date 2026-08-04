@@ -285,6 +285,63 @@ pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
         .insert(Box::from(name), value);
 }
 
+/// Where each constant was assigned -- `(owner, name) -> (file, line)`, the
+/// answer behind `Module#const_source_location`. CRuby keeps it on the
+/// constant entry itself (`rb_const_entry_t`); a table beside the values keeps
+/// the read path -- the hot one -- exactly as wide as it was.
+///
+/// A REASSIGNMENT overwrites the record, the way CRuby's `setup_const_entry`
+/// does, so the location always names the write that is in force. A `class` or
+/// `module` reopen does not: it creates nothing, so nothing restamps it.
+static LOCATIONS: LazyLock<Mutex<crate::ScopedMap<SourceLine>>> =
+    LazyLock::new(|| Mutex::new(FMap::default()));
+
+/// Where one constant was written: the file, as the program names it, and the
+/// line. Both come from a compiled literal or a live frame, so neither is owned.
+type SourceLine = (&'static str, u32);
+
+/// Records where a constant that lives OUTSIDE the value table came from -- a
+/// `class`/`module` declaration, which the class registry holds.
+pub fn record_const_location(owner_class_id: u32, name: &str, file: &'static str, line: u32) {
+    LOCATIONS
+        .lock()
+        .entry(owner_class_id)
+        .or_default()
+        .insert(Box::from(name), (file, line));
+}
+
+/// [`const_set`] plus where the assignment was written.
+pub fn const_set_at(
+    owner_class_id: u32,
+    name: &str,
+    value: RubyValue,
+    file: &'static str,
+    line: u32,
+) {
+    const_set(owner_class_id, name, value);
+    record_const_location(owner_class_id, name, file, line);
+}
+
+/// Where `owner` -- or, unless `own_only`, anything it inherits from -- says
+/// `name` was assigned. `None` means nobody recorded one, which for a constant
+/// that DOES exist is CRuby's "defined in C" answer rather than a miss.
+pub fn const_location(owner_class_id: u32, name: &str, own_only: bool) -> Option<SourceLine> {
+    let map = LOCATIONS.lock();
+    let of = |id: u32| map.get(&id).and_then(|m| m.get(name)).copied();
+    if let Some(loc) = of(owner_class_id) {
+        return Some(loc);
+    }
+    if own_only {
+        return None;
+    }
+    crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id))
+        .iter()
+        .find_map(|anc| of(anc.0))
+        // A module's ancestry does not pass through `Object`, but the
+        // inheriting search consults it anyway -- `const_lookup`'s own rule.
+        .or_else(|| of(0))
+}
+
 /// Installs `ARGV` (the program's arguments, minus the binary name, as an
 /// Array of Strings) as a top-level constant -- called once from generated
 /// `main()`, mirroring CRuby's own startup. Reads resolve through the

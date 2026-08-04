@@ -189,8 +189,8 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
     // `Arc<parking_lot::Mutex<RubyValue>>`, and a bare `var_ident = ...`
     // reassignment would be a Rust type error against that, not just a
     // semantic gap.
-    let bind_array = emit_target_write(cx, target, quote! { __iter[__idx].clone() });
-    let bind_range = emit_target_write(cx, target, quote! { zeo_rt::RubyValue::Int(__i) });
+    let bind_array = emit_target_write(cx, target, quote! { __iter[__idx].clone() }, None);
+    let bind_range = emit_target_write(cx, target, quote! { zeo_rt::RubyValue::Int(__i) }, None);
 
     // `for` evaluates to the collection it iterated (CRuby: `for x in c; end`
     // returns `c`, the same object), unless the body `break`s with a value.
@@ -377,7 +377,14 @@ pub fn emit_redo(cx: &Ctx) -> TokenStream {
 /// every other call, with no bespoke attr/index-write codegen needed here
 /// at all (see `hir::MultiTarget::Call`'s docs). `Nested` recurses into
 /// `emit_multi_target_group`, further destructuring `value` itself.
-pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> TokenStream {
+/// `at` is the assignment's own node, where there is one: a constant target
+/// records where it was written (`Module#const_source_location`).
+pub fn emit_target_write(
+    cx: &Ctx,
+    target: &MultiTarget,
+    value: TokenStream,
+    at: Option<NodeId>,
+) -> TokenStream {
     match target {
         MultiTarget::Local(name) => super::hoisting::emit_local_write(cx, name, value),
         MultiTarget::Ivar(name) => super::expr::emit_ivar_write_stmt(cx, name, value),
@@ -386,9 +393,9 @@ pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> 
             let bx = cx.box_id;
             quote! { zeo_rt::global_assign(#bx, #name, #value)?; }
         }
-        MultiTarget::Const(name) => super::expr::emit_const_write_stmt(cx, None, name, value),
+        MultiTarget::Const(name) => super::expr::emit_const_write_stmt(cx, None, name, value, at),
         MultiTarget::ScopedConst { scope, name } => {
-            super::expr::emit_const_write_stmt(cx, Some(scope), name, value)
+            super::expr::emit_const_write_stmt(cx, Some(scope), name, value, at)
         }
         MultiTarget::Call {
             write_call,
@@ -398,7 +405,7 @@ pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> 
             let call = emit_expr(cx, *write_call);
             quote! { #bind let _ = #call; }
         }
-        MultiTarget::Nested(group) => emit_multi_target_group(cx, group, value),
+        MultiTarget::Nested(group) => emit_multi_target_group(cx, group, value, at),
     }
 }
 
@@ -415,6 +422,7 @@ pub fn emit_multi_target_group(
     cx: &Ctx,
     group: &crate::hir::MultiTargetGroup,
     value_expr: TokenStream,
+    at: Option<NodeId>,
 ) -> TokenStream {
     let n_before = group.before.len();
     let n_after = group.after.len();
@@ -424,17 +432,18 @@ pub fn emit_multi_target_group(
         .before
         .iter()
         .enumerate()
-        .map(|(i, t)| emit_target_write(cx, t, quote! { __before[#i].clone() }));
+        .map(|(i, t)| emit_target_write(cx, t, quote! { __before[#i].clone() }, at));
     let bind_after = group
         .after
         .iter()
         .enumerate()
-        .map(|(i, t)| emit_target_write(cx, t, quote! { __after[#i].clone() }));
+        .map(|(i, t)| emit_target_write(cx, t, quote! { __after[#i].clone() }, at));
     let bind_splat = match &group.splat {
         Some(Some(t)) => Some(emit_target_write(
             cx,
             t,
             quote! { zeo_rt::RubyValue::Array(zeo_rt::array_new(__splat)) },
+            at,
         )),
         _ => None,
     };
@@ -477,7 +486,7 @@ pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> 
             ))
         }
     };
-    emit_multi_target_group(cx, targets, value_expr)
+    emit_multi_target_group(cx, targets, value_expr, Some(value))
 }
 
 /// Sub-expression form of a multiple assignment: `result = (x, y = rhs)` or
@@ -502,7 +511,7 @@ pub fn emit_multi_write_value(cx: &Ctx, targets: &MultiTargetGroup, value: NodeI
             ))
         }
     };
-    let group = emit_multi_target_group(cx, targets, coerced);
+    let group = emit_multi_target_group(cx, targets, coerced, Some(value));
     quote! {
         {
             let __rhs = #value_expr;

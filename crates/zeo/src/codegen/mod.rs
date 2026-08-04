@@ -2341,10 +2341,11 @@ pub(crate) fn emit_class_body_site(
     // hard-codes (`declare_under` sets the constant, then `rb_class_inherited`,
     // then the body runs).
     let const_added = emit_declaration_const_added(compiler, site);
+    let const_location = emit_declaration_const_location(compiler, site);
     let inherited_hook = emit_inherited_hook(compiler, site);
     let stmts = &site.stmts;
     if stmts.is_empty() {
-        return quote! { #alias_check #const_added #inherited_hook };
+        return quote! { #alias_check #const_location #const_added #inherited_hook };
     }
     let label_counter = Cell::new(0u32);
     // A class body is an ordinary Ruby scope with ordinary locals, and an
@@ -2445,7 +2446,7 @@ pub(crate) fn emit_class_body_site(
         }
         None => quote! {},
     };
-    quote! { #const_added #inherited_hook { #frame #body }?; #alias_check }
+    quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
 }
 
 /// The `const_added` a `class Foo` / `module M` fires for its OWN name, on the
@@ -2460,23 +2461,57 @@ fn emit_declaration_const_added(
     // A site with no source position is a synthetic registration -- the
     // built-in exception prelude, a pinned surrogate. Nothing declared those in
     // Ruby, and in CRuby they exist before the program's first statement runs.
-    if site.def_node.is_none() {
+    if site.def_node.is_none() || !declares_the_class(compiler, site) {
         return nil;
     }
-    let cid = site.class;
-    let first = compiler
+    let owner = declaration_owner(compiler, site.class);
+    emit_const_added(
+        compiler,
+        owner,
+        compiler.leaf_name(site.class),
+        site.def_node,
+    )
+}
+
+/// Whether this site is the one that CREATES the class -- a reopen finds the
+/// constant already there and declares nothing.
+fn declares_the_class(compiler: &Compiler, site: &crate::compiler::ClassBodySite) -> bool {
+    compiler
         .class_body_sites
         .iter()
-        .find(|s| s.class == cid)
-        .is_some_and(|s| std::ptr::eq(s, site));
-    if !first {
-        return nil;
-    }
-    let owner = compiler
+        .find(|s| s.class == site.class)
+        .is_some_and(|s| std::ptr::eq(s, site))
+}
+
+/// The module a class declaration binds its own name in.
+fn declaration_owner(
+    compiler: &Compiler,
+    cid: crate::compiler::ClassId,
+) -> crate::compiler::ClassId {
+    compiler
         .class(cid)
         .lexical_parent
-        .unwrap_or(crate::compiler::OBJECT_CLASS);
-    emit_const_added(compiler, owner, compiler.leaf_name(cid), site.def_node)
+        .unwrap_or(crate::compiler::OBJECT_CLASS)
+}
+
+/// Where `class Foo` / `module M` binds its own name, for
+/// `Module#const_source_location`. CRuby stamps this when the constant is
+/// CREATED, so a reopen leaves the first declaration's line standing -- the
+/// same first-site rule `emit_declaration_const_added` follows.
+fn emit_declaration_const_location(
+    compiler: &Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> TokenStream {
+    let nil = quote! {};
+    if !declares_the_class(compiler, site) {
+        return nil;
+    }
+    let Some((file, line)) = site.def_node.and_then(|n| source_location(compiler, n)) else {
+        return nil;
+    };
+    let owner = declaration_owner(compiler, site.class).0;
+    let name = compiler.leaf_name(site.class);
+    quote! { zeo_rt::record_const_location(#owner, #name, #file, #line); }
 }
 
 /// Whether the hook body `hook` was already installed at position `at`.

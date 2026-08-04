@@ -264,7 +264,15 @@ ruby_class! {
                 return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
             }
         };
-        crate::constants::const_set(cid.0, &name, (*arg2).clone());
+        // A run-time assignment is located at the line that made it, exactly
+        // as a written one is -- and a builtin has no frame of its own, so the
+        // top of the stack IS the caller.
+        match crate::frames::current_location() {
+            Some((file, line)) => {
+                crate::constants::const_set_at(cid.0, &name, (*arg2).clone(), file, line)
+            }
+            None => crate::constants::const_set(cid.0, &name, (*arg2).clone()),
+        }
         crate::runtime_meta::fire_const_added(cid, &name)?;
         Ok((*arg2).clone())
     }
@@ -882,18 +890,27 @@ ruby_class! {
         })
     }
     // `Module#const_source_location` -- `nil` for a constant nobody defines,
-    // and `[]` for one that exists. CRuby answers `[]` for every constant
-    // defined in C, which is what all of zeo's are: codegen resolves a
-    // constant path statically and the store keeps no file or line.
+    // `[file, line]` for one a Ruby assignment created, and `[]` for one that
+    // exists with no source behind it. That last is CRuby's answer for every
+    // constant defined in C, and so it is here for the ones the runtime seeds.
     def "const_source_location" cfunc (recv, name, inherit?) {
         let name = const_name_arg(name)?;
         if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
             return Err(name_error!("wrong constant name {name}"));
         }
-        Ok(match const_lookup(recv_cid(recv), &name, inherit_search(inherit)) {
-            Some(_) => RubyValue::Array(crate::array_new(Vec::new())),
-            None => RubyValue::Nil,
-        })
+        let cid = recv_cid(recv);
+        let how = inherit_search(inherit);
+        if const_lookup(cid, &name, how).is_none() {
+            return Ok(RubyValue::Nil);
+        }
+        let found = crate::constants::const_location(cid.0, &name, how == Search::Own);
+        Ok(RubyValue::Array(crate::array_new(match found {
+            Some((file, line)) => vec![
+                RubyValue::Str(crate::string_new(file.to_string())),
+                RubyValue::Int(line as i64),
+            ],
+            None => Vec::new(),
+        })))
     }
 
     // `Module#public_instance_method(:name)` -- `instance_method`'s narrowing

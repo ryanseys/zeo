@@ -1148,7 +1148,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // See `IvarWrite`'s docs: constant storage is likewise always
             // `RubyValue` (`zeo_rt::const_set`'s own signature).
             let v = box_if_object_typed(cx, *value, v);
-            let write = emit_const_write_stmt(cx, scope.as_deref(), name, quote! { __v.clone() });
+            let write =
+                emit_const_write_stmt(cx, scope.as_deref(), name, quote! { __v.clone() }, Some(id));
             // Ruby announces the constant AFTER the write, so the hook body can
             // already read it -- and on every assignment, re-assignment
             // included (oracle-verified).
@@ -2442,6 +2443,7 @@ pub(super) fn emit_const_write_stmt(
     scope: Option<&str>,
     name: &str,
     value: TokenStream,
+    at: Option<crate::hir::NodeId>,
 ) -> TokenStream {
     // An explicit `Scope::NAME = ...` whose scope class isn't registered is a
     // `NameError` on the missing scope. CRuby resolves the scope BEFORE
@@ -2452,7 +2454,15 @@ pub(super) fn emit_const_write_stmt(
         let err = uninitialized_constant_error(cx, scope.unwrap_or(name));
         return quote! { return Err(zeo_rt::Signal::Raise(#err)); };
     };
-    quote! { zeo_rt::const_set(#owner, #name, #value); }
+    // `Module#const_source_location` reads back where the assignment was
+    // written, so it travels with the write. A re-assignment restamps it, and
+    // a span-less write (a synthetic one) simply records nothing.
+    match at.and_then(|n| super::source_location(cx.compiler, n)) {
+        Some((file, line)) => {
+            quote! { zeo_rt::const_set_at(#owner, #name, #value, #file, #line); }
+        }
+        None => quote! { zeo_rt::const_set(#owner, #name, #value); },
+    }
 }
 
 // ---------------------------------------------------------------------------
