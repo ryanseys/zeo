@@ -679,6 +679,16 @@ ruby_class! {
     // and `instance_methods(false)` agree and there is still only one body.
     def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
     def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
+    // ruby 4 freezes every Range at construction, so both private rows can
+    // only ever answer FrozenError for a reachable receiver -- which is the
+    // oracle's answer too. (`Range.allocate`'s blank is a by-value zeo
+    // Range no row could re-seat; it takes the same refusal.)
+    private def "initialize" cfunc (recv, *_args) {
+        Err(range_reinit_refusal(recv))
+    }
+    private def "initialize_copy"(recv, _other) {
+        Err(range_reinit_refusal(recv))
+    }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
     def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
@@ -700,6 +710,16 @@ ruby_class! {
     def "minmax" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::minmax_own(s, __args, block)) }
     def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
     def "to_set" cfunc (recv, *_args, &_block) { own_row!(recv, |s| enumerable::to_set_own(s, __args, None)) }
+}
+
+/// The one answer both private re-init rows can give: FrozenError with the
+/// receiver, CRuby's response for every constructed (frozen) Range.
+fn range_reinit_refusal(recv: &crate::RubyValue) -> crate::Signal {
+    crate::dispatch::raise_error_details(
+        "FrozenError",
+        format!("can't modify frozen Range: {}", recv.inspect_string()),
+        &[("receiver", recv.clone())],
+    )
 }
 
 #[cfg(test)]

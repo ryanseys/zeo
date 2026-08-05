@@ -356,6 +356,44 @@ ruby_class! {
         set_of(recv).replace_contents(elements);
         Ok(recv.clone())
     }
+    // ruby's `Set#initialize` MERGES into whatever is already there (no
+    // clear) -- and, a 4.0 CoreSet quirk pinned against the oracle, it
+    // skips the frozen check a plain `#add` performs. The block maps each
+    // incoming element.
+    private def "initialize"(recv, arg?, &block) {
+        if let Some(source) = arg
+            && !source.is_nil()
+        {
+            let s = set_of(recv);
+            for e in arg_elements(source)? {
+                let e = match &block {
+                    Some(p @ RubyValue::Proc(_)) => {
+                        crate::dispatch::send_value(p, crate::Symbol::intern("call"), &[e], None)?
+                    }
+                    _ => e,
+                };
+                s.insert(e);
+            }
+        }
+        Ok(recv.clone())
+    }
+    // `initialize_copy` is the full replace.
+    private def "initialize_copy"(recv, arg) {
+        check_frozen(recv)?;
+        let RubyValue::Object(o) = arg else {
+            return Err(crate::builtins::type_error!(
+                "initialize_copy should take same class object"
+            ));
+        };
+        let Some(other) = crate::dispatch::downcast_robj::<RSet>(o) else {
+            return Err(crate::builtins::type_error!(
+                "initialize_copy should take same class object"
+            ));
+        };
+        let elements = other.elements();
+        set_of(recv).replace_contents(elements);
+        Ok(recv.clone())
+    }
     // `flatten` -- a NEW Set with every nested Set expanded recursively.
     def "flatten" (recv) {
         let mut out = Vec::new();

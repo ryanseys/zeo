@@ -234,6 +234,22 @@ impl RIo {
     }
 }
 
+/// Zeroes the per-handle state back to `RIo::new`'s defaults after a re-init
+/// swaps the descriptor: lineno, binmode, autoclose, sync, pushed-back bytes,
+/// read-ahead, child pid, encodings, timeout.
+fn reset_handle_state(io: &RIo) {
+    use std::sync::atomic::Ordering;
+    io.lineno.store(0, Ordering::Relaxed);
+    io.binmode.store(false, Ordering::Relaxed);
+    io.autoclose.store(true, Ordering::Relaxed);
+    io.sync.store(false, Ordering::Relaxed);
+    io.unget.lock().clear();
+    *io.rbuf.lock() = ReadBuf::default();
+    io.child_pid.store(0, Ordering::Relaxed);
+    *io.encodings.lock() = (None, None);
+    *io.timeout.lock() = RubyValue::Nil;
+}
+
 /// Wrap a connected socket fd (from a `TcpStream`/`TcpListener::accept`) as a
 /// value that reports `class_id` for `#class` but reads/writes like a `Pipe`.
 /// Shared by `TCPSocket.new` and `TCPServer#accept` (see `builtins::socket`).
@@ -2736,6 +2752,104 @@ ruby_class! {
         let out = p.call(std::slice::from_ref(&io));
         let _ = close_io(&io);
         out
+    }
+
+    // Re-init rebinds this handle to `fd` (+ an optional mode string and
+    // opts), the same descriptor adoption `IO.new` performs, and the
+    // per-handle state (lineno, pushed-back bytes, read-ahead, encodings)
+    // starts over. The previous descriptor is RELEASED, not closed -- re-init
+    // closes nothing -- and the File-vs-pipe shape is kept so `#class` stays
+    // what it was.
+    private def "initialize" cfunc (recv, *args, &_block) {
+        use std::os::fd::FromRawFd;
+        crate::builtins::check_arity(args.len(), 1, Some(3))?;
+        let Some(io) = as_rio(recv) else {
+            return Err(crate::builtins::type_error!("not an IO"));
+        };
+        let fd = convert::to_index(&args[0])?;
+        if unsafe { libc::fcntl(fd as libc::c_int, libc::F_GETFD) } < 0 {
+            return Err(crate::dispatch::raise_error(
+                "Errno::EBADF",
+                "Bad file descriptor".to_string(),
+            ));
+        }
+        // SAFETY: the fd was just confirmed open, and re-init adopts it.
+        let f = unsafe { std::fs::File::from_raw_fd(fd as libc::c_int) };
+        {
+            let mut b = io.backend.lock();
+            let was_file = matches!(&*b, IoBackend::File(_));
+            b.release_file();
+            *b = if was_file {
+                IoBackend::File(Some(f))
+            } else {
+                IoBackend::Pipe(Some(f))
+            };
+        }
+        reset_handle_state(io);
+        if let Some(RubyValue::Hash(opts)) = args.last() {
+            let key = RubyValue::Symbol(crate::Symbol::intern("autoclose"));
+            let v = crate::collections::hash_get(opts, &key);
+            if !v.is_nil() && !v.truthy() {
+                set_autoclose(recv, &RubyValue::Bool(false));
+            }
+        }
+        Ok(recv.clone())
+    }
+
+    // `#initialize_copy` -- adopt a `dup(2)` of the other handle's descriptor
+    // (the two share a file position, as CRuby's `IO#dup` pair does). A
+    // std-stream source stays a std-stream handle: zeo's std streams are
+    // positionless globals, not descriptors to duplicate.
+    private def "initialize_copy"(recv, other) {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let Some(io) = as_rio(recv) else {
+            return Err(crate::builtins::type_error!("not an IO"));
+        };
+        let Some(src) = as_rio(other) else {
+            return Err(crate::builtins::type_error!(
+                "initialize_copy should take same class object"
+            ));
+        };
+        let dup_slot = |slot: &Option<std::fs::File>| -> Result<Option<std::fs::File>, Signal> {
+            let Some(f) = slot else {
+                return Err(crate::builtins::io_error!("closed stream"));
+            };
+            let fd = unsafe { libc::dup(f.as_raw_fd()) };
+            if fd < 0 {
+                return Err(crate::builtins::file::raise_errno(
+                    &std::io::Error::last_os_error(),
+                    "dup",
+                    "",
+                ));
+            }
+            // SAFETY: `dup(2)` just handed us this descriptor to own.
+            Ok(Some(unsafe { std::fs::File::from_raw_fd(fd) }))
+        };
+        let new_backend = match &*src.backend.lock() {
+            IoBackend::Std(s) => IoBackend::Std(*s),
+            IoBackend::File(slot) => IoBackend::File(dup_slot(slot)?),
+            IoBackend::Pipe(slot) => IoBackend::Pipe(dup_slot(slot)?),
+        };
+        {
+            let mut b = io.backend.lock();
+            b.release_file();
+            *b = new_backend;
+        }
+        reset_handle_state(io);
+        io.lineno.store(
+            src.lineno.load(std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        io.binmode.store(
+            src.binmode.load(std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        io.sync.store(
+            src.sync.load(std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        *io.encodings.lock() = *src.encodings.lock();
+        Ok(recv.clone())
     }
 
     // `io/console`'s additions to IO. The rows are declared here, with the rest

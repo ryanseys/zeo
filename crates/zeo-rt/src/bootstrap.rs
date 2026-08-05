@@ -88,6 +88,7 @@ impl ClassRegistry {
         crate::builtins::pathname::register_pathname(&mut registry);
         crate::builtins::converter::register_converter(&mut registry);
         crate::builtins::random::register_random(&mut registry);
+        crate::builtins::stat::register_stat(&mut registry);
         registry
     }
 }

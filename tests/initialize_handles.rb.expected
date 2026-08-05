@@ -1,0 +1,23 @@
+"/b"
+"/c"
+pathname frozen: FrozenError: can't modify frozen Pathname: #<Pathname:/a>
+pathname nul: ArgumentError: path name contains null byte
+"/"
+true
+true
+[5]
+enum blockless: ArgumentError: tried to create Proc object without a block
+[7, 8]
+[9]
+[4, 5]
+2
+3
+[[7, 8]]
+[[5, 6]]
+[2]
+lazy blockless: ArgumentError: tried to call lazy new without a block
+file reinit: RuntimeError: reinitializing File
+true
+1
+[Pathname, Dir, Enumerator, Enumerator::Chain, Enumerator::Generator, Enumerator::Product, Enumerator::Lazy, File::Stat, IO, File]
+[Enumerator, Enumerator::Chain, Enumerator::Generator, Enumerator::Product, File::Stat, IO]

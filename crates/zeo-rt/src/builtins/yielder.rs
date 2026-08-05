@@ -18,6 +18,21 @@ fn recv_yielder(recv: &RubyValue) -> &RProc {
 ruby_class! {
     Yielder = zeo_abi::YIELDER_CLASS < zeo_abi::OBJECT_CLASS;
 
+    // The blockless refusal is the row's whole reachable surface
+    // (`Yielder.new` without a block, CRuby's LocalJumpError); a yielder in
+    // hand is a by-value proc handle no re-init could rebind.
+    private def "initialize"(_recv, &block) {
+        if block.is_none() {
+            return Err(crate::dispatch::raise_error(
+                "LocalJumpError",
+                "no block given".to_string(),
+            ));
+        }
+        Err(crate::builtins::not_impl_error!(
+            "Enumerator::Yielder#initialize cannot rebind a zeo yielder handle"
+        ))
+    }
+
     // `y << v` forwards to the consumer's block and returns the yielder
     // (chainable: `y << 1 << 2`).
     def "<<"(recv, value, &_block) {

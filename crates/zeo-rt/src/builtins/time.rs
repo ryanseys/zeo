@@ -1806,6 +1806,15 @@ ruby_class! {
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
 
+    // Every reachable zeo Time is constructed, and CRuby refuses to re-run
+    // either hook on one -- the rows ARE that refusal.
+    private def "initialize" cfunc (_recv, *_args, &_block) {
+        Err(type_error!("already initialized Time"))
+    }
+    private def "initialize_copy"(_recv, _other) {
+        Err(type_error!("already initialized Time"))
+    }
+
     // ---- ruby's private marshal pair. The row answers the raw bytes;
     // CRuby additionally hangs zone/offset/nano ivars on that string, which
     // zeo strings cannot carry -- the marshal writer/reader have a native

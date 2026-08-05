@@ -211,6 +211,27 @@ ruby_class! {
     def "names" (recv) {
         Ok(crate::regexp::matchdata_names(&recv_md(recv)))
     }
+    // CRuby's checks, in its order: same-class first, then the receiver.
+    // A zeo MatchData payload is immutable by design (the hot `$~` paths
+    // read it lock-free), so the copy itself refuses loudly -- gap-filed;
+    // `dup`/`clone` take the native `dup_data` path and are unaffected.
+    private def "initialize_copy"(recv, other) {
+        if !matches!(other, RubyValue::MatchData(_)) {
+            return Err(crate::builtins::type_error!(
+                "initialize_copy should take same class object"
+            ));
+        }
+        if recv.is_frozen() {
+            return Err(crate::dispatch::raise_error_details(
+                "FrozenError",
+                format!("can't modify frozen MatchData: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
+            ));
+        }
+        Err(crate::builtins::not_impl_error!(
+            "MatchData#initialize_copy cannot rebind an immutable zeo match (use dup/clone)"
+        ))
+    }
     def "regexp" (recv) {
         Ok(crate::regexp::matchdata_regexp(&recv_md(recv)))
     }

@@ -100,15 +100,33 @@ impl OpState {
     }
 }
 
-pub struct RLazy {
+/// The replaceable half of a lazy: the original source plus its op chain.
+/// One value so the private `#initialize` row can swap both atomically.
+struct LazyCore {
     source: RubyValue,
     links: Vec<Link>,
+}
+
+pub struct RLazy {
+    /// Behind a `Mutex` only so `#initialize` can re-seed the lazy in place;
+    /// every drive clones the pair out once (links are small), so no lock is
+    /// held while blocks run.
+    core: Mutex<LazyCore>,
     /// `next`/`peek`'s iteration, built on first use: an ordinary Enumerator
     /// over this very lazy's `each`. CRuby gets external iteration for free
     /// because `Enumerator::Lazy < Enumerator`; here one enumerator held on
     /// the side buys the same thing, and the chain still only advances as far
     /// as each `next` asks for.
     external: Mutex<Option<RubyValue>>,
+}
+
+/// The core cloned out -- what every read site works from.
+fn snapshot(l: &RLazy) -> LazyCore {
+    let g = l.core.lock();
+    LazyCore {
+        source: g.source.clone(),
+        links: clone_links(&g.links),
+    }
 }
 
 impl RubyObject for RLazy {
@@ -132,8 +150,7 @@ impl RubyObject for RLazy {
         // The copy starts un-iterated, like `Enumerator#dup` (`fresh_copy`):
         // an in-flight fiber belongs to the object that started it.
         Arc::new(RLazy {
-            source: self.source.clone(),
-            links: clone_links(&self.links),
+            core: Mutex::new(snapshot(self)),
             external: Mutex::new(None),
         })
     }
@@ -151,8 +168,10 @@ fn source_size(source: &RubyValue) -> RubyValue {
 /// `Enumerable#lazy` -- the entry point every enumerable dispatches to.
 pub(crate) fn make_lazy(source: &RubyValue) -> RubyValue {
     RubyValue::Object(Arc::new(RLazy {
-        source: source.clone(),
-        links: Vec::new(),
+        core: Mutex::new(LazyCore {
+            source: source.clone(),
+            links: Vec::new(),
+        }),
         external: Mutex::new(None),
     }))
 }
@@ -197,12 +216,10 @@ fn clone_links(links: &[Link]) -> Vec<Link> {
 
 /// A new lazy that is `recv` with one more link appended.
 fn extend(recv: &RubyValue, name: &'static str, op: LazyOp) -> RubyValue {
-    let l = lazy_of(recv);
-    let mut links = clone_links(&l.links);
-    links.push(Link { name, op });
+    let mut core = snapshot(lazy_of(recv));
+    core.links.push(Link { name, op });
     RubyValue::Object(Arc::new(RLazy {
-        source: l.source.clone(),
-        links,
+        core: Mutex::new(core),
         external: Mutex::new(None),
     }))
 }
@@ -589,17 +606,18 @@ fn flush(links: &[Link], st: &mut [OpState], sink: &mut Sink) -> Result<(), Sign
 /// that ends NATURALLY flushes: a `Stop` means the sink already has what it
 /// asked for.
 fn drive(lazy: &RLazy, sink: &mut Sink) -> Result<(), Signal> {
-    let src = enumerator_for(&lazy.source, "each", &[]);
+    let core = snapshot(lazy);
+    let src = enumerator_for(&core.source, "each", &[]);
     let RubyValue::Enumerator(e) = &src else {
         unreachable!("enumerator_for always builds an Enumerator");
     };
-    let mut st: Vec<OpState> = lazy.links.iter().map(|l| OpState::for_op(&l.op)).collect();
+    let mut st: Vec<OpState> = core.links.iter().map(|l| OpState::for_op(&l.op)).collect();
     while let Some(vals) = pull_next(e)? {
-        if push(&lazy.links, &mut st, 0, pack(vals), sink)? == Flow::Stop {
+        if push(&core.links, &mut st, 0, pack(vals), sink)? == Flow::Stop {
             return Ok(());
         }
     }
-    flush(&lazy.links, &mut st, sink)
+    flush(&core.links, &mut st, sink)
 }
 
 /// One link as `inspect` prints it: the method name, plus the arguments it
@@ -630,8 +648,9 @@ fn link_label(link: &Link) -> String {
 /// 1..3>:map>`. CRuby builds the same string by recursion, because there each
 /// link IS a lazy holding the previous one.
 fn chain_inspect(lazy: &RLazy) -> Result<String, Signal> {
-    let mut s = format!("#<Enumerator::Lazy: {}>", lazy.source.try_inspect_string()?);
-    for link in &lazy.links {
+    let core = snapshot(lazy);
+    let mut s = format!("#<Enumerator::Lazy: {}>", core.source.try_inspect_string()?);
+    for link in &core.links {
         s = format!("#<Enumerator::Lazy: {s}:{}>", link_label(link));
     }
     Ok(s)
@@ -702,9 +721,9 @@ pub(crate) fn lazy_feed(recv: &RubyValue, arg: &RubyValue) -> Result<RubyValue, 
 /// folded in. A filtering op makes the answer unknowable (nil) -- CRuby's
 /// rule, since it can't be answered without running.
 pub(crate) fn lazy_size(recv: &RubyValue) -> Result<RubyValue, Signal> {
-    let lz = lazy_of(recv);
-    let mut size = source_size(&lz.source);
-    for link in &lz.links {
+    let core = snapshot(lazy_of(recv));
+    let mut size = source_size(&core.source);
+    for link in &core.links {
         size = match (&link.op, size) {
             (LazyOp::Map(_) | LazyOp::Compact | LazyOp::Zip(_), s) => s,
             (LazyOp::Take(n), RubyValue::Int(s)) => RubyValue::Int(s.min(*n)),
@@ -774,6 +793,29 @@ fn each_group(
     Ok(recv.clone())
 }
 
+/// `Lazy.new(source, size = nil) { |yielder, *values| ... }`'s argument
+/// parsing, shared with the private `#initialize` row: the source plus the
+/// explicit per-element body as the chain's first link. The size hint is
+/// accepted and unused (`#size` derives from the source here).
+fn lazy_new_core(args: &[RubyValue], block: Option<RubyValue>) -> Result<LazyCore, Signal> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 1..2)",
+            args.len()
+        ));
+    }
+    let Some(RubyValue::Proc(p)) = &block else {
+        return Err(arg_error!("tried to call lazy new without a block"));
+    };
+    Ok(LazyCore {
+        source: args[0].clone(),
+        links: vec![Link {
+            name: "each",
+            op: LazyOp::YielderBody(p.clone()),
+        }],
+    })
+}
+
 fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal> {
     let mut out = Vec::new();
     drive(
@@ -795,20 +837,20 @@ ruby_class! {
     // out. The size hint is accepted and unused (`#size` derives from the
     // source here).
     def self."new" cfunc (_recv, *args, &block) {
-        if args.is_empty() || args.len() > 2 {
-            return Err(arg_error!(
-                "wrong number of arguments (given {}, expected 1..2)",
-                args.len()
-            ));
-        }
-        let Some(RubyValue::Proc(p)) = &block else {
-            return Err(arg_error!("tried to call lazy new without a block"));
-        };
         Ok(RubyValue::Object(Arc::new(RLazy {
-            source: args[0].clone(),
-            links: vec![Link { name: "each", op: LazyOp::YielderBody(p.clone()) }],
+            core: Mutex::new(lazy_new_core(args, block)?),
             external: Mutex::new(None),
         })))
+    }
+
+    // Re-init: the receiver becomes what `Lazy.new(source[, size]) { ... }`
+    // builds, discarding the previous chain and any external iteration.
+    private def "initialize" cfunc (recv, *args, &block) {
+        let l = lazy_of(recv);
+        let core = lazy_new_core(args, block)?;
+        *l.core.lock() = core;
+        *l.external.lock() = None;
+        Ok(recv.clone())
     }
 
 

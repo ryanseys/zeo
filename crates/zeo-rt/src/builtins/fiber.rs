@@ -181,6 +181,10 @@ ruby_class! {
     def "transfer" cfunc (_recv, *args) {
         outcome(fiber_transfer(f, args.to_vec()))
     }
+    // A reachable Fiber always carries its block -- CRuby's refusal.
+    private def "initialize" cfunc (_recv, *_args, &_block) {
+        Err(crate::builtins::runtime_error!("cannot initialize twice"))
+    }
     def "alive?"(_recv) {
         Ok(RubyValue::Bool(fiber_alive(f)))
     }

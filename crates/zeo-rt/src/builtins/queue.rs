@@ -58,6 +58,28 @@ ruby_class! {
         crate::thread::queue_clear(&q);
         Ok(RubyValue::Queue(q))
     }
+    // Re-init EMPTIES the queue (oracle-pinned), then seeds from an
+    // optional enumerable like `Queue.new(items)`.
+    private def "initialize" cfunc (recv, *args) {
+        let q = recv.as_queue_unchecked();
+        crate::thread::queue_clear(&q);
+        if let Some(src) = args.first()
+            && !src.is_nil()
+        {
+            let RubyValue::Array(items) = src else {
+                return Err(crate::builtins::type_error!(
+                    "can't convert {} into Array",
+                    crate::builtins::class_name_of(src)
+                ));
+            };
+            for v in items.lock().iter() {
+                if queue_push(&q, v.clone()).is_err() {
+                    return Err(raise_error("ClosedQueueError", "queue closed".to_string()));
+                }
+            }
+        }
+        Ok(recv.clone())
+    }
     def "num_waiting"(recv) {
         Ok(RubyValue::Int(crate::thread::queue_num_waiting(&recv.as_queue_unchecked())))
     }

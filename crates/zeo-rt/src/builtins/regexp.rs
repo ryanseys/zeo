@@ -149,6 +149,15 @@ ruby_class! {
         let id = crate::builtins::encoding::computed_encoding_of(&re.source);
         Ok(crate::builtins::encoding::encoding_value(id))
     }
+    // Every reachable zeo Regexp is compiled: a frozen one (every literal)
+    // answers FrozenError, anything else CRuby's "already initialized
+    // regexp" -- the oracle's two answers, in its order.
+    private def "initialize" cfunc (recv, *_args) {
+        Err(regexp_reinit_refusal(recv))
+    }
+    private def "initialize_copy"(recv, _other) {
+        Err(regexp_reinit_refusal(recv))
+    }
     def "source" (recv) {
         Ok(crate::regexp_source(re_of(recv)))
     }
@@ -386,6 +395,20 @@ fn escape_regexp_source(s: &str) -> String {
         }
     }
     out
+}
+
+/// The re-init refusal, in CRuby's precedence: a frozen receiver (every
+/// literal) is a FrozenError; anything else "already initialized regexp".
+fn regexp_reinit_refusal(recv: &RubyValue) -> crate::Signal {
+    if recv.is_frozen() {
+        crate::dispatch::raise_error_details(
+            "FrozenError",
+            format!("can't modify frozen Regexp: {}", recv.inspect_string()),
+            &[("receiver", recv.clone())],
+        )
+    } else {
+        crate::builtins::type_error!("already initialized regexp")
+    }
 }
 
 #[cfg(test)]

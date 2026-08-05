@@ -1,0 +1,29 @@
+range reinit: FrozenError: can't modify frozen Range: 1..2
+range icopy: FrozenError: can't modify frozen Range: 1..2
+regexp reinit: FrozenError: can't modify frozen Regexp: /x/
+regexp icopy: FrozenError: can't modify frozen Regexp: /x/
+time reinit: TypeError: already initialized Time
+time icopy: TypeError: already initialized Time
+class reinit: TypeError: already initialized class
+class anon: TypeError: already initialized class
+conv reinit: TypeError: already initialized
+fiber reinit: RuntimeError: cannot initialize twice
+md icopy type: TypeError: initialize_copy should take same class object
+thread reinit: ThreadError: already initialized thread
+true
+#<struct S1 a=8, b=9>
+struct icopy class: TypeError: initialize_copy should take same class object
+data icopy: FrozenError: can't modify frozen D1: #<data D1 a=1>
+nil
+[:hi]
+nil
+Module
+nil
+nil
+0
+5
+nil
+true
+[Range, Regexp, Time, Class, Module]
+[Range, Regexp, Time, MatchData, Struct, Data]
+Module

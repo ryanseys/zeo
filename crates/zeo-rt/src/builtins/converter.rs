@@ -771,6 +771,11 @@ ruby_class! {
             None => RubyValue::Nil,
         })
     }
+    // A reachable Converter is always built (the ConstructorFn) -- re-init
+    // is CRuby's refusal.
+    private def "initialize" cfunc (_recv, *_args) {
+        Err(type_error!("already initialized"))
+    }
     def "destination_encoding"(recv) {
         Ok(match as_converter(recv)?.dst {
             Some(id) => encoding_value(id),

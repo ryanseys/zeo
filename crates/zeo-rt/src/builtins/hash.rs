@@ -423,6 +423,49 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
+    // ruby's `rb_hash_initialize`: sets the DEFAULT channel and nothing
+    // else -- an already-filled receiver keeps its entries (oracle-pinned:
+    // `{a: 1}.send(:initialize, 9)` stays `{a: 1}` with default 9).
+    private def "initialize"(recv, ifnone?, &block) {
+        guard_hash_frozen(recv)?;
+        if let Some(RubyValue::Proc(_)) = &block {
+            if ifnone.is_some() {
+                return Err(arg_error!("wrong number of arguments (given 1, expected 0)"));
+            }
+            let mut g = rhash.lock();
+            g.default = RubyValue::Nil;
+            g.default_proc = block;
+        } else {
+            let mut g = rhash.lock();
+            g.default = ifnone.cloned().unwrap_or(RubyValue::Nil);
+            g.default_proc = None;
+        }
+        Ok(recv.clone())
+    }
+    // `initialize_copy` is the FULL replace -- entries plus both default
+    // channels (`rb_hash_replace` backs it).
+    private def "initialize_copy"(recv, arg) {
+        guard_hash_frozen(recv)?;
+        let other = &convert::to_rhash(arg)?;
+        if std::sync::Arc::ptr_eq(rhash, other) {
+            return Ok(recv.clone());
+        }
+        let old_keys: Vec<RubyValue> = rhash.lock().values().map(|(k, _)| k.clone()).collect();
+        for k in &old_keys {
+            crate::hash_delete(rhash, k);
+        }
+        for (k, v) in other.lock().values() {
+            crate::hash_set(rhash, k.clone(), v.clone());
+        }
+        let (d, dp) = {
+            let s = other.lock();
+            (s.default.clone(), s.default_proc.clone())
+        };
+        let mut g = rhash.lock();
+        g.default = d;
+        g.default_proc = dp;
+        Ok(recv.clone())
+    }
     // Subset/superset by key AND value: `a <= b` iff every pair of `a` is in
     // `b`; `<` additionally requires `a` to be strictly smaller. `>`/`>=` are
     // the mirror.

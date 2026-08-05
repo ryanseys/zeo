@@ -469,6 +469,28 @@ ruby_class! {
         bind_members(recv, args, false)?;
         Ok(RubyValue::Nil)
     }
+    // `initialize_copy` -- the slot vector and nothing else, and only
+    // between instances of the SAME struct class (CRuby's
+    // "initialize_copy should take same class object").
+    private def "initialize_copy"(recv, other) {
+        if recv.is_frozen() {
+            return Err(frozen_error(recv));
+        }
+        // Class-ID equality, not a payload downcast: a compile-time
+        // `S = Struct.new(...)` synthesizes a GENERATED struct class whose
+        // instances are not `StructInstance` -- the id is the honest test.
+        let same_class = other.class_id() == recv.class_id() && meta_of(recv.class_id()).is_some();
+        if !same_class {
+            return Err(crate::builtins::type_error!(
+                "initialize_copy should take same class object"
+            ));
+        }
+        let values = slots_of(other);
+        for (i, v) in values.into_iter().enumerate() {
+            slot_set(recv, i, v);
+        }
+        Ok(recv.clone())
+    }
     def "members"(recv) {
         build_members(recv)
     }
@@ -549,11 +571,11 @@ ruby_class! {
     def "filter" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "filter", recv, __args, block) }
 }
 
-fn frozen_error(recv: &RubyValue) -> Signal {
+pub(crate) fn frozen_error(recv: &RubyValue) -> Signal {
     let name = class_name(recv.class_id()).unwrap_or_else(|| "Struct".to_string());
     crate::dispatch::raise_error_details(
         "FrozenError",
-        format!("can't modify frozen {name}"),
+        format!("can't modify frozen {name}: {}", recv.inspect_string()),
         &[("receiver", recv.clone())],
     )
 }

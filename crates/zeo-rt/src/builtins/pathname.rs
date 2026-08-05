@@ -15,17 +15,20 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use parking_lot::Mutex;
+
 use crate::builtins::file::{extname_of, path_arg};
-use crate::builtins::{arg_error, block_or_enum, type_error};
+use crate::builtins::{arg_error, block_or_enum, frozen_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PATHNAME_CLASS};
 use zeo_macros::ruby_class;
 
-/// A `Pathname` instance: an immutable path string. No `Mutex` -- Pathname is
-/// a value class (every mutating-looking method returns a fresh Pathname).
+/// A `Pathname` instance: a path string. Behind a `Mutex` only because the
+/// private `#initialize` row can re-seed it in place; every other
+/// mutating-looking method still returns a fresh Pathname.
 pub(crate) struct RPathname {
-    path: String,
+    path: Mutex<String>,
     frozen: AtomicBool,
 }
 
@@ -50,7 +53,7 @@ impl RubyObject for RPathname {
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let d = Arc::new(RPathname {
-            path: self.path.clone(),
+            path: Mutex::new(self.path.lock().clone()),
             frozen: AtomicBool::new(false),
         });
         if copy_frozen && self.is_frozen() {
@@ -67,19 +70,20 @@ fn str_val(s: String) -> RubyValue {
 /// Wrap a path string as a fresh `Pathname` value.
 fn pathname_val(path: String) -> RubyValue {
     RubyValue::Object(Arc::new(RPathname {
-        path,
+        path: Mutex::new(path),
         frozen: AtomicBool::new(false),
     }))
 }
 
-fn recv_path(recv: &RubyValue) -> &str {
+fn recv_path(recv: &RubyValue) -> String {
     match recv {
-        RubyValue::Object(o) => {
-            &o.as_any()
-                .downcast_ref::<RPathname>()
-                .expect("Pathname row on a non-Pathname receiver")
-                .path
-        }
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<RPathname>()
+            .expect("Pathname row on a non-Pathname receiver")
+            .path
+            .lock()
+            .clone(),
         _ => panic!("Pathname row on a non-Object receiver"),
     }
 }
@@ -95,7 +99,7 @@ fn as_pathname(v: &RubyValue) -> Option<&RPathname> {
 /// (`p + other`, `p == other`) -- Pathname's operators accept both.
 fn arg_path(v: &RubyValue) -> Result<String, Signal> {
     if let Some(p) = as_pathname(v) {
-        return Ok(p.path.clone());
+        return Ok(p.path.lock().clone());
     }
     path_arg(v, "pathname")
 }
@@ -492,7 +496,7 @@ fn child_paths(
             Ok(if bare {
                 pathname_val(name)
             } else {
-                pathname_val(plus(base, &name))
+                pathname_val(plus(&base, &name))
             })
         })
         .collect()
@@ -566,6 +570,20 @@ pub fn kernel_pathname(arg: &RubyValue) -> Result<RubyValue, Signal> {
     pathname_construct(PATHNAME_CLASS, std::slice::from_ref(arg), None)
 }
 
+/// The String/Pathname/#to_path acceptance (and null-byte refusal) shared by
+/// `Pathname.new` and the private `#initialize` row.
+fn construct_path(arg: &RubyValue) -> Result<String, Signal> {
+    let path = match as_pathname(arg) {
+        Some(p) => p.path.lock().clone(),
+        None => path_arg(arg, "pathname")
+            .map_err(|_| type_error!("Pathname.new requires a String, #to_path or #to_str"))?,
+    };
+    if path.contains('\0') {
+        return Err(arg_error!("path name contains null byte"));
+    }
+    Ok(path)
+}
+
 /// `Pathname.new` is a CONSTRUCTOR, not a class-method row: CRuby inherits it
 /// from `Class`, so it must not show up in `singleton_methods(false)`.
 fn pathname_construct(
@@ -574,14 +592,7 @@ fn pathname_construct(
     _block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::check_arity(args.len(), 1, Some(1))?;
-    let path = match as_pathname(&args[0]) {
-        Some(p) => p.path.clone(),
-        None => path_arg(&args[0], "pathname")
-            .map_err(|_| type_error!("Pathname.new requires a String, #to_path or #to_str"))?,
-    };
-    if path.contains('\0') {
-        return Err(arg_error!("path name contains null byte"));
-    }
+    let path = construct_path(&args[0])?;
     Ok(pathname_val(path))
 }
 
@@ -620,6 +631,23 @@ ruby_class! {
         if let RubyValue::Object(o) = recv { o.set_frozen(); }
         Ok(recv.clone())
     }
+    // Re-init replaces the stored path in place, accepting the same
+    // String/Pathname/#to_path set (and null-byte refusal) as `Pathname.new`.
+    private def "initialize"(recv, path) {
+        if let RubyValue::Object(o) = recv
+            && o.is_frozen()
+        {
+            return Err(frozen_error!(
+                "can't modify frozen Pathname: #<Pathname:{}>",
+                recv_path(recv)
+            ));
+        }
+        let new_path = construct_path(path)?;
+        if let Some(p) = as_pathname(recv) {
+            *p.path.lock() = new_path;
+        }
+        Ok(recv.clone())
+    }
     def "hash"(recv) {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -629,12 +657,12 @@ ruby_class! {
     // Only another Pathname compares equal -- a String never does.
     def "==" | "===" | "eql?"(recv, other) {
         Ok(RubyValue::Bool(
-            as_pathname(other).is_some_and(|p| p.path == recv_path(recv)),
+            as_pathname(other).is_some_and(|p| *p.path.lock() == recv_path(recv)),
         ))
     }
     def "<=>"(recv, other) {
         Ok(match as_pathname(other) {
-            Some(p) => RubyValue::Int(match recv_path(recv).cmp(p.path.as_str()) {
+            Some(p) => RubyValue::Int(match recv_path(recv).cmp(&p.path.lock()) {
                 std::cmp::Ordering::Less => -1,
                 std::cmp::Ordering::Equal => 0,
                 std::cmp::Ordering::Greater => 1,
@@ -645,7 +673,7 @@ ruby_class! {
 
     // ---- path algebra
     def "+" | "/"(recv, other) {
-        Ok(pathname_val(plus(recv_path(recv), &arg_path(other)?)))
+        Ok(pathname_val(plus(&recv_path(recv), &arg_path(other)?)))
     }
     // Right to left, stopping at the first absolute piece: everything to its
     // left is unreachable, which is what makes `join("b", "/c")` answer `/c`.
@@ -664,19 +692,19 @@ ruby_class! {
         }
         Ok(match result {
             None => recv.clone(),
-            Some(rel) => pathname_val(plus(recv_path(recv), &rel)),
+            Some(rel) => pathname_val(plus(&recv_path(recv), &rel)),
         })
     }
-    def "parent"(recv) { Ok(pathname_val(plus(recv_path(recv), ".."))) }
+    def "parent"(recv) { Ok(pathname_val(plus(&recv_path(recv), ".."))) }
     def "cleanpath"(recv, consider_symlink?) {
         let p = recv_path(recv);
         Ok(pathname_val(match consider_symlink {
-            Some(v) if v.truthy() => cleanpath_conservative(p),
-            _ => cleanpath_aggressive(p),
+            Some(v) if v.truthy() => cleanpath_conservative(&p),
+            _ => cleanpath_aggressive(&p),
         }))
     }
     def "relative_path_from"(recv, base) {
-        Ok(pathname_val(relative_path_from(recv_path(recv), &arg_path(base)?)?))
+        Ok(pathname_val(relative_path_from(&recv_path(recv), &arg_path(base)?)?))
     }
 
     // ---- ruby's private path-algebra helpers (`pathname_builtin.rb`), as
@@ -726,26 +754,26 @@ ruby_class! {
         Ok(str_val(plus(&arg_path(path1)?, &arg_path(path2)?)))
     }
     private def "cleanpath_aggressive"(recv) {
-        Ok(pathname_val(cleanpath_aggressive(recv_path(recv))))
+        Ok(pathname_val(cleanpath_aggressive(&recv_path(recv))))
     }
     private def "cleanpath_conservative"(recv) {
-        Ok(pathname_val(cleanpath_conservative(recv_path(recv))))
+        Ok(pathname_val(cleanpath_conservative(&recv_path(recv))))
     }
     def "sub_ext"(recv, repl) {
         let newext = arg_path(repl)?;
         let path = recv_path(recv);
-        let cur = extname_of(path);
+        let cur = extname_of(&path);
         let stem = &path[..path.len() - cur.len()];
         Ok(pathname_val(format!("{stem}{newext}")))
     }
-    def "absolute?"(recv) { Ok(RubyValue::Bool(is_absolute(recv_path(recv)))) }
-    def "relative?"(recv) { Ok(RubyValue::Bool(!is_absolute(recv_path(recv)))) }
+    def "absolute?"(recv) { Ok(RubyValue::Bool(is_absolute(&recv_path(recv)))) }
+    def "relative?"(recv) { Ok(RubyValue::Bool(!is_absolute(&recv_path(recv)))) }
     def "root?"(recv) {
         let p = recv_path(recv);
-        Ok(RubyValue::Bool(chop_basename(p).is_none() && is_absolute(p)))
+        Ok(RubyValue::Bool(chop_basename(&p).is_none() && is_absolute(&p)))
     }
     def "each_filename"(recv, &block) {
-        let names: Vec<RubyValue> = split_names(recv_path(recv))
+        let names: Vec<RubyValue> = split_names(&recv_path(recv))
             .into_iter()
             .map(|n| str_val(n.to_string()))
             .collect();
@@ -756,7 +784,7 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
     def "ascend"(recv, &block) {
-        let steps: Vec<RubyValue> = ascend_paths(recv_path(recv))
+        let steps: Vec<RubyValue> = ascend_paths(&recv_path(recv))
             .into_iter()
             .map(pathname_val)
             .collect();
@@ -765,7 +793,7 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
     def "descend"(recv, &block) {
-        let mut steps: Vec<RubyValue> = ascend_paths(recv_path(recv))
+        let mut steps: Vec<RubyValue> = ascend_paths(&recv_path(recv))
             .into_iter()
             .map(pathname_val)
             .collect();
@@ -841,7 +869,7 @@ ruby_class! {
     // which is what the root answers.
     def "mountpoint?"(recv) {
         let here = on_file(recv, "lstat", &[], None)?;
-        let up = file_call("lstat", &[str_val(plus(recv_path(recv), ".."))], None)?;
+        let up = file_call("lstat", &[str_val(plus(&recv_path(recv), ".."))], None)?;
         let read = |v: &RubyValue, m: &str| {
             crate::dispatch::send_value(v, crate::Symbol::intern(m), &[], None)
         };
@@ -937,14 +965,14 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "glob" cfunc (recv, pattern, *rest, &block) {
-        let joined = str_val(plus(recv_path(recv), &arg_path(pattern)?));
+        let joined = str_val(plus(&recv_path(recv), &arg_path(pattern)?));
         let mut args = vec![joined];
         args.extend_from_slice(rest);
         yield_or_return(wrap_array(dir_call("glob", &args, None)?), block)
     }
     // Every missing directory on the way, root-most first.
     def "mkpath" cfunc (recv, *_rest) {
-        let mut steps = ascend_paths(&cleanpath_aggressive(recv_path(recv)));
+        let mut steps = ascend_paths(&cleanpath_aggressive(&recv_path(recv)));
         steps.reverse();
         for step in steps {
             let arg = str_val(step);
@@ -958,13 +986,13 @@ ruby_class! {
     // `require "pathname"` is what adds these two in ruby; zeo gates whole
     // classes rather than methods, so they are here from the start.
     def "rmtree" cfunc (recv, *_rest) {
-        remove_tree(recv_path(recv))?;
+        remove_tree(&recv_path(recv))?;
         Ok(RubyValue::Nil)
     }
     def "find" cfunc (recv, *_rest, &block) {
         let proc = block_or_enum!(recv, &[], block);
         let mut found = Vec::new();
-        collect_tree(recv_path(recv), &mut found)?;
+        collect_tree(&recv_path(recv), &mut found)?;
         for f in found { proc.call(&[f])?; }
         Ok(RubyValue::Nil)
     }

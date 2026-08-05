@@ -760,6 +760,29 @@ ruby_class! {
         let blk = crate::builtins::basic_object::block_proc(block, "class_exec")?;
         crate::runtime_meta::with_body_frame(recv_cid(recv), || blk.call_with_self(recv, args))
     }
+    // `Module#initialize`: module_exec the block (on ANY module -- CRuby
+    // re-runs it happily, even frozen), answer NIL either way.
+    private def "initialize"(recv, &block) {
+        if let Some(RubyValue::Proc(_)) = &block {
+            let blk = crate::builtins::basic_object::block_proc(block, "initialize")?;
+            crate::runtime_meta::with_body_frame(recv_cid(recv), || {
+                blk.call_with_self(recv, &[])
+            })?;
+        }
+        Ok(RubyValue::Nil)
+    }
+    // `Module#initialize_clone(orig, freeze: nil)` -- the copy hook `clone`
+    // drives; the freeze keyword is the clone machinery's concern, the copy
+    // itself is `initialize_copy`'s.
+    private def "initialize_clone" cfunc (recv, *args, &_block) {
+        let Some(orig) = args.first() else {
+            return Err(crate::builtins::arg_error!(
+                "wrong number of arguments (given 0, expected 1)"
+            ));
+        };
+        inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)?;
+        Ok(recv.clone())
+    }
     // `Module#class_variable_get/set/defined?` over the linearized ancestry
     // (a `@@x` is owned by the nearest ancestor that first assigned it --
     // see `cvars`' docs). `get` on a never-assigned name is a `NameError`,

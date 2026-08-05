@@ -128,6 +128,10 @@ ruby_class! {
         Ok(recv.clone())
     }
     // Wake at most one waiter; returns self.
+    // Re-init is a permitted no-op, like Mutex's.
+    private def "initialize"(_recv) {
+        Ok(RubyValue::Nil)
+    }
     def "signal"(recv) {
         let cv = cv_of(recv);
         let _g = cv.lock.lock();

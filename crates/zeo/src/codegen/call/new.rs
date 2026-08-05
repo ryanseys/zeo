@@ -263,8 +263,17 @@ pub fn emit_new_with_arg_tokens(
     // `.initialize(...)?` did.
     if cx.compiler.is_native_backed(cid) {
         let id = cid.0;
+        // The block threads through: `Stack.new(2) { |i| i * 5 }` on a
+        // `class Stack < Array` reaches `Array.new`'s block form.
+        let block_expr = match block {
+            Some(b) => {
+                let p = super::procs::emit_proc_value(cx, b);
+                quote! { Some(#p) }
+            }
+            None => quote! { None },
+        };
         return quote! {
-            zeo_rt::construct_by_class_id(zeo_rt::ClassId(#id), &[#(#arg_exprs),*], None)?
+            zeo_rt::construct_by_class_id(zeo_rt::ClassId(#id), &[#(#arg_exprs),*], #block_expr)?
         };
     }
     // `Object.new` -- a bare sentinel instance of the runtime root

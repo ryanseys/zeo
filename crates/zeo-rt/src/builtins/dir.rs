@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use parking_lot::Mutex;
 use zeo_macros::ruby_class;
 
 use crate::builtins::file::{path_arg, raise_errno};
@@ -281,9 +283,11 @@ fn glob(pattern: &str, dotmatch: bool) -> Vec<String> {
 pub struct RDir {
     /// The directory this was opened from, as given. `None` for a `Dir.for_fd`
     /// handle, which has only a descriptor -- exactly what `#path` reports.
-    path: Option<String>,
+    /// Mutex-wrapped (with `entries`) only so the private `#initialize` row
+    /// can re-seed the handle in place.
+    path: Mutex<Option<String>>,
     /// Every entry, INCLUDING `.` and `..` (what `#read`/`#each` iterate).
-    entries: Vec<String>,
+    entries: Mutex<Vec<String>>,
     /// The read cursor into `entries`.
     pos: AtomicUsize,
     /// `false` after `#close`; every later operation raises IOError.
@@ -327,8 +331,8 @@ impl RubyObject for RDir {
             _ => -1,
         };
         Arc::new(RDir {
-            path: self.path.clone(),
-            entries: self.entries.clone(),
+            path: Mutex::new(self.path.lock().clone()),
+            entries: Mutex::new(self.entries.lock().clone()),
             pos: AtomicUsize::new(self.pos.load(Ordering::Relaxed)),
             open: AtomicBool::new(self.open.load(Ordering::Relaxed)),
             fd: std::sync::atomic::AtomicI32::new(fd),
@@ -341,8 +345,8 @@ fn dir_value(path: Option<String>, mut entries: Vec<String>, fd: libc::c_int) ->
     entries.push(".".to_string());
     entries.push("..".to_string());
     RubyValue::Object(Arc::new(RDir {
-        path,
-        entries,
+        path: Mutex::new(path),
+        entries: Mutex::new(entries),
         pos: AtomicUsize::new(0),
         open: AtomicBool::new(true),
         fd: std::sync::atomic::AtomicI32::new(fd),
@@ -671,15 +675,40 @@ ruby_class! {
         glob_matches(args, block)
     }
 
+    // Re-init reopens the handle over a new path (`d.send(:initialize, "/")`):
+    // a fresh snapshot and descriptor, cursor rewound, the old descriptor
+    // closed. No frozen check -- a frozen Dir re-inits fine (oracle-pinned).
+    // Accepts `(name, encoding: ...)` like `Dir.new`; the kwargs are ignored.
+    private def "initialize"(recv, name, **_opts) {
+        let d = recv_dir(recv)?;
+        let path = path_arg(name, "open")?;
+        let mut entries = read_names(&path)?;
+        entries.push(".".to_string());
+        entries.push("..".to_string());
+        let fd = std::ffi::CString::new(path.clone())
+            .ok()
+            .map(|c| unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) })
+            .unwrap_or(-1);
+        let old = d.fd.swap(fd, Ordering::Relaxed);
+        if old >= 0 {
+            unsafe { libc::close(old) };
+        }
+        *d.entries.lock() = entries;
+        *d.path.lock() = Some(path);
+        d.pos.store(0, Ordering::Relaxed);
+        d.open.store(true, Ordering::Relaxed);
+        Ok(recv.clone())
+    }
     // `#read` -- the next entry name (INCLUDING `.`/`..`), or nil at the end.
     def "read"(recv) {
         let d = live_dir(recv)?;
         let i = d.pos.fetch_add(1, Ordering::Relaxed);
-        Ok(match d.entries.get(i) {
+        let entries = d.entries.lock();
+        Ok(match entries.get(i) {
             Some(name) => str_val(name.clone()),
             None => {
                 // Don't advance past the end.
-                d.pos.store(d.entries.len(), Ordering::Relaxed);
+                d.pos.store(entries.len(), Ordering::Relaxed);
                 RubyValue::Nil
             }
         })
@@ -687,7 +716,8 @@ ruby_class! {
     // `#each` -- yield every entry from the current cursor onward (INCLUDING
     // `.`/`..`); without a block, an Enumerator over the entry array.
     def "each"(recv, &block) {
-        let entries: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
+        let entries: Vec<RubyValue> =
+            live_dir(recv)?.entries.lock().iter().cloned().map(str_val).collect();
         let p = block_or_enum!(recv, &[], block);
         for e in entries {
             p.call(&[e])?;
@@ -697,7 +727,7 @@ ruby_class! {
     // `#each_child` -- like `#each` but WITHOUT `.` and `..`.
     def "each_child"(recv, &block) {
         let entries: Vec<RubyValue> = live_dir(recv)?
-            .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
+            .entries.lock().iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
         let p = block_or_enum!(recv, &[], block);
         for e in entries {
             p.call(&[e])?;
@@ -708,18 +738,19 @@ ruby_class! {
     // `.`/`..`); both snapshot the whole listing regardless of the cursor.
     def "children"(recv) {
         let out: Vec<RubyValue> = live_dir(recv)?
-            .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
+            .entries.lock().iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
     }
     def "entries" cfunc (recv) {
-        let out: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
+        let out: Vec<RubyValue> =
+            live_dir(recv)?.entries.lock().iter().cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
     }
     // `Dir#chdir` -- change to the directory this handle was opened on. The
     // block form restores the previous directory afterwards, as the class
     // method's does.
     def "chdir"(recv, &block) {
-        let Some(target) = recv_dir(recv)?.path.clone() else {
+        let Some(target) = recv_dir(recv)?.path.lock().clone() else {
             return Err(crate::builtins::io_error!("closed directory"));
         };
         let prev = std::env::current_dir().map_err(|e| raise_errno(&e, "getcwd", "."))?;
@@ -732,7 +763,7 @@ ruby_class! {
         r
     }
     def "path" | "to_path"(recv) {
-        Ok(match &recv_dir(recv)?.path {
+        Ok(match &*recv_dir(recv)?.path.lock() {
             Some(p) => str_val(p.clone()),
             None => RubyValue::Nil,
         })
@@ -770,7 +801,7 @@ ruby_class! {
         Ok(RubyValue::Int(live_dir(recv)?.fd.load(Ordering::Relaxed) as i64))
     }
     def "inspect" | "to_s"(recv) {
-        Ok(str_val(match &recv_dir(recv)?.path {
+        Ok(str_val(match &*recv_dir(recv)?.path.lock() {
             Some(p) => format!("#<Dir:{p}>"),
             None => "#<Dir>".to_string(),
         }))

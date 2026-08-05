@@ -671,6 +671,12 @@ ruby_class! {
     // CLOSES it afterwards no matter how the block leaves (return, raise,
     // break), answering the block's value; without one, answers the open
     // file for the caller to close.
+    // Every reachable zeo File is open (there is no `File.allocate` blank),
+    // and CRuby refuses to re-run initialize on one.
+    private def "initialize" cfunc (_recv, *_args, &_block) {
+        Err(crate::builtins::runtime_error!("reinitializing File"))
+    }
+
     def self."open" | "new" cfunc (_recv, path, mode?, perm?, &block) {
         let trailing = perm.or(mode);
         if let RubyValue::Int(fd) = path {

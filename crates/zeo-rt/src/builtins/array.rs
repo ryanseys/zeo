@@ -1098,6 +1098,46 @@ ruby_class! {
         *rary.lock() = new_items;
         Ok(recv.clone())
     }
+    // ruby's `rb_ary_initialize`, as the real private row: `Array.new`'s
+    // whole surface applied IN PLACE, so `[].send(:initialize, 2, 0)` is
+    // `[0, 0]` and a subclass `super` re-seeds the same storage.
+    private def "initialize"(recv, size?, fill?, &block) {
+        check_frozen(rary, recv)?;
+        if fill.is_none()
+            && let Some(RubyValue::Array(a)) = size
+        {
+            let items = a.lock().to_vec();
+            *rary.lock() = items.into();
+            return Ok(recv.clone());
+        }
+        let size = match size {
+            None => 0,
+            Some(v) => arg_int!(v),
+        };
+        if size < 0 {
+            return Err(arg_error!("negative array size"));
+        }
+        let size = size as usize;
+        let items: Vec<RubyValue> = if let Some(RubyValue::Proc(p)) = &block {
+            let mut out = Vec::with_capacity(size);
+            for i in 0..size {
+                out.push(p.call(&[RubyValue::Int(i as i64)])?);
+            }
+            out
+        } else {
+            vec![fill.cloned().unwrap_or(RubyValue::Nil); size]
+        };
+        *rary.lock() = items.into();
+        Ok(recv.clone())
+    }
+    // `initialize_copy` IS `replace` in CRuby (`rb_ary_replace` backs both).
+    private def "initialize_copy"(recv, other) {
+        check_frozen(rary, recv)?;
+        let other = &convert::to_rary(other)?;
+        let new_items = other.lock().clone();
+        *rary.lock() = new_items;
+        Ok(recv.clone())
+    }
     // `sort` with rb_cmp or a comparator block; `sort!` in place.
     def "sort" (recv, &block) {
         let mut items = rary.lock().to_vec();

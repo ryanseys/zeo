@@ -39,7 +39,7 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arg_error, arg_int, inherited_row, need_block, type_error};
+use crate::builtins::{arg_error, arg_int, frozen_error, inherited_row, need_block, type_error};
 use crate::collections::array_new;
 use crate::coroutine::CoroutineResult;
 use crate::dispatch::{raise_stop_iteration, send_value};
@@ -131,11 +131,27 @@ struct ExternState {
     saved_ec: crate::ec::Ec,
 }
 
-pub struct EnumeratorData {
+/// The replaceable half of an enumerator: its source plus the
+/// `Enumerator.new(size) { ... }` hint. One value so the private
+/// `#initialize`/`#initialize_copy` rows can swap both atomically.
+#[derive(Clone)]
+struct EnumCore {
     source: EnumSource,
     /// `Enumerator.new(size) { ... }`'s stored hint; method-backed
     /// enumerators derive size lazily from their source instead.
     size_hint: Option<RubyValue>,
+}
+
+pub struct EnumeratorData {
+    /// The construction-time core. Its VARIANT KIND is authoritative for the
+    /// enumerator's class -- re-init never changes it (the re-init rows are
+    /// same-class checked, and an ArithmeticSequence refuses re-init) -- so
+    /// `enumerator_class_id` and `arith_seq_parts` read it without a lock.
+    seed: EnumCore,
+    /// `#initialize`/`#initialize_copy`'s in-place replacement, if any.
+    /// Everything that iterates or describes the enumerator reads through
+    /// [`Self::core`], which folds this in.
+    reinit: Mutex<Option<EnumCore>>,
     state: Mutex<ExternState>,
     /// `.frozen?` state -- flag-only (CRuby happily iterates a frozen
     /// enumerator; external-iteration state isn't Ruby-visible mutation).
@@ -145,6 +161,30 @@ pub struct EnumeratorData {
 pub type REnumerator = Arc<EnumeratorData>;
 
 impl EnumeratorData {
+    fn new(source: EnumSource, size_hint: Option<RubyValue>) -> EnumeratorData {
+        EnumeratorData {
+            seed: EnumCore { source, size_hint },
+            reinit: Mutex::new(None),
+            state: Mutex::new(ExternState::default()),
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// The CURRENT core -- the re-init replacement when one was stored, else
+    /// the seed. Cloned out (everything inside is Arc-backed or small) so no
+    /// lock is held while iteration runs.
+    fn core(&self) -> EnumCore {
+        self.reinit
+            .lock()
+            .clone()
+            .unwrap_or_else(|| self.seed.clone())
+    }
+
+    /// The current source alone -- the common read.
+    fn source(&self) -> EnumSource {
+        self.core().source
+    }
+
     /// Whether external iteration has begun and not finished -- what
     /// makes `dup` unsafe (CRuby: "can't copy execution context").
     pub(crate) fn iteration_live(&self) -> bool {
@@ -155,12 +195,8 @@ impl EnumeratorData {
     /// `dup`/`clone`'s payload (which starts unfrozen; `clone`'s flag copy
     /// is `dup_value`'s job).
     pub(crate) fn fresh_copy(&self) -> REnumerator {
-        Arc::new(EnumeratorData {
-            source: self.source.clone(),
-            size_hint: self.size_hint.clone(),
-            state: Mutex::new(ExternState::default()),
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })
+        let core = self.core();
+        Arc::new(EnumeratorData::new(core.source, core.size_hint))
     }
 
     /// `Enumerator#frozen?` -- see the `frozen` field.
@@ -205,16 +241,14 @@ pub(crate) fn enumerator_for_with_size(
     args: &[RubyValue],
     size_hint: Option<RubyValue>,
 ) -> RubyValue {
-    RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::Method {
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+        EnumSource::Method {
             recv: recv.clone(),
             meth: meth.to_string(),
             args: args.to_vec(),
         },
         size_hint,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    }))
+    )))
 }
 
 /// A Generator-backed Enumerator that yields each precomputed value in
@@ -236,12 +270,10 @@ pub(crate) fn generator_of(values: Vec<RubyValue>) -> RubyValue {
 /// `Enumerator::Chain` over `sources`, iterated back to back. The public
 /// constructor behind `Enumerator#+` and `Enumerable#chain`.
 pub(crate) fn chain_of(sources: Vec<RubyValue>) -> RubyValue {
-    RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::Chain { sources },
-        size_hint: None,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    }))
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+        EnumSource::Chain { sources },
+        None,
+    )))
 }
 
 /// `Enumerator::ArithmeticSequence` over `(begin, end, step, exclude_end)`.
@@ -256,8 +288,8 @@ pub(crate) fn arith_seq_of(
     step: RubyValue,
     exclude_end: bool,
 ) -> RubyValue {
-    RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::ArithSeq {
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+        EnumSource::ArithSeq {
             recv: recv.clone(),
             meth,
             args: args.to_vec(),
@@ -266,10 +298,8 @@ pub(crate) fn arith_seq_of(
             step,
             exclude_end,
         },
-        size_hint: None,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    }))
+        None,
+    )))
 }
 
 /// The `(begin, end, step, exclude_end)` quadruple, for a value that is an
@@ -282,13 +312,15 @@ pub(crate) fn arith_seq_parts(
     let RubyValue::Enumerator(e) = v else {
         return None;
     };
+    // The seed is authoritative here: an ArithmeticSequence refuses re-init
+    // (see `#initialize`), so its quadruple can be borrowed without a lock.
     let EnumSource::ArithSeq {
         begin,
         end,
         step,
         exclude_end,
         ..
-    } = &e.source
+    } = &e.seed.source
     else {
         return None;
     };
@@ -303,7 +335,9 @@ pub(crate) fn arith_seq_parts(
 /// `Enumerator::Chain`/`Enumerator::Product`/`::ArithmeticSequence` over
 /// plain `Enumerator` (see `value.rs`).
 pub fn enumerator_class_id(e: &REnumerator) -> crate::ClassId {
-    match e.source {
+    // The seed's variant kind never changes (re-init is same-class checked),
+    // so the class read stays lock-free.
+    match e.seed.source {
         EnumSource::Chain { .. } => zeo_abi::ENUMERATOR_CHAIN_CLASS,
         EnumSource::Product { .. } => zeo_abi::ENUMERATOR_PRODUCT_CLASS,
         EnumSource::ArithSeq { .. } => zeo_abi::ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS,
@@ -319,26 +353,22 @@ pub fn enumerator_class_id(e: &REnumerator) -> crate::ClassId {
 /// is the pairing CRuby builds: `Enumerator.new { }` answers an Enumerator
 /// whose `each` re-invokes the generator's.
 fn enumerator_over(source: RubyValue, size_hint: Option<RubyValue>) -> RubyValue {
-    RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::Method {
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+        EnumSource::Method {
             recv: source,
             meth: "each".to_string(),
             args: Vec::new(),
         },
         size_hint,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    }))
+    )))
 }
 
 /// A bare `Enumerator::Generator` over `block`.
 fn generator_object(block: RProc) -> RubyValue {
-    RubyValue::Enumerator(Arc::new(EnumeratorData {
-        source: EnumSource::Generator { block },
-        size_hint: None,
-        state: Mutex::new(ExternState::default()),
-        frozen: std::sync::atomic::AtomicBool::new(false),
-    }))
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+        EnumSource::Generator { block },
+        None,
+    )))
 }
 
 /// `Enumerator.new([size]) { |y| ... }` -- reached through the dynamic
@@ -528,7 +558,7 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
         return id;
     }
     let id = NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed);
-    let source = e.source.clone();
+    let source = e.source();
     let coro: EnumCoro = crate::coroutine::new_fiber(move |_: Vec<RubyValue>| {
         // See `fiber_new`: the coroutine stack needs its own overflow floor.
         crate::stack_guard::set_floor(crate::stack_guard::fiber_floor_here());
@@ -653,6 +683,66 @@ fn ary2sv(mut vals: Vec<RubyValue>) -> RubyValue {
     }
 }
 
+/// Drops any external-iteration state (fiber, lookahead, fed value, parked
+/// result) -- the re-init rows discard the position exactly as a fresh
+/// enumerator would start.
+fn clear_iteration(e: &EnumeratorData) {
+    let mut st = e.state.lock();
+    if let Some(id) = st.fiber.take()
+        && st.owner == Some(std::thread::current().id())
+    {
+        ENUM_FIBERS.with(|f| f.borrow_mut().remove(&id));
+    }
+    st.owner = None;
+    st.lookahead = None;
+    st.feed = None;
+    st.done = None;
+    st.saved_ec = crate::ec::Ec::default();
+}
+
+/// The FrozenError every re-init row raises on a frozen receiver.
+fn check_reinit_frozen(e: &REnumerator) -> Result<(), Signal> {
+    if !e.is_frozen() {
+        return Ok(());
+    }
+    let name = crate::dispatch::class_name(enumerator_class_id(e))
+        .unwrap_or_else(|| "Enumerator".to_string());
+    Err(frozen_error!(
+        "can't modify frozen {name}: {}",
+        enum_inspect(e)
+    ))
+}
+
+/// Stores a replacement core and discards iteration state -- the shared tail
+/// of every `initialize`/`initialize_copy` row.
+fn replace_core(e: &EnumeratorData, core: EnumCore) {
+    *e.reinit.lock() = Some(core);
+    clear_iteration(e);
+}
+
+/// `initialize_copy`'s shared body: `other` must be an enumerator of the
+/// receiver's own class (CRuby's check). An ArithmeticSequence pair is
+/// refused: its quadruple is read lock-free (`arith_seq_parts`), so it cannot
+/// be swapped in place.
+fn enum_init_copy(recv: &RubyValue, other: &RubyValue) -> Result<RubyValue, Signal> {
+    let e = recv_enum(recv);
+    check_reinit_frozen(e)?;
+    let RubyValue::Enumerator(o) = other else {
+        return Err(type_error!("initialize_copy should take same class object"));
+    };
+    if enumerator_class_id(e) != enumerator_class_id(o) {
+        return Err(type_error!("initialize_copy should take same class object"));
+    }
+    if matches!(e.seed.source, EnumSource::ArithSeq { .. }) {
+        return Err(crate::builtins::not_impl_error!(
+            "can't re-initialize an Enumerator::ArithmeticSequence (zeo reads its quadruple lock-free)"
+        ));
+    }
+    let core = o.core();
+    replace_core(e, core);
+    Ok(recv.clone())
+}
+
 fn list(vals: &[RubyValue]) -> String {
     let rendered: Vec<String> = vals.iter().map(|v| v.inspect_string()).collect();
     format!("[{}]", rendered.join(", "))
@@ -669,7 +759,7 @@ pub(crate) fn enum_to_s(e: &REnumerator) -> String {
 }
 
 pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
-    match &e.source {
+    match &e.source() {
         // A generator/producer is an object in its own right, and CRuby
         // prints it with its address (the conformance test normalizes that to
         // `0xADDR`). The enumerator WRAPPING one renders through the `Method`
@@ -770,16 +860,17 @@ fn render_kwargs(h: &crate::RHash) -> Option<String> {
 /// nil for everything else (a few shapes CRuby computes -- e.g.
 /// `each_slice` over an infinite range -- return nil here, documented).
 fn enum_size(e: &EnumeratorData) -> RubyValue {
+    let core = e.core();
     // `Enumerator.new(size) { }`'s stored hint wins over anything derived
     // from the source. A size CALLABLE is invoked lazily here, which is when
     // CRuby calls it too.
-    if let Some(hint) = &e.size_hint {
+    if let Some(hint) = &core.size_hint {
         return match hint {
             // The captured arguments are forwarded to a size callable, so
             // `to_enum(:pairs, n) { n }` can read them back -- CRuby passes
             // `e->args` through the same `call` probe.
             RubyValue::Proc(p) => {
-                let args = match &e.source {
+                let args = match &core.source {
                     EnumSource::Method { args, .. } => args.as_slice(),
                     _ => &[],
                 };
@@ -788,7 +879,7 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
             v => v.clone(),
         };
     }
-    match &e.source {
+    match &core.source {
         EnumSource::Generator { .. } => RubyValue::Nil,
         // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
         EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
@@ -825,7 +916,7 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
         EnumSource::Product { sources } => fold_sizes(sources, 1, |acc, n| acc * n),
         // Computed from the quadruple, never walked -- which is the only way
         // an endless sequence can answer at all.
-        EnumSource::ArithSeq { .. } => arith_size(&e.source).unwrap_or(RubyValue::Nil),
+        EnumSource::ArithSeq { .. } => arith_size(&core.source).unwrap_or(RubyValue::Nil),
     }
 }
 
@@ -910,7 +1001,7 @@ fn drive_with_index(e: &REnumerator, block: RubyValue, offset: i64) -> Result<Ru
         };
         blk.call(&[el, RubyValue::Int(i)])
     });
-    internal_each(&e.source, RubyValue::Proc(wrapper))
+    internal_each(&e.source(), RubyValue::Proc(wrapper))
 }
 
 /// `with_object(memo)`/`each_with_object`'s driver: yields
@@ -935,7 +1026,7 @@ fn drive_with_object(
     if crate::builtins::lazy::is_lazy(recv) {
         crate::builtins::lazy::lazy_each(recv, Some(RubyValue::Proc(wrapper)))?;
     } else {
-        internal_each(&recv_enum(recv).source, RubyValue::Proc(wrapper))?;
+        internal_each(&recv_enum(recv).source(), RubyValue::Proc(wrapper))?;
     }
     Ok(memo)
 }
@@ -951,24 +1042,20 @@ ruby_class! {
         let Some(RubyValue::Proc(generator)) = block else {
             return Err(arg_error!("tried to create Producer without a block"));
         };
-        let producer = RubyValue::Enumerator(Arc::new(EnumeratorData {
-            source: EnumSource::Produce { initial: arg.cloned(), block: generator },
-            size_hint: None,
-            state: Mutex::new(ExternState::default()),
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        }));
+        let producer = RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+            EnumSource::Produce { initial: arg.cloned(), block: generator },
+            None,
+        )));
         Ok(enumerator_over(producer, None))
     }
 
     // `Enumerator.product(*enums)` -- every combination as an Array, rightmost
     // source varying fastest (#2484). No args yields one empty combination.
     def self."product"(_recv, *args, &_block) {
-        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
-            source: EnumSource::Product { sources: args.to_vec() },
-            size_hint: None,
-            state: Mutex::new(ExternState::default()),
-            frozen: std::sync::atomic::AtomicBool::new(false),
-        })))
+        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+            EnumSource::Product { sources: args.to_vec() },
+            None,
+        ))))
     }
 
     def "each"(recv, *args, &block) {
@@ -985,7 +1072,7 @@ ruby_class! {
         match block {
             // Re-invoke the captured method with the caller's block; the
             // return value is the underlying method's own.
-            Some(b) => internal_each(&e.source, b),
+            Some(b) => internal_each(&e.source(), b),
             // Blockless `each` returns SELF (`equal?`-identical, oracle).
             None => Ok(recv.clone()),
         }
@@ -995,6 +1082,31 @@ ruby_class! {
     // a chain nests rather than flattens, matching CRuby.
     def "+"(recv, other) {
         Ok(chain_of(vec![recv.clone(), (*other).clone()]))
+    }
+
+    // Re-init: the receiver becomes the fresh block-driven enumerator
+    // `Enumerator.new([size]) { |y| ... }` would build, discarding previous
+    // state including any external-iteration position.
+    private def "initialize" cfunc (recv, *args, &block) {
+        let e = recv_enum(recv);
+        check_reinit_frozen(e)?;
+        if matches!(e.seed.source, EnumSource::ArithSeq { .. }) {
+            return Err(crate::builtins::not_impl_error!(
+                "can't re-initialize an Enumerator::ArithmeticSequence (zeo reads its quadruple lock-free)"
+            ));
+        }
+        if !matches!(&block, Some(RubyValue::Proc(_))) {
+            return Err(arg_error!("tried to create Proc object without a block"));
+        }
+        let RubyValue::Enumerator(fresh) = enumerator_new(args, block)? else {
+            unreachable!("enumerator_new builds an Enumerator");
+        };
+        replace_core(e, fresh.core());
+        Ok(recv.clone())
+    }
+
+    private def "initialize_copy"(recv, other) {
+        enum_init_copy(recv, other)
     }
 
     def "next"(recv) {
@@ -1144,7 +1256,24 @@ ruby_class! {
         // hands back what `rb_proc_call` gave it.
         def "each" cfunc (recv, *_args, &block) {
             let consumer = need_block!(block);
-            internal_each(&recv_enum(recv).source, RubyValue::Proc(consumer))
+            internal_each(&recv_enum(recv).source(), RubyValue::Proc(consumer))
+        }
+        // Re-init replaces the generator's proc; blockless keeps `self.new`'s
+        // own refusal shape.
+        private def "initialize" cfunc (recv, *_args, &block) {
+            let e = recv_enum(recv);
+            check_reinit_frozen(e)?;
+            let Some(RubyValue::Proc(p)) = block else {
+                return Err(crate::dispatch::raise_error(
+                    "LocalJumpError",
+                    "no block given".to_string(),
+                ));
+            };
+            replace_core(e, EnumCore { source: EnumSource::Generator { block: p }, size_hint: None });
+            Ok(recv.clone())
+        }
+        private def "initialize_copy"(recv, other) {
+            enum_init_copy(recv, other)
         }
     }
 
@@ -1154,7 +1283,7 @@ ruby_class! {
     class Producer = zeo_abi::ENUMERATOR_PRODUCER_CLASS < zeo_abi::OBJECT_CLASS {
         def "each"(recv, &block) {
             let consumer = need_block!(block);
-            internal_each(&recv_enum(recv).source, RubyValue::Proc(consumer))
+            internal_each(&recv_enum(recv).source(), RubyValue::Proc(consumer))
         }
     }
 
@@ -1176,6 +1305,19 @@ ruby_class! {
         def "inspect"(recv) { inherited_row!(enumerator, "inspect", recv, __args, None) }
         def "rewind"(recv) { inherited_row!(enumerator, "rewind", recv, __args, None) }
         def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
+        // Re-init: the receiver becomes a chain over the given enumerables.
+        private def "initialize" cfunc (recv, *args) {
+            let e = recv_enum(recv);
+            check_reinit_frozen(e)?;
+            replace_core(e, EnumCore {
+                source: EnumSource::Chain { sources: args.to_vec() },
+                size_hint: None,
+            });
+            Ok(recv.clone())
+        }
+        private def "initialize_copy"(recv, other) {
+            enum_init_copy(recv, other)
+        }
     }
 
     class Product = zeo_abi::ENUMERATOR_PRODUCT_CLASS < zeo_abi::ENUMERATOR_CLASS {
@@ -1185,6 +1327,19 @@ ruby_class! {
         def "inspect"(recv) { inherited_row!(enumerator, "inspect", recv, __args, None) }
         def "rewind"(recv) { inherited_row!(enumerator, "rewind", recv, __args, None) }
         def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
+        // Re-init: the receiver becomes the product of the given axes.
+        private def "initialize" cfunc (recv, *args) {
+            let e = recv_enum(recv);
+            check_reinit_frozen(e)?;
+            replace_core(e, EnumCore {
+                source: EnumSource::Product { sources: args.to_vec() },
+                size_hint: None,
+            });
+            Ok(recv.clone())
+        }
+        private def "initialize_copy"(recv, other) {
+            enum_init_copy(recv, other)
+        }
     }
 
     class ArithmeticSequence = zeo_abi::ENUMERATOR_ARITHMETIC_SEQUENCE_CLASS
@@ -1211,7 +1366,7 @@ ruby_class! {
         def "each"(recv, &block) {
             if let Some(RubyValue::Proc(p)) = &block {
                 let e = recv_enum(recv);
-                arith_walk(&e.source, |v| {
+                arith_walk(&e.seed.source, |v| {
                     p.call(std::slice::from_ref(v))?;
                     Ok(())
                 })?;
@@ -1220,7 +1375,7 @@ ruby_class! {
         }
 
         def "size"(recv) {
-            arith_size(&recv_enum(recv).source)
+            arith_size(&recv_enum(recv).seed.source)
         }
 
         def "inspect"(recv) {
@@ -1286,7 +1441,7 @@ ruby_class! {
             if want > 0 {
                 // `Signal::Break` is the walk's only exit for an endless
                 // sequence -- the same stop `Enumerable#first` uses.
-                let taken = arith_walk(&recv_enum(recv).source, |v| {
+                let taken = arith_walk(&recv_enum(recv).seed.source, |v| {
                     out.push(v.clone());
                     if out.len() as i64 >= want {
                         return Err(Signal::Break(RubyValue::Nil));

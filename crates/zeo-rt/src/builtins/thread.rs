@@ -193,6 +193,16 @@ ruby_class! {
         thread_outcome(t)
     }
     // `Thread#alive?` -- true until the thread has finished (a non-joining peek).
+    // Every reachable Thread is running or ran -- CRuby's ThreadError,
+    // with the ORIGINAL spawn site appended when one is recorded.
+    private def "initialize" cfunc (recv, *_args, &_block) {
+        let _ = recv;
+        let msg = match crate::thread::thread_origin(t) {
+            Some(loc) => format!("already initialized thread - {loc}"),
+            None => "already initialized thread".to_string(),
+        };
+        Err(crate::dispatch::raise_error("ThreadError", msg))
+    }
     def "alive?"(_recv) {
         Ok(RubyValue::Bool(thread_alive(t)))
     }

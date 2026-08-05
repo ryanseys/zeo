@@ -52,6 +52,10 @@ ruby_class! {
         // CRuby answers nil, not the elapsed seconds `Kernel#sleep` gives.
         slept.map(|_| RubyValue::Nil)
     }
+    // Re-init is a permitted no-op (oracle: nil even on a frozen Mutex).
+    private def "initialize"(_recv) {
+        Ok(RubyValue::Nil)
+    }
     def "locked?"(recv) {
         Ok(RubyValue::Bool(mutex_locked(&recv.as_mutex_unchecked())))
     }

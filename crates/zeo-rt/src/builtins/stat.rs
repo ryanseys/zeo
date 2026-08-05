@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+
 use crate::Signal;
 use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
@@ -17,14 +19,22 @@ use crate::value::RubyValue;
 use zeo_abi::{ClassId, FILE_STAT_CLASS};
 use zeo_macros::ruby_class;
 
-/// A captured `stat(2)` result. `libc::stat` is `Copy` and self-contained, so
-/// the whole object is a plain value behind the `Arc` every `RObj` needs.
-pub struct RStat {
+/// A captured `stat(2)` result plus the creation time. `libc::stat` is `Copy`
+/// and self-contained, so readers copy the whole snapshot out in one move.
+#[derive(Clone, Copy)]
+struct StatPayload {
     st: libc::stat,
     /// Creation time as `(secs, nanos)`. macOS reads it off the stat itself;
     /// Linux captures it separately via `statx(2)` at construction, and a
     /// filesystem without a recorded btime leaves it `None`.
     birth: Option<(i64, i64)>,
+}
+
+/// A `File::Stat`. The payload sits behind a `Mutex` only so the private
+/// `#initialize`/`#initialize_copy` rows can re-stat in place (allocate +
+/// re-init, marshal's load path); it is a value snapshot everywhere else.
+pub struct RStat {
+    payload: Mutex<StatPayload>,
 }
 
 impl RubyObject for RStat {
@@ -48,15 +58,33 @@ impl RubyObject for RStat {
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         Arc::new(RStat {
-            st: self.st,
-            birth: self.birth,
+            payload: Mutex::new(*self.payload.lock()),
         })
     }
 }
 
 /// Wrap a `libc::stat` as a `File::Stat` value.
 fn stat_value(st: libc::stat, birth: Option<(i64, i64)>) -> RubyValue {
-    RubyValue::Object(Arc::new(RStat { st, birth }))
+    RubyValue::Object(Arc::new(RStat {
+        payload: Mutex::new(StatPayload { st, birth }),
+    }))
+}
+
+/// `File::Stat.allocate` -- a blank (zeroed) snapshot for `#initialize` or
+/// marshal to fill in.
+fn stat_allocate(_id: ClassId) -> RObj {
+    Arc::new(RStat {
+        payload: Mutex::new(StatPayload {
+            // SAFETY: `libc::stat` is plain old data; all-zeroes is a valid
+            // (if meaningless) value, exactly what an uninitialized Stat is.
+            st: unsafe { std::mem::zeroed() },
+            birth: None,
+        }),
+    })
+}
+
+pub fn register_stat(registry: &mut crate::dispatch::ClassRegistry) {
+    registry.define_allocator(FILE_STAT_CLASS, stat_allocate);
 }
 
 /// The creation time `stat(2)` itself cannot carry on Linux: `statx(2)` with
@@ -77,8 +105,9 @@ fn statx_birth(
     }
 }
 
-/// `File.stat(path)` (follows a final symlink) / `File.lstat(path)` (doesn't).
-pub fn stat_from_path(path: &str, follow: bool) -> Result<RubyValue, Signal> {
+/// The `stat(2)`/`lstat(2)` capture behind `File.stat`/`File.lstat` and the
+/// private `#initialize` row.
+fn payload_from_path(path: &str, follow: bool) -> Result<StatPayload, Signal> {
     let c = std::ffi::CString::new(path).map_err(|_| arg_error!("string contains null byte"))?;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     // SAFETY: `c` is a valid NUL-terminated path; `st` is a live `stat` buffer.
@@ -105,7 +134,13 @@ pub fn stat_from_path(path: &str, follow: bool) -> Result<RubyValue, Signal> {
         &c,
         if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW },
     );
-    Ok(stat_value(st, birth))
+    Ok(StatPayload { st, birth })
+}
+
+/// `File.stat(path)` (follows a final symlink) / `File.lstat(path)` (doesn't).
+pub fn stat_from_path(path: &str, follow: bool) -> Result<RubyValue, Signal> {
+    let p = payload_from_path(path, follow)?;
+    Ok(stat_value(p.st, p.birth))
 }
 
 /// `File#stat` -- a `fstat(2)` on the open descriptor.
@@ -137,6 +172,12 @@ fn recv_stat(recv: &RubyValue) -> Result<&RStat, Signal> {
     }
 }
 
+/// The receiver's snapshot, copied out of the lock -- what every reader row
+/// works from.
+fn payload(recv: &RubyValue) -> Result<StatPayload, Signal> {
+    Ok(*recv_stat(recv)?.payload.lock())
+}
+
 /// The `S_IFMT`-masked type bits -- the discriminant every `ftype`/predicate
 /// reads.
 fn fmt(st: &libc::stat) -> libc::mode_t {
@@ -159,30 +200,30 @@ ruby_class! {
     include zeo_abi::COMPARABLE_CLASS;
 
     def "size"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_size))
+        Ok(RubyValue::Int(payload(recv)?.st.st_size))
     }
     // `size?` is nil for an empty file (the "is there content" predicate).
     def "size?"(recv) {
-        let n = recv_stat(recv)?.st.st_size;
+        let n = payload(recv)?.st.st_size;
         Ok(if n > 0 { RubyValue::Int(n) } else { RubyValue::Nil })
     }
     def "zero?"(recv) {
-        Ok(RubyValue::Bool(recv_stat(recv)?.st.st_size == 0))
+        Ok(RubyValue::Bool(payload(recv)?.st.st_size == 0))
     }
     def "mtime"(recv) {
-        let st = &recv_stat(recv)?.st;
+        let st = &payload(recv)?.st;
         Ok(stat_time(st.st_mtime, st.st_mtime_nsec))
     }
     def "atime"(recv) {
-        let st = &recv_stat(recv)?.st;
+        let st = &payload(recv)?.st;
         Ok(stat_time(st.st_atime, st.st_atime_nsec))
     }
     def "ctime"(recv) {
-        let st = &recv_stat(recv)?.st;
+        let st = &payload(recv)?.st;
         Ok(stat_time(st.st_ctime, st.st_ctime_nsec))
     }
     def "birthtime"(recv) {
-        match recv_stat(recv)?.birth {
+        match payload(recv)?.birth {
             Some((secs, nsec)) => Ok(stat_time(secs, nsec)),
             None => Err(crate::dispatch::raise_error(
                 "NotImplementedError",
@@ -191,34 +232,34 @@ ruby_class! {
         }
     }
     def "mode"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_mode as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_mode as i64))
     }
     def "uid"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_uid as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_uid as i64))
     }
     def "gid"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_gid as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_gid as i64))
     }
     def "ino"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_ino as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_ino as i64))
     }
     def "dev"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_dev as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_dev as i64))
     }
     def "rdev"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_rdev as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_rdev as i64))
     }
     def "nlink"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_nlink as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_nlink as i64))
     }
     def "blksize"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_blksize as i64))
+        Ok(RubyValue::Int(payload(recv)?.st.st_blksize as i64))
     }
     def "blocks"(recv) {
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_blocks))
+        Ok(RubyValue::Int(payload(recv)?.st.st_blocks))
     }
     def "ftype"(recv) {
-        let t = fmt(&recv_stat(recv)?.st);
+        let t = fmt(&payload(recv)?.st);
         let s = match t {
             libc::S_IFREG => "file",
             libc::S_IFDIR => "directory",
@@ -232,93 +273,116 @@ ruby_class! {
         Ok(RubyValue::Str(crate::collections::string_new(s.to_string())))
     }
     def "file?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFREG))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFREG))
     }
     def "directory?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFDIR))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFDIR))
     }
     def "symlink?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFLNK))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFLNK))
     }
     def "pipe?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFIFO))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFIFO))
     }
     def "socket?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFSOCK))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFSOCK))
     }
     def "blockdev?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFBLK))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFBLK))
     }
     def "chardev?"(recv) {
-        Ok(RubyValue::Bool(fmt(&recv_stat(recv)?.st) == libc::S_IFCHR))
+        Ok(RubyValue::Bool(fmt(&payload(recv)?.st) == libc::S_IFCHR))
     }
     def "setuid?"(recv) {
-        Ok(RubyValue::Bool(mode_has(&recv_stat(recv)?.st, libc::S_ISUID)))
+        Ok(RubyValue::Bool(mode_has(&payload(recv)?.st, libc::S_ISUID)))
     }
     def "setgid?"(recv) {
-        Ok(RubyValue::Bool(mode_has(&recv_stat(recv)?.st, libc::S_ISGID)))
+        Ok(RubyValue::Bool(mode_has(&payload(recv)?.st, libc::S_ISGID)))
     }
     def "sticky?"(recv) {
-        Ok(RubyValue::Bool(mode_has(&recv_stat(recv)?.st, libc::S_ISVTX)))
+        Ok(RubyValue::Bool(mode_has(&payload(recv)?.st, libc::S_ISVTX)))
     }
     def "owned?"(recv) {
-        Ok(RubyValue::Bool(recv_stat(recv)?.st.st_uid == unsafe { libc::geteuid() }))
+        Ok(RubyValue::Bool(payload(recv)?.st.st_uid == unsafe { libc::geteuid() }))
     }
     def "grpowned?"(recv) {
-        Ok(RubyValue::Bool(recv_stat(recv)?.st.st_gid == unsafe { libc::getegid() }))
+        Ok(RubyValue::Bool(payload(recv)?.st.st_gid == unsafe { libc::getegid() }))
     }
     // Access predicates read the mode bits against the effective uid/gid --
     // owner bits when we own it, group bits when we share the group, else
     // other bits (the same rule CRuby's `Stat` uses, distinct from `access(2)`).
     def "readable?"(recv) {
-        Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o400, 0o040, 0o004)))
+        Ok(RubyValue::Bool(access_bits(&payload(recv)?.st, 0o400, 0o040, 0o004)))
     }
     def "writable?"(recv) {
-        Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o200, 0o020, 0o002)))
+        Ok(RubyValue::Bool(access_bits(&payload(recv)?.st, 0o200, 0o020, 0o002)))
     }
     def "executable?"(recv) {
-        Ok(RubyValue::Bool(access_bits(&recv_stat(recv)?.st, 0o100, 0o010, 0o001)))
+        Ok(RubyValue::Bool(access_bits(&payload(recv)?.st, 0o100, 0o010, 0o001)))
     }
     // The `*_real?` trio asks the same question of the REAL uid/gid rather than
     // the effective one. They differ only under set-uid, which is exactly what
     // they exist to test.
     def "readable_real?"(recv) {
-        Ok(RubyValue::Bool(real_access_bits(&recv_stat(recv)?.st, 0o400, 0o040, 0o004)))
+        Ok(RubyValue::Bool(real_access_bits(&payload(recv)?.st, 0o400, 0o040, 0o004)))
     }
     def "writable_real?"(recv) {
-        Ok(RubyValue::Bool(real_access_bits(&recv_stat(recv)?.st, 0o200, 0o020, 0o002)))
+        Ok(RubyValue::Bool(real_access_bits(&payload(recv)?.st, 0o200, 0o020, 0o002)))
     }
     def "executable_real?"(recv) {
-        Ok(RubyValue::Bool(real_access_bits(&recv_stat(recv)?.st, 0o100, 0o010, 0o001)))
+        Ok(RubyValue::Bool(real_access_bits(&payload(recv)?.st, 0o100, 0o010, 0o001)))
     }
     // `st_dev`/`st_rdev` split into their major and minor halves.
     def "dev_major"(recv) {
-        Ok(RubyValue::Int(dev_major(recv_stat(recv)?.st.st_dev)))
+        Ok(RubyValue::Int(dev_major(payload(recv)?.st.st_dev)))
     }
     def "dev_minor"(recv) {
-        Ok(RubyValue::Int(dev_minor(recv_stat(recv)?.st.st_dev)))
+        Ok(RubyValue::Int(dev_minor(payload(recv)?.st.st_dev)))
     }
     def "rdev_major"(recv) {
-        Ok(RubyValue::Int(dev_major(recv_stat(recv)?.st.st_rdev)))
+        Ok(RubyValue::Int(dev_major(payload(recv)?.st.st_rdev)))
     }
     def "rdev_minor"(recv) {
-        Ok(RubyValue::Int(dev_minor(recv_stat(recv)?.st.st_rdev)))
+        Ok(RubyValue::Int(dev_minor(payload(recv)?.st.st_rdev)))
     }
     def "world_readable?"(recv) {
-        Ok(world_perm(&recv_stat(recv)?.st, 0o004))
+        Ok(world_perm(&payload(recv)?.st, 0o004))
     }
     def "world_writable?"(recv) {
-        Ok(world_perm(&recv_stat(recv)?.st, 0o002))
+        Ok(world_perm(&payload(recv)?.st, 0o002))
+    }
+    // Re-init stats `path` into the receiver in place -- the
+    // `File::Stat.allocate` + `#initialize` pair (marshal's load path) and a
+    // plain `send(:initialize, path)` both land here. Follows a final
+    // symlink, exactly like `File.stat`.
+    private def "initialize"(recv, path) {
+        let p = crate::builtins::file::path_arg(path, "stat")?;
+        let fresh = payload_from_path(&p, true)?;
+        *recv_stat(recv)?.payload.lock() = fresh;
+        Ok(recv.clone())
+    }
+    // `#initialize_copy` -- adopt another Stat's snapshot wholesale.
+    private def "initialize_copy"(recv, other) {
+        let RubyValue::Object(o) = other else {
+            return Err(type_error!("initialize_copy should take same class object"));
+        };
+        let Some(src) = o.as_any().downcast_ref::<RStat>() else {
+            return Err(type_error!("initialize_copy should take same class object"));
+        };
+        let copied = *src.payload.lock();
+        *recv_stat(recv)?.payload.lock() = copied;
+        Ok(recv.clone())
     }
     // Ordered by mtime -- what `Comparable` drives `<`/`>`/`between?` from.
     def "<=>"(recv, other) {
-        let a = recv_stat(recv)?.st.st_mtime;
+        let a = payload(recv)?.st.st_mtime;
         let RubyValue::Object(o) = other else { return Ok(RubyValue::Nil) };
         let Some(other) = o.as_any().downcast_ref::<RStat>() else { return Ok(RubyValue::Nil) };
-        Ok(RubyValue::Int(a.cmp(&other.st.st_mtime) as i64))
+        let b = other.payload.lock().st.st_mtime;
+        Ok(RubyValue::Int(a.cmp(&b) as i64))
     }
     def "inspect" | "to_s"(recv) {
-        let st = &recv_stat(recv)?.st;
+        let st = &payload(recv)?.st;
         Ok(RubyValue::Str(crate::collections::string_new(format!(
             "#<File::Stat dev=0x{:x}, ino={}, mode=0{:o}, nlink={}, uid={}, gid={}, size={}>",
             st.st_dev, st.st_ino, st.st_mode, st.st_nlink, st.st_uid, st.st_gid, st.st_size

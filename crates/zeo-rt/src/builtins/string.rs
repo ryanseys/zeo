@@ -2809,6 +2809,41 @@ ruby_class! {
         rstr.lock().replace_utf8(new_text);
         Ok(recv.clone())
     }
+    // ruby's `rb_str_init` as the private row: a source replaces bytes AND
+    // encoding; `capacity:` alone reallocates (contents discarded --
+    // oracle-pinned to ""); `encoding:` alone just retags; bare re-init is
+    // a no-op. Byte-faithful, unlike `replace`'s utf8 path.
+    private def "initialize"(recv, source?, **opts) {
+        guard_str_frozen(recv)?;
+        let enc_override = kw_encoding(opts)?;
+        let has_capacity = matches!(opts, Some(RubyValue::Hash(h))
+            if !crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("capacity"))).is_nil());
+        if let Some(v) = source {
+            let s = convert::to_rstr(v)?;
+            let (bytes, enc) = {
+                let g = s.lock();
+                (g.bytes().to_vec(), g.encoding())
+            };
+            *rstr.lock() =
+                crate::StrBuf::from_bytes(bytes, enc_override.unwrap_or(enc));
+        } else if has_capacity {
+            let enc = enc_override.unwrap_or_else(|| rstr.lock().encoding());
+            *rstr.lock() = crate::StrBuf::from_bytes(Vec::new(), enc);
+        } else if let Some(enc) = enc_override {
+            rstr.lock().set_encoding(enc);
+        }
+        Ok(recv.clone())
+    }
+    private def "initialize_copy"(recv, other) {
+        guard_str_frozen(recv)?;
+        let s = convert::to_rstr(other)?;
+        let copied = {
+            let g = s.lock();
+            crate::StrBuf::from_bytes(g.bytes().to_vec(), g.encoding())
+        };
+        *rstr.lock() = copied;
+        Ok(recv.clone())
+    }
     // `Integer#chr`'s inverse -- the first character's codepoint.
     def "ord" (recv) {
         match rstr.lock().chars().next() {

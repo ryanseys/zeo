@@ -164,6 +164,11 @@ ruby_class! {
     // the real parent class); `nil` at the root (`BasicObject`). Declaring it
     // HERE is what makes `Enumerable.superclass` the NoMethodError CRuby
     // raises: a module receiver never reaches this table.
+    // Any Class a program can hold is initialized (CRuby raises even for
+    // `Class.allocate` + first initialize) -- the row IS the refusal.
+    private def "initialize" cfunc (_recv, *_args, &_block) {
+        Err(type_error!("already initialized class"))
+    }
     def "superclass" (recv) {
         let cid = recv_cid(recv);
         // "no superclass yet" is not "no superclass": `Class.allocate`'s

@@ -21,6 +21,11 @@ ruby_class! {
 
     // The bound. `Queue` shares the payload field but not these rows, so
     // `Queue.new.max` is the NoMethodError CRuby raises.
+    // Re-init resets the bound (oracle: `q.send(:initialize, 5)` -> max 5).
+    private def "initialize"(recv, arg) {
+        inherited_row!(sized_queue, "max=", recv, std::slice::from_ref(arg), None)?;
+        Ok(recv.clone())
+    }
     def "max"(recv) {
         Ok(match queue_max(&recv.as_queue_unchecked()) {
             Some(n) => RubyValue::Int(n),
