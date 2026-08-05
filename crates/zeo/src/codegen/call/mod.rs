@@ -1705,6 +1705,103 @@ pub fn emit_call(
         HirNode::QualifiedConstRead(scope, n) if scope == "Object" => Some(n.as_str()),
         _ => None,
     };
+    // `Ractor.new(*args, name: ...) { |*params| }` -- handled AHEAD of the
+    // kwargs-empty class-target block so the `name:` keyword reaches it.
+    // Block ISOLATION is enforced HERE, at compile time (the capture set is
+    // statically known), strictly earlier than CRuby's own
+    // Proc-creation-time `Ractor::IsolationError`. Args cross the boundary
+    // at runtime (shareable-by-reference or deep-copied; a rejection raises
+    // `RactorError`).
+    if class_target == Some("Ractor") && name == "new" && !safe {
+        let mut name_kwarg: Option<TokenStream> = None;
+        for kw in kwargs {
+            match kw {
+                KwArg::Pair(k, v)
+                    if matches!(&cx.compiler.hir[*k], HirNode::SymbolLit(s) if s == "name") =>
+                {
+                    let e = emit_expr(cx, *v);
+                    name_kwarg = Some(super::expr::box_if_object_typed(cx, *v, e));
+                }
+                _ => {
+                    return crate::codegen::unsupported(
+                        "`Ractor.new` supports only the `name:` keyword (zeo limitation)",
+                    );
+                }
+            }
+        }
+        let Some(block_id) = block else {
+            if block_arg.is_some() {
+                return crate::codegen::unsupported(
+                    "`Ractor.new` requires a literal block (zeo limitation)",
+                );
+            }
+            return raise::emit_missing_block_raise(cx, "Ractor");
+        };
+        let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+            panic!(
+                "internal error: a Block node should only be reached via the Call that invokes it"
+            );
+        };
+        let block_caps =
+            super::captures::block_captures(cx.compiler, params, body, cx.current_class);
+        // `block_captures` reports every referenced non-param
+        // name, INCLUDING the block's own locals (`msg =
+        // Ractor.receive` -- found the hard way). An outer-scope
+        // access is a name that's either a genuine shared
+        // capture (in `cx.captured_locals`) or one this block
+        // never assigns itself (an enclosing param/block-local).
+        let mut assigned_here = Vec::new();
+        for &n in body {
+            super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
+        }
+        let assigned_here: std::collections::HashSet<&String> = assigned_here.iter().collect();
+        if let Some(outer) = block_caps
+            .locals
+            .iter()
+            .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
+            .min()
+        {
+            return crate::codegen::unsupported(format!(
+                "can not isolate a Proc because it accesses outer variables ({outer})"
+            ));
+        }
+        if block_caps.self_captured {
+            return crate::codegen::unsupported(
+                "can not isolate a Proc because it accesses instance variables of the enclosing object",
+            );
+        }
+        let proc = procs::emit_proc_value(cx, block_id);
+        let arg_exprs: Vec<TokenStream> = args
+            .iter()
+            .map(|&a| {
+                let e = emit_expr(cx, a);
+                super::expr::box_if_object_typed(cx, a, e)
+            })
+            .collect();
+        // The `name:` kwarg's runtime value (nil = unnamed, like CRuby).
+        let name_tok = match name_kwarg {
+            Some(e) => quote! {
+                match (#e) {
+                    zeo_rt::RubyValue::Nil => None,
+                    __n => Some(__n.to_display_string()),
+                }
+            },
+            None => quote! { None },
+        };
+        // The call site, for `#inspect`'s `#<Ractor:#2 file.rb:4 ...>` slot.
+        let loc_tok = match crate::codegen::source_location(cx.compiler, block_id) {
+            Some((file, line)) => quote! { Some(format!("{}:{}", #file, #line)) },
+            None => quote! { None },
+        };
+        let ractor_error = raise::emit_ractor_error(cx);
+        return quote! {
+            match zeo_rt::ractor_new(#proc, vec![#(#arg_exprs),*], #name_tok, #loc_tok) {
+                Ok(__r) => __r,
+                Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
+            }
+        };
+    }
+
     if let Some(target_name) = class_target
         && !safe
         && kwargs.is_empty()
@@ -1813,73 +1910,17 @@ pub fn emit_call(
                     zeo_rt::sized_queue_new((#n).as_int_unchecked())
                 };
             }
-            // `Ractor.new(*args) { |*params| }` -- block
-            // ISOLATION is enforced HERE, at compile time (the capture
-            // set is statically known), strictly earlier than CRuby's
-            // own Proc-creation-time `Ractor::IsolationError`. Args
-            // cross the boundary at runtime (shareable-by-reference or
-            // deep-copied; a rejection raises `RactorError`).
-            ("Ractor", "new") => {
-                let Some(block_id) = block else {
-                    if block_arg.is_some() {
-                        return crate::codegen::unsupported(
-                            "`Ractor.new` requires a literal block (zeo limitation)",
-                        );
-                    }
-                    return raise::emit_missing_block_raise(cx, "Ractor");
-                };
-                let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-                    panic!(
-                        "internal error: a Block node should only be reached via the Call that invokes it"
-                    );
-                };
-                let block_caps =
-                    super::captures::block_captures(cx.compiler, params, body, cx.current_class);
-                // `block_captures` reports every referenced non-param
-                // name, INCLUDING the block's own locals (`msg =
-                // Ractor.receive` -- found the hard way). An outer-scope
-                // access is a name that's either a genuine shared
-                // capture (in `cx.captured_locals`) or one this block
-                // never assigns itself (an enclosing param/block-local).
-                let mut assigned_here = Vec::new();
-                for &n in body {
-                    super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
-                }
-                let assigned_here: std::collections::HashSet<&String> =
-                    assigned_here.iter().collect();
-                if let Some(outer) = block_caps
-                    .locals
-                    .iter()
-                    .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
-                    .min()
-                {
-                    return crate::codegen::unsupported(format!(
-                        "can not isolate a Proc because it accesses outer variables ({outer})"
-                    ));
-                }
-                if block_caps.self_captured {
-                    return crate::codegen::unsupported(
-                        "can not isolate a Proc because it accesses instance variables of the enclosing object",
-                    );
-                }
-                let proc = procs::emit_proc_value(cx, block_id);
-                let arg_exprs: Vec<TokenStream> = args
-                    .iter()
-                    .map(|&a| {
-                        let e = emit_expr(cx, a);
-                        super::expr::box_if_object_typed(cx, a, e)
-                    })
-                    .collect();
-                let ractor_error = raise::emit_ractor_error(cx);
-                return quote! {
-                    match zeo_rt::ractor_new(#proc, vec![#(#arg_exprs),*]) {
-                        Ok(__r) => __r,
-                        Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
-                    }
-                };
-            }
+            // `Ractor.new` is handled ahead of this kwargs-empty block (the
+            // `name:` keyword must reach it).
             ("Ractor", "receive") if args.is_empty() && block.is_none() => {
-                return quote! { zeo_rt::ractor_receive() };
+                // Default-port receive on the CURRENT ractor -- the main
+                // ractor's included (it blocks, fed by workers' sends).
+                return quote! {
+                    match zeo_rt::ractor_receive() {
+                        Ok(__v) => __v,
+                        Err(__sig) => return Err(__sig),
+                    }
+                };
             }
             ("Ractor", "make_shareable") if args.len() == 1 && block.is_none() => {
                 let v = emit_expr(cx, args[0]);
@@ -3002,24 +3043,25 @@ fn dispatch(
     // `value`/`join` mirror Thread's (an uncaught signal re-raises in the
     // caller; join returns the Ractor itself).
     if no_kwargs && infer(cx, recv_id) == TyKind::Ractor && block.is_none() && block_arg.is_none() {
-        let ractor_error = raise::emit_ractor_error(cx);
         match (name, args.len()) {
-            ("send", 1) => {
+            ("send" | "<<", 1) => {
                 let v = emit_expr(cx, args[0]);
                 let v = super::expr::box_if_object_typed(cx, args[0], v);
+                // Typed `Signal` errors straight from the runtime
+                // (`Ractor::ClosedError`/`Ractor::Error`) -- no re-wrap.
                 return quote! {
                     {
                         let __r = (#recv_expr).as_ractor_unchecked();
                         match zeo_rt::ractor_send(&__r, &(#v)) {
                             Ok(()) => zeo_rt::RubyValue::Ractor(__r),
-                            Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
+                            Err(__sig) => return Err(__sig),
                         }
                     }
                 };
             }
             ("value", 0) => {
                 return quote! {
-                    match zeo_rt::ractor_outcome(&(#recv_expr).as_ractor_unchecked()) {
+                    match zeo_rt::ractor_value(&(#recv_expr).as_ractor_unchecked()) {
                         Ok(__v) => __v,
                         Err(__sig) => return Err(__sig),
                     }
@@ -3029,8 +3071,8 @@ fn dispatch(
                 return quote! {
                     {
                         let __r = (#recv_expr).as_ractor_unchecked();
-                        match zeo_rt::ractor_outcome(&__r) {
-                            Ok(_) => zeo_rt::RubyValue::Ractor(__r),
+                        match zeo_rt::ractor_join(&__r) {
+                            Ok(()) => zeo_rt::RubyValue::Ractor(__r),
                             Err(__sig) => return Err(__sig),
                         }
                     }

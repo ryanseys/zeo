@@ -1,18 +1,14 @@
 # Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
-# absent-module: 18
-# constant: 5
-# owner: 4
-# unreachable: 25
+# absent-module: 16
+# constant: 3
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
 absent-module	IO::Buffer::InvalidatedError	-	-
 absent-module	IO::Buffer::LockedError	-	-
 absent-module	IO::Buffer::MaskError	-	-
-absent-module	Ractor::MovedObject	-	-
-absent-module	Ractor::Port	-	-
 absent-module	Ruby	-	-
 absent-module	Ruby::Box	-	-
 absent-module	Ruby::Box::Entry	-	-
@@ -26,34 +22,3 @@ absent-module	RubyVM::YJIT	-	-
 constant	IO	c	Buffer
 constant	Object	c	Ruby
 constant	Object	c	RubyVM
-constant	Ractor	c	MovedObject
-constant	Ractor	c	Port
-owner	Ractor	i	inspect
-owner	Ractor	i	send
-owner	Ractor	i	to_s
-owner	Ractor	s	new
-unreachable	Ractor	i	<<
-unreachable	Ractor	i	[]
-unreachable	Ractor	i	[]=
-unreachable	Ractor	i	close
-unreachable	Ractor	i	default_port
-unreachable	Ractor	i	join
-unreachable	Ractor	i	monitor
-unreachable	Ractor	i	name
-unreachable	Ractor	i	unmonitor
-unreachable	Ractor	i	value
-unreachable	Ractor	p	receive
-unreachable	Ractor	p	recv
-unreachable	Ractor	s	[]
-unreachable	Ractor	s	[]=
-unreachable	Ractor	s	_require
-unreachable	Ractor	s	count
-unreachable	Ractor	s	current
-unreachable	Ractor	s	main
-unreachable	Ractor	s	main?
-unreachable	Ractor	s	receive
-unreachable	Ractor	s	recv
-unreachable	Ractor	s	select
-unreachable	Ractor	s	shareable_lambda
-unreachable	Ractor	s	shareable_proc
-unreachable	Ractor	s	store_if_absent

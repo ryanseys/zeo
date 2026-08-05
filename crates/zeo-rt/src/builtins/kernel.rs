@@ -151,31 +151,7 @@ ruby_module! {
         require_feature(recv, std::slice::from_ref(arg1), None)
     }
     module_function def "require" | "require_relative" as require_feature (_recv, arg1) {
-        let path = crate::builtins::convert::to_rstr(arg1)?
-            .lock()
-            .to_utf8_lossy()
-            .into_owned();
-        // ...unless the front end already spliced this very file, in which case
-        // Ruby's own answer for an already-loaded feature -- `false` -- is both
-        // correct and what the caller expects.
-        if feature_already_loaded(&path) {
-            return Ok(RubyValue::Bool(false));
-        }
-        // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
-        // `require_relative` only, against the calling file's directory -- a
-        // compiled binary has no such directory, so the argument stands.
-        // A feature zeo DECLINES says so; everything else keeps CRuby's bare
-        // wording. Shared with the compiler's loader through the ABI, the only
-        // thing the two sides agree on.
-        let msg = match zeo_abi::declined_feature_reason(&path) {
-            Some(reason) => format!("cannot load such file -- {path}: {reason}"),
-            None => format!("cannot load such file -- {path}"),
-        };
-        let sig = crate::dispatch::raise_error("LoadError", msg);
-        if let crate::signal::Signal::Raise(exc) = &sig {
-            crate::builtins::exception::set_load_error_path(exc, &path);
-        }
-        Err(sig)
+        dynamic_require(arg1)
     }
     private def "pp"(_recv, *args, &_block) {
         kernel_pp(args)
@@ -1605,6 +1581,42 @@ pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// relatively (`require_relative "smtp/auth_plain"`, with or without `.rb`).
 /// Suffix matching is what makes both spellings find it, and a `/` boundary is
 /// what keeps `auth_plain.rb` from matching `not_auth_plain.rb`.
+/// The `require`/`require_relative` runtime body, shared by the Kernel rows
+/// above and `Ractor._require`. Whole-program AOT already spliced every
+/// compile-time-resolvable require, so the only calls that land here are
+/// genuinely dynamic (a computed path, or `load`). zeo has no runtime Ruby
+/// loader, so an actually-executed dynamic load raises CRuby's LoadError
+/// shape -- honest, and rescuable by `begin; require dyn; rescue LoadError`
+/// -- rather than a silent no-op. A non-String-convertible argument raises
+/// the same TypeError CRuby's path coercion does.
+pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Signal> {
+    let path = crate::builtins::convert::to_rstr(arg1)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    // ...unless the front end already spliced this very file, in which case
+    // Ruby's own answer for an already-loaded feature -- `false` -- is both
+    // correct and what the caller expects.
+    if feature_already_loaded(&path) {
+        return Ok(RubyValue::Bool(false));
+    }
+    // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
+    // `require_relative` only, against the calling file's directory -- a
+    // compiled binary has no such directory, so the argument stands.
+    // A feature zeo DECLINES says so; everything else keeps CRuby's bare
+    // wording. Shared with the compiler's loader through the ABI, the only
+    // thing the two sides agree on.
+    let msg = match zeo_abi::declined_feature_reason(&path) {
+        Some(reason) => format!("cannot load such file -- {path}: {reason}"),
+        None => format!("cannot load such file -- {path}"),
+    };
+    let sig = crate::dispatch::raise_error("LoadError", msg);
+    if let crate::signal::Signal::Raise(exc) = &sig {
+        crate::builtins::exception::set_load_error_path(exc, &path);
+    }
+    Err(sig)
+}
+
 pub(crate) fn feature_already_loaded(path: &str) -> bool {
     let RubyValue::Array(features) = crate::globals::global_get(0, "$LOADED_FEATURES") else {
         return false;

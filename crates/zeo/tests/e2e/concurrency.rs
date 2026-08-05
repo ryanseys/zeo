@@ -1369,10 +1369,10 @@ fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
 }
 
 // ---------------------------------------------------------------------------
-// Ractor -- real OS threads sharing the global heap, with the
-// frozen-or-copy boundary discipline (see zeo_rt::ractor's docs, incl.
-// the documented divergences: no Ractor::RemoteError wrapper, RactorError
-// standing in for Ractor::Error, process-shared globals). Oracle-verified.
+// Ractor -- real OS threads sharing the global heap, with the ruby 4.0
+// PORT MODEL's frozen-or-copy boundary discipline (see zeo_rt::ractor's
+// docs, incl. the documented divergences: an unfrozen Object is rejected
+// rather than deep-copied, process-shared globals). Oracle-verified.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1429,10 +1429,9 @@ fn ractor_shareable_tiering_and_make_shareable() {
 }
 
 #[test]
-fn an_uncaught_exception_in_a_ractor_reraises_at_value() {
-    // Documented divergence: the ORIGINAL exception re-raises directly
-    // (like Thread#join), not wrapped in Ractor::RemoteError (which needs
-    // nested class names + .cause chaining, both documented gaps).
+fn an_uncaught_exception_in_a_ractor_wraps_in_remote_error_at_value() {
+    // The port model relays the failure as CRuby does: a
+    // `Ractor::RemoteError` whose `#cause` is the original exception.
     let result = run_ruby(
         r#"
         bad = Ractor.new do
@@ -1440,13 +1439,16 @@ fn an_uncaught_exception_in_a_ractor_reraises_at_value() {
         end
         begin
           bad.value
-        rescue RuntimeError => e
-          puts "rescued: #{e.send(:message)}"
+        rescue Ractor::RemoteError => e
+          puts "rescued: #{e.send(:message)} / #{e.cause.class} / #{e.cause.send(:message)}"
         end
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "rescued: ractor boom\n");
+    assert_eq!(
+        result.stdout,
+        "rescued: thrown by remote Ractor. / RuntimeError / ractor boom\n"
+    );
 }
 
 #[test]
@@ -1471,7 +1473,7 @@ fn a_ractor_block_capturing_an_outer_local_is_rejected_at_compile_time() {
 fn an_unfrozen_object_sent_across_a_ractor_boundary_raises_ractor_error() {
     // Documented narrower-than-CRuby divergence: real Ruby deep-copies an
     // unfrozen object; this runtime has no by-name ivar-setting reflection
-    // to rebuild one, so it raises a catchable RactorError instead.
+    // to rebuild one, so it raises a catchable Ractor::Error instead.
     let result = run_ruby(
         r#"
         class Box
@@ -1484,7 +1486,7 @@ fn an_unfrozen_object_sent_across_a_ractor_boundary_raises_ractor_error() {
         end
         begin
           sink.send(Box.new(1))
-        rescue RactorError => e
+        rescue Ractor::Error => e
           puts "rejected: #{e.send(:message)}"
         end
         "#,
@@ -1841,15 +1843,15 @@ fn no_method_error_propagates_out_of_fibers_and_ractors() {
         r = Ractor.new { Bare.new.send(:nope) }
         begin
           r.value
-        rescue NoMethodError
-          puts "rescued at value"
+        rescue Ractor::RemoteError => e
+          puts "rescued at value: #{e.cause.class}"
         end
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "rescued in resumer\nfalse\nrescued at value\n"
+        "rescued in resumer\nfalse\nrescued at value: NoMethodError\n"
     );
 }
 

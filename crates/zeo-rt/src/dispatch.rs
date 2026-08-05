@@ -2364,12 +2364,14 @@ impl VisFilter {
 /// `initialize` must reach it, but `obj.initialize` must raise. Kernel's
 /// print family is the same shape.
 fn is_hidden_builtin_private(owner: ClassId, name: &str) -> bool {
-    // Private on EVERY class, wherever a table defines one.
+    // Private on EVERY class, wherever a table defines one -- except
+    // `Ractor::MovedObject`, whose whole raising surface (`method_missing`
+    // included) is PUBLIC in CRuby's `instance_methods(false)`.
     if matches!(
         name,
         "initialize" | "method_missing" | "respond_to_missing?"
     ) {
-        return true;
+        return !(owner == zeo_abi::RACTOR_MOVED_OBJECT_CLASS && name == "method_missing");
     }
     // Private on `Kernel` ALONE. `IO#puts`, `StringIO#print` and
     // `Thread#raise` are ordinary public methods of their own classes, so

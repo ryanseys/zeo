@@ -154,8 +154,9 @@ pub use globals::{
 pub use handling::{PropagatingGuard, current_exception, pop_handling, push_handling};
 pub use pools::{LitPool, SymPool};
 pub use ractor::{
-    RRactor, RactorData, make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send,
-    shareable,
+    RRactor, RactorData, cross_boundary, current_ractor, init_main_ractor, make_shareable,
+    ractor_join, ractor_new, ractor_outcome, ractor_receive, ractor_select, ractor_send,
+    ractor_value, shareable,
 };
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};

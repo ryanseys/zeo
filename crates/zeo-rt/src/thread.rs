@@ -297,9 +297,14 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     let data = ThreadData::build(None, false, origin);
     register_live(&data);
     let for_thread = data.clone();
+    // A spawned Thread belongs to the ractor that spawned it (CRuby's
+    // threads-within-a-ractor model), so `Ractor.current` and the port
+    // creator guards keep answering inside the child.
+    let parent_ractor = crate::ractor::current_ractor();
     let run = move || {
         // Record identity so `Thread.current` inside the body finds THIS
         // thread rather than falling through to main.
+        crate::ractor::install_current_ractor(parent_ractor);
         CURRENT.with(|c| *c.lock() = Some(for_thread.clone()));
         for_thread.native_id.store(native_id(), Ordering::Relaxed);
         // The frame stack needs no management here: this closure runs on
@@ -411,8 +416,9 @@ pub fn check_interrupt() -> Result<(), Signal> {
 }
 
 /// Whether the CURRENT thread has a pending interrupt (a cheap peek used inside
-/// a condvar-wait loop before committing to `check_interrupt`'s take).
-fn interrupt_pending() -> bool {
+/// a condvar-wait loop before committing to `check_interrupt`'s take --
+/// `queue_pop`'s here and the ractor port waits' in `ractor.rs`).
+pub(crate) fn interrupt_pending() -> bool {
     let t = CURRENT
         .with(|c| c.lock().clone())
         .unwrap_or_else(main_thread);

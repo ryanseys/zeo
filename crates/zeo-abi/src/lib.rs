@@ -409,6 +409,15 @@ pub const SET_CORE_SET_CLASS: ClassId = ClassId(160);
 /// as its one own method.
 pub const PROCESS_WAITER_CLASS: ClassId = ClassId(161);
 
+/// `Ractor::Port` -- ruby 4.0's message endpoint. Every Ractor owns a default
+/// port plus any `Ractor::Port.new` ports its own thread creates; any ractor
+/// may `#send` to a port, only the creator may `#receive`/`#close`.
+pub const RACTOR_PORT_CLASS: ClassId = ClassId(162);
+
+/// `Ractor::MovedObject` -- the `BasicObject` husk left behind by `move: true`
+/// sends. Every method on it raises `Ractor::MovedError`.
+pub const RACTOR_MOVED_OBJECT_CLASS: ClassId = ClassId(163);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -2002,6 +2011,22 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
+    BuiltinClass {
+        id: RACTOR_PORT_CLASS,
+        name: "Ractor::Port",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RACTOR_MOVED_OBJECT_CLASS,
+        name: "Ractor::MovedObject",
+        is_module: false,
+        superclass: Some(BASIC_OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
@@ -2436,11 +2461,11 @@ const CORE_EXCEPTIONS: [ExceptionClass; 52] = [
         superclass: Some(exc_id(4)),
         is_module: false,
     },
-    // The `Ractor` error tree. zeo runs no ractors, so nothing here is ever
-    // RAISED -- the classes exist so a `rescue Ractor::ClosedError` in
-    // portable code resolves its constant instead of dying at the rescue.
-    // `Ractor::ClosedError` descends from `StopIteration` rather than from
-    // `Ractor::Error`, which is what lets `Kernel#loop` swallow it.
+    // The `Ractor` error tree, raised by the runtime's port model
+    // (`zeo-rt::ractor`): closed-port sends/receives, non-creator access,
+    // successor violations, and the `Ractor::RemoteError` a `#value`/`#join`
+    // relays. `Ractor::ClosedError` descends from `StopIteration` rather than
+    // from `Ractor::Error`, which is what lets `Kernel#loop` swallow it.
     ExceptionClass {
         id: exc_id(46),
         name: "Ractor::Error",

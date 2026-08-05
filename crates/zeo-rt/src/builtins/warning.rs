@@ -97,10 +97,16 @@ pub(crate) fn warn_ractor_experimental() {
     let Some((file, line)) = crate::frames::current_location() else {
         return;
     };
-    eprintln!(
+    // Through the Ruby-level `$stderr` (CRuby's `rb_warn` writes to
+    // `rb_stderr`), so `$stderr.reopen(IO::NULL)` silences it -- the
+    // standard trick for keeping the nondeterministic `file:line` out of a
+    // fixture's stderr. A raising redirected writer must not turn a warning
+    // into an exception, so the write result is dropped.
+    let msg = format!(
         "{file}:{line}: warning: Ractor API is experimental and may change in \
-         future versions of Ruby."
+         future versions of Ruby.\n"
     );
+    let _ = crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), msg.as_bytes());
 }
 
 /// Ruby's PARSE-time warnings, which CRuby prints before the program's first
