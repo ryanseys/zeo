@@ -290,7 +290,7 @@ fn run() -> Result<(), MainError> {
         gem_warnings: gem_report.is_some(),
         gem_report,
         nowarn: args.nowarn.clone(),
-        gem_path: args.gem_path.clone(),
+        gem_paths: args.gem_path.clone().into_iter().collect(),
         lockfile: args.lockfile.clone(),
         pretty: args.print_rust,
     };

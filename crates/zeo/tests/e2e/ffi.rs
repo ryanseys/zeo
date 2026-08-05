@@ -12,7 +12,7 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
     let report = std::env::temp_dir().join(format!("zeo-store-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&report);
     let opts = zeo::CompileOptions {
-        gem_path: Some(store.clone()),
+        gem_paths: vec![store.clone()],
         lockfile: Some(store.join("Gemfile.lock")),
         gem_report: Some(report.clone()),
         ..Default::default()
@@ -37,7 +37,7 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
     // Actually requiring an excluded gem fails with the store's precise reason,
     // not the generic "cannot load such file".
     let strict = zeo::CompileOptions {
-        gem_path: Some(store.clone()),
+        gem_paths: vec![store.clone()],
         lockfile: Some(store.join("Gemfile.lock")),
         ..Default::default()
     };

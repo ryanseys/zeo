@@ -60,7 +60,7 @@ fn classify(
     parsed: &lockfile::Lockfile,
 ) -> Result<Vec<GemCompatEntry>, String> {
     use super::lockfile::GemSource;
-    let resolution = gem_store::resolve(store, parsed)?;
+    let resolution = gem_store::resolve(&[store.to_path_buf()], parsed)?;
 
     let compiled: std::collections::HashSet<&str> =
         resolution.roots.iter().map(|(n, _)| n.as_str()).collect();

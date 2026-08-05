@@ -150,7 +150,7 @@ pub(super) fn lower_main_file(
     input_path: Option<&Path>,
     load_roots: &[PathBuf],
     package_dirs: &[PathBuf],
-    gem_path: Option<&Path>,
+    gem_paths: &[PathBuf],
     lockfile: Option<&Path>,
 ) -> PResult<(Vec<NodeId>, Vec<crate::gem_report::GemRecord>)> {
     // The requiring-file directory for the main file's own require_relative
@@ -188,14 +188,17 @@ pub(super) fn lower_main_file(
         gem_records: Vec::new(),
         require_memo: std::cell::RefCell::new(HashMap::new()),
     };
-    // The external gem store: a `--gem-path` + `--lockfile` pair adds
-    // the pure-Ruby gems zeo can compile as extra roots, and records a
-    // disclosure for every gem it satisfies natively or can't provide. Store
-    // gems are APPENDED, so a bundled zeo gem of the same name shadows them
-    // (first-name-wins), and never override the compiler's own libraries.
-    if let (Some(store), Some(lock)) = (gem_path, lockfile) {
+    // The external gem store: store dirs (`--gem-path`/`GEM_PATH`) plus a
+    // lockfile (via `--bundle-gemfile`/`BUNDLE_GEMFILE`) add the pure-Ruby
+    // gems zeo can compile as extra roots, and record a disclosure for every
+    // gem it satisfies natively or can't provide. Store gems are APPENDED, so
+    // a bundled zeo gem of the same name shadows them (first-name-wins), and
+    // never override the compiler's own libraries.
+    if let Some(lock) = lockfile
+        && !gem_paths.is_empty()
+    {
         let parsed = super::lockfile::parse_file(lock)?;
-        let resolution = super::gem_store::resolve(store, &parsed)?;
+        let resolution = super::gem_store::resolve(gem_paths, &parsed)?;
         for (name, roots) in resolution.roots {
             if !loader.packages.iter().any(|g| g.name == name) {
                 loader.packages.push(Gem::from_parts(name, roots));

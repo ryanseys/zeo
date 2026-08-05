@@ -63,13 +63,15 @@ pub struct CompileOptions {
     /// Warning slugs suppressed via `--nowarn=<slug>` -- a dial independent of
     /// `gem_report`, so a caller can silence the noise but keep the file.
     pub nowarn: std::collections::HashSet<String>,
-    /// `--gem-path <dir>`: an installed RubyGems store (`gem env gemdir`) to
-    /// resolve locked gems against. Explicit opt-in, paired with `lockfile`;
-    /// neither is ambient (a compile that silently depends on `$GEM_HOME` is
-    /// not reproducible).
-    pub gem_path: Option<std::path::PathBuf>,
-    /// `--lockfile <Gemfile.lock>`: the resolved gem set to draw from the
-    /// store. Only meaningful together with `gem_path`.
+    /// Installed RubyGems store directories (`gem env gemdir`) to resolve
+    /// locked gems against, probed in order (first hit per gem wins). The CLI
+    /// fills this from `--gem-path` or `GEM_PATH` -- but only alongside a
+    /// lockfile, so an ambient `GEM_PATH` alone never changes a compile.
+    /// The library default is empty: no store resolution.
+    pub gem_paths: Vec<std::path::PathBuf>,
+    /// The `Gemfile.lock` naming the gem set to draw from the store (the CLI
+    /// derives it from `--bundle-gemfile`/`BUNDLE_GEMFILE`). Only meaningful
+    /// together with a non-empty `gem_paths`.
     pub lockfile: Option<std::path::PathBuf>,
     /// Render the generated Rust through prettyplease (the `-S` human view).
     /// Off by default: the build path feeds rustc, which is insensitive to
@@ -142,7 +144,7 @@ fn compile_on_this_thread(
         opts.input_path.as_deref(),
         &opts.load_roots,
         &opts.package_dirs,
-        opts.gem_path.as_deref(),
+        &opts.gem_paths,
         opts.lockfile.as_deref(),
     )?;
     let t_parse_lower = t_start.elapsed();

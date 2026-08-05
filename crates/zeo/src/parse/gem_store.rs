@@ -33,13 +33,12 @@ pub(super) struct StoreResolution {
     pub disclosures: Vec<GemRecord>,
 }
 
-/// Resolve `lockfile`'s gems against the `store` directory (a `gem env
-/// gemdir`). Never fails on an individual gem -- an unusable one becomes a
+/// Resolve `lockfile`'s gems against the `stores` directories (each a `gem
+/// env gemdir` -- `GEM_PATH` is a list, probed in order, first hit per gem
+/// wins). Never fails on an individual gem -- an unusable one becomes a
 /// disclosure, because the program may never `require` it (an AOT compiler
 /// only compiles what a require reaches).
-pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolution> {
-    let specs = store.join("specifications");
-    let gems = store.join("gems");
+pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreResolution> {
     let mut roots = Vec::new();
     let mut disclosures = Vec::new();
 
@@ -63,12 +62,26 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
         }
 
         // Force the ruby (source) platform: the suffix-less
-        // `<name>-<version>.gemspec`.
-        let gemspec_path = match locate_gemspec(&specs, &locked.name, &locked.version) {
-            Located::Source(path) => path,
+        // `<name>-<version>.gemspec`. The first store with a source-platform
+        // spec supplies the gem; a precompiled-only store keeps the later
+        // ones in play.
+        let mut found = None;
+        let mut saw_precompiled = false;
+        for store in stores {
+            match locate_gemspec(&store.join("specifications"), &locked.name, &locked.version) {
+                Located::Source(path) => {
+                    found = Some((path, store));
+                    break;
+                }
+                Located::PrecompiledOnly => saw_precompiled = true,
+                Located::Absent => {}
+            }
+        }
+        let (gemspec_path, store) = match found {
+            Some(hit) => hit,
             // Only the precompiled `<name>-<version>-<platform>.gemspec` is
             // installed -- its `.bundle` is unloadable, so it is excluded.
-            Located::PrecompiledOnly => {
+            None if saw_precompiled => {
                 disclosures.push(excluded(
                     &name,
                     "precompiled-platform-gem",
@@ -82,12 +95,12 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
             }
             // Locked but no gemspec at all -- a store/`bundle install` state
             // issue, not something zeo owns. Skipped without a disclosure.
-            Located::Absent => continue,
+            None => continue,
         };
 
         let spec = super::gemspec::parse_file(&gemspec_path)?;
         let version = spec.version.as_deref().unwrap_or(&locked.version);
-        let gem_dir = gems.join(format!("{}-{version}", spec.name));
+        let gem_dir = store.join("gems").join(format!("{}-{version}", spec.name));
 
         if is_native(&spec, &gem_dir) {
             disclosures.push(excluded(
