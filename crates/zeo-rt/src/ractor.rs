@@ -571,9 +571,7 @@ pub fn ractor_new(
         .iter()
         .map(|a| cross_graph(a, CrossMode::Copy).map_err(|(cls, msg)| raise_error(cls, msg)))
         .collect::<Result<_, _>>()?;
-    let loc = loc.or_else(|| {
-        crate::frames::current_location().map(|(f, l)| format!("{f}:{l}"))
-    });
+    let loc = loc.or_else(|| crate::frames::current_location().map(|(f, l)| format!("{f}:{l}")));
     let data = Arc::new(RactorData::build(
         NEXT_RACTOR_ID.fetch_add(1, Ordering::Relaxed),
         name,
@@ -625,9 +623,9 @@ fn wait_for_termination(r: &RRactor) -> Result<Symbol, Signal> {
 /// with `#ractor` and `#cause` set. Callers must have observed termination.
 fn take_value(r: &RRactor) -> Result<RubyValue, Signal> {
     let me = current_ractor().id;
-    if let Err(prev) =
-        r.successor
-            .compare_exchange(0, me, Ordering::SeqCst, Ordering::SeqCst)
+    if let Err(prev) = r
+        .successor
+        .compare_exchange(0, me, Ordering::SeqCst, Ordering::SeqCst)
         && prev != me
     {
         return Err(raise_error(
@@ -1168,7 +1166,10 @@ fn cross_build(v: &RubyValue, st: &mut CrossState) -> Result<RubyValue, CrossFai
         other => Err(match st.mode {
             CrossMode::Copy => (
                 "Ractor::Error",
-                format!("{} can't cross a Ractor boundary", other.to_display_string()),
+                format!(
+                    "{} can't cross a Ractor boundary",
+                    other.to_display_string()
+                ),
             ),
             CrossMode::Move => (
                 "Ractor::Error",
@@ -1219,7 +1220,7 @@ pub fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
 /// `#send`'s argument split: exactly one payload, plus the `move:` kwarg
 /// (recognized only as codegen's kwargs-marked trailing Hash, so a plain
 /// Hash PAYLOAD stays a payload).
-fn send_payload<'a>(args: &'a [RubyValue]) -> Result<(&'a RubyValue, bool), Signal> {
+fn send_payload(args: &[RubyValue]) -> Result<(&RubyValue, bool), Signal> {
     let (opts, pos): (Option<&crate::RHash>, &[RubyValue]) = match args.last() {
         Some(RubyValue::Hash(h)) if crate::collections::hash_is_kwargs(h) => {
             (Some(h), &args[..args.len() - 1])
@@ -1521,7 +1522,10 @@ zeo_macros::ruby_class! {
 mod tests {
     use super::*;
 
-    fn spawn_ractor(f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static, args: Vec<RubyValue>) -> RRactor {
+    fn spawn_ractor(
+        f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
+        args: Vec<RubyValue>,
+    ) -> RRactor {
         let block = RubyValue::Proc(crate::RProc::new(f));
         ractor_new(block, args, None, None)
             .expect("spawn")
@@ -1747,10 +1751,7 @@ mod tests {
         let me = current_ractor();
         let key = Symbol::intern("unit_test_key");
         me.locals.lock().insert(key, RubyValue::Int(3));
-        assert_eq!(
-            me.locals.lock().get(&key).unwrap().to_display_string(),
-            "3"
-        );
+        assert_eq!(me.locals.lock().get(&key).unwrap().to_display_string(), "3");
         assert_eq!(local_key(&RubyValue::Symbol(key)).unwrap(), key);
         assert_eq!(
             local_key(&RubyValue::Str(crate::string_new("unit_test_key".into()))).unwrap(),

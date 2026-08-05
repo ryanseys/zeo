@@ -728,14 +728,14 @@ fn strftime(t: &RTime, fmt: &str) -> String {
                 | 'c'
                 | 'v'
         );
-        if string_directive && !left {
-            if let Some(w) = width
-                && piece.chars().count() < w
-            {
-                let fill = if pad == Some('0') { '0' } else { ' ' };
-                let missing = w - piece.chars().count();
-                piece = format!("{}{piece}", fill.to_string().repeat(missing));
-            }
+        if string_directive
+            && !left
+            && let Some(w) = width
+            && piece.chars().count() < w
+        {
+            let fill = if pad == Some('0') { '0' } else { ' ' };
+            let missing = w - piece.chars().count();
+            piece = format!("{}{piece}", fill.to_string().repeat(missing));
         }
         out.push_str(&piece);
     }

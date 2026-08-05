@@ -152,146 +152,146 @@ const PRISM_ERROR: &str = "cannot get AST for ISEQ compiled by prism";
 mod ast {
     use super::*;
 
-ruby_module! {
-    AbstractSyntaxTree = zeo_abi::RUBYVM_AST_MODULE;
+    ruby_module! {
+        AbstractSyntaxTree = zeo_abi::RUBYVM_AST_MODULE;
 
-    def self."parse"(_recv, source, **opts) {
-        let src = match source {
-            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => {
-                return Err(crate::builtins::type_error!(
-                    "wrong argument type {} (expected String)",
-                    crate::builtins::class_name_of(other)
-                ));
+        def self."parse"(_recv, source, **opts) {
+            let src = match source {
+                RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+                other => {
+                    return Err(crate::builtins::type_error!(
+                        "wrong argument type {} (expected String)",
+                        crate::builtins::class_name_of(other)
+                    ));
+                }
+            };
+            parse_to_node(&src, opts)
+        }
+        def self."parse_file"(_recv, path, **opts) {
+            let path = match path {
+                RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+                other => other.to_display_string(),
+            };
+            let src = std::fs::read_to_string(&path)
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "read", &path))?;
+            parse_to_node(&src, opts)
+        }
+        // Compiled code has no retained AST -- byte-for-byte what ruby 4.0.6
+        // itself answers (prism is its default compiler): a raise for Ruby-level
+        // callables, `nil` for a C-defined method.
+        def self."of"(_recv, what, **_opts) {
+            match what {
+                RubyValue::Proc(_) => Err(raise_error("RuntimeError", PRISM_ERROR.to_string())),
+                _ => Ok(RubyValue::Nil),
             }
-        };
-        parse_to_node(&src, opts)
-    }
-    def self."parse_file"(_recv, path, **opts) {
-        let path = match path {
-            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => other.to_display_string(),
-        };
-        let src = std::fs::read_to_string(&path)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "read", &path))?;
-        parse_to_node(&src, opts)
-    }
-    // Compiled code has no retained AST -- byte-for-byte what ruby 4.0.6
-    // itself answers (prism is its default compiler): a raise for Ruby-level
-    // callables, `nil` for a C-defined method.
-    def self."of"(_recv, what, **_opts) {
-        match what {
-            RubyValue::Proc(_) => Err(raise_error("RuntimeError", PRISM_ERROR.to_string())),
-            _ => Ok(RubyValue::Nil),
+        }
+        def self."node_id_for_backtrace_location"(_recv, _loc) {
+            Err(raise_error("RuntimeError", PRISM_ERROR.to_string()))
         }
     }
-    def self."node_id_for_backtrace_location"(_recv, _loc) {
-        Err(raise_error("RuntimeError", PRISM_ERROR.to_string()))
-    }
-}
 }
 
 mod node_class {
     use super::*;
 
-ruby_class! {
-    Node = zeo_abi::RUBYVM_AST_NODE_CLASS < zeo_abi::OBJECT_CLASS;
+    ruby_class! {
+        Node = zeo_abi::RUBYVM_AST_NODE_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def "type"(recv) {
-        Ok(RubyValue::Symbol(crate::Symbol::intern(recv_node(recv).kind)))
+        def "type"(recv) {
+            Ok(RubyValue::Symbol(crate::Symbol::intern(recv_node(recv).kind)))
+        }
+        def "children"(recv) {
+            Ok(RubyValue::Array(crate::array_new(recv_node(recv).children.clone())))
+        }
+        def "first_lineno"(recv) {
+            Ok(RubyValue::Int(recv_node(recv).span.fl))
+        }
+        def "first_column"(recv) {
+            Ok(RubyValue::Int(recv_node(recv).span.fc))
+        }
+        def "last_lineno"(recv) {
+            Ok(RubyValue::Int(recv_node(recv).span.ll))
+        }
+        def "last_column"(recv) {
+            Ok(RubyValue::Int(recv_node(recv).span.lc))
+        }
+        def "node_id"(recv) {
+            Ok(RubyValue::Int(recv_node(recv).node_id))
+        }
+        def "inspect" | "to_s" (recv) {
+            let n = recv_node(recv);
+            Ok(RubyValue::Str(crate::string_new(format!(
+                "#<RubyVM::AbstractSyntaxTree::Node:{}@{}:{}-{}:{}>",
+                n.kind, n.span.fl, n.span.fc, n.span.ll, n.span.lc
+            ))))
+        }
+        def "locations"(recv) {
+            let n = recv_node(recv);
+            Ok(RubyValue::Array(crate::array_new(vec![location_value(
+                n.span,
+            )])))
+        }
+        def "script_lines"(recv) {
+            let n = recv_node(recv);
+            Ok(match &n.script {
+                Some(s) => RubyValue::Array(crate::array_new(
+                    s.lines
+                        .iter()
+                        .map(|l| RubyValue::Str(crate::string_new(l.clone())))
+                        .collect(),
+                )),
+                None => RubyValue::Nil,
+            })
+        }
+        def "source"(recv) {
+            let n = recv_node(recv);
+            Ok(match &n.script {
+                Some(s) => RubyValue::Str(crate::string_new(
+                    s.src[n.byte_range.0..n.byte_range.1].to_string(),
+                )),
+                None => RubyValue::Nil,
+            })
+        }
+        // Token decoding needs `keep_tokens:`, which zeo does not retain -- and
+        // CRuby itself answers nil when tokens were not kept.
+        def "tokens" | "all_tokens" (_recv) {
+            Ok(RubyValue::Nil)
+        }
     }
-    def "children"(recv) {
-        Ok(RubyValue::Array(crate::array_new(recv_node(recv).children.clone())))
-    }
-    def "first_lineno"(recv) {
-        Ok(RubyValue::Int(recv_node(recv).span.fl))
-    }
-    def "first_column"(recv) {
-        Ok(RubyValue::Int(recv_node(recv).span.fc))
-    }
-    def "last_lineno"(recv) {
-        Ok(RubyValue::Int(recv_node(recv).span.ll))
-    }
-    def "last_column"(recv) {
-        Ok(RubyValue::Int(recv_node(recv).span.lc))
-    }
-    def "node_id"(recv) {
-        Ok(RubyValue::Int(recv_node(recv).node_id))
-    }
-    def "inspect" | "to_s" (recv) {
-        let n = recv_node(recv);
-        Ok(RubyValue::Str(crate::string_new(format!(
-            "#<RubyVM::AbstractSyntaxTree::Node:{}@{}:{}-{}:{}>",
-            n.kind, n.span.fl, n.span.fc, n.span.ll, n.span.lc
-        ))))
-    }
-    def "locations"(recv) {
-        let n = recv_node(recv);
-        Ok(RubyValue::Array(crate::array_new(vec![location_value(
-            n.span,
-        )])))
-    }
-    def "script_lines"(recv) {
-        let n = recv_node(recv);
-        Ok(match &n.script {
-            Some(s) => RubyValue::Array(crate::array_new(
-                s.lines
-                    .iter()
-                    .map(|l| RubyValue::Str(crate::string_new(l.clone())))
-                    .collect(),
-            )),
-            None => RubyValue::Nil,
-        })
-    }
-    def "source"(recv) {
-        let n = recv_node(recv);
-        Ok(match &n.script {
-            Some(s) => RubyValue::Str(crate::string_new(
-                s.src[n.byte_range.0..n.byte_range.1].to_string(),
-            )),
-            None => RubyValue::Nil,
-        })
-    }
-    // Token decoding needs `keep_tokens:`, which zeo does not retain -- and
-    // CRuby itself answers nil when tokens were not kept.
-    def "tokens" | "all_tokens" (_recv) {
-        Ok(RubyValue::Nil)
-    }
-}
 }
 
 mod location_class {
     use super::*;
 
-ruby_class! {
-    Location = zeo_abi::RUBYVM_AST_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
+    ruby_class! {
+        Location = zeo_abi::RUBYVM_AST_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
 
-    // Locations only ever come out of a Node (CRuby has no allocator).
-    def self."new"(_recv, *_args) {
-        Err(crate::builtins::type_error!(
-            "allocator undefined for RubyVM::AbstractSyntaxTree::Location"
-        ))
+        // Locations only ever come out of a Node (CRuby has no allocator).
+        def self."new"(_recv, *_args) {
+            Err(crate::builtins::type_error!(
+                "allocator undefined for RubyVM::AbstractSyntaxTree::Location"
+            ))
+        }
+        def "first_lineno"(recv) {
+            Ok(RubyValue::Int(recv_location(recv).span.fl))
+        }
+        def "first_column"(recv) {
+            Ok(RubyValue::Int(recv_location(recv).span.fc))
+        }
+        def "last_lineno"(recv) {
+            Ok(RubyValue::Int(recv_location(recv).span.ll))
+        }
+        def "last_column"(recv) {
+            Ok(RubyValue::Int(recv_location(recv).span.lc))
+        }
+        def "inspect"(recv) {
+            let l = recv_location(recv);
+            Ok(RubyValue::Str(crate::string_new(format!(
+                "#<RubyVM::AbstractSyntaxTree::Location:@{}:{}-{}:{}>",
+                l.span.fl, l.span.fc, l.span.ll, l.span.lc
+            ))))
+        }
     }
-    def "first_lineno"(recv) {
-        Ok(RubyValue::Int(recv_location(recv).span.fl))
-    }
-    def "first_column"(recv) {
-        Ok(RubyValue::Int(recv_location(recv).span.fc))
-    }
-    def "last_lineno"(recv) {
-        Ok(RubyValue::Int(recv_location(recv).span.ll))
-    }
-    def "last_column"(recv) {
-        Ok(RubyValue::Int(recv_location(recv).span.lc))
-    }
-    def "inspect"(recv) {
-        let l = recv_location(recv);
-        Ok(RubyValue::Str(crate::string_new(format!(
-            "#<RubyVM::AbstractSyntaxTree::Location:@{}:{}-{}:{}>",
-            l.span.fl, l.span.fc, l.span.ll, l.span.lc
-        ))))
-    }
-}
 }
 
 fn location_value(span: Span) -> RubyValue {
@@ -422,7 +422,13 @@ mod translate {
         RubyValue::Symbol(crate::Symbol::intern(&String::from_utf8_lossy(bytes)))
     }
 
-    fn node(cx: &mut Cx, kind: &'static str, start: usize, end: usize, children: Vec<RubyValue>) -> RubyValue {
+    fn node(
+        cx: &mut Cx,
+        kind: &'static str,
+        start: usize,
+        end: usize,
+        children: Vec<RubyValue>,
+    ) -> RubyValue {
         cx.next_id += 1;
         RubyValue::Object(Arc::new(RAstNode {
             kind,
@@ -466,20 +472,17 @@ mod translate {
     }
 
     /// `LIST` -- CRuby's cons-shaped array node: elements then a trailing nil.
-    fn list_node(
-        cx: &mut Cx,
-        start: usize,
-        end: usize,
-        mut elems: Vec<RubyValue>,
-    ) -> RubyValue {
+    fn list_node(cx: &mut Cx, start: usize, end: usize, mut elems: Vec<RubyValue>) -> RubyValue {
         elems.push(RubyValue::Nil);
         node(cx, "LIST", start, end, elems)
     }
 
     fn is_operator(name: &str) -> bool {
-        !name.chars().any(|c| c.is_alphanumeric() || c == '_')
-            && !name.ends_with('=')
-            || matches!(name, "==" | "!=" | "<=" | ">=" | "<=>" | "===" | "=~" | "[]=")
+        !name.chars().any(|c| c.is_alphanumeric() || c == '_') && !name.ends_with('=')
+            || matches!(
+                name,
+                "==" | "!=" | "<=" | ">=" | "<=>" | "===" | "=~" | "[]="
+            )
     }
 
     /// The 10-slot parse.y ARGS node from a prism parameter list (`None`
@@ -691,11 +694,7 @@ mod translate {
         }
         if let Some(x) = n.as_def_node() {
             let dloc = x.location();
-            let locals: Vec<RubyValue> = x
-                .locals()
-                .iter()
-                .map(|l| sym_val(l.as_slice()))
-                .collect();
+            let locals: Vec<RubyValue> = x.locals().iter().map(|l| sym_val(l.as_slice())).collect();
             let params = x.parameters();
             let (ps, pe) = params
                 .as_ref()

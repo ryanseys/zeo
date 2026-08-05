@@ -97,10 +97,9 @@ pub use dispatch::{
     MissingReason, NIL_CLASS, NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
     RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS,
     SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn, YIELDER_CLASS, arity_error,
-    bind_dynamic_kwargs, call_singleton_super_target, class_is_module, class_name,
-    check_not_moved_obj, coerce_raise_arg, coerce_raise_arg_with_message, const_miss,
-    construct_by_class_id, define_in_default_definee, describe_receiver, downcast_robj,
-    downcast_robj_ref,
+    bind_dynamic_kwargs, call_singleton_super_target, check_not_moved_obj, class_is_module,
+    class_name, coerce_raise_arg, coerce_raise_arg_with_message, const_miss, construct_by_class_id,
+    define_in_default_definee, describe_receiver, downcast_robj, downcast_robj_ref,
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
     is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn,
     ivar_slot_get_dyn, ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol,
@@ -158,8 +157,7 @@ pub use pools::{LitPool, SymPool};
 pub use ractor::{
     RRactor, RactorData, cross_boundary, current_ractor, init_main_ractor, make_shareable,
     make_shareable_value, moved_object_error, ractor_join, ractor_new, ractor_outcome,
-    ractor_receive, ractor_select,
-    ractor_send, ractor_send_mode, ractor_value, shareable,
+    ractor_receive, ractor_select, ractor_send, ractor_send_mode, ractor_value, shareable,
 };
 
 /// `Ractor::MovedObject`'s numeric class id, spelled where `ruby_class!`'s
@@ -183,8 +181,8 @@ pub use thread::{
     queue_len, queue_max, queue_new, queue_pop, queue_push, queue_set_max, sized_queue_new,
     thread_new, thread_outcome,
 };
-pub use value::{RubyValue, observed_class_id};
 pub use value::rb_eq_checked;
+pub use value::{RubyValue, observed_class_id};
 pub use value::{case_eq, case_eq_any};
 pub use value::{range_checked, range_endpoint, range_endpoint_error};
 

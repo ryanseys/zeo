@@ -1,0 +1,5 @@
+[Ractor::Error, "can not move Thread object."]
+[:poisoned, Ractor::MovedError]
+String
+[:husk, Ractor::MovedError]
+false

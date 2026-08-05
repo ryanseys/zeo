@@ -920,7 +920,8 @@ fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str
     if NOFRAME.contains(&n) {
         return None;
     }
-    static LABELS: std::sync::Mutex<Option<crate::FMap<(u32, Symbol, bool), &'static str>>> =
+    type LabelKey = (u32, Symbol, bool);
+    static LABELS: std::sync::Mutex<Option<crate::FMap<LabelKey, &'static str>>> =
         std::sync::Mutex::new(None);
     let key = (owner.0, name, sep == '#');
     let mut cache = LABELS.lock().expect("label cache");
@@ -4611,7 +4612,9 @@ pub fn send_value_cached(
     // part-built: a filled cache line would answer for a method that does not
     // exist yet. Sending the whole call down the slow route while a hook runs
     // puts that question where it is already asked (`send_in_reason`).
-    if !matches!(recv, RubyValue::Class(_)) && box_id == 0 && !crate::runtime_meta::gates_live(gates)
+    if !matches!(recv, RubyValue::Class(_))
+        && box_id == 0
+        && !crate::runtime_meta::gates_live(gates)
     {
         let id = recv.class_id();
         if let Some((cached, target)) = site.hit.get() {

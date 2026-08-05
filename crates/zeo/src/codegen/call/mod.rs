@@ -1716,8 +1716,7 @@ pub fn emit_call(
         let mut name_kwarg: Option<TokenStream> = None;
         for kw in kwargs {
             match kw {
-                KwArg::Pair(k, v)
-                    if matches!(&cx.compiler.hir[*k], HirNode::SymbolLit(s) if s == "name") =>
+                KwArg::Pair(k, v) if matches!(&cx.compiler.hir[*k], HirNode::SymbolLit(s) if s == "name") =>
                 {
                     let e = emit_expr(cx, *v);
                     name_kwarg = Some(super::expr::box_if_object_typed(cx, *v, e));
@@ -3889,8 +3888,7 @@ fn dispatch(
 fn ractor_move_kwarg(cx: &Ctx, kwargs: &[KwArg]) -> Option<Option<TokenStream>> {
     match kwargs {
         [] => Some(None),
-        [KwArg::Pair(k, v)]
-            if matches!(&cx.compiler.hir[*k], HirNode::SymbolLit(s) if s == "move") =>
+        [KwArg::Pair(k, v)] if matches!(&cx.compiler.hir[*k], HirNode::SymbolLit(s) if s == "move") =>
         {
             let e = emit_expr(cx, *v);
             Some(Some(super::expr::box_if_object_typed(cx, *v, e)))

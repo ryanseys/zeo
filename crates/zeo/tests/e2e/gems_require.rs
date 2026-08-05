@@ -903,8 +903,15 @@ fn box_globals_are_fully_separate() {
 /// `box_eval_dynamic_source_routes_through_the_vm`.)
 #[test]
 fn ruby_box_rejections_are_clean_errors() {
-    let err = zeo::compile_to_rust("p [Ruby::Box.new]\n").unwrap_err();
-    assert!(err.contains("top-level statement"), "{err}");
+    // An expression-position `.new` compiles to a dynamic send and raises
+    // CRuby's own disabled-mode refusal at run time.
+    let result =
+        run_ruby("begin\n  p [Ruby::Box.new]\nrescue RuntimeError => e\n  puts e.message\nend\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Ruby Box is disabled. Set RUBY_BOX=1 environment variable to use Ruby::Box.\n"
+    );
     let err = zeo::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
     assert!(err.contains("top-level statement"), "{err}");
     let err =

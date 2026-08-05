@@ -90,6 +90,7 @@ impl ClassRegistry {
         crate::builtins::random::register_random(&mut registry);
         crate::builtins::stat::register_stat(&mut registry);
         crate::builtins::io_buffer::register_io_buffer(&mut registry);
+        crate::builtins::ruby_box::register_ruby_box(&mut registry);
         registry
     }
 }

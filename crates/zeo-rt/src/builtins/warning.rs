@@ -106,7 +106,8 @@ pub(crate) fn warn_ractor_experimental() {
         "{file}:{line}: warning: Ractor API is experimental and may change in \
          future versions of Ruby.\n"
     );
-    let _ = crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), msg.as_bytes());
+    let _ =
+        crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), msg.as_bytes());
 }
 
 /// Ruby's PARSE-time warnings, which CRuby prints before the program's first

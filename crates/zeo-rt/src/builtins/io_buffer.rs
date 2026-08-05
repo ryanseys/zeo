@@ -224,7 +224,11 @@ fn null_state() -> BufState {
 /// The default flag word for an anonymous `new(size)` -- CRuby maps at page
 /// size and beyond, allocates internally below it.
 fn default_flags(size: usize) -> u32 {
-    if size >= page_size() as usize { MAPPED } else { INTERNAL }
+    if size >= page_size() as usize {
+        MAPPED
+    } else {
+        INTERNAL
+    }
 }
 
 fn window_bytes(st: &BufState) -> Vec<u8> {
@@ -255,7 +259,10 @@ fn locked_error(msg: &str) -> Signal {
 }
 
 fn access_error() -> Signal {
-    raise_error("IO::Buffer::AccessError", "Buffer is not writable!".to_string())
+    raise_error(
+        "IO::Buffer::AccessError",
+        "Buffer is not writable!".to_string(),
+    )
 }
 
 fn writable_guard(st: &BufState) -> Result<(), Signal> {
@@ -359,10 +366,18 @@ fn decode(bytes: &[u8], t: BufType) -> RubyValue {
     if t.float {
         return RubyValue::Float(if t.size == 4 {
             let b: [u8; 4] = bytes.try_into().expect("4-byte window");
-            (if t.big_endian { f32::from_be_bytes(b) } else { f32::from_le_bytes(b) }) as f64
+            (if t.big_endian {
+                f32::from_be_bytes(b)
+            } else {
+                f32::from_le_bytes(b)
+            }) as f64
         } else {
             let b: [u8; 8] = bytes.try_into().expect("8-byte window");
-            if t.big_endian { f64::from_be_bytes(b) } else { f64::from_le_bytes(b) }
+            if t.big_endian {
+                f64::from_be_bytes(b)
+            } else {
+                f64::from_le_bytes(b)
+            }
         });
     }
     let unsigned = if t.big_endian {
@@ -411,7 +426,11 @@ fn encode(value: &RubyValue, t: BufType, out: &mut [u8]) -> Result<(), Signal> {
             };
             out.copy_from_slice(&b);
         } else {
-            let b = if t.big_endian { f.to_be_bytes() } else { f.to_le_bytes() };
+            let b = if t.big_endian {
+                f.to_be_bytes()
+            } else {
+                f.to_le_bytes()
+            };
             out.copy_from_slice(&b);
         }
         return Ok(());
@@ -504,7 +523,11 @@ fn hexdump_lines(bytes: &[u8], base: usize, width: usize) -> String {
             }
         }
         for b in chunk {
-            out.push(if (0x20..0x7f).contains(b) { *b as char } else { '.' });
+            out.push(if (0x20..0x7f).contains(b) {
+                *b as char
+            } else {
+                '.'
+            });
         }
     }
     out
@@ -591,7 +614,7 @@ ruby_class! {
         let RubyValue::Proc(p) = &block else {
             unreachable!("a literal block is a Proc");
         };
-        let result = p.call(&[buf.clone()]);
+        let result = p.call(std::slice::from_ref(&buf));
         // Write back and detach, error or not (CRuby's ensure).
         let b = recv_buffer(&buf);
         let mut bst = b.state.lock();
@@ -692,7 +715,7 @@ ruby_class! {
             return Err(raise_error("LocalJumpError", "no block given".to_string()));
         };
         let buf = buffer_value(heap_state(n, INTERNAL));
-        p.call(&[buf.clone()])?;
+        p.call(std::slice::from_ref(&buf))?;
         let b = recv_buffer(&buf);
         let st = b.state.lock();
         let bytes = window_bytes(&st);
@@ -700,12 +723,6 @@ ruby_class! {
             bytes,
             crate::encoding::ASCII_8BIT,
         )))
-    }
-
-    def self."new"(_recv, *args) {
-        let buf = buffer_value(null_state());
-        init_in_place(&buf, args)?;
-        Ok(buf)
     }
 
     private def "initialize"(recv, *args) {
@@ -781,7 +798,7 @@ ruby_class! {
             st.flags |= LOCKED;
         }
         let result = match &block {
-            Some(RubyValue::Proc(p)) => p.call(&[recv.clone()]),
+            Some(RubyValue::Proc(p)) => p.call(std::slice::from_ref(recv)),
             _ => Err(raise_error("LocalJumpError", "no block given".to_string())),
         };
         b.state.lock().flags &= !LOCKED;
@@ -1388,6 +1405,26 @@ fn buffer_allocate(_id: ClassId) -> RObj {
     })
 }
 
+/// `IO::Buffer.new` as a `ConstructorFn` rather than a table row, so
+/// `singleton_methods(false)` stays `[:for, :map, :size_of, :string]` like
+/// CRuby's (the Pathname precedent).
+fn buffer_construct(
+    _id: ClassId,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let buf = buffer_value(null_state());
+    init_in_place(&buf, args)?;
+    Ok(buf)
+}
+
 pub fn register_io_buffer(registry: &mut crate::dispatch::ClassRegistry) {
     registry.define_allocator(IO_BUFFER_CLASS, buffer_allocate);
+    registry.register(
+        IO_BUFFER_CLASS,
+        "IO::Buffer",
+        false,
+        zeo_abi::declared_ancestors(IO_BUFFER_CLASS),
+        Some(buffer_construct as crate::dispatch::ConstructorFn),
+    );
 }

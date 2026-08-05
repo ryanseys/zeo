@@ -1,0 +1,5 @@
+:got
+[:io_husk, Ractor::MovedError]
+"a".."z"
+[:range_husk, Ractor::MovedError]
+[:endpoint_poisoned, Ractor::MovedError]

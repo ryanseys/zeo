@@ -162,12 +162,8 @@ and the conformance corpus below is the record of what agrees with Ruby.
 zeo targets **CRuby 4.0.6**. The version has one source, `zeo-abi`. Therefore
 the compiler's version tests and the runtime's `RUBY_VERSION` always agree.
 
-zeo reports compatibility as text, and not as a percentage. A green corpus run
-is the record. A note such as "zeo's `json` is not the `json` gem" carries more
-information than a score.
-
-One number is worth stating: the **method census** diffs every module, method,
-constant, and visibility that ruby 4.0.6 can reach against zeo's surface
+The **method census** compares every module, method, constant and visibility
+that Ruby 4.0.6 can reach with zeo's surface
 (`crates/zeo/tests/method_census.rs`). Its gap ledger,
 `conformance/method-census-gaps.tsv`, holds **zero rows**. Read
 [`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md) for how the census works.
@@ -348,9 +344,9 @@ the release runtime and makes a static binary. This is the same configuration
 that a user gets.
 
 Before it measures a program, the tool compares the output of that program with
-the correct output, byte for byte. A speed number is meaningless if the answer
-is wrong. The tool then measures the time more than one time and keeps the
-smallest value. It measures CRuby 4.0.6 in the same run.
+the correct output, byte for byte. The tool does not measure a program that
+gives a wrong answer. The tool then measures the time more than one time and
+keeps the smallest value. It measures CRuby 4.0.6 in the same run.
 
 zeo gives two results:
 
@@ -359,12 +355,13 @@ zeo gives two results:
 | all 58 programs | **1.78 times faster than CRuby** |
 | the 37 programs where CRuby needs 0.10 s or more | **1.23 times faster** |
 
-The difference between the two results is the start time. For 13 programs,
-CRuby needs less than 50 ms. A native binary starts immediately, but the
-interpreter needs approximately 35 ms to start. This is a real advantage of a
-binary, but it says nothing about the quality of the generated code. The second
-result covers the programs that run long enough for the generated code to
-control the time. zeo is faster for 47 programs, and slower for 11 programs.
+The difference between the two results is the start time. The CRuby
+interpreter needs approximately 35 ms before it runs the first line of a
+program. A native binary needs less than 1 ms. For the 13 programs that finish
+in less than 50 ms, this start time is most of the measurement, so the first
+result mostly measures start time. The second result removes this effect: it
+keeps only the programs that run long enough for the generated code to control
+the time. zeo is faster for 47 programs, and slower for 11 programs.
 
 The largest advantages are `bigint_fib`, `jekyll_lite` and `str_concat` (8.8),
 `pidigits` and `poly_cells` (8.5), and `micro_lisp` and `sinatra_mini` (8.3).

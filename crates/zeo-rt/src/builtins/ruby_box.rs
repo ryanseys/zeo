@@ -10,9 +10,9 @@
 //! `Ruby` itself is the identity namespace: the `RUBY_*` constants under
 //! their modern spellings, seeded by bootstrap from the same one source.
 
+use crate::RubyValue;
 use crate::boxes;
 use crate::dispatch::raise_error;
-use crate::RubyValue;
 use zeo_macros::{ruby_class, ruby_module};
 
 mod ruby_ns {
@@ -21,6 +21,34 @@ mod ruby_ns {
     ruby_module! {
         Ruby = zeo_abi::RUBY_MODULE;
     }
+}
+
+/// The DYNAMIC allocation path (an expression-position `.new` the
+/// compile-time box loader did not claim): CRuby's disabled refusal when
+/// ungated, the compile-time-model refusal otherwise. A `ConstructorFn`
+/// rather than a table row, so `Ruby::Box.singleton_methods(false)` stays
+/// `[:current, :enabled?]` like CRuby's (the Pathname precedent).
+fn box_construct(
+    _id: crate::ClassId,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    if !boxes::boxes_enabled() {
+        return Err(boxes::disabled_error());
+    }
+    Err(crate::builtins::not_impl_error!(
+        "dynamic `Ruby::Box.new` isn't supported (zeo boxes are compile-time; write `box = Ruby::Box.new` as a top-level statement)"
+    ))
+}
+
+pub fn register_ruby_box(registry: &mut crate::dispatch::ClassRegistry) {
+    registry.register(
+        zeo_abi::RUBY_BOX_CLASS,
+        "Ruby::Box",
+        false,
+        zeo_abi::declared_ancestors(zeo_abi::RUBY_BOX_CLASS),
+        Some(box_construct as crate::dispatch::ConstructorFn),
+    );
 }
 
 mod loader {
@@ -32,10 +60,7 @@ mod loader {
         // The box-aware load path. Outside an enabled box these are the
         // ordinary dynamic require/load (Kernel's own body) -- CRuby's
         // Loader methods degrade the same way.
-        module_function def "require" | "require_relative" (_recv, feature) {
-            crate::builtins::kernel::dynamic_require(feature)
-        }
-        module_function def "load"(_recv, *args) {
+        module_function def "require" | "require_relative" | "load" (_recv, *args) {
             crate::builtins::check_arity(args.len(), 1, Some(2))?;
             crate::builtins::kernel::dynamic_require(&args[0])
         }

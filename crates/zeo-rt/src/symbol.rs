@@ -77,10 +77,10 @@ impl Symbol {
     /// path); anything else keys `(encoding, bytes)` so `to_s` restores the
     /// original string exactly.
     pub fn intern_bytes(bytes: &[u8], enc: EncodingId) -> Symbol {
-        if (bytes.is_ascii() && enc.ascii_compatible()) || enc == crate::encoding::UTF_8 {
-            if let Ok(text) = std::str::from_utf8(bytes) {
-                return Symbol::intern(text);
-            }
+        if ((bytes.is_ascii() && enc.ascii_compatible()) || enc == crate::encoding::UTF_8)
+            && let Ok(text) = std::str::from_utf8(bytes)
+        {
+            return Symbol::intern(text);
         }
         let mut i = INTERNER.lock();
         if let Some(&id) = i.by_key.get(&(enc, bytes.to_vec())) {

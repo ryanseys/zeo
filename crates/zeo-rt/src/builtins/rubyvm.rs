@@ -60,115 +60,115 @@ fn stat_pairs() -> Vec<(RubyValue, RubyValue)> {
 mod vm {
     use super::*;
 
-ruby_class! {
-    RubyVM = zeo_abi::RUBYVM_CLASS < zeo_abi::OBJECT_CLASS;
+    ruby_class! {
+        RubyVM = zeo_abi::RUBYVM_CLASS < zeo_abi::OBJECT_CLASS;
 
-    // zeo's real pipeline stages -- the honest analog of CRuby's compiler
-    // option strings.
-    const OPTS = {
-        RubyValue::Array(crate::array_new(vec![
-            RubyValue::Str(crate::string_new("ahead-of-time compilation".to_string())),
-            RubyValue::Str(crate::string_new("prism parser".to_string())),
-            RubyValue::Str(crate::string_new("rustc code generation".to_string())),
-        ]))
-    };
-    // zeo executes native code, not a bytecode instruction set; the empty
-    // frozen Array is the truthful answer.
-    const INSTRUCTION_NAMES = {
-        let a = crate::array_new(vec![]);
-        a.set_frozen();
-        RubyValue::Array(a)
-    };
-    const DEFAULT_PARAMS = {
-        let int = RubyValue::Int;
-        let sym = |s: &str| RubyValue::Symbol(crate::Symbol::intern(s));
-        let h = crate::hash_new(vec![
-            // Real numbers where zeo has them: threads and ractors spawn
-            // with 8MiB stacks (thread.rs); fibers use corosensei's 128KiB.
-            (sym("thread_vm_stack_size"), int(1048576)),
-            (sym("thread_machine_stack_size"), int(8 * 1024 * 1024)),
-            (sym("fiber_vm_stack_size"), int(131072)),
-            (sym("fiber_machine_stack_size"), int(131072)),
-        ]);
-        h.set_frozen();
-        RubyValue::Hash(h)
-    };
+        // zeo's real pipeline stages -- the honest analog of CRuby's compiler
+        // option strings.
+        const OPTS = {
+            RubyValue::Array(crate::array_new(vec![
+                RubyValue::Str(crate::string_new("ahead-of-time compilation".to_string())),
+                RubyValue::Str(crate::string_new("prism parser".to_string())),
+                RubyValue::Str(crate::string_new("rustc code generation".to_string())),
+            ]))
+        };
+        // zeo executes native code, not a bytecode instruction set; the empty
+        // frozen Array is the truthful answer.
+        const INSTRUCTION_NAMES = {
+            let a = crate::array_new(vec![]);
+            a.set_frozen();
+            RubyValue::Array(a)
+        };
+        const DEFAULT_PARAMS = {
+            let int = RubyValue::Int;
+            let sym = |s: &str| RubyValue::Symbol(crate::Symbol::intern(s));
+            let h = crate::hash_new(vec![
+                // Real numbers where zeo has them: threads and ractors spawn
+                // with 8MiB stacks (thread.rs); fibers use corosensei's 128KiB.
+                (sym("thread_vm_stack_size"), int(1048576)),
+                (sym("thread_machine_stack_size"), int(8 * 1024 * 1024)),
+                (sym("fiber_vm_stack_size"), int(131072)),
+                (sym("fiber_machine_stack_size"), int(131072)),
+            ]);
+            h.set_frozen();
+            RubyValue::Hash(h)
+        };
 
-    def self."stat"(_recv, *args) {
-        crate::builtins::check_arity(args.len(), 0, Some(1))?;
-        let pairs = stat_pairs();
-        match args.first() {
-            None => Ok(RubyValue::Hash(crate::hash_new(pairs))),
-            Some(RubyValue::Symbol(want)) => {
-                for (k, v) in pairs {
-                    if matches!(k, RubyValue::Symbol(s) if s == *want) {
-                        return Ok(v);
+        def self."stat"(_recv, *args) {
+            crate::builtins::check_arity(args.len(), 0, Some(1))?;
+            let pairs = stat_pairs();
+            match args.first() {
+                None => Ok(RubyValue::Hash(crate::hash_new(pairs))),
+                Some(RubyValue::Symbol(want)) => {
+                    for (k, v) in pairs {
+                        if matches!(k, RubyValue::Symbol(s) if s == *want) {
+                            return Ok(v);
+                        }
                     }
+                    Err(crate::builtins::arg_error!("unknown key: {}", want.name()))
                 }
-                Err(crate::builtins::arg_error!("unknown key: {}", want.name()))
-            }
-            Some(RubyValue::Hash(h)) => {
-                // The fill-this-Hash form (GC.stat's shape).
-                for (k, v) in pairs {
-                    crate::collections::hash_set(h, k, v);
+                Some(RubyValue::Hash(h)) => {
+                    // The fill-this-Hash form (GC.stat's shape).
+                    for (k, v) in pairs {
+                        crate::collections::hash_set(h, k, v);
+                    }
+                    Ok(RubyValue::Hash(h.clone()))
                 }
-                Ok(RubyValue::Hash(h.clone()))
+                Some(other) => Err(crate::builtins::type_error!(
+                    "non-symbol key given: {}",
+                    crate::builtins::class_name_of(other)
+                )),
             }
-            Some(other) => Err(crate::builtins::type_error!(
-                "non-symbol key given: {}",
-                crate::builtins::class_name_of(other)
-            )),
+        }
+        def self."keep_script_lines"(_recv) {
+            Ok(RubyValue::Bool(KEEP_SCRIPT_LINES.load(Ordering::Relaxed)))
+        }
+        def self."keep_script_lines="(_recv, value) {
+            KEEP_SCRIPT_LINES.store(value.truthy(), Ordering::Relaxed);
+            Ok(value.clone())
         }
     }
-    def self."keep_script_lines"(_recv) {
-        Ok(RubyValue::Bool(KEEP_SCRIPT_LINES.load(Ordering::Relaxed)))
-    }
-    def self."keep_script_lines="(_recv, value) {
-        KEEP_SCRIPT_LINES.store(value.truthy(), Ordering::Relaxed);
-        Ok(value.clone())
-    }
-}
 }
 
 mod yjit {
     use super::*;
 
-ruby_module! {
-    YJIT = zeo_abi::RUBYVM_YJIT_MODULE;
+    ruby_module! {
+        YJIT = zeo_abi::RUBYVM_YJIT_MODULE;
 
-    // zeo is an AOT compiler: there is no JIT to switch on, so `enable`
-    // truthfully answers false where CRuby answers true (the one divergence
-    // in this family); every stats/log reader answers its disabled shape.
-    def self."enabled?" | "stats_enabled?" | "log_enabled?" | "trace_exit_locations_enabled?" (_recv) {
-        Ok(RubyValue::Bool(false))
+        // zeo is an AOT compiler: there is no JIT to switch on, so `enable`
+        // truthfully answers false where CRuby answers true (the one divergence
+        // in this family); every stats/log reader answers its disabled shape.
+        def self."enabled?" | "stats_enabled?" | "log_enabled?" | "trace_exit_locations_enabled?" (_recv) {
+            Ok(RubyValue::Bool(false))
+        }
+        def self."enable"(_recv, **_opts) {
+            Ok(RubyValue::Bool(false))
+        }
+        def self."runtime_stats"(_recv, *_args) {
+            Ok(RubyValue::Nil)
+        }
+        def self."stats_string"(_recv) {
+            Ok(RubyValue::Str(crate::string_new(String::new())))
+        }
+        def self."exit_locations" | "log" (_recv) {
+            Ok(RubyValue::Nil)
+        }
+        def self."dump_exit_locations"(_recv, _path) {
+            Err(crate::builtins::arg_error!(
+                "--yjit-trace-exits must be enabled to use dump_exit_locations."
+            ))
+        }
+        def self."insns_compiled"(_recv, _iseq) {
+            Ok(RubyValue::Nil)
+        }
+        def self."code_gc" | "reset_stats!" | "simulate_oom!" (_recv) {
+            Ok(RubyValue::Nil)
+        }
+        def self."disasm"(_recv, _what) {
+            Ok(RubyValue::Nil)
+        }
     }
-    def self."enable"(_recv, **_opts) {
-        Ok(RubyValue::Bool(false))
-    }
-    def self."runtime_stats"(_recv, *_args) {
-        Ok(RubyValue::Nil)
-    }
-    def self."stats_string"(_recv) {
-        Ok(RubyValue::Str(crate::string_new(String::new())))
-    }
-    def self."exit_locations" | "log" (_recv) {
-        Ok(RubyValue::Nil)
-    }
-    def self."dump_exit_locations"(_recv, _path) {
-        Err(crate::builtins::arg_error!(
-            "--yjit-trace-exits must be enabled to use dump_exit_locations."
-        ))
-    }
-    def self."insns_compiled"(_recv, _iseq) {
-        Ok(RubyValue::Nil)
-    }
-    def self."code_gc" | "reset_stats!" | "simulate_oom!" (_recv) {
-        Ok(RubyValue::Nil)
-    }
-    def self."disasm"(_recv, _what) {
-        Ok(RubyValue::Nil)
-    }
-}
 }
 
 // ---------------------------------------------------------------- iseq
@@ -284,7 +284,7 @@ fn compile_body(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let absolute = args
         .get(2)
         .filter(|v| !matches!(v, RubyValue::Nil))
-        .map(|v| str_arg(v))
+        .map(str_arg)
         .or_else(|| given_path.is_none().then(|| path.clone()));
     let line = match args.get(3) {
         None | Some(RubyValue::Nil) => 1,
@@ -299,93 +299,93 @@ const NO_YARV: &str =
 mod iseq {
     use super::*;
 
-ruby_class! {
-    InstructionSequence = zeo_abi::RUBYVM_ISEQ_CLASS < zeo_abi::OBJECT_CLASS;
+    ruby_class! {
+        InstructionSequence = zeo_abi::RUBYVM_ISEQ_CLASS < zeo_abi::OBJECT_CLASS;
 
-    def self."compile" | "new" | "compile_prism" | "compile_parsey" (_recv, *args) {
-        compile_body(args)
-    }
-    def self."compile_file" | "compile_file_prism" (_recv, *args) {
-        crate::builtins::check_arity(args.len(), 1, Some(2))?;
-        let path = str_arg(&args[0]);
-        let src = std::fs::read_to_string(&path)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "read", &path))?;
-        parse_check(&src)?;
-        Ok(iseq_value(src, "<main>".to_string(), path.clone(), Some(path), 1))
-    }
-    def self."compile_option"(_recv) {
-        Ok(COMPILE_OPTION
-            .get_or_init(|| PlMutex::new(RubyValue::Hash(crate::hash_new(vec![]))))
-            .lock()
-            .clone())
-    }
-    def self."compile_option="(_recv, value) {
-        *COMPILE_OPTION
-            .get_or_init(|| PlMutex::new(RubyValue::Hash(crate::hash_new(vec![]))))
-            .lock() = value.clone();
-        Ok(value.clone())
-    }
-    // `nil`, never a raise: C-defined is the answer for every compiled
-    // method, and irb's source finder leans on `.of(m)&.script_lines`.
-    def self."of"(_recv, _what) {
-        Ok(RubyValue::Nil)
-    }
-    def self."disasm" | "disassemble" (_recv, _what) {
-        Err(not_impl_error!("{}", NO_YARV))
-    }
-    def self."load_from_binary" | "load_from_binary_extra_data" (_recv, _data) {
-        Err(raise_error("RuntimeError", "broken binary format".to_string()))
-    }
+        def self."compile" | "new" | "compile_prism" | "compile_parsey" (_recv, *args) {
+            compile_body(args)
+        }
+        def self."compile_file" | "compile_file_prism" (_recv, *args) {
+            crate::builtins::check_arity(args.len(), 1, Some(2))?;
+            let path = str_arg(&args[0]);
+            let src = std::fs::read_to_string(&path)
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "read", &path))?;
+            parse_check(&src)?;
+            Ok(iseq_value(src, "<main>".to_string(), path.clone(), Some(path), 1))
+        }
+        def self."compile_option"(_recv) {
+            Ok(COMPILE_OPTION
+                .get_or_init(|| PlMutex::new(RubyValue::Hash(crate::hash_new(vec![]))))
+                .lock()
+                .clone())
+        }
+        def self."compile_option="(_recv, value) {
+            *COMPILE_OPTION
+                .get_or_init(|| PlMutex::new(RubyValue::Hash(crate::hash_new(vec![]))))
+                .lock() = value.clone();
+            Ok(value.clone())
+        }
+        // `nil`, never a raise: C-defined is the answer for every compiled
+        // method, and irb's source finder leans on `.of(m)&.script_lines`.
+        def self."of"(_recv, _what) {
+            Ok(RubyValue::Nil)
+        }
+        def self."disasm" | "disassemble" (_recv, _what) {
+            Err(not_impl_error!("{}", NO_YARV))
+        }
+        def self."load_from_binary" | "load_from_binary_extra_data" (_recv, _data) {
+            Err(raise_error("RuntimeError", "broken binary format".to_string()))
+        }
 
-    def "eval"(recv) {
-        let iseq = recv_iseq(recv);
-        crate::eval_string(&iseq.src, crate::dispatch::main_object(), 0)
+        def "eval"(recv) {
+            let iseq = recv_iseq(recv);
+            crate::eval_string(&iseq.src, crate::dispatch::main_object(), 0)
+        }
+        def "label" | "base_label" (recv) {
+            Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).label.clone())))
+        }
+        def "path"(recv) {
+            Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).path.clone())))
+        }
+        def "absolute_path"(recv) {
+            Ok(match &recv_iseq(recv).absolute_path {
+                Some(p) => RubyValue::Str(crate::string_new(p.clone())),
+                None => RubyValue::Nil,
+            })
+        }
+        def "first_lineno"(recv) {
+            Ok(RubyValue::Int(recv_iseq(recv).first_lineno))
+        }
+        def "script_lines"(_recv) {
+            Ok(RubyValue::Nil)
+        }
+        def "trace_points"(recv) {
+            let iseq = recv_iseq(recv);
+            Ok(RubyValue::Array(crate::array_new(vec![RubyValue::Array(
+                crate::array_new(vec![
+                    RubyValue::Int(iseq.first_lineno),
+                    RubyValue::Symbol(crate::Symbol::intern("line")),
+                ]),
+            )])))
+        }
+        def "each_child"(recv, &_block) {
+            // A source-wrapping iseq holds no compiled children.
+            Ok(recv.clone())
+        }
+        def "inspect"(recv) {
+            let iseq = recv_iseq(recv);
+            Ok(RubyValue::Str(crate::string_new(format!(
+                "<RubyVM::InstructionSequence:{}@{}:{}>",
+                iseq.label, iseq.path, iseq.first_lineno
+            ))))
+        }
+        def "to_a" | "disasm" | "disassemble" (_recv) {
+            Err(not_impl_error!("{}", NO_YARV))
+        }
+        def "to_binary"(_recv, *_args) {
+            Err(not_impl_error!("{}", NO_YARV))
+        }
     }
-    def "label" | "base_label" (recv) {
-        Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).label.clone())))
-    }
-    def "path"(recv) {
-        Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).path.clone())))
-    }
-    def "absolute_path"(recv) {
-        Ok(match &recv_iseq(recv).absolute_path {
-            Some(p) => RubyValue::Str(crate::string_new(p.clone())),
-            None => RubyValue::Nil,
-        })
-    }
-    def "first_lineno"(recv) {
-        Ok(RubyValue::Int(recv_iseq(recv).first_lineno))
-    }
-    def "script_lines"(_recv) {
-        Ok(RubyValue::Nil)
-    }
-    def "trace_points"(recv) {
-        let iseq = recv_iseq(recv);
-        Ok(RubyValue::Array(crate::array_new(vec![RubyValue::Array(
-            crate::array_new(vec![
-                RubyValue::Int(iseq.first_lineno),
-                RubyValue::Symbol(crate::Symbol::intern("line")),
-            ]),
-        )])))
-    }
-    def "each_child"(recv, &_block) {
-        // A source-wrapping iseq holds no compiled children.
-        Ok(recv.clone())
-    }
-    def "inspect"(recv) {
-        let iseq = recv_iseq(recv);
-        Ok(RubyValue::Str(crate::string_new(format!(
-            "<RubyVM::InstructionSequence:{}@{}:{}>",
-            iseq.label, iseq.path, iseq.first_lineno
-        ))))
-    }
-    def "to_a" | "disasm" | "disassemble" (_recv) {
-        Err(not_impl_error!("{}", NO_YARV))
-    }
-    def "to_binary"(_recv, *_args) {
-        Err(not_impl_error!("{}", NO_YARV))
-    }
-}
 }
 
 static COMPILE_OPTION: std::sync::OnceLock<PlMutex<RubyValue>> = std::sync::OnceLock::new();
