@@ -361,8 +361,8 @@ frame string literals was implemented and reverted: the shared method bodies
 removed the duplication it targeted, and it cost +6.6% rustc on uri and +52.9%
 on rubygems, because a large `static [Frame; N]` is not free to const-evaluate.
 
-**Metric:** compile-bench lines/bytes down, with no `-S` semantic diffs beyond
-the intended shapes.
+**Metric:** compile-bench lines/bytes down, with no `--dump=rust` semantic
+diffs beyond the intended shapes.
 
 ### Considered, not scheduled
 
@@ -394,7 +394,8 @@ stdlib or dependency gaps.
 2. For every `pure-ruby` gem, compile a probe — synthesize a temp `Gemfile.lock`
    from the installed set (`gem_store::installed_as_lockfile` already produces
    exactly this) or reuse the user's lockfile, then run `zeo` on a
-   `require "<name>"` probe with `--gem-path <store> --lockfile <temp> -S`.
+   `require "<name>"` probe with `--gem-path <store> --bundle-gemfile <temp>
+   --dump=rust`.
    Exit 0 → `compiles`; a clean rejection or a panic → `pure-ruby (fails)`,
    bucketed by stderr (`stdlib_status::reason_bucket` is the existing distiller
    — factor it out and share it).

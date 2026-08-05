@@ -82,7 +82,7 @@ gem or C extension. This is prose, not a percentage: each entry carries a
 *reason*, because "zeo's `json` is not the `json` gem" is a fact that can
 only be stated, never inferred from a score.
 
-Every artifact-producing compile also writes a machine-readable
+A compile run with `--report` also writes a machine-readable
 [`zeo-gems.json`](#the-per-compile-record) recording the same facts for the
 libraries a given program actually used. This document is the human-facing
 catalogue; that file is the per-program ledger.
@@ -139,8 +139,8 @@ replaces.
 zeo provides its own implementation under a name a gem or C extension also
 uses. The surface is close, but the backing differs — so an edge case can
 diverge, and `zeo-gems.json` marks these `diverges: true`. A compile warns
-once per such library (slug `zeo-builtin-substitute`; silence with
-`--nowarn=zeo-builtin-substitute`).
+once per such library (category `zeo-builtin-substitute`; silence with
+`-W:no-zeo-builtin-substitute`, or `-W0` for all warnings).
 
 | `require` | zeo provides | why it diverges |
 |---|---|---|
@@ -941,13 +941,20 @@ extended module exactly as for a `def obj.method` singleton.
 
 ## Compiling against an installed gem store
 
-`zeo app.rb --gem-path "$(gem env gemdir)" --lockfile Gemfile.lock` resolves
-the gems your `Gemfile.lock` locked out of the installed RubyGems store. zeo
+`zeo app.rb --gem-path "$(gem env gemdir)" --bundle-gemfile Gemfile` resolves
+the gems your `Gemfile.lock` locked out of the installed RubyGems store — zeo
+reads the Gemfile's lockfile (`Gemfile` → `Gemfile.lock`, `gems.rb` →
+`gems.locked`; a path that already ends in `.lock` is read directly). zeo
 consumes Bundler's resolution verbatim — it never resolves, fetches, or builds
 extensions — and applies TruffleRuby's `force_ruby_platform`: it uses the
-`ruby`-platform (source) gemspec, never a precompiled `.bundle`. Both flags are
-required together and are explicit opt-in (a compile that silently depended on
-`$GEM_HOME` would not be reproducible).
+`ruby`-platform (source) gemspec, never a precompiled `.bundle`.
+
+The `GEM_PATH` and `BUNDLE_GEMFILE` environment variables fill in whichever
+side the flags left unset (`GEM_PATH` may list several stores, probed in
+order). The store activates only when **both** a store and a Gemfile are
+known: a flag missing its counterpart is an error, and an ambient `GEM_PATH`
+alone never changes a compile (a compile that silently depended on the shell's
+gem environment would not be reproducible).
 
 Each locked gem lands in one of three buckets, all recorded in
 `zeo-gems.json`:
@@ -973,8 +980,8 @@ native gems grouped by detected layout (the FFI work-list).
 
 ## The per-compile record
 
-`zeo app.rb -o app` writes `zeo-gems.json` next to the artifact, one
-object per library the program required:
+`zeo app.rb -o app --report` writes `zeo-gems.json` next to the artifact, one
+object per library the program required (`--report=<path>` picks the path):
 
 ```json
 {
@@ -988,7 +995,6 @@ object per library the program required:
 }
 ```
 
-It is written **by default** — the substitution is silent by nature, so the
-record has to already be on disk at the moment a user discovers they need it.
-`--no-report` opts out for callers that already know substitutions happen (the
-conformance, example, and test harnesses).
+The record is opt-in; the **warnings** are the always-on half — a substitution
+is silent by nature, so every compile warns once per substituted library
+unless `-W0`/`-W:no-zeo-builtin-substitute` turns that off.

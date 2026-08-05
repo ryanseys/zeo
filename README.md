@@ -70,7 +70,7 @@ $ target/release/zeo hello.rb -o build/hello
 $ target/release/zeo -e 'puts "hello, world"'
 
 # Show the generated Rust. This does not build a binary.
-$ target/release/zeo hello.rb -S
+$ target/release/zeo hello.rb --dump=rust
 ```
 
 **Note:** `zeo foo.rb` compiles the program, but it does not run the program.
@@ -80,28 +80,47 @@ Only `-e` compiles and runs. There are no subcommands, and there is no
 ## Command-line options
 
 ```
-usage: zeo (<input.rb> | -e <code>) [options]
+usage: zeo [options] [--] (<input.rb> | -e <code>) [args...]
 ```
+
+The flags follow CRuby's conventions. Every long option also accepts the
+attached form `--flag=<value>`. An option that zeo does not know is an error;
+zeo names the replacement for each removed old spelling.
 
 | Option | Function |
 |---|---|
 | `<input.rb>` | Compiles the file to a native binary. The default output path is the input path without its extension. |
-| `-e <code>` | Compiles the given code and runs it immediately. Sends stdout, stderr and the exit status to the caller. You can give this option more than one time; zeo joins the parts with newlines. With `-o`, zeo writes a binary and does not run it. |
+| `-e <code>` | Compiles the given code and runs it immediately. Sends stdout, stderr and the exit status to the caller. You can give this option more than one time; zeo joins the parts with newlines. The arguments that follow the code (or follow `--`) become the program's `ARGV`, as in `ruby -e`. With `-o`, zeo writes a binary and does not run it. |
 | `-o <output>` | Sets the path of the compiled binary. |
-| `-S` | Prints the generated Rust source, then stops. Does not build. |
 | `-I <dir>` | Adds a directory to the `require` search path, as Ruby's `-I` does. You can give this option more than one time. The form `-I<dir>` is also correct. |
-| `--packages <dir>` | Adds a gem directory. zeo searches it before the project and bundled directories. You can give this option more than one time. |
-| `--gem-path <dir>` | Sets the external gem store. **You must also give `--lockfile`.** |
-| `--lockfile <path>` | Gives the `Gemfile.lock` that selects the versions in `--gem-path`. You must give it together with `--gem-path`. |
-| `--no-report` | Stops zeo from writing the `zeo-gems.json` record. zeo writes this record with each artifact by default. |
-| `--nowarn <slug>` | Stops one category of disclosure warning. You can give this option more than one time. The form `--nowarn=<slug>` is also correct. |
-| `--log-level <level>` | Writes compiler diagnostics to stderr. The levels are `off`, `error`, `warn`, `info`, `debug` and `trace`. The form `--log-level=<level>` is also correct. This option has priority over `ZEO_LOG` and `RUST_LOG`. |
+| `--gems <dir>` | Adds a directory of vendored gems. Each subdirectory that contains a `.gemspec` file is one gem. You can give this option more than one time. See the search order below. |
+| `--gem-path <dir>` | Adds an installed RubyGems store (`gem env gemdir`). You can give this option more than one time; without it, zeo reads `GEM_PATH`. A store is only used together with a Gemfile from `--bundle-gemfile` or `BUNDLE_GEMFILE`. |
+| `--bundle-gemfile <path>` | Gives the Gemfile. zeo reads its lockfile — `Gemfile` → `Gemfile.lock`, `gems.rb` → `gems.locked` — and that lockfile selects the versions in the store. A `<path>` that already ends in `.lock` is read directly. Without this option, zeo reads `BUNDLE_GEMFILE`. |
+| `--report[=<path>]` | Writes the `zeo-gems.json` record. Without a path, the record goes next to the output artifact. The record is off by default. |
+| `-W0` | Stops all zeo warnings. |
+| `-W:no-<category>` | Stops one category of disclosure warning; `-W:<category>` starts it again. The one category today is `zeo-builtin-substitute`. An unknown category is an error. `-w`, `-W`, `-W1` and `-W2` are accepted and change nothing: the warnings are on by default. |
+| `--dump=rust` | Prints the generated Rust source, then stops. Does not build. |
+| `--log-level <level>` | Writes compiler diagnostics to stderr. The levels are `off`, `error`, `warn`, `info`, `debug` and `trace`. This option has priority over `ZEO_LOG` and `RUST_LOG`. |
+| `-v`, `--version` | Prints the version, then stops. |
 | `-h`, `--help` | Shows the help text, then stops. |
+| `--` | Ends the options. The next argument is the input file (or, with `-e`, the start of `ARGV`). |
+
+**The `require` search order.** For a plain `require "feature"`, zeo searches,
+in this order, and the first gem with a given name wins:
+
+1. The `-I` roots, in the order given, then the `RUBYLIB` entries.
+2. The `--gems` directories, in the order given.
+3. The input file's sibling `gems/` directory.
+4. zeo's own bundled gems, then the external gem store.
 
 Environment variables:
 
 | Variable | Function |
 |---|---|
+| `RUBYOPT` | Gives extra options, applied before the command line (the command line wins). Only `-I`, `-w` and `-W` are permitted, as in CRuby. |
+| `RUBYLIB` | Adds `require` search roots after every `-I` root. |
+| `GEM_PATH` | Gives the gem store directories for `--gem-path`, separated by `:`. An ambient store alone never changes a compile: zeo uses it only when a Gemfile is also known. |
+| `BUNDLE_GEMFILE` | Gives the Gemfile for `--bundle-gemfile`. |
 | `ZEO_LOG`, `RUST_LOG` | Give a `tracing` `EnvFilter` directive. This gives more control than `--log-level`. Example: `ZEO_LOG=zeo::analyze=debug,zeo::lower=trace`. If you set none of these variables, zeo installs no subscriber and writes no diagnostics. |
 | `ZEO_RUNTIME_PROFILE` | Selects the profile of the linked runtime: `debug` or `release`. The default is `debug` for `-e`, and `release` for a file or `-o` compile. |
 | `ZEO_GVL` | If you set `ZEO_GVL=1`, the threads in that run use CRuby's schedule. This is a FIFO global lock with a 100 ms timer. The default is parallel OS threads. |
@@ -176,8 +195,9 @@ that Ruby 4.0.6 can reach with zeo's surface
 - **zeo declares each substitution.** For some libraries, zeo supplies its own
   code: `json` uses serde_json, `psych` and `yaml` use yaml-rust2, `zlib` uses
   flate2, `digest` uses RustCrypto, and `openssl` uses a vendored OpenSSL 3.
-  The compile writes one warning. It also writes a `zeo-gems.json` record with
-  the artifact. That record tells you which libraries are different, and why.
+  The compile writes one warning. With `--report`, it also writes a
+  `zeo-gems.json` record with the artifact. That record tells you which
+  libraries are different, and why.
 - **A gem with a C extension fails clearly.** If zeo has no built-in for the
   extension, the error gives the name of the gem, such as `sqlite3`, `nokogiri`
   or `pg`. The error also points to the FFI path. It does not look like an
@@ -266,7 +286,8 @@ gem. For the full source information and the licences, read
 | uri | 1.1.1 | git-pinned | `uri_parse_and_build.rb` | — |
 | zlib | 3.2.3 | zeo Ruby half | `zlib_classes.rb` | uses flate2; 4 functions are not available ([compat](docs/COMPATIBILITY.md)) |
 
-To use a gem that is not in this list, give `--gem-path` and `--lockfile`.
+To use a gem that is not in this list, give `--gem-path` and
+`--bundle-gemfile` (or set `GEM_PATH` and `BUNDLE_GEMFILE`).
 
 If a gem needs a C extension that zeo has no built-in for, the `require` fails
 and the error gives the name of the gem. The function `is_known_native_gem` in
@@ -291,8 +312,8 @@ Two independent gates control each extension:
 
 Each method in these modules is complete, and zeo compares it with real Ruby.
 No method is an empty `todo!()`. If the library behind a module is different
-from CRuby's, the compile writes one warning and records it in
-`zeo-gems.json`. `docs/COMPATIBILITY.md` gives the reason for each library.
+from CRuby's, the compile writes one warning and, with `--report`, records it
+in `zeo-gems.json`. `docs/COMPATIBILITY.md` gives the reason for each library.
 
 | Extension | `require` | Cargo feature | Uses |
 |---|---|---|---|
