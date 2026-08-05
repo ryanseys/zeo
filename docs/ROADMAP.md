@@ -8,12 +8,19 @@ differently from ruby — does not belong here. It belongs in
 day someone fixes it. This file holds only **work**: things to build, measure,
 or decide.
 
+Where the surface stands: the method census is at **zero rows**
+([`METHOD_COVERAGE.md`](METHOD_COVERAGE.md)) — every module, method, constant
+and visibility ruby 4.0.6 reaches has a zeo answer. What remains is
+behavioural: the gaps directory, and the build-work below.
+
 Each item states what is measured and what is only suspected. An item that
 says "not yet root-caused" means exactly that — start by measuring it, not by
 writing the fix.
 
 **Good places to start**, roughly by size: a `to_utf8_lossy` site in
-[Correctness](#correctness) (one judgment each, no design work); an iterator
+[Correctness](#correctness) (one judgment each, no design work); an AST node
+kind in [the mapped tier](#rubyvmabstractsyntaxtree--widen-the-mapped-tier)
+(dump the oracle's tree, add one match arm, extend the fixture); an iterator
 kind in [lever 2](#2-iterator-inlining-wave-3) (the machinery exists, each
 kind is self-contained); a row for `irb`, `minitest` or `openssl` in
 [`gems/UPSTREAM.md`](../gems/UPSTREAM.md). [`CONTRIBUTING.md`](../CONTRIBUTING.md)
@@ -97,10 +104,75 @@ pack/Base64/format. The CONCAT and OUTPUT legs are fixed (`StrBuf::push_buf`
 byte concat, the raw-byte print family); pack/Base64/format still funnel
 through lossy text.
 
+### The block-local scoping fix
+
+[`tests/gaps/block_local_shadows_later_outer.rb`](../tests/gaps/block_local_shadows_later_outer.rb)
+records the divergence; the fix is real design work, so it earns a row here
+too. Ruby's rule is textual: a name assigned inside a block is block-local
+unless the enclosing scope assigned it EARLIER in the source. zeo's capture
+analysis (`codegen/captures.rs::collect_escaping_captures`) is order-blind —
+it unions block-referenced names against names the scope assigns ANYWHERE, so
+a block-local that shares a name with a LATER outer local becomes a shared
+`Captured` cell, and the block's write leaks out. The same misclassification
+makes `Ractor.new { e = 1 }` refuse isolation when main rescue-binds an `e`
+further down. The fix: the capture set must only admit names whose outer
+assignment textually precedes the block. Position data exists in the HIR;
+the work is threading it through `collect_locals` and the capture filter
+without disturbing the params half (see the `set`-package note in
+`captures.rs`).
+
+### Ruby::Box stage 2 — the enabled-mode seams
+
+Stage 1 landed: the census surface, the env gate with CRuby's messages, and
+the eval-VM top-owner fix (a dynamic `box.eval("X = 1")` lands on the box's
+surrogate, not `Object`). Four seams remain for real enabled-mode isolation,
+all designed in the pass-4 plan:
+
+- **Box-keyed runtime method overlay.** `OverlayEntry` grows
+  `boxed_methods: FMap<(box_id, Symbol), MethodImpl>` beside the unkeyed map,
+  so a box's monkeypatch of a shared builtin stays in the box. Probes check
+  `(box, name)` only behind the existing `is_live()` gate — the disabled path
+  must stay bit-identical (add no atomic loads).
+- **Per-box load bookkeeping.** Stamp `LoadedFile.box_id` at splice time,
+  seed `$LOADED_FEATURES` per box, key `feature_already_loaded` by box.
+- **Runtime `box.require`/`load`** through the eval VM, searching the box's
+  own `$LOAD_PATH`; `wrap:` refused loudly. Today both raise
+  `NotImplementedError` naming the compile-time model.
+- **`Box.current` as a value.** Today it answers `nil` (the disabled-mode
+  answer). The design: a codegen intrinsic answering the enclosing
+  `Ctx.box_id` — zeo's baked box id IS CRuby's "code runs in its defining
+  file's box" rule — with the eval VM answering via `Env.box_id`.
+
+### RubyVM::AbstractSyntaxTree — widen the mapped tier
+
+The translator (`builtins/rubyvm_ast.rs`) maps the high-frequency prism kinds
+onto parse.y shapes, each pinned against the oracle by
+`tests/rubyvm_ast.rb`; everything else answers an honest `:UNKNOWN` leaf.
+Widening is mechanical and self-contained per kind: pick a construct
+(`case/when`, `begin/rescue`, `def` with rest/kw/block params, `&&=`-family
+op-assigns, string interpolation, `yield`, singleton defs), dump the
+oracle's tree for a small program, add the `as_*_node` arm, extend the
+fixture. Two larger items in the same family: `keep_tokens:` (phase 2 decodes
+`pm_serialize_parse_lex` with a prism→parse.y token-symbol table; today
+`#tokens` answers `nil`, which is also CRuby's answer when tokens were not
+kept), and per-kind `#locations` lists (every node answers its one full-span
+Location today; CRuby answers per-kind lists — keyword, operator, …).
+
+### Ractor deadlock detection
+
+A receive that can never be fed blocks forever; CRuby detects the cycle and
+raises. zeo has the pieces (every wait parks on a known port in a known
+ractor), so detection is a wait-for graph over the port tables. Unmeasured:
+whether CRuby's message (`No live threads left. Deadlock?`-family) is
+reachable byte-for-byte from zeo's model. Related, larger, and owned by the
+Ruby::Box overlay work above: globals and cvars are process-shared across
+ractors where CRuby raises `Ractor::IsolationError` on non-main access.
+
 ### Backtrace frames
 
 Everything else in the 20-case oracle battery matches ruby 4.0.6 verbatim.
-These four do not, and are not yet gapped:
+These four do not. Per the house rule the first step is writing their gap
+files; the frame machinery is the work after that:
 
 - **No C-method frames.** CRuby shows a frame for most C methods —
   `Array#each` between a block and its caller, `Integer#/` at a division's
