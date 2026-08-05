@@ -1216,7 +1216,9 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 /// feature.
 fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
     match feature {
-        "rbconfig" => Some(include_str!("shims/rbconfig.rb")),
+        // Rendered by build.rs from shims/rbconfig.rb.in with the build
+        // target's platform facts (arch, darwin major, dlext, ...).
+        "rbconfig" => Some(include_str!(concat!(env!("OUT_DIR"), "/rbconfig.rb"))),
         "securerandom" => Some(include_str!("shims/securerandom.rb")),
         "gem-securerandom" => Some(include_str!("shims/gem_securerandom.rb")),
         // CRuby's C `erb/escape` extension -- defined as a pure-Ruby shim over

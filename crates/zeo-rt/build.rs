@@ -41,17 +41,26 @@ fn ruby_os() -> String {
     }
 }
 
-/// The Darwin kernel major version of the build host (`uname -r` -> `25.5.0`
-/// -> `25`), matching what CRuby's `configure` embeds. Empty if `uname` is
-/// unavailable (never, on an Apple build host).
+/// The Darwin kernel major version (`uname -r` -> `25.5.0` -> `25`), matching
+/// what CRuby's `configure` embeds -- taken from the build host only when the
+/// host IS a mac (native build). Cross-compiling to an Apple target from
+/// elsewhere pins a contemporary default: the host kernel is meaningless for
+/// the target, and the value is cosmetic (`RUBY_PLATFORM`'s suffix). Kept in
+/// sync with the copy in `crates/zeo/build.rs` (`render_rbconfig`).
 fn darwin_major() -> String {
-    Command::new("uname")
-        .arg("-r")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|r| r.trim().split('.').next().map(str::to_string))
-        .unwrap_or_default()
+    if std::env::consts::OS == "macos" {
+        if let Some(major) = Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|r| r.trim().split('.').next().map(str::to_string))
+        {
+            return major;
+        }
+    }
+    // ruby 4.0.6 era: Darwin 25 (macOS 26).
+    "25".to_string()
 }
 
 fn cfg_var(key: &str) -> String {

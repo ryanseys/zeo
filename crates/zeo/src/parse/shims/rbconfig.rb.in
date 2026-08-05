@@ -2,19 +2,19 @@
 #
 # Synthesized `rbconfig` shim, built into zeo (spliced by parse/loader.rs when a
 # program `require`s "rbconfig"). Real Ruby generates rbconfig.rb at build time
-# from its own build configuration; zeo has no such build, so it ships this
-# static stand-in describing the target it emulates (ruby 4.0.6). It carries the
-# keys rubygems + bundler actually read (version, platform, install layout).
+# from its own build configuration; zeo has no such build, so build.rs renders
+# this template with the BUILD TARGET's platform facts (@..@ placeholders,
+# substituted from CARGO_CFG_TARGET_*). It carries the keys rubygems + bundler
+# actually read (version, platform, install layout).
 #
-# FIRST-PASS LIMITATION: the platform/arch and install paths below are static
-# (arm64 macOS, an FHS-style prefix), not derived from the real build target.
-# When target-arch fidelity is needed (cross-compiling, gem-install milestones)
-# this should become compile-time-generated from zeo's build target. Tracked in
-# docs/todo/bundler-northstar.md.
+# REMAINING LIMITATION: the install prefix is a synthesized FHS default, not a
+# real install layout -- if bundler/rubygems behavior ever keys off the real
+# install dirs, the prefix needs runtime substitution from the resolved home
+# (zeo::home), not a compile-time constant.
 module RbConfig
   ruby_version = "4.0.0"
   prefix = "/usr/local"
-  arch = "arm64-darwin25"
+  arch = "@RUBY_PLATFORM@"
 
   CONFIG = {
     "MAJOR" => "4",
@@ -30,22 +30,22 @@ module RbConfig
     # Platform / host triple.
     "arch" => arch,
     "sitearch" => arch,
-    "platform" => "arm64-apple-darwin25",
-    "host" => "arm64-apple-darwin25",
+    "platform" => "@HOST_TRIPLE@",
+    "host" => "@HOST_TRIPLE@",
     "host_alias" => "",
-    "host_cpu" => "arm64",
-    "host_vendor" => "apple",
-    "host_os" => "darwin25",
-    "target" => "arm64-apple-darwin25",
-    "target_cpu" => "arm64",
-    "target_vendor" => "apple",
-    "target_os" => "darwin25",
+    "host_cpu" => "@HOST_CPU@",
+    "host_vendor" => "@HOST_VENDOR@",
+    "host_os" => "@HOST_OS@",
+    "target" => "@HOST_TRIPLE@",
+    "target_cpu" => "@HOST_CPU@",
+    "target_vendor" => "@HOST_VENDOR@",
+    "target_os" => "@HOST_OS@",
 
     # Executable / shared-object extensions.
     "EXEEXT" => "",
     "EXECUTABLE_EXTS" => "",
-    "DLEXT" => "bundle",
-    "SOEXT" => "dylib",
+    "DLEXT" => "@DLEXT@",
+    "SOEXT" => "@SOEXT@",
     "LIBEXT" => "a",
     "OBJEXT" => "o",
 
@@ -70,10 +70,10 @@ module RbConfig
 
     # Feature flags rubygems consults.
     "ENABLE_SHARED" => "yes",
-    "host_os_version" => "25",
-    "CC" => "clang",
-    "CXX" => "clang++",
-    "LDSHARED" => "clang -dynamic -bundle",
+    "host_os_version" => "@OS_VERSION@",
+    "CC" => "cc",
+    "CXX" => "c++",
+    "LDSHARED" => "@LDSHARED@",
     "DLDFLAGS" => "",
     "configure_args" => "",
   }.freeze

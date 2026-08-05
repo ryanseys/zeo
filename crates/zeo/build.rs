@@ -1,13 +1,25 @@
-//! Projects the compiler's view of the builtin METHOD/CONSTANT surface.
+//! Projects the compiler's view of the builtin METHOD/CONSTANT surface, and
+//! renders the target-derived `rbconfig` shim.
 //!
 //! The compiler folds `respond_to?`/`method_defined?`/const lookups against a
 //! class's known members. For USER classes it reads the compiled program; for
 //! BUILTINS that data lives in `zeo-rt` (never linked into the compiler). This
 //! build script bridges the gap WITHOUT a cargo dependency edge (which would be
-//! a cycle): it reads `zeo-rt/src/builtins/*.rs` as SOURCE, finds every
-//! `ruby_class!`/`ruby_module!` invocation, and parses each with the SHARED
-//! `zeo-dsl` grammar -- the exact parser the proc-macro uses, so the
-//! compiler's folding view can never drift from what the runtime registers.
+//! a cycle). Two sources, tried in order:
+//!
+//! - **Dev tree** (sibling `../zeo-rt/src` exists): read
+//!   `zeo-rt/src/{builtins,ext}/*.rs` as SOURCE, find every
+//!   `ruby_class!`/`ruby_module!` invocation, and parse each with the SHARED
+//!   `zeo-dsl` grammar -- the exact parser the proc-macro uses, so the
+//!   compiler's folding view can never drift from what the runtime registers.
+//! - **Packaged crate** (no siblings -- a published `.crate` building out of
+//!   the registry): use `src/class_surface.pregen.rs`, the projection
+//!   `cargo xtask stage-publish` generated from the exact zeo-rt this zeo
+//!   version pins (`=X.Y.Z`), staged into the crate at publish time.
+//!
+//! NEITHER source resolving is a hard error. It used to degrade silently to
+//! an empty surface, which quietly broke every fold -- worse than any build
+//! failure.
 //!
 //! It emits `$OUT_DIR/class_surface.rs`: a `CLASS_SURFACE` table written
 //! SYMBOLICALLY (`id: zeo_abi::COMPARABLE_CLASS`), so the build script never
@@ -25,16 +37,52 @@ use zeo_dsl::ClassSpec;
 fn main() {
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
-    let rt_src = Path::new(&manifest_dir).join("../zeo-rt/src");
+    let manifest_dir = Path::new(&manifest_dir);
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
+    let out_dir = Path::new(&out_dir);
 
+    let rt_src = manifest_dir.join("../zeo-rt/src");
+    let pregen = manifest_dir.join("src/class_surface.pregen.rs");
+    let dev_tree = rt_src.join("builtins").is_dir();
+
+    let code = if dev_tree {
+        generate_class_surface(&rt_src)
+    } else if pregen.is_file() {
+        println!("cargo:rerun-if-changed=src/class_surface.pregen.rs");
+        std::fs::read_to_string(&pregen).expect("reading class_surface.pregen.rs")
+    } else {
+        panic!(
+            "zeo's build script found NEITHER the zeo-rt sibling sources (a dev \
+             tree) nor src/class_surface.pregen.rs (a published crate, staged by \
+             `cargo xtask stage-publish`). The builtin class surface cannot be \
+             projected, and building without it would silently disable the \
+             compiler's respond_to?/method_defined?/constant folding. If you are \
+             building from a source checkout, the full workspace is required."
+        );
+    };
+    std::fs::write(out_dir.join("class_surface.rs"), code).expect("writing class_surface.rs");
+
+    render_rbconfig(manifest_dir, out_dir);
+    emit_compiler_fingerprint(manifest_dir, dev_tree);
+}
+
+/// Project `CLASS_SURFACE` from the sibling zeo-rt sources: the core classes
+/// (`builtins/`) and the require-gated extensions (`ext/`, whose gems
+/// namespace their classes in subdirectories -- `socket/`, ...). Ext surfaces
+/// are projected unconditionally of their cargo feature: the surface is
+/// folding-only (a miss falls back to runtime dispatch), and an un-required
+/// ext constant is unreachable regardless.
+fn generate_class_surface(rt_src: &Path) -> String {
     let mut surfaces: Vec<Surface> = Vec::new();
-    // The core classes (`builtins/`) and the require-gated extensions (`ext/`,
-    // whose gems namespace their classes in subdirectories -- `socket/`, ...).
-    // Ext surfaces are projected unconditionally of their cargo feature: the
-    // surface is folding-only (a miss falls back to runtime dispatch), and an
-    // un-required ext constant is unreachable regardless.
     collect_from_dir(&rt_src.join("builtins"), &mut surfaces);
     collect_from_dir(&rt_src.join("ext"), &mut surfaces);
+    assert!(
+        !surfaces.is_empty(),
+        "projected an EMPTY class surface from {} -- the zeo-rt sources are \
+         present but no ruby_class!/ruby_module! invocation parsed, which \
+         would silently disable the compiler's builtin folding",
+        rt_src.display()
+    );
     // Deterministic output regardless of readdir order.
     surfaces.sort_by(|a, b| a.id_const.cmp(&b.id_const));
 
@@ -69,23 +117,110 @@ fn main() {
         .expect("writing to a String never fails");
     }
     code.push_str("];\n");
-
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
-    std::fs::write(Path::new(&out_dir).join("class_surface.rs"), code)
-        .expect("writing class_surface.rs");
-
-    emit_compiler_fingerprint(Path::new(&manifest_dir));
+    code
 }
 
-/// A deterministic content hash over everything that shapes GENERATED CODE:
-/// this crate's sources (and this script), the shared front-end crates, the
-/// zeo-rt headers the surface projection reads, and the lockfile (a dep bump
-/// can change emission). `backend::cache` folds it into the bin-cache
-/// generation, replacing the compiler executable's len+mtime -- so a REBUILD
-/// of identical source keeps the cache warm (what lets CI restore
-/// `target/zeo-bin-cache` usefully) while any real compiler change still
-/// rolls it.
-fn emit_compiler_fingerprint(manifest_dir: &Path) {
+/// Render `shims/rbconfig.rb.in` -> `$OUT_DIR/rbconfig.rb`, substituting the
+/// build TARGET's platform facts (mirroring how CRuby's `configure` bakes
+/// them). The naming logic deliberately duplicates `crates/zeo-rt/build.rs`
+/// (`ruby_platform` and friends): ~40 lines shared by value, because a path
+/// `include!` across crates would break in a packaged crate and a cargo edge
+/// is heavier than the duplication. Keep the two in sync.
+fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
+    let template_path = manifest_dir.join("src/parse/shims/rbconfig.rb.in");
+    println!("cargo:rerun-if-changed=src/parse/shims/rbconfig.rb.in");
+    let template = std::fs::read_to_string(&template_path).expect("reading rbconfig.rb.in");
+
+    let arch = ruby_arch();
+    let os = ruby_os();
+    let (vendor, host_os, dlext, soext, ldshared) = match target_os().as_str() {
+        "macos" | "ios" | "tvos" | "watchos" => (
+            "apple",
+            format!("darwin{}", darwin_major()),
+            "bundle",
+            "dylib",
+            "clang -dynamic -bundle",
+        ),
+        "linux" => ("pc", "linux-gnu".to_string(), "so", "so", "cc -shared"),
+        other => ("unknown", other.to_string(), "so", "so", "cc -shared"),
+    };
+    let rendered = template
+        .replace("@RUBY_PLATFORM@", &format!("{arch}-{os}"))
+        .replace("@HOST_TRIPLE@", &format!("{arch}-{vendor}-{host_os}"))
+        .replace("@HOST_CPU@", &arch)
+        .replace("@HOST_VENDOR@", vendor)
+        .replace("@HOST_OS@", &host_os)
+        .replace("@DLEXT@", dlext)
+        .replace("@SOEXT@", soext)
+        .replace("@OS_VERSION@", &darwin_major())
+        .replace("@LDSHARED@", ldshared);
+    assert!(
+        !rendered.contains('@') || !rendered.contains("@RUBY"),
+        "rbconfig.rb.in has an unsubstituted placeholder"
+    );
+    std::fs::write(out_dir.join("rbconfig.rb"), rendered).expect("writing rbconfig.rb");
+}
+
+fn target_os() -> String {
+    std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default()
+}
+
+/// Ruby names a few CPUs differently from Rust's `target_arch` (notably
+/// `aarch64` -> `arm64`); everything else passes through unchanged.
+fn ruby_arch() -> String {
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+        "aarch64" => "arm64".to_string(),
+        "x86" => "i686".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Ruby's OS token: `darwin<major>` on Apple targets, `linux`/`linux-musl`
+/// on Linux, the raw `target_os` elsewhere.
+fn ruby_os() -> String {
+    match target_os().as_str() {
+        "macos" | "ios" | "tvos" | "watchos" => format!("darwin{}", darwin_major()),
+        "linux" => match std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default().as_str() {
+            "musl" => "linux-musl".to_string(),
+            _ => "linux".to_string(),
+        },
+        other => other.to_string(),
+    }
+}
+
+/// The Darwin kernel major (`uname -r` -> `25.5.0` -> `25`) when building ON
+/// a mac FOR a mac; a pinned contemporary default when cross-compiling (the
+/// build host's kernel is meaningless for the target then). Only reached for
+/// Apple targets.
+fn darwin_major() -> String {
+    if std::env::consts::OS == "macos" {
+        if let Some(major) = std::process::Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|r| r.trim().split('.').next().map(str::to_string))
+        {
+            return major;
+        }
+    }
+    // ruby 4.0.6 era: Darwin 25 (macOS 26). Cosmetic (RUBY_PLATFORM suffix).
+    "25".to_string()
+}
+
+/// A deterministic content hash over everything that shapes GENERATED CODE.
+/// `backend::cache` folds it into the bin-cache generation, replacing the
+/// compiler executable's len+mtime -- so a REBUILD of identical source keeps
+/// the cache warm (what lets CI restore `target/zeo-bin-cache` usefully)
+/// while any real compiler change still rolls it.
+///
+/// Dev tree: this crate's sources (and this script), the shared front-end
+/// crates, the zeo-rt headers the surface projection reads, and the lockfile
+/// (a dep bump can change emission). Packaged crate: the crate's own sources
+/// -- which include the staged pregen surface -- plus the package version;
+/// sound because a published zeo pins its published zeo-rt at `=X.Y.Z`, so
+/// no other runtime-source variation can exist for this compiler.
+fn emit_compiler_fingerprint(manifest_dir: &Path, dev_tree: bool) {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut fold = |bytes: &[u8]| {
         for &b in bytes {
@@ -93,18 +228,24 @@ fn emit_compiler_fingerprint(manifest_dir: &Path) {
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     };
+    fold(env!("CARGO_PKG_VERSION").as_bytes());
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in [
-        manifest_dir.join("src"),
-        manifest_dir.join("../zeo-dsl/src"),
-        manifest_dir.join("../zeo-abi/src"),
-        manifest_dir.join("../zeo-rt/src/builtins"),
-        manifest_dir.join("../zeo-rt/src/ext"),
-    ] {
+    let mut dirs = vec![manifest_dir.join("src")];
+    if dev_tree {
+        dirs.extend([
+            manifest_dir.join("../zeo-dsl/src"),
+            manifest_dir.join("../zeo-abi/src"),
+            manifest_dir.join("../zeo-rt/src/builtins"),
+            manifest_dir.join("../zeo-rt/src/ext"),
+        ]);
+    }
+    for dir in dirs {
         collect_rs_files(&dir, &mut files);
     }
     files.push(manifest_dir.join("build.rs"));
-    files.push(manifest_dir.join("../../Cargo.lock"));
+    if dev_tree {
+        files.push(manifest_dir.join("../../Cargo.lock"));
+    }
     files.sort();
     for path in files {
         if let Ok(bytes) = std::fs::read(&path) {
@@ -118,10 +259,14 @@ fn emit_compiler_fingerprint(manifest_dir: &Path) {
             fold(&bytes);
         }
     }
-    println!("cargo:rerun-if-changed=../../Cargo.lock");
     println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=../zeo-dsl/src");
-    println!("cargo:rerun-if-changed=../zeo-abi/src");
+    if dev_tree {
+        // These paths exist only in the dev tree; a rerun-if-changed on a
+        // missing path makes cargo re-run the script on EVERY build.
+        println!("cargo:rerun-if-changed=../../Cargo.lock");
+        println!("cargo:rerun-if-changed=../zeo-dsl/src");
+        println!("cargo:rerun-if-changed=../zeo-abi/src");
+    }
     println!("cargo:rustc-env=ZEO_COMPILER_FINGERPRINT={h:016x}");
 }
 
