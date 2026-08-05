@@ -192,7 +192,80 @@ fn target_dir() -> PathBuf {
             Some(dir) => PathBuf::from(dir),
             None => root.join("target"),
         },
-        crate::home::ZeoHome::Installed { cache, .. } => cache.join("target"),
+        crate::home::ZeoHome::Installed { cache, .. } => cache.join(runtime_cache_key()),
+    }
+}
+
+/// The name of the per-(compiler, toolchain) cache dir an installed zeo
+/// builds into: `rt-<fnv64(version ; compiler fingerprint ; rustc -vV)>`.
+///
+/// Folding `rustc -vV` in is the load-bearing part: rlibs are locked to the
+/// exact rustc that built them (Rust has no stable ABI), so a toolchain
+/// update must land in a FRESH dir and rebuild cleanly rather than link a
+/// mismatched artifact. The version + fingerprint fold means a zeo upgrade
+/// gets the same treatment. Because every input to the artifact is part of
+/// the key, existence IS freshness inside the dir -- see
+/// [`runtime_artifact_is_stale`]'s installed-mode short-circuit.
+fn runtime_cache_key() -> &'static str {
+    static KEY: OnceLock<String> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for part in [
+            env!("CARGO_PKG_VERSION"),
+            env!("ZEO_COMPILER_FINGERPRINT"),
+            &rustc_version(),
+        ] {
+            for &b in part.as_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h ^= 0x3b;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("rt-{h:016x}")
+    })
+}
+
+/// The full `rustc -vV` identity (version, commit hash, host), memoized.
+/// Empty string if rustc can't be run -- the subsequent build fails with
+/// cargo's own clearer error.
+fn rustc_version() -> String {
+    static V: OnceLock<String> = OnceLock::new();
+    V.get_or_init(|| {
+        std::process::Command::new("rustc")
+            .arg("-vV")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    })
+    .clone()
+}
+
+/// Best-effort reaper for SIBLING cache keys -- dirs left behind by an older
+/// zeo or a replaced toolchain. Runs after a successful installed-mode build;
+/// only dirs whose contents have been untouched for 30 days go, so a second
+/// toolchain in active use is never yanked out from under its user. Removal
+/// failures are ignored (another process may hold the dir open).
+fn reap_stale_cache_keys(cache: &Path, current_key: &str) {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+    let Ok(entries) = std::fs::read_dir(cache) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with("rt-") || name == current_key {
+            continue;
+        }
+        let dir = entry.path();
+        let last_used = newest_mtime_under(&dir);
+        if let Ok(age) = SystemTime::now().duration_since(last_used)
+            && age > MAX_AGE
+        {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }
 
@@ -317,6 +390,17 @@ fn runtime_artifact_is_stale(profile: Profile, runtime: Runtime, linkage: Linkag
     let Ok(artifact) = runtime_artifact(profile, runtime, linkage) else {
         return true; // not built yet
     };
+    // Installed mode: existence IS freshness. The payload is immutable and
+    // every input to the artifact -- compiler version, fingerprint, exact
+    // rustc -- is folded into the cache dir's name (`runtime_cache_key`), so
+    // an input change lands in a different dir and builds there. The mtime
+    // walk below exists for the dev tree, where sources actually change.
+    if matches!(
+        crate::home::zeo_home(),
+        crate::home::ZeoHome::Installed { .. }
+    ) {
+        return false;
+    }
     let Some(artifact_mtime) = file_mtime(&artifact) else {
         return true;
     };
@@ -388,6 +472,12 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             cmd.args(["-p", "zeo-rt"]);
             if runtime == Runtime::Eval {
                 cmd.arg("--features").arg("eval-vm");
+            }
+            // The eval variant always needs its own dir; installed mode needs
+            // the redirect for EVERY variant -- without it cargo would write
+            // into the payload's own `target/`, and the prefix may be
+            // read-only (a Homebrew Cellar).
+            if runtime == Runtime::Eval || installed_payload().is_some() {
                 cmd.arg("--target-dir")
                     .arg(variant_target_dir(runtime, linkage));
             }
@@ -417,14 +507,48 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             cmd.arg("-C").arg(install_name_arg());
         }
     }
-    cmd.current_dir(runtime_workspace_dir());
+    let workspace = runtime_workspace_dir();
+    if let Some(payload) = installed_payload() {
+        // The shipped lockfile is part of the payload's identity; never let
+        // cargo rewrite dependency resolution under an installed compiler.
+        cmd.arg("--locked");
+        // A vendored payload (the default dist shape) builds fully offline;
+        // its .cargo/config.toml redirects crates.io to the vendor tree.
+        if payload.join("runtime/vendor").is_dir() {
+            cmd.arg("--offline");
+        }
+    }
+    cmd.current_dir(&workspace);
     let label = build_label(profile, runtime, linkage);
+    if installed_payload().is_some() {
+        // The one place an installed zeo is slow: the first compile per
+        // (zeo version, toolchain) builds the runtime into the cache. Say so,
+        // or a first `zeo hello.rb` looks hung for minutes.
+        eprintln!("zeo: building the runtime for this toolchain (one-time per zeo/rustc version)...");
+    }
     // Held for the whole cargo call: one runtime build machine-wide at a time.
     let _lock = lock_runtime_build();
-    match cmd.status() {
+    let result = match cmd.status() {
         Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!("`{label}` exited with {status}")),
+        Ok(status) => Err(format!(
+            "`{label}` (in {}) exited with {status}",
+            workspace.display()
+        )),
         Err(e) => Err(format!("running `{label}`: {e}")),
+    };
+    if result.is_ok()
+        && let crate::home::ZeoHome::Installed { cache, .. } = crate::home::zeo_home()
+    {
+        reap_stale_cache_keys(cache, runtime_cache_key());
+    }
+    result
+}
+
+/// The payload dir when running installed, `None` in the dev tree.
+fn installed_payload() -> Option<&'static Path> {
+    match crate::home::zeo_home() {
+        crate::home::ZeoHome::Installed { payload, .. } => Some(payload),
+        crate::home::ZeoHome::DevTree { .. } => None,
     }
 }
 
