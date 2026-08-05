@@ -164,21 +164,35 @@ const RUNTIME_CRATES: &[&str] = &[
     "zeo-dsl",
 ];
 
-/// The workspace root -- two levels up from `crates/zeo` (this crate's
-/// own `CARGO_MANIFEST_DIR`), i.e. wherever the top-level `Cargo.toml`/
-/// `target/` actually live.
-fn workspace_root() -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+/// The cargo workspace `build_runtime` shells `cargo build -p zeo-rt` in.
+///
+/// Dev tree: the repo root itself. Installed: the payload's `runtime/`
+/// mini-workspace (`cargo xtask dist` stages the four runtime crates there
+/// under the same `crates/<name>` layout, so every path derived from this
+/// root -- the staleness walk, the `-p zeo-rt` build -- works unchanged).
+fn runtime_workspace_dir() -> PathBuf {
+    match crate::home::zeo_home() {
+        crate::home::ZeoHome::DevTree { root } => root.clone(),
+        crate::home::ZeoHome::Installed { payload, .. } => payload.join("runtime"),
+    }
 }
 
-/// Respects `CARGO_TARGET_DIR` (the standard Cargo override) if set, else
-/// the ordinary `<workspace_root>/target` default -- not a full `cargo
-/// metadata` query (this project's build layout is simple enough that the
-/// common cases are all that's needed).
+/// The build root everything hangs off: variant target dirs, the runtime
+/// build lock, and the bin cache.
+///
+/// Dev tree: `CARGO_TARGET_DIR` (the standard Cargo override) if set, else
+/// the ordinary `<root>/target` default -- not a full `cargo metadata` query
+/// (this project's build layout is simple enough that the common cases are
+/// all that's needed). Installed: the per-user cache -- the prefix is never
+/// written to, and ambient `CARGO_TARGET_DIR` from an unrelated shell is
+/// deliberately ignored (see `home::cache_root`).
 fn target_dir() -> PathBuf {
-    match std::env::var_os("CARGO_TARGET_DIR") {
-        Some(dir) => PathBuf::from(dir),
-        None => workspace_root().join("target"),
+    match crate::home::zeo_home() {
+        crate::home::ZeoHome::DevTree { root } => match std::env::var_os("CARGO_TARGET_DIR") {
+            Some(dir) => PathBuf::from(dir),
+            None => root.join("target"),
+        },
+        crate::home::ZeoHome::Installed { cache, .. } => cache.join("target"),
     }
 }
 
@@ -306,7 +320,7 @@ fn runtime_artifact_is_stale(profile: Profile, runtime: Runtime, linkage: Linkag
     let Some(artifact_mtime) = file_mtime(&artifact) else {
         return true;
     };
-    let root = workspace_root();
+    let root = runtime_workspace_dir();
     let mut newest_source = SystemTime::UNIX_EPOCH;
     for crate_name in RUNTIME_CRATES {
         let crate_dir = root.join("crates").join(crate_name);
@@ -403,7 +417,7 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             cmd.arg("-C").arg(install_name_arg());
         }
     }
-    cmd.current_dir(workspace_root());
+    cmd.current_dir(runtime_workspace_dir());
     let label = build_label(profile, runtime, linkage);
     // Held for the whole cargo call: one runtime build machine-wide at a time.
     let _lock = lock_runtime_build();

@@ -19,6 +19,7 @@ pub mod codegen;
 pub mod compiler;
 pub mod diagnostics;
 pub mod gem_report;
+pub mod home;
 
 pub use diagnostics::CompileError;
 

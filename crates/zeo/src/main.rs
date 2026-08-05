@@ -489,11 +489,9 @@ fn validate_log_level(level: &str) -> Result<String, String> {
 ///
 /// The compiler's OWN bundled `gems/` is not listed here: the loader appends
 /// it unconditionally, so it is found whether zeo is driven through this
-/// CLI or used as a library. The bundled path is baked in
-/// via `CARGO_MANIFEST_DIR` -- honest for a dev-tree compiler
-/// (both `cargo run` and the test harness live in the repo); an installed
-/// distribution would locate it relative to the executable instead, the
-/// reference project's approach.
+/// CLI or used as a library. The bundled path comes from the resolved home
+/// (see `zeo::home`) -- the repo's `gems/` in the dev tree, the payload's
+/// `gems/` next to an installed executable.
 fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(parent) = input.and_then(|p| p.parent()) {
@@ -519,6 +517,9 @@ fn run() -> Result<(), MainError> {
         }
     };
     init_tracing(args.log_level.as_deref());
+    // Pre-flight: a broken install (payload missing next to the executable)
+    // reports here as an ordinary error instead of panicking mid-compile.
+    zeo::home::ensure_resolved()?;
     let (source, input_path) = match &args.source {
         Source::File(path) => {
             let text = std::fs::read_to_string(path)

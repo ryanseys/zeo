@@ -1240,13 +1240,14 @@ fn vendored_shim_feature(canonical: &Path) -> Option<&'static str> {
 
 /// The `gems/` directory shipped with the compiler, if it exists.
 ///
-/// Baked in via `CARGO_MANIFEST_DIR` -- honest for a dev-tree compiler (both
-/// `cargo run` and the test harness live in the repo); an installed
-/// distribution would locate it relative to the executable instead.
+/// Located through the resolved home (see `crate::home`): the repo's `gems/`
+/// in the dev tree, the payload's `gems/` in an installed prefix. An absent
+/// dir contributes no bundled gems, in either mode.
 pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("gems");
+    let dir = match crate::home::zeo_home() {
+        crate::home::ZeoHome::DevTree { root } => root.join("gems"),
+        crate::home::ZeoHome::Installed { payload, .. } => payload.join("gems"),
+    };
     dir.is_dir().then_some(dir)
 }
 
