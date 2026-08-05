@@ -85,12 +85,15 @@ impl ConstSite {
             if self.epoch.load(Ordering::Acquire) == const_epoch() {
                 return Some(value.clone());
             }
+            crate::builtins::rubyvm::CONST_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
             return resolve();
         }
         // Read BEFORE resolving: a write landing between the lookup and the
         // store must leave the site stamped with the older epoch, so readers
         // reject the value rather than trusting a stale one.
         let epoch = const_epoch();
+        // Cold branch only -- `RubyVM.stat[:constant_cache_misses]`.
+        crate::builtins::rubyvm::CONST_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
         let value = resolve()?;
         if self.cached.set(value.clone()).is_ok() {
             self.epoch.store(epoch, Ordering::Release);

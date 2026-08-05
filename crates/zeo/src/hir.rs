@@ -541,7 +541,22 @@ impl Hir {
     /// program would otherwise fail at LINK time, where no message can
     /// explain itself.
     pub fn needs_prism_runtime(&self) -> bool {
-        self.activated_features.contains("prism") || self.uses_runtime_eval()
+        self.activated_features.contains("prism")
+            || self.uses_runtime_eval()
+            || self.mentions_rubyvm_parser()
+    }
+
+    /// Whether the program names a `RubyVM` surface whose body parses at
+    /// runtime (`AbstractSyntaxTree.parse`, `InstructionSequence.compile`) --
+    /// those link the prism runtime exactly like a dynamic `eval` does.
+    fn mentions_rubyvm_parser(&self) -> bool {
+        self.nodes.iter().any(|node| match node {
+            HirNode::ClassRef(n) => n == "RubyVM",
+            HirNode::QualifiedConstRead(scope, n) => {
+                n == "RubyVM" || scope == "RubyVM" || scope.starts_with("RubyVM::")
+            }
+            _ => false,
+        })
     }
 
     /// Whether this program can reach the RUNTIME eval VM.

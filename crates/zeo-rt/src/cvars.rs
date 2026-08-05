@@ -86,6 +86,9 @@ pub fn cvar_set(owner_class_id: u32, name: &str, value: RubyValue) -> Result<(),
         .entry(owner_class_id)
         .or_default()
         .insert(Box::from(name), value);
+    // `RubyVM.stat[:global_cvar_state]` -- every write bumps the generation.
+    crate::builtins::rubyvm::GLOBAL_CVAR_STATE
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 

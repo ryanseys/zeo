@@ -423,6 +423,21 @@ pub const RACTOR_MOVED_OBJECT_CLASS: ClassId = ClassId(163);
 /// Includes `Comparable` (byte-lexicographic `<=>`).
 pub const IO_BUFFER_CLASS: ClassId = ClassId(164);
 
+/// `RubyVM` -- CRuby's VM introspection namespace, emulated over zeo's own
+/// counters and (behind `eval-vm`) the prism parser.
+pub const RUBYVM_CLASS: ClassId = ClassId(165);
+/// `RubyVM::AbstractSyntaxTree` -- parse.y-taxonomy AST over prism.
+pub const RUBYVM_AST_MODULE: ClassId = ClassId(166);
+/// `RubyVM::AbstractSyntaxTree::Node`.
+pub const RUBYVM_AST_NODE_CLASS: ClassId = ClassId(167);
+/// `RubyVM::AbstractSyntaxTree::Location`.
+pub const RUBYVM_AST_LOCATION_CLASS: ClassId = ClassId(168);
+/// `RubyVM::InstructionSequence` -- compile/eval work; serialization
+/// truthfully refuses (zeo has no YARV).
+pub const RUBYVM_ISEQ_CLASS: ClassId = ClassId(169);
+/// `RubyVM::YJIT` -- present, permanently disabled (zeo is AOT).
+pub const RUBYVM_YJIT_MODULE: ClassId = ClassId(170);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -2038,6 +2053,54 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(OBJECT_CLASS),
         includes: &[COMPARABLE_CLASS],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBYVM_CLASS,
+        name: "RubyVM",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBYVM_AST_MODULE,
+        name: "RubyVM::AbstractSyntaxTree",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBYVM_AST_NODE_CLASS,
+        name: "RubyVM::AbstractSyntaxTree::Node",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBYVM_AST_LOCATION_CLASS,
+        name: "RubyVM::AbstractSyntaxTree::Location",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBYVM_ISEQ_CLASS,
+        name: "RubyVM::InstructionSequence",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBYVM_YJIT_MODULE,
+        name: "RubyVM::YJIT",
+        is_module: true,
+        superclass: None,
+        includes: &[],
         feature: None,
     },
 ];

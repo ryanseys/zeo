@@ -13,6 +13,8 @@ members = [
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/ryanseys/zeo"
+categories = ["compilers", "command-line-utilities"]
 
 [workspace.dependencies]
 zeo = { path = "crates/zeo" }
