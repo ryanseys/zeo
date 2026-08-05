@@ -653,6 +653,13 @@ ruby_module! {
     private def "initialize_clone" cfunc (recv, orig, *_opts) {
         inherited_row!(kernel, "initialize_copy", recv, std::slice::from_ref(orig), None)
     }
+    // `Kernel#instance_variables_to_inspect` default: nil, meaning "show
+    // every ivar". An override returning an Array turns `#inspect`'s ivar
+    // list into a members-only filter -- see `value::default_object_repr`.
+    private def "instance_variables_to_inspect"(_recv) {
+        Ok(RubyValue::Nil)
+    }
+
     // `Object#respond_to_missing?` default: false for every name -- what a
     // user override's `super` reaches (CRuby's
     // `rb_obj_respond_to_missing`). Hidden-private, like `initialize`.

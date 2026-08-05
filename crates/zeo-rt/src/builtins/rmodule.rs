@@ -7,7 +7,7 @@
 //! keywords. The shared `recv_cid` helper is `pub(crate)` for `rclass` to use.
 
 use crate::RubyValue;
-use crate::builtins::{inherited_row, name_error, type_error};
+use crate::builtins::{inherited_row, name_error, not_impl_error, type_error};
 use zeo_macros::ruby_class;
 
 pub(crate) fn recv_cid(recv: &RubyValue) -> crate::ClassId {
@@ -975,7 +975,7 @@ ruby_class! {
     // { ... } }`, the only way to refine a class chosen by the caller. Mints
     // the holder, runs the block with the holder as self/definee, and
     // answers it; DEFINITION only (a `using` is what would activate it).
-    def "refine" (recv, target, &block) {
+    private def "refine" (recv, target, &block) {
         let RubyValue::Class(target_id) = target else {
             return Err(type_error!(
                 "wrong argument type {} (expected Class or Module)",
@@ -986,6 +986,15 @@ ruby_class! {
             return Err(crate::builtins::arg_error!("no block given"));
         };
         crate::runtime_meta::runtime_refine(recv_cid(recv), *target_id, b)
+    }
+    // Private `Module#using` reached at RUNTIME. zeo resolves `using` at
+    // compile time by rewriting the call sites inside its lexical range; a
+    // dynamically dispatched `using` has no lexical range to rewrite, so it
+    // refuses loudly rather than activate nothing.
+    private def "using" (_recv, _module) {
+        Err(not_impl_error!(
+            "Module#using cannot be reached through a runtime send: zeo activates refinements at compile time"
+        ))
     }
     // `Module#refinements` -- the `Refinement` modules THIS module's `refine`
     // blocks minted, in source order. They are ordinary registered modules

@@ -930,6 +930,38 @@ ruby_class! {
     def "slice_when" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_when", recv, __args, block) }
     def "enum_for" cfunc (recv, *_args, &block) { inherited_row!(kernel, "enum_for", recv, __args, block) }
     def "to_enum" cfunc (recv, *_args, &block) { inherited_row!(kernel, "to_enum", recv, __args, block) }
+
+    // ---- `_enumerable_*` -- ruby snapshots the EAGER Enumerable bodies onto
+    // Lazy under these names BEFORE defining the lazy overrides, then makes
+    // them private (enumerator.c). Real `private def` rows, not aliases: the
+    // DSL's `alias` would bind the lazy override and copy its public
+    // visibility. Each drives the eager ancestor row, so calling one on a
+    // lazy runs the chain at once -- CRuby's exact behavior.
+    private def "_enumerable_map" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "map", recv, __args, block) }
+    private def "_enumerable_collect" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "collect", recv, __args, block) }
+    private def "_enumerable_flat_map" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "flat_map", recv, __args, block) }
+    private def "_enumerable_collect_concat" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "collect_concat", recv, __args, block) }
+    private def "_enumerable_select" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "select", recv, __args, block) }
+    private def "_enumerable_filter" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "filter", recv, __args, block) }
+    private def "_enumerable_find_all" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "find_all", recv, __args, block) }
+    private def "_enumerable_filter_map" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "filter_map", recv, __args, block) }
+    private def "_enumerable_reject" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "reject", recv, __args, block) }
+    private def "_enumerable_grep" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "grep", recv, __args, block) }
+    private def "_enumerable_grep_v" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "grep_v", recv, __args, block) }
+    private def "_enumerable_zip" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "zip", recv, __args, block) }
+    private def "_enumerable_take" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "take", recv, __args, block) }
+    private def "_enumerable_take_while" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "take_while", recv, __args, block) }
+    private def "_enumerable_drop" arity 1 (recv, *_args, &block) { inherited_row!(enumerable, "drop", recv, __args, block) }
+    private def "_enumerable_drop_while" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "drop_while", recv, __args, block) }
+    private def "_enumerable_uniq" arity 0 (recv, *_args, &block) { inherited_row!(enumerable, "uniq", recv, __args, block) }
+    // The odd one out: it snapshots Enumerator#with_index, not an Enumerable
+    // row (there is none by that name). Enumerator's row needs an Enumerator
+    // receiver, so the lazy goes through its EAGER self first -- same
+    // sequence, eager drive, which is exactly what the snapshot is for.
+    private def "_enumerable_with_index" cfunc (recv, *_args, &block) {
+        let eager = enumerator_for(recv, "each", &[]);
+        inherited_row!(enumerator, "with_index", &eager, __args, block)
+    }
 }
 
 #[cfg(test)]

@@ -141,6 +141,68 @@ fn del_trailing_separator(path: &str) -> &str {
     }
 }
 
+/// `File.basename`, the slice of it these helpers need: the last component,
+/// `"/"` for a path of nothing but separators, `""` for an empty path.
+fn file_basename(path: &str) -> &str {
+    match chop_basename(path) {
+        Some((_, base)) => base,
+        None if path.is_empty() => "",
+        None => "/",
+    }
+}
+
+/// `File.dirname`: everything before the last component, trailing separators
+/// dropped; `"."` when nothing is left, `"/"` for the root itself.
+fn file_dirname(path: &str) -> String {
+    match chop_basename(path) {
+        Some((pre, _)) => {
+            let d = del_trailing_separator(pre);
+            if d.is_empty() {
+                ".".to_string()
+            } else {
+                d.to_string()
+            }
+        }
+        None if path.is_empty() => ".".to_string(),
+        None => "/".to_string(),
+    }
+}
+
+/// CRuby's `has_trailing_separator?`: the last component is followed by
+/// separators. False for the root, which is ALL separator.
+fn has_trailing_separator(path: &str) -> bool {
+    match chop_basename(path) {
+        Some((pre, base)) => pre.len() + base.len() < path.len(),
+        None => false,
+    }
+}
+
+/// CRuby's `add_trailing_separator`: ensure one, except on a path that
+/// already behaves as if it had one (empty, or separator-tailed).
+fn add_trailing_separator(path: &str) -> String {
+    if path.is_empty() || path.ends_with('/') {
+        path.to_string()
+    } else {
+        format!("{path}/")
+    }
+}
+
+/// CRuby's `prepend_prefix`: glue a peeled prefix back onto a relative
+/// remainder. An empty remainder names the prefix's own directory.
+fn prepend_prefix(prefix: &str, relpath: &str) -> String {
+    if relpath.is_empty() {
+        file_dirname(prefix)
+    } else if prefix.contains('/') {
+        let mut prefix = file_dirname(prefix);
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        format!("{prefix}{relpath}")
+    } else {
+        format!("{prefix}{relpath}")
+    }
+}
+
 /// Joins components onto a prefix that is either empty or the root. An empty
 /// result is `"."`, the path that names no movement.
 fn assemble(absolute: bool, names: &[&str]) -> String {
@@ -191,7 +253,10 @@ fn cleanpath_aggressive(path: &str) -> String {
 }
 
 /// `#cleanpath(true)`: only `.` and repeated separators go, because a `..`
-/// that follows a symlink does NOT name the directory above it.
+/// that follows a symlink does NOT name the directory above it. Ported step
+/// for step from `pathname_builtin.rb` -- a `.` LAST component survives
+/// (`"a/."` stays `"a/."`), and a component-less path answers its prefix's
+/// dirname.
 fn cleanpath_conservative(path: &str) -> String {
     let mut names: Vec<&str> = Vec::new();
     let mut pre = path;
@@ -201,22 +266,23 @@ fn cleanpath_conservative(path: &str) -> String {
             names.insert(0, base);
         }
     }
-    let absolute = !pre.is_empty();
-    if absolute {
+    if !pre.is_empty() {
         while names.first() == Some(&"..") {
             names.remove(0);
         }
     }
-    let mut out = assemble(absolute, &names);
-    // A path that ended in a separator keeps one, unless it ends in `..`.
-    if !names.is_empty()
-        && names.last() != Some(&"..")
-        && path.ends_with('/')
-        && !out.ends_with('/')
-    {
-        out.push('/');
+    if names.is_empty() {
+        return file_dirname(pre);
     }
-    out
+    if names.last() != Some(&"..") && file_basename(path) == "." {
+        names.push(".");
+    }
+    let result = prepend_prefix(pre, &names.join("/"));
+    if !matches!(*names.last().expect("non-empty"), "." | "..") && has_trailing_separator(path) {
+        add_trailing_separator(&result)
+    } else {
+        result
+    }
 }
 
 /// `Pathname#+`: CRuby's `plus`, which resolves `.` and `..` in the RIGHT
@@ -611,6 +677,59 @@ ruby_class! {
     }
     def "relative_path_from"(recv, base) {
         Ok(pathname_val(relative_path_from(recv_path(recv), &arg_path(base)?)?))
+    }
+
+    // ---- ruby's private path-algebra helpers (`pathname_builtin.rb`), as
+    // real rows so `private_instance_methods` and a dynamic `send` agree
+    // with CRuby. Each wraps the Rust fn the public rows already share.
+    private def "chop_basename"(_recv, path) {
+        let p = arg_path(path)?;
+        Ok(match chop_basename(&p) {
+            Some((pre, base)) => RubyValue::Array(crate::array_new(vec![
+                str_val(pre.to_string()),
+                str_val(base.to_string()),
+            ])),
+            None => RubyValue::Nil,
+        })
+    }
+    // `[prefix, names]` -- the un-peelable head plus every component after it.
+    private def "split_names"(_recv, path) {
+        let p = arg_path(path)?;
+        let mut pre = p.as_str();
+        let mut names: Vec<RubyValue> = Vec::new();
+        while let Some((q, base)) = chop_basename(pre) {
+            names.insert(0, str_val(base.to_string()));
+            pre = q;
+        }
+        Ok(RubyValue::Array(crate::array_new(vec![
+            str_val(pre.to_string()),
+            RubyValue::Array(crate::array_new(names)),
+        ])))
+    }
+    private def "prepend_prefix"(_recv, prefix, relpath) {
+        Ok(str_val(prepend_prefix(&arg_path(prefix)?, &arg_path(relpath)?)))
+    }
+    private def "has_trailing_separator?"(_recv, path) {
+        Ok(RubyValue::Bool(has_trailing_separator(&arg_path(path)?)))
+    }
+    private def "add_trailing_separator"(_recv, path) {
+        Ok(str_val(add_trailing_separator(&arg_path(path)?)))
+    }
+    private def "del_trailing_separator"(_recv, path) {
+        Ok(str_val(del_trailing_separator(&arg_path(path)?).to_string()))
+    }
+    // Plain equality: ruby 4.0 compares verbatim even on macOS (oracle-pinned).
+    private def "same_paths?"(_recv, a, b) {
+        Ok(RubyValue::Bool(arg_path(a)? == arg_path(b)?))
+    }
+    private def "plus"(_recv, path1, path2) {
+        Ok(str_val(plus(&arg_path(path1)?, &arg_path(path2)?)))
+    }
+    private def "cleanpath_aggressive"(recv) {
+        Ok(pathname_val(cleanpath_aggressive(recv_path(recv))))
+    }
+    private def "cleanpath_conservative"(recv) {
+        Ok(pathname_val(cleanpath_conservative(recv_path(recv))))
     }
     def "sub_ext"(recv, repl) {
         let newext = arg_path(repl)?;

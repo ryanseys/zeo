@@ -891,6 +891,15 @@ ruby_class! {
         let _ = recv;
         Ok(RubyValue::Bool(false))
     }
+    // The marshal hook ruby declares on the class; the writer's native `U`
+    // fast path emits the same pair without dispatching here.
+    private def "marshal_dump" (recv) {
+        let c = recv_complex(recv);
+        Ok(RubyValue::Array(crate::array_new(vec![
+            c.real.clone(),
+            c.imag.clone(),
+        ])))
+    }
     def "abs" | "magnitude" (recv) {
         complex_abs_value(recv_complex(recv))
     }

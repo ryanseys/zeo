@@ -1,0 +1,31 @@
+["a/b/", "c"]
+["a/", "b"]
+nil
+nil
+["/", ["a", "b", "c"]]
+["", ["a", "b"]]
+"a/b"
+"/a/b"
+"/a"
+"/"
+true
+false
+false
+"a/"
+"a/"
+""
+"a"
+"/"
+""
+false
+true
+"a/d"
+"/z"
+"../.."
+#<Pathname:b/c>
+#<Pathname:/a>
+#<Pathname:a/.>
+#<Pathname:a/b/>
+#<Pathname:.>
+#<Pathname:a/.>
+true

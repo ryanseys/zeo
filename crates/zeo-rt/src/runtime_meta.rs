@@ -2753,6 +2753,83 @@ pub fn runtime_refine(
     Ok(val)
 }
 
+/// `Refinement#import_methods(*modules)` -- CRuby copies each module's OWN
+/// method entries into the refinement, re-compiled under the refinement's
+/// cref (eval.c:1863), refusing methods not defined in Ruby. zeo's bodies
+/// are Rust fns with no cref to re-bind, so the copy is the resolved body
+/// itself and every method qualifies; the module doc records that copied
+/// bodies do not see the refinement's own refinements. Ancestors are NOT
+/// imported, with CRuby's warning.
+pub fn refinement_import_methods(
+    holder: &RubyValue,
+    modules: &[RubyValue],
+) -> Result<RubyValue, Signal> {
+    let RubyValue::Class(hid) = holder else {
+        return Err(runtime_error!("import_methods on a non-module refinement"));
+    };
+    // Every argument is validated BEFORE anything imports (CRuby's shape).
+    for m in modules {
+        let ok = matches!(m, RubyValue::Class(id)
+            if crate::dispatch::class_is_module(*id) == Some(true));
+        if !ok {
+            return Err(crate::builtins::type_error!(
+                "wrong argument type {} (expected Module)",
+                crate::builtins::class_name_of(m)
+            ));
+        }
+    }
+    for m in modules {
+        let RubyValue::Class(mid) = m else {
+            unreachable!()
+        };
+        if ancestors_of_value(*mid).len() > 1
+            && let Some((file, line)) = crate::frames::current_location()
+        {
+            eprintln!(
+                "{file}:{line}: warning: {} has ancestors, but Refinement#import_methods doesn't import their methods",
+                m.try_display_string()?
+            );
+        }
+        let private: std::collections::HashSet<Symbol> = crate::dispatch::instance_method_names(
+            *mid,
+            crate::dispatch::VisFilter::Private,
+            false,
+        )
+        .into_iter()
+        .collect();
+        let protected: std::collections::HashSet<Symbol> = crate::dispatch::instance_method_names(
+            *mid,
+            crate::dispatch::VisFilter::Protected,
+            false,
+        )
+        .into_iter()
+        .collect();
+        for name in
+            crate::dispatch::instance_method_names(*mid, crate::dispatch::VisFilter::All, false)
+        {
+            let Some(body) = snapshot_instance_method(*mid, name) else {
+                continue;
+            };
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(hid.0).or_insert_with(OverlayEntry::delta);
+            e.methods.insert(name, body);
+            e.undefs.remove(&name);
+            if private.contains(&name) {
+                e.methods_vis
+                    .insert(name, crate::dispatch::MethodVisibility::Private);
+            } else if protected.contains(&name) {
+                e.methods_vis
+                    .insert(name, crate::dispatch::MethodVisibility::Protected);
+            } else {
+                e.methods_vis.remove(&name);
+            }
+        }
+        patch_class(*hid);
+    }
+    mark_live();
+    Ok(holder.clone())
+}
+
 /// The overlay twin of `dispatch::refinement_of` -- `(refining module,
 /// refined target)` for a holder a runtime `refine` minted.
 pub fn overlay_refinement_of(id: ClassId) -> Option<(ClassId, ClassId)> {

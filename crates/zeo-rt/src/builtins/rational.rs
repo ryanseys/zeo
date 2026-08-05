@@ -515,6 +515,15 @@ ruby_class! {
     def "denominator" (recv) {
         Ok(crate::builtins::integer::int_value(recv_rational(recv).den.clone()))
     }
+    // The marshal hook ruby declares on the class; the writer's native `U`
+    // fast path emits the same pair without dispatching here.
+    private def "marshal_dump" (recv) {
+        let r = recv_rational(recv);
+        Ok(RubyValue::Array(crate::array_new(vec![
+            crate::builtins::integer::int_value(r.num.clone()),
+            crate::builtins::integer::int_value(r.den.clone()),
+        ])))
+    }
     def "to_f" (recv) {
         Ok(RubyValue::Float(rat_to_f64(recv_rational(recv))))
     }

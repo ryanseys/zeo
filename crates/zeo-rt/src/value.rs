@@ -10,7 +10,7 @@ use crate::dispatch::{
     ARRAY_CLASS, CLASS_CLASS, ClassId, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
     INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS,
     RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, SIZED_QUEUE_CLASS, STRING_CLASS, SYMBOL_CLASS,
-    THREAD_CLASS, TRUE_CLASS,
+    TRUE_CLASS,
 };
 use crate::fiber::RFiber;
 use crate::ractor::RRactor;
@@ -204,7 +204,10 @@ pub(crate) fn default_object_repr(
     if seen.contains(&addr) {
         return Ok(format!("#<{name}:0x{addr:016x} ...>"));
     }
-    let pairs = o.ivar_pairs();
+    let mut pairs = o.ivar_pairs();
+    if let Some(keep) = ivars_to_inspect_filter(o)? {
+        pairs.retain(|(n, _)| keep.contains(n.as_str()));
+    }
     if pairs.is_empty() {
         return Ok(format!("#<{name}:0x{addr:016x}>"));
     }
@@ -215,6 +218,42 @@ pub(crate) fn default_object_repr(
         .collect::<Result<Vec<_>, crate::Signal>>();
     seen.pop();
     Ok(format!("#<{name}:0x{addr:016x} {}>", body?.join(", ")))
+}
+
+/// The `#instance_variables_to_inspect` hook: `None` = show every ivar
+/// (Kernel's default answered nil, or nothing overrode it); `Some(set)` = a
+/// members-only filter. The set keeps the object's own ivar ORDER (the hook's
+/// array is membership, not ordering -- oracle-pinned), Symbol entries only
+/// (a String never matches), and a non-Array/nil answer is CRuby's TypeError.
+fn ivars_to_inspect_filter(
+    o: &crate::RObj,
+) -> Result<Option<std::collections::HashSet<String>>, crate::Signal> {
+    let name = crate::Symbol::intern("instance_variables_to_inspect");
+    // Kernel's default row answers nil; only an OVERRIDE is worth a dispatch.
+    match crate::dispatch::method_owner(o.class_id(), name) {
+        Some(owner) if owner != zeo_abi::KERNEL_CLASS => {}
+        _ => return Ok(None),
+    }
+    let recv = RubyValue::Object(o.clone());
+    match crate::dispatch::send_value(&recv, name, &[], None)? {
+        RubyValue::Nil => Ok(None),
+        RubyValue::Array(a) => Ok(Some(
+            a.lock()
+                .iter()
+                .filter_map(|v| match v {
+                    RubyValue::Symbol(s) => Some(s.name()),
+                    _ => None,
+                })
+                .collect(),
+        )),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "Expected #instance_variables_to_inspect to return an Array or nil, but it returned {}",
+                crate::builtins::class_name_of(&other)
+            ),
+        )),
+    }
 }
 
 impl RubyValue {
@@ -589,7 +628,7 @@ impl RubyValue {
             RubyValue::Fiber(_) => FIBER_CLASS,
             RubyValue::Enumerator(e) => crate::builtins::enumerator::enumerator_class_id(e),
             RubyValue::Yielder(_) => crate::dispatch::YIELDER_CLASS,
-            RubyValue::Thread(_) => THREAD_CLASS,
+            RubyValue::Thread(t) => crate::thread::thread_class_id(t),
             RubyValue::Mutex(_) => MUTEX_CLASS,
             RubyValue::Queue(q) => {
                 if crate::thread::queue_is_sized(q) {
