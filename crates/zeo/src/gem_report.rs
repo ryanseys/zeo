@@ -45,9 +45,13 @@ pub enum SatisfiedBy {
     Excluded { kind: String, reason: String },
 }
 
-/// The mnemonic slug the substitution warning carries, and the value
-/// `--nowarn=<slug>` suppresses.
+/// The mnemonic slug the substitution warning carries, and the category
+/// `-W:no-zeo-builtin-substitute` suppresses.
 pub const SUBSTITUTE_SLUG: &str = "zeo-builtin-substitute";
+
+/// Every warning category `-W:<category>`/`-W:no-<category>` accepts -- the
+/// validation list, so a typo is an error rather than a silent no-op.
+pub const WARNING_CATEGORIES: &[&str] = &[SUBSTITUTE_SLUG];
 
 /// `Excluded::kind` for a library only a method body required. zeo does not
 /// load it, so the record is the only breadcrumb before the runtime
