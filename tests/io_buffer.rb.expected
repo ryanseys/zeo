@@ -93,7 +93,7 @@ Enumerator
 "#<IO::Buffer 0xN+2 SLICE>\n0x00000000  00 00                                           .."
 "#<IO::Buffer 0xN+7 EXTERNAL READONLY SLICE>\n0x00000000  6c 69 74 65 72 61 6c                            literal"
 "#<IO::Buffer 0xN+7 INTERNAL>\n0x00000000  6c 69 74 65 72 61 6c                            literal"
-"#<IO::Buffer 0x0000000000000000+0 NULL>"
+"#<IO::Buffer 0xN+0 NULL>"
 "#<IO::Buffer 0xN+4 INTERNAL>"
 "#<IO::Buffer 0xN+4 INTERNAL LOCKED>\n"
 18

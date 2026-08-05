@@ -702,25 +702,14 @@ ruby_class! {
         )))
     }
 
+    def self."new"(_recv, *args) {
+        let buf = buffer_value(null_state());
+        init_in_place(&buf, args)?;
+        Ok(buf)
+    }
+
     private def "initialize"(recv, *args) {
-        crate::builtins::check_arity(args.len(), 0, Some(2))?;
-        let size = match args.first() {
-            None => DEFAULT_SIZE as i64,
-            Some(v) => crate::builtins::arg_int!(v),
-        };
-        if size < 0 {
-            return Err(arg_error!("Size can't be negative!"));
-        }
-        let flags = match args.get(1) {
-            None => default_flags(size as usize),
-            Some(v) => crate::builtins::arg_int!(v) as u32,
-        };
-        let b = recv_buffer(recv);
-        *b.state.lock() = if size == 0 {
-            null_state()
-        } else {
-            heap_state(size as usize, flags)
-        };
+        init_in_place(recv, args)?;
         Ok(recv.clone())
     }
 
@@ -891,7 +880,8 @@ ruby_class! {
         writable_guard(&st)?;
         let offset = type_bounds(&st, crate::builtins::arg_int!(offset_arg), t)?;
         with_window_mut(&st, |w| encode(value, t, &mut w[offset..offset + t.size]))?;
-        Ok(RubyValue::Int(t.size as i64))
+        // The offset AFTER the write (io_buffer.c's return), not the size.
+        Ok(RubyValue::Int((offset + t.size) as i64))
     }
 
     def "get_values"(recv, types, offset_arg) {
@@ -926,15 +916,14 @@ ruby_class! {
         let st = b.state.lock();
         writable_guard(&st)?;
         let mut offset = crate::builtins::arg_int!(offset_arg);
-        let mut written = 0i64;
         for (ty, v) in ts.iter().zip(vs.iter()) {
             let t = buf_type(ty)?;
             let o = type_bounds(&st, offset, t)?;
             with_window_mut(&st, |w| encode(v, t, &mut w[o..o + t.size]))?;
             offset += t.size as i64;
-            written += t.size as i64;
         }
-        Ok(RubyValue::Int(written))
+        // The offset AFTER the last write, like set_value.
+        Ok(RubyValue::Int(offset))
     }
 
     def "get_string"(recv, *args) {
@@ -976,7 +965,7 @@ ruby_class! {
         writable_guard(&st)?;
         let (offset, length) = check_range(&st, offset, src.len() as i64)?;
         with_window_mut(&st, |w| w[offset..offset + length].copy_from_slice(&src));
-        Ok(RubyValue::Int(length as i64))
+        Ok(RubyValue::Int((offset + length) as i64))
     }
 
     def "copy"(recv, *args) {
@@ -1270,6 +1259,30 @@ ruby_class! {
     }
 }
 
+/// `new`/`initialize` share one body: (re-)seat the receiver's state from
+/// the `(size = DEFAULT_SIZE, flags = derived)` pair.
+fn init_in_place(recv: &RubyValue, args: &[RubyValue]) -> Result<(), Signal> {
+    crate::builtins::check_arity(args.len(), 0, Some(2))?;
+    let size = match args.first() {
+        None => DEFAULT_SIZE as i64,
+        Some(v) => crate::builtins::arg_int!(v),
+    };
+    if size < 0 {
+        return Err(arg_error!("Size can't be negative!"));
+    }
+    let flags = match args.get(1) {
+        None => default_flags(size as usize),
+        Some(v) => crate::builtins::arg_int!(v) as u32,
+    };
+    let b = recv_buffer(recv);
+    *b.state.lock() = if size == 0 {
+        null_state()
+    } else {
+        heap_state(size as usize, flags)
+    };
+    Ok(())
+}
+
 /// `each`/`values` share the (type, offset, count) argument shape.
 fn each_bounds(
     b: &RBuffer,
@@ -1313,7 +1326,13 @@ fn mask_binop(
     let a = window_bytes(&recv_buffer(recv).state.lock());
     let m = window_bytes(&o.state.lock());
     mask_guard(&m)?;
-    let bytes: Vec<u8> = a.iter().zip(m.iter()).map(|(x, y)| op(*x, *y)).collect();
+    // The mask CYCLES over the receiver (io_buffer.c) -- the result is
+    // always receiver-sized.
+    let bytes: Vec<u8> = a
+        .iter()
+        .enumerate()
+        .map(|(i, x)| op(*x, m[i % m.len()]))
+        .collect();
     let len = bytes.len();
     Ok(buffer_value(BufState {
         backing: Some(Backing::heap(bytes)),

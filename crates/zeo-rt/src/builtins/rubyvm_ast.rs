@@ -266,6 +266,12 @@ mod location_class {
 ruby_class! {
     Location = zeo_abi::RUBYVM_AST_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
 
+    // Locations only ever come out of a Node (CRuby has no allocator).
+    def self."new"(_recv, *_args) {
+        Err(crate::builtins::type_error!(
+            "allocator undefined for RubyVM::AbstractSyntaxTree::Location"
+        ))
+    }
     def "first_lineno"(recv) {
         Ok(RubyValue::Int(recv_location(recv).span.fl))
     }
@@ -642,9 +648,11 @@ mod translate {
         }
         if let Some(x) = n.as_call_node() {
             let name = String::from_utf8_lossy(x.name().as_slice()).into_owned();
-            // The block form wraps the bare call in ITER.
+            // The block form wraps the bare call in ITER; the inner call's
+            // span EXCLUDES the block (its message/arguments only), and a
+            // blockful no-arg call is FCALL with nil args, never VCALL.
             if let Some(block) = x.block().and_then(|b| b.as_block_node()) {
-                let call = call_without_block(&x, &name, cx, in_block);
+                let call = call_for_iter(&x, &name, cx, in_block);
                 let bloc = block.location();
                 let params = block
                     .parameters()
@@ -897,6 +905,60 @@ mod translate {
 
         // A kind with no mapping yet: an honest leaf, never a raise.
         node(cx, "UNKNOWN", s, e, vec![])
+    }
+
+    /// The ITER-wrapped inner call: FCALL/CALL spanning receiver-to-args
+    /// (never the block, never VCALL).
+    fn call_for_iter(
+        x: &ruby_prism::CallNode<'_>,
+        name: &str,
+        cx: &mut Cx,
+        in_block: bool,
+    ) -> RubyValue {
+        let msg = x
+            .message_loc()
+            .map(|l| (l.start_offset(), l.end_offset()))
+            .unwrap_or_else(|| {
+                let l = x.location();
+                (l.start_offset(), l.end_offset())
+            });
+        let start = x
+            .receiver()
+            .map(|r| r.location().start_offset())
+            .unwrap_or(msg.0);
+        let end = x
+            .arguments()
+            .map(|a| a.location().end_offset())
+            .unwrap_or(msg.1);
+        let name_sym = RubyValue::Symbol(crate::Symbol::intern(name));
+        let args = x.arguments().map(|a| {
+            let al = a.location();
+            let elems: Vec<RubyValue> = a
+                .arguments()
+                .iter()
+                .map(|el| translate(&el, cx, in_block))
+                .collect();
+            list_node(cx, al.start_offset(), al.end_offset(), elems)
+        });
+        match x.receiver() {
+            Some(recv) => {
+                let r = translate(&recv, cx, in_block);
+                node(
+                    cx,
+                    "CALL",
+                    start,
+                    end,
+                    vec![r, name_sym, args.unwrap_or(RubyValue::Nil)],
+                )
+            }
+            None => node(
+                cx,
+                "FCALL",
+                start,
+                end,
+                vec![name_sym, args.unwrap_or(RubyValue::Nil)],
+            ),
+        }
     }
 
     fn call_without_block(

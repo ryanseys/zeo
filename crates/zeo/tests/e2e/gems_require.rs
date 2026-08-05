@@ -893,16 +893,18 @@ fn box_globals_are_fully_separate() {
     assert_eq!(result.stdout, "nil\n\"main value\"\n\"box value\"\n");
 }
 
-/// The clean rejections: `Ruby::Box.current`-family reflection, box
-/// operations outside their recognized positions, and expression-position
-/// eval defining classes. (A non-literal `box.eval` source is NOT rejected
+/// The clean rejections: an expression-position `Ruby::Box.new` (a box
+/// nothing could reference), box operations outside their recognized
+/// positions, and expression-position eval defining classes.
+/// (`.current`/`.enabled?` are ordinary runtime calls now that the class
+/// carries real rows; a non-literal `box.eval` source is NOT rejected
 /// here -- it routes to the runtime eval VM, so a non-string source is a
 /// catchable runtime `TypeError`, exactly like `Kernel#eval`; see
 /// `box_eval_dynamic_source_routes_through_the_vm`.)
 #[test]
 fn ruby_box_rejections_are_clean_errors() {
-    let err = zeo::compile_to_rust("p Ruby::Box.current\n").unwrap_err();
-    assert!(err.contains("no compile-time meaning"), "{err}");
+    let err = zeo::compile_to_rust("p [Ruby::Box.new]\n").unwrap_err();
+    assert!(err.contains("top-level statement"), "{err}");
     let err = zeo::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
     assert!(err.contains("top-level statement"), "{err}");
     let err =

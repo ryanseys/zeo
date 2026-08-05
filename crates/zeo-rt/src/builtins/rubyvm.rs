@@ -275,15 +275,17 @@ fn compile_body(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::check_arity(args.len(), 1, Some(5))?;
     let src = str_arg(&args[0]);
     parse_check(&src)?;
-    let path = args
-        .get(1)
-        .filter(|v| !matches!(v, RubyValue::Nil))
+    let given_path = args.get(1).filter(|v| !matches!(v, RubyValue::Nil));
+    let path = given_path
         .map(str_arg)
         .unwrap_or_else(|| "<compiled>".to_string());
+    // The default names carry through to absolute_path; an explicit
+    // RELATIVE path leaves it nil (CRuby's split).
     let absolute = args
         .get(2)
         .filter(|v| !matches!(v, RubyValue::Nil))
-        .map(|v| str_arg(v));
+        .map(|v| str_arg(v))
+        .or_else(|| given_path.is_none().then(|| path.clone()));
     let line = match args.get(3) {
         None | Some(RubyValue::Nil) => 1,
         Some(v) => crate::builtins::arg_int!(v),

@@ -2034,14 +2034,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             return Ok(hir.push(HirNode::NilLit));
         }
 
-        // `Ruby::Box` guard rails. `.enabled?`/`.current` are ordinary
-        // runtime calls (the class carries real rows); the ALLOCATION shapes
-        // stay compile-time-only: an unassigned/nested `.new` would allocate
-        // a box nothing could ever reference, so it is a clean rejection.
+        // `Ruby::Box` guard rails. Everything but ALLOCATION is an ordinary
+        // runtime call (the class carries real rows); an unassigned/nested
+        // `.new` would allocate a box nothing could ever reference, so that
+        // one shape stays a clean compile-time rejection.
         if let Some(recv) = &receiver {
-            if constant_path_name(recv).is_ok_and(|n| n == "Ruby::Box")
-                && !matches!(name.as_str(), "enabled?" | "current")
-            {
+            if constant_path_name(recv).is_ok_and(|n| n == "Ruby::Box") && name == "new" {
                 return Err(format!(
                     "`Ruby::Box.{name}` isn't supported here (zeo limitation) -- the one supported allocation shape is `box = Ruby::Box.new` as a top-level statement"
                 ).into());

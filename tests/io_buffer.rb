@@ -235,7 +235,7 @@ p SCRUB.(IO::Buffer.for("literal").inspect)
 p SCRUB.(IO::Buffer.for("literal").dup.inspect)
 fz = IO::Buffer.new(4)
 fz.free
-p fz.inspect
+p SCRUB.(fz.inspect)
 p SCRUB.(IO::Buffer.new(4).to_s)
 lk = IO::Buffer.new(4)
 lk.locked { p SCRUB.(lk.inspect.lines.first) }
