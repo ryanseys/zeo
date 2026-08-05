@@ -1,9 +1,15 @@
 [package]
 name = "zeo-macros"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Proc-macros (ruby_class!/ruby_module!) that register built-in Ruby classes in the zeo-rt runtime"
+readme = "README.md"
 
 [lib]
 proc-macro = true

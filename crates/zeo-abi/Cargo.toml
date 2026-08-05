@@ -1,9 +1,15 @@
 [package]
 name = "zeo-abi"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Shared ABI: the zero-dependency leaf crate both the zeo compiler and the zeo-rt runtime agree on"
+readme = "README.md"
 
 [dependencies]
 # Deliberately empty: this crate is the zero-dependency leaf both `zeo`

@@ -1,9 +1,46 @@
 [package]
 name = "zeo-rt"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "The Ruby runtime library statically linked into every binary the zeo compiler produces"
+readme = "README.md"
+
+# docs.rs must not build the vendored-C heavyweights: `ext-openssl` compiles
+# OpenSSL 3.x from source and `ext-ffi` builds libffi -- both are timeout
+# risks and neither adds documented API surface. Everything else (including
+# the non-optional vendored oniguruma) builds fine.
+[package.metadata.docs.rs]
+no-default-features = true
+features = [
+    "eval-vm",
+    "ext-base64",
+    "ext-monitor",
+    "ext-stringio",
+    "ext-strscan",
+    "ext-cgi",
+    "ext-digest",
+    "ext-json",
+    "ext-date",
+    "ext-zlib",
+    "ext-psych",
+    "ext-socket",
+    "ext-etc",
+    "ext-fcntl",
+    "ext-pty",
+    "ext-syslog",
+    "ext-readline",
+    "ext-nkf",
+    "ext-bigdecimal",
+    "ext-coverage",
+    "ext-tracepoint",
+    "ext-prism",
+]
 
 [dependencies]
 zeo-abi.workspace = true

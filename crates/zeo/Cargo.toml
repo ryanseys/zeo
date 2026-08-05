@@ -1,9 +1,15 @@
 [package]
 name = "zeo"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "An ahead-of-time Ruby compiler: compiles Ruby programs to self-contained native binaries by emitting Rust"
+readme = "../../README.md"
 default-run = "zeo"
 
 [dependencies]

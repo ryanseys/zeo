@@ -4,6 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# The dev-only task runner (`cargo xtask ...`); never published.
+publish = false
 
 [dependencies]
 zeo.workspace = true
