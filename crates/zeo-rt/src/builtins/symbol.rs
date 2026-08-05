@@ -158,12 +158,19 @@ ruby_class! {
     }
 
     def "to_s" | "id2name" (recv) {
-        Ok(RubyValue::Str(crate::string_new(recv_sym(recv).name())))
+        // The EXACT interned bytes and encoding, not the lossy text -- a
+        // symbol minted from a non-UTF-8 string spells it back verbatim.
+        let sym = recv_sym(recv);
+        Ok(RubyValue::Str(crate::string_from_bytes(
+            sym.bytes().to_vec(),
+            sym.encoding(),
+        )))
     }
     // `Symbol#name` returns a FROZEN String (unlike `to_s`, which is a fresh
     // mutable copy) -- CRuby caches and freezes it.
     def "name" (recv) {
-        let s = crate::string_new(recv_sym(recv).name());
+        let sym = recv_sym(recv);
+        let s = crate::string_from_bytes(sym.bytes().to_vec(), sym.encoding());
         s.set_frozen();
         Ok(RubyValue::Str(s))
     }
@@ -171,8 +178,7 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "encoding" (recv) {
-        let id = crate::builtins::encoding::computed_encoding_of(&recv_sym(recv).name());
-        Ok(crate::builtins::encoding::encoding_value(id))
+        Ok(crate::builtins::encoding::encoding_value(recv_sym(recv).encoding()))
     }
     def "inspect" (recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_name(&recv_sym(recv).name()))))

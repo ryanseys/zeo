@@ -2709,9 +2709,13 @@ ruby_class! {
                 format!("invalid symbol in encoding {enc} :{}", recv.inspect_string()),
             ));
         }
-        Ok(RubyValue::Symbol(crate::Symbol::intern(
-            &rstr.lock().to_utf8_lossy(),
-        )))
+        // By BYTES plus encoding, ruby's interning key -- `to_s` then
+        // restores the original string exactly (see `Symbol::intern_bytes`).
+        let (bytes, enc) = {
+            let s = rstr.lock();
+            (s.bytes().to_vec(), s.encoding())
+        };
+        Ok(RubyValue::Symbol(crate::Symbol::intern_bytes(&bytes, enc)))
     }
     def "succ" | "next" (recv) {
         let s = rstr;

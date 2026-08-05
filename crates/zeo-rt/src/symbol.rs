@@ -16,16 +16,34 @@
 //! names on the dispatch hot path instead of cloning a `String` per send.
 
 use crate::FMap;
+use crate::encoding::EncodingId;
 use parking_lot::Mutex;
 use std::sync::LazyLock;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Symbol(u32);
 
+/// One interned symbol: ruby interns by BYTES plus encoding, so the same
+/// bytes under two encodings are two symbols and `to_s` can spell either
+/// back exactly. `lossy` is the UTF-8 reading every internal by-name path
+/// (dispatch, rendering) keys on -- for the DEFAULT encodings (US-ASCII,
+/// UTF-8) it IS the bytes.
+struct SymEntry {
+    lossy: &'static str,
+    bytes: &'static [u8],
+    enc: EncodingId,
+}
+
 #[derive(Default)]
 struct Interner {
-    names: Vec<&'static str>,
-    by_name: FMap<&'static str, u32>,
+    entries: Vec<SymEntry>,
+    /// Default-encoding symbols (ASCII text normalizes to US-ASCII, valid
+    /// UTF-8 to UTF-8 -- CRuby's own rule), keyed by text so the hot
+    /// `intern(&str)` path stays one allocation-free probe.
+    by_lossy: FMap<&'static str, u32>,
+    /// Every OTHER `(encoding, bytes)` pair -- the rare path, reached only
+    /// through `String#to_sym` on a non-UTF-8 string.
+    by_key: FMap<(EncodingId, Vec<u8>), u32>,
 }
 
 static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(|| Mutex::new(Interner::default()));
@@ -34,13 +52,53 @@ impl Symbol {
     /// Look up or insert `name`, returning a stable id either way.
     pub fn intern(name: &str) -> Symbol {
         let mut i = INTERNER.lock();
-        if let Some(&id) = i.by_name.get(name) {
+        if let Some(&id) = i.by_lossy.get(name) {
             return Symbol(id);
         }
         let name: &'static str = Box::leak(name.to_string().into_boxed_str());
-        let id = i.names.len() as u32;
-        i.names.push(name);
-        i.by_name.insert(name, id);
+        let enc = if name.is_ascii() {
+            crate::encoding::US_ASCII
+        } else {
+            crate::encoding::UTF_8
+        };
+        let id = i.entries.len() as u32;
+        i.entries.push(SymEntry {
+            lossy: name,
+            bytes: name.as_bytes(),
+            enc,
+        });
+        i.by_lossy.insert(name, id);
+        Symbol(id)
+    }
+
+    /// `String#to_sym`'s entry: intern by the string's exact bytes AND
+    /// encoding. ASCII text in any ASCII-compatible encoding is the
+    /// US-ASCII symbol and valid UTF-8 the UTF-8 one (both via the default
+    /// path); anything else keys `(encoding, bytes)` so `to_s` restores the
+    /// original string exactly.
+    pub fn intern_bytes(bytes: &[u8], enc: EncodingId) -> Symbol {
+        if (bytes.is_ascii() && enc.ascii_compatible()) || enc == crate::encoding::UTF_8 {
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                return Symbol::intern(text);
+            }
+        }
+        let mut i = INTERNER.lock();
+        if let Some(&id) = i.by_key.get(&(enc, bytes.to_vec())) {
+            return Symbol(id);
+        }
+        let lossy: String = crate::collections::string_from_bytes(bytes.to_vec(), enc)
+            .lock()
+            .to_utf8_lossy()
+            .into_owned();
+        let lossy: &'static str = Box::leak(lossy.into_boxed_str());
+        let bytes_static: &'static [u8] = Box::leak(bytes.to_vec().into_boxed_slice());
+        let id = i.entries.len() as u32;
+        i.entries.push(SymEntry {
+            lossy,
+            bytes: bytes_static,
+            enc,
+        });
+        i.by_key.insert((enc, bytes.to_vec()), id);
         Symbol(id)
     }
 
@@ -52,14 +110,24 @@ impl Symbol {
 
     /// The interned text, allocation-free -- what the dispatch path reads.
     pub fn name_str(self) -> &'static str {
-        INTERNER.lock().names[self.0 as usize]
+        INTERNER.lock().entries[self.0 as usize].lossy
+    }
+
+    /// The exact source bytes -- what `Symbol#to_s` spells back.
+    pub fn bytes(self) -> &'static [u8] {
+        INTERNER.lock().entries[self.0 as usize].bytes
+    }
+
+    /// The encoding the symbol was minted under.
+    pub fn encoding(self) -> EncodingId {
+        INTERNER.lock().entries[self.0 as usize].enc
     }
 
     /// How many distinct symbols exist. Nothing is ever removed from the
     /// interner, so this only grows -- which is what lets
     /// `ObjectSpace.count_symbols` report the total as `immortal_symbol`.
     pub fn count() -> usize {
-        INTERNER.lock().names.len()
+        INTERNER.lock().entries.len()
     }
 
     /// The Symbol with interner id `id` -- the inverse of [`Symbol::to_u32`],
