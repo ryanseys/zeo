@@ -135,10 +135,19 @@ zeo aims at the full language. These features work today:
 - **Concurrency.** A `Thread` is a real OS thread with an 8 MiB stack, and
   threads run in parallel by default. There is no GVL. You can kill a busy
   loop, raise in it, and interrupt a `sleep`. A `Fiber` uses a real coroutine
-  that changes the stack (`corosensei`). A `Ractor` has a boundary that freezes
-  or copies. `Mutex` and `Queue` are available.
+  that changes the stack (`corosensei`). A `Ractor` implements Ruby 4.0's full
+  port model: `Ractor::Port`, `select`, `monitor`, `join`/`value` with
+  `Ractor::RemoteError`, per-ractor locals, and real `move: true` semantics
+  (the source graph is poisoned; later calls raise `Ractor::MovedError`).
+  `Mutex` and `Queue` are available.
 - **Regexp.** Real engines do the work: `regex` and `fancy-regex`. zeo also
   includes Oniguruma for the paths that need Onigmo behaviour.
+- **VM introspection.** `IO::Buffer` is complete, with typed value access,
+  slices over shared backing, and a real `mmap` for `.map`.
+  `RubyVM::AbstractSyntaxTree` parses through Prism and answers parse.y node
+  types; `RubyVM::InstructionSequence` compiles and evaluates;
+  `RubyVM.stat` reports zeo's real counters. `Ruby::Box` carries its full
+  surface over zeo's compile-time box model.
 - **`eval`.** zeo parses a literal `eval("…")` and puts it into the program at
   compile time. A dynamic `eval`, whose text the program computes at run time,
   needs the interpreter in [`docs/EVAL_VM.md`](docs/EVAL_VM.md). The `eval-vm`
@@ -156,6 +165,12 @@ the compiler's version tests and the runtime's `RUBY_VERSION` always agree.
 zeo reports compatibility as text, and not as a percentage. A green corpus run
 is the record. A note such as "zeo's `json` is not the `json` gem" carries more
 information than a score.
+
+One number is worth stating: the **method census** diffs every module, method,
+constant, and visibility that ruby 4.0.6 can reach against zeo's surface
+(`crates/zeo/tests/method_census.rs`). Its gap ledger,
+`conformance/method-census-gaps.tsv`, holds **zero rows**. Read
+[`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md) for how the census works.
 
 - **The conformance suite** in `tests/spinel/` compiles approximately 2,509
   programs. It compares stdout and stderr with real Ruby, byte for byte, as
@@ -549,7 +564,7 @@ the full procedure.
 
 ```
 crates/      the six crates of the workspace (above)
-docs/        COMPATIBILITY, EXTENSIONS, EVAL_VM, TODO
+docs/        COMPATIBILITY, EXTENSIONS, EVAL_VM, METHOD_COVERAGE, ROADMAP
 tests/       the test suites: examples, the spinel corpus, the gaps tracker
 gems/        51 gems (gems.toml controls the git-pinned ones)
 bench/       the performance suite (`cargo xtask bench`); read bench/README.md
@@ -570,8 +585,10 @@ zeo is experimental. Here are the known limits:
   `nkf`, `openssl` and `TracePoint`. Read the extension section above.
 - **CRuby is faster for 11 of the 58 benchmark programs.** These programs make
   and release many objects. Read the benchmark section above.
-- **A dynamic `eval` and `Ruby::Box` isolation are not complete.** Read
-  `docs/`.
+- **`Ruby::Box` allocation is compile-time only.** `box = Ruby::Box.new` works
+  as a top-level statement, and `box.eval` isolates its constants. A box that
+  the program makes at run time, and a run-time `box.require`, raise a clear
+  `NotImplementedError`. Read `docs/COMPATIBILITY.md`.
 - **zeo cannot use a gem with a C extension.** Use the `ffi` gem API instead.
   zeo compiles it ahead of time. Read `docs/EXTENSIONS.md`.
 

@@ -38,7 +38,10 @@ being called back from compiled code.
 `ruby-prism` is a C library and the single largest size lever in the runtime, so
 the default runtime never links it. The compiler statically detects whether a
 program can reach the VM (`Hir::uses_runtime_eval` — a receiverless
-`Kernel#eval`, or a string-form `instance_eval`/`class_eval`/`module_eval`) and
+`Kernel#eval`, or a string-form `instance_eval`/`class_eval`/`module_eval` —
+and `Hir::needs_prism_runtime`, which additionally catches any mention of
+`RubyVM`, whose `AbstractSyntaxTree.parse` and `InstructionSequence.compile`
+parse at run time) and
 only then links the prism-backed `eval-vm` runtime variant (`backend::Runtime`).
 A program that uses `eval` still compiles and runs out of the box; it just opts
 *its own* binary into carrying prism, while every other binary stays lean. This

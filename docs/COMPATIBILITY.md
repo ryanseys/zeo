@@ -87,6 +87,53 @@ Every artifact-producing compile also writes a machine-readable
 libraries a given program actually used. This document is the human-facing
 catalogue; that file is the per-program ledger.
 
+## Ractor, IO::Buffer, RubyVM, Ruby::Box
+
+These subsystems carry their full census surface (see
+[`METHOD_COVERAGE.md`](METHOD_COVERAGE.md)); the divergences below are
+behavioural, each deliberate, each narrower than the CRuby behaviour it
+replaces.
+
+- **A refused `move:` send poisons nothing.** CRuby's move traversal guts
+  objects as it walks, so `r.send([a, Thread.current], move: true)` destroys
+  `a` before raising on the Thread. zeo validates the whole graph first;
+  a refusal leaves every object intact. Related: CRuby delivers a
+  `Ractor::MovedObject` husk for the second occurrence of a duplicated
+  reference in a moved graph (`[x, x]`); zeo preserves the duplicate as one
+  moved object. Cycles reconstruct on both engines.
+- **`IO` objects do not move.** CRuby migrates an IO across a `move:` send
+  (poisoning `$stdout` included); zeo refuses with `can not move IO object.`
+  A moved `Range` keeps its shell in zeo (Range is an inline value here)
+  where CRuby poisons it.
+- **`IO::Buffer.for(string)` copies.** zeo strings are not stably
+  addressable, so the buffer copies the bytes in; the block form copies back
+  into the string at exit, which reproduces CRuby's observable end state.
+  What it cannot reproduce is a concurrent observer seeing mid-block writes.
+- **`IO::Buffer#resize` never invalidates a slice.** The backing grows in
+  place and never shrinks, so a slice taken before a resize keeps answering
+  (CRuby's slice also answers, over memory it happens not to have moved).
+- **`RubyVM::AbstractSyntaxTree` node ids are zeo-numbered.** Prism's
+  internal ids are not exposed through its Rust bindings. Types, locations,
+  children orderings, `#source` and `#script_lines` match the oracle (pinned
+  by `tests/rubyvm_ast.rb`); a construct outside the mapped tier answers an
+  honest `:UNKNOWN` leaf rather than raising. `SyntaxError` messages carry
+  prism's wording, not parse.y's.
+- **`RubyVM::InstructionSequence` refuses serialization.** `#to_a`,
+  `#to_binary` and the disassembly family raise `NotImplementedError` naming
+  the reason: zeo compiles ahead of time and has no YARV bytecode.
+  `compile`/`#eval` are real (a prism parse check, then the eval VM).
+  `InstructionSequence.of` answers `nil` for every method — the same answer
+  CRuby gives for a C-defined method, and what irb's source finder expects.
+- **`RubyVM::YJIT.enable` answers `false`.** There is no JIT to switch on.
+  Every stats/log reader answers its disabled shape.
+- **`Ruby::Box` allocation is compile-time.** `box = Ruby::Box.new` as a
+  top-level statement allocates a box in the compiler; `box.eval` isolates
+  its top-level constants against the box (a dynamic
+  `box.eval("X = 1")` lands in the box, not on `Object`). A run-time
+  `Box.new`, `#require`, or `#load` raises `NotImplementedError` saying so.
+  `Ruby::Box.current` answers `nil` (the disabled-mode answer); box-scoped
+  code reaches its own box through the compile-time handle instead.
+
 ## Satisfied, but divergent (a substitution)
 
 zeo provides its own implementation under a name a gem or C extension also
