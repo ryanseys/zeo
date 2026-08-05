@@ -454,7 +454,7 @@ impl RubyValue {
                 let addr = std::sync::Arc::as_ptr(q) as *const () as usize;
                 format!("#<{kind}:0x{addr:016x}>")
             }
-            RubyValue::Ractor(_) => "#<Ractor>".to_string(),
+            RubyValue::Ractor(r) => crate::ractor::ractor_inspect(r),
             // The registered fully-qualified name (`puts Widget` ->
             // "Widget", `puts Store::Item` -> "Store::Item"); the id form
             // is only reachable registry-less (this crate's unit tests).

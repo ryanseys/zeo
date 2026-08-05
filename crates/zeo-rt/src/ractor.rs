@@ -541,19 +541,36 @@ impl Drop for FinishGuard {
 }
 
 /// `Ractor.new(*args, name: nil) { |*params| ... }` -- `args` cross the
-/// boundary NOW (CRuby sends them through the ordinary message path). `Err`
-/// = an unshareable/uncopyable arg's message, raised as `RactorError` by
-/// codegen. `loc` is the call site (`"file:line"`) when codegen could
-/// resolve it, else the current frame's.
+/// boundary NOW (CRuby sends them through the ordinary message path), so a
+/// rejection raises the same typed error a `#send` would (TypeError
+/// "allocator undefined for Proc", `Ractor::Error` for a Thread, ...).
+/// `loc` is the call site (`"file:line"`) when codegen could resolve it,
+/// else the current frame's.
 pub fn ractor_new(
     block: RubyValue,
     args: Vec<RubyValue>,
-    name: Option<String>,
+    name: Option<RubyValue>,
     loc: Option<String>,
-) -> Result<RubyValue, String> {
+) -> Result<RubyValue, Signal> {
     crate::builtins::warning::warn_ractor_experimental();
+    let name = match name {
+        None => None,
+        Some(RubyValue::Str(s)) => Some(s.lock().to_utf8_lossy().into_owned()),
+        Some(other) => {
+            return Err(raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into String",
+                    crate::builtins::class_name_of(&other)
+                ),
+            ));
+        }
+    };
     let body = block.as_proc_unchecked();
-    let crossed: Vec<RubyValue> = args.iter().map(cross_boundary).collect::<Result<_, _>>()?;
+    let crossed: Vec<RubyValue> = args
+        .iter()
+        .map(|a| cross_graph(a, CrossMode::Copy).map_err(|(cls, msg)| raise_error(cls, msg)))
+        .collect::<Result<_, _>>()?;
     let loc = loc.or_else(|| {
         crate::frames::current_location().map(|(f, l)| format!("{f}:{l}"))
     });
@@ -885,6 +902,12 @@ fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
 pub fn make_shareable(v: &RubyValue) -> Result<RubyValue, String> {
     make_shareable_guarded(v, &mut Vec::new())?;
     Ok(v.clone())
+}
+
+/// [`make_shareable`] with the failure typed as CRuby's `Ractor::Error` --
+/// the shape both the codegen intrinsic and the dynamic row raise.
+pub fn make_shareable_value(v: &RubyValue) -> Result<RubyValue, Signal> {
+    make_shareable(v).map_err(|msg| raise_error("Ractor::Error", msg))
 }
 
 fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), String> {
@@ -1224,7 +1247,7 @@ fn local_key(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
-fn ractor_inspect(r: &RRactor) -> String {
+pub(crate) fn ractor_inspect(r: &RRactor) -> String {
     let mut s = format!("#<Ractor:#{}", r.id);
     if let Some(name) = &r.name {
         s.push(' ');
@@ -1343,7 +1366,7 @@ zeo_macros::ruby_class! {
     // `copy: false` asks for, and the copying form would need a deep clone the
     // runtime does not have yet.
     def self."make_shareable"(_recv, obj, **_opts) {
-        make_shareable(obj).map_err(|msg| raise_error("RactorError", msg))
+        make_shareable_value(obj)
     }
     def self."shareable?"(_recv, obj) {
         Ok(RubyValue::Bool(shareable(obj)))

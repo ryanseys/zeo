@@ -156,7 +156,8 @@ pub use handling::{PropagatingGuard, current_exception, pop_handling, push_handl
 pub use pools::{LitPool, SymPool};
 pub use ractor::{
     RRactor, RactorData, cross_boundary, current_ractor, init_main_ractor, make_shareable,
-    moved_object_error, ractor_join, ractor_new, ractor_outcome, ractor_receive, ractor_select,
+    make_shareable_value, moved_object_error, ractor_join, ractor_new, ractor_outcome,
+    ractor_receive, ractor_select,
     ractor_send, ractor_send_mode, ractor_value, shareable,
 };
 

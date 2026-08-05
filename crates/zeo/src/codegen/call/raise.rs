@@ -9,17 +9,6 @@ use quote::quote;
 use crate::codegen::Ctx;
 use proc_macro2::TokenStream;
 
-/// A `RactorError` (the flat stand-in for `Ractor::Error` -- nested class
-/// names don't exist yet) whose message comes from a runtime `__msg: String`
-/// in scope at the emission site (boundary-crossing rejections are computed
-/// at runtime, unlike `FiberError`'s fixed strings).
-pub(super) fn emit_ractor_error(cx: &Ctx) -> TokenStream {
-    crate::codegen::expr::emit_boxed_new(
-        cx,
-        "RactorError",
-        vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(__msg)) }],
-    )
-}
 /// A boxed `class_name` exception carrying `msg` -- what a codegen site emits
 /// when real Ruby RAISES where a compile-time check would otherwise reject.
 pub(super) fn emit_simple_error(cx: &Ctx, class_name: &str, msg: &str) -> TokenStream {

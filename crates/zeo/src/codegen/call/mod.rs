@@ -1711,7 +1711,7 @@ pub fn emit_call(
     // statically known), strictly earlier than CRuby's own
     // Proc-creation-time `Ractor::IsolationError`. Args cross the boundary
     // at runtime (shareable-by-reference or deep-copied; a rejection raises
-    // `RactorError`).
+    // the same typed error a `#send` would).
     if class_target == Some("Ractor") && name == "new" && !safe {
         let mut name_kwarg: Option<TokenStream> = None;
         for kw in kwargs {
@@ -1778,12 +1778,13 @@ pub fn emit_call(
                 super::expr::box_if_object_typed(cx, a, e)
             })
             .collect();
-        // The `name:` kwarg's runtime value (nil = unnamed, like CRuby).
+        // The `name:` kwarg's runtime value (nil = unnamed, like CRuby; a
+        // non-String raises TypeError inside `ractor_new`).
         let name_tok = match name_kwarg {
             Some(e) => quote! {
                 match (#e) {
                     zeo_rt::RubyValue::Nil => None,
-                    __n => Some(__n.to_display_string()),
+                    __n => Some(__n),
                 }
             },
             None => quote! { None },
@@ -1793,11 +1794,10 @@ pub fn emit_call(
             Some((file, line)) => quote! { Some(format!("{}:{}", #file, #line)) },
             None => quote! { None },
         };
-        let ractor_error = raise::emit_ractor_error(cx);
         return quote! {
             match zeo_rt::ractor_new(#proc, vec![#(#arg_exprs),*], #name_tok, #loc_tok) {
                 Ok(__r) => __r,
-                Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
+                Err(__sig) => return Err(__sig),
             }
         };
     }
@@ -1925,11 +1925,10 @@ pub fn emit_call(
             ("Ractor", "make_shareable") if args.len() == 1 && block.is_none() => {
                 let v = emit_expr(cx, args[0]);
                 let v = super::expr::box_if_object_typed(cx, args[0], v);
-                let ractor_error = raise::emit_ractor_error(cx);
                 return quote! {
-                    match zeo_rt::make_shareable(&(#v)) {
+                    match zeo_rt::make_shareable_value(&(#v)) {
                         Ok(__v) => __v,
-                        Err(__msg) => return Err(zeo_rt::Signal::Raise(#ractor_error)),
+                        Err(__sig) => return Err(__sig),
                     }
                 };
             }
