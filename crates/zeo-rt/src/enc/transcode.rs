@@ -358,8 +358,10 @@ pub enum Stop {
     },
     /// One side is registered by name only, so there is no mapping to apply.
     NoConverter(String),
-    /// `limit` was reached with source left over. The unit that would not
-    /// fit is untouched -- neither converted nor consumed.
+    /// `limit` was reached with source left over. The character that would
+    /// not fit IS converted and consumed -- its bytes ride in
+    /// [`TranscodeRun::overflow`] -- mirroring CRuby's internal output
+    /// buffer (one-character lookahead; see `Encoding::Converter`).
     DestinationFull,
 }
 
@@ -369,6 +371,10 @@ pub struct TranscodeRun {
     /// Source bytes consumed, which INCLUDES an offending sequence.
     pub consumed: usize,
     pub stop: Stop,
+    /// Output converted PAST `limit` -- the one character a
+    /// [`Stop::DestinationFull`] cut still consumed. The caller holds it for
+    /// its next run; always empty without a limit.
+    pub overflow: Vec<u8>,
 }
 
 /// The part of a conversion that outlives one call, so a stateful converter
@@ -431,6 +437,23 @@ pub fn transcode(
     opts: &TranscodeOptions,
     fallback: Option<TranscodeFallback<'_>>,
 ) -> Result<Vec<u8>, TranscodeError> {
+    // UTF8-MAC is UTF-8 in NFD; DECODING it composes to NFC ("e" + combining
+    // acute -> "é"), which is the whole conversion. The composed text then
+    // transcodes as ordinary UTF-8. Decode direction only: encoding INTO
+    // UTF8-MAC still refuses (a registered-only target).
+    if from == crate::enc::registry::UTF8_MAC && to != crate::enc::registry::UTF8_MAC {
+        use unicode_normalization::UnicodeNormalization;
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            let composed: String = text.nfc().collect();
+            return transcode(
+                composed.as_bytes(),
+                crate::enc::table::UTF_8,
+                to,
+                opts,
+                fallback,
+            );
+        }
+    }
     let mut state = TranscodeState::new(to);
     let mut run = transcode_run(bytes, from, opts, fallback, &mut state, None);
     match run.stop {
@@ -489,10 +512,12 @@ pub fn transcode_run(
             out,
             consumed: 0,
             stop: Stop::NoConverter(converter_not_found(from, to)),
+            overflow: Vec::new(),
         };
     }
     let mut consumed = 0usize;
     let mut stop = Stop::Finished;
+    let mut overflow: Vec<u8> = Vec::new();
     for (unit, span) in decode_spans(bytes, from) {
         // Each unit's bytes are built aside so the destination limit can
         // refuse the WHOLE unit -- a half-written character is not an
@@ -608,7 +633,12 @@ pub fn transcode_run(
             }
         }
         if limit.is_some_and(|l| out.len() + chunk.len() > l) {
-            state.jis = saved;
+            // CRuby converts this character too and holds its bytes in an
+            // internal buffer -- so it IS consumed, its output rides in
+            // `overflow`, and the encoder state stays advanced past it.
+            let _ = saved;
+            consumed += span;
+            overflow = chunk;
             stop = Stop::DestinationFull;
             break;
         }
@@ -619,6 +649,7 @@ pub fn transcode_run(
         out,
         consumed,
         stop,
+        overflow,
     }
 }
 

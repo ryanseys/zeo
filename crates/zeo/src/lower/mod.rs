@@ -1317,7 +1317,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `using M` -- the top-level spelling, where it activates for the
         // rest of the file. The class-body spelling is recognized by
         // `defs::lower_class_body_statement`, which reaches the same helper.
-        if let Some(id) = defs::lower_using(hir, node, &name, &call)? {
+        // The anonymous `using Module.new { }` form needs the class
+        // registration only a class-body statement position provides, so at
+        // the top level it falls through to the ordinary (raising) call.
+        if let Some(nodes) = defs::lower_using(result, hir, node, &name, &call)?
+            && let [id] = nodes[..]
+        {
             return Ok(id);
         }
 

@@ -3308,12 +3308,20 @@ pub fn class_is_refinement(id: ClassId) -> bool {
 }
 
 /// `(refining module, refined target)` for a `refine` holder -- `None` for
-/// every ordinary module.
+/// every ordinary module. A holder can be compiled (the registry's mark) or
+/// minted by a RUNTIME `refine` (the overlay's).
 pub fn refinement_of(id: ClassId) -> Option<(ClassId, ClassId)> {
-    REGISTRY
+    if let Some(pair) = REGISTRY
         .get()
         .and_then(|r| r.entries.get(&id.0))
         .and_then(|e| e.refinement_of)
+    {
+        return Some(pair);
+    }
+    if crate::runtime_meta::is_live() {
+        return crate::runtime_meta::overlay_refinement_of(id);
+    }
+    None
 }
 
 /// The holders `module`'s own `refine` blocks minted, in the order the source
@@ -3330,6 +3338,11 @@ pub fn refinements_of(module: ClassId) -> Vec<ClassId> {
         .map(|(&id, _)| ClassId(id))
         .collect();
     holders.sort_by_key(|c| c.0);
+    // Runtime-minted holders come after every compiled one -- their ids are
+    // allocated above the frozen range, so a plain append keeps the order.
+    if crate::runtime_meta::is_live() {
+        holders.extend(crate::runtime_meta::overlay_refinements_of(module));
+    }
     holders
 }
 

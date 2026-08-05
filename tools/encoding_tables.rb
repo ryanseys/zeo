@@ -34,6 +34,17 @@ KINDS = {
   "EUC-JP" => "EncKind::MultiByte(MbFamily::EucJp)",
   "GBK" => "EncKind::MultiByte(MbFamily::Gbk)",
   "Big5" => "EncKind::MultiByte(MbFamily::Big5)",
+  # The vendor/family rows sharing those walks and encoding_rs backends --
+  # documented approximations where the vendor table differs (eucJP-ms and
+  # CP51932 ride EUC-JP's mapping; GB2312 rides GBK's; Big5-HKSCS rides
+  # Big5's; CP949 and EUC-KR both map through encoding_rs's windows-949).
+  "EUC-KR" => "EncKind::MultiByte(MbFamily::EucKr)",
+  "CP949" => "EncKind::MultiByte(MbFamily::Cp949)",
+  "GB2312" => "EncKind::MultiByte(MbFamily::Gbk)",
+  "GB18030" => "EncKind::MultiByte(MbFamily::Gb18030)",
+  "Big5-HKSCS" => "EncKind::MultiByte(MbFamily::Big5)",
+  "eucJP-ms" => "EncKind::MultiByte(MbFamily::EucJp)",
+  "CP51932" => "EncKind::MultiByte(MbFamily::EucJp)",
 }.freeze
 
 # The dummy rows this runtime still converts, by special case in `transcode`

@@ -110,6 +110,11 @@ struct OverlayEntry {
     /// has no superclass AT ALL -- distinct from "its superclass is
     /// `BasicObject`", and the difference is what `#superclass` reports.
     uninitialized: bool,
+    /// `(refining module, refined target)` when this entry is a holder a
+    /// RUNTIME `refine` minted -- the overlay twin of
+    /// `ClassEntry::refinement_of`. Definition only: nothing installs these
+    /// methods anywhere until a `using` activates them.
+    refinement_of: Option<(ClassId, ClassId)>,
 }
 
 impl Default for OverlayEntry {
@@ -129,6 +134,7 @@ impl Default for OverlayEntry {
             undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
             uninitialized: false,
+            refinement_of: None,
         }
     }
 }
@@ -2652,6 +2658,64 @@ pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
         with_body_frame(new_id, || b.call_with_self(&val, &[]))?;
     }
     Ok(val)
+}
+
+/// A RUNTIME `refine(target) { body }` (Module's private `refine`, reached
+/// from a `Module.new` body or any other runtime module context): mints the
+/// holder module, marks it a refinement of `(module, target)`, and runs the
+/// body with the holder as self and definee -- so its `def`s land on the
+/// holder, exactly like a module body. Definition only: `Module#refinements`
+/// reports it and nothing changes dispatch until a `using`.
+pub fn runtime_refine(
+    module: ClassId,
+    target: ClassId,
+    body: &crate::RProc,
+) -> Result<RubyValue, Signal> {
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    let leaked: &'static [ClassId] = Box::leak(vec![new_id].into_boxed_slice());
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                is_module: true,
+                ancestors: leaked,
+                refinement_of: Some((module, target)),
+                ..Default::default()
+            },
+        );
+    }
+    mark_live();
+    let val = RubyValue::Class(new_id);
+    with_body_frame(new_id, || body.call_with_self(&val, &[]))?;
+    Ok(val)
+}
+
+/// The overlay twin of `dispatch::refinement_of` -- `(refining module,
+/// refined target)` for a holder a runtime `refine` minted.
+pub fn overlay_refinement_of(id: ClassId) -> Option<(ClassId, ClassId)> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .and_then(|e| e.refinement_of)
+}
+
+/// The holders a runtime `refine` minted for `module`, in declaration order
+/// (ids are handed out sequentially) -- `Module#refinements`' overlay half.
+pub fn overlay_refinements_of(module: ClassId) -> Vec<ClassId> {
+    let mut holders: Vec<ClassId> = maps()
+        .classes
+        .read()
+        .unwrap()
+        .iter()
+        .filter(|(_, e)| e.refinement_of.is_some_and(|(m, _)| m == module))
+        .map(|(&id, _)| ClassId(id))
+        .collect();
+    holders.sort_by_key(|c| c.0);
+    holders
 }
 
 /// `Class.new(superclass) { body }` -- allocate a runtime class id, register

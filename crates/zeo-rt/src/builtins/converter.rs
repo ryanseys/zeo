@@ -627,10 +627,27 @@ fn run(
     );
     let held = buf.split_off(buf.len() - hold);
     let mut out = std::mem::take(&mut state.carry);
+    // Held output (a prior cut's overflow, or an `insert_output`) drains
+    // FIRST and counts against the budget; when it alone fills the limit,
+    // nothing more converts and the input waits untouched.
+    if let Some(l) = limit
+        && out.len() >= l
+    {
+        state.carry = out.split_off(l);
+        let mut rest = buf;
+        rest.extend_from_slice(&held);
+        state.pending = rest;
+        state.errinfo = ErrInfo::default();
+        return (out, Ok(Stop::DestinationFull));
+    }
+    let budget = limit.map(|l| l - out.len());
     let ConvState { tstate, opts, .. } = state;
-    let mut r = encoding::transcode_run(&buf, src, opts, None, tstate, limit);
+    let mut r = encoding::transcode_run(&buf, src, opts, None, tstate, budget);
     let consumed = r.consumed;
     out.append(&mut r.out);
+    // The one character a limit cut converted past the budget -- held here,
+    // drained at the top of the next run (CRuby's internal output buffer).
+    state.carry.extend(r.overflow);
     let mut rest = buf.split_off(consumed);
     rest.extend_from_slice(&held);
     state.pending = rest;

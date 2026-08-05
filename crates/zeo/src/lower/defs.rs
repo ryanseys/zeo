@@ -1355,11 +1355,12 @@ pub(crate) fn refinement_holder_name(target: &str) -> String {
 /// falls through to an ordinary call, which is a clean rejection later if
 /// nothing else defines `using`.
 pub(crate) fn lower_using(
+    result: &ParseResult,
     hir: &mut Hir,
     node: &Node<'_>,
     name: &str,
     call: &ruby_prism::CallNode<'_>,
-) -> PResult<Option<NodeId>> {
+) -> PResult<Option<Vec<NodeId>>> {
     if name != "using" || call.receiver().is_some() {
         return Ok(None);
     }
@@ -1370,13 +1371,42 @@ pub(crate) fn lower_using(
     let [arg] = arg_list.as_slice() else {
         return Ok(None);
     };
-    let Ok(module) = constant_path_name(arg) else {
-        return Ok(None);
-    };
-    hir.push_span(crate::lower::span_of(hir, node));
-    let id = hir.push(HirNode::Using(module));
-    hir.pop_span();
-    Ok(Some(id))
+    if let Ok(module) = constant_path_name(arg) {
+        hir.push_span(crate::lower::span_of(hir, node));
+        let id = hir.push(HirNode::Using(module));
+        hir.pop_span();
+        return Ok(Some(vec![id]));
+    }
+    // `using Module.new { refine C do ... end }` -- irb's shape, and the only
+    // way to activate a refinement over a class chosen where no constant
+    // names the module. The anonymous module becomes an ordinary
+    // compile-time module under an unwritable `#using:`-prefixed name (the
+    // refinement-holder convention: claims no constant, `Module#name` stays
+    // nil), so the whole existing rewrite -- holder registration, byte-range
+    // activation, refined call sites -- applies unchanged.
+    if let Some(mcall) = arg.as_call_node()
+        && String::from_utf8_lossy(mcall.name().as_slice()) == "new"
+        && mcall
+            .receiver()
+            .and_then(|r| r.as_constant_read_node().map(|c| c.name().as_slice().to_vec()))
+            .is_some_and(|n| n == b"Module")
+        && let Some(block) = mcall.block().and_then(|b| b.as_block_node())
+    {
+        let span = crate::lower::span_of(hir, node);
+        let anon = format!("#using:{}", span.start);
+        let body = lower_class_body(result, hir, block.body(), None, Some(&anon))?;
+        hir.push_span(span);
+        let def = hir.push(HirNode::ClassDef {
+            name: anon.clone(),
+            superclass: None,
+            body,
+            is_module: true,
+        });
+        let using = hir.push(HirNode::Using(anon));
+        hir.pop_span();
+        return Ok(Some(vec![def, using]));
+    }
+    Ok(None)
 }
 
 pub(crate) fn lower_class_body(
@@ -1879,8 +1909,8 @@ fn lower_class_body_statement(
                 return Ok(());
             }
         }
-        if let Some(node) = lower_using(hir, node, &name, &call)? {
-            out.push(node);
+        if let Some(nodes) = lower_using(result, hir, node, &name, &call)? {
+            out.extend(nodes);
             return Ok(());
         }
         if matches!(

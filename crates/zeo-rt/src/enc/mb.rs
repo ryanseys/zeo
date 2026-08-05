@@ -25,6 +25,15 @@ pub enum MbFamily {
     Gbk,
     /// Big5: 2-byte lead 0xA1-0xFE, trail 0x40-0x7E / 0xA1-0xFE.
     Big5,
+    /// EUC-KR proper: 2-byte lead 0xA1-0xFE, trail 0xA1-0xFE.
+    EucKr,
+    /// CP949/UHC (EUC-KR's vendor superset): 2-byte lead 0x81-0xFE, trail
+    /// 0x41-0x5A / 0x61-0x7A / 0x81-0xFE. Same mapping backend as EUC-KR
+    /// (encoding_rs's EUC-KR IS windows-949).
+    Cp949,
+    /// GB18030: GBK's 2-byte form plus the 4-byte form (lead 0x81-0xFE,
+    /// then 0x30-0x39, 0x81-0xFE, 0x30-0x39).
+    Gb18030,
 }
 
 impl MbFamily {
@@ -34,13 +43,15 @@ impl MbFamily {
             MbFamily::EucJp => encoding_rs::EUC_JP,
             MbFamily::Gbk => encoding_rs::GBK,
             MbFamily::Big5 => encoding_rs::BIG5,
+            MbFamily::EucKr | MbFamily::Cp949 => encoding_rs::EUC_KR,
+            MbFamily::Gb18030 => encoding_rs::GB18030,
         }
     }
 }
 
 /// One structural unit of a multibyte string.
 pub(crate) struct MbUnit {
-    /// Byte length (1..=3).
+    /// Byte length (1..=4 -- GB18030's four-byte form is the widest).
     pub len: usize,
     /// Structurally valid (a real character, mapped or not). A `false` unit
     /// is always a single byte: a naked non-lead byte, an invalid trail's
@@ -117,6 +128,31 @@ pub(crate) fn mb_unit(family: MbFamily, bytes: &[u8]) -> MbUnit {
         },
         MbFamily::Big5 => match b {
             0xA1..=0xFE => follow(1, &|t| matches!(t, 0x40..=0x7E | 0xA1..=0xFE)),
+            _ => bad(InvalidStyle::Plain),
+        },
+        MbFamily::EucKr => match b {
+            0xA1..=0xFE => follow(1, &|t| (0xA1..=0xFE).contains(&t)),
+            _ => bad(InvalidStyle::Plain),
+        },
+        MbFamily::Cp949 => match b {
+            0x81..=0xFE => follow(1, &|t| matches!(t, 0x41..=0x5A | 0x61..=0x7A | 0x81..=0xFE)),
+            _ => bad(InvalidStyle::Plain),
+        },
+        MbFamily::Gb18030 => match b {
+            0x81..=0xFE => {
+                // The 4-byte form is unambiguous from the SECOND byte: a
+                // digit never trails the 2-byte form.
+                if bytes.get(1).is_some_and(|t| (0x30..=0x39).contains(t)) {
+                    if bytes.len() < 4 {
+                        return bad(InvalidStyle::Incomplete);
+                    }
+                    if (0x81..=0xFE).contains(&bytes[2]) && (0x30..=0x39).contains(&bytes[3]) {
+                        return ok(4);
+                    }
+                    return bad(InvalidStyle::FollowedBy(bytes[2]));
+                }
+                follow(1, &|t| matches!(t, 0x40..=0x7E | 0x80..=0xFE))
+            }
             _ => bad(InvalidStyle::Plain),
         },
     }

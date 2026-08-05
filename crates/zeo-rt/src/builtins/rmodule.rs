@@ -971,6 +971,22 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
+    // Private `Module#refine` reached at RUNTIME -- `Module.new { refine(C)
+    // { ... } }`, the only way to refine a class chosen by the caller. Mints
+    // the holder, runs the block with the holder as self/definee, and
+    // answers it; DEFINITION only (a `using` is what would activate it).
+    def "refine" (recv, target, &block) {
+        let RubyValue::Class(target_id) = target else {
+            return Err(type_error!(
+                "wrong argument type {} (expected Class or Module)",
+                crate::builtins::class_name_of(target)
+            ));
+        };
+        let Some(RubyValue::Proc(b)) = &block else {
+            return Err(crate::builtins::arg_error!("no block given"));
+        };
+        crate::runtime_meta::runtime_refine(recv_cid(recv), *target_id, b)
+    }
     // `Module#refinements` -- the `Refinement` modules THIS module's `refine`
     // blocks minted, in source order. They are ordinary registered modules
     // carrying the refined methods; what makes each a `Refinement` is the

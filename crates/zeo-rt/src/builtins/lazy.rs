@@ -62,6 +62,10 @@ enum LazyOp {
     /// when the source does not divide evenly, and arrives at exhaustion (see
     /// [`flush`]).
     EachSlice(usize),
+    /// `Enumerator::Lazy.new(source) { |yielder, *values| ... }`'s explicit
+    /// per-element body: whatever the block hands the yielder (0..n values
+    /// per input) flows downstream; the input itself does not.
+    YielderBody(RProc),
 }
 
 /// The per-run mutable state for the stateful ops (a fresh set is built at the
@@ -175,6 +179,7 @@ fn clone_links(links: &[Link]) -> Vec<Link> {
                 LazyOp::WithIndex(n, blk) => LazyOp::WithIndex(*n, blk.clone()),
                 LazyOp::EachCons(n) => LazyOp::EachCons(*n),
                 LazyOp::EachSlice(n) => LazyOp::EachSlice(*n),
+                LazyOp::YielderBody(p) => LazyOp::YielderBody(p.clone()),
             },
         })
         .collect()
@@ -489,6 +494,30 @@ fn push(
                 Ok(Flow::Continue)
             }
         }
+        LazyOp::YielderBody(p) => {
+            // The body runs against a COLLECTING yielder (the chain's
+            // continuation cannot ride inside an `RProc`), then whatever it
+            // emitted flows downstream in order.
+            let bucket: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+            let sink_bucket = bucket.clone();
+            let collector = crate::RProc::new(move |args: &[RubyValue]| {
+                let v = match args.len() {
+                    0 => RubyValue::Nil,
+                    1 => args[0].clone(),
+                    _ => RubyValue::Array(array_new(args.to_vec())),
+                };
+                sink_bucket.lock().push(v);
+                Ok(RubyValue::Nil)
+            });
+            p.call(&[RubyValue::Yielder(collector), val])?;
+            let emitted = std::mem::take(&mut *bucket.lock());
+            for v in emitted {
+                if push(links, st, idx + 1, v, sink)? == Flow::Stop {
+                    return Ok(Flow::Stop);
+                }
+            }
+            Ok(Flow::Continue)
+        }
     }
 }
 
@@ -626,6 +655,20 @@ fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal>
 ruby_class! {
     Lazy = zeo_abi::LAZY_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
+
+    // `Enumerator::Lazy.new(source) { |yielder, *values| ... }` -- a lazy
+    // over `source` with an explicit per-element body: what the block hands
+    // the yielder flows on, so it can filter, transform, or fan out.
+    def self."new"(_recv, source, &block) {
+        let Some(RubyValue::Proc(p)) = &block else {
+            return Err(arg_error!("tried to call lazy new without a block"));
+        };
+        Ok(RubyValue::Object(Arc::new(RLazy {
+            source: source.clone(),
+            links: vec![Link { name: "each", op: LazyOp::YielderBody(p.clone()) }],
+            external: Mutex::new(None),
+        })))
+    }
 
     // `size` never iterates: it takes the source's size and folds the ops that
     // have a knowable effect on it. A filtering op makes the result unknown
