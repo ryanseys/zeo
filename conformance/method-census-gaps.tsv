@@ -1,17 +1,16 @@
 # Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.
 # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.
 # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.
-# absent-module: 19
-# constant: 7
-# owner: 50
-# unreachable: 65
+# absent-module: 18
+# constant: 5
+# owner: 49
+# unreachable: 25
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
 absent-module	IO::Buffer::InvalidatedError	-	-
 absent-module	IO::Buffer::LockedError	-	-
 absent-module	IO::Buffer::MaskError	-	-
-absent-module	Process::Waiter	-	-
 absent-module	Ractor::MovedObject	-	-
 absent-module	Ractor::Port	-	-
 absent-module	Ruby	-	-
@@ -27,8 +26,6 @@ absent-module	RubyVM::YJIT	-	-
 constant	IO	c	Buffer
 constant	Object	c	Ruby
 constant	Object	c	RubyVM
-constant	Object	c	TOPLEVEL_BINDING
-constant	Process	c	Waiter
 constant	Ractor	c	MovedObject
 constant	Ractor	c	Port
 owner	Array	p	initialize
@@ -63,7 +60,6 @@ owner	Ractor	i	inspect
 owner	Ractor	i	send
 owner	Ractor	i	to_s
 owner	Ractor	s	new
-owner	Random	p	initialize_copy
 owner	Random::Base	p	initialize
 owner	Range	p	initialize
 owner	Range	p	initialize_copy
@@ -81,39 +77,6 @@ owner	Thread::Queue	p	initialize
 owner	Thread::SizedQueue	p	initialize
 owner	Time	p	initialize
 owner	Time	p	initialize_copy
-unreachable	Complex	p	marshal_dump
-unreachable	Enumerator::Lazy	p	_enumerable_collect
-unreachable	Enumerator::Lazy	p	_enumerable_collect_concat
-unreachable	Enumerator::Lazy	p	_enumerable_drop
-unreachable	Enumerator::Lazy	p	_enumerable_drop_while
-unreachable	Enumerator::Lazy	p	_enumerable_filter
-unreachable	Enumerator::Lazy	p	_enumerable_filter_map
-unreachable	Enumerator::Lazy	p	_enumerable_find_all
-unreachable	Enumerator::Lazy	p	_enumerable_flat_map
-unreachable	Enumerator::Lazy	p	_enumerable_grep
-unreachable	Enumerator::Lazy	p	_enumerable_grep_v
-unreachable	Enumerator::Lazy	p	_enumerable_map
-unreachable	Enumerator::Lazy	p	_enumerable_reject
-unreachable	Enumerator::Lazy	p	_enumerable_select
-unreachable	Enumerator::Lazy	p	_enumerable_take
-unreachable	Enumerator::Lazy	p	_enumerable_take_while
-unreachable	Enumerator::Lazy	p	_enumerable_uniq
-unreachable	Enumerator::Lazy	p	_enumerable_with_index
-unreachable	Enumerator::Lazy	p	_enumerable_zip
-unreachable	Kernel	p	instance_variables_to_inspect
-unreachable	Marshal	p	dump
-unreachable	Module	p	refine
-unreachable	Module	p	using
-unreachable	Pathname	p	add_trailing_separator
-unreachable	Pathname	p	chop_basename
-unreachable	Pathname	p	cleanpath_aggressive
-unreachable	Pathname	p	cleanpath_conservative
-unreachable	Pathname	p	del_trailing_separator
-unreachable	Pathname	p	has_trailing_separator?
-unreachable	Pathname	p	plus
-unreachable	Pathname	p	prepend_prefix
-unreachable	Pathname	p	same_paths?
-unreachable	Pathname	p	split_names
 unreachable	Ractor	i	<<
 unreachable	Ractor	i	[]
 unreachable	Ractor	i	[]=
@@ -139,10 +102,3 @@ unreachable	Ractor	s	select
 unreachable	Ractor	s	shareable_lambda
 unreachable	Ractor	s	shareable_proc
 unreachable	Ractor	s	store_if_absent
-unreachable	Random	p	left
-unreachable	Random	p	marshal_dump
-unreachable	Random	p	marshal_load
-unreachable	Random	p	state
-unreachable	Rational	p	marshal_dump
-unreachable	Refinement	p	import_methods
-unreachable	Time	p	_dump

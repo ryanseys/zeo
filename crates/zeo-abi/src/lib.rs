@@ -404,6 +404,11 @@ pub const UNICODE_NORMALIZE_MODULE: ClassId = ClassId(159);
 /// 4.0 keeps as the name for the core implementation.
 pub const SET_CORE_SET_CLASS: ClassId = ClassId(160);
 
+/// `Process::Waiter` -- the `Thread` subclass `Process.detach` answers: a
+/// real thread whose class pointer CRuby retags after creation, with `#pid`
+/// as its one own method.
+pub const PROCESS_WAITER_CLASS: ClassId = ClassId(161);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -1986,6 +1991,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "Set::CoreSet",
         is_module: false,
         superclass: Some(SET_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: PROCESS_WAITER_CLASS,
+        name: "Process::Waiter",
+        is_module: false,
+        superclass: Some(THREAD_CLASS),
         includes: &[],
         feature: None,
     },

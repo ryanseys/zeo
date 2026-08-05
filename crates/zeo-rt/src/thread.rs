@@ -32,7 +32,7 @@
 use crate::{RubyValue, Signal, Symbol};
 use parking_lot::Mutex as PlMutex;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
@@ -120,6 +120,10 @@ pub struct ThreadData {
     /// thread can read it). Zero until then, which is what makes
     /// `#native_thread_id` answer nil for a thread that never ran.
     native_id: AtomicU64,
+    /// This thread's class -- `Thread` for all but `Process.detach`'s
+    /// answer, which CRuby RETAGS to `Process::Waiter` after creation
+    /// (`process.c` `rb_detach_process`). Written once, right after spawn.
+    class_id: AtomicU32,
 }
 
 pub type RThread = Arc<ThreadData>;
@@ -169,6 +173,7 @@ impl ThreadData {
             priority: AtomicI64::new(0),
             stopped: AtomicBool::new(false),
             native_id: AtomicU64::new(0),
+            class_id: AtomicU32::new(zeo_abi::THREAD_CLASS.0),
         })
     }
 
@@ -626,6 +631,19 @@ pub fn thread_abort_on_exception(t: &RThread) -> bool {
 
 pub fn thread_set_abort_on_exception(t: &RThread, v: bool) {
     t.abort_on_exception.store(v, Ordering::Relaxed);
+}
+
+/// The thread's class -- `Thread`, or `Process::Waiter` once
+/// [`retag_process_waiter`] ran. What `RubyValue::class_id` reports.
+pub fn thread_class_id(t: &RThread) -> zeo_abi::ClassId {
+    zeo_abi::ClassId(t.class_id.load(Ordering::Relaxed))
+}
+
+/// `Process.detach`'s retag -- CRuby swaps the watcher thread's class
+/// pointer to `Process::Waiter` right after creating it.
+pub(crate) fn retag_process_waiter(t: &RThread) {
+    t.class_id
+        .store(zeo_abi::PROCESS_WAITER_CLASS.0, Ordering::Relaxed);
 }
 
 /// `Thread#[]` -- a fiber-local value, or nil.

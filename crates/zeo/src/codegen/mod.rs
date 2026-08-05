@@ -2086,10 +2086,14 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         block_depth: 0,
         has_blk_binding: false,
     };
-    let toplevel_binding = wants_toplevel_binding.then(|| {
+    // Installed UNCONDITIONALLY: `Object.constants` must list it (census).
+    // A program that never names it gets the cheap degraded form -- self =
+    // `main`, no locals -- because `binding_names` stayed `None` and the top
+    // level never deoptimized to cells; naming it anywhere upgrades both.
+    let toplevel_binding = {
         let value = call::emit_binding_value(&cx, "<main>", 0);
         quote! { zeo_rt::const_set(0, "TOPLEVEL_BINDING", #value); }
-    });
+    };
     let main_body = hoisting::emit_hoisted_body_after_decls(
         &cx,
         &analyzed.main_statements,

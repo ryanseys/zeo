@@ -1480,7 +1480,14 @@ pub(crate) fn detach_thread(pid: i64) -> RubyValue {
             _ => Ok(RubyValue::Nil),
         }
     });
-    crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new())
+    let v = crate::thread::thread_new(RubyValue::Proc(reaper), Vec::new());
+    if let RubyValue::Thread(t) = &v {
+        // CRuby retags the watcher's class and stashes the pid in its
+        // thread-local storage (`rb_detach_process`); `Waiter#pid` reads it.
+        crate::thread::retag_process_waiter(t);
+        crate::thread::thread_local_set(t, crate::Symbol::intern("pid"), RubyValue::Int(pid));
+    }
+    v
 }
 
 /// Start a child without waiting, answering its pid -- the shared engine of

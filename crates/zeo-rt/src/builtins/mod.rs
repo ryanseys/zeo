@@ -85,6 +85,7 @@ pub(crate) mod time;
 pub(crate) mod true_class;
 pub(crate) mod unbound_method;
 pub(crate) mod value_subclass;
+pub(crate) mod waiter;
 pub(crate) mod warning;
 pub(crate) mod weak;
 pub(crate) mod yielder;
