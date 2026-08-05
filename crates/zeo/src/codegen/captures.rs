@@ -528,6 +528,7 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::ClassDef {
             name: _,
             superclass: _,
@@ -814,6 +815,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::ClassDef {
             name: _,
             superclass: _,
@@ -1406,6 +1408,7 @@ fn walk(
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::ClassDef {
             name: _,
             superclass: _,

@@ -453,6 +453,7 @@ impl Walker {
             }
             | HirNode::Using(_)
             | HirNode::DefHook { .. }
+            | HirNode::MethodRedefine { .. }
             | HirNode::Redo
             | HirNode::Retry
             | HirNode::BlockGiven

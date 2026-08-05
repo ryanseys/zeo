@@ -1,0 +1,8 @@
+[:singleton_const, :module_const, :from_singleton]
+:name_error
+[:singleton_const, :second_body]
+[:SC, :SC2, :SHADOWED]
+[:inner, :a_const]
+["#<Class:A::B>", "A::B", "A"]
+:singleton_const
+[false, true]

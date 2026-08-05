@@ -883,6 +883,51 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     Ok(RubyValue::Symbol(name))
 }
 
+/// Installs a COMPILED trampoline as the current body of `id`'s `name` --
+/// the runtime half of a positional method redefinition (a reopen's `def`
+/// over an existing method, a `def x; def x` pair a `method_added` hook
+/// observes). The static tables keep the final body; codegen calls this at
+/// boot with the FIRST body and again at each redefinition's document
+/// position, so dynamic dispatch tracks ruby's install-where-it-stands
+/// timeline. No hook fires here -- the spliced `DefHook` at the same
+/// position is the report, exactly as for a statically-registered `def`.
+/// Seeds the singleton mint with a COMPILE-registered singleton class: the
+/// surrogate a constant-bearing `class << self` body registered for `owner`
+/// (its constants live on the surrogate's id in the frozen tables). After
+/// this, `owner.singleton_class` answers the surrogate, and a runtime
+/// `def owner.x` through it redirects to `owner` exactly as a minted
+/// singleton would (`singleton_owner`). Called from generated `main()`
+/// before the first statement runs -- no gates need flipping, because
+/// nothing here adds an overlay method table.
+pub fn register_singleton_surrogate(owner: ClassId, surrogate: ClassId) {
+    let owner_val = RubyValue::Class(owner);
+    let Some(key) = singleton_class_key(&owner_val) else {
+        return;
+    };
+    maps()
+        .singleton_classes
+        .write()
+        .unwrap()
+        .insert(key, surrogate);
+    maps()
+        .singleton_owner
+        .write()
+        .unwrap()
+        .insert(surrogate.0, owner_val);
+}
+
+pub fn runtime_replace_method(id: ClassId, name: Symbol, f: crate::dispatch::MethodFn) {
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.methods
+            .insert(name, crate::dispatch::MethodImpl::Static(f));
+        e.undefs.remove(&name);
+    }
+    patch_class(id);
+    mark_live();
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum AttrKind {
     Reader,

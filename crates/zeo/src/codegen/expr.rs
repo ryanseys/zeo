@@ -524,6 +524,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -1568,6 +1569,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
+        | HirNode::MethodRedefine { .. }
         | HirNode::ConstantVisibility { .. } => {
             let loc = crate::codegen::source_location(cx.compiler, id);
             crate::codegen::unsupported(format!(
@@ -2031,6 +2033,17 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
             crate::compiler::OBJECT_CLASS
         }
     });
+    // Cvar lookup walks PAST singleton crefs (ruby's rule -- see
+    // `Hir::cvar_is_toplevel`): a `class << self` surrogate lexical home
+    // defers to the class itself, whose `cvar_owners` the resolver filled.
+    let defining = if cx.compiler.is_singleton_surrogate(defining) {
+        cx.compiler
+            .class(defining)
+            .lexical_parent
+            .unwrap_or(defining)
+    } else {
+        defining
+    };
     cx.compiler
         .class(defining)
         .cvar_owners

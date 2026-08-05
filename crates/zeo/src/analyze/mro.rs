@@ -642,6 +642,27 @@ fn resolve_cvars_and_consts(
             const_owner_of(compiler, ClassId(i as u32), name);
         }
     }
+    // A `class << self` def's bare constants resolve from the SURROGATE
+    // (`Scope::lexical_home`), whose map the per-class loop above never
+    // fills -- the scope itself is owned by the enclosing class. Resolve
+    // those scopes' names against the surrogate too, so codegen's map
+    // lookup finds the lexical owner (`expr::const_owner_id_opt`
+    // self-defaults on a miss, which would wrongly claim the surrogate).
+    let tagged: Vec<(ClassId, Vec<crate::hir::NodeId>)> = compiler
+        .scopes
+        .iter()
+        .filter_map(|s| s.lexical_home.map(|h| (h, s.body.clone())))
+        .collect();
+    for (home, body) in tagged {
+        let mut consts = NameList::default();
+        let mut cvars = NameList::default();
+        for &n in &body {
+            collect_ownership_names(compiler, n, &[], &mut consts, &mut cvars);
+        }
+        for name in consts.names {
+            const_owner_of(compiler, home, &name);
+        }
+    }
     Ok(())
 }
 

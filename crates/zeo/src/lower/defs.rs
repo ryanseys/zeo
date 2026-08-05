@@ -370,6 +370,29 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
     Ok(())
 }
 
+/// Marks every `DefMethod` in a constant-bearing `class << self` body
+/// (recursing into kept conditional branches) -- see
+/// `Hir::singleton_body_defs`.
+fn tag_singleton_body_defs(hir: &mut Hir, ids: &[NodeId]) {
+    for &id in ids {
+        match &hir[id] {
+            HirNode::DefMethod { .. } => {
+                hir.singleton_body_defs.insert(id);
+            }
+            HirNode::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                let (t, e) = (then_body.clone(), else_body.clone());
+                tag_singleton_body_defs(hir, &t);
+                tag_singleton_body_defs(hir, &e);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The Ruby version zeo targets -- kept in lockstep with `zeo_rt::bootstrap`'s
 /// `VERSION` (the value of the runtime `RUBY_VERSION` constant). Mirrors the
 /// loader's hardcoded `RUBY_ENGINE`: zeo compiles to one fixed target, so a
@@ -1388,7 +1411,10 @@ pub(crate) fn lower_using(
         && String::from_utf8_lossy(mcall.name().as_slice()) == "new"
         && mcall
             .receiver()
-            .and_then(|r| r.as_constant_read_node().map(|c| c.name().as_slice().to_vec()))
+            .and_then(|r| {
+                r.as_constant_read_node()
+                    .map(|c| c.name().as_slice().to_vec())
+            })
             .is_some_and(|n| n == b"Module")
         && let Some(block) = mcall.block().and_then(|b| b.as_block_node())
     {
@@ -1616,7 +1642,31 @@ fn lower_class_body_statement(
             return Ok(());
         }
         let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
-        map_class_self_items(hir, &inner, out)?;
+        let mut mapped = Vec::new();
+        map_class_self_items(hir, &inner, &mut mapped)?;
+        // A constant assigned here belongs to the SINGLETON class, not the
+        // enclosing module (`M.const_defined?(:SC)` is false where
+        // `M.singleton_class.const_defined?(:SC)` is true). The constants
+        // move into a surrogate child definition under the reserved name
+        // `#<Class:self>` -- no Ruby constant can collide with it -- which
+        // `analyze::register_class` files as an ordinary module and the
+        // runtime singleton mint answers for `M.singleton_class` (see
+        // `zeo_rt::register_singleton_surrogate`). The `def`s beside them
+        // are tagged: their lexical home is the singleton, so a bare `SC`
+        // resolves against the surrogate and `Module.nesting` reports it.
+        let (consts, rest): (Vec<NodeId>, Vec<NodeId>) = mapped
+            .into_iter()
+            .partition(|&n| matches!(hir[n], HirNode::ConstWrite { .. }));
+        if !consts.is_empty() {
+            out.push(hir.push(HirNode::ClassDef {
+                name: "#<Class:self>".to_string(),
+                superclass: None,
+                body: consts,
+                is_module: true,
+            }));
+            tag_singleton_body_defs(hir, &rest);
+        }
+        out.extend(rest);
         return Ok(());
     }
 

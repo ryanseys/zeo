@@ -2143,6 +2143,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // method registrations ride `__VM_ROWS`, applied after every module's own
     // `__registry.register` above has created the entry they attach to.
     let um_containers = emit_user_module_bridges(compiler);
+    let redef_containers = emit_redef_containers(compiler);
 
     // Every body has been emitted by now, so the coverage collector (fed by
     // `stmt::stamp_line` during those emissions) is complete.
@@ -2180,6 +2181,47 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             .collect()
     };
 
+    // Observable redefinition timelines: the FIRST body goes into the
+    // overlay before the first statement runs, so the window before each
+    // reopen's re-install (`HirNode::MethodRedefine`, emitted at document
+    // position) dispatches the way ruby's install-where-it-stands does.
+    let boot_redefs: Vec<TokenStream> = compiler
+        .positional_redefs
+        .iter()
+        .map(|&(cid, ref name, sid)| {
+            let tramp = redef_trampoline(compiler, cid, sid);
+            let id = cid.0;
+            quote! {
+                zeo_rt::runtime_replace_method(
+                    zeo_rt::ClassId(#id),
+                    zeo_rt::Symbol::intern(#name),
+                    #tramp,
+                );
+            }
+        })
+        .collect();
+
+    // Compile-registered singleton-class surrogates (constant-bearing
+    // `class << self` bodies): seed the runtime mint so `M.singleton_class`
+    // answers the surrogate that owns the constants.
+    let singleton_surrogates: Vec<TokenStream> = compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| compiler.is_singleton_surrogate(ClassId(i as u32)))
+        .filter_map(|(i, c)| {
+            c.lexical_parent.map(|owner| {
+                let (o, s) = (owner.0, i as u32);
+                quote! {
+                    zeo_rt::register_singleton_surrogate(
+                        zeo_rt::ClassId(#o),
+                        zeo_rt::ClassId(#s),
+                    );
+                }
+            })
+        })
+        .collect();
+
     let program = quote! {
         // Lints that mirror RUBY-source properties, not codegen defects: an
         // unused Ruby assignment (or a hoisted local never read), code after
@@ -2211,6 +2253,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#class_method_containers)*
         #(#builtin_reopens)*
         #(#um_containers)*
+        #(#redef_containers)*
         #(#exc_containers)*
         #(#own_bridge_containers)*
         #(#sst_containers)*
@@ -2245,6 +2288,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // runtime's per-class owner scan cannot infer these -- see
             // `Compiler::global_def_hooks`.
             #(#global_def_hooks)*
+            // First bodies of observably-redefined methods -- see
+            // `Compiler::positional_redefs`.
+            #(#boot_redefs)*
+            #(#singleton_surrogates)*
             // Seed the CORE constants (`Float::INFINITY`, `Encoding::UTF_8`,
             // `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
             // `Process::CLOCK_*`) -- their owners resolved at compile time;
@@ -2790,15 +2837,20 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         &mut no_captures,
         false,
     );
+    // A def from a constant-bearing `class << self` body is lexically inside
+    // the SINGLETON class: its bare constants and `Module.nesting` resolve
+    // through the surrogate (whose lexical parent is the class itself, so
+    // everything else in the chain is unchanged). See `Scope::lexical_home`.
+    let lexical = scope.lexical_home.unwrap_or(scope.defining_class);
     let cx = Ctx {
         compiler,
-        box_id: compiler.class(scope.defining_class).box_id,
+        box_id: compiler.class(lexical).box_id,
         // No concrete receiver exists for a class method (no `self:
         // Arc<Self>`) -- but `defining_class` (which class/module this body
         // was LEXICALLY written in) still needs to be real, for `@@cvar`
         // ownership lookup (`codegen::expr::cvar_owner_id`).
         current_class: None,
-        defining_class: Some(scope.defining_class),
+        defining_class: Some(lexical),
         // `scope.class` (the OWNER -- which class this body is emitted
         // into), deliberately NOT `defining_class` (where it was written).
         // The two differ exactly when a class method is inherited, and
@@ -3261,6 +3313,69 @@ pub(crate) fn emit_instance_method_body(
         }
     });
     InstanceMethodBody { preamble, body }
+}
+
+/// The Rust ident a SUPERSEDED redefinition body is emitted under -- the
+/// live body owns the plain `safe_ident` name, so older bodies mangle with
+/// their own `ScopeId` (globally unique).
+pub(crate) fn redef_ident(sid: crate::compiler::ScopeId, name: &str) -> proc_macro2::Ident {
+    let base = safe_ident(name);
+    format_ident!("__r{}_{}", sid.0, base)
+}
+
+/// The `MethodFn` trampoline that installs scope `sid` as `cid`'s current
+/// body of its name -- shared by the boot install of the first body
+/// (`Compiler::positional_redefs`) and each positional re-install
+/// (`HirNode::MethodRedefine`). It calls the body's free-function emission
+/// in the class's `__redef_<id>` container (see `emit_redef_containers`):
+/// `RubyValue`-self with name-keyed ivars, because the overlay entry
+/// propagates down the ancestry and a SUBCLASS instance is a different
+/// concrete struct than the defining class's -- a downcasting inherent-
+/// method trampoline would panic on it.
+pub(crate) fn redef_trampoline(
+    compiler: &Compiler,
+    cid: ClassId,
+    sid: crate::compiler::ScopeId,
+) -> TokenStream {
+    let container = redef_container_ident(cid);
+    let scope = compiler.scope(sid);
+    let method_ident = redef_ident(sid, &scope.name);
+    let fn_path = quote! { #container::#method_ident };
+    params::emit_exc_trampoline(
+        &fn_path,
+        &scope.name,
+        &scope.params,
+        scope.needs_block_param(),
+        &scope_frame_guard(compiler, scope, false),
+    )
+}
+
+fn redef_container_ident(cid: ClassId) -> proc_macro2::Ident {
+    format_ident!("__redef_{}", cid.0)
+}
+
+/// One container module per class with an observable redefinition timeline
+/// (`ClassInfo::redef_scopes`): every body of the redefined name -- the
+/// superseded ones AND the final one -- as `RubyValue`-self free functions
+/// for `redef_trampoline` to install.
+fn emit_redef_containers(compiler: &Compiler) -> Vec<TokenStream> {
+    let mut containers = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if class.redef_scopes.is_empty() {
+            continue;
+        }
+        let cid = ClassId(idx as u32);
+        let container = redef_container_ident(cid);
+        let fns = class.redef_scopes.iter().map(|&sid| {
+            let ident = redef_ident(sid, &compiler.scope(sid).name);
+            emit_value_self_method_fn(compiler, cid, sid, &ident, false)
+        });
+        containers.push(quote! {
+            #[allow(non_snake_case)]
+            pub mod #container { #[allow(unused_imports)] use super::*; #(#fns)* }
+        });
+    }
+    containers
 }
 
 fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -> TokenStream {

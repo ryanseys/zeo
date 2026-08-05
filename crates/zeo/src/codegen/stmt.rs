@@ -234,6 +234,31 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             apply
         };
     }
+    if let HirNode::MethodRedefine { class, name, scope } = &cx.compiler.hir[stmt] {
+        // A redefinition applied at its document position -- see
+        // `analyze::redefs`. The install replaces the overlay body; the
+        // definition's own `method_added` report is a separate `DefHook`
+        // spliced right after this statement.
+        let id = *class;
+        let tramp = crate::codegen::redef_trampoline(
+            cx.compiler,
+            crate::compiler::ClassId(*class),
+            crate::compiler::ScopeId(*scope),
+        );
+        let apply = quote! {
+            zeo_rt::runtime_replace_method(
+                zeo_rt::ClassId(#id),
+                zeo_rt::Symbol::intern(#name),
+                #tramp,
+            );
+        };
+        return if is_tail {
+            let nil = tail_nil(wrap_ok);
+            quote! { #apply #nil }
+        } else {
+            apply
+        };
+    }
     if matches!(
         &cx.compiler.hir[stmt],
         HirNode::LocalWrite(..) | HirNode::MultiWrite { .. }

@@ -93,28 +93,31 @@ pub use dispatch::{
     CallSite, ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS,
     FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
     MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MethodVisibility,
-    MissingReason, NIL_CLASS,
-    NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
-    REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
-    TRUE_CLASS, ValueMethodFn, YIELDER_CLASS, arity_error, bind_dynamic_kwargs,
-    call_singleton_super_target, class_is_module, class_name, coerce_raise_arg,
-    coerce_raise_arg_with_message, const_miss, construct_by_class_id, define_in_default_definee,
-    describe_receiver, downcast_robj, downcast_robj_ref, install_class_registry,
-    instance_variable_get, instance_variable_set, instance_variables, is_a, is_a_value,
-    ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, ivar_slot_get_dyn,
-    ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol, raise_error,
-    raise_error_details, raise_method_missing, raise_no_block_yield, raise_stop_iteration,
-    raise_with_cause, refined_method, refined_responds_to, refined_send_dynamic, refined_send_in,
-    reject_marked_kwargs,
-    rescue_matches_any, responds_to, responds_to_or_missing, responds_to_value, run_initialize,
-    send, send_dispatch_in, send_in, send_super_class_from, send_super_from, send_value,
-    send_value_cached, send_value_explicit_in, send_value_in, send_value_public_in,
-    send_value_vcall_in, stamp_backtrace, super_defined, validate_aliases,
-    validate_class_aliases, value_class,
+    MissingReason, NIL_CLASS, NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
+    RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS,
+    SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn, YIELDER_CLASS, arity_error,
+    bind_dynamic_kwargs, call_singleton_super_target, class_is_module, class_name,
+    coerce_raise_arg, coerce_raise_arg_with_message, const_miss, construct_by_class_id,
+    define_in_default_definee, describe_receiver, downcast_robj, downcast_robj_ref,
+    install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
+    is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn,
+    ivar_slot_get_dyn, ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol,
+    raise_error, raise_error_details, raise_method_missing, raise_no_block_yield,
+    raise_stop_iteration, raise_with_cause, refined_method, refined_responds_to,
+    refined_send_dynamic, refined_send_in, reject_marked_kwargs, rescue_matches_any, responds_to,
+    responds_to_or_missing, responds_to_value, run_initialize, send, send_dispatch_in, send_in,
+    send_super_class_from, send_super_from, send_value, send_value_cached, send_value_explicit_in,
+    send_value_in, send_value_public_in, send_value_vcall_in, stamp_backtrace, super_defined,
+    validate_aliases, validate_class_aliases, value_class,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value, eval_value_in_scope};
 pub use exec::{at_exit_register, run_at_exit, run_main};
+/// The compiled-prologue `TracePoint#self` note (`ext::tracepoint`) -- boxes
+/// the receiver only while a trace hook is armed; free (and a no-op) in
+/// builds without the tracepoint ext.
+#[cfg(feature = "ext-tracepoint")]
+pub use ext::tracepoint::trace_frame_self;
 pub use flipflop::{flip_flop_on, flip_flop_set};
 pub use gvl::mark_sole_thread;
 pub use ivars::IvarCell;
@@ -122,11 +125,6 @@ pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match, svar_scope,
 };
-/// The compiled-prologue `TracePoint#self` note (`ext::tracepoint`) -- boxes
-/// the receiver only while a trace hook is armed; free (and a no-op) in
-/// builds without the tracepoint ext.
-#[cfg(feature = "ext-tracepoint")]
-pub use ext::tracepoint::trace_frame_self;
 #[cfg(not(feature = "ext-tracepoint"))]
 #[inline]
 pub fn trace_frame_self(_f: impl FnOnce() -> RubyValue) {}
@@ -163,8 +161,9 @@ pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
     class_maybe_patched, copy_value_singletons, fire_const_added, iter_inline_ok,
-    iter_inline_ok_for, mark_global_def_hook, name_runtime_class_if_anonymous, runtime_class_new,
-    runtime_define_method, runtime_define_singleton_method, runtime_set_visibility,
+    iter_inline_ok_for, mark_global_def_hook, name_runtime_class_if_anonymous,
+    register_singleton_surrogate, runtime_class_new, runtime_define_method,
+    runtime_define_singleton_method, runtime_replace_method, runtime_set_visibility,
     send_super_dynamic, value_extends, with_pending_defs,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};

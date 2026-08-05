@@ -142,6 +142,14 @@ pub struct ClassInfo {
     /// redefine -- resolving against the final table made the alias call
     /// itself and the compiled program abort on a native stack overflow).
     pub method_history: Vec<(String, bool, u32, ScopeId)>,
+    /// Superseded instance-method bodies that must still be COMPILED: the
+    /// non-final `method_history` rows of a name whose redefinition timeline
+    /// is observable (a pre-reopen call, a `method_added` hook). Codegen
+    /// emits each as a mangled inherent method beside the live one, so the
+    /// positional installs (`HirNode::MethodRedefine`) and the boot install
+    /// of the first body ([`Compiler::positional_redefs`]) have a trampoline
+    /// target. See `analyze::redefs`.
+    pub redef_scopes: Vec<ScopeId>,
     /// Names from a `module_function :m` whose `m` is INHERITED rather than
     /// defined in this body -- recorded by `analyze::register_class` from a
     /// `HirNode::ModuleFunction` and resolved by `mro::resolve_module_functions`
@@ -285,6 +293,13 @@ pub struct Scope {
     /// need to be distinct once mixins/plain inheritance-without-override
     /// exist.
     pub defining_class: ClassId,
+    /// The singleton-class SURROGATE this body was lexically written in, when
+    /// the `def` sat in a constant-bearing `class << self` body
+    /// (`Hir::singleton_body_defs`). Codegen's method-emission `Ctx` uses it
+    /// over `defining_class` for everything lexical -- bare-constant
+    /// resolution, `Module.nesting` -- while `class`/`defining_class` keep
+    /// owning dispatch, ivars, and `super`. `None` for every other method.
+    pub lexical_home: Option<ClassId>,
     /// The `HirNode::DefMethod` this scope was registered from -- its span
     /// gives the `def` keyword's source line, which is what a backtrace
     /// frame shows until the first statement stamps a line (and what an
@@ -439,6 +454,14 @@ pub struct Compiler {
     /// answers "could this name change under us?", and over-answering `true`
     /// costs speed, not correctness.
     pub runtime_patches: std::collections::HashSet<String>,
+    /// Boot-time overlay installs for observable redefinition timelines:
+    /// `(class, name, first_scope)`. The static tables carry the FINAL body
+    /// (last-`def`-wins, so every compile-time fact -- super inlining,
+    /// materialization -- is untouched); the FIRST body is installed into
+    /// the runtime overlay before the first statement runs, and each later
+    /// redefinition re-installs at its own document position
+    /// (`HirNode::MethodRedefine`). Filled by `analyze::redefs`.
+    pub positional_redefs: Vec<(ClassId, String, ScopeId)>,
     /// One of those sites names its method with something other than a literal
     /// (`Node.send(:define_method, computed)`, a bare `private`), so NO name is
     /// safe to fold. Kept apart from the set above because it is the expensive
@@ -662,6 +685,7 @@ impl Compiler {
                 runtime_undefs: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
                 method_history: Vec::new(),
+                redef_scopes: Vec::new(),
                 pending_module_functions: Vec::new(),
                 builtin_aliases: Vec::new(),
                 visibility_overrides: Vec::new(),
@@ -692,6 +716,7 @@ impl Compiler {
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
             runtime_patches: std::collections::HashSet::new(),
+            positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
             class_index: std::cell::RefCell::new(HashMap::new()),
             indexed_upto: std::cell::Cell::new(0),
@@ -927,6 +952,14 @@ impl Compiler {
         self.box_surrogates.get(&box_id).copied()
     }
 
+    /// Whether `cid` is a singleton-class SURROGATE -- the module a
+    /// constant-bearing `class << self` body registers under the reserved
+    /// name (see `lower::defs`). Display name and reflection identity come
+    /// from `fq_name`'s `#<Class:M>` special case.
+    pub fn is_singleton_surrogate(&self, cid: ClassId) -> bool {
+        self.class(cid).name == "#<Class:self>"
+    }
+
     /// The `(target, holder)` pairs a call site at `node` must consult
     /// before ordinary dispatch, MOST RECENTLY activated first -- real
     /// Ruby's own precedence when two `using`s refine the same class.
@@ -1106,6 +1139,14 @@ impl Compiler {
         {
             return name.clone();
         }
+        // A singleton-class surrogate (a constant-bearing `class << self`
+        // body -- see `lower::defs`) displays as CRuby's `#<Class:M>`, not a
+        // `M::...` path: it is not reachable as a constant at all.
+        if self.class(cid).name == "#<Class:self>"
+            && let Some(p) = self.class(cid).lexical_parent
+        {
+            return format!("#<Class:{}>", self.fq_name(p));
+        }
         let mut segments = vec![self.class(cid).name.clone()];
         let mut cur = self.class(cid).lexical_parent;
         while let Some(p) = cur {
@@ -1180,6 +1221,7 @@ impl Compiler {
             runtime_undefs: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
             method_history: Vec::new(),
+            redef_scopes: Vec::new(),
             pending_module_functions: Vec::new(),
             builtin_aliases: Vec::new(),
             visibility_overrides: Vec::new(),

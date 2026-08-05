@@ -177,6 +177,14 @@ pub struct Hir {
     /// makes those slots invisible to `instance_variables` while `Struct`'s own
     /// shared protocol still reaches them by index.
     pub struct_members: std::collections::HashMap<NodeId, Vec<String>>,
+    /// `DefMethod` nodes written inside a CONSTANT-BEARING `class << self`
+    /// body. Their lexical home is the singleton class -- a bare constant
+    /// there resolves against the singleton's surrogate first, and
+    /// `Module.nesting` reports it (`analyze::register_method` sets
+    /// `Scope::lexical_home` from this). Defs in a constant-free singleton
+    /// body stay untagged: with no surrogate there is nothing to resolve
+    /// differently.
+    pub singleton_body_defs: std::collections::HashSet<NodeId>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.
@@ -1812,6 +1820,20 @@ pub enum HirNode {
         /// the last definition in a class, which is the common case.
         pending: Vec<String>,
     },
+    /// A method REDEFINITION applied at its document position. Ruby installs
+    /// each `def` where it stands, so code running between two same-name
+    /// `def`s dispatches to the FIRST body; zeo's static tables carry only
+    /// the last-def-wins winner. `analyze::redefs` splices one of these at
+    /// each superseded redefinition's position: codegen installs the named
+    /// scope's compiled trampoline into the runtime overlay there, and a
+    /// boot-time install of the FIRST body covers the window before it.
+    /// Never produced by lowering.
+    MethodRedefine {
+        class: u32,
+        name: String,
+        /// The `ScopeId` (as raw index) whose body becomes current here.
+        scope: u32,
+    },
     /// `refine Target do ... end` in a module body. The block's `def`s lower
     /// into a HOLDER module (a `ClassDef` pushed immediately before this
     /// marker, named `#refinement:Target` so it claims no Ruby constant);
@@ -2373,6 +2395,7 @@ impl HirNode {
             // the class and runs as an ordinary send at its position, which is
             // exactly what the runtime-class-body rewrite wants of it.
             | HirNode::DefHook { .. }
+            | HirNode::MethodRedefine { .. }
             | HirNode::FlipFlop { .. } => false,
         }
     }
@@ -2638,6 +2661,7 @@ impl HirNode {
             }
             | HirNode::Using(_)
             | HirNode::DefHook { .. }
+            | HirNode::MethodRedefine { .. }
             | HirNode::Undef(_)
             | HirNode::AliasGlobal(_, _)
             | HirNode::AliasMethod {

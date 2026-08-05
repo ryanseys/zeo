@@ -11,6 +11,7 @@
 pub(crate) mod def_hooks;
 mod locals;
 pub(crate) mod mro;
+pub(crate) mod redefs;
 pub(crate) mod share;
 
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
@@ -123,6 +124,11 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // already exist (same "defined earlier in the file" rule `superclass`
     // resolution already enforces). See `mro`'s module docs.
     mro::materialize(&mut compiler, &main_statements)?;
+
+    // Which redefinition timelines are observable and must be applied at
+    // their document position. Before `def_hooks::resolve`: its `at` bumps
+    // are what order a redefinition's install before its own hook report.
+    redefs::resolve(&mut compiler);
 
     // Which compiled definitions announce themselves. Runs here because it
     // needs `class_methods` flattened over the ancestry to see the hook, and
@@ -939,6 +945,7 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
@@ -2771,10 +2778,23 @@ fn register_method(
     // reuses the same node, so the alias stays an alias all the way down.
     let alias_of = def_node.and_then(|n| compiler.hir.alias_origin(n).map(str::to_string));
     let accessor = accessor_shape(&compiler.hir, def_node, &params, &body);
+    // A def from a constant-bearing `class << self` body: its lexical home
+    // is the singleton's surrogate, registered just before it in the same
+    // body walk (lowering pushes the surrogate `ClassDef` first).
+    let lexical_home = def_node
+        .filter(|n| compiler.hir.singleton_body_defs.contains(n))
+        .and_then(|_| {
+            compiler
+                .classes
+                .iter()
+                .position(|c| c.lexical_parent == Some(defining_class) && c.name == "#<Class:self>")
+        })
+        .map(|i| ClassId(i as u32));
     Ok(compiler.push_scope(Scope {
         name,
         class: Some(owner),
         defining_class,
+        lexical_home,
         def_node,
         alias_of,
         params,
@@ -3106,6 +3126,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -3382,6 +3403,7 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
+        | HirNode::MethodRedefine { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
