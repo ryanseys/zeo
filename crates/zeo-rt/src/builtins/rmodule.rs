@@ -318,28 +318,27 @@ ruby_class! {
             };
             let mut cur = const_lookup(cid, head, head_search)
                 .ok_or_else(|| name_error!("uninitialized constant {head}"))?;
-            // A miss past the head is reported qualified by the scope that
-            // failed to answer, not by the bare segment -- CRuby's wording.
+            // A miss past the head dispatches `const_missing` on the scope
+            // that failed to answer; the default hook reports it qualified
+            // by that scope, CRuby's wording.
             for seg in rest.split("::") {
                 let RubyValue::Class(scope) = cur else {
                     return Err(type_error!("{} is not a class/module", cur.inspect_string()));
                 };
-                cur = const_lookup(scope, seg, rest_search).ok_or_else(|| {
-                    let owner = crate::dispatch::class_name(scope)
-                        .unwrap_or_else(|| "Object".to_string());
-                    name_error!("uninitialized constant {owner}::{seg}")
-                })?;
+                cur = match const_lookup(scope, seg, rest_search) {
+                    Some(v) => v,
+                    None => crate::dispatch::const_miss(scope, seg)?,
+                };
             }
             return Ok(cur);
         }
-        const_lookup(cid, &name, inherit_search(inherit)).ok_or_else(|| {
-            // Qualified by the RECEIVER, which is what tells a miss on
-            // `Foo.const_get(:X)` apart from one on a bare `X`.
-            match crate::dispatch::class_name(cid) {
-                Some(owner) if cid.0 != 0 => name_error!("uninitialized constant {owner}::{name}"),
-                _ => name_error!("uninitialized constant {name}"),
-            }
-        })
+        // A single-segment miss dispatches `const_missing` on the receiver;
+        // the default hook raises qualified by it, which is what tells a
+        // miss on `Foo.const_get(:X)` apart from one on a bare `X`.
+        match const_lookup(cid, &name, inherit_search(inherit)) {
+            Some(v) => Ok(v),
+            None => crate::dispatch::const_miss(cid, &name),
+        }
     }
     def "const_defined?" cfunc (recv, name, inherit?) {
         let name = const_name_arg(name)?;
@@ -883,10 +882,15 @@ ruby_class! {
     def "const_missing" (recv, name) {
         let name = const_name_arg(name)?;
         let cid = recv_cid(recv);
-        Err(match crate::dispatch::class_name(cid) {
-            Some(owner) if cid.0 != 0 => name_error!("uninitialized constant {owner}::{name}"),
-            _ => name_error!("uninitialized constant {name}"),
-        })
+        let qualified = match crate::dispatch::class_name(cid) {
+            Some(owner) if cid.0 != 0 => format!("uninitialized constant {owner}::{name}"),
+            _ => format!("uninitialized constant {name}"),
+        };
+        // Carries `#name` and `#receiver` exactly as the pre-hook baked
+        // raise did -- every const miss now funnels through this row.
+        Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
+            crate::dispatch::make_name_error(qualified, &name, recv.clone()),
+        )))
     }
     // `Module#const_source_location` -- `nil` for a constant nobody defines,
     // `[file, line]` for one a Ruby assignment created, and `[]` for one that

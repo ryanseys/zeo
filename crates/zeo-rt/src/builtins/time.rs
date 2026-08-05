@@ -324,16 +324,27 @@ fn offset_str(off: i32, with_seconds: bool) -> String {
 ///
 /// `left` is sticky (any `-` among the flags) while `pad` is last-wins, which
 /// is what makes `%-_z` (` -000`) and `%_-z` (`-0000`) differ.
-fn offset_str_flagged(off: i32, colons: usize, pad: Option<char>, left: bool, gmt: bool) -> String {
+fn offset_str_flagged(
+    off: i32,
+    colons: usize,
+    pad: Option<char>,
+    left: bool,
+    gmt: bool,
+    width: Option<usize>,
+) -> String {
     let negative = off < 0 || (gmt && left);
     let a = off.abs();
     let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
     let signed_h = if negative { -(h as i64) } else { h as i64 };
     let space = pad == Some('_');
+    // An explicit `%<w>z` width widens the HOUR field (the minutes keep
+    // their two digits), zero-filled through the same signed macro:
+    // `%10z` on UTC is `+000000000`.
+    let hw = width.map_or(3, |w| w.saturating_sub(2).max(3));
     let mut out = if space {
-        format!("{signed_h:+3}")
+        format!("{signed_h:+hw$}")
     } else {
-        format!("{signed_h:+03}")
+        format!("{signed_h:+0hw$}")
     };
     // An offset smaller than an hour has no sign of its own to carry (`-0` is
     // `0`), so a negative one is written over the field's rendered `+`.
@@ -523,6 +534,9 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         }
         // Flags, then an optional field WIDTH, then the directive. `:` flags
         // only precede `z` (`%:z` etc.); `^`/`#` upcase/swapcase the result.
+        // `raw` keeps everything consumed after the `%`, so a combination
+        // ruby itself refuses (a width after a `:` flag) can be re-emitted
+        // verbatim.
         let mut pad: Option<char> = None;
         let mut colons = 0usize;
         let (mut upcase, mut swapcase) = (false, false);
@@ -530,6 +544,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         // sign flip independently of which pad character came last, which is
         // what makes `%-_z` and `%_-z` differ.
         let mut left = false;
+        let mut raw = String::new();
         while let Some(&f) = chars.peek() {
             match f {
                 '-' | '0' | '_' => {
@@ -541,17 +556,28 @@ fn strftime(t: &RTime, fmt: &str) -> String {
                 ':' => colons += 1,
                 _ => break,
             }
+            raw.push(f);
             chars.next();
         }
         let mut width: Option<usize> = None;
         while let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
             width = Some(width.unwrap_or(0) * 10 + d as usize);
+            raw.push(char::from_digit(d, 10).unwrap());
             chars.next();
         }
         let Some(d) = chars.next() else {
             out.push('%');
+            out.push_str(&raw);
             break;
         };
+        // A width AFTER a colon flag is not a directive ruby accepts: `%:5z`
+        // stays verbatim (the 13,800-case oracle sweep pins this boundary).
+        if colons > 0 && width.is_some() {
+            out.push('%');
+            out.push_str(&raw);
+            out.push(d);
+            continue;
+        }
         // `num_pad` applies the flag to a numeric directive: `-` drops padding,
         // `_` pads with spaces, `0` with zeros, and with no flag the
         // directive's own default pad applies (an explicit `%<n>X` width
@@ -627,7 +653,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'S' => num(tm.tm_sec as i64, 2),
             'L' => frac(width.unwrap_or(3)),
             'N' => frac(width.unwrap_or(9)),
-            'z' => offset_str_flagged(c.offset, colons, pad, left, t.is_utc()),
+            'z' => offset_str_flagged(c.offset, colons, pad, left, t.is_utc(), width),
             'Z' => c.zone.clone(),
             'a' => DAY_NAMES[tm.tm_wday as usize][..3].to_string(),
             'A' => DAY_NAMES[tm.tm_wday as usize].to_string(),
@@ -635,14 +661,18 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'B' => MONTH_NAMES[tm.tm_mon as usize].to_string(),
             'p' => (if tm.tm_hour < 12 { "AM" } else { "PM" }).to_string(),
             'P' => (if tm.tm_hour < 12 { "am" } else { "pm" }).to_string(),
-            'u' => (if tm.tm_wday == 0 {
-                7
-            } else {
-                tm.tm_wday as i64
-            })
-            .to_string(),
-            'w' => (tm.tm_wday as i64).to_string(),
-            's' => t.sec().to_string(),
+            // Numeric like every other number directive (`%5u` zero-pads),
+            // just with a 1-digit natural width.
+            'u' => num(
+                if tm.tm_wday == 0 {
+                    7
+                } else {
+                    tm.tm_wday as i64
+                },
+                1,
+            ),
+            'w' => num(tm.tm_wday as i64, 1),
+            's' => num(t.sec(), 1),
             // The compound directives, in terms of the above.
             'F' => strftime(t, "%Y-%m-%d"),
             'T' | 'X' => strftime(t, "%H:%M:%S"),
@@ -650,6 +680,8 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'R' => strftime(t, "%H:%M"),
             'r' => strftime(t, "%I:%M:%S %p"),
             'c' => strftime(t, "%a %b %e %H:%M:%S %Y"),
+            // The VMS date, strftime.c's own recursive definition.
+            'v' => strftime(t, "%e-%^b-%4Y"),
             'n' => "\n".to_string(),
             't' => "\t".to_string(),
             '%' => "%".to_string(),
@@ -668,6 +700,25 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             piece = piece.to_uppercase();
         } else if fold_lower {
             piece = piece.to_lowercase();
+        }
+        // An explicit width right-pads STRING directives too (`%10a` ->
+        // "       Thu") -- space unless the `0` flag asked otherwise, `-`
+        // dropping the pad as everywhere. Numeric directives already
+        // consumed the width inside `num_pad`, so only the string/compound
+        // set takes the generic pad.
+        let string_directive = matches!(
+            d,
+            'a' | 'A' | 'b' | 'h' | 'B' | 'p' | 'P' | 'Z' | 'n' | 't' | '%'
+                | 'F' | 'T' | 'X' | 'D' | 'x' | 'R' | 'r' | 'c' | 'v'
+        );
+        if string_directive && !left {
+            if let Some(w) = width
+                && piece.chars().count() < w
+            {
+                let fill = if pad == Some('0') { '0' } else { ' ' };
+                let missing = w - piece.chars().count();
+                piece = format!("{}{piece}", fill.to_string().repeat(missing));
+            }
         }
         out.push_str(&piece);
     }

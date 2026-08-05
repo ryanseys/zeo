@@ -97,6 +97,10 @@ pub struct ProcData {
     /// beyond the word: codegen already has the span (it threads the same one
     /// into `#binding`), and the file is a literal in the generated source.
     location: Option<(&'static str, u32)>,
+    /// The Symbol this proc was DERIVED from (`:upcase.to_proc`, `&:name`) --
+    /// what makes `#inspect` render `#<Proc:0x...(&:upcase) (lambda)>`
+    /// instead of a source location. `None` for every other construction.
+    origin: Option<crate::Symbol>,
     /// `.frozen?` state -- Procs are freezable ordinary objects in Ruby
     /// (freezing one changes nothing observable beyond the flag: no mutating
     /// methods exist), and `dup`/`clone` follow the standard flag rule via
@@ -148,6 +152,7 @@ impl RProc {
             home: None,
             binding: None,
             location: None,
+            origin: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -169,6 +174,7 @@ impl RProc {
             home: None,
             binding: None,
             location: None,
+            origin: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -212,6 +218,7 @@ impl RProc {
             home: None,
             binding: None,
             location: None,
+            origin: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -272,6 +279,19 @@ impl RProc {
             data.location = Some((file, line));
         }
         self
+    }
+
+    /// Tag this proc as derived from a Symbol (see `ProcData::origin`).
+    pub fn with_symbol_origin(mut self, name: crate::Symbol) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.origin = Some(name);
+        }
+        self
+    }
+
+    /// The Symbol this proc was derived from, if any.
+    pub fn symbol_origin(&self) -> Option<crate::Symbol> {
+        self.0.origin
     }
 
     /// Where this Proc was written, if codegen supplied it.
@@ -424,6 +444,7 @@ impl RProc {
             home: self.0.home.clone(),
             binding: self.0.binding.clone(),
             location: self.0.location,
+            origin: self.0.origin,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -438,6 +459,7 @@ impl RProc {
             home: self.0.home.clone(),
             binding: self.0.binding.clone(),
             location: self.0.location,
+            origin: self.0.origin,
             frozen: std::sync::atomic::AtomicBool::new(frozen),
         }))
     }

@@ -247,6 +247,15 @@ struct Ctx<'a> {
     /// than a `def`. A BARE `super` is an error in the first and ordinary in
     /// the second -- see `call::super_calls::emit_super`.
     defined_by_define_method: bool,
+    /// The frame-label BASE at the position where a `define_method` was
+    /// WRITTEN -- ruby labels its body as the block it literally is
+    /// (`block in <class:Named>`, `block (2 levels) in <main>`), never after
+    /// the method it installs. Captured by `expr`'s `DefMethod` arm before
+    /// `current_method` is overwritten (which would make
+    /// `enclosing_frame_label` answer the installed method); cleared for a
+    /// real `def`, whose frame IS the method. Read by `procs`' frame-label
+    /// emission.
+    lexical_frame_label: Option<String>,
 }
 
 /// The local-type map a scope emits under, given its `binding_names`. An
@@ -514,14 +523,35 @@ pub(crate) fn scope_frame_guard(
         return quote! {};
     };
     let sep = if class_method { "." } else { "#" };
-    let label = format!(
-        "{}{sep}{}",
-        compiler.fq_name(scope.defining_class),
-        scope.name
-    );
+    // A `define_method` body is a BLOCK, and ruby labels its frame as one --
+    // `block in <class:Named>` -- never after the method it installs. A
+    // static `DefMethod` scope always sits directly in a class/module body
+    // (a nested one compiles to the runtime path, labeled in `procs`).
+    let label = if scope_is_define_method(compiler, scope) {
+        let kind = if compiler.class(scope.defining_class).is_module {
+            "module"
+        } else {
+            "class"
+        };
+        format!(
+            "block in <{kind}:{}>",
+            compiler.leaf_name(scope.defining_class)
+        )
+    } else {
+        format!(
+            "{}{sep}{}",
+            compiler.fq_name(scope.defining_class),
+            scope.name
+        )
+    };
     // The `def`'s `end` line, `TracePoint`'s `:return` lineno; a scope
     // located only through its body (no `def_node`) stays 0 = untraced.
     let end_line = scope.def_node.map_or(0, |n| source_end_line(compiler, n));
+    // A scope that MENTIONS an svar (`$~`/`$1`/`Regexp.last_match`) gets its
+    // own frame-local `$~` slot, CRuby's special-variable rule: a callee's
+    // match is invisible to the caller. Blocks share their method's (no
+    // guard of their own -- see `lastmatch`'s module docs).
+    let svar = scope_mentions_svars(compiler, scope).then(|| quote! { , zeo_rt::svar_scope() });
     // The stack probe rides the prologue, INSIDE the guard's initializer so
     // this stays one statement (`zeo_tramp!` splices it as `$frame:stmt`):
     // every compiled method checks its depth against the execution context's
@@ -530,9 +560,37 @@ pub(crate) fn scope_frame_guard(
     quote! {
         let __frame = {
             zeo_rt::stack_check()?;
-            zeo_rt::FrameGuard::push(#file, #label, #line, #end_line)
+            (zeo_rt::FrameGuard::push(#file, #label, #line, #end_line) #svar)
         };
     }
+}
+
+/// Whether `scope`'s body (nested blocks included -- they share the method's
+/// svar scope) touches the `$~` family: a `LastMatchRef` read, a `$~` write,
+/// or a `Regexp.last_match` call. Decides `scope_frame_guard`'s svar-scope
+/// push; a false positive costs one dead scope push, a false negative would
+/// leak a match to the caller, so the `last_match` check ignores the
+/// receiver.
+fn scope_mentions_svars(compiler: &Compiler, scope: &crate::compiler::Scope) -> bool {
+    fn walk(hir: &crate::hir::Hir, id: crate::hir::NodeId, found: &mut bool) {
+        if *found {
+            return;
+        }
+        match &hir[id] {
+            crate::hir::HirNode::LastMatchRef(_) => *found = true,
+            crate::hir::HirNode::GlobalWrite(name, _) if name == "$~" => *found = true,
+            crate::hir::HirNode::Call { name, .. } if name == "last_match" => *found = true,
+            _ => hir[id].for_each_child(&mut |c| walk(hir, c, found)),
+        }
+    }
+    let mut found = false;
+    for &n in &scope.body {
+        walk(&compiler.hir, n, &mut found);
+        if found {
+            break;
+        }
+    }
+    found
 }
 
 /// The frame label of the scope ENCLOSING the current emission position --
@@ -2024,6 +2082,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         shared_body: false,
         runtime_super_params: None,
         defined_by_define_method: false,
+        lexical_frame_label: None,
         block_depth: 0,
         has_blk_binding: false,
     };
@@ -2423,6 +2482,7 @@ pub(crate) fn emit_class_body_site(
         shared_body: false,
         runtime_super_params: None,
         defined_by_define_method: false,
+        lexical_frame_label: None,
         block_depth: 0,
         has_blk_binding: false,
     };
@@ -2749,6 +2809,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
+        lexical_frame_label: None,
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &no_captures.locals,
@@ -2791,6 +2852,13 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         || captures::body_contains_escaping_return(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, body);
     let frame = scope_frame_guard(compiler, scope, true);
+    // A class method's traced `self` is the class object itself.
+    let self_note = scope.class.map(|c| {
+        let id = c.0;
+        quote! {
+            zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)));
+        }
+    });
     // `check_ints` after the frame push: the method-prologue interruption
     // checkpoint (pairs with the back-edge check in `loops`), so recursion-
     // driven busy work is killable even with no native loop in sight.
@@ -2798,6 +2866,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         #[allow(unused_variables)]
         pub fn #method_ident(#sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #frame
+            #self_note
             zeo_rt::check_ints()?;
             #body_tokens
         }
@@ -3020,6 +3089,7 @@ fn emit_value_self_method_fn(
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
+        lexical_frame_label: None,
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,
@@ -3067,6 +3137,7 @@ fn emit_value_self_method_fn(
         #[allow(unused_variables)]
         pub fn #method_ident(__self: zeo_rt::RubyValue #sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #frame
+            zeo_rt::trace_frame_self(|| __self.clone());
             zeo_rt::check_ints()?;
             #body_tokens
         }
@@ -3113,6 +3184,7 @@ pub(crate) fn emit_instance_method_body(
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
+        lexical_frame_label: None,
         local_types: binding_scope_local_types(
             binding_names.as_ref(),
             &method_captures.locals,
@@ -3176,7 +3248,13 @@ pub(crate) fn emit_instance_method_body(
     // checks on each iteration (`codegen::loops`, `codegen::call::procs`).
     let preamble = (!frameless).then(|| {
         let frame = scope_frame_guard(compiler, scope, false);
-        quote! { #frame zeo_rt::check_ints()?; }
+        // The armed-only `TracePoint#self` note: boxes the receiver ONLY
+        // while a trace hook is on (one relaxed load otherwise).
+        quote! {
+            #frame
+            zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::Object(Self::new_handle(self.clone())));
+            zeo_rt::check_ints()?;
+        }
     });
     InstanceMethodBody { preamble, body }
 }

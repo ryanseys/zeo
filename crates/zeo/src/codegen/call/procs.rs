@@ -65,7 +65,22 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
         panic!("internal error: expected a Block node at block_id")
     };
     let loc = crate::codegen::source_location(cx.compiler, block_id);
-    emit_proc_or_lambda_value(cx, params, body, false, false, loc)
+    // A re-homed block (`recv.instance_eval { }`) always captures `self`,
+    // even when its body never mentions one: `instance_eval` rebinding needs
+    // the self slot, and the block's call sites read the runtime `self`'s
+    // class for the `protected` barrier (see `Hir::rehomed_blocks`).
+    let force_self = cx.compiler.hir.rehomed_blocks.contains(&block_id);
+    // A computed-name `define_method` block is a METHOD body at run time:
+    // `super` inside it resolves through the runtime method-frame stack
+    // (`emit_super_dynamic`), and a bare `super` raises ruby's define_method
+    // refusal -- the same two markers the literal `DefMethod` form carries.
+    if cx.compiler.hir.dynamic_define_method_blocks.contains(&block_id) {
+        let mut dm_cx = cx.clone();
+        dm_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+        dm_cx.defined_by_define_method = true;
+        return emit_proc_or_lambda_value_with(&dm_cx, params, body, false, false, loc, force_self);
+    }
+    emit_proc_or_lambda_value_with(cx, params, body, false, false, loc, force_self)
 }
 /// `-> (x) { ... }` / `lambda { ... }` (`HirNode::Lambda`) -- see that
 /// variant's docs. Shares its ENTIRE construction with `emit_proc_value`
@@ -94,6 +109,21 @@ pub(crate) fn emit_proc_or_lambda_value(
     is_lambda: bool,
     method_body: bool,
     proc_loc: Option<(String, u32)>,
+) -> TokenStream {
+    emit_proc_or_lambda_value_with(cx, params, body, is_lambda, method_body, proc_loc, false)
+}
+
+/// [`emit_proc_or_lambda_value`] with the self capture forcible (`force_self`
+/// -- a re-homed block's construction, see [`emit_proc_value`]).
+#[allow(clippy::too_many_arguments)]
+fn emit_proc_or_lambda_value_with(
+    cx: &Ctx,
+    params: &Params,
+    body: &[NodeId],
+    is_lambda: bool,
+    method_body: bool,
+    proc_loc: Option<(String, u32)>,
+    force_self: bool,
 ) -> TokenStream {
     let block_caps =
         crate::codegen::captures::block_captures(cx.compiler, params, body, cx.current_class);
@@ -153,7 +183,7 @@ pub(crate) fn emit_proc_or_lambda_value(
     // RubyValue" rule this needs, so it isn't re-derived. A method-body lambda
     // always takes a self parameter (the runtime install rebinds it per call),
     // so it needs the default even when the body itself never mentions `self`.
-    let needs_self = block_caps.self_captured;
+    let needs_self = block_caps.self_captured || force_self;
     // `__self_default` is the closure's stored `self_val`; every shape that
     // takes a `&self` closure parameter needs it -- a method-body lambda, a
     // self-capturing block, AND an ordinary proc/lambda promoted to the
@@ -353,7 +383,10 @@ pub(crate) fn emit_proc_or_lambda_value(
         .find_map(|&n| crate::codegen::source_location(cx.compiler, n))
     {
         Some((file, line)) => {
-            let base = crate::codegen::enclosing_frame_label(cx);
+            let base = cx
+                .lexical_frame_label
+                .clone()
+                .unwrap_or_else(|| crate::codegen::enclosing_frame_label(cx));
             let label = match proc_cx.block_depth {
                 // Depth 0 is a `def`'s own body -- the method IS the frame.
                 0 => base,

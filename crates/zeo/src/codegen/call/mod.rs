@@ -728,6 +728,9 @@ fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenS
     quote! {
         {
             let __iter_frame = zeo_rt::synthetic_c_frame("Hash#each");
+            // The inlined loop marks the hash under iteration exactly as the
+            // runtime row does, so inserting a new key raises mid-`each`.
+            let __iter_guard = zeo_rt::hash_iter_guard(&__iter_h);
             let __iter_pairs = zeo_rt::hash_pairs_snapshot(&__iter_h);
             let mut __iter_i: usize = 0;
             #outer: loop {
@@ -1079,8 +1082,15 @@ pub(super) fn emit_kwargs_trailing_hash(cx: &Ctx, kwargs: &[KwArg]) -> Option<To
         };
         quote! { (#ke, #ve) }
     });
+    // kw-marked: the callee side reads the mark wherever keyword-vs-
+    // positional-Hash changes behavior (`**nil`'s refusal, Struct member
+    // binding) -- CRuby's `rb_keyword_given_p` carried on the value.
     Some(quote! {
-        zeo_rt::RubyValue::Hash(zeo_rt::hash_new(vec![#(#pairs),*]))
+        {
+            let __kw = zeo_rt::hash_new(vec![#(#pairs),*]);
+            zeo_rt::hash_mark_kwargs(&__kw);
+            zeo_rt::RubyValue::Hash(__kw)
+        }
     })
 }
 pub(super) fn emit_block_option(
@@ -2659,6 +2669,32 @@ fn dispatch(
         };
         if !user_defined {
             let copy_frozen = name == "clone";
+            // `clone` carries the singleton class (methods + extended
+            // modules); `dup` drops it -- the same split the Kernel rows
+            // make, which this fast path must not lose.
+            if name == "clone" {
+                return match infer(cx, recv_id) {
+                    TyKind::Object(_) => quote! {
+                        {
+                            let __orig: zeo_rt::RObj = (#recv_expr).clone();
+                            let __copy = zeo_rt::RubyObject::dup_object(&*__orig, true);
+                            zeo_rt::copy_value_singletons(
+                                &zeo_rt::RubyValue::Object(__orig),
+                                &zeo_rt::RubyValue::Object(__copy.clone()),
+                            );
+                            zeo_rt::RubyValue::Object(__copy)
+                        }
+                    },
+                    _ => quote! {
+                        {
+                            let __orig = #recv_expr;
+                            let __copy = __orig.dup_value(true)?;
+                            zeo_rt::copy_value_singletons(&__orig, &__copy);
+                            __copy
+                        }
+                    },
+                };
+            }
             return match infer(cx, recv_id) {
                 TyKind::Object(_) => {
                     // Boxed result, like `freeze`'s -- the copy's static
@@ -3640,25 +3676,32 @@ fn dispatch(
         // inline cache; see `zeo_rt::CallSite`. A SHARED body gets none -- see
         // `Ctx::shared_body`.
         let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
-        let dyn_call = if cx.shared_body {
-            quote! {
-                zeo_rt::send_value_explicit_in(#__bx,
-                    &(#recv_expr),
-                    #name_expr,
-                    &[#(#arg_exprs,)* #(#kw_hash,)*],
-                    #block_value,
-                    #caller,
-                )
+        // A runtime caller class (re-homed `self`) can't fill a per-site
+        // cache -- its vetting varies per call -- so it takes the uncached
+        // entry, like a shared body.
+        let dyn_call = match caller {
+            visibility::Caller::Static(c) if !cx.shared_body => {
+                let site = crate::codegen::pooled_call_site(c);
+                quote! {
+                    zeo_rt::send_value_cached(#site, #__bx,
+                        &(#recv_expr),
+                        #name_expr,
+                        &[#(#arg_exprs,)* #(#kw_hash,)*],
+                        #block_value,
+                    )
+                }
             }
-        } else {
-            let site = crate::codegen::pooled_call_site(caller);
-            quote! {
-                zeo_rt::send_value_cached(#site, #__bx,
-                    &(#recv_expr),
-                    #name_expr,
-                    &[#(#arg_exprs,)* #(#kw_hash,)*],
-                    #block_value,
-                )
+            caller => {
+                let caller_expr = caller.expr();
+                quote! {
+                    zeo_rt::send_value_explicit_in(#__bx,
+                        &(#recv_expr),
+                        #name_expr,
+                        &[#(#arg_exprs,)* #(#kw_hash,)*],
+                        #block_value,
+                        #caller_expr,
+                    )
+                }
             }
         };
         return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
@@ -3699,7 +3742,7 @@ fn dispatch(
         // Keyword args ride as one trailing Hash (the G2 convention).
         let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
         let block_value = emit_block_option(cx, block, block_arg);
-        let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
+        let caller = visibility::caller_class(cx, recv_id, bypass_visibility).expr();
         return quote! {
             zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
                 &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
@@ -3730,15 +3773,30 @@ fn dispatch(
     // The general dynamic dispatch, and the one the object-graph benchmarks
     // spend a third of their time in -- so it carries a per-site inline cache
     // (`zeo_rt::CallSite`). Every other dynamic entry point stays uncached.
-    let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
-    let site = crate::codegen::pooled_call_site(caller);
-    quote! {
-        zeo_rt::catch_break(zeo_rt::send_value_cached(#site, #__bx,
-            &#recv_boxed,
-            #name_expr,
-            &[#(#arg_exprs,)* #(#kw_hash,)*],
-            #block_value,
-        ))?
+    match visibility::caller_class(cx, recv_id, bypass_visibility) {
+        visibility::Caller::Static(c) => {
+            let site = crate::codegen::pooled_call_site(c);
+            quote! {
+                zeo_rt::catch_break(zeo_rt::send_value_cached(#site, #__bx,
+                    &#recv_boxed,
+                    #name_expr,
+                    &[#(#arg_exprs,)* #(#kw_hash,)*],
+                    #block_value,
+                ))?
+            }
+        }
+        caller => {
+            let caller_expr = caller.expr();
+            quote! {
+                zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
+                    &#recv_boxed,
+                    #name_expr,
+                    &[#(#arg_exprs,)* #(#kw_hash,)*],
+                    #block_value,
+                    #caller_expr,
+                ))?
+            }
+        }
     }
 }
 

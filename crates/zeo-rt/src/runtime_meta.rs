@@ -145,8 +145,8 @@ struct OverlayMaps {
     classes: RwLock<FMap<u32, OverlayEntry>>,
     /// Per-object singleton methods, keyed by the receiver's `Arc` DATA address
     /// (object identity). Not carried across `dup` -- a fresh `Arc` is a fresh
-    /// address -- matching Ruby (`dup` drops singletons). `clone`'s
-    /// singleton-carry is a documented fast-follow.
+    /// address -- matching Ruby (`dup` drops singletons); `clone` re-keys the
+    /// tables onto the copy via [`copy_value_singletons`].
     singletons: RwLock<FMap<usize, FMap<Symbol, MethodImpl>>>,
     /// Singleton methods on a NON-object heap value (`def SOME_ARRAY.[](i)`),
     /// keyed the same way. Separate from `singletons` because there is no
@@ -591,6 +591,45 @@ pub fn value_singleton_method(recv: &RubyValue, name: Symbol) -> Option<RProc> {
     let key = value_identity(recv)?;
     let s = maps().value_singletons.read().unwrap();
     s.get(&key).and_then(|t| t.get(&name)).cloned()
+}
+
+/// `Object#clone`'s singleton-class carry: every method installed directly
+/// on `from`, and every module `extend`ed onto it, is re-keyed under `to`'s
+/// identity (`dup` deliberately never calls this -- it drops the singleton
+/// class, Ruby's rule). The copy is pinned exactly as the original was, so
+/// its identity key stays sound for its lifetime.
+pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
+    if !is_live() {
+        return;
+    }
+    let (Some(fk), Some(tk)) = (value_identity(from), value_identity(to)) else {
+        return;
+    };
+    let mut copied = false;
+    if let Some(t) = maps().singletons.read().unwrap().get(&fk).cloned()
+        && !t.is_empty()
+    {
+        maps().singletons.write().unwrap().insert(tk, t);
+        copied = true;
+    }
+    if let Some(t) = maps().value_singletons.read().unwrap().get(&fk).cloned()
+        && !t.is_empty()
+    {
+        maps().value_singletons.write().unwrap().insert(tk, t);
+        copied = true;
+    }
+    // `extended` keys through `extend_key`, which for these (non-Class)
+    // receivers IS `value_identity` -- a Class never comes through `clone`'s
+    // object arm.
+    if let Some(mods) = maps().extended.read().unwrap().get(&fk).cloned()
+        && !mods.is_empty()
+    {
+        maps().extended.write().unwrap().insert(tk, mods);
+        copied = true;
+    }
+    if copied {
+        maps().pinned.write().unwrap().insert(tk, to.clone());
+    }
 }
 
 // ---------------------------------------------------------------------------

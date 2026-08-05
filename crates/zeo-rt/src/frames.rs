@@ -324,6 +324,13 @@ pub fn current_frame() -> Option<Frame> {
     with_frames(|f| f.last().copied())
 }
 
+/// How many frames are live -- the depth key for `tracepoint`'s armed-only
+/// self notes.
+#[cfg(feature = "ext-tracepoint")]
+pub fn depth() -> usize {
+    with_frames(<[Frame]>::len)
+}
+
 /// `Kernel#__method__` / `#__callee__`: the innermost frame's METHOD name,
 /// with the `Class#` qualifier the backtrace label carries stripped off.
 /// `None` at the top level and inside a block, which is what ruby answers

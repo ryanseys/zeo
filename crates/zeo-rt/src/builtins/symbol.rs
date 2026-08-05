@@ -141,7 +141,7 @@ pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
         -2,
         true,
     );
-    RubyValue::Proc(p)
+    RubyValue::Proc(p.with_symbol_origin(name))
 }
 
 ruby_class! {

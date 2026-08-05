@@ -160,7 +160,8 @@ pub(super) fn try_collection_dispatch(
                     if __recv.is_frozen() {
                         return Err(zeo_rt::Signal::Raise(#frozen_error));
                     }
-                    zeo_rt::hash_set(&__recv, __key, __val)
+                    // Checked: adding a NEW key mid-iteration raises.
+                    zeo_rt::hash_set_checked(&__recv, __key, __val)?
                 }
             }
         }

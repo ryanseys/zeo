@@ -134,6 +134,18 @@ pub struct Hir {
     /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
     /// codegen routes these through `send_value_vcall_in`.
     pub vcall_nodes: std::collections::HashSet<NodeId>,
+    /// Literal blocks handed to a RE-HOMING call (`recv.instance_eval { }` and
+    /// the exec/class_eval family): their `self` becomes the receiver at run
+    /// time, so codegen forces the self capture (`procs`) and their call
+    /// sites ask the runtime `self`'s class the `protected` question instead
+    /// of baking the lexical one (`visibility::caller_class`).
+    pub rehomed_blocks: std::collections::HashSet<NodeId>,
+    /// Literal blocks on a COMPUTED-name `define_method(name) { }` call --
+    /// the literal-symbol form desugars to `DefMethod` and never gets here.
+    /// The block body IS a method body at run time, so `super` inside it
+    /// resolves through the runtime method-frame stack and a BARE `super`
+    /// raises ruby's define_method refusal (see `procs::emit_proc_value`).
+    pub dynamic_define_method_blocks: std::collections::HashSet<NodeId>,
     /// `HashLit` nodes that are a `yield`'s KEYWORD arguments folded into one
     /// trailing hash, rather than a hash the source really wrote. The two are
     /// the same shape but not the same value: `yield(1, **h)` with an empty `h`

@@ -217,13 +217,15 @@ ruby_class! {
 ///     #<Proc:0x00000001234 file.rb:4 (lambda)>
 ///     #<Proc:0x00000001234 (lambda)>        -- a runtime-internal proc
 ///
-/// A proc with no recorded location is CRuby's C-level Proc, which prints the
-/// identity alone. (CRuby also tags a `Symbol#to_proc` with `(&:name)`, which
-/// needs the symbol carried on the proc; one is reported here as an ordinary
-/// locationless lambda.)
+/// A proc with no recorded location is CRuby's C-level Proc, which prints
+/// the identity alone. A `Symbol#to_proc` carries its symbol and renders as
+/// `#<Proc:0x...(&:upcase) (lambda)>` -- no space before the `(&:`.
 fn proc_inspect(p: &crate::RProc) -> String {
     let lambda = if p.is_lambda() { " (lambda)" } else { "" };
     let addr = p.identity();
+    if let Some(sym) = p.symbol_origin() {
+        return format!("#<Proc:0x{addr:016x}(&:{}){lambda}>", sym.name());
+    }
     match p.location() {
         Some((file, line)) => format!("#<Proc:0x{addr:016x} {file}:{line}{lambda}>"),
         None => format!("#<Proc:0x{addr:016x}{lambda}>"),

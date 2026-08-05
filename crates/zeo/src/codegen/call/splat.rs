@@ -112,6 +112,7 @@ pub(super) fn emit_splat_call(
             // A literal keyword (`k: 1`) can never produce an empty hash, so
             // for a pairs-only list this check is simply never false.
             if !__kw.lock().is_empty() {
+                zeo_rt::hash_mark_kwargs(&__kw);
                 __args.push(zeo_rt::RubyValue::Hash(__kw));
             }
         }

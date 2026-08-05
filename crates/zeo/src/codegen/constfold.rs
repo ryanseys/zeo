@@ -270,6 +270,7 @@ mod tests {
                 shared_body: false,
                 runtime_super_params: None,
                 defined_by_define_method: false,
+                lexical_frame_label: None,
                 block_depth: 0,
                 has_blk_binding: false,
             }

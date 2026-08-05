@@ -780,6 +780,19 @@ fn dynamic_kwargs_binding(
     callee_frame: &TokenStream,
 ) -> (Option<TokenStream>, Vec<TokenStream>) {
     if params.keywords.is_empty() && params.keyword_rest.is_none() {
+        // `**nil` refuses a kw-marked trailing Hash (the caller wrote
+        // keywords) BEFORE the arity check -- the dynamic twin of
+        // `emit_call_args_to`'s literal-kwargs refusal. The raise runs with
+        // the callee's frame pushed, same as the binder below.
+        if params.no_keywords {
+            let preamble = quote! {
+                {
+                    #callee_frame
+                    zeo_rt::reject_marked_kwargs(args)?;
+                }
+            };
+            return (Some(preamble), Vec::new());
+        }
         return (None, Vec::new());
     }
     let req_names: Vec<&str> = params
@@ -901,6 +914,9 @@ fn plain_signature(params: &Params) -> bool {
         && params.post.is_empty()
         && params.keywords.is_empty()
         && params.keyword_rest.is_none()
+        // `**nil` needs the long form's kwargs preamble (the marked-hash
+        // refusal) even though it binds nothing.
+        && !params.no_keywords
 }
 
 /// The frame guard as a `zeo_tramp!` argument: the same `let __frame = ...`
@@ -2218,6 +2234,7 @@ mod tests {
             shared_body: false,
             runtime_super_params: None,
             defined_by_define_method: false,
+            lexical_frame_label: None,
             block_depth: 0,
             has_blk_binding: false,
         };

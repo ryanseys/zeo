@@ -686,6 +686,17 @@ fn needs_onig(source: &str) -> bool {
                 ) {
                     return true;
                 }
+                // A NAMED group -- `(?<name>` (not the `(?<=`/`(?<!`
+                // lookbehinds) or `(?'name'` -- flips Ruby's capture rule:
+                // plain `(...)` groups stop capturing entirely. Onig's ruby
+                // syntax implements that natively; the Rust engines number
+                // plain groups regardless, so these patterns go to onig.
+                if bytes.get(i + 2) == Some(&b'\'')
+                    || (bytes.get(i + 2) == Some(&b'<')
+                        && !matches!(bytes.get(i + 3), Some(b'=' | b'!')))
+                {
+                    return true;
+                }
             }
             _ => {}
         }
@@ -1433,7 +1444,12 @@ pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
 pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
     let has_groups = re.engine.captures_len() > 1;
     let mut results = Vec::new();
+    // `$~` ends up on the LAST match -- CRuby's `scan` writes the backref per
+    // iteration, so the final state is the last one (nil when nothing
+    // matched, same as any failed match).
+    let mut last_md = None;
     for caps in re.engine.captures_all(haystack) {
+        last_md = Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8));
         if has_groups {
             let group_vals: Vec<RubyValue> = (1..caps.len())
                 .map(|i| match caps.str(i, haystack) {
@@ -1449,6 +1465,7 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
             results.push(RubyValue::Str(string_new(whole.to_string())));
         }
     }
+    crate::lastmatch::set_last_match(last_md);
     RubyValue::Array(array_new(results))
 }
 

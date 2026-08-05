@@ -53,6 +53,11 @@ pub struct RMethod {
     /// a non-object receiver, and a `#super_method` re-seat -- all of which
     /// keep the ordinary resolve-and-send.
     pub(crate) snapshot: Option<FrozenEntry>,
+    /// The RESOLVED chain position, once a `#super_method` re-seat picked
+    /// one. `#owner` answers it verbatim (re-scanning from `home` under
+    /// `prepend` finds the prepended module again and the walk never
+    /// advances), and `#call` runs exactly this ancestor's body.
+    pub(crate) seat: Option<ClassId>,
 }
 
 /// Which LAYER answered when a `Method`/`UnboundMethod` was taken.
@@ -108,6 +113,9 @@ impl RMethod {
     /// at the lookup root and, once `#super_method` has re-seated it, IS the
     /// definer -- so resolving from it answers both cases.
     pub(crate) fn owner(&self) -> Option<ClassId> {
+        if let Some(seat) = self.seat {
+            return Some(seat);
+        }
         match self.kind {
             MethodKind::Instance => crate::dispatch::method_owner(self.home, self.name),
             MethodKind::Singleton => crate::dispatch::class_method_owner(self.home, self.name),
@@ -138,7 +146,7 @@ pub(crate) fn method_value(
     kind: MethodKind,
 ) -> RubyValue {
     let snapshot = entry_snapshot(&recv, name, home, kind);
-    method_value_with(recv, name, home, kind, snapshot)
+    method_value_with(recv, name, home, kind, None, snapshot)
 }
 
 /// [`method_value`] over an entry frozen ELSEWHERE -- `UnboundMethod#bind`,
@@ -149,6 +157,7 @@ pub(crate) fn method_value_with(
     name: Symbol,
     home: ClassId,
     kind: MethodKind,
+    seat: Option<ClassId>,
     snapshot: Option<FrozenEntry>,
 ) -> RubyValue {
     RubyValue::Object(Arc::new(RMethod {
@@ -157,6 +166,7 @@ pub(crate) fn method_value_with(
         home,
         kind,
         snapshot,
+        seat,
     }))
 }
 
@@ -217,6 +227,7 @@ impl RubyObject for RMethod {
             home: self.home,
             kind: self.kind,
             snapshot: self.snapshot.clone(),
+            seat: self.seat,
         })
     }
 }
@@ -354,24 +365,40 @@ ruby_class! {
     // find the override it was reached through and recurse.
     def "call" | "[]" | "===" (recv, *args, &blk) {
         let m = recv_method(recv);
-        // The frozen entry first: re-resolving by name would find whatever
+        // A method whose position was NAMED -- a `#super_method` re-seat, or
+        // an ancestor's `instance_method` bound down to a descendant -- runs
+        // exactly that ancestor's body. Bypassing the overrides (and
+        // prepends) above it is what naming the position means, so this
+        // outranks the frozen-entry probe, whose layer is chain-rooted.
+        let seat = m.seat.or_else(|| (m.home != m.chain()).then_some(m.home));
+        if let Some(seat) = seat {
+            return match m.kind {
+                MethodKind::Instance => match &m.snapshot {
+                    // A frozen `define_method` body binds any instance
+                    // directly; a frozen layer resolves below the overlay AT
+                    // the seat, so a wrapper installed since can't capture it.
+                    Some(FrozenEntry::Overlay(mi)) => match &m.recv {
+                        RubyValue::Object(o) => mi.call(o, args, blk),
+                        _ => crate::dispatch::send_as_defined_in(&m.recv, seat, m.name, args, blk),
+                    },
+                    Some(FrozenEntry::BelowOverlay) => {
+                        crate::dispatch::send_below_overlay_at(&m.recv, seat, m.name, args, blk)
+                    }
+                    None => crate::dispatch::send_as_defined_in(&m.recv, seat, m.name, args, blk),
+                },
+                MethodKind::Singleton => {
+                    crate::dispatch::send_class_from(m.chain(), seat, m.name, args, blk)
+                }
+            };
+        }
+        // The frozen entry: re-resolving by name would find whatever
         // holds the name NOW, which for a wrapped method is the wrapper
         // itself. See `RMethod::snapshot`.
         if let (Some(frozen), RubyValue::Object(o)) = (&m.snapshot, &m.recv)
             && let Some(out) = frozen.call_on(o, m.name, args, blk.clone()) {
                 return out;
             }
-        if m.home == m.chain() {
-            return crate::dispatch::send_value(&m.recv, m.name, args, blk);
-        }
-        match m.kind {
-            MethodKind::Instance => {
-                crate::dispatch::send_as_defined_in(&m.recv, m.home, m.name, args, blk)
-            }
-            MethodKind::Singleton => {
-                crate::dispatch::send_class_from(m.chain(), m.home, m.name, args, blk)
-            }
-        }
+        crate::dispatch::send_value(&m.recv, m.name, args, blk)
     }
     def "name"(recv) {
         Ok(RubyValue::Symbol(recv_method(recv).name))
@@ -386,11 +413,18 @@ ruby_class! {
         let m = recv_method(recv);
         let (target, name) = (m.recv.clone(), m.name);
         let arity = crate::method_meta::arity(Some(&m.recv), m.home, m.kind, m.name).unwrap_or(-1) as i32;
-        Ok(RubyValue::Proc(crate::RProc::with_meta(
+        let p = crate::RProc::with_meta(
             move |args: &[RubyValue]| crate::dispatch::send_value(&target, name, args, None),
             arity,
             true,
-        )))
+        );
+        // The proc reports the METHOD's own source location (CRuby's
+        // method_to_proc carries the method, and source_location delegates).
+        let p = match crate::method_meta::source_pair(m.home, m.kind, m.name) {
+            Some((file, line)) => p.with_location(file, line),
+            None => p,
+        };
+        Ok(RubyValue::Proc(p))
     }
     def "arity"(recv) {
         let m = recv_method(recv);
@@ -417,8 +451,9 @@ ruby_class! {
             home: m.owner().unwrap_or(m.home),
             kind: m.kind,
             // Unbinding does not re-resolve: the entry stays the one this
-            // Method froze.
+            // Method froze, and a re-seat keeps its position.
             snapshot: m.snapshot.clone(),
+            seat: m.seat,
         })))
     }
     // `Method#owner` -- the class or module in the receiver's ancestry that
@@ -459,7 +494,10 @@ ruby_class! {
             }
         };
         Ok(match next {
-            Some(home) => method_value(m.recv.clone(), m.name, home, m.kind),
+            // The re-seat records its position in `seat`: `#owner` must
+            // answer it verbatim (a fresh scan from `home` under `prepend`
+            // finds the prepended module again and the walk never advances).
+            Some(home) => method_value_with(m.recv.clone(), m.name, home, m.kind, Some(home), None),
             None => RubyValue::Nil,
         })
     }

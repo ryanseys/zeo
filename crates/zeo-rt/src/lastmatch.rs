@@ -8,52 +8,81 @@
 //! at all, so `"xyz".match?(/y/)` leaves whatever the last real match
 //! stored (oracle-verified).
 //!
-//! THREAD-LOCAL, which is the plan's specified representation (G4(j)) and
-//! is the right call for the thread half -- two Threads matching
-//! concurrently must not clobber each other's `$1`.
+//! FRAME-SCOPED per CRuby's svar rule: `$~` lives in the method's control
+//! frame, so a callee's matching is invisible to its caller. The stack here
+//! is the compiled spelling of that: every generated METHOD whose body
+//! mentions an svar (`$~`/`$1`/`Regexp.last_match`/...) pushes one scope
+//! ([`svar_scope`], emitted by `codegen::scope_frame_guard`), blocks share
+//! their method's, and the regexp entry points write the innermost scope --
+//! falling back to a thread-base slot outside any (the top level).
 //!
-//! It is NOT frame-local, and real Ruby's IS. That is a genuine divergence,
-//! oracle-verified, and worth stating precisely because it is silent:
-//!
-//! ```ruby
-//! def m
-//!   "q7" =~ /(\d)/
-//!   $1
-//! end
-//! "a1" =~ /(\d)/
-//! m      # => "7"
-//! $1     # real ruby: "1" -- `$~` is scoped to m's own frame, so m's
-//!        #   match never touched the caller's.
-//!        # here:      "7" -- one slot per thread, so m's match overwrote it.
-//! ```
-//!
-//! CRuby stores `$~` in the method's control frame (a "special variable"),
-//! so a callee's matching is invisible to its caller. Reproducing that
-//! needs a per-frame slot: every generated method that mentions `$~`/`$1`/
-//! etc. would carry its own, and the runtime's match functions would have
-//! to write to the CURRENT frame's rather than a static one -- which means
-//! threading a frame pointer through the regexp API. Deferred rather than
-//! faked; the common shapes (match and read in the same method; match in a
-//! condition and read in its body) are unaffected.
+//! Documented narrowing: a method that matches but never MENTIONS an svar
+//! pushes no scope, so its match writes the nearest mentioning caller's --
+//! CRuby would confine it to the silent callee's own frame. THREAD-local
+//! underneath either way (two Threads matching concurrently must not clobber
+//! each other's `$1`), and part of the [`crate::ec::swap`] bundle so a fiber
+//! carries its own.
 
 use crate::RubyValue;
 use crate::regexp::RMatchData;
 use std::cell::RefCell;
 
 thread_local! {
-    static LAST_MATCH: RefCell<Option<RMatchData>> = const { RefCell::new(None) };
+    static BASE: RefCell<Option<RMatchData>> = const { RefCell::new(None) };
+    static SCOPES: RefCell<Vec<Option<RMatchData>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// One method's svar scope -- push on entry, RAII-pop on any exit.
+pub struct SvarScope(());
+
+impl Drop for SvarScope {
+    fn drop(&mut self) {
+        SCOPES.with(|s| {
+            s.borrow_mut().pop();
+        });
+    }
+}
+
+/// Enter a fresh svar scope: `$~` and friends read nil here until this
+/// scope's own first match, and its matches vanish when it drops.
+pub fn svar_scope() -> SvarScope {
+    SCOPES.with(|s| s.borrow_mut().push(None));
+    SvarScope(())
+}
+
+/// The fiber-switch handoff ([`crate::ec::swap`]): install a suspended
+/// context's base+scopes, returning the running one's.
+pub fn swap_svars(
+    base: Option<RMatchData>,
+    scopes: Vec<Option<RMatchData>>,
+) -> (Option<RMatchData>, Vec<Option<RMatchData>>) {
+    (
+        BASE.with(|c| std::mem::replace(&mut *c.borrow_mut(), base)),
+        SCOPES.with(|s| std::mem::replace(&mut *s.borrow_mut(), scopes)),
+    )
 }
 
 /// Records a successful match, or clears the slot on a failed one -- pass
 /// `None` for "did not match". Called by every regexp entry point that
-/// builds MatchData.
+/// builds MatchData; writes the innermost svar scope.
 pub fn set_last_match(m: Option<RMatchData>) {
-    LAST_MATCH.with(|c| *c.borrow_mut() = m);
+    SCOPES.with(|s| match s.borrow_mut().last_mut() {
+        Some(top) => *top = m,
+        None => BASE.with(|c| *c.borrow_mut() = m),
+    })
+}
+
+/// The innermost scope's slot, read under `f`.
+fn with_slot<R>(f: impl FnOnce(&Option<RMatchData>) -> R) -> R {
+    SCOPES.with(|s| match s.borrow().last() {
+        Some(top) => f(top),
+        None => BASE.with(|c| f(&c.borrow())),
+    })
 }
 
 /// `$~` -- the MatchData, or nil.
 pub fn last_match() -> RubyValue {
-    LAST_MATCH.with(|c| match &*c.borrow() {
+    with_slot(|slot| match slot {
         Some(m) => RubyValue::MatchData(m.clone()),
         None => RubyValue::Nil,
     })
@@ -62,7 +91,7 @@ pub fn last_match() -> RubyValue {
 /// `$1`..`$9` (and `$&`, which is group 0) -- the nth capture group, or nil
 /// when there was no match or the group didn't participate.
 pub fn last_match_group(n: usize) -> RubyValue {
-    LAST_MATCH.with(|c| match &*c.borrow() {
+    with_slot(|slot| match slot {
         Some(m) => crate::regexp::matchdata_group(m, n as i64),
         None => RubyValue::Nil,
     })
@@ -91,7 +120,7 @@ pub fn last_match_post() -> RubyValue {
 /// It yields nil when that search bottoms out at index 0: `$+` reports a
 /// CAPTURE GROUP only, never the whole match.
 pub fn last_match_last_group() -> RubyValue {
-    LAST_MATCH.with(|c| match &*c.borrow() {
+    with_slot(|slot| match slot {
         Some(m) => match m.groups.iter().rposition(|g| g.is_some()) {
             Some(i) if i > 0 => crate::regexp::matchdata_group(m, i as i64),
             _ => RubyValue::Nil,
@@ -103,7 +132,7 @@ pub fn last_match_last_group() -> RubyValue {
 /// Shared by `` $` ``/`$'`: both are a slice of the haystack cut at group
 /// 0's span, and both are nil when nothing matched.
 fn last_match_slice(f: impl Fn(&RMatchData, usize, usize) -> String) -> RubyValue {
-    LAST_MATCH.with(|c| match &*c.borrow() {
+    with_slot(|slot| match slot {
         Some(m) => match m.groups.first().copied().flatten() {
             Some((start, end)) => RubyValue::Str(crate::string_new(f(m, start, end))),
             None => RubyValue::Nil,

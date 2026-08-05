@@ -568,6 +568,18 @@ pub struct RHashData {
     /// `Hash#compare_by_identity`: when set, keys project by object identity
     /// (`equal?`/`object_id`) instead of structure -- see `hash_key_in`.
     pub compare_by_identity: bool,
+    /// Live iterations over this hash (nested `each`es stack) -- while
+    /// nonzero, inserting a NEW key raises ruby's "can't add a new key into
+    /// hash during iteration". Updates to existing keys, and deletes, stay
+    /// legal, as in CRuby. See [`hash_iter_guard`]/[`hash_set_checked`].
+    pub(crate) iterating: u32,
+    /// The caller WROTE keywords -- CRuby's `rb_keyword_given_p`, carried on
+    /// the trailing hash a dynamic call builds from them (`**h` splat sites
+    /// and `send`'s literal kwargs both set it). Read by callees that decide
+    /// behavior from keyword-vs-positional-Hash: a `**nil` declaration
+    /// refuses a marked hash, `Struct#initialize` binds one by member name.
+    /// Never copied by `dup`/`merge` (both rebuild via [`hash_new`]).
+    pub(crate) kw_marked: bool,
 }
 
 impl RHashData {
@@ -577,8 +589,20 @@ impl RHashData {
             default: RubyValue::Nil,
             default_proc: None,
             compare_by_identity: false,
+            iterating: 0,
+            kw_marked: false,
         }
     }
+}
+
+/// Tag `h` as a keyword set (see [`RHashData::kw_marked`]).
+pub fn hash_mark_kwargs(h: &RHash) {
+    h.lock().kw_marked = true;
+}
+
+/// Whether the caller wrote keywords to build `h` (see [`RHashData::kw_marked`]).
+pub fn hash_is_kwargs(h: &RHash) -> bool {
+    h.lock().kw_marked
 }
 
 impl std::ops::Deref for RHashData {
@@ -729,6 +753,8 @@ pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>
         default,
         default_proc,
         compare_by_identity: false,
+        iterating: 0,
+        kw_marked: false,
     }))
 }
 
@@ -851,6 +877,41 @@ pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
     let key = snapshot_key(key, g.compare_by_identity);
     g.insert(k, (key, value.clone()));
     value
+}
+
+/// [`hash_set`] behind ruby's iteration guard: while any `each` is live on
+/// this hash, adding a NEW key raises RuntimeError ("can't add a new key
+/// into hash during iteration"); updating an existing key stays legal. The
+/// user-visible write rows (`[]=`/`store`, codegen's index-assign fast path)
+/// come through here; internal builders (literals, kwargs assembly) keep the
+/// plain form -- they build hashes nothing can be iterating yet.
+pub fn hash_set_checked(
+    h: &RHash,
+    key: RubyValue,
+    value: RubyValue,
+) -> Result<RubyValue, crate::Signal> {
+    if h.lock().iterating > 0 && !hash_has_key(h, &key) {
+        return Err(crate::dispatch::raise_error(
+            "RuntimeError",
+            "can't add a new key into hash during iteration".to_string(),
+        ));
+    }
+    Ok(hash_set(h, key, value))
+}
+
+/// Marks `h` under iteration for the new-key guard, un-marking on drop
+/// (nested iterations stack).
+pub fn hash_iter_guard(h: &RHash) -> HashIterGuard {
+    h.lock().iterating += 1;
+    HashIterGuard(h.clone())
+}
+
+pub struct HashIterGuard(RHash);
+
+impl Drop for HashIterGuard {
+    fn drop(&mut self) {
+        self.0.lock().iterating -= 1;
+    }
 }
 
 pub fn hash_len(h: &RHash) -> i64 {
@@ -980,6 +1041,8 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
         default: RubyValue::Nil,
         default_proc: None,
         compare_by_identity: false,
+        iterating: 0,
+        kw_marked: false,
     }))
 }
 

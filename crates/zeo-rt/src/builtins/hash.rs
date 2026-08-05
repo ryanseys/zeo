@@ -182,7 +182,7 @@ ruby_class! {
                 &[("receiver", recv.clone())],
             ));
         }
-        Ok(crate::hash_set(h, (*arg1).clone(), (*arg2).clone()))
+        crate::collections::hash_set_checked(h, (*arg1).clone(), (*arg2).clone())
     }
     def "delete" (recv, arg, &block) {
         let h = rhash;
@@ -642,6 +642,7 @@ ruby_class! {
         // A block-raised exception shows a 'Hash#each' C-frame between the
         // block and the caller in CRuby's backtrace.
         let _frame = crate::frames::synthetic_c_frame("Hash#each");
+        let _iter = crate::collections::hash_iter_guard(rhash);
         let pairs = crate::collections::hash_pairs_snapshot(rhash);
         for (k, v) in pairs {
             // CRuby yields the pair as ONE array, so `{ |pair| }` and a

@@ -43,6 +43,33 @@ pub fn cvar_get(owner_class_id: u32, name: &str) -> RubyValue {
         .unwrap_or(RubyValue::Nil)
 }
 
+/// [`cvar_get`] with real Ruby's miss behavior: reading a class variable
+/// nobody assigned raises NameError ("uninitialized class variable @@x in
+/// Owner") -- what codegen emits for a `@@x` READ. The infallible form stays
+/// for the reflective callers (`defined?`, `class_variable_get`'s own
+/// error shape).
+pub fn cvar_get_checked(owner_class_id: u32, name: &str) -> Result<RubyValue, crate::Signal> {
+    let hit = CVARS
+        .lock()
+        .get(&owner_class_id)
+        .and_then(|m| m.get(name))
+        .cloned();
+    hit.ok_or_else(|| {
+        let owner = crate::dispatch::class_name(crate::ClassId(owner_class_id))
+            .unwrap_or_else(|| "Object".to_string());
+        // Storage keys drop the sigil; the message must not.
+        let sigiled = if name.starts_with("@@") {
+            name.to_string()
+        } else {
+            format!("@@{name}")
+        };
+        crate::dispatch::raise_error(
+            "NameError",
+            format!("uninitialized class variable {sigiled} in {owner}"),
+        )
+    })
+}
+
 /// Fallible because a FROZEN owner class refuses the write (`can't modify
 /// frozen Class: Base`). The check is on the OWNER -- the class whose
 /// storage holds the `@@name` slot -- not the lexical receiver:

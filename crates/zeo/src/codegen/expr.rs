@@ -259,12 +259,33 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
+    // `defined?(super)` answers "super" only when a super target exists past
+    // this method's own class on the receiver's chain, else nil -- the same
+    // resolution the emitted `super` walks, probed instead of called. A
+    // class-method context (`current_class.is_none()`, `super_calls`' own
+    // test) keeps the static classification.
+    if matches!(&cx.compiler.hir[id], HirNode::SuperCall { .. })
+        && cx.current_class.is_some()
+        && let (Some(dc), Some(m)) = (cx.defining_class, cx.current_method.as_ref())
+    {
+        let dcid = dc.0;
+        let name_sym = super::pooled_sym(m);
+        let recv =
+            super::call::boxed_implicit_self(cx).expect("every context has an implicit self");
+        return quote! {
+            if zeo_rt::super_defined(&#recv, zeo_rt::ClassId(#dcid), #name_sym) {
+                zeo_rt::RubyValue::Str(zeo_rt::string_new("super".to_string()))
+            } else {
+                zeo_rt::RubyValue::Nil
+            }
+        };
+    }
     // `defined?(a_method_call)` answers `"method"` only when the receiver
     // actually responds to it, else `nil` -- CRuby evaluates the receiver and
     // probes it (a bare undefined name like `defined?(missing_thing)` is a
     // no-receiver call and answers nil, not "method"). An implicit-self call
     // includes private methods (`defined?(puts)`); an explicit receiver checks
-    // its public surface. `New`/`SuperCall`/etc. keep the static "method".
+    // its public surface. `New`/etc. keep the static "method".
     if let HirNode::Call { receiver, name, .. } = &cx.compiler.hir[id] {
         let receiver = *receiver;
         let name = name.clone();
@@ -932,7 +953,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::ClassVarRead(name) => {
             let owner = cvar_owner_id(cx, name);
-            quote! { zeo_rt::cvar_get(#owner, #name) }
+            // Checked: an unassigned `@@x` read is ruby's NameError, not nil.
+            quote! { zeo_rt::cvar_get_checked(#owner, #name)? }
         }
         HirNode::ClassVarWrite(name, value) => {
             let v = emit_expr(cx, *value);
@@ -1408,6 +1430,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
             body_cx.defined_by_define_method = !is_def;
+            // Ruby labels a `define_method` body's frame after where it was
+            // WRITTEN (`block in <main>`), a `def`'s after the method it
+            // creates -- captured before `current_method` changes the answer.
+            body_cx.lexical_frame_label =
+                (!is_def).then(|| crate::codegen::enclosing_frame_label(cx));
             // The body IS this method's body, however it is installed, so
             // `__method__`/`__callee__` name it rather than reporting whatever
             // encloses the `def` -- `nil` at the top level, which is what a
@@ -2420,18 +2447,35 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // it caches what it found -- see `zeo_rt::ConstSite` for how the cache
     // knows when to stop trusting itself. Only a HIT is cached: a miss raises,
     // and the constant may well be defined by the time the site runs again.
+    //
+    // A miss on a scope whose chain defines a USER `const_missing` dispatches
+    // the hook instead of the baked raise (CRuby's protocol); every other
+    // site keeps the raise, whose as-written wording the default hook could
+    // not reproduce.
     let site = quote::format_ident!("__CONST_{}_{}", owner, name.to_uppercase());
+    let miss_owner = crate::compiler::ClassId(owner);
+    let miss = if cx
+        .compiler
+        .class_method_in_chain(miss_owner, "const_missing")
+        .is_some()
+    {
+        quote! { zeo_rt::const_miss(zeo_rt::ClassId(#owner), #name)? }
+    } else {
+        quote! {
+            return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
+                format!("uninitialized constant {}", #qualified),
+                #name,
+                zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
+            ))))
+        }
+    };
     quote! {
         {
             #private_guard
             static #site: zeo_rt::ConstSite = zeo_rt::ConstSite::new();
             match #site.get(|| #lookup) {
                 Some(__v) => __v,
-                None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
-                    format!("uninitialized constant {}", #qualified),
-                    #name,
-                    zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
-                )))),
+                None => #miss,
             }
         }
     }

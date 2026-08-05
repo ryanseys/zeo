@@ -162,11 +162,59 @@ struct Snapshot {
     /// lazily so the fire path never allocates.
     label: &'static str,
     raised: Option<RubyValue>,
+    /// The receiver the event ran under (`TracePoint#self`, and the degraded
+    /// `#binding`'s receiver) -- resolved by `dispatch` from the armed-only
+    /// self notes, `main` when no note covers the frame.
+    slf: RubyValue,
 }
 
 thread_local! {
     static IN_HANDLER: Cell<bool> = const { Cell::new(false) };
     static CURRENT: RefCell<Option<Snapshot>> = const { RefCell::new(None) };
+    /// `(frame depth, receiver)` notes, pushed by compiled method prologues
+    /// ONLY while tracing is armed (`trace_frame_self`'s gate) -- the frame
+    /// itself stays 40 bytes and the untraced path pays one relaxed load.
+    /// Depth-keyed with prune-on-push, so a note left behind by a returned
+    /// method is displaced the next time anything notes at or below it.
+    static SELF_STACK: RefCell<Vec<(usize, RubyValue)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The compiled-prologue self note: evaluate `f` (boxing the receiver) only
+/// while a tracepoint or legacy trace hook is armed.
+#[inline]
+pub fn trace_frame_self(f: impl FnOnce() -> RubyValue) {
+    if tracing() {
+        note_self(f());
+    }
+}
+
+#[cold]
+fn note_self(v: RubyValue) {
+    let depth = crate::frames::depth();
+    SELF_STACK.with(|s| {
+        let mut s = s.borrow_mut();
+        while s.last().is_some_and(|&(d, _)| d >= depth) {
+            s.pop();
+        }
+        s.push((depth, v));
+    });
+}
+
+/// The innermost note at or below the current frame depth -- a block's
+/// events resolve to its enclosing method's receiver (a block shares its
+/// method's `self`, `instance_exec` rebinding aside). `main` when nothing
+/// noted (the top level, or a frame entered before arming).
+fn current_self() -> RubyValue {
+    let depth = crate::frames::depth();
+    SELF_STACK
+        .with(|s| {
+            s.borrow()
+                .iter()
+                .rev()
+                .find(|&&(d, _)| d <= depth)
+                .map(|(_, v)| v.clone())
+        })
+        .unwrap_or_else(crate::dispatch::main_object)
 }
 
 #[inline]
@@ -190,6 +238,7 @@ pub fn fire_line(line: u32) {
         lineno: line,
         label: fr.method,
         raised: None,
+        slf: RubyValue::Nil,
     });
 }
 
@@ -203,6 +252,7 @@ pub fn fire_entry(file: &'static str, label: &'static str, line: u32) {
         lineno: line,
         label,
         raised: None,
+        slf: RubyValue::Nil,
     });
 }
 
@@ -221,6 +271,7 @@ pub fn fire_exit(fr: &crate::frames::Frame) {
         lineno: fr.end_line,
         label: fr.method,
         raised: None,
+        slf: RubyValue::Nil,
     });
 }
 
@@ -237,6 +288,7 @@ pub fn fire_raise(exc: &RubyValue) {
         lineno: fr.line,
         label: fr.method,
         raised: Some(exc.clone()),
+        slf: RubyValue::Nil,
     });
 }
 
@@ -247,7 +299,7 @@ pub fn fire_raise(exc: &RubyValue) {
 /// the uncaught report (or a silent `SystemExit`) -- because a hook called
 /// from `set_line`/`Drop` has no `Result` channel to propagate through,
 /// and CRuby's propagation is observably fatal too.
-fn dispatch(snap: Snapshot) {
+fn dispatch(mut snap: Snapshot) {
     if IN_HANDLER.get() {
         return;
     }
@@ -260,11 +312,22 @@ fn dispatch(snap: Snapshot) {
         .filter(|tp| tp_of(tp).events & bit != 0)
         .cloned()
         .collect();
-    if tps.is_empty() {
+    let legacy = LEGACY.lock().unwrap().clone();
+    if tps.is_empty() && legacy.is_none() {
         return;
     }
+    snap.slf = current_self();
     IN_HANDLER.set(true);
-    CURRENT.with(|c| *c.borrow_mut() = Some(snap));
+    CURRENT.with(|c| *c.borrow_mut() = Some(snap.clone()));
+    let fatal = |exc: RubyValue| -> ! {
+        crate::run_at_exit();
+        crate::run_finalizers();
+        if let Some(code) = crate::system_exit_status(&exc) {
+            std::process::exit(code);
+        }
+        crate::report_uncaught(&exc);
+        std::process::exit(1);
+    };
     for tp in tps {
         let rtp = tp_of(&tp);
         // An earlier handler this event may have disabled a later one.
@@ -273,20 +336,62 @@ fn dispatch(snap: Snapshot) {
         }
         match crate::catch_break(rtp.block.call(std::slice::from_ref(&tp))) {
             Ok(_) => {}
-            Err(Signal::Raise(exc)) => {
-                crate::run_at_exit();
-                crate::run_finalizers();
-                if let Some(code) = crate::system_exit_status(&exc) {
-                    std::process::exit(code);
-                }
-                crate::report_uncaught(&exc);
-                std::process::exit(1);
-            }
+            Err(Signal::Raise(exc)) => fatal(exc),
+            Err(_) => {}
+        }
+    }
+    // The `set_trace_func` legacy hook, over the same events, with CRuby's
+    // six arguments `(event, file, line, id, binding, classname)`. The
+    // binding is the degraded receiver-only capture `TracePoint#binding`
+    // hands out; `c-call`/`c-return` never fire (no hook exists to fire
+    // them from -- documented).
+    if let Some(hook) = legacy {
+        let args = [
+            RubyValue::Str(string_new(event_name(bit).to_string())),
+            RubyValue::Str(string_new(snap.path.to_string())),
+            RubyValue::Int(i64::from(snap.lineno)),
+            method_symbol(snap.label),
+            degraded_binding(&snap),
+            resolve_defined_class(snap.label),
+        ];
+        match crate::catch_break(hook.call(&args)) {
+            Ok(_) => {}
+            Err(Signal::Raise(exc)) => fatal(exc),
             Err(_) => {}
         }
     }
     CURRENT.with(|c| *c.borrow_mut() = None);
     IN_HANDLER.set(false);
+}
+
+/// The `set_trace_func` hook slot -- one global Proc (CRuby replaces on each
+/// call; `nil` clears). Firing rides [`dispatch`], so arming it arms the
+/// same [`TRACING`] gate the tracepoints use.
+static LEGACY: LazyLock<Mutex<Option<RProc>>> = LazyLock::new(|| Mutex::new(None));
+
+pub fn set_legacy_hook(hook: Option<RProc>) {
+    let armed = hook.is_some();
+    *LEGACY.lock().unwrap() = hook;
+    if armed {
+        TRACING.store(true, Ordering::Relaxed);
+    } else {
+        TRACING.store(!ACTIVE.lock().unwrap().is_empty(), Ordering::Relaxed);
+    }
+}
+
+/// The receiver-only `Binding` a trace event can supply: `#receiver` and
+/// `#eval` against the event's `self`, NO locals (a real frame binding
+/// would force cell storage on every local in every traced program --
+/// documented in COMPATIBILITY.md).
+fn degraded_binding(snap: &Snapshot) -> RubyValue {
+    crate::binding_new(
+        snap.slf.clone(),
+        Vec::new(),
+        snap.path,
+        snap.lineno,
+        0,
+        u32::MAX,
+    )
 }
 
 fn register(tp: &RubyValue) {
@@ -494,14 +599,24 @@ ruby_class! {
         Ok(snap.raised.unwrap_or(RubyValue::Nil))
     }
 
-    // The frame-dependent accessors. zeo's `Frame` is deliberately
-    // lightweight -- a file, a line and a label -- so it carries no receiver,
-    // no bindings, no return value and no compiled sequence. Every one of
-    // these raises CRuby's OWN refusal for an event that cannot supply them,
-    // which is what a `:line` event gets from CRuby for four of the six.
-    // Refusing loudly is the rule `TracePoint.new` already follows for the
-    // events zeo cannot fire.
-    def "self" | "binding" | "return_value" | "parameters"
+    // `#self`/`#binding` read the armed-only self notes: the receiver the
+    // event ran under, and a receiver-only Binding over it (see
+    // `degraded_binding`).
+    def "self" cfunc (recv) {
+        let _ = tp_of(recv);
+        Ok(snapshot()?.slf)
+    }
+    def "binding" (recv) {
+        let _ = tp_of(recv);
+        Ok(degraded_binding(&snapshot()?))
+    }
+    // The remaining frame-dependent accessors. zeo's `Frame` is deliberately
+    // lightweight -- a file, a line and a label -- so it carries no return
+    // value and no compiled sequence. Each raises CRuby's OWN refusal for an
+    // event that cannot supply them, which is what a `:line` event gets from
+    // CRuby for these four. Refusing loudly is the rule `TracePoint.new`
+    // already follows for the events zeo cannot fire.
+    def "return_value" | "parameters"
         | "eval_script" | "instruction_sequence" (recv) {
         let _ = tp_of(recv);
         // "access from outside" outranks it, exactly as in CRuby: a handler
@@ -615,6 +730,7 @@ mod tests {
                 lineno: 3,
                 label: "<main>",
                 raised: None,
+                slf: RubyValue::Nil,
             });
         });
         assert_eq!(snapshot().unwrap().lineno, 3);

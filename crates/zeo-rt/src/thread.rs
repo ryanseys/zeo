@@ -80,10 +80,13 @@ pub struct ThreadData {
     /// uncaught exception in this thread takes the whole process down instead
     /// of dying quietly with the thread (minitest's parallel workers set it).
     abort_on_exception: AtomicBool,
-    /// `Thread#[]`/`#[]=` storage. CRuby scopes this per-FIBER; with no
-    /// separate fiber identity here it is per-thread, a documented narrowing
-    /// that the common one-fiber-per-thread programs can't observe.
-    locals: PlMutex<HashMap<Symbol, RubyValue>>,
+    /// `Thread#[]`/`#[]=` storage for this thread's ROOT fiber. CRuby scopes
+    /// this per-FIBER: the RUNNING fiber's map rides in the EC bundle
+    /// ([`swap_fiber_locals`]), seeded from this field outside any fiber, and
+    /// a fresh empty map inside one -- so a fiber's writes die with it.
+    /// Cross-thread access (`other[:k]`) reads the other thread's root map, a
+    /// documented narrowing (CRuby reads its current fiber's).
+    locals: FiberLocals,
     /// `Thread#thread_variable_get`/`set` storage -- genuinely per-thread.
     tvars: PlMutex<HashMap<Symbol, RubyValue>>,
     /// The main thread never holds a join handle yet is always "running"; this
@@ -155,7 +158,7 @@ impl ThreadData {
             name: PlMutex::new(None),
             report_on_exception: AtomicBool::new(report_on_exception_default()),
             abort_on_exception: AtomicBool::new(abort_on_exception_default()),
-            locals: PlMutex::new(HashMap::new()),
+            locals: Arc::new(PlMutex::new(HashMap::new())),
             tvars: PlMutex::new(HashMap::new()),
             is_main,
             interrupt: PlMutex::new(None),
@@ -228,6 +231,36 @@ fn main_thread() -> RThread {
 }
 
 std::thread_local!(static CURRENT: PlMutex<Option<RThread>> = const { PlMutex::new(None) });
+
+/// One fiber's `Thread#[]` storage -- shared by handle so the root fiber's
+/// map IS the thread's [`ThreadData::locals`] field.
+pub type FiberLocals = Arc<PlMutex<HashMap<Symbol, RubyValue>>>;
+
+std::thread_local!(static FIBER_LOCALS: PlMutex<Option<FiberLocals>> = const { PlMutex::new(None) });
+
+/// Install the entering fiber's `Thread#[]` map, returning the suspended
+/// one -- an [`crate::ec::swap`] member. `None` restores "not yet bound":
+/// the next access re-seeds from the current thread's root map.
+pub fn swap_fiber_locals(new: Option<FiberLocals>) -> Option<FiberLocals> {
+    FIBER_LOCALS.with(|s| std::mem::replace(&mut *s.lock(), new))
+}
+
+fn is_current_thread(t: &RThread) -> bool {
+    CURRENT.with(|c| match &*c.lock() {
+        Some(cur) => Arc::ptr_eq(cur, t),
+        None => t.is_main,
+    })
+}
+
+/// The map a `Thread#[]`-family call on `t` reads: the RUNNING fiber's map
+/// when `t` is the current thread (seeded from the root map outside any
+/// fiber), `t`'s root map cross-thread.
+fn locals_of(t: &RThread) -> FiberLocals {
+    if !is_current_thread(t) {
+        return t.locals.clone();
+    }
+    FIBER_LOCALS.with(|s| s.lock().get_or_insert_with(|| t.locals.clone()).clone())
+}
 
 /// `Thread.current` -- the running thread's object, or the main thread's when
 /// called outside any spawned coroutine.
@@ -498,7 +531,7 @@ pub fn set_ignore_deadlock(on: bool) {
 /// `Thread#[]`'s `fetch` twin -- the stored value, or `None` for a miss (the
 /// caller supplies CRuby's default/block/`KeyError` handling).
 pub fn thread_local_fetch(t: &RThread, key: Symbol) -> Option<RubyValue> {
-    t.locals.lock().get(&key).cloned()
+    locals_of(t).lock().get(&key).cloned()
 }
 
 /// `Thread#status` -- "run" while alive, `false` after a clean finish, `nil`
@@ -597,19 +630,23 @@ pub fn thread_set_abort_on_exception(t: &RThread, v: bool) {
 
 /// `Thread#[]` -- a fiber-local value, or nil.
 pub fn thread_local_get(t: &RThread, key: Symbol) -> RubyValue {
-    t.locals.lock().get(&key).cloned().unwrap_or(RubyValue::Nil)
+    locals_of(t)
+        .lock()
+        .get(&key)
+        .cloned()
+        .unwrap_or(RubyValue::Nil)
 }
 
 pub fn thread_local_set(t: &RThread, key: Symbol, value: RubyValue) {
-    t.locals.lock().insert(key, value);
+    locals_of(t).lock().insert(key, value);
 }
 
 pub fn thread_local_key(t: &RThread, key: Symbol) -> bool {
-    t.locals.lock().contains_key(&key)
+    locals_of(t).lock().contains_key(&key)
 }
 
 pub fn thread_local_keys(t: &RThread) -> Vec<RubyValue> {
-    t.locals
+    locals_of(t)
         .lock()
         .keys()
         .map(|k| RubyValue::Symbol(*k))

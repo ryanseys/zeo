@@ -603,8 +603,8 @@ pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
 /// - a member whose name is not a plain lowercase identifier
 ///   (`Struct.new(:verbose?)`), or that is a Ruby KEYWORD (`Struct.new(:class)`,
 ///   which is legal and even shadows `Kernel#class`) -- the synthesized source
-///   below spells members as parameter names and `@name` ivars, and neither
-///   can be either of those.
+///   below spells members as accessor `def` names and `@name` ivars, and
+///   neither can be either of those.
 ///
 /// `ZEO_STRUCT=runtime` turns the whole thing off.
 /// Legal `Struct` member names that cannot be spelled as a Rust-side parameter
@@ -672,20 +672,40 @@ pub(crate) fn synthesize_struct_class(
         .map(|m| format!(":{m}"))
         .collect::<Vec<_>>()
         .join(", ");
-    // Every parameter defaults to nil: `Struct.new(:a, :b).new(1)` fills the
-    // rest with nil rather than raising, and `.new()` is legal too.
-    let params = members
+    // `initialize` binds by CALL SHAPE, as `rstruct::bind_members` does on the
+    // runtime path (the F-C rule: one semantic kernel, and this synthesized
+    // body is its compiled spelling). Keywords bind by member name only when
+    // they arrive ALONE -- CRuby's `rb_keyword_given_p && argc == 1` rule --
+    // so a positional Hash and the mixed form both stay positional, a short
+    // arg list nil-fills, and too many positionals report ruby's exact
+    // `struct size differs`.
+    let n = members.len();
+    let member_syms = members
         .iter()
-        .map(|m| format!("{m} = nil"))
+        .map(|m| format!(":{m}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let assigns = members
+    let pos_assigns = members
         .iter()
-        .map(|m| format!("    @{m} = {m}\n"))
+        .enumerate()
+        .map(|(i, m)| format!("      @{m} = args[{i}]\n"))
+        .collect::<String>();
+    let kw_assigns = members
+        .iter()
+        .map(|m| format!("      @{m} = kw[:{m}]\n"))
         .collect::<String>();
     let src = format!(
         "class {name} < Struct\n  attr_accessor {accessors}\n  \
-         def initialize({params})\n{assigns}  end\nend\n"
+         def initialize(*args, **kw)\n    \
+         if kw.empty? || !args.empty?\n      \
+         args = args + [kw] unless kw.empty?\n      \
+         raise ArgumentError, \"struct size differs\" if args.size > {n}\n\
+         {pos_assigns}    \
+         else\n      \
+         bad = kw.keys.reject {{ |k| [{member_syms}].include?(k) }}\n      \
+         raise ArgumentError, \"unknown keywords: #{{bad.join(', ')}}\" unless bad.empty?\n\
+         {kw_assigns}    \
+         end\n  end\nend\n"
     );
     // The offsets `parse_and_lower_into` produces index `src`, not the file
     // being lowered, so the class would claim a position it never occupied --

@@ -143,18 +143,15 @@ pub(super) fn try_const_reflection(
     } else {
         format!("{}::{cname}", cx.compiler.fq_name(target))
     };
-    // The raised `NameError` carries `#name` (the missing leaf, `:Nope`) and
-    // `#receiver` (the class the lookup ran against, `Object` for a top-level
-    // `const_get`), which the caller can introspect.
+    // A miss dispatches `const_missing` on the receiver (CRuby's protocol);
+    // Module's default hook raises the same receiver-qualified NameError
+    // this site used to bake, `#name`/`#receiver` included.
+    let _ = qualified;
     let receiver_id = target.0;
     Some(quote! {
         match zeo_rt::const_get(#owner, #cname) {
             Some(__v) => __v,
-            None => return Err(zeo_rt::Signal::Raise(zeo_rt::make_name_error(
-                format!("uninitialized constant {}", #qualified),
-                #cname,
-                zeo_rt::RubyValue::Class(zeo_rt::ClassId(#receiver_id)),
-            ))),
+            None => zeo_rt::const_miss(zeo_rt::ClassId(#receiver_id), #cname)?,
         }
     })
 }

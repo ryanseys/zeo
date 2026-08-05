@@ -2959,6 +2959,18 @@ fn encode_impl(recv: &RubyValue, args: &[RubyValue], in_place: bool) -> Result<R
     let opts = parse_encode_opts(opts_hash.as_ref())?;
     let bytes = src.lock().bytes().to_vec();
 
+    // Same source and destination encoding with no options is a NO-OP in
+    // CRuby -- no converter runs, so invalid bytes ride through untouched
+    // rather than raising. Options (`invalid:`, newline modes, ...) still
+    // force the converter even for identical encodings.
+    if from_enc == to_enc && opts_hash.is_none() {
+        return if in_place {
+            Ok(recv.clone())
+        } else {
+            Ok(RubyValue::Str(crate::string_from_bytes(bytes, to_enc)))
+        };
+    }
+
     let fallback_val = opts_hash.as_ref().and_then(|h| {
         let v = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("fallback")));
         (!v.is_nil()).then_some(v)

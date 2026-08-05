@@ -583,13 +583,16 @@ pub(crate) fn bind_members(
     let meta = meta_of(recv_class_id(recv)).expect("struct instance has meta");
     let n = meta.members.len();
 
-    // Keyword construction: a plain Struct only when declared `keyword_init:`;
-    // Data when the sole arg is a keyword hash (else positional).
+    // Keyword construction: a plain Struct when declared `keyword_init:`, OR
+    // when the caller WROTE keywords (the kw-marked hash -- CRuby decides by
+    // `rb_keyword_given_p`, not the declaration; `keyword_init: false` still
+    // forces positional). Data when the sole arg is a keyword hash.
     let kw_hash = match args.last() {
-        Some(RubyValue::Hash(h))
-            if (meta.keyword_init == Some(true) || is_data) && args.len() == 1 =>
-        {
-            Some(h)
+        Some(RubyValue::Hash(h)) if args.len() == 1 => {
+            let by_declaration = meta.keyword_init == Some(true) || is_data;
+            let by_call_shape =
+                meta.keyword_init.is_none() && crate::collections::hash_is_kwargs(h);
+            (by_declaration || by_call_shape).then_some(h)
         }
         _ => None,
     };

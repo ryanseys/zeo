@@ -242,9 +242,17 @@ mod imp {
         /// holds no `'src`-lifetime nodes past the call that built them).
         src: Arc<str>,
         /// The lexical class a constant read resolves against before the top
-        /// level -- a `Binding`'s captured cref. `None` everywhere else, which
-        /// keeps the plain eval's documented top-level-first rule.
+        /// level -- a `Binding`'s captured cref, or the RECEIVER for the
+        /// string form of `class_eval` (its whole point: the receiver is the
+        /// scope). `None` for a plain `Caller` eval, which keeps the
+        /// documented top-level-first rule.
         cref: Option<crate::ClassId>,
+        /// How a constant MISS qualifies its NameError -- the receiver's
+        /// name for `class_eval` (`Outer::Host::VAL`), the singleton
+        /// spelling for `instance_eval` on a class
+        /// (`#<Class:Outer::Host>::HOST_C`). `None` = the bare top-level
+        /// message.
+        cref_name: Option<String>,
         /// What `__FILE__`/`__LINE__` report, and where a `binding` taken
         /// inside this eval says it came from -- `eval`'s own 3rd/4th
         /// arguments when given, `("(eval)", 1)` otherwise.
@@ -278,6 +286,23 @@ mod imp {
             .as_program_node()
             .ok_or_else(|| internal("eval: expected a top-level ProgramNode"))?;
         let definee = initial_definee(&self_val, mode);
+        // The string forms of class_eval/instance_eval evaluate with the
+        // RECEIVER as the constant scope (the block forms keep the writer's
+        // lexical scope and never come here): class_eval resolves against
+        // the class itself; instance_eval on a class resolves against its
+        // SINGLETON (which owns no constants -- the miss is the answer, in
+        // the #<Class:X> spelling).
+        let (cref, cref_name) = match (&mode, &self_val) {
+            (EvalMode::ClassEval, RubyValue::Class(cid)) => (
+                Some(*cid),
+                crate::dispatch::class_name(*cid),
+            ),
+            (EvalMode::InstanceEval, RubyValue::Class(cid)) => (
+                None,
+                crate::dispatch::class_name(*cid).map(|n| format!("#<Class:{n}>")),
+            ),
+            _ => (None, None),
+        };
         let mut env = Env {
             self_val,
             scope: fresh_scope(),
@@ -286,7 +311,8 @@ mod imp {
             block: None,
             method_args: None,
             src: Arc::from(src),
-            cref: None,
+            cref,
+            cref_name,
             file: Arc::from(EVAL_FILE),
             line: 1,
         };
@@ -321,6 +347,7 @@ mod imp {
             method_args: None,
             src: Arc::from(src),
             cref: b.cref,
+            cref_name: None,
             file: Arc::from(file.as_deref().unwrap_or(EVAL_FILE)),
             line: line.unwrap_or(1),
         };
@@ -466,6 +493,14 @@ mod imp {
                 && let Some(v) = crate::constants::const_get(cref.0, &name)
             {
                 return Ok(v);
+            }
+            // A scoped eval's miss names its scope -- `Outer::Host::VAL` for
+            // class_eval, `#<Class:Outer::Host>::HOST_C` for instance_eval
+            // on a class (CRuby's spellings).
+            if let Some(scope) = &env.cref_name
+                && crate::constants::const_get(0, &name).is_none()
+            {
+                return Err(name_error!("uninitialized constant {scope}::{name}"));
             }
             return const_lookup(0, &name);
         }
@@ -772,6 +807,7 @@ mod imp {
             method_args: None,
             src: Arc::clone(&env.src),
             cref: Some(class_id),
+            cref_name: None,
             file: Arc::clone(&env.file),
             line: env.line,
         };
@@ -868,7 +904,11 @@ mod imp {
             block,
             method_args: Some(args.to_vec()),
             src: Arc::from(snippet),
-            cref: None,
+            // The body's constants resolve against the class the method was
+            // defined into (`class_eval("def m = SOME_CONST")`), which is the
+            // receiver's class at every invocation.
+            cref: Some(self_val.class_id()),
+            cref_name: None,
             file: Arc::from(EVAL_FILE),
             line: 1,
         };
@@ -1342,6 +1382,7 @@ mod imp {
             method_args: None,
             src: Arc::from(snippet),
             cref: None,
+            cref_name: None,
             file: Arc::from(EVAL_FILE),
             line: 1,
         };

@@ -1728,6 +1728,73 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // (`self.block_given?`) is the same query about the current method's
         // block, so it desugars identically. `iterator?` is CRuby's (deprecated)
         // alias for `block_given?` and folds the same way.
+        // `send(:block_given?)` / `send(:binding)` / `send(:iterator?)` /
+        // `send(:local_variables)` with a LITERAL symbol is the reflective
+        // spelling of the same caller-scope query, so it folds exactly like
+        // the direct one (the `is_sent_eval` precedent) -- rewritten here to
+        // the direct name so every recognizer below, and the Binding cell
+        // promotion in `codegen::captures`, sees the plain spelling.
+        // `public_send` is excluded: all four are private, so CRuby raises
+        // NoMethodError there. A COMPUTED name stays a runtime send and
+        // reaches the loud refusal rows (see
+        // tests/gaps/kernel_scope_intrinsics_dynamic_send.rb).
+        let name = if matches!(name.as_str(), "send" | "__send__")
+            && receiver.is_none()
+            && call.block().is_none()
+        {
+            let sent: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            let target = sent.first().and_then(|n| n.as_symbol_node()).map(|s| {
+                String::from_utf8_lossy(s.unescaped()).into_owned()
+            });
+            match target.as_deref() {
+                Some(
+                    t @ ("block_given?" | "iterator?" | "binding" | "local_variables"),
+                ) if sent.len() == 1 => {
+                    match t {
+                        "block_given?" | "iterator?" => {
+                            return Ok(hir.push(HirNode::BlockGiven));
+                        }
+                        "binding" => {
+                            return Ok(hir.push(HirNode::Call {
+                                receiver: None,
+                                name: "binding".to_string(),
+                                args: vec![],
+                                kwargs: vec![],
+                                block: None,
+                                block_arg: None,
+                                safe: false,
+                            }));
+                        }
+                        _ => {
+                            let binding = hir.push(HirNode::Call {
+                                receiver: None,
+                                name: "binding".to_string(),
+                                args: vec![],
+                                kwargs: vec![],
+                                block: None,
+                                block_arg: None,
+                                safe: false,
+                            });
+                            return Ok(hir.push(HirNode::Call {
+                                receiver: Some(binding),
+                                name: "local_variables".to_string(),
+                                args: vec![],
+                                kwargs: vec![],
+                                block: None,
+                                block_arg: None,
+                                safe: false,
+                            }));
+                        }
+                    }
+                }
+                _ => name,
+            }
+        } else {
+            name
+        };
         let bg_self_or_none = match &receiver {
             None => true,
             Some(r) => r.as_self_node().is_some(),
@@ -2078,6 +2145,39 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         let node = hir.push(built);
         if is_vcall {
             hir.vcall_nodes.insert(node);
+        }
+        // A literal block on a re-homing call runs under the RECEIVER's
+        // `self` -- see `Hir::rehomed_blocks`.
+        if let HirNode::Call {
+            receiver: Some(_),
+            name,
+            block: Some(b),
+            ..
+        } = &hir[node]
+            && matches!(
+                name.as_str(),
+                "instance_eval"
+                    | "instance_exec"
+                    | "class_eval"
+                    | "class_exec"
+                    | "module_eval"
+                    | "module_exec"
+            )
+        {
+            let b = *b;
+            hir.rehomed_blocks.insert(b);
+        }
+        // A computed-name `define_method(name) { }` block IS a method body
+        // at run time -- see `Hir::dynamic_define_method_blocks`.
+        if let HirNode::Call {
+            name,
+            block: Some(b),
+            ..
+        } = &hir[node]
+            && matches!(name.as_str(), "define_method" | "define_singleton_method")
+        {
+            let b = *b;
+            hir.dynamic_define_method_blocks.insert(b);
         }
         return Ok(node);
     }

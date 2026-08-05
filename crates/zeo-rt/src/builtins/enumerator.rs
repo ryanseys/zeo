@@ -658,6 +658,16 @@ fn list(vals: &[RubyValue]) -> String {
     format!("[{}]", rendered.join(", "))
 }
 
+/// `Object#to_s`'s address form under the enumerator's own class name --
+/// what `Enumerator#to_s`, `puts`, and interpolation print (inspect alone
+/// describes the iteration). One helper for the method row and value.rs's
+/// display arm, so the two cannot drift.
+pub(crate) fn enum_to_s(e: &REnumerator) -> String {
+    let name = crate::dispatch::class_name(enumerator_class_id(e))
+        .unwrap_or_else(|| "Enumerator".to_string());
+    format!("#<{name}:0x{:016x}>", std::sync::Arc::as_ptr(e) as usize)
+}
+
 pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
     match &e.source {
         // A generator/producer is an object in its own right, and CRuby
@@ -1028,11 +1038,16 @@ ruby_class! {
         Ok(enum_size(recv_enum(recv)))
     }
 
-    // `Enumerator#to_s` is inherited `Object#to_s` in CRuby but prints the
-    // same `#<Enumerator: ...>` shape via #inspect in practice; sharing
-    // one implementation matches the observable output.
-    def "inspect" | "to_s" (recv) {
+    def "inspect"(recv) {
         Ok(RubyValue::Str(crate::string_new(enum_inspect(recv_enum(recv)))))
+    }
+
+    // `Enumerator#to_s` is inherited `Object#to_s` in CRuby: the ADDRESS
+    // form, not #inspect's iteration description. `puts e`/interpolation go
+    // through the same helper (value.rs's display arm), so the two halves
+    // cannot drift.
+    def "to_s"(recv) {
+        Ok(RubyValue::Str(crate::string_new(enum_to_s(recv_enum(recv)))))
     }
 
     def "with_index"(recv, offset?, &block) {

@@ -382,9 +382,9 @@ impl RubyValue {
             RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).display_with(seen)?,
             // Same placeholder posture as `Object`/`Proc` above.
             RubyValue::Fiber(_) => "#<Fiber>".to_string(),
-            // The real CRuby shape (`#<Enumerator: [1, 2]:each>`) -- to_s
-            // and inspect agree for enumerators.
-            RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_inspect(e),
+            // `Object#to_s`'s address form -- inspect alone describes the
+            // iteration.
+            RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_to_s(e),
             RubyValue::Yielder(_) => "#<Enumerator::Yielder>".to_string(),
             RubyValue::Thread(_) => "#<Thread>".to_string(),
             RubyValue::Mutex(_) => "#<Thread::Mutex>".to_string(),

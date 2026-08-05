@@ -394,6 +394,22 @@ pub fn bind_dynamic_kwargs<'a>(
     Ok((positional, req_values, opt_values, rest_pairs))
 }
 
+/// A `**nil` callee reached dynamically: a kw-marked trailing Hash means the
+/// caller WROTE keywords (`**h` splat or `send`'s literal kwargs -- see
+/// [`crate::collections::RHashData::kw_marked`]), which the declaration
+/// refuses before any arity check (CRuby `vm_args.c` order). An unmarked
+/// trailing Hash is an ordinary positional and passes through. A marked
+/// EMPTY hash never arrives -- every writer drops a runtime-empty keyword
+/// set before pushing it.
+pub fn reject_marked_kwargs(args: &[RubyValue]) -> Result<(), Signal> {
+    if let Some(RubyValue::Hash(h)) = args.last()
+        && crate::collections::hash_is_kwargs(h)
+    {
+        return Err(arg_error!("no keywords accepted"));
+    }
+    Ok(())
+}
+
 /// CRuby's keyword-error wording: `missing keyword: :a` / `unknown keywords:
 /// :c, :d` -- singular or plural by count, each name a `:sym`, no `(in ...)`
 /// suffix. `kind` is `"missing"` or `"unknown"`.
@@ -809,8 +825,10 @@ struct ClassEntry {
     /// `class_methods` rows over the builtin class-method table, flattened.
     /// Frozen-layer-only like `flat_value`, but box-free (class methods are
     /// not box-scoped) so it serves every box; the runtime overlay is still
-    /// probed ahead of it when live.
-    flat_class: OnceLock<crate::FMap<Symbol, ValueMethodFn>>,
+    /// probed ahead of it when live. The label rides along for BUILTIN rows
+    /// (`'File.read'` -- see [`FlatHit::frame_label`]); user `def self.x`
+    /// rows push their own compiled frames and carry `None`.
+    flat_class: OnceLock<crate::FMap<Symbol, (ValueMethodFn, Option<&'static str>)>>,
 }
 
 /// One flattened dispatch answer: the function, which ancestor supplied it,
@@ -822,6 +840,83 @@ struct FlatHit {
     f: ValueMethodFn,
     owner: ClassId,
     builtin: bool,
+    /// The `'Owner#name'` backtrace frame this row shows while it runs --
+    /// CRuby names the C frames a raise passes through, so every builtin hit
+    /// pushes one (see [`crate::frames::synthetic_c_frame`]). `None` for
+    /// reopen rows (compiled bodies push their own real frames) and for the
+    /// [`NOFRAME`] set.
+    frame_label: Option<&'static str>,
+}
+
+/// Builtin rows that push NO synthetic frame: rows whose CRuby counterpart is
+/// frameless in a backtrace (`send`, `raise`), and rows whose implementation
+/// reads the CALLER's frames and would see its own synthetic one instead
+/// (`caller`, `binding`, `__method__`, `warn`'s uplevel). The eval family
+/// stays frameless too: its frames carry `(eval)` locations built inside
+/// `eval_vm`, not a dispatch-boundary label.
+const NOFRAME: &[&str] = &[
+    "caller",
+    "caller_locations",
+    "raise",
+    "fail",
+    "throw",
+    "binding",
+    "local_variables",
+    "__method__",
+    "__callee__",
+    "block_given?",
+    "iterator?",
+    "warn",
+    "puts",
+    "print",
+    "p",
+    "pp",
+    "putc",
+    "send",
+    "__send__",
+    "public_send",
+    "eval",
+    "instance_eval",
+    "instance_exec",
+    "class_eval",
+    "class_exec",
+    "module_eval",
+    "module_exec",
+];
+
+/// The interned backtrace label for a builtin row -- `'Owner#name'` for an
+/// instance row, `'Owner.name'` for a class row -- or `None` for [`NOFRAME`].
+/// One leak per distinct row, cached, so the cold MRO-walk paths can ask on
+/// every call; the flat maps precompute it into [`FlatHit`] instead.
+fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str> {
+    let n = name.name_str();
+    if NOFRAME.contains(&n) {
+        return None;
+    }
+    static LABELS: std::sync::Mutex<Option<crate::FMap<(u32, Symbol, bool), &'static str>>> =
+        std::sync::Mutex::new(None);
+    let key = (owner.0, name, sep == '#');
+    let mut cache = LABELS.lock().expect("label cache");
+    let map = cache.get_or_insert_with(crate::FMap::default);
+    if let Some(&label) = map.get(&key) {
+        return Some(label);
+    }
+    let label: &'static str =
+        Box::leak(format!("{}{sep}{n}", class_name(owner)?).into_boxed_str());
+    map.insert(key, label);
+    Some(label)
+}
+
+/// Run `f` under the row's synthetic C frame, or bare for a `None` label.
+#[inline]
+fn with_c_frame<R>(label: Option<&'static str>, f: impl FnOnce() -> R) -> R {
+    match label {
+        Some(l) => {
+            let _frame = crate::frames::synthetic_c_frame(l);
+            f()
+        }
+        None => f(),
+    }
 }
 
 #[derive(Default)]
@@ -906,6 +1001,7 @@ impl ClassRegistry {
                                 f,
                                 owner: anc,
                                 builtin: false,
+                                frame_label: None,
                             });
                         }
                     }
@@ -921,6 +1017,7 @@ impl ClassRegistry {
                                 f,
                                 owner: anc,
                                 builtin: true,
+                                frame_label: c_frame_label(anc, sym, '#'),
                             });
                         }
                     }
@@ -934,17 +1031,18 @@ impl ClassRegistry {
     /// `flat_value_hit`'s class-receiver twin: user `def self.x` rows over
     /// the builtin class-method table for `id` itself (no ancestry -- the
     /// walk the caller falls back to covers Class/Module).
-    fn flat_class_hit(&self, id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+    fn flat_class_hit(&self, id: ClassId, name: Symbol) -> Option<(ValueMethodFn, Option<&'static str>)> {
         let entry = self.entries.get(&id.0)?;
         let map = entry.flat_class.get_or_init(|| {
             let mut map = crate::FMap::default();
             for (&sym, &f) in &entry.class_methods {
-                map.entry(sym).or_insert(f);
+                map.entry(sym).or_insert((f, None));
             }
             if let Some(lookup) = crate::builtins::class_method_table(id) {
                 for &n in crate::builtins::class_method_table_names(id) {
                     if let Some(f) = lookup(n) {
-                        map.entry(Symbol::intern(n)).or_insert(f);
+                        let sym = Symbol::intern(n);
+                        map.entry(sym).or_insert((f, c_frame_label(id, sym, '.')));
                     }
                 }
             }
@@ -2597,6 +2695,20 @@ pub(crate) fn allocate_instance_of(id: ClassId) -> Option<RObj> {
     }
 }
 
+/// A constant MISS dispatches `const_missing` on the owning class -- a user
+/// hook (compiled `def self.const_missing`, or one defined at runtime)
+/// answers; Module's default row raises the same qualified NameError the
+/// miss would have. CRuby's exact protocol, which nothing in this runtime
+/// called before: the hook had a definition but no caller.
+pub fn const_miss(cid: ClassId, name: &str) -> Result<RubyValue, Signal> {
+    send_value(
+        &RubyValue::Class(cid),
+        Symbol::intern("const_missing"),
+        &[RubyValue::Symbol(Symbol::intern(name))],
+        None,
+    )
+}
+
 /// The `AllocatorFn` `id` itself registered -- only `ruby_class!`-generated
 /// (compiled user) classes register one, so a `Some` here identifies a class
 /// whose instances are real generated structs.
@@ -2674,6 +2786,13 @@ pub fn construct_by_class_id(
 /// the registry -- where every exception id carries the native `exc_*` fns --
 /// runs the true behavior instead. Also the exact shape the eval VM needs for
 /// `super`, so it lands here rather than as a codegen special case.
+/// `defined?(super)`'s probe: whether a super target exists for `name` past
+/// `defining_class` on `recv`'s chain -- the same resolution
+/// [`send_super_from`] walks, answered as a boolean instead of a call.
+pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) -> bool {
+    method_owner_after(recv.class_id(), defining_class, name).is_some()
+}
+
 pub fn send_super_from(
     recv: &RubyValue,
     defining_class: ClassId,
@@ -2702,6 +2821,31 @@ pub fn send_super_from(
 /// instance. `own_impls` holds the receiver-generic bridge instead. Codegen
 /// emits those bridges for every method name a `super` -- or a
 /// `#super_method` anywhere in the program -- can reach.
+/// [`send_as_defined_in`] with the runtime overlay skipped -- the body
+/// `owner` defines BELOW any later runtime redefinition. What a frozen
+/// `Method`/`UnboundMethod` position calls, so a wrapper installed since
+/// (the `method_added` wrap idiom) cannot capture it and recurse.
+pub fn send_below_overlay_at(
+    recv: &RubyValue,
+    owner: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    if let RubyValue::Object(obj) = recv
+        && let Some(m) = registry().super_target(owner, name)
+    {
+        return m.call(obj, args, block);
+    }
+    if let Some(f) = value_method(owner, 0, name) {
+        return f(recv, args, block);
+    }
+    if let Some(f) = crate::builtins::class_table(owner).and_then(|t| t(&name.to_string())) {
+        return f(recv, args, block);
+    }
+    send_value(recv, name, args, block)
+}
+
 pub fn send_as_defined_in(
     recv: &RubyValue,
     owner: ClassId,
@@ -4176,13 +4320,13 @@ fn send_value_in_reason(
         // singleton method is strictly closer than one inherited from
         // Class/Module). A class with NO registry entry (a never-required
         // feature-gated ext) still gets the direct builtin probe below.
-        if let Some(f) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
-            return f(recv, args, block);
+        if let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
+            return with_c_frame(label, || f(recv, args, block));
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid)
             && let Some(f) = lookup(name.name_str())
         {
-            return f(recv, args, block);
+            return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
         }
         // Class methods on a MINTED native struct/data class (`Point.members`,
         // `Point[1, 2]`): these hang off `STRUCT_CLASS`/`DATA_CLASS` but are NOT
@@ -4227,7 +4371,7 @@ fn send_value_in_reason(
     if box_id == 0 && !crate::runtime_meta::is_live() {
         if let Some(hit) = REGISTRY.get().and_then(|r| r.flat_value_hit(cid, name)) {
             if let Some(hit) = hit {
-                return (hit.f)(recv, args, block);
+                return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
             }
             // A genuine flat miss: fall through to the alias tail below.
         } else {
@@ -4239,7 +4383,9 @@ fn send_value_in_reason(
                 if let Some(table) = crate::builtins::class_table(anc)
                     && let Some(f) = table(n)
                 {
-                    return f(recv, args, block);
+                    return with_c_frame(c_frame_label(anc, name, '#'), || {
+                        f(recv, args, block)
+                    });
                 }
             }
         }
@@ -4264,7 +4410,7 @@ fn send_value_in_reason(
             if let Some(table) = crate::builtins::class_table(anc)
                 && let Some(f) = table(n)
             {
-                return f(recv, args, block);
+                return with_c_frame(c_frame_label(anc, name, '#'), || f(recv, args, block));
             }
         }
     }
@@ -4288,8 +4434,9 @@ enum Cached {
     /// A generated object -- resolved through the registry's own method table.
     Obj(MethodFn),
     /// A builtin value (`Int`, `Str`, `Array`, ...) -- resolved through the
-    /// flattened one-probe walk.
-    Value(ValueMethodFn),
+    /// flattened one-probe walk, with the row's synthetic-frame label so a
+    /// cached hit shows the same backtrace as the uncached resolution.
+    Value(ValueMethodFn, Option<&'static str>),
 }
 
 /// One dynamic call site's monomorphic inline cache.
@@ -4377,7 +4524,7 @@ pub fn send_value_cached(
                 note_dispatch(name);
                 return match (target, recv) {
                     (Cached::Obj(f), RubyValue::Object(o)) => f(o, args, block),
-                    (Cached::Value(f), _) => f(recv, args, block),
+                    (Cached::Value(f, label), _) => with_c_frame(*label, || f(recv, args, block)),
                     // A class id cannot be both shapes, so this is unreachable
                     // in practice; falling through is still the right answer.
                     _ => send_value_in(box_id, recv, name, args, block),
@@ -4407,8 +4554,8 @@ pub fn send_value_cached(
                     if let Some(Some(hit)) = REGISTRY.get().and_then(|r| r.flat_value_hit(id, name))
                     {
                         note_dispatch(name);
-                        let _ = site.hit.set((id.0, Cached::Value(hit.f)));
-                        return (hit.f)(recv, args, block);
+                        let _ = site.hit.set((id.0, Cached::Value(hit.f, hit.frame_label)));
+                        return with_c_frame(hit.frame_label, || (hit.f)(recv, args, block));
                     }
                 }
             }
@@ -4599,7 +4746,7 @@ fn send_in_reason(
                 && payload_root == Some(hit.owner)
                 && let Some(ref p) = payload
             {
-                let result = (hit.f)(p, args, block)?;
+                let result = with_c_frame(hit.frame_label, || (hit.f)(p, args, block))?;
                 return Ok(crate::builtins::value_subclass::rewrap_self_return(
                     result,
                     p,
@@ -4607,7 +4754,7 @@ fn send_in_reason(
                     name.name_str(),
                 ));
             }
-            return (hit.f)(&boxed, args, block);
+            return with_c_frame(hit.frame_label, || (hit.f)(&boxed, args, block));
         }
         // A genuine flat miss: straight to the alias tail below.
         Some(None) => {}
@@ -4623,18 +4770,19 @@ fn send_in_reason(
                 if let Some(table) = crate::builtins::class_table(anc)
                     && let Some(f) = table(n)
                 {
+                    let label = c_frame_label(anc, name, '#');
                     // At the payload root, run against the wrapped value
                     // and re-wrap a self-return (`push`/`<<`) back to the
                     // subclass.
                     if payload_root == Some(anc)
                         && let Some(ref p) = payload
                     {
-                        let result = f(p, args, block)?;
+                        let result = with_c_frame(label, || f(p, args, block))?;
                         return Ok(crate::builtins::value_subclass::rewrap_self_return(
                             result, p, recv, n,
                         ));
                     }
-                    return f(&boxed, args, block);
+                    return with_c_frame(label, || f(&boxed, args, block));
                 }
             }
         }

@@ -52,21 +52,47 @@ pub(super) fn enforce_visibility(
     }
     None
 }
-/// The caller class a Path 2 site records -- the same question
+/// The caller class a Path 2 site carries -- the same question
 /// [`enforce_visibility`] answers at compile time, for the sites where the
 /// receiver's class is only known at run time.
-///
+pub(super) enum Caller {
+    /// A per-site compile-time constant -- cacheable in the site's
+    /// `CallSite`.
+    Static(u32),
+    /// A dynamic-`self` context (a re-homed block, a runtime method body):
+    /// the caller class is whatever the runtime `self`'s class turns out to
+    /// be, so the site must ask per call -- and must NOT fill a `CallSite`,
+    /// whose vetting is per-site-constant.
+    Runtime(TokenStream),
+}
+
+impl Caller {
+    pub(super) fn expr(&self) -> TokenStream {
+        match self {
+            Caller::Static(c) => quote! { #c },
+            Caller::Runtime(t) => t.clone(),
+        }
+    }
+}
+
 /// `zeo_rt::FCALL` (`u32::MAX`) wherever ruby runs no check at all: an implicit
 /// receiver, a literal `self` receiver (private is reachable that way since
 /// 2.7), and `send`/`__send__`. Otherwise the class whose body the call sits
-/// in, which is what decides whether a `protected` target is in reach.
-pub(super) fn caller_class(cx: &Ctx, recv_id: NodeId, bypass: bool) -> u32 {
+/// in, which is what decides whether a `protected` target is in reach -- read
+/// off the runtime `self` where that class isn't a compile-time fact
+/// (`Ctx::self_is_dynamic`: `instance_eval`/`instance_exec` re-homed blocks
+/// and `Class.new`-body method bodies).
+pub(super) fn caller_class(cx: &Ctx, recv_id: NodeId, bypass: bool) -> Caller {
     if bypass || matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
-        return u32::MAX;
+        return Caller::Static(u32::MAX);
+    }
+    if cx.self_is_dynamic {
+        let s = &cx.self_ident;
+        return Caller::Runtime(quote! { (#s).class_id().0 });
     }
     // Outside any class body `self` is `main`, an ordinary `Object` -- and
     // `Object` is what a protected check has to compare against there.
-    cx.current_class.map_or(0, |c| c.0)
+    Caller::Static(cx.current_class.map_or(0, |c| c.0))
 }
 
 /// The class-method counterpart, for an explicit `Target.name` receiver. Ruby

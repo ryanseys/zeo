@@ -557,6 +557,9 @@ ruby_module! {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(copy_frozen)))?,
             _ => recv.dup_value(copy_frozen)?,
         };
+        // `clone` carries the singleton class -- its methods and extended
+        // modules -- where `dup` drops it (Ruby's rule).
+        crate::runtime_meta::copy_value_singletons(recv, &copy);
         if freeze == Some(true) {
             copy.freeze_value()?;
         }
@@ -961,18 +964,58 @@ ruby_module! {
     // would be accepted and then never called, so it is refused instead --
     // the rule `Thread#set_trace_func` and `TracePoint.new` already follow.
     module_function def "set_trace_func"(_recv, arg) {
-        if matches!(arg, RubyValue::Nil) {
-            return Ok(RubyValue::Nil);
+        match arg {
+            RubyValue::Nil => {
+                #[cfg(feature = "ext-tracepoint")]
+                crate::ext::tracepoint::set_legacy_hook(None);
+                Ok(RubyValue::Nil)
+            }
+            #[cfg(feature = "ext-tracepoint")]
+            RubyValue::Proc(p) => {
+                crate::ext::tracepoint::set_legacy_hook(Some(p.clone()));
+                Ok(arg.clone())
+            }
+            #[cfg(not(feature = "ext-tracepoint"))]
+            RubyValue::Proc(_) => Err(crate::dispatch::raise_error(
+                "NotImplementedError",
+                "set_trace_func is not supported: this build carries no trace hooks"
+                    .to_string(),
+            )),
+            _ => Err(type_error!("trace_func needs to be Proc")),
         }
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "set_trace_func is not supported: zeo raises no per-line trace events".to_string(),
-        ))
     }
     module_function def "syscall" arity 0 (_recv, *_args) {
         Err(crate::dispatch::raise_error(
             "NotImplementedError",
             "syscall() function is unimplemented on this machine".to_string(),
+        ))
+    }
+
+    // The caller-scope intrinsics. Every direct or literal-`send` spelling
+    // folds into the caller at compile time (`lower`'s rewrite,
+    // `codegen::call::kernel`), so these rows exist for REFLECTION --
+    // `respond_to?(:block_given?, true)`, `method(:binding)`, the private
+    // NoMethodError for an explicit receiver -- and for the one spelling no
+    // fold can serve: a `send` whose name is computed at runtime. A row
+    // cannot see its caller's block or scope, so that spelling is refused
+    // loudly rather than answered wrongly (the `set_trace_func` rule; see
+    // tests/gaps/kernel_scope_intrinsics_dynamic_send.rb).
+    module_function def "block_given?" | "iterator?" (_recv) {
+        Err(crate::dispatch::raise_error(
+            "NotImplementedError",
+            "block_given? cannot be reached through a runtime-computed send: a method row cannot see the caller's block".to_string(),
+        ))
+    }
+    module_function def "binding"(_recv) {
+        Err(crate::dispatch::raise_error(
+            "NotImplementedError",
+            "binding cannot be reached through a runtime-computed send: a method row cannot see the caller's scope".to_string(),
+        ))
+    }
+    module_function def "local_variables"(_recv) {
+        Err(crate::dispatch::raise_error(
+            "NotImplementedError",
+            "local_variables cannot be reached through a runtime-computed send: a method row cannot see the caller's scope".to_string(),
         ))
     }
 }
@@ -1092,6 +1135,9 @@ pub(crate) fn integer_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         RubyValue::Rational(r) => Ok(crate::builtins::integer::int_value(&r.num / &r.den)),
         RubyValue::Str(s) => {
             let text = s.lock().to_utf8_lossy().into_owned();
+            // Base 0 is strtol's "detect from the prefix" -- exactly the
+            // no-base rule (0x/0o/0b, leading-0 octal, else decimal).
+            let base = base.filter(|&b| b != 0);
             parse_integer_strict(&text, base)
                 .ok_or_else(|| arg_error!("invalid value for Integer(): {:?}", text))
         }
@@ -1591,6 +1637,7 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // are on. The caller already evaluated the message arguments, so their
     // side effects happen regardless of suppression.
     let mut msgs = args;
+    let mut uplevel: Option<usize> = None;
     if let Some(RubyValue::Hash(h)) = args.last() {
         let cat_key = RubyValue::Symbol(crate::Symbol::intern("category"));
         let up_key = RubyValue::Symbol(crate::Symbol::intern("uplevel"));
@@ -1606,9 +1653,22 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             {
                 return Ok(RubyValue::Nil);
             }
+            if let RubyValue::Int(n) = crate::hash_get(h, &up_key)
+                && n >= 0
+            {
+                uplevel = Some(n as usize);
+            }
         }
     }
     let mut buf = Vec::new();
+    // `uplevel: n` prefixes the first message with "file:line: warning: "
+    // from the caller frame n levels up. This bare fn is folded into its
+    // caller (no frame of its own), so the TOP frame is uplevel 0.
+    if let Some(n) = uplevel
+        && let Some(&(file, line, _)) = crate::frames::caller_frames(0).get(n)
+    {
+        buf.extend_from_slice(format!("{file}:{line}: warning: ").as_bytes());
+    }
     for a in msgs {
         let start = buf.len();
         // NO partial flush on a raising `to_s`: CRuby's `warn` renders the

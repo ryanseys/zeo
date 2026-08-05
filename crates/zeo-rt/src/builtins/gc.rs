@@ -5,12 +5,13 @@
 //! there would be a worse lie than doing nothing.
 //!
 //! Cycles genuinely leak; that is documented in the plan as an accepted
-//! trade, not something these rows paper over. `GC.stat` answers an empty
-//! Hash so `GC.stat[:count]`-style reads get `nil` rather than crashing --
-//! no fabricated statistics.
+//! trade, not something these rows paper over. `GC.stat` carries exactly one
+//! real number -- `:count`, the explicit collections run -- and answers
+//! `nil` for every statistic this heap has no truthful value for. No
+//! fabricated statistics.
 
 use crate::{RubyValue, Signal};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use zeo_macros::ruby_module;
 
 /// The two switches a program may set and read back. Nothing consults them --
@@ -23,6 +24,10 @@ static STRESS: AtomicBool = AtomicBool::new(false);
 /// tracing collector here to time -- but a program that turns profiling on
 /// and asks must be told what it asked for.
 static PROFILING: AtomicBool = AtomicBool::new(false);
+/// Collections run -- each explicit `GC.start`/`garbage_collect` counts one
+/// (in a refcounting heap each is trivially a full collection). What
+/// `GC.count` and `GC.stat(:count)` answer.
+static COUNT: AtomicU64 = AtomicU64::new(0);
 
 fn hash_of(pairs: Vec<(&str, RubyValue)>) -> RubyValue {
     RubyValue::Hash(crate::collections::hash_new(
@@ -65,12 +70,14 @@ ruby_module! {
     def self."start" | "compact" arity 0 (_recv, *_args, &_block) {
         // No tracing collector to drive, but this is the honest moment to run
         // finalizers for objects whose last strong reference has dropped.
+        COUNT.fetch_add(1, Ordering::Relaxed);
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }
     // `GC#garbage_collect` -- the instance twin of `GC.start`, which a class
     // gets by `include GC`. Public, as CRuby lists it.
     def "garbage_collect" (_recv, *_args, &_block) {
+        COUNT.fetch_add(1, Ordering::Relaxed);
         crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }
@@ -85,11 +92,33 @@ ruby_module! {
     def self."stress="(_recv, on) {
         flag(&STRESS, on)
     }
+    // The number of collections RUN: every explicit `GC.start`/
+    // `garbage_collect` is one (in a refcounting heap each is trivially a
+    // full collection), so `GC.start; GC.count > 0` holds as in CRuby.
     def self."count"(_recv) {
-        Ok(RubyValue::Int(0))
+        Ok(RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64))
     }
+    // `stat()` -> the whole hash, `stat(:key)` -> one value (nil for a key
+    // this heap has no truthful number for), `stat(hash)` -> fills and
+    // answers the hash. Only `:count` carries a real value.
     def self."stat"(_recv, *_args, &_block) {
-        Ok(empty_hash())
+        let count = RubyValue::Int(COUNT.load(Ordering::Relaxed) as i64);
+        match _args.first() {
+            Some(RubyValue::Symbol(s)) => Ok(if s.name() == "count" {
+                count
+            } else {
+                RubyValue::Nil
+            }),
+            Some(RubyValue::Hash(h)) => {
+                crate::collections::hash_set(
+                    h,
+                    RubyValue::Symbol(crate::Symbol::intern("count")),
+                    count,
+                );
+                Ok(RubyValue::Hash(h.clone()))
+            }
+            _ => Ok(hash_of(vec![("count", count)])),
+        }
     }
     // One size-pooled heap per slot size is an MRI structure; there are no
     // heaps here to describe, whether asked for all of them or for one.

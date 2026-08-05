@@ -61,11 +61,19 @@ pub fn emit_kwarg_inserts(cx: &Ctx, kwargs: &[KwArg], hash_ident: &TokenStream) 
         // `**obj` converts through `to_hash` like CRuby, so a non-Hash
         // converter object splats (and a non-converter raises a real
         // TypeError); boxed first, since the coercion takes a `RubyValue`.
+        // `**nil` is ruby's "pass no keywords" spelling -- a no-op, whether
+        // written literally or through a nil-valued variable, in calls and
+        // hash literals alike (oracle-verified), so nil skips the coercion.
         KwArg::DoubleSplat(n) => {
             let e = box_if_object_typed(cx, *n, emit_expr(cx, *n));
             quote! {
-                for (__k, __v) in zeo_rt::to_hash_coerce(&(#e))?.lock().values().cloned().collect::<Vec<_>>() {
-                    zeo_rt::hash_set(&#hash_ident, __k, __v);
+                {
+                    let __ds = #e;
+                    if !__ds.is_nil() {
+                        for (__k, __v) in zeo_rt::to_hash_coerce(&__ds)?.lock().values().cloned().collect::<Vec<_>>() {
+                            zeo_rt::hash_set(&#hash_ident, __k, __v);
+                        }
+                    }
                 }
             }
         }

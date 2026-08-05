@@ -428,13 +428,23 @@ pub fn parameters(
 /// method with no Ruby source here -- a builtin, or a body this runtime
 /// synthesized. CRuby answers `nil` for its own C methods the same way.
 pub fn source_location(class: ClassId, kind: MethodKind, name: Symbol) -> RubyValue {
-    let Some((file, line)) = lookup(class, kind, name).and_then(|m| m.source) else {
+    let Some((file, line)) = source_pair(class, kind, name) else {
         return RubyValue::Nil;
     };
     RubyValue::Array(crate::array_new(vec![
         RubyValue::Str(crate::string_new(file.to_string())),
         RubyValue::Int(line as i64),
     ]))
+}
+
+/// [`source_location`]'s raw pair -- exactly the shape `ProcData::location`
+/// wants, so `Method#to_proc` can carry its method's location.
+pub(crate) fn source_pair(
+    class: ClassId,
+    kind: MethodKind,
+    name: Symbol,
+) -> Option<(&'static str, u32)> {
+    lookup(class, kind, name).and_then(|m| m.source)
 }
 
 /// The pieces of CRuby's `method_inspect` (proc.c), assembled by

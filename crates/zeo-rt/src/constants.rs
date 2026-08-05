@@ -310,7 +310,13 @@ pub fn record_const_location(owner_class_id: u32, name: &str, file: &'static str
         .insert(Box::from(name), (file, line));
 }
 
-/// [`const_set`] plus where the assignment was written.
+/// [`const_set`] plus where the assignment was written -- and, when the name
+/// is already bound, CRuby's two-line reassignment warning. The gate is
+/// VALUE presence: `remove_const` deletes the value (so a re-set after it is
+/// a fresh definition, silently), and a `class`/`module` reopen never comes
+/// through the value table at all. Only located assignments warn -- written
+/// ones and `Module#const_set` route here; bootstrap seeding uses the plain
+/// [`const_set`] and stays quiet.
 pub fn const_set_at(
     owner_class_id: u32,
     name: &str,
@@ -318,6 +324,24 @@ pub fn const_set_at(
     file: &'static str,
     line: u32,
 ) {
+    let already = CONSTANTS
+        .lock()
+        .get(&owner_class_id)
+        .is_some_and(|m| m.contains_key(name));
+    if already {
+        // Line 1 carries the qualified name, line 2 the bare one, exactly as
+        // CRuby prints them; the OLD location is read before the new record
+        // overwrites it. A binding with no recorded location (a builtin) gets
+        // line 1 alone -- CRuby's shape there too.
+        let qualified = match crate::dispatch::class_name(crate::ClassId(owner_class_id)) {
+            Some(owner) if owner_class_id != 0 => format!("{owner}::{name}"),
+            _ => name.to_string(),
+        };
+        eprintln!("{file}:{line}: warning: already initialized constant {qualified}");
+        if let Some((prev_file, prev_line)) = const_location(owner_class_id, name, true) {
+            eprintln!("{prev_file}:{prev_line}: warning: previous definition of {name} was here");
+        }
+    }
     const_set(owner_class_id, name, value);
     record_const_location(owner_class_id, name, file, line);
 }
@@ -352,9 +376,9 @@ pub fn seed_argv() {
         .skip(1)
         .map(|a| RubyValue::Str(crate::collections::string_new(a)))
         .collect();
-    const_set(
-        0,
-        "ARGV",
-        RubyValue::Array(crate::collections::array_new(args)),
-    );
+    let argv = RubyValue::Array(crate::collections::array_new(args));
+    // `$*` is an ALIAS of ARGV -- the same array object (`$*.equal?(ARGV)`),
+    // not a copy.
+    crate::globals::global_set(0, "$*", argv.clone());
+    const_set(0, "ARGV", argv);
 }
