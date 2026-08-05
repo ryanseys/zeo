@@ -2294,13 +2294,32 @@ fn register_class(
                     .pending_module_functions
                     .push(name.clone());
             }
-            // A `private`/`public`/`protected :m` re-declaring an INHERITED
-            // method's visibility -- applied by codegen after materialization.
-            // See `HirNode::MethodVisibility`.
+            // A `private`/`public`/`protected :m` naming a method with no
+            // `def` in this body. Re-marking the class's OWN method (defined
+            // in an EARLIER body -- a reopen) is POSITIONAL: ruby applies it
+            // where it stands, so calls made while the method was still
+            // public succeed. The node joins the site's statements (codegen
+            // emits `runtime_set_visibility` there) and the name loses
+            // devirtualization (`runtime_patches`) so every call site asks
+            // the runtime barrier. An INHERITED method's re-mark keeps the
+            // static override: it runs before any instance exists, so
+            // start-of-program application is observationally identical.
             HirNode::MethodVisibility { name, visibility } => {
-                compiler.classes[class_id.0 as usize]
-                    .visibility_overrides
-                    .push((name.clone(), *visibility));
+                let (name, visibility) = (name.clone(), *visibility);
+                // `own_methods`, not `method_in_chain`: the flattened
+                // `methods` list is MRO-materialized after this walk.
+                let own = compiler.classes[class_id.0 as usize]
+                    .own_methods
+                    .iter()
+                    .any(|&s| compiler.scope(s).name == name);
+                if own {
+                    compiler.runtime_patches.insert(name);
+                    compiler.class_body_sites[site_idx].stmts.push(stmt);
+                } else {
+                    compiler.classes[class_id.0 as usize]
+                        .visibility_overrides
+                        .push((name, visibility));
+                }
             }
             // The class-method half. See `HirNode::ClassMethodVisibility`.
             HirNode::ClassMethodVisibility { name, visibility } => {

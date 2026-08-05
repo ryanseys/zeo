@@ -53,6 +53,10 @@ fn outcome(result: FiberResume) -> Result<RubyValue, Signal> {
             "FiberError",
             "fiber called across threads".to_string(),
         )),
+        FiberResume::Unborn => Err(raise_error(
+            "FiberError",
+            "cannot raise exception on unborn fiber".to_string(),
+        )),
     }
 }
 

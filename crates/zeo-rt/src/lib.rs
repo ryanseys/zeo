@@ -92,7 +92,8 @@ pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     CallSite, ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS,
     FALSE_CLASS, FCALL, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS,
-    MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MissingReason, NIL_CLASS,
+    MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MethodVisibility,
+    MissingReason, NIL_CLASS,
     NUMERIC_CLASS, Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
     REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     TRUE_CLASS, ValueMethodFn, YIELDER_CLASS, arity_error, bind_dynamic_kwargs,
@@ -163,8 +164,8 @@ pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_ha
 pub use runtime_meta::{
     class_maybe_patched, copy_value_singletons, fire_const_added, iter_inline_ok,
     iter_inline_ok_for, mark_global_def_hook, name_runtime_class_if_anonymous, runtime_class_new,
-    runtime_define_method, runtime_define_singleton_method, send_super_dynamic, value_extends,
-    with_pending_defs,
+    runtime_define_method, runtime_define_singleton_method, runtime_set_visibility,
+    send_super_dynamic, value_extends, with_pending_defs,
 };
 pub use signal::{Signal, catch_break, home_pop, home_push, return_targets_here};
 pub use stack_guard::stack_check;
@@ -178,7 +179,7 @@ pub use thread::{
 pub use value::RubyValue;
 pub use value::rb_eq_checked;
 pub use value::{case_eq, case_eq_any};
-pub use value::{range_endpoint, range_endpoint_error};
+pub use value::{range_checked, range_endpoint, range_endpoint_error};
 
 /// The interruption checkpoint generated code plants at loop back-edges and
 /// method prologues: ONE relaxed load of the process-wide pending counter

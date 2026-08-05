@@ -130,8 +130,8 @@ pub fn infer_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
     use crate::compiler::{
         ARRAY_CLASS, CLASS_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-        MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
-        RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+        MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, PROC_CLASS, RACTOR_CLASS, RANGE_CLASS,
+        REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     };
     match infer(cx, id) {
         TyKind::Object(cid) => Some(cid),
@@ -148,7 +148,11 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
         TyKind::Fiber => Some(FIBER_CLASS),
         TyKind::Thread => Some(THREAD_CLASS),
         TyKind::Mutex => Some(MUTEX_CLASS),
-        TyKind::Queue => Some(QUEUE_CLASS),
+        // `TyKind::Queue` covers BOTH `Queue` and `SizedQueue` (one runtime
+        // representation, told apart per value -- see `types.rs`'s ClassRef
+        // arms), so a queue-typed receiver's class identity is not a static
+        // fact: `is_a?`/`instance_of?`/`respond_to?` must ask at run time.
+        TyKind::Queue => None,
         TyKind::Ractor => Some(RACTOR_CLASS),
         // A class VALUE's own class is `Class` (or `Module` for a module
         // value) -- what `Widget.is_a?(Class)`/`.respond_to?` consult.

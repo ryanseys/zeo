@@ -52,6 +52,15 @@ pub(super) fn enforce_visibility(
     }
     None
 }
+/// Whether a Path 1 site must give up its devirtualized emission and fall
+/// through to Path 2: a `protected` target under a dynamic `self` (a re-homed
+/// block, a `Class.new`-body method) has no compile-time caller class to
+/// check against, so only the runtime barrier -- asked with this site's
+/// [`Caller::Runtime`] class -- can decide it.
+pub(super) fn defers_to_runtime(cx: &Ctx, scope: &crate::compiler::Scope, bypass: bool) -> bool {
+    !bypass && cx.self_is_dynamic && matches!(scope.visibility, Visibility::Protected)
+}
+
 /// The caller class a Path 2 site carries -- the same question
 /// [`enforce_visibility`] answers at compile time, for the sites where the
 /// receiver's class is only known at run time.

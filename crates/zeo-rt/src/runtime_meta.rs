@@ -612,13 +612,18 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
         return;
     };
     let mut copied = false;
-    if let Some(t) = maps().singletons.read().unwrap().get(&fk).cloned()
+    // Each read guard must be DEAD before the matching write lock: a let-chain
+    // scrutinee's guard temporary lives through the body, and a same-thread
+    // read->write on these RwLocks deadlocks.
+    let singles = maps().singletons.read().unwrap().get(&fk).cloned();
+    if let Some(t) = singles
         && !t.is_empty()
     {
         maps().singletons.write().unwrap().insert(tk, t);
         copied = true;
     }
-    if let Some(t) = maps().value_singletons.read().unwrap().get(&fk).cloned()
+    let value_singles = maps().value_singletons.read().unwrap().get(&fk).cloned();
+    if let Some(t) = value_singles
         && !t.is_empty()
     {
         maps().value_singletons.write().unwrap().insert(tk, t);
@@ -627,7 +632,8 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
     // `extended` keys through `extend_key`, which for these (non-Class)
     // receivers IS `value_identity` -- a Class never comes through `clone`'s
     // object arm.
-    if let Some(mods) = maps().extended.read().unwrap().get(&fk).cloned()
+    let mods = maps().extended.read().unwrap().get(&fk).cloned();
+    if let Some(mods) = mods
         && !mods.is_empty()
     {
         maps().extended.write().unwrap().insert(tk, mods);
@@ -2520,19 +2526,29 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     anc.extend(singleton_super_chain(recv));
     let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
     // A CLASS receiver's singleton is named after the class itself --
-    // CRuby's `#<Class:Melody>` -- not after `real` (the class of a Class
-    // is `Class`, which would name every one `#<Class:Class>`).
-    let named = match recv {
-        RubyValue::Class(cid) => *cid,
-        _ => real,
+    // CRuby's `#<Class:Melody>`. A plain object's is named after the OBJECT,
+    // in its address form (`#<Class:#<Object:0xADDR>>`, CRuby's
+    // `rb_any_to_s` of the attached object -- never its class, which would
+    // collapse every instance's singleton to one name).
+    let singleton_name = match recv {
+        RubyValue::Class(cid) => {
+            let n = crate::dispatch::class_name(*cid).unwrap_or_else(|| "Object".to_string());
+            format!("#<Class:{n}>")
+        }
+        _ => {
+            let cname = crate::dispatch::class_name(real).unwrap_or_else(|| "Object".to_string());
+            match value_identity(recv) {
+                Some(addr) => format!("#<Class:#<{cname}:0x{addr:016x}>>"),
+                None => format!("#<Class:{cname}>"),
+            }
+        }
     };
-    let real_name = crate::dispatch::class_name(named).unwrap_or_else(|| "Object".to_string());
     {
         let mut w = maps().classes.write().unwrap();
         w.insert(
             id_num,
             OverlayEntry {
-                name: RwLock::new(Some(format!("#<Class:{real_name}>"))),
+                name: RwLock::new(Some(singleton_name)),
                 ancestors: leaked,
                 ..Default::default()
             },

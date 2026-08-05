@@ -207,6 +207,33 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             quote! { #site_body }
         };
     }
+    if let HirNode::MethodVisibility { name, visibility } = &cx.compiler.hir[stmt] {
+        // Only a reopen's re-mark of the class's OWN method joins a site's
+        // statements (see analyze's `MethodVisibility` arm) -- applied here,
+        // at its document position: ruby's program-order visibility.
+        let cid = cx
+            .defining_class
+            .expect("MethodVisibility sits in a class body")
+            .0;
+        let vis = match visibility {
+            crate::hir::Visibility::Public => quote! { Public },
+            crate::hir::Visibility::Private => quote! { Private },
+            crate::hir::Visibility::Protected => quote! { Protected },
+        };
+        let apply = quote! {
+            zeo_rt::runtime_set_visibility(
+                zeo_rt::ClassId(#cid),
+                &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name))],
+                zeo_rt::MethodVisibility::#vis,
+            )?;
+        };
+        return if is_tail {
+            let nil = tail_nil(wrap_ok);
+            quote! { #apply #nil }
+        } else {
+            apply
+        };
+    }
     if matches!(
         &cx.compiler.hir[stmt],
         HirNode::LocalWrite(..) | HirNode::MultiWrite { .. }

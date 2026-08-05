@@ -184,6 +184,12 @@ pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
         (RubyValue::BigInt(x), RubyValue::BigInt(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Rational(x), RubyValue::Rational(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Complex(x), RubyValue::Complex(y)) => Arc::ptr_eq(x, y),
+        // The concurrency handles are heap instances: identity is the handle
+        // behind the box, not the box a variable read hands out.
+        (RubyValue::Mutex(x), RubyValue::Mutex(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Queue(x), RubyValue::Queue(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Thread(x), RubyValue::Thread(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Fiber(x), RubyValue::Fiber(y)) => Arc::ptr_eq(x, y),
         // `Range` is an inline value type with no stable shared pointer, so
         // identity falls back to structure -- `g.equal?(g)` holds; the rare
         // `(1..2).equal?(1..2)` reads true rather than false (documented).

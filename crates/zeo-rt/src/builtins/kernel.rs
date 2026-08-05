@@ -1686,6 +1686,10 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// `Kernel#p`: each argument's INSPECT rendering on its own line; returns
 /// nil / the single argument / the argument array (CRuby's exact shapes).
 pub fn kernel_p(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    // CRuby's `rb_f_p` is a C frame: an `inspect` that raises shows
+    // `in 'Kernel#p'` under the raising frame. Statically-emitted calls
+    // bypass the dispatch boundary, so the frame is placed here.
+    let _frame = crate::frames::synthetic_c_frame("Kernel#p");
     let mut buf = String::new();
     // Fallible: a raising user `inspect` propagates out of `p` (catchable,
     // CRuby's rule) -- after flushing the args already rendered, since

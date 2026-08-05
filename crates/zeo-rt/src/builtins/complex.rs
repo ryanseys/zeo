@@ -629,6 +629,11 @@ pub(crate) fn cpx_eq(a: &RubyValue, b: &RubyValue) -> bool {
 /// `to_s` uses the parts' `to_s` and `inspect` their `inspect`, so both
 /// can dispatch, and both can raise.
 pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> Result<String, Signal> {
+    // A raising component (a user subclass's `<` under `comp_negative`, or a
+    // raising `inspect`) must show this C frame -- `p`'s internal render
+    // reaches here without crossing the dispatch boundary.
+    let _frame =
+        crate::frames::synthetic_c_frame(if inspect { "Complex#inspect" } else { "Complex#to_s" });
     let render = |v: &RubyValue| {
         if inspect {
             v.try_inspect_string()

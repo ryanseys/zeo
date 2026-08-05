@@ -264,6 +264,9 @@ pub enum FiberResume {
     DoubleResume,
     /// `FiberError: fiber called across threads`.
     CrossThread,
+    /// `FiberError: cannot raise exception on unborn fiber` -- `#raise`
+    /// before the first `resume` has no fiber context to deliver into.
+    Unborn,
 }
 
 /// `Fiber#resume(*args)` -- feed values in and run to the next yield/return.
@@ -312,6 +315,12 @@ pub fn fiber_transfer(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
 /// either is rescued inside the fiber (which then yields/returns normally) or
 /// propagates back here as `RubyError`.
 pub fn fiber_raise(handle: &RFiber, exc: RubyValue) -> FiberResume {
+    if !handle.uninitialized
+        && std::thread::current().id() == handle.owner
+        && FIBERS.with(|f| f.borrow().get(&handle.id).is_some_and(|c| !c.started()))
+    {
+        return FiberResume::Unborn;
+    }
     fiber_drive(handle, FiberInput::Raise(exc))
 }
 

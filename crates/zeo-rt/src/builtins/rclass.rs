@@ -89,17 +89,11 @@ ruby_class! {
         if cid == zeo_abi::RANGE_CLASS {
             crate::builtins::check_arity(args.len(), 2, Some(3))?;
             let excl = args.get(2).is_some_and(|v| v.truthy());
-            let (b, e) = (args[0].clone(), args[1].clone());
-            if !matches!((&b, &e), (RubyValue::Nil, _) | (_, RubyValue::Nil))
-                && b.rb_cmp(&e).is_none()
-            {
-                return Err(crate::builtins::arg_error!("bad value for range"));
-            }
-            return Ok(RubyValue::Range(
-                crate::range_endpoint(b),
-                crate::range_endpoint(e),
+            return crate::range_checked(
+                crate::range_endpoint(args[0].clone()),
+                crate::range_endpoint(args[1].clone()),
                 excl,
-            ));
+            );
         }
         // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
         // runtime allocator; parse deliberately skips the

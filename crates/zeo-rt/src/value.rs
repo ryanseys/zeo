@@ -387,13 +387,21 @@ impl RubyValue {
             RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_to_s(e),
             RubyValue::Yielder(_) => "#<Enumerator::Yielder>".to_string(),
             RubyValue::Thread(_) => "#<Thread>".to_string(),
-            RubyValue::Mutex(_) => "#<Thread::Mutex>".to_string(),
+            // `Object#to_s`'s address form (CRuby defines no `to_s`/`inspect`
+            // on these, so the default applies to both -- inspect_with's
+            // catch-all lands here too).
+            RubyValue::Mutex(m) => {
+                let addr = std::sync::Arc::as_ptr(m) as *const () as usize;
+                format!("#<Thread::Mutex:0x{addr:016x}>")
+            }
             RubyValue::Queue(q) => {
-                if crate::thread::queue_is_sized(q) {
-                    "#<Thread::SizedQueue>".to_string()
+                let kind = if crate::thread::queue_is_sized(q) {
+                    "Thread::SizedQueue"
                 } else {
-                    "#<Thread::Queue>".to_string()
-                }
+                    "Thread::Queue"
+                };
+                let addr = std::sync::Arc::as_ptr(q) as *const () as usize;
+                format!("#<{kind}:0x{addr:016x}>")
             }
             RubyValue::Ractor(_) => "#<Ractor>".to_string(),
             // The registered fully-qualified name (`puts Widget` ->
@@ -1175,8 +1183,7 @@ impl RubyValue {
             RubyValue::Mutex(m) => m.set_frozen(),
             RubyValue::Queue(q) => {
                 // CRuby's message renders the receiver's default inspect,
-                // address included -- built here directly since this
-                // runtime's Queue inspect is the address-less placeholder.
+                // address included (the same form the display arm builds).
                 let kind = if crate::thread::queue_is_sized(q) {
                     "Thread::SizedQueue"
                 } else {
@@ -1496,6 +1503,29 @@ pub fn range_endpoint(v: RubyValue) -> Option<Box<RubyValue>> {
         RubyValue::Nil => None,
         other => Some(Box::new(other)),
     }
+}
+
+/// Range construction with CRuby's endpoint check (`range_init`): two present
+/// endpoints must answer `begin <=> end`, else `ArgumentError: bad value for
+/// range` -- what makes a runtime `(true..false)` raise. The `rb_eq` fallback
+/// is `Kernel#<=>`'s own rule (0 when `==`), which is how `(true..true)`
+/// stays legal. Codegen emits this only where comparability isn't a static
+/// fact; the literal `1..10` keeps the unchecked constructor.
+pub fn range_checked(
+    b: Option<Box<RubyValue>>,
+    e: Option<Box<RubyValue>>,
+    exclusive: bool,
+) -> Result<RubyValue, crate::Signal> {
+    if let (Some(x), Some(y)) = (&b, &e)
+        && x.rb_cmp(y).is_none()
+        && !x.rb_eq(y)
+    {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "bad value for range".to_string(),
+        ));
+    }
+    Ok(RubyValue::Range(b, e, exclusive))
 }
 
 /// The RangeError `Range#first`/`#last` raise when the endpoint they want is

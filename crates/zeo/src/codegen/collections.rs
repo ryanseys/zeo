@@ -137,7 +137,23 @@ pub fn emit_range_lit(
     };
     let start_expr = endpoint(start);
     let end_expr = endpoint(end);
-    quote! { zeo_rt::RubyValue::Range(#start_expr, #end_expr, #exclusive) }
+    // CRuby checks `begin <=> end` at construction ("bad value for range") --
+    // skipped only where the endpoint types make comparability a static fact
+    // (or a side is absent, which never raises).
+    let statically_comparable = match (start, end) {
+        (Some(s), Some(e)) => {
+            use crate::types::TyKind;
+            let (ks, ke) = (super::expr::infer(cx, s), super::expr::infer(cx, e));
+            let num = |k: &TyKind| matches!(k, TyKind::Int | TyKind::Float);
+            (num(&ks) && num(&ke)) || (ks == TyKind::Str && ke == TyKind::Str)
+        }
+        _ => true,
+    };
+    if statically_comparable {
+        quote! { zeo_rt::RubyValue::Range(#start_expr, #end_expr, #exclusive) }
+    } else {
+        quote! { zeo_rt::range_checked(#start_expr, #end_expr, #exclusive)? }
+    }
 }
 
 /// `a..b` / `a...b` in a condition -- Ruby's flip-flop (see

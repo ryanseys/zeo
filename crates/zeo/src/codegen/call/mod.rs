@@ -1275,13 +1275,18 @@ pub fn emit_call(
         // box's id inside a `BoxScope` (`box.eval(dynamic_source)`), so this one
         // path serves both. The single string-LITERAL form never reaches here:
         // it lowered to `HirNode::Eval` (an AOT inline splice) at lower time.
-        // Like that literal path, this treats `eval` as `Kernel#eval` rather
-        // than resolving a user-defined override.
+        // A class that defines its OWN `eval` shadows `Kernel#eval` for
+        // receiverless calls in its instance methods (ruby's ordinary method
+        // resolution) -- skip the VM route and resolve the sibling instead.
         if name == "eval"
             && (1..=4).contains(&args.len())
             && kwargs.is_empty()
             && block.is_none()
             && block_arg.is_none()
+            && !(cx.class_self.is_none()
+                && cx
+                    .current_class
+                    .is_some_and(|c| cx.compiler.method_in_chain(c, "eval").is_some()))
         {
             let scope = emit_binding_value(cx, "(eval)", 0);
             return emit_eval_in_scope(cx, scope, args);
@@ -2732,6 +2737,7 @@ fn dispatch(
             let double =
                 raise::emit_fiber_error(cx, "attempt to resume a resumed fiber (double resume)");
             let cross = raise::emit_fiber_error(cx, "fiber called across threads");
+            let unborn = raise::emit_fiber_error(cx, "cannot raise exception on unborn fiber");
             return quote! {
                 match zeo_rt::fiber_resume(
                     &(#recv_expr).as_fiber_unchecked(),
@@ -2750,6 +2756,11 @@ fn dispatch(
                     }
                     zeo_rt::FiberResume::CrossThread => {
                         return Err(zeo_rt::Signal::Raise(#cross))
+                    }
+                    // `#raise`'s outcome alone; a resume/transfer never
+                    // answers it -- exhaustiveness only.
+                    zeo_rt::FiberResume::Unborn => {
+                        return Err(zeo_rt::Signal::Raise(#unborn))
                     }
                 }
             };
@@ -2770,6 +2781,7 @@ fn dispatch(
             let double =
                 raise::emit_fiber_error(cx, "attempt to resume a resumed fiber (double resume)");
             let cross = raise::emit_fiber_error(cx, "fiber called across threads");
+            let unborn = raise::emit_fiber_error(cx, "cannot raise exception on unborn fiber");
             return quote! {
                 match zeo_rt::fiber_transfer(
                     &(#recv_expr).as_fiber_unchecked(),
@@ -2788,6 +2800,11 @@ fn dispatch(
                     }
                     zeo_rt::FiberResume::CrossThread => {
                         return Err(zeo_rt::Signal::Raise(#cross))
+                    }
+                    // `#raise`'s outcome alone; a resume/transfer never
+                    // answers it -- exhaustiveness only.
+                    zeo_rt::FiberResume::Unborn => {
+                        return Err(zeo_rt::Signal::Raise(#unborn))
                     }
                 }
             };
@@ -3156,6 +3173,7 @@ fn dispatch(
     if let Some(cid) = infer_any_class(cx, recv_id)
         && cx.compiler.class(cid).is_builtin
         && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name)
+        && !visibility::defers_to_runtime(cx, cx.compiler.scope(sid), bypass_visibility)
     {
         let scope = cx.compiler.scope(sid);
         if !bypass_visibility
@@ -3406,6 +3424,7 @@ fn dispatch(
         !cx.compiler.may_be_undefined_at_runtime(c, name)
             && !cx.compiler.may_be_patched_at_runtime(name)
     }) && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name)
+        && !visibility::defers_to_runtime(cx, cx.compiler.scope(sid), bypass_visibility)
     {
         let scope = cx.compiler.scope(sid);
         if !bypass_visibility
