@@ -855,8 +855,12 @@ struct FlatHit {
 /// stays frameless too: its frames carry `(eval)` locations built inside
 /// `eval_vm`, not a dispatch-boundary label.
 const NOFRAME: &[&str] = &[
+    // `Proc#call`/`Method#call` are frameless in CRuby backtraces -- the
+    // callee's own frame sits directly on the caller's.
+    "call",
     "caller",
     "caller_locations",
+    "each_caller_location",
     "raise",
     "fail",
     "throw",

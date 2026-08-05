@@ -289,15 +289,41 @@ fn traced_pop() {
 /// so this clones the current innermost frame's location under `method`'s
 /// label -- e.g. `'BasicObject#initialize'` when an `initialize`-less
 /// `.new` rejects arguments. Same RAII contract as [`FrameGuard::push`].
-pub fn synthetic_c_frame(method: &'static str) -> FrameGuard {
+///
+/// An EXACT repeat of the innermost frame (same label, same location) is
+/// skipped: one logical C call shows one frame, and a row with a
+/// hand-placed frame inside it is also framed at the dispatch boundary
+/// (`dispatch::with_c_frame`) -- without the dedupe every such call showed
+/// twice in a backtrace.
+pub fn synthetic_c_frame(method: &'static str) -> CFrameGuard {
     let (file, line) = current_location().unwrap_or(("", 0));
+    let duplicate = with_frames(|f| {
+        f.last()
+            .is_some_and(|t| t.method == method && t.file == file && t.line == line)
+    });
+    if duplicate {
+        return CFrameGuard(false);
+    }
     push_frame(Frame {
         file,
         line,
         method,
         end_line: 0,
     });
-    FrameGuard(())
+    CFrameGuard(true)
+}
+
+/// [`synthetic_c_frame`]'s guard: pops only what it pushed (a deduped call
+/// pushed nothing). Delegates the pop to [`FrameGuard`]'s own Drop so the
+/// traced-pop path stays in one place.
+pub struct CFrameGuard(bool);
+
+impl Drop for CFrameGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            drop(FrameGuard(()));
+        }
+    }
 }
 
 /// Stamp the innermost frame's current line -- emitted before a statement

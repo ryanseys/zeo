@@ -140,6 +140,11 @@ pub struct Hir {
     /// sites ask the runtime `self`'s class the `protected` question instead
     /// of baking the lexical one (`visibility::caller_class`).
     pub rehomed_blocks: std::collections::HashSet<NodeId>,
+    /// `ClassVarRead` nodes born as the READ half of `@@x ||= v`: ruby's ONE
+    /// lenient cvar read -- an unassigned `@@x` reads as nil there and the
+    /// write then defines it, where every other read (including `+=`/`&&=`)
+    /// raises NameError. The `ConstReadOrNil` rule, applied to cvars.
+    pub lenient_cvar_reads: std::collections::HashSet<NodeId>,
     /// Literal blocks on a COMPUTED-name `define_method(name) { }` call --
     /// the literal-symbol form desugars to `DefMethod` and never gets here.
     /// The block body IS a method body at run time, so `super` inside it

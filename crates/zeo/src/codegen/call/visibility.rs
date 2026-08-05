@@ -67,10 +67,23 @@ pub(super) enum Caller {
 }
 
 impl Caller {
-    pub(super) fn expr(&self) -> TokenStream {
+    /// A statement binding the caller class to `__caller_class` BEFORE the
+    /// call expression -- the runtime form reads `self`, which a block
+    /// argument's `move` closure may consume later in the same expression
+    /// (E0382 otherwise). Empty for the static form; pair with
+    /// [`Caller::bound`].
+    pub(super) fn bind(&self) -> TokenStream {
+        match self {
+            Caller::Static(_) => TokenStream::new(),
+            Caller::Runtime(t) => quote! { let __caller_class: u32 = #t; },
+        }
+    }
+
+    /// The argument matching [`Caller::bind`].
+    pub(super) fn bound(&self) -> TokenStream {
         match self {
             Caller::Static(c) => quote! { #c },
-            Caller::Runtime(t) => t.clone(),
+            Caller::Runtime(_) => quote! { __caller_class },
         }
     }
 }

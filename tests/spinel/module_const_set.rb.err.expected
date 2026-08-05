@@ -1,0 +1,10 @@
+spinel/module_const_set.rb:6: warning: already initialized constant Box::X
+spinel/module_const_set.rb:5: warning: previous definition of X was here
+spinel/module_const_set.rb:8: warning: already initialized constant Box::S
+spinel/module_const_set.rb:5: warning: previous definition of S was here
+spinel/module_const_set.rb:10: warning: already initialized constant Box::F
+spinel/module_const_set.rb:5: warning: previous definition of F was here
+spinel/module_const_set.rb:13: warning: already initialized constant Y
+spinel/module_const_set.rb:12: warning: previous definition of Y was here
+spinel/module_const_set.rb:16: warning: already initialized constant Box::X
+spinel/module_const_set.rb:6: warning: previous definition of X was here

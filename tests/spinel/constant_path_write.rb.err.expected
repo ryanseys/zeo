@@ -1,0 +1,16 @@
+spinel/constant_path_write.rb:11: warning: already initialized constant M::COUNT
+spinel/constant_path_write.rb:7: warning: previous definition of COUNT was here
+spinel/constant_path_write.rb:14: warning: already initialized constant M::NAME
+spinel/constant_path_write.rb:8: warning: previous definition of NAME was here
+spinel/constant_path_write.rb:18: warning: already initialized constant M::COUNT
+spinel/constant_path_write.rb:11: warning: previous definition of COUNT was here
+spinel/constant_path_write.rb:27: warning: already initialized constant A::B::LEVEL
+spinel/constant_path_write.rb:24: warning: previous definition of LEVEL was here
+spinel/constant_path_write.rb:34: warning: already initialized constant N::V
+spinel/constant_path_write.rb:32: warning: previous definition of V was here
+spinel/constant_path_write.rb:35: warning: already initialized constant N::V
+spinel/constant_path_write.rb:34: warning: previous definition of V was here
+spinel/constant_path_write.rb:45: warning: already initialized constant E::NUMS
+spinel/constant_path_write.rb:42: warning: previous definition of NUMS was here
+spinel/constant_path_write.rb:47: warning: already initialized constant E::TBL
+spinel/constant_path_write.rb:43: warning: previous definition of TBL was here

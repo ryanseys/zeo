@@ -602,7 +602,7 @@ ruby_class! {
     // `#self`/`#binding` read the armed-only self notes: the receiver the
     // event ran under, and a receiver-only Binding over it (see
     // `degraded_binding`).
-    def "self" cfunc (recv) {
+    def "self" (recv) {
         let _ = tp_of(recv);
         Ok(snapshot()?.slf)
     }

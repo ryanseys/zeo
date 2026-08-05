@@ -953,8 +953,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::ClassVarRead(name) => {
             let owner = cvar_owner_id(cx, name);
-            // Checked: an unassigned `@@x` read is ruby's NameError, not nil.
-            quote! { zeo_rt::cvar_get_checked(#owner, #name)? }
+            // The `@@x ||= v` read half tolerates an unassigned cvar (nil);
+            // every other read is ruby's NameError, not nil.
+            if cx.compiler.hir.lenient_cvar_reads.contains(&id) {
+                quote! { zeo_rt::cvar_get(#owner, #name) }
+            } else {
+                quote! { zeo_rt::cvar_get_checked(#owner, #name)? }
+            }
         }
         HirNode::ClassVarWrite(name, value) => {
             let v = emit_expr(cx, *value);

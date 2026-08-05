@@ -53,7 +53,12 @@ where
             body()
         })
         .expect("spawn the ruby main thread");
-    match main.join() {
+    let joined = main.join();
+    // From here the REAL main runs `at_exit`/finalizers over objects the
+    // ruby-main thread stamped -- give up this thread's sole-thread claim so
+    // those accesses take the locks (see `gvl::clear_sole_thread`).
+    crate::gvl::clear_sole_thread();
+    match joined {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }

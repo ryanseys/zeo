@@ -101,6 +101,14 @@ pub(crate) fn lower_or_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> Nod
         Storage::Const { scope, name } => {
             hir.push(HirNode::ConstReadOrNil(scope.clone(), name.clone()))
         }
+        // `@@x ||= v` gets the same leniency (an unassigned `@@x` reads nil
+        // and the write defines it -- the memoization idiom); `+=`/`&&=`
+        // keep the raising read. See `Hir::lenient_cvar_reads`.
+        Storage::ClassVar(_) => {
+            let read = target.read(hir);
+            hir.lenient_cvar_reads.insert(read);
+            read
+        }
         _ => target.read(hir),
     };
     let write = target.write(hir, rhs);

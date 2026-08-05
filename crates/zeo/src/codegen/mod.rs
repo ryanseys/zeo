@@ -3249,10 +3249,14 @@ pub(crate) fn emit_instance_method_body(
     let preamble = (!frameless).then(|| {
         let frame = scope_frame_guard(compiler, scope, false);
         // The armed-only `TracePoint#self` note: boxes the receiver ONLY
-        // while a trace hook is on (one relaxed load otherwise).
+        // while a trace hook is on (one relaxed load otherwise). UFCS
+        // `Arc::clone`, never `self.clone()` -- a user method named `clone`
+        // would shadow the handle bump.
         quote! {
             #frame
-            zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::Object(Self::new_handle(self.clone())));
+            zeo_rt::trace_frame_self(
+                || zeo_rt::RubyValue::Object(Self::new_handle(std::sync::Arc::clone(&self))),
+            );
             zeo_rt::check_ints()?;
         }
     });

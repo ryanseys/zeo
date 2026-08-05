@@ -3692,15 +3692,18 @@ fn dispatch(
                 }
             }
             caller => {
-                let caller_expr = caller.expr();
+                let (bind, arg) = (caller.bind(), caller.bound());
                 quote! {
-                    zeo_rt::send_value_explicit_in(#__bx,
-                        &(#recv_expr),
-                        #name_expr,
-                        &[#(#arg_exprs,)* #(#kw_hash,)*],
-                        #block_value,
-                        #caller_expr,
-                    )
+                    {
+                        #bind
+                        zeo_rt::send_value_explicit_in(#__bx,
+                            &(#recv_expr),
+                            #name_expr,
+                            &[#(#arg_exprs,)* #(#kw_hash,)*],
+                            #block_value,
+                            #arg,
+                        )
+                    }
                 }
             }
         };
@@ -3742,15 +3745,19 @@ fn dispatch(
         // Keyword args ride as one trailing Hash (the G2 convention).
         let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
         let block_value = emit_block_option(cx, block, block_arg);
-        let caller = visibility::caller_class(cx, recv_id, bypass_visibility).expr();
+        let caller = visibility::caller_class(cx, recv_id, bypass_visibility);
+        let (bind, caller_arg) = (caller.bind(), caller.bound());
         return quote! {
-            zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
-                &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
-                #name_expr,
-                &[#(#arg_exprs,)* #(#kw_hash,)*],
-                #block_value,
-                #caller,
-            ))?
+            {
+                #bind
+                zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
+                    &zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
+                    #name_expr,
+                    &[#(#arg_exprs,)* #(#kw_hash,)*],
+                    #block_value,
+                    #caller_arg,
+                ))?
+            }
         };
     }
 
@@ -3786,15 +3793,18 @@ fn dispatch(
             }
         }
         caller => {
-            let caller_expr = caller.expr();
+            let (bind, caller_arg) = (caller.bind(), caller.bound());
             quote! {
-                zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
-                    &#recv_boxed,
-                    #name_expr,
-                    &[#(#arg_exprs,)* #(#kw_hash,)*],
-                    #block_value,
-                    #caller_expr,
-                ))?
+                {
+                    #bind
+                    zeo_rt::catch_break(zeo_rt::send_value_explicit_in(#__bx,
+                        &#recv_boxed,
+                        #name_expr,
+                        &[#(#arg_exprs,)* #(#kw_hash,)*],
+                        #block_value,
+                        #caller_arg,
+                    ))?
+                }
             }
         }
     }

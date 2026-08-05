@@ -656,15 +656,23 @@ ruby_class! {
     Lazy = zeo_abi::LAZY_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
 
-    // `Enumerator::Lazy.new(source) { |yielder, *values| ... }` -- a lazy
-    // over `source` with an explicit per-element body: what the block hands
-    // the yielder flows on, so it can filter, transform, or fan out.
-    def self."new"(_recv, source, &block) {
+    // `Enumerator::Lazy.new(source, size = nil) { |yielder, *values| ... }`
+    // -- a lazy over `source` with an explicit per-element body: what the
+    // block hands the yielder flows on, so it can filter, transform, or fan
+    // out. The size hint is accepted and unused (`#size` derives from the
+    // source here).
+    def self."new" cfunc (_recv, *args, &block) {
+        if args.is_empty() || args.len() > 2 {
+            return Err(arg_error!(
+                "wrong number of arguments (given {}, expected 1..2)",
+                args.len()
+            ));
+        }
         let Some(RubyValue::Proc(p)) = &block else {
             return Err(arg_error!("tried to call lazy new without a block"));
         };
         Ok(RubyValue::Object(Arc::new(RLazy {
-            source: source.clone(),
+            source: args[0].clone(),
             links: vec![Link { name: "each", op: LazyOp::YielderBody(p.clone()) }],
             external: Mutex::new(None),
         })))

@@ -66,6 +66,15 @@ pub fn sole_thread() -> bool {
     SOLE.with(|s| s.get())
 }
 
+/// The exit handoff: the REAL main thread resumes after `ruby-main` joined
+/// (`exec::run_main`) and runs `at_exit`/finalizers -- touching objects that
+/// thread stamped. Sequentially safe, but a DIFFERENT thread, so it must not
+/// keep a sole-thread claim of its own: clearing it routes the remaining
+/// exit-path work through the locks.
+pub fn clear_sole_thread() {
+    SOLE.with(|s| s.set(false));
+}
+
 /// Called BEFORE spawning a Ruby thread or Ractor, never after.
 ///
 /// Two happens-before edges close the invariant, and the second is the one a

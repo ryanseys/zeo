@@ -82,6 +82,35 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     }
     emit_proc_or_lambda_value_with(cx, params, body, false, false, loc, force_self)
 }
+/// Whether any node in `body` (nested blocks included) is an
+/// explicit-receiver call -- the population whose Path-2 emission reads the
+/// runtime `self` under a dynamic-`self` context (see `needs_self` above).
+/// A literal-`self` receiver is FCALL and reads nothing.
+fn body_mentions_receiver_call(hir: &crate::hir::Hir, body: &[NodeId]) -> bool {
+    fn walk(hir: &crate::hir::Hir, id: NodeId, found: &mut bool) {
+        if *found {
+            return;
+        }
+        if let HirNode::Call {
+            receiver: Some(r), ..
+        } = &hir[id]
+            && !matches!(hir[*r], HirNode::SelfRef)
+        {
+            *found = true;
+            return;
+        }
+        hir[id].for_each_child(&mut |c| walk(hir, c, found));
+    }
+    let mut found = false;
+    for &n in body {
+        walk(hir, n, &mut found);
+        if found {
+            break;
+        }
+    }
+    found
+}
+
 /// `-> (x) { ... }` / `lambda { ... }` (`HirNode::Lambda`) -- see that
 /// variant's docs. Shares its ENTIRE construction with `emit_proc_value`
 /// (captures, redo-wrapper loop) via `emit_proc_or_lambda_value`, differing
@@ -183,7 +212,15 @@ fn emit_proc_or_lambda_value_with(
     // RubyValue" rule this needs, so it isn't re-derived. A method-body lambda
     // always takes a self parameter (the runtime install rebinds it per call),
     // so it needs the default even when the body itself never mentions `self`.
-    let needs_self = block_caps.self_captured || force_self;
+    // A dynamic-`self` context makes every explicit-receiver call site read
+    // the runtime `self`'s class for the `protected` barrier
+    // (`visibility::Caller::Runtime`) -- a `self` mention the captures scan
+    // cannot see, so the clone-prelude capture is forced here: without it
+    // the `move` closure consumes the enclosing `__self` (E0382 on any
+    // later use).
+    let needs_self = block_caps.self_captured
+        || force_self
+        || (cx.self_is_dynamic && body_mentions_receiver_call(&cx.compiler.hir, body));
     // `__self_default` is the closure's stored `self_val`; every shape that
     // takes a `&self` closure parameter needs it -- a method-body lambda, a
     // self-capturing block, AND an ordinary proc/lambda promoted to the

@@ -542,6 +542,9 @@ impl RubyValue {
                     },
                 }
             }
+            // Inspect DESCRIBES the iteration; `to_s` is the address form
+            // (the `display_with` arm) -- ruby keeps the two apart here.
+            RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_inspect(e),
             // `Bool`/`Int`/`Float`/`Proc`: `#inspect` and `#to_s` agree
             // (or share the same placeholder approximation).
             other => other.display_with(seen)?,

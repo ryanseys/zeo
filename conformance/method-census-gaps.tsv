@@ -4,7 +4,7 @@
 # absent-module: 19
 # constant: 7
 # owner: 50
-# unreachable: 73
+# unreachable: 65
 absent-module	IO::Buffer	-	-
 absent-module	IO::Buffer::AccessError	-	-
 absent-module	IO::Buffer::AllocationError	-	-
@@ -100,15 +100,7 @@ unreachable	Enumerator::Lazy	p	_enumerable_take_while
 unreachable	Enumerator::Lazy	p	_enumerable_uniq
 unreachable	Enumerator::Lazy	p	_enumerable_with_index
 unreachable	Enumerator::Lazy	p	_enumerable_zip
-unreachable	Kernel	p	binding
-unreachable	Kernel	p	block_given?
 unreachable	Kernel	p	instance_variables_to_inspect
-unreachable	Kernel	p	iterator?
-unreachable	Kernel	p	local_variables
-unreachable	Kernel	s	binding
-unreachable	Kernel	s	block_given?
-unreachable	Kernel	s	iterator?
-unreachable	Kernel	s	local_variables
 unreachable	Marshal	p	dump
 unreachable	Module	p	refine
 unreachable	Module	p	using
