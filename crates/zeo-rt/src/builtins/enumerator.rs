@@ -921,7 +921,6 @@ fn drive_with_object(
     block: Option<RubyValue>,
     label: &str,
 ) -> Result<RubyValue, Signal> {
-    let e = recv_enum(recv);
     let Some(block) = block else {
         return Ok(enumerator_for(recv, label, std::slice::from_ref(obj)));
     };
@@ -930,7 +929,14 @@ fn drive_with_object(
     let memo_for_block = memo.clone();
     let wrapper: RProc =
         RProc::new(move |raw: &[RubyValue]| blk.call(&[pack(raw), memo_for_block.clone()]));
-    internal_each(&e.source, RubyValue::Proc(wrapper))?;
+    // A LAZY receiver drives its own chain (`Enumerator::Lazy < Enumerator`
+    // puts it through this row); an ordinary enumerator re-invokes its
+    // captured source.
+    if crate::builtins::lazy::is_lazy(recv) {
+        crate::builtins::lazy::lazy_each(recv, Some(RubyValue::Proc(wrapper)))?;
+    } else {
+        internal_each(&recv_enum(recv).source, RubyValue::Proc(wrapper))?;
+    }
     Ok(memo)
 }
 
@@ -966,6 +972,12 @@ ruby_class! {
     }
 
     def "each"(recv, *args, &block) {
+        // `Enumerator::Lazy < Enumerator`: a lazy receiver reaches this row
+        // (its own class adds no `each`, matching CRuby's `.owner`) and
+        // drives its chain instead of downcasting to `EnumeratorData`.
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_each(recv, block);
+        }
         let e = recv_enum(recv);
         if !args.is_empty() {
             panic!("Enumerator#each with extra arguments isn't supported yet (zeo limitation; CRuby appends them to the captured args on a dup)");
@@ -986,18 +998,30 @@ ruby_class! {
     }
 
     def "next"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_iterate(recv, "next");
+        }
         Ok(ary2sv(take_next(recv_enum(recv))?))
     }
 
     def "next_values"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_iterate(recv, "next_values");
+        }
         Ok(RubyValue::Array(array_new(take_next(recv_enum(recv))?)))
     }
 
     def "peek"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_iterate(recv, "peek");
+        }
         Ok(ary2sv(fill_peek(recv_enum(recv))?))
     }
 
     def "peek_values"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_iterate(recv, "peek_values");
+        }
         Ok(RubyValue::Array(array_new(fill_peek(recv_enum(recv))?)))
     }
 
@@ -1005,6 +1029,9 @@ ruby_class! {
     // on the next `#next`. Setting it twice before a `#next` consumes it is a
     // TypeError; the call itself answers nil.
     def "feed"(recv, arg) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_feed(recv, arg);
+        }
         let mut st = recv_enum(recv).state.lock();
         if st.feed.is_some() {
             return Err(type_error!("feed value already set"));
@@ -1014,6 +1041,9 @@ ruby_class! {
     }
 
     def "rewind"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_rewind(recv);
+        }
         let e = recv_enum(recv);
         let mut st = e.state.lock();
         if let Some(id) = st.fiber.take() {
@@ -1035,10 +1065,16 @@ ruby_class! {
     }
 
     def "size"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_size(recv);
+        }
         Ok(enum_size(recv_enum(recv)))
     }
 
     def "inspect"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_inspect(recv);
+        }
         Ok(RubyValue::Str(crate::string_new(enum_inspect(recv_enum(recv)))))
     }
 
@@ -1047,6 +1083,9 @@ ruby_class! {
     // through the same helper (value.rs's display arm), so the two halves
     // cannot drift.
     def "to_s"(recv) {
+        if crate::builtins::lazy::is_lazy(recv) {
+            return crate::builtins::lazy::lazy_to_s(recv);
+        }
         Ok(RubyValue::Str(crate::string_new(enum_to_s(recv_enum(recv)))))
     }
 

@@ -1007,8 +1007,11 @@ pub const BUILTINS: &[BuiltinClass] = &[
         id: LAZY_CLASS,
         name: "Enumerator::Lazy",
         is_module: false,
-        superclass: Some(OBJECT_CLASS),
-        includes: &[ENUMERABLE_CLASS],
+        // CRuby's real hierarchy: `Enumerator::Lazy < Enumerator`, which
+        // already includes Enumerable -- a direct include here would put
+        // Enumerable AHEAD of Enumerator in the linearized ancestors.
+        superclass: Some(ENUMERATOR_CLASS),
+        includes: &[],
         feature: None,
     },
     BuiltinClass {

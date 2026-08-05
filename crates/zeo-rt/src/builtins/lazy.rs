@@ -66,6 +66,11 @@ enum LazyOp {
     /// per-element body: whatever the block hands the yielder (0..n values
     /// per input) flows downstream; the input itself does not.
     YielderBody(RProc),
+    /// `zip(*others)` -- each value becomes `[value, others[0].next, ...]`,
+    /// the others pulled ONE element per source element so an endless
+    /// receiver stays workable. An exhausted other pads with nil, CRuby's
+    /// rule. The receiver's length wins, so the op is size-preserving.
+    Zip(Vec<RubyValue>),
 }
 
 /// The per-run mutable state for the stateful ops (a fresh set is built at the
@@ -77,6 +82,9 @@ enum OpState {
     Seen(HashSet<crate::collections::HashKey>),
     /// The values `each_cons`/`each_slice` have buffered but not yet emitted.
     Window(Vec<RubyValue>),
+    /// `zip`'s external enumerators over its others, built at the first
+    /// accepted value so a re-run starts every other from its beginning.
+    Iters(Option<Vec<RubyValue>>),
 }
 
 impl OpState {
@@ -86,6 +94,7 @@ impl OpState {
             LazyOp::DropWhile(_) => OpState::Dropping(true),
             LazyOp::Uniq(_) => OpState::Seen(HashSet::new()),
             LazyOp::EachCons(_) | LazyOp::EachSlice(_) => OpState::Window(Vec::new()),
+            LazyOp::Zip(_) => OpState::Iters(None),
             _ => OpState::None,
         }
     }
@@ -180,6 +189,7 @@ fn clone_links(links: &[Link]) -> Vec<Link> {
                 LazyOp::EachCons(n) => LazyOp::EachCons(*n),
                 LazyOp::EachSlice(n) => LazyOp::EachSlice(*n),
                 LazyOp::YielderBody(p) => LazyOp::YielderBody(p.clone()),
+                LazyOp::Zip(others) => LazyOp::Zip(others.clone()),
             },
         })
         .collect()
@@ -494,6 +504,28 @@ fn push(
                 Ok(Flow::Continue)
             }
         }
+        LazyOp::Zip(others) => {
+            let iters = match &mut st[idx] {
+                OpState::Iters(it) => it.get_or_insert_with(|| {
+                    others
+                        .iter()
+                        .map(|o| enumerator_for(o, "each", &[]))
+                        .collect()
+                }),
+                _ => unreachable!("Zip state"),
+            };
+            let mut tuple = vec![val];
+            for it in iters.iter() {
+                let RubyValue::Enumerator(e) = it else {
+                    unreachable!("enumerator_for always builds an Enumerator");
+                };
+                tuple.push(match pull_next(e)? {
+                    Some(vals) => pack(vals),
+                    None => RubyValue::Nil,
+                });
+            }
+            push(links, st, idx + 1, RubyValue::Array(array_new(tuple)), sink)
+        }
         LazyOp::YielderBody(p) => {
             // The body runs against a COLLECTING yielder (the chain's
             // continuation cannot ride inside an `RProc`), then whatever it
@@ -578,6 +610,14 @@ fn link_label(link: &Link) -> String {
         LazyOp::Take(n) | LazyOp::Drop(n) => format!("({n})"),
         LazyOp::EachCons(n) | LazyOp::EachSlice(n) => format!("({n})"),
         LazyOp::Grep(pat, ..) => format!("({})", pat.inspect_string()),
+        LazyOp::Zip(others) => format!(
+            "({})",
+            others
+                .iter()
+                .map(|o| o.inspect_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         // `each_with_index` takes no offset, so only `with_index` shows one.
         LazyOp::WithIndex(offset, _) if link.name == "with_index" => format!("({offset})"),
         _ => String::new(),
@@ -610,6 +650,100 @@ fn external_iter(recv: &RubyValue) -> RubyValue {
 /// Hands one external-iteration call to that enumerator.
 fn iterate(recv: &RubyValue, meth: &str) -> Result<RubyValue, Signal> {
     crate::dispatch::send_value(&external_iter(recv), crate::Symbol::intern(meth), &[], None)
+}
+
+// ---------------------------------------------------------------------------
+// The Enumerator-row bridge. `Enumerator::Lazy < Enumerator` (real CRuby
+// hierarchy), so `each`/`next`/`peek`/`rewind`/`size`/`inspect` are
+// Enumerator's OWN rows -- `.owner` says so -- and those rows detect a lazy
+// receiver and branch here instead of downcasting to `EnumeratorData`.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn is_lazy(v: &RubyValue) -> bool {
+    matches!(v, RubyValue::Object(o) if o.as_any().is::<RLazy>())
+}
+
+/// `each` with a block drives the chain; blockless answers the lazy itself.
+pub(crate) fn lazy_each(recv: &RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    match block {
+        Some(RubyValue::Proc(p)) => {
+            drive(lazy_of(recv), &mut Sink::Each(&p))?;
+            Ok(recv.clone())
+        }
+        _ => Ok(recv.clone()),
+    }
+}
+
+/// `next`/`next_values`/`peek`/`peek_values` -- external iteration through
+/// the cached side enumerator.
+pub(crate) fn lazy_iterate(recv: &RubyValue, meth: &str) -> Result<RubyValue, Signal> {
+    iterate(recv, meth)
+}
+
+/// `rewind` answers the LAZY, not the enumerator doing the iterating.
+pub(crate) fn lazy_rewind(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    if lazy_of(recv).external.lock().is_some() {
+        iterate(recv, "rewind")?;
+    }
+    Ok(recv.clone())
+}
+
+/// `feed` reaches the side enumerator's paused generator.
+pub(crate) fn lazy_feed(recv: &RubyValue, arg: &RubyValue) -> Result<RubyValue, Signal> {
+    crate::dispatch::send_value(
+        &external_iter(recv),
+        crate::Symbol::intern("feed"),
+        std::slice::from_ref(arg),
+        None,
+    )
+}
+
+/// `size` never iterates: the source's size with each op's knowable effect
+/// folded in. A filtering op makes the answer unknowable (nil) -- CRuby's
+/// rule, since it can't be answered without running.
+pub(crate) fn lazy_size(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    let lz = lazy_of(recv);
+    let mut size = source_size(&lz.source);
+    for link in &lz.links {
+        size = match (&link.op, size) {
+            (LazyOp::Map(_) | LazyOp::Compact | LazyOp::Zip(_), s) => s,
+            (LazyOp::Take(n), RubyValue::Int(s)) => RubyValue::Int(s.min(*n)),
+            // `take` bounds even an endless source.
+            (LazyOp::Take(n), RubyValue::Float(_)) => RubyValue::Int(*n),
+            (LazyOp::Drop(n), RubyValue::Int(s)) => RubyValue::Int((s - n).max(0)),
+            (LazyOp::Drop(_), s @ RubyValue::Float(_)) => s,
+            // A window/slice op leaves an endless source endless.
+            (LazyOp::EachCons(n), RubyValue::Int(s)) => RubyValue::Int((s - *n as i64 + 1).max(0)),
+            (LazyOp::EachSlice(n), RubyValue::Int(s)) => {
+                let n = *n as i64;
+                RubyValue::Int((s + n - 1) / n)
+            }
+            (LazyOp::EachCons(_) | LazyOp::EachSlice(_), s @ RubyValue::Float(_)) => s,
+            _ => RubyValue::Nil,
+        };
+        if matches!(size, RubyValue::Nil) {
+            break;
+        }
+    }
+    Ok(size)
+}
+
+/// The chain, printed outside-in -- see [`chain_inspect`].
+pub(crate) fn lazy_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Str(crate::string_new(chain_inspect(lazy_of(
+        recv,
+    ))?)))
+}
+
+/// `to_s` stays the ADDRESS form (CRuby leaves it to `Object#to_s`), even
+/// though dispatch now reaches `Enumerator`'s own `to_s` row first.
+pub(crate) fn lazy_to_s(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    let RubyValue::Object(o) = recv else {
+        unreachable!("is_lazy gated this branch");
+    };
+    Ok(RubyValue::Str(crate::string_new(
+        crate::value::default_object_repr(o, false, &mut Vec::new())?,
+    )))
 }
 
 /// `each_cons`/`each_slice` -- one grouping op appended. WITH a block CRuby
@@ -653,8 +787,7 @@ fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal>
 }
 
 ruby_class! {
-    Lazy = zeo_abi::LAZY_CLASS < zeo_abi::OBJECT_CLASS;
-    include zeo_abi::ENUMERABLE_CLASS;
+    Lazy = zeo_abi::LAZY_CLASS < zeo_abi::ENUMERATOR_CLASS;
 
     // `Enumerator::Lazy.new(source, size = nil) { |yielder, *values| ... }`
     // -- a lazy over `source` with an explicit per-element body: what the
@@ -678,37 +811,6 @@ ruby_class! {
         })))
     }
 
-    // `size` never iterates: it takes the source's size and folds the ops that
-    // have a knowable effect on it. A filtering op makes the result unknown
-    // (nil) -- CRuby's rule, since it can't be answered without running.
-    def "size"(recv) {
-        let lz = lazy_of(recv);
-        let mut size = source_size(&lz.source);
-        for link in &lz.links {
-            size = match (&link.op, size) {
-                (LazyOp::Map(_) | LazyOp::Compact, s) => s,
-                (LazyOp::Take(n), RubyValue::Int(s)) => RubyValue::Int(s.min(*n)),
-                // `take` bounds even an endless source.
-                (LazyOp::Take(n), RubyValue::Float(_)) => RubyValue::Int(*n),
-                (LazyOp::Drop(n), RubyValue::Int(s)) => RubyValue::Int((s - n).max(0)),
-                (LazyOp::Drop(_), s @ RubyValue::Float(_)) => s,
-                // A window/slice op leaves an endless source endless.
-                (LazyOp::EachCons(n), RubyValue::Int(s)) => {
-                    RubyValue::Int((s - *n as i64 + 1).max(0))
-                }
-                (LazyOp::EachSlice(n), RubyValue::Int(s)) => {
-                    let n = *n as i64;
-                    RubyValue::Int((s + n - 1) / n)
-                }
-                (LazyOp::EachCons(_) | LazyOp::EachSlice(_), s @ RubyValue::Float(_)) => s,
-                _ => RubyValue::Nil,
-            };
-            if matches!(size, RubyValue::Nil) {
-                break;
-            }
-        }
-        Ok(size)
-    }
 
     // Each alias appends the name it was CALLED by, so `inspect` prints the
     // chain the way it was written. The missing-block message does not follow
@@ -785,55 +887,37 @@ ruby_class! {
     def "lazy"(recv) {
         Ok(recv.clone())
     }
-    // Terminal operations: these run the chain.
-    def "first"(recv, arg?) {
-        match arg {
-            None => Ok(collect(lazy_of(recv), Some(1))?.into_iter().next().unwrap_or(RubyValue::Nil)),
-            Some(v) => {
-                let n = count_arg(v, "take")?;
-                Ok(RubyValue::Array(array_new(collect(lazy_of(recv), Some(n as usize))?)))
-            }
-        }
-    }
     // `#eager` -- the same sequence as a NON-lazy Enumerator, so every later
     // `map`/`select` evaluates at once. An ordinary Enumerator over this very
     // lazy is exactly that, and it still costs nothing until someone iterates.
     def "eager"(recv) {
         Ok(enumerator_for(recv, "each", &[]))
     }
-    def "to_a" | "force" | "entries" cfunc (recv) {
+    // The one terminal ruby puts ON this class -- `to_a`/`entries`/`first`
+    // are Enumerable's rows (they drive `each`, which `Enumerator`'s row
+    // routes back through this lazy's chain), and `each`/`next`/`peek`/
+    // `rewind`/`size`/`inspect` are Enumerator's own rows with a lazy
+    // branch. `.owner` agrees with CRuby on every one of them.
+    def "force" cfunc (recv, *_args) {
         Ok(RubyValue::Array(array_new(collect(lazy_of(recv), None)?)))
     }
-    def "each" cfunc (recv, &block) {
-        match block {
-            Some(RubyValue::Proc(p)) => {
-                drive(lazy_of(recv), &mut Sink::Each(&p))?;
-                Ok(recv.clone())
-            }
-            // Blockless `each` on a lazy is just the lazy itself.
-            _ => Ok(recv.clone()),
-        }
-    }
-    // `to_s` is deliberately NOT an alias of this: CRuby leaves a lazy's
-    // `to_s` as `Object#to_s`, so it prints the address form.
-    def "inspect"(recv) {
-        Ok(RubyValue::Str(crate::string_new(chain_inspect(lazy_of(recv))?)))
-    }
 
-    // External iteration. CRuby inherits all four from `Enumerator`; here they
-    // ride one enumerator over this lazy's own `each`, which is what keeps
-    // `(1..).lazy.map { }.next` advancing the source one element at a time.
-    def "next"(recv) { iterate(recv, "next") }
-    def "next_values"(recv) { iterate(recv, "next_values") }
-    def "peek"(recv) { iterate(recv, "peek") }
-    def "peek_values"(recv) { iterate(recv, "peek_values") }
-
-    // Answers the LAZY, not the enumerator doing the iterating.
-    def "rewind"(recv) {
-        if lazy_of(recv).external.lock().is_some() {
-            iterate(recv, "rewind")?;
+    // `zip(*others)` stays LAZY -- one element pulled from each other per
+    // source element. CRuby falls back to the eager super for a block or an
+    // argument it can't re-iterate; the eager Enumerable row is that
+    // fallback here.
+    def "zip" cfunc (recv, *args, &block) {
+        let lazy_ok = block.is_none()
+            && args.iter().all(|a| {
+                matches!(
+                    a,
+                    RubyValue::Array(_) | RubyValue::Range(..) | RubyValue::Enumerator(_)
+                ) || is_lazy(a)
+            });
+        if !lazy_ok {
+            return inherited_row!(enumerable, "zip", recv, __args, block);
         }
-        Ok(recv.clone())
+        Ok(extend(recv, "zip", LazyOp::Zip(args.to_vec())))
     }
 
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
@@ -844,7 +928,6 @@ ruby_class! {
     def "slice_after" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_after", recv, __args, block) }
     def "slice_before" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_before", recv, __args, block) }
     def "slice_when" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "slice_when", recv, __args, block) }
-    def "zip" cfunc (recv, *_args, &block) { inherited_row!(enumerable, "zip", recv, __args, block) }
     def "enum_for" cfunc (recv, *_args, &block) { inherited_row!(kernel, "enum_for", recv, __args, block) }
     def "to_enum" cfunc (recv, *_args, &block) { inherited_row!(kernel, "to_enum", recv, __args, block) }
 }
@@ -902,11 +985,22 @@ mod tests {
 
     // The registry-free unit tier can't drive a source to natural exhaustion
     // (constructing the terminating `StopIteration` needs a registry and
-    // panics without one), so these exercise the transducer through
-    // `imethod("first")(n)`, which stops before the exhausting pull. The exhaustion path
-    // (`to_a`/`force`) is covered by the e2e suite, which runs with a registry.
+    // panics without one), so these exercise the transducer through a
+    // bounded `collect`, which stops before the exhausting pull -- the same
+    // drive `Enumerable#first` performs (`first` is Enumerable's row now,
+    // unreachable from Lazy's own table). The exhaustion path (`force`) is
+    // covered by the e2e suite, which runs with a registry.
     fn first_n(l: &RubyValue, n: i64) -> Vec<i64> {
-        ints(&imethod("first")(l, &[RubyValue::Int(n)], None).unwrap())
+        let mut out = Vec::new();
+        drive(
+            lazy_of(l),
+            &mut Sink::Collect {
+                out: &mut out,
+                limit: Some(n as usize),
+            },
+        )
+        .unwrap();
+        ints(&RubyValue::Array(array_new(out)))
     }
 
     #[test]
@@ -938,10 +1032,7 @@ mod tests {
     fn first_without_arg_returns_one_element() {
         let mapped =
             imethod("map")(&make_lazy(&arr(&[1, 2, 3, 4])), &[], Some(times_two())).unwrap();
-        assert!(matches!(
-            imethod("first")(&mapped, &[], None).unwrap(),
-            RubyValue::Int(2)
-        ));
+        assert_eq!(first_n(&mapped, 1), vec![2]);
     }
 
     #[test]
