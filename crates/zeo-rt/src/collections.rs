@@ -20,7 +20,7 @@ use crate::builtins::type_error;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// The shared storage cell behind every mutable built-in value: the
 /// `Mutex`-guarded payload plus its `.freeze` flag, mirroring
@@ -31,21 +31,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// pre-existing call site -- including every codegen-EMITTED `.lock()` in
 /// generated programs -- keeps compiling unchanged.
 ///
-/// `Ordering::Relaxed` is sufficient for the flag: freezing only needs to
+/// `Ordering::Relaxed` is sufficient for the flags: freezing only needs to
 /// prevent FUTURE mutations observed through ordinary program order (CRuby's
 /// own flag is a plain bit with no fence either); it synchronizes nothing
 /// else. The frozen CHECK itself lives in codegen-emitted guards, not here
 /// -- only codegen can construct the `FrozenError` to raise (same division
 /// of labor as `array_set`'s `IndexError` contract below).
+///
+/// One `AtomicU8` rather than two bools: FROZEN and MOVED (a `Ractor` move's
+/// poison bit -- see `ractor::cross_graph`) share the byte, so every probe
+/// that asks about either reads the same word `is_frozen` always read.
 pub struct Freezable<T> {
-    frozen: AtomicBool,
+    flags: AtomicU8,
     payload: Mutex<T>,
 }
+
+const FLAG_FROZEN: u8 = 1;
+const FLAG_MOVED: u8 = 2;
 
 impl<T> Freezable<T> {
     pub fn new(payload: T) -> Freezable<T> {
         Freezable {
-            frozen: AtomicBool::new(false),
+            flags: AtomicU8::new(0),
             payload: Mutex::new(payload),
         }
     }
@@ -55,11 +62,23 @@ impl<T> Freezable<T> {
     }
 
     pub fn is_frozen(&self) -> bool {
-        self.frozen.load(Ordering::Relaxed)
+        self.flags.load(Ordering::Relaxed) & FLAG_FROZEN != 0
     }
 
     pub fn set_frozen(&self) {
-        self.frozen.store(true, Ordering::Relaxed)
+        self.flags.fetch_or(FLAG_FROZEN, Ordering::Relaxed);
+    }
+
+    /// Whether a `send(obj, move: true)` gutted this container -- every
+    /// later send to it must raise `Ractor::MovedError`.
+    pub fn is_moved(&self) -> bool {
+        self.flags.load(Ordering::Relaxed) & FLAG_MOVED != 0
+    }
+
+    /// Set strictly BEFORE the payload is gutted (`ractor::cross_graph`'s
+    /// commit), so a reader that beats the gut still sees the poison.
+    pub fn set_moved(&self) {
+        self.flags.fetch_or(FLAG_MOVED, Ordering::Relaxed);
     }
 }
 
@@ -679,6 +698,46 @@ pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue
 
 pub fn array_len(arr: &RArray) -> i64 {
     arr.lock().len() as i64
+}
+
+/// The moved-container guard the fallible `_checked` twins below share, and
+/// codegen's own emission for the mutator fast paths when the program can
+/// reach `Ractor` at all (`try_collection_dispatch`'s switch). Checked ahead
+/// of any frozen guard: `Ractor::MovedError` beats `FrozenError`.
+pub fn check_not_moved<T>(c: &Freezable<T>) -> Result<(), crate::Signal> {
+    if c.is_moved() {
+        return Err(crate::ractor::moved_object_error());
+    }
+    Ok(())
+}
+
+// The infallible container fast-path helpers above serve programs that can
+// never move an object; a program that names `Ractor` compiles against these
+// fallible twins instead, so a husk left by `send(obj, move: true)` raises
+// rather than answering from its gutted payload.
+pub fn array_get_checked(arr: &RArray, index: i64) -> Result<RubyValue, crate::Signal> {
+    check_not_moved(arr)?;
+    Ok(array_get(arr, index))
+}
+
+pub fn array_len_checked(arr: &RArray) -> Result<i64, crate::Signal> {
+    check_not_moved(arr)?;
+    Ok(array_len(arr))
+}
+
+pub fn hash_len_checked(h: &RHash) -> Result<i64, crate::Signal> {
+    check_not_moved(h)?;
+    Ok(hash_len(h))
+}
+
+pub fn string_get_checked(s: &RStr, index: i64) -> Result<RubyValue, crate::Signal> {
+    check_not_moved(s)?;
+    Ok(string_get(s, index))
+}
+
+pub fn string_len_checked(s: &RStr) -> Result<i64, crate::Signal> {
+    check_not_moved(s)?;
+    Ok(string_len(s))
 }
 
 /// Flattens a `*splat` element in place, with Ruby's own coercion rules --

@@ -1470,32 +1470,33 @@ fn a_ractor_block_capturing_an_outer_local_is_rejected_at_compile_time() {
 }
 
 #[test]
-fn an_unfrozen_object_sent_across_a_ractor_boundary_raises_ractor_error() {
-    // Documented narrower-than-CRuby divergence: real Ruby deep-copies an
-    // unfrozen object; this runtime has no by-name ivar-setting reflection
-    // to rebuild one, so it raises a catchable Ractor::Error instead.
+fn an_unfrozen_object_sent_across_a_ractor_boundary_deep_copies() {
+    // CRuby's rule, now real here too: an unfrozen plain object crosses as
+    // a deep copy (dup + ivar rewrite -- `ractor::cross_graph`), so the
+    // receiver sees the value and later mutation of the source's graph
+    // never reaches it.
     let result = run_ruby(
         r#"
         class Box
           def initialize(v)
             @v = v
           end
+          attr_accessor :v
         end
         sink = Ractor.new do
-          Ractor.receive
+          got = Ractor.receive
+          got.v << "-seen"
+          got.v
         end
-        begin
-          sink.send(Box.new(1))
-        rescue Ractor::Error => e
-          puts "rejected: #{e.send(:message)}"
-        end
+        b = Box.new(+"payload")
+        sink.send(b)
+        out = sink.value
+        p [out, b.v]
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert!(
-        result
-            .stdout
-            .starts_with("rejected: an unfrozen Object can't cross a Ractor boundary"),
+        result.stdout.starts_with("[\"payload-seen\", \"payload\"]"),
         "stdout: {}",
         result.stdout
     );

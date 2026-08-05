@@ -3042,23 +3042,35 @@ fn dispatch(
     // the generic dynamic-dispatch `send` handling further down.
     // `value`/`join` mirror Thread's (an uncaught signal re-raises in the
     // caller; join returns the Ractor itself).
+    if infer(cx, recv_id) == TyKind::Ractor && block.is_none() && block_arg.is_none() {
+        // `send`/`<<` alone also takes the `move:` kwarg (`send(obj,
+        // move: true)` runs the real move traversal); any other kwarg shape
+        // falls through like every other arm.
+        if let ("send" | "<<", 1) = (name, args.len())
+            && let Some(move_kw) = ractor_move_kwarg(cx, kwargs)
+        {
+            let v = emit_expr(cx, args[0]);
+            let v = super::expr::box_if_object_typed(cx, args[0], v);
+            let mv = match move_kw {
+                Some(e) => quote! { (#e).truthy() },
+                None => quote! { false },
+            };
+            // Typed `Signal` errors straight from the runtime
+            // (`Ractor::ClosedError`/`Ractor::Error`/`Ractor::MovedError`)
+            // -- no re-wrap.
+            return quote! {
+                {
+                    let __r = (#recv_expr).as_ractor_unchecked();
+                    match zeo_rt::ractor_send_mode(&__r, &(#v), #mv) {
+                        Ok(()) => zeo_rt::RubyValue::Ractor(__r),
+                        Err(__sig) => return Err(__sig),
+                    }
+                }
+            };
+        }
+    }
     if no_kwargs && infer(cx, recv_id) == TyKind::Ractor && block.is_none() && block_arg.is_none() {
         match (name, args.len()) {
-            ("send" | "<<", 1) => {
-                let v = emit_expr(cx, args[0]);
-                let v = super::expr::box_if_object_typed(cx, args[0], v);
-                // Typed `Signal` errors straight from the runtime
-                // (`Ractor::ClosedError`/`Ractor::Error`) -- no re-wrap.
-                return quote! {
-                    {
-                        let __r = (#recv_expr).as_ractor_unchecked();
-                        match zeo_rt::ractor_send(&__r, &(#v)) {
-                            Ok(()) => zeo_rt::RubyValue::Ractor(__r),
-                            Err(__sig) => return Err(__sig),
-                        }
-                    }
-                };
-            }
             ("value", 0) => {
                 return quote! {
                     match zeo_rt::ractor_value(&(#recv_expr).as_ractor_unchecked()) {
@@ -3871,6 +3883,23 @@ fn dispatch(
     }
 }
 
+/// The `Ractor#send` arm's kwarg split: `Some(None)` for a kwarg-less call,
+/// `Some(Some(expr))` when the ONLY kwarg is a literal-keyed `move:` (its
+/// emitted, boxed value), and `None` -- fall through to ordinary dispatch --
+/// for any other kwarg shape (a double-splat, an unknown keyword).
+fn ractor_move_kwarg(cx: &Ctx, kwargs: &[KwArg]) -> Option<Option<TokenStream>> {
+    match kwargs {
+        [] => Some(None),
+        [KwArg::Pair(k, v)]
+            if matches!(&cx.compiler.hir[*k], HirNode::SymbolLit(s) if s == "move") =>
+        {
+            let e = emit_expr(cx, *v);
+            Some(Some(super::expr::box_if_object_typed(cx, *v, e)))
+        }
+        _ => None,
+    }
+}
+
 /// A Path-1 call to an accessor, replaced by the field access itself: no
 /// call, no frame, no `check_ints`, no wide `Result` through memory.
 ///
@@ -3907,6 +3936,16 @@ fn emit_inline_accessor(
     }
     let shape = cx.compiler.accessor_shape(cid, scope)?;
     let slot = super::expr::ivar_slot(cx, cid, &shape.ivar)?;
+    // The husk guard: an inlined accessor bypasses dispatch, so a program
+    // that names `Ractor` (and can therefore `send(obj, move: true)` the
+    // receiver away) checks the class word here -- ahead of the frozen
+    // check, since `Ractor::MovedError` beats `FrozenError`. Everything
+    // else emits the bare field access it always did.
+    let moved_guard = if cx.compiler.uses_ractor() {
+        quote! { zeo_rt::check_not_moved_obj(&**__r)?; }
+    } else {
+        quote! {}
+    };
     match (shape.kind, args) {
         // `&#recv_expr`, not `#recv_expr`: a receiver expression is often a
         // temporary (`Clone::clone(&x)`), and borrowing it in a `let` extends
@@ -3915,6 +3954,7 @@ fn emit_inline_accessor(
         (AccessorKind::Reader, []) => Some(quote! {
             {
                 let __r = &#recv_expr;
+                #moved_guard
                 __r.__ivars.get(#slot)
             }
         }),
@@ -3930,6 +3970,7 @@ fn emit_inline_accessor(
                 {
                     let __r = &#recv_expr;
                     let __v: zeo_rt::RubyValue = #v;
+                    #moved_guard
                     if zeo_rt::RubyObject::is_frozen(&**__r) {
                         Err::<(), zeo_rt::Signal>(zeo_rt::ivar_frozen_error(
                             #class_ident::new_handle(Clone::clone(__r)),

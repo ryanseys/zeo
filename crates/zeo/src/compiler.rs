@@ -528,6 +528,9 @@ pub struct Compiler {
     /// Memo for [`Compiler::defines_bang`] -- a whole-arena scan every `!x`
     /// fold would otherwise repeat, and `!` is everywhere.
     defines_bang: std::cell::OnceCell<bool>,
+    /// Memo for [`Hir::uses_ractor`] -- consulted by every collection
+    /// fast-path and inlined-accessor emission site.
+    uses_ractor: std::cell::OnceCell<bool>,
 }
 
 /// See [`Compiler::inline_iter_sites`].
@@ -732,6 +735,7 @@ impl Compiler {
             range_each_literal_suppressed: false,
             traces_calls: std::cell::OnceCell::new(),
             defines_bang: std::cell::OnceCell::new(),
+            uses_ractor: std::cell::OnceCell::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table:
         // superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -1273,6 +1277,11 @@ impl Compiler {
         *self
             .traces_calls
             .get_or_init(|| self.hir.uses_call_tracing())
+    }
+
+    /// See [`Hir::uses_ractor`](crate::hir::Hir::uses_ractor).
+    pub fn uses_ractor(&self) -> bool {
+        *self.uses_ractor.get_or_init(|| self.hir.uses_ractor())
     }
 
     /// `scope`'s [`AccessorShape`] when reaching the field DIRECTLY, in place

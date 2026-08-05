@@ -97,8 +97,9 @@ pub use dispatch::{
     RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj, RubyObject, STRING_CLASS, STRUCT_CLASS,
     SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn, YIELDER_CLASS, arity_error,
     bind_dynamic_kwargs, call_singleton_super_target, class_is_module, class_name,
-    coerce_raise_arg, coerce_raise_arg_with_message, const_miss, construct_by_class_id,
-    define_in_default_definee, describe_receiver, downcast_robj, downcast_robj_ref,
+    check_not_moved_obj, coerce_raise_arg, coerce_raise_arg_with_message, const_miss,
+    construct_by_class_id, define_in_default_definee, describe_receiver, downcast_robj,
+    downcast_robj_ref,
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
     is_a_value, ivar_defined, ivar_frozen_error, ivar_get_dyn, ivar_name_arg, ivar_set_dyn,
     ivar_slot_get_dyn, ivar_slot_set_dyn, main_object, make_name_error, method_name_symbol,
@@ -155,9 +156,13 @@ pub use handling::{PropagatingGuard, current_exception, pop_handling, push_handl
 pub use pools::{LitPool, SymPool};
 pub use ractor::{
     RRactor, RactorData, cross_boundary, current_ractor, init_main_ractor, make_shareable,
-    ractor_join, ractor_new, ractor_outcome, ractor_receive, ractor_select, ractor_send,
-    ractor_value, shareable,
+    moved_object_error, ractor_join, ractor_new, ractor_outcome, ractor_receive, ractor_select,
+    ractor_send, ractor_send_mode, ractor_value, shareable,
 };
+
+/// `Ractor::MovedObject`'s numeric class id, spelled where `ruby_class!`'s
+/// generated `retag_moved` can reach it through `$crate`.
+pub const MOVED_OBJECT_CLASS_ID: u32 = zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0;
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
@@ -176,7 +181,7 @@ pub use thread::{
     queue_len, queue_max, queue_new, queue_pop, queue_push, queue_set_max, sized_queue_new,
     thread_new, thread_outcome,
 };
-pub use value::RubyValue;
+pub use value::{RubyValue, observed_class_id};
 pub use value::rb_eq_checked;
 pub use value::{case_eq, case_eq_any};
 pub use value::{range_checked, range_endpoint, range_endpoint_error};
@@ -333,9 +338,13 @@ macro_rules! ruby_class {
             /// generated struct type can back many class ids, the same
             /// precedent `ValueSubclass`/`RubyException` set -- which is what
             /// lets an inherited compiled method's trampoline downcast
-            /// successfully instead of aborting. Written once at
-            /// construction, never mutated.
-            pub __class: u32,
+            /// successfully instead of aborting. Written at construction,
+            /// atomic (relaxed -- a plain load on every real target) for the
+            /// ONE later write that exists: a `Ractor` move's retag to
+            /// `Ractor::MovedObject`, which is what makes a husk's
+            /// `class_id()` -- and with it dispatch and reflection -- answer
+            /// the husk class with no extra probe anywhere.
+            pub __class: std::sync::atomic::AtomicU32,
         }
 
         impl $name {
@@ -412,7 +421,7 @@ macro_rules! ruby_class {
                 std::sync::Arc::new($name {
                     __frozen: std::sync::atomic::AtomicBool::new(false),
                     __ivars: $crate::IvarCell::new(),
-                    __class: class.0,
+                    __class: std::sync::atomic::AtomicU32::new(class.0),
                 })
             }
 
@@ -430,7 +439,16 @@ macro_rules! ruby_class {
         }
 
         impl $crate::RubyObject for $name {
-            fn class_id(&self) -> $crate::ClassId { $crate::ClassId(self.__class) }
+            fn class_id(&self) -> $crate::ClassId {
+                $crate::ClassId(self.__class.load(std::sync::atomic::Ordering::Relaxed))
+            }
+            fn retag_moved(&self) -> bool {
+                self.__class.store(
+                    $crate::MOVED_OBJECT_CLASS_ID,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                true
+            }
             fn as_any(&self) -> &dyn std::any::Any { self }
             fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> { self }
             fn is_frozen(&self) -> bool { self.__frozen.load(std::sync::atomic::Ordering::Relaxed) }
@@ -511,7 +529,9 @@ macro_rules! ruby_class {
                     ),
                     __ivars: self.__ivars.duplicate(),
                     // A dup of a runtime-subclass instance stays that class.
-                    __class: self.__class,
+                    __class: std::sync::atomic::AtomicU32::new(
+                        self.__class.load(std::sync::atomic::Ordering::Relaxed),
+                    ),
                 })
             }
         }
@@ -669,7 +689,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Point::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         });
         p.__ivars.set(0, RubyValue::Int(x));
         p
@@ -679,7 +699,7 @@ mod tests {
         let t = std::sync::Arc::new(Temp {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Temp::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Temp::CLASS_ID.0),
         });
         t.__ivars.set(0, RubyValue::Int(deg));
         RubyValue::Object(Temp::new_handle(t))
@@ -781,7 +801,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Point::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
         match p.x().unwrap() {
@@ -824,7 +844,7 @@ mod tests {
         let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Point::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         })));
         assert!(!obj.is_frozen());
         obj.freeze_value().unwrap();
@@ -843,7 +863,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         }));
         let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
@@ -855,7 +875,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         }));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
@@ -881,7 +901,7 @@ mod tests {
         let p = std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Point::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         });
         RubyObject::set_frozen(&*p);
 
@@ -904,7 +924,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         }));
         let result = send(&g, Symbol::intern("dup"), &[], None).unwrap();
         let RubyValue::Object(copy) = result else {
@@ -957,7 +977,7 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         }));
         let g_class = send(&g, Symbol::intern("class"), &[], None).unwrap();
         assert!(g_class.rb_eq(&RubyValue::Class(Greeter::CLASS_ID)));
@@ -988,7 +1008,7 @@ mod tests {
         let instance = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Point::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         })));
 
         assert!(point_class.rb_case_eq(&instance));
@@ -1012,7 +1032,7 @@ mod tests {
         let p: RObj = Point::new_handle(std::sync::Arc::new(Point {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Point::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         }));
         let _ = send(&p, Symbol::intern("nope"), &[], None);
     }
@@ -1050,12 +1070,12 @@ mod tests {
         let g1 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         })));
         let g2 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         })));
         assert!(g1.rb_eq(&g1.clone()));
         assert!(!g1.rb_eq(&g2));
@@ -1071,7 +1091,7 @@ mod tests {
         let g = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
             __ivars: IvarCell::new(),
-            __class: Greeter::CLASS_ID.0,
+            __class: std::sync::atomic::AtomicU32::new(Greeter::CLASS_ID.0),
         })));
         let s = g.to_display_string();
         assert!(s.starts_with("#<Greeter:0x") && s.ends_with('>'), "got {s}");

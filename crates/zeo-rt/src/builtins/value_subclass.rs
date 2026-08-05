@@ -16,7 +16,7 @@
 //! matter (`Array`/`String`/`Hash`).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use parking_lot::Mutex;
 use zeo_abi::{ARRAY_CLASS, ClassId, HASH_CLASS, STRING_CLASS};
@@ -38,7 +38,9 @@ use crate::{array_new, hash_new, string_new};
 /// inner `Arc<Mutex<…>>` and never takes this outer lock). User ivars are
 /// name-keyed (insertion-ordered), like `RubyException`.
 pub struct ValueSubclass {
-    class_id: ClassId,
+    /// Atomic so a `Ractor` move can retag the husk to `Ractor::MovedObject`
+    /// in place (`retag_moved`); relaxed loads everywhere else.
+    class_id: AtomicU32,
     root: ClassId,
     frozen: AtomicBool,
     payload: Mutex<RubyValue>,
@@ -49,7 +51,7 @@ impl ValueSubclass {
     /// Allocates directly as the trait-object handle every caller stores.
     fn alloc(class_id: ClassId, root: ClassId, payload: RubyValue) -> RObj {
         Arc::new(ValueSubclass {
-            class_id,
+            class_id: AtomicU32::new(class_id.0),
             root,
             frozen: AtomicBool::new(false),
             payload: Mutex::new(payload),
@@ -68,7 +70,12 @@ impl ValueSubclass {
 
 impl RubyObject for ValueSubclass {
     fn class_id(&self) -> ClassId {
+        ClassId(self.class_id.load(Ordering::Relaxed))
+    }
+    fn retag_moved(&self) -> bool {
         self.class_id
+            .store(zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0, Ordering::Relaxed);
+        true
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -115,7 +122,7 @@ impl RubyObject for ValueSubclass {
             .dup_value(false)
             .expect("value-subclass payloads are copyable collections");
         Arc::new(ValueSubclass {
-            class_id: self.class_id,
+            class_id: AtomicU32::new(self.class_id.load(Ordering::Relaxed)),
             root: self.root,
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
             payload: Mutex::new(payload),

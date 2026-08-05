@@ -188,20 +188,27 @@ struct OverlayMaps {
     next_id: AtomicU32,
 }
 
-/// The two gates the dispatch fast path reads, in ONE atomic:
+/// The gates the dispatch fast path reads, in ONE atomic:
 ///
 /// * [`GATE_OVERLAY`] -- something has been defined at runtime, so the overlay
 ///   may answer where the frozen tables would not.
 /// * [`GATE_PENDING`] -- a definition hook is running with names still ahead of
 ///   it, so a resolved entry may not exist yet (see [`with_pending_defs`]).
+/// * [`GATE_MOVED`] -- some object was gutted by a `Ractor` move, so a
+///   dispatch receiver may be a husk that must raise `Ractor::MovedError`.
+///   Deliberately NOT part of [`is_live`]'s mask: a move must not deopt the
+///   inline caches or the overlay shortcuts, only arm the husk probes.
 ///
-/// One word rather than two `AtomicBool`s because [`is_live`] asks about both
-/// and must stay a single load and a single compare against zero. As a second
-/// flag beside the first, the pending gate measured +2.6% on a loop whose body
-/// is nothing but a cached dynamic send; folded in here it is free.
+/// One word rather than separate `AtomicBool`s because the fast-path readers
+/// must stay a single load (and, for [`is_live`], a single masked compare).
+/// As a second flag beside the first, the pending gate measured +2.6% on a
+/// loop whose body is nothing but a cached dynamic send; folded in here it
+/// is free -- the moved gate rides the same byte for the same reason.
 static GATES: AtomicU8 = AtomicU8::new(0);
 const GATE_OVERLAY: u8 = 1;
 const GATE_PENDING: u8 = 2;
+const GATE_MOVED: u8 = 4;
+const GATE_LIVE_MASK: u8 = GATE_OVERLAY | GATE_PENDING;
 static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
@@ -227,7 +234,39 @@ fn maps() -> &'static OverlayMaps {
 /// compare-against-zero it was when the overlay was the only gate.
 #[inline(always)]
 pub fn is_live() -> bool {
-    GATES.load(Ordering::Acquire) != 0
+    GATES.load(Ordering::Acquire) & GATE_LIVE_MASK != 0
+}
+
+/// The whole gate byte in one load, for the callers that ask more than one
+/// gate question per dispatch ([`crate::dispatch::send_value_cached`]) --
+/// same single atomic load `is_live` costs, split by [`gates_live`]/
+/// [`gates_moved`] with plain register tests.
+#[inline(always)]
+pub(crate) fn gates() -> u8 {
+    GATES.load(Ordering::Acquire)
+}
+
+#[inline(always)]
+pub(crate) fn gates_live(g: u8) -> bool {
+    g & GATE_LIVE_MASK != 0
+}
+
+#[inline(always)]
+pub(crate) fn gates_moved(g: u8) -> bool {
+    g & GATE_MOVED != 0
+}
+
+/// Whether any `Ractor` move has ever poisoned an object -- the cheap gate
+/// in front of every husk probe off the dispatch fast path.
+#[inline(always)]
+pub fn any_moved() -> bool {
+    GATES.load(Ordering::Acquire) & GATE_MOVED != 0
+}
+
+/// Arm the moved gate -- once per `move: true` send that actually poisoned
+/// something (`ractor::cross_graph`'s commit), never cleared.
+pub(crate) fn mark_moved() {
+    GATES.fetch_or(GATE_MOVED, Ordering::Release);
 }
 
 /// The typed-iterator fusion gate (`codegen`'s `emit_typed_iter_inline`): a
@@ -244,9 +283,15 @@ pub fn is_live() -> bool {
 /// compile-time constant. One `Struct.new` measured **+55% on fused-iterator
 /// work** through the wide form (0.53s -> 0.81s), and it is on the load path
 /// of every rubygems and bundler program.
+// Both forms also refuse once any Ractor move happened: a fused loop reads
+// its receiver's payload directly and would iterate a husk's gutted storage
+// instead of raising `Ractor::MovedError` -- after the first move, fused
+// loops fall back to dispatch (whose probes answer correctly). The wide form
+// tests the WHOLE gate byte (the same one load it always did); the `_for`
+// form pays one extra load only because its other gates live outside GATES.
 #[inline(always)]
 pub fn iter_inline_ok(box_id: u32) -> bool {
-    box_id == 0 && !is_live()
+    box_id == 0 && GATES.load(Ordering::Acquire) == 0
 }
 
 #[inline(always)]
@@ -254,6 +299,7 @@ pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
     box_id == 0
         && !ANY_SINGLETONS.load(Ordering::Acquire)
         && !ANCESTRY_MUTATED.load(Ordering::Acquire)
+        && !any_moved()
         && !class_maybe_patched(recv)
 }
 
@@ -3440,7 +3486,10 @@ impl RubyObject for ClassSurrogate {
 }
 
 struct DynObject {
-    class_id: ClassId,
+    /// Atomic so a `Ractor` move can RETAG the instance to
+    /// `Ractor::MovedObject` in place (`retag_moved`); plain relaxed loads
+    /// everywhere else.
+    class_id: AtomicU32,
     frozen: AtomicBool,
     /// Insertion-ordered: ruby reports instance variables in FIRST-ASSIGNMENT
     /// order, and that order is a property of the object rather than of its
@@ -3455,7 +3504,7 @@ struct DynObject {
 impl DynObject {
     fn new(class_id: ClassId) -> DynObject {
         DynObject {
-            class_id,
+            class_id: AtomicU32::new(class_id.0),
             frozen: AtomicBool::new(false),
             ivars: parking_lot::Mutex::new(indexmap::IndexMap::new()),
         }
@@ -3464,7 +3513,12 @@ impl DynObject {
 
 impl RubyObject for DynObject {
     fn class_id(&self) -> ClassId {
+        ClassId(self.class_id.load(Ordering::Relaxed))
+    }
+    fn retag_moved(&self) -> bool {
         self.class_id
+            .store(zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0, Ordering::Relaxed);
+        true
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -3512,7 +3566,7 @@ impl RubyObject for DynObject {
         self.ivars.lock().shift_remove(name)
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        let d = DynObject::new(self.class_id);
+        let d = DynObject::new(RubyObject::class_id(self));
         *d.ivars.lock() = self.ivars.lock().clone();
         if copy_frozen && self.is_frozen() {
             d.set_frozen();

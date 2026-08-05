@@ -175,6 +175,18 @@ pub(crate) fn container_identity(v: &RubyValue) -> Option<usize> {
     }
 }
 
+/// [`RubyValue::class_id`] as dispatch OBSERVES it: a container husk left by
+/// a `Ractor` move (whose variant class id cannot change) answers
+/// `Ractor::MovedObject`, everything else its ordinary class. Gated on the
+/// process-wide moved gate, so a program that never moves pays one
+/// shared-byte load.
+pub fn observed_class_id(v: &RubyValue) -> zeo_abi::ClassId {
+    if crate::runtime_meta::any_moved() && crate::dispatch::value_moved(v) {
+        return zeo_abi::RACTOR_MOVED_OBJECT_CLASS;
+    }
+    v.class_id()
+}
+
 /// The default `#<Class:0xADDR ...>` rendering for a user object that defines
 /// no `to_s`/`inspect` override -- CRuby's `rb_any_to_s`/`rb_obj_inspect`.
 /// `to_s` (`with_ivars=false`) is just `#<Class:0xADDR>`; `inspect` lists the

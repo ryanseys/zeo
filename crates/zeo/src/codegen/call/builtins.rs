@@ -40,12 +40,28 @@ pub(super) fn try_collection_dispatch(
     {
         return None;
     }
+    // The moved-object emission switch: a program that names `Ractor` can
+    // poison a receiver (`send(obj, move: true)`), so its container fast
+    // paths compile against the fallible `_checked` twins -- a husk raises
+    // `Ractor::MovedError` instead of answering from its gutted payload, and
+    // the mutators check moved AHEAD of frozen (MovedError beats
+    // FrozenError). Everything else keeps the guard-free helpers.
+    let moved = cx.compiler.uses_ractor();
+    let moved_guard = if moved {
+        quote! { zeo_rt::check_not_moved(&__recv)?; }
+    } else {
+        quote! {}
+    };
     let tokens = match (ty, name, args.len()) {
         // Only for a statically-Int index -- Range/other index shapes
         // fall through to the dynamic rows.
         (TyKind::Array, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
-            quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
+            if moved {
+                quote! { zeo_rt::array_get_checked(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked())? }
+            } else {
+                quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
+            }
         }
         // Only for a statically-Int index -- a Range index is a SPLICE with
         // different semantics (to_ary coercion), served by the dynamic row.
@@ -94,6 +110,7 @@ pub(super) fn try_collection_dispatch(
                     let __recv = (#recv_expr).as_array_unchecked();
                     let __idx = (#idx).as_int_unchecked();
                     let __val = #val;
+                    #moved_guard
                     if __recv.is_frozen() {
                         return Err(zeo_rt::Signal::Raise(#frozen_error));
                     }
@@ -105,7 +122,11 @@ pub(super) fn try_collection_dispatch(
             }
         }
         (TyKind::Array, "length" | "size", 0) => {
-            quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len(&(#recv_expr).as_array_unchecked())) }
+            if moved {
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len_checked(&(#recv_expr).as_array_unchecked())?) }
+            } else {
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len(&(#recv_expr).as_array_unchecked())) }
+            }
         }
         // The bare single-value/no-arg Array mutators and probes -- the
         // shapes 12M-send list benchmarks live on. Multi-arg `push`, count
@@ -115,29 +136,69 @@ pub(super) fn try_collection_dispatch(
         (TyKind::Array, "push" | "append" | "<<", 1) => {
             let val = emit_expr(cx, args[0]);
             let val = box_if_object_typed(cx, args[0], val);
-            quote! { zeo_rt::array_push_checked(&(#recv_expr).as_array_unchecked(), #val)? }
+            quote! {
+                {
+                    let __recv = (#recv_expr).as_array_unchecked();
+                    #moved_guard
+                    zeo_rt::array_push_checked(&__recv, #val)?
+                }
+            }
         }
         (TyKind::Array, "pop", 0) => {
-            quote! { zeo_rt::array_pop_checked(&(#recv_expr).as_array_unchecked())? }
+            quote! {
+                {
+                    let __recv = (#recv_expr).as_array_unchecked();
+                    #moved_guard
+                    zeo_rt::array_pop_checked(&__recv)?
+                }
+            }
         }
         (TyKind::Array, "shift", 0) => {
-            quote! { zeo_rt::array_shift_checked(&(#recv_expr).as_array_unchecked())? }
+            quote! {
+                {
+                    let __recv = (#recv_expr).as_array_unchecked();
+                    #moved_guard
+                    zeo_rt::array_shift_checked(&__recv)?
+                }
+            }
         }
         (TyKind::Array, "empty?", 0) => {
-            quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len(&(#recv_expr).as_array_unchecked()) == 0) }
+            if moved {
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len_checked(&(#recv_expr).as_array_unchecked())? == 0) }
+            } else {
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len(&(#recv_expr).as_array_unchecked()) == 0) }
+            }
         }
         (TyKind::Array, "first", 0) => {
-            quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), 0) }
+            if moved {
+                quote! { zeo_rt::array_get_checked(&(#recv_expr).as_array_unchecked(), 0)? }
+            } else {
+                quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), 0) }
+            }
         }
         (TyKind::Array, "last", 0) => {
-            quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), -1) }
+            if moved {
+                quote! { zeo_rt::array_get_checked(&(#recv_expr).as_array_unchecked(), -1)? }
+            } else {
+                quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), -1) }
+            }
         }
         (TyKind::Hash, "[]", 1) => {
             let key = emit_expr(cx, args[0]);
             // Boxed if Object-typed: an object KEY reaches the
             // `HashKey` projection (which now dispatches a user `hash`).
             let key = crate::codegen::expr::box_if_object_typed(cx, args[0], key);
-            quote! { zeo_rt::hash_index(&(#recv_expr).as_hash_unchecked(), &(#key))? }
+            if moved {
+                quote! {
+                    {
+                        let __recv = (#recv_expr).as_hash_unchecked();
+                        #moved_guard
+                        zeo_rt::hash_index(&__recv, &(#key))?
+                    }
+                }
+            } else {
+                quote! { zeo_rt::hash_index(&(#recv_expr).as_hash_unchecked(), &(#key))? }
+            }
         }
         (TyKind::Hash, "[]=", 2) => {
             let key = emit_expr(cx, args[0]);
@@ -157,6 +218,7 @@ pub(super) fn try_collection_dispatch(
                     let __recv = (#recv_expr).as_hash_unchecked();
                     let __key = #key;
                     let __val = #val;
+                    #moved_guard
                     if __recv.is_frozen() {
                         return Err(zeo_rt::Signal::Raise(#frozen_error));
                     }
@@ -166,20 +228,40 @@ pub(super) fn try_collection_dispatch(
             }
         }
         (TyKind::Hash, "length" | "size", 0) => {
-            quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
+            if moved {
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len_checked(&(#recv_expr).as_hash_unchecked())?) }
+            } else {
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
+            }
         }
         (TyKind::Hash, "empty?", 0) => {
-            quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked()) == 0) }
+            if moved {
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len_checked(&(#recv_expr).as_hash_unchecked())? == 0) }
+            } else {
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked()) == 0) }
+            }
         }
         (TyKind::Str, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
-            quote! { zeo_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
+            if moved {
+                quote! { zeo_rt::string_get_checked(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked())? }
+            } else {
+                quote! { zeo_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
+            }
         }
         (TyKind::Str, "length" | "size", 0) => {
-            quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len(&(#recv_expr).as_str_unchecked())) }
+            if moved {
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len_checked(&(#recv_expr).as_str_unchecked())?) }
+            } else {
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len(&(#recv_expr).as_str_unchecked())) }
+            }
         }
         (TyKind::Str, "empty?", 0) => {
-            quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len(&(#recv_expr).as_str_unchecked()) == 0) }
+            if moved {
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len_checked(&(#recv_expr).as_str_unchecked())? == 0) }
+            } else {
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len(&(#recv_expr).as_str_unchecked()) == 0) }
+            }
         }
         (TyKind::Range, "first", 0) => quote! { (#recv_expr).range_first_checked()? },
         (TyKind::Range, "last", 0) => quote! { (#recv_expr).range_last_checked()? },

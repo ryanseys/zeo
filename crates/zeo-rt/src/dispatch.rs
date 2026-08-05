@@ -186,6 +186,17 @@ pub trait RubyObject: Any + Send + Sync {
     fn set_builtin_payload(&self, _v: RubyValue) -> bool {
         false
     }
+
+    /// A `Ractor` move's poison: re-tag this instance's class word to
+    /// `Ractor::MovedObject`, so `class_id()` -- and with it dispatch,
+    /// `method_missing`, `===`, inspect -- REALLY answers the husk class.
+    /// `true` when the concrete type could retag (an atomic class word);
+    /// the default `false` leaves a hand-written builtin `RObj` usable
+    /// after a move -- the safe direction, documented on
+    /// `ractor::cross_graph`.
+    fn retag_moved(&self) -> bool {
+        false
+    }
 }
 
 /// A handle to any live Ruby object, used wherever the concrete class isn't
@@ -212,6 +223,10 @@ pub struct Object {
     /// no frozen slot at all before, so `freeze`/`frozen?`/`clone(freeze:)`
     /// silently no-op'd (issue_3033).
     frozen: std::sync::atomic::AtomicBool,
+    /// A `Ractor` move's poison bit -- this type has no per-instance class
+    /// word to retag, so `class_id()` consults the flag instead (cold type;
+    /// generated classes carry an atomic class word and skip this).
+    moved: std::sync::atomic::AtomicBool,
 }
 
 impl Object {
@@ -245,7 +260,14 @@ pub use zeo_abi::{
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {
+        if self.moved.load(std::sync::atomic::Ordering::Relaxed) {
+            return zeo_abi::RACTOR_MOVED_OBJECT_CLASS;
+        }
         Self::CLASS_ID
+    }
+    fn retag_moved(&self) -> bool {
+        self.moved.store(true, std::sync::atomic::Ordering::Relaxed);
+        true
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -301,6 +323,7 @@ impl RubyObject for Object {
         Arc::new(Object {
             ivars: parking_lot::Mutex::new(self.ivars.lock().clone()),
             frozen: std::sync::atomic::AtomicBool::new(copy_frozen && self.is_frozen()),
+            moved: std::sync::atomic::AtomicBool::new(false),
         })
     }
 }
@@ -1634,9 +1657,41 @@ pub(crate) fn class_extends(cid: ClassId) -> &'static [ClassId] {
 /// `ClassCheck` pattern) goes through here. `is_a` itself stays for the
 /// internal checks that hold a class id and nothing else.
 pub fn is_a_value(recv: &RubyValue, target: ClassId) -> bool {
+    // A moved container answers as the husk class it now is (`class_id`
+    // cannot say so for `Str`/`Array`/`Hash`, which carry no class word) --
+    // `crate::value::observed_class_id` is the same probe for the callers
+    // that want the id itself. Gated on the process-wide moved gate, so a
+    // program that never moves pays one shared-byte load.
+    if crate::runtime_meta::any_moved() && value_moved(recv) {
+        return is_a(zeo_abi::RACTOR_MOVED_OBJECT_CLASS, target);
+    }
     is_a(recv.class_id(), target)
         || crate::runtime_meta::value_extends(recv, target)
         || is_a_singleton_class(recv, target)
+}
+
+/// Whether `v` is a husk a `Ractor` move left behind: a gutted container
+/// (its `Freezable` flags byte says so) or a retagged object. Callers gate
+/// on [`crate::runtime_meta::any_moved`] first, so the flag probes only run
+/// once a move has actually happened.
+pub(crate) fn value_moved(v: &RubyValue) -> bool {
+    match v {
+        RubyValue::Str(s) => s.is_moved(),
+        RubyValue::Array(a) => a.is_moved(),
+        RubyValue::Hash(h) => h.is_moved(),
+        RubyValue::Object(o) => o.class_id() == zeo_abi::RACTOR_MOVED_OBJECT_CLASS,
+        _ => false,
+    }
+}
+
+/// Codegen's guard ahead of an inlined accessor field access (emitted only
+/// for a program that names `Ractor` -- the emission switch): a Path-1
+/// receiver bypasses dispatch, so the husk check runs here instead.
+pub fn check_not_moved_obj<T: RubyObject>(o: &T) -> Result<(), Signal> {
+    if o.class_id() == zeo_abi::RACTOR_MOVED_OBJECT_CLASS {
+        return Err(crate::ractor::moved_object_error());
+    }
+    Ok(())
 }
 
 /// `Foo.is_a?(Foo.singleton_class)` -- true in CRuby, because `CLASS_OF(Foo)`
@@ -4302,6 +4357,14 @@ fn send_value_in_reason(
     // self-forwarding, builtin-row cycles) still deepens the native stack --
     // check here as the prologues do.
     crate::stack_guard::stack_check()?;
+    // The husk probe: EVERY send to a moved object -- `equal?`, `!`,
+    // `__id__`, `class`, all of them -- raises `Ractor::MovedError`. A
+    // container husk's class word cannot say so (Str/Array/Hash have none),
+    // hence the flags probe; an object husk would resolve through its
+    // retagged id anyway, this just makes the raise uniform.
+    if crate::runtime_meta::any_moved() && value_moved(recv) {
+        return Err(crate::ractor::moved_object_error());
+    }
     if let RubyValue::Object(o) = recv {
         return send_in_reason(box_id, o, name, args, block, reason);
     }
@@ -4531,15 +4594,25 @@ pub fn send_value_cached(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    // ONE gate-byte load serves both questions this path asks -- the same
+    // single atomic load `is_live()` always cost. The moved branch is
+    // never taken until a `move: true` send poisons something; from then on
+    // a husk receiver raises here, BEFORE the cache can serve a container
+    // husk its old class's method (its class id never changed).
+    let gates = crate::runtime_meta::gates();
+    if crate::runtime_meta::gates_moved(gates) && value_moved(recv) {
+        return Err(crate::ractor::moved_object_error());
+    }
     // A `Class` receiver is ruled out FIRST, before the class id is computed
     // or the cache is even read: it resolves through a class-method arm of its
     // own further down, so a site that only ever sees one (`Math.sin`) would
     // otherwise pay the lookup on every call and never fill.
-    // `is_live` also covers a running definition hook, whose class is only
+    // The live gates also cover a running definition hook, whose class is only
     // part-built: a filled cache line would answer for a method that does not
     // exist yet. Sending the whole call down the slow route while a hook runs
     // puts that question where it is already asked (`send_in_reason`).
-    if !matches!(recv, RubyValue::Class(_)) && box_id == 0 && !crate::runtime_meta::is_live() {
+    if !matches!(recv, RubyValue::Class(_)) && box_id == 0 && !crate::runtime_meta::gates_live(gates)
+    {
         let id = recv.class_id();
         if let Some((cached, target)) = site.hit.get() {
             if *cached == id.0 {
@@ -4681,6 +4754,13 @@ fn send_in_reason(
     reason: MissingReason,
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
+    // A retagged husk short-circuits: every `Ractor::MovedObject` row raises
+    // this same error, so the direct raise is behaviorally identical and
+    // covers arbitrary names without the method_missing detour. A plain
+    // compare on the id already in hand -- free.
+    if id == zeo_abi::RACTOR_MOVED_OBJECT_CLASS {
+        return Err(crate::ractor::moved_object_error());
+    }
     note_dispatch(name);
     // A definition hook sees the class only as far as it has been built, and
     // that governs DISPATCH as well as reflection: a method written below the

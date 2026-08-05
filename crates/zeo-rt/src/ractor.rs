@@ -27,15 +27,14 @@
 //! Documented divergences (all narrow, all loud rather than silently
 //! wrong): globals/cvars stay process-shared (CRuby raises IsolationError
 //! on non-main-Ractor access; here they genuinely share -- flagged for the
-//! `Ruby::Box` work, which owns namespace isolation); an unfrozen user
-//! OBJECT is rejected at the boundary with a catchable error instead of
-//! deep-copied (no by-name ivar-SETTING reflection to rebuild one --
-//! `Ractor.make_shareable` it first); `move: true` raises `Ractor::Error`
-//! ("isn't supported yet" -- a follow-up work package owns move semantics
-//! and `Ractor::MovedObject` husks); a receive that can never be fed blocks
-//! forever instead of CRuby's deadlock detection; block isolation is checked
-//! at COMPILE time (`codegen::call`'s `Ractor.new` interception), strictly
-//! earlier than CRuby's own Proc-creation-time `Ractor::IsolationError`.
+//! `Ruby::Box` work, which owns namespace isolation); a receive that can
+//! never be fed blocks forever instead of CRuby's deadlock detection; block
+//! isolation is checked at COMPILE time (`codegen::call`'s `Ractor.new`
+//! interception), strictly earlier than CRuby's own Proc-creation-time
+//! `Ractor::IsolationError`. `move: true` is REAL: the graph transplants and
+//! every source node is poisoned (`Ractor::MovedError` on any later send) --
+//! [`cross_graph`] documents its own deliberate divergences from CRuby's
+//! traversal accidents.
 
 use crate::{FMap, RubyValue, Signal, Symbol};
 use parking_lot::{Condvar, Mutex as PlMutex};
@@ -76,6 +75,10 @@ enum RactorLifecycle {
     Terminated {
         result: Result<RubyValue, Signal>,
         aborted: bool,
+        /// Whether `result` already crossed the boundary on a take --
+        /// `#value` crosses ONCE, so a re-take (same successor) answers the
+        /// SAME object: `r.value[0].equal?(r.value)` holds.
+        crossed: bool,
     },
 }
 
@@ -357,8 +360,17 @@ fn drop_port(port: &RPort) {
 /// payload crosses the boundary FIRST (before any lock), then only the
 /// creator's table lock is taken.
 pub(crate) fn port_send(port: &RPort, value: &RubyValue) -> Result<(), Signal> {
-    let crossed =
-        cross_boundary(value).map_err(|msg| raise_error("Ractor::Error", msg))?;
+    port_send_in(port, value, false)
+}
+
+/// The `move:`-aware form behind `Ractor#send`/`Port#send`.
+pub(crate) fn port_send_in(port: &RPort, value: &RubyValue, move_it: bool) -> Result<(), Signal> {
+    let mode = if move_it {
+        CrossMode::Move
+    } else {
+        CrossMode::Copy
+    };
+    let crossed = cross_graph(value, mode).map_err(|(cls, msg)| raise_error(cls, msg))?;
     let tgt = port.target();
     let r = &tgt.creator;
     let mut t = r.ports.lock();
@@ -479,7 +491,11 @@ pub(crate) fn ractor_unmonitor(target: &RRactor, port: &RPort) {
 /// The one exit path: store the outcome, flip the status anchor, drain the
 /// own port table, then -- holding NOTHING -- feed every monitor.
 fn finish(r: &RRactor, result: Result<RubyValue, Signal>, aborted: bool) {
-    *r.state.lock() = RactorLifecycle::Terminated { result, aborted };
+    *r.state.lock() = RactorLifecycle::Terminated {
+        result,
+        aborted,
+        crossed: false,
+    };
     r.status.store(STATUS_TERMINATED, Ordering::SeqCst);
     {
         let mut t = r.ports.lock();
@@ -602,19 +618,30 @@ fn take_value(r: &RRactor) -> Result<RubyValue, Signal> {
             "Only the successor ractor can take a value".to_string(),
         ));
     }
-    let outcome = match &*r.state.lock() {
-        RactorLifecycle::Terminated { result, .. } => result.clone(),
+    let (outcome, already_crossed) = match &*r.state.lock() {
+        RactorLifecycle::Terminated {
+            result, crossed, ..
+        } => (result.clone(), *crossed),
         RactorLifecycle::Live => {
             unreachable!("take_value before termination was observed")
         }
     };
     match outcome {
-        Ok(v) => cross_boundary(&v).map_err(|msg| {
-            raise_error(
-                "Ractor::Error",
-                format!("this Ractor's final value can't cross back: {msg}"),
-            )
-        }),
+        Ok(v) if already_crossed => Ok(v),
+        Ok(v) => {
+            let crossed = cross_boundary(&v).map_err(|msg| {
+                raise_error(
+                    "Ractor::Error",
+                    format!("this Ractor's final value can't cross back: {msg}"),
+                )
+            })?;
+            *r.state.lock() = RactorLifecycle::Terminated {
+                result: Ok(crossed.clone()),
+                aborted: false,
+                crossed: true,
+            };
+            Ok(crossed)
+        }
         Err(sig) => {
             let cause = match &sig {
                 Signal::Raise(exc) => Some(exc.clone()),
@@ -660,6 +687,12 @@ pub fn ractor_outcome(r: &RRactor) -> Result<RubyValue, Signal> {
 /// port. Exported for codegen's typed-receiver fast paths.
 pub fn ractor_send(r: &RRactor, value: &RubyValue) -> Result<(), Signal> {
     port_send(&default_port(r), value)
+}
+
+/// `Ractor#send(obj, move: bool)`'s runtime half -- codegen's typed-receiver
+/// intrinsic calls this when the call site carries the kwarg.
+pub fn ractor_send_mode(r: &RRactor, value: &RubyValue, move_it: bool) -> Result<(), Signal> {
+    port_send_in(&default_port(r), value, move_it)
 }
 
 pub fn ractor_receive() -> Result<RubyValue, Signal> {
@@ -781,6 +814,12 @@ pub fn shareable(v: &RubyValue) -> bool {
 }
 
 fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
+    // A husk left by `move: true` reports shareable (oracle-verified:
+    // `Ractor.shareable?(husk)` answers true in 4.0.6), and sending one on
+    // passes it by reference like any other shareable.
+    if crate::runtime_meta::any_moved() && crate::dispatch::value_moved(v) {
+        return true;
+    }
     if let Some(ptr) = crate::value::container_identity(v) {
         if seen.contains(&ptr) {
             return true;
@@ -914,45 +953,242 @@ fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), St
     Ok(())
 }
 
-/// By reference when shareable, deep copy otherwise -- see module docs for
-/// the unfrozen-Object rejection.
-pub fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
+/// The one `Ractor::MovedError` every husk raises -- dispatch's moved
+/// probes, the container `_checked` twins, and codegen's accessor guard all
+/// funnel here.
+pub fn moved_object_error() -> Signal {
+    raise_error(
+        "Ractor::MovedError",
+        "can not send any methods to a moved object".to_string(),
+    )
+}
+
+/// A cross-boundary refusal: the exception class to raise, and its message.
+type CrossFail = (&'static str, String);
+
+/// How a graph crosses: `Copy` deep-copies every unshareable node; `Move`
+/// additionally POISONS each source node afterwards (`send(obj, move:
+/// true)` -- the source raises `Ractor::MovedError` from then on).
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum CrossMode {
+    Copy,
+    Move,
+}
+
+/// One `cross_graph` run's working state. `built` is the seen-table: cycle
+/// guard AND duplicate preservation -- CRuby's own traversal husks a
+/// duplicated sibling reference (`[x, x]` delivers a husk in slot 1); zeo
+/// deliberately maps every re-encounter through this table instead.
+struct CrossState {
+    mode: CrossMode,
+    built: FMap<usize, RubyValue>,
+    /// Move mode: every source node to poison at commit, in visit order.
+    sources: Vec<RubyValue>,
+}
+
+impl CrossState {
+    /// Register `built` under `src`'s identity BEFORE the children are
+    /// walked -- what makes a cycle re-enter the table and reconstruct.
+    fn remember(&mut self, src: &RubyValue, built: &RubyValue) {
+        if let Some(id) = cross_identity(src) {
+            self.built.insert(id, built.clone());
+        }
+        if self.mode == CrossMode::Move {
+            self.sources.push(src.clone());
+        }
+    }
+}
+
+/// The seen-table key: `value::container_identity`'s three recursive kinds
+/// plus `Str` (never cyclic, but a duplicated reference must map to ONE
+/// copy, and a move must poison it once).
+fn cross_identity(v: &RubyValue) -> Option<usize> {
+    match v {
+        RubyValue::Str(s) => Some(Arc::as_ptr(s) as usize),
+        RubyValue::Array(a) => Some(Arc::as_ptr(a) as usize),
+        RubyValue::Hash(h) => Some(Arc::as_ptr(h) as usize),
+        RubyValue::Object(o) => Some(Arc::as_ptr(o) as *const () as usize),
+        _ => None,
+    }
+}
+
+/// By reference when shareable, rebuilt otherwise -- the one walker behind
+/// both crossing modes, in two phases:
+///
+/// 1. BUILD (no source mutation anywhere): the receiver-side graph is
+///    constructed with each parent registered before its children are
+///    walked, so cycles reconstruct. Every refusal raises out of this phase
+///    BEFORE any source is touched -- unlike CRuby, which poisons the part
+///    of the graph it walked before a refused move (destroying data).
+/// 2. COMMIT (move only, infallible): each source's MOVED flag is set, then
+///    its payload gutted under the lock; an `RObj` retags its class word to
+///    `Ractor::MovedObject`; finally ONE `GATE_MOVED` arm per send.
+pub(crate) fn cross_graph(v: &RubyValue, mode: CrossMode) -> Result<RubyValue, CrossFail> {
+    let mut st = CrossState {
+        mode,
+        built: FMap::default(),
+        sources: Vec::new(),
+    };
+    let out = cross_build(v, &mut st)?;
+    if !st.sources.is_empty() {
+        for src in &st.sources {
+            poison(src);
+        }
+        crate::runtime_meta::mark_moved();
+    }
+    Ok(out)
+}
+
+fn cross_build(v: &RubyValue, st: &mut CrossState) -> Result<RubyValue, CrossFail> {
+    // Shareable nodes pass by REFERENCE and terminate their subtree
+    // un-poisoned -- moving a shareable directly is a no-op poison-wise
+    // (the source stays usable, the receiver holds the same reference).
     if shareable(v) {
         return Ok(v.clone());
     }
+    if let Some(id) = cross_identity(v)
+        && let Some(done) = st.built.get(&id)
+    {
+        return Ok(done.clone());
+    }
     match v {
-        RubyValue::Str(s) => Ok(RubyValue::Str(crate::string_new(s.lock().to_utf8_lossy().into_owned()))),
+        RubyValue::Str(s) => {
+            // A `StrBuf` clone: byte- and encoding-faithful.
+            let out = RubyValue::Str(crate::string_wrap(s.lock().clone()));
+            st.remember(v, &out);
+            Ok(out)
+        }
         RubyValue::Array(a) => {
-            let copied: Vec<RubyValue> =
-                a.lock().iter().map(cross_boundary).collect::<Result<_, _>>()?;
-            Ok(RubyValue::Array(crate::array_new(copied)))
+            let dst = crate::array_new(Vec::new());
+            let out = RubyValue::Array(dst.clone());
+            st.remember(v, &out);
+            for e in crate::collections::array_snapshot(a) {
+                let crossed = cross_build(&e, st)?;
+                dst.lock().push(crossed);
+            }
+            Ok(out)
         }
         RubyValue::Hash(h) => {
-            let pairs: Vec<(RubyValue, RubyValue)> = h
-                .lock()
-                .values()
-                .map(|(k, val)| Ok((cross_boundary(k)?, cross_boundary(val)?)))
-                .collect::<Result<_, String>>()?;
-            Ok(RubyValue::Hash(crate::hash_new(pairs)))
+            let dst = crate::hash_new(Vec::new());
+            let out = RubyValue::Hash(dst.clone());
+            st.remember(v, &out);
+            let (default, default_proc, by_identity) = {
+                let g = h.lock();
+                (
+                    g.default.clone(),
+                    g.default_proc.clone(),
+                    g.compare_by_identity,
+                )
+            };
+            if by_identity {
+                dst.lock().compare_by_identity = true;
+            }
+            for (k, val) in crate::collections::hash_pairs_snapshot(h) {
+                let ck = cross_build(&k, st)?;
+                let cv = cross_build(&val, st)?;
+                crate::hash_set(&dst, ck, cv);
+            }
+            // The per-instance default travels with the pairs.
+            let crossed_default = cross_build(&default, st)?;
+            let crossed_proc = match &default_proc {
+                Some(p) => Some(cross_build(p, st)?),
+                None => None,
+            };
+            {
+                let mut g = dst.lock();
+                g.default = crossed_default;
+                g.default_proc = crossed_proc;
+            }
+            Ok(out)
         }
         RubyValue::Range(start, end, excl) => {
-            let cross_end = |e: &Option<Box<RubyValue>>| -> Result<_, String> {
+            // A Range is an inline value here (no shared identity): its
+            // ENDPOINTS cross -- and move -- while the shell itself
+            // survives un-poisoned, unlike CRuby's husked Range object.
+            let mut cross_end = |e: &Option<Box<RubyValue>>| -> Result<_, CrossFail> {
                 Ok(match e.as_deref() {
-                    Some(v) => Some(Box::new(cross_boundary(v)?)),
+                    Some(inner) => Some(Box::new(cross_build(inner, st)?)),
                     None => None,
                 })
             };
             Ok(RubyValue::Range(cross_end(start)?, cross_end(end)?, *excl))
         }
-        RubyValue::Object(_) => Err(
-            "an unfrozen Object can't cross a Ractor boundary (zeo limitation: real Ruby deep-copies it; here, Ractor.make_shareable it first)"
-                .to_string(),
-        ),
-        other => Err(format!(
-            "{} can't cross a Ractor boundary",
-            other.to_display_string()
-        )),
+        RubyValue::Object(o) => {
+            // zeo refuses to move an IO (CRuby moves them; a moved fd's
+            // husk-vs-live-handle split has no safe answer here).
+            if st.mode == CrossMode::Move && crate::dispatch::is_a(o.class_id(), zeo_abi::IO_CLASS)
+            {
+                return Err(("Ractor::Error", "can not move IO object.".to_string()));
+            }
+            // A plain object crosses as CRuby's does: a shallow dup whose
+            // ivars (and a value-subclass's payload) are rewritten with
+            // their crossed counterparts.
+            let dup = o.dup_object(true);
+            let out = RubyValue::Object(dup.clone());
+            st.remember(v, &out);
+            for (name, val) in o.ivar_pairs() {
+                let crossed = cross_build(&val, st)?;
+                dup.ivar_set_named(name.strip_prefix('@').unwrap_or(&name), crossed);
+            }
+            if let Some(p) = o.builtin_payload() {
+                let crossed = cross_build(&p, st)?;
+                dup.set_builtin_payload(crossed);
+            }
+            Ok(out)
+        }
+        RubyValue::Proc(_) => Err(match st.mode {
+            // CRuby's copy path fails at allocation; its move path refuses
+            // by class name. Both messages verbatim.
+            CrossMode::Copy => ("TypeError", "allocator undefined for Proc".to_string()),
+            CrossMode::Move => ("Ractor::Error", "can not move Proc object.".to_string()),
+        }),
+        other => Err(match st.mode {
+            CrossMode::Copy => (
+                "Ractor::Error",
+                format!("{} can't cross a Ractor boundary", other.to_display_string()),
+            ),
+            CrossMode::Move => (
+                "Ractor::Error",
+                format!("can not move {} object.", crate::class_name_of_value(other)),
+            ),
+        }),
     }
+}
+
+/// The commit half: MOVED flag first, then the payload gutted under its own
+/// lock, so a racing reader sees the poison before (or with) the empty husk.
+/// An object retags its class word where its concrete type supports it; a
+/// builtin `RObj` that cannot retag stays usable -- the safe direction.
+fn poison(src: &RubyValue) {
+    match src {
+        RubyValue::Str(s) => {
+            s.set_moved();
+            let mut g = s.lock();
+            let enc = g.encoding();
+            *g = crate::encoding::StrBuf::from_bytes(Vec::new(), enc);
+        }
+        RubyValue::Array(a) => {
+            a.set_moved();
+            a.lock().clear();
+        }
+        RubyValue::Hash(h) => {
+            h.set_moved();
+            let mut g = h.lock();
+            g.clear();
+            g.default = RubyValue::Nil;
+            g.default_proc = None;
+        }
+        RubyValue::Object(o) => {
+            o.retag_moved();
+        }
+        _ => {}
+    }
+}
+
+/// The copy-mode crossing with message-only errors -- `Ractor.new`'s arg
+/// path and the value-take keep their existing plumbing.
+pub fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
+    cross_graph(v, CrossMode::Copy).map_err(|(_, msg)| msg)
 }
 
 // ---------------------------------------------------------------- row glue
@@ -960,7 +1196,7 @@ pub fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
 /// `#send`'s argument split: exactly one payload, plus the `move:` kwarg
 /// (recognized only as codegen's kwargs-marked trailing Hash, so a plain
 /// Hash PAYLOAD stays a payload).
-fn send_payload<'a>(args: &'a [RubyValue]) -> Result<&'a RubyValue, Signal> {
+fn send_payload<'a>(args: &'a [RubyValue]) -> Result<(&'a RubyValue, bool), Signal> {
     let (opts, pos): (Option<&crate::RHash>, &[RubyValue]) = match args.last() {
         Some(RubyValue::Hash(h)) if crate::collections::hash_is_kwargs(h) => {
             (Some(h), &args[..args.len() - 1])
@@ -968,24 +1204,11 @@ fn send_payload<'a>(args: &'a [RubyValue]) -> Result<&'a RubyValue, Signal> {
         _ => (None, args),
     };
     crate::builtins::check_arity(pos.len(), 1, Some(1))?;
-    if let Some(h) = opts {
-        reject_move(h)?;
-    }
-    Ok(&pos[0])
+    Ok((&pos[0], opts.is_some_and(move_requested)))
 }
 
-fn reject_move(opts: &crate::RHash) -> Result<(), Signal> {
-    let mv = crate::collections::hash_get(opts, &RubyValue::Symbol(Symbol::intern("move")));
-    if mv.truthy() {
-        // Move semantics (and the `Ractor::MovedObject` husk) are a
-        // separate work package; parsing the kwarg here keeps the raise
-        // rescuable rather than an arity error.
-        return Err(raise_error(
-            "Ractor::Error",
-            "move: true isn't supported yet".to_string(),
-        ));
-    }
-    Ok(())
+fn move_requested(opts: &crate::RHash) -> bool {
+    crate::collections::hash_get(opts, &RubyValue::Symbol(Symbol::intern("move"))).truthy()
 }
 
 /// A `Ractor#[]`/`.[]` key: a Symbol, or a String interned to one
@@ -1138,8 +1361,8 @@ zeo_macros::ruby_class! {
     }
 
     def "send" | "<<" cfunc (recv, *args) {
-        let payload = send_payload(args)?;
-        ractor_send(&recv.as_ractor_unchecked(), payload)?;
+        let (payload, move_it) = send_payload(args)?;
+        ractor_send_mode(&recv.as_ractor_unchecked(), payload, move_it)?;
         Ok(recv.clone())
     }
     private def "receive" | "recv" (recv) {
@@ -1216,10 +1439,8 @@ zeo_macros::ruby_class! {
             port_receive(&recv_port(recv))
         }
         def "send" | "<<" (recv, obj, **opts) {
-            if let Some(RubyValue::Hash(h)) = opts {
-                reject_move(h)?;
-            }
-            port_send(&recv_port(recv), obj)?;
+            let move_it = matches!(opts, Some(RubyValue::Hash(h)) if move_requested(h));
+            port_send_in(&recv_port(recv), obj, move_it)?;
             Ok(recv.clone())
         }
         def "close"(recv) {
@@ -1259,9 +1480,10 @@ zeo_macros::ruby_class! {
     }
 
     // The husk a `move: true` send leaves behind. No allocator/constructor;
-    // instances only ever appear once move semantics land, but the class and
-    // its raising surface exist now so `rescue Ractor::MovedError` code and
-    // reflection over it behave.
+    // a moved `RObj` RETAGS its class word to this id (`cross_graph`'s
+    // commit), and dispatch short-circuits the id straight to
+    // `moved_object_error` -- these rows serve reflection
+    // (`instance_methods(false)`) and any direct table probe.
     class MovedObject = zeo_abi::RACTOR_MOVED_OBJECT_CLASS < zeo_abi::BASIC_OBJECT_CLASS {
         def "method_missing" | "__send__" | "!" | "==" | "!=" | "__id__" | "equal?" | "instance_eval" | "instance_exec" cfunc (_recv, *_args, &_block) {
             Err(raise_error(

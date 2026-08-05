@@ -620,6 +620,24 @@ impl Hir {
         })
     }
 
+    /// Whether the program names `Ractor` anywhere -- the emission switch for
+    /// the moved-object guards (`codegen::call::builtins`' `_checked` container
+    /// twins, the inlined-accessor husk check): only a program that can reach
+    /// `Ractor` can ever poison an object with `send(obj, move: true)`, so
+    /// everything else keeps the guard-free fast paths. A plain whole-arena
+    /// scan like [`uses_call_tracing`], and over-approximation is the safe
+    /// direction (a program that merely mentions the constant just carries
+    /// the cheap guards).
+    pub fn uses_ractor(&self) -> bool {
+        self.nodes.iter().any(|node| match node {
+            HirNode::New { class_name: n, .. }
+            | HirNode::ClassRef(n)
+            | HirNode::QualifiedConstRead(_, n)
+            | HirNode::ConstReadOrNil(_, n) => n == "Ractor" || n.starts_with("Ractor::"),
+            _ => false,
+        })
+    }
+
     /// The literal method name a `send`-family call names, if it is a symbol
     /// or string literal -- `None` for a computed one.
     pub fn sent_name(&self, first_arg: NodeId) -> Option<&str> {
