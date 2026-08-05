@@ -285,7 +285,13 @@ mod imp {
             .node()
             .as_program_node()
             .ok_or_else(|| internal("eval: expected a top-level ProgramNode"))?;
-        let definee = initial_definee(&self_val, mode);
+        let definee = if box_id != 0 && matches!(mode, EvalMode::Caller) {
+            // A boxed eval's top level IS the box: bare constant writes and
+            // `class Foo` land on the surrogate, not on `Object`.
+            Definee::Class(crate::ClassId(crate::boxes::surrogate_of(box_id)))
+        } else {
+            initial_definee(&self_val, mode)
+        };
         // The string forms of class_eval/instance_eval evaluate with the
         // RECEIVER as the constant scope (the block forms keep the writer's
         // lexical scope and never come here): class_eval resolves against
@@ -500,6 +506,18 @@ mod imp {
                 && crate::constants::const_get(0, &name).is_none()
             {
                 return Err(name_error!("uninitialized constant {scope}::{name}"));
+            }
+            // Boxed code's top level is its surrogate, then the MASTER
+            // namespace -- never main's own mutations (the isolation line).
+            if env.box_id != 0 {
+                let top = crate::boxes::surrogate_of(env.box_id);
+                if let Some(v) = crate::constants::const_get(top, &name) {
+                    return Ok(v);
+                }
+                if let Some(v) = crate::constants::const_get_master(&name) {
+                    return Ok(v);
+                }
+                return Err(name_error!("uninitialized constant {name}"));
             }
             return const_lookup(0, &name);
         }

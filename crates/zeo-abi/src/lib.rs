@@ -438,6 +438,16 @@ pub const RUBYVM_ISEQ_CLASS: ClassId = ClassId(169);
 /// `RubyVM::YJIT` -- present, permanently disabled (zeo is AOT).
 pub const RUBYVM_YJIT_MODULE: ClassId = ClassId(170);
 
+/// The `Ruby` namespace module -- carries the `RUBY_*` identity constants
+/// under their modern spellings, plus `Ruby::Box`.
+pub const RUBY_MODULE: ClassId = ClassId(171);
+/// `Ruby::Box < Module` -- namespace isolation, env-gated (`RUBY_BOX=1`).
+pub const RUBY_BOX_CLASS: ClassId = ClassId(172);
+/// `Ruby::Box::Entry`.
+pub const RUBY_BOX_ENTRY_CLASS: ClassId = ClassId(173);
+/// `Ruby::Box::Loader`.
+pub const RUBY_BOX_LOADER_MODULE: ClassId = ClassId(174);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -2098,6 +2108,38 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass {
         id: RUBYVM_YJIT_MODULE,
         name: "RubyVM::YJIT",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBY_MODULE,
+        name: "Ruby",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBY_BOX_CLASS,
+        name: "Ruby::Box",
+        is_module: false,
+        superclass: Some(MODULE_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBY_BOX_ENTRY_CLASS,
+        name: "Ruby::Box::Entry",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: RUBY_BOX_LOADER_MODULE,
+        name: "Ruby::Box::Loader",
         is_module: true,
         superclass: None,
         includes: &[],

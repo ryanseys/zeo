@@ -12,6 +12,7 @@ pub(crate) type ScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
 
 mod arith;
 mod bootstrap;
+pub mod boxes;
 mod builtins;
 mod civars;
 mod collections;

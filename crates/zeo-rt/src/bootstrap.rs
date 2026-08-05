@@ -217,11 +217,21 @@ fn seed_ruby_constants() {
     const_set(object, "RUBY_DESCRIPTION", rb_str(&description));
 
     // CRuby copyright line, verbatim from `version.c`.
-    const_set(
-        object,
-        "RUBY_COPYRIGHT",
-        rb_str("ruby - Copyright (C) 1993-2026 Yukihiro Matsumoto"),
-    );
+    const COPYRIGHT: &str = "ruby - Copyright (C) 1993-2026 Yukihiro Matsumoto";
+    const_set(object, "RUBY_COPYRIGHT", rb_str(COPYRIGHT));
+
+    // The `Ruby` module carries the SAME identity under the modern
+    // spellings (`Ruby::VERSION == RUBY_VERSION`, one source for both).
+    let ruby_ns = zeo_abi::RUBY_MODULE.0;
+    const_set(ruby_ns, "VERSION", rb_str(VERSION));
+    const_set(ruby_ns, "PATCHLEVEL", RubyValue::Int(0));
+    const_set(ruby_ns, "ENGINE", rb_str(ENGINE));
+    const_set(ruby_ns, "ENGINE_VERSION", rb_str(ENGINE_VERSION));
+    const_set(ruby_ns, "PLATFORM", rb_str(PLATFORM));
+    const_set(ruby_ns, "REVISION", rb_str(REVISION));
+    const_set(ruby_ns, "RELEASE_DATE", rb_str(RELEASE_DATE));
+    const_set(ruby_ns, "DESCRIPTION", rb_str(&description));
+    const_set(ruby_ns, "COPYRIGHT", rb_str(COPYRIGHT));
 
     // `Mutex`, `Queue`, `SizedQueue` and `ConditionVariable` are TOP-LEVEL
     // spellings of the `Thread::*` classes -- the same class under two
