@@ -43,7 +43,10 @@ ruby_module! {
     const MINOR_VERSION = RubyValue::Int(MINOR as i64);
 
     // `Marshal.dump(obj[, io])` -> a BINARY String of the serialized object.
-    def self."dump" cfunc (_recv, arg1, _arg2?) {
+    // `module_function`, not `def self.`: CRuby gives `dump` alone a private
+    // instance copy (`Marshal.private_instance_methods` is `[:dump]`), while
+    // `load`/`restore` are singleton-only -- the pair is asymmetric.
+    module_function def "dump" cfunc (_recv, arg1, _arg2?) {
         let mut w = Writer::default();
         w.out.push(MAJOR);
         w.out.push(MINOR);
@@ -76,6 +79,40 @@ enum Iv {
     EncName(&'static str),
     /// A user instance variable (`@x => value`), name `@`-prefixed as stored.
     Named(String, RubyValue),
+}
+
+/// Marshal's variable-length LONG, appended to `out` -- shared with
+/// `Time#_dump`'s year-extension tail, which embeds one inside `u` data.
+pub(crate) fn marshal_long_into(mut x: i64, out: &mut Vec<u8>) {
+    if x == 0 {
+        out.push(0);
+        return;
+    }
+    if (1..123).contains(&x) {
+        out.push((x + 5) as u8);
+        return;
+    }
+    if (-123..0).contains(&x) {
+        out.push((x - 5) as u8);
+        return;
+    }
+    let mut buf = [0u8; 9];
+    let mut len = 0usize;
+    for i in 1..=8 {
+        buf[i] = (x & 0xff) as u8;
+        x >>= 8;
+        if x == 0 {
+            buf[0] = i as u8;
+            len = i;
+            break;
+        }
+        if x == -1 {
+            buf[0] = (-(i as i64)) as u8;
+            len = i;
+            break;
+        }
+    }
+    out.extend_from_slice(&buf[..=len]);
 }
 
 /// The `I`-wrapper ivar for a string/regexp of encoding `enc`, or `None` for
@@ -270,6 +307,26 @@ impl Writer {
     fn write_object(&mut self, v: &RubyValue, o: &RObj) -> Result<(), Signal> {
         let cid = o.class_id();
         let name = nameable(cid)?;
+
+        // `Time` -> `Iu` with the zone/offset/nano ivars CRuby hangs on the
+        // dump string -- native, because the `_dump` row's answer (a zeo
+        // string) has nowhere to carry them.
+        if let Some(t) = o.as_any().downcast_ref::<crate::builtins::time::RTime>() {
+            if self.check_link(ptr_of(v)) {
+                return Ok(());
+            }
+            self.register_link(ptr_of(v));
+            let (bytes, named) = crate::builtins::time::time_mdump(t);
+            let ivars: Vec<Iv> = named.into_iter().map(|(n, iv)| Iv::Named(n, iv)).collect();
+            if !ivars.is_empty() {
+                self.out.push(b'I');
+            }
+            self.out.push(b'u');
+            self.write_symbol(&name);
+            self.write_bytes(&bytes);
+            self.write_ivars(&ivars)?;
+            return Ok(());
+        }
 
         if responds_to(cid, Symbol::intern("marshal_dump"), true) {
             if self.check_link(ptr_of(v)) {
@@ -491,36 +548,8 @@ impl Writer {
 
     /// CRuby's `w_long` packed encoding: 0 -> 0x00; 1..122 -> n+5; -123..-1 ->
     /// (n-5)&0xff; else a leading signed byte count and little-endian bytes.
-    fn write_long(&mut self, mut x: i64) {
-        if x == 0 {
-            self.out.push(0);
-            return;
-        }
-        if (1..123).contains(&x) {
-            self.out.push((x + 5) as u8);
-            return;
-        }
-        if (-123..0).contains(&x) {
-            self.out.push((x - 5) as u8);
-            return;
-        }
-        let mut buf = [0u8; 9];
-        let mut len = 0usize;
-        for i in 1..=8 {
-            buf[i] = (x & 0xff) as u8;
-            x >>= 8;
-            if x == 0 {
-                buf[0] = i as u8;
-                len = i;
-                break;
-            }
-            if x == -1 {
-                buf[0] = (-(i as i64)) as u8;
-                len = i;
-                break;
-            }
-        }
-        self.out.extend_from_slice(&buf[..=len]);
+    fn write_long(&mut self, x: i64) {
+        marshal_long_into(x, &mut self.out);
     }
 
     fn write_bignum(&mut self, b: &BigInt) {
@@ -863,6 +892,7 @@ impl Reader<'_> {
         let cls = self.read_symbol_name()?;
         let bytes = self.read_bytes()?;
         let mut enc = ASCII_8BIT;
+        let mut named: Vec<(String, RubyValue)> = Vec::new();
         if has_ivars {
             let n = self.read_long()?;
             for _ in 0..n {
@@ -870,8 +900,17 @@ impl Reader<'_> {
                 let val = self.read()?;
                 if let Some(e) = enc_from_ivar(&name, &val) {
                     enc = e;
+                } else {
+                    named.push((name, val));
                 }
             }
+        }
+        // `Time` rebuilds natively: its wire ivars (zone/offset/nano) belong
+        // to the VALUE, not to the byte string `_load` would receive.
+        if cls == "Time" {
+            let v = crate::builtins::time::time_mload(&bytes, &named)?;
+            self.objects[idx] = v.clone();
+            return Ok(v);
         }
         let data = RubyValue::Str(string_from_bytes(bytes, enc));
         let cid =

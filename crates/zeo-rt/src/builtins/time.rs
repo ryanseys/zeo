@@ -1150,6 +1150,243 @@ fn time_field_pairs(t: &RTime) -> Vec<(&'static str, RubyValue)> {
     ]
 }
 
+// ------------------------------------------------------------------ marshal
+
+/// CRuby's `Time#_dump` payload (`time.c` `time_mdump`): 8 bytes of
+/// bit-packed UTC civil time -- word `p` = marker|utc|year|mon|mday|hour,
+/// word `s` = min|sec|usec, both little-endian -- plus a year-extension tail
+/// when the year leaves 1900..67435. The wire also hangs instance variables
+/// beside the bytes (`nano_num`/`nano_den`, the 1.9.1-compat `submicro`,
+/// `offset`, `zone`); zeo strings carry no ivars, so the marshal writer takes
+/// this pair while the `_dump` ROW answers the bytes alone.
+pub(crate) fn time_mdump(t: &RTime) -> (Vec<u8>, Vec<(String, RubyValue)>) {
+    use num_bigint::BigInt;
+    let utc_p = t.is_utc();
+    let tm = broken_down(t.sec());
+    let year = i64::from(tm.tm_year) + 1900;
+    const MAX_YEAR: i64 = 1900 + 0xffff;
+    let (year_field, year_extend) = if year > MAX_YEAR {
+        (MAX_YEAR, Some(BigInt::from(year - MAX_YEAR)))
+    } else if year < 1900 {
+        (1900, Some(BigInt::from(1900 - year)))
+    } else {
+        (year, None)
+    };
+    // The fraction in nanoseconds: whole ns splits into usec + the three
+    // sub-usec digits; anything below a nanosecond rides along exactly.
+    let (fnum, fden) = t.frac();
+    let nano_scaled = &fnum * BigInt::from(1_000_000_000u32);
+    let whole_ns = &nano_scaled / &fden;
+    let subnano_num = &nano_scaled - &whole_ns * &fden;
+    let whole_ns = i64::try_from(&whole_ns).unwrap_or(0);
+    let usec = (whole_ns / 1000) as u32;
+    let nsec = whole_ns % 1000;
+
+    let p: u32 = 1u32 << 31
+        | u32::from(utc_p) << 30
+        | (((year_field - 1900) as u32) & 0xffff) << 14
+        | (tm.tm_mon as u32) << 10
+        | (tm.tm_mday as u32) << 5
+        | tm.tm_hour as u32;
+    let s: u32 = (tm.tm_min as u32) << 26 | (tm.tm_sec as u32) << 20 | usec;
+    let mut bytes = Vec::with_capacity(8);
+    bytes.extend_from_slice(&p.to_le_bytes());
+    bytes.extend_from_slice(&s.to_le_bytes());
+    if let Some(ext) = &year_extend {
+        let (_, mag) = ext.to_bytes_le();
+        crate::builtins::marshal::marshal_long_into(mag.len() as i64, &mut bytes);
+        bytes.extend_from_slice(&mag);
+    }
+
+    let ascii_str = |b: &[u8]| {
+        RubyValue::Str(crate::string_from_bytes(
+            b.to_vec(),
+            crate::encoding::US_ASCII,
+        ))
+    };
+    let mut ivars: Vec<(String, RubyValue)> = Vec::new();
+    // `nano` = the sub-usec remainder as an exact value in nanoseconds; an
+    // integral one dumps as `(n, 1)` like CRuby's Integer branch.
+    let nano_num = BigInt::from(nsec) * &fden + &subnano_num;
+    if nano_num != BigInt::from(0) {
+        use num_integer::Integer;
+        let g = nano_num.gcd(&fden);
+        ivars.push((
+            "nano_num".to_string(),
+            crate::builtins::integer::int_value(&nano_num / &g),
+        ));
+        ivars.push((
+            "nano_den".to_string(),
+            crate::builtins::integer::int_value(&fden / &g),
+        ));
+    }
+    if nsec != 0 {
+        // Fixed-point packed BCD of the three sub-usec digits, second byte
+        // dropped when zero -- 1.9.1 compatibility, byte-for-byte.
+        let b0 = (((nsec / 100) as u8) << 4) | ((nsec / 10) % 10) as u8;
+        let b1 = ((nsec % 10) as u8) << 4;
+        let buf = if b1 == 0 { vec![b0] } else { vec![b0, b1] };
+        ivars.push((
+            "submicro".to_string(),
+            RubyValue::Str(crate::string_from_bytes(buf, crate::encoding::ASCII_8BIT)),
+        ));
+    }
+    let zone = if utc_p {
+        ascii_str(b"UTC")
+    } else {
+        let c = civil(t);
+        ivars.push(("offset".to_string(), RubyValue::Int(i64::from(c.offset))));
+        if c.zone.is_empty() {
+            RubyValue::Nil
+        } else {
+            ascii_str(c.zone.as_bytes())
+        }
+    };
+    ivars.push(("zone".to_string(), zone));
+    (bytes, ivars)
+}
+
+/// CRuby's `Time._load` (`time.c` `time_mload`): the inverse of
+/// [`time_mdump`], including the pre-1.8 plain `(sec, usec)` format when the
+/// marker bit is clear. A `zone` STRING re-localizes the loaded value (zeo:
+/// `offset = None`, so the system zone re-resolves the abbreviation -- exact
+/// on the dumping machine, divergent across zones, documented); a bare
+/// `offset` stays fixed; the `gmt` bit stays UTC.
+pub(crate) fn time_mload(bytes: &[u8], ivars: &[(String, RubyValue)]) -> Result<RubyValue, Signal> {
+    use num_bigint::BigInt;
+    if bytes.len() < 8 {
+        return Err(type_error!("marshaled time format differ"));
+    }
+    let p = u32::from_le_bytes(bytes[0..4].try_into().expect("length checked"));
+    let s = u32::from_le_bytes(bytes[4..8].try_into().expect("length checked"));
+    if p & (1 << 31) == 0 {
+        // Pre-1.8 dump: two plain words, local time.
+        return Ok(time_value(i64::from(p), s.wrapping_mul(1000), None));
+    }
+    let ivar = |name: &str| ivars.iter().find(|(n, _)| n == name).map(|(_, v)| v);
+
+    let utc_p = (p >> 30) & 1 == 1;
+    let mut year = i64::from((p >> 14) & 0xffff) + 1900;
+    if bytes.len() > 8 {
+        let mut tail = &bytes[8..];
+        let ysize = read_marshal_long(&mut tail)?;
+        if ysize < 0 || ysize as usize > tail.len() {
+            return Err(type_error!("marshaled time format differ"));
+        }
+        let ext = BigInt::from_bytes_le(num_bigint::Sign::Plus, &tail[..ysize as usize]);
+        let ext = i64::try_from(&ext).unwrap_or(i64::MAX / 2);
+        if year == 1900 {
+            year -= ext;
+        } else {
+            year += ext;
+        }
+    }
+    let mut mon = i64::from((p >> 10) & 0xf);
+    if mon >= 12 {
+        mon -= 12;
+        year += 1;
+    }
+    let mday = i64::from((p >> 5) & 0x1f);
+    let hour = i64::from(p & 0x1f);
+    let min = i64::from((s >> 26) & 0x3f);
+    let sec = i64::from((s >> 20) & 0x3f);
+    let usec = i64::from(s & 0xfffff);
+
+    let epoch = days_from_civil(year, mon + 1, mday) * 86_400 + hour * 3600 + min * 60 + sec;
+    let billion = BigInt::from(1_000_000_000u32);
+
+    // subsec = usec + nano (exact) -- nano_num/nano_den win over submicro.
+    let (mut num, mut den) = (
+        BigInt::from(epoch) * &billion + BigInt::from(usec * 1000),
+        billion.clone(),
+    );
+    if let Some(nn) = ivar("nano_num") {
+        let nn = to_bigint(nn)?;
+        let nd = match ivar("nano_den") {
+            Some(v) => to_bigint(v)?,
+            None => BigInt::from(1),
+        };
+        num = num * &nd + nn;
+        den *= nd;
+    } else if let Some(RubyValue::Str(sm)) = ivar("submicro") {
+        let b = sm.lock().bytes().to_vec();
+        let mut nsec = 0i64;
+        'bcd: {
+            if let Some(&b0) = b.first() {
+                let (h, t) = (i64::from(b0 >> 4), i64::from(b0 & 0xf));
+                if h >= 10 {
+                    break 'bcd;
+                }
+                nsec += h * 100;
+                if t >= 10 {
+                    break 'bcd;
+                }
+                nsec += t * 10;
+                if let Some(&b1) = b.get(1) {
+                    let u = i64::from(b1 >> 4);
+                    if u >= 10 {
+                        break 'bcd;
+                    }
+                    nsec += u;
+                }
+            }
+        }
+        num += BigInt::from(nsec);
+    }
+
+    let offset = if utc_p {
+        Some(RTime::UTC)
+    } else if matches!(ivar("zone"), Some(RubyValue::Str(_))) {
+        None
+    } else if let Some(off) = ivar("offset") {
+        Some(i32::try_from(crate::builtins::convert::to_index(off)?).unwrap_or(0))
+    } else {
+        None
+    };
+    Ok(time_exact(num, den, offset))
+}
+
+fn to_bigint(v: &RubyValue) -> Result<num_bigint::BigInt, Signal> {
+    Ok(match crate::builtins::convert::to_int(v)? {
+        RubyValue::Int(n) => num_bigint::BigInt::from(n),
+        RubyValue::BigInt(b) => (*b).clone(),
+        _ => unreachable!("to_int post-checks its answer"),
+    })
+}
+
+/// Marshal's variable-length LONG, read off the front of `tail` -- the
+/// year-extension header [`time_mdump`] embeds inside the `u` data.
+fn read_marshal_long(tail: &mut &[u8]) -> Result<i64, Signal> {
+    let take = |tail: &mut &[u8]| -> Result<u8, Signal> {
+        let (&b, rest) = tail
+            .split_first()
+            .ok_or_else(|| type_error!("marshaled time format differ"))?;
+        *tail = rest;
+        Ok(b)
+    };
+    let c = take(tail)? as i8;
+    Ok(match c {
+        0 => 0,
+        1..=4 => {
+            let mut x = 0i64;
+            for i in 0..c as usize {
+                x |= i64::from(take(tail)?) << (8 * i);
+            }
+            x
+        }
+        -4..=-1 => {
+            let mut x = -1i64;
+            for i in 0..(-c) as usize {
+                x &= !(0xffi64 << (8 * i));
+                x |= i64::from(take(tail)?) << (8 * i);
+            }
+            x
+        }
+        5.. => i64::from(c) - 5,
+        _ => i64::from(c) + 5,
+    })
+}
+
 ruby_class! {
     Time = zeo_abi::TIME_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
@@ -1567,6 +1804,29 @@ ruby_class! {
             }
         };
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
+
+    // ---- ruby's private marshal pair. The row answers the raw bytes;
+    // CRuby additionally hangs zone/offset/nano ivars on that string, which
+    // zeo strings cannot carry -- the marshal writer/reader have a native
+    // Time arm serving the FULL wire format, so only a hand-called `_dump`
+    // sees the difference.
+    private def "_dump" cfunc (recv, *_args) {
+        let (bytes, _ivars) = time_mdump(recv_time(recv));
+        Ok(RubyValue::Str(crate::string_from_bytes(
+            bytes,
+            crate::encoding::ASCII_8BIT,
+        )))
+    }
+    private def self."_load"(_recv, data) {
+        let RubyValue::Str(s) = data else {
+            return Err(type_error!(
+                "wrong argument type {} (expected String)",
+                crate::builtins::class_name_of(data)
+            ));
+        };
+        let bytes = s.lock().bytes().to_vec();
+        time_mload(&bytes, &[])
     }
 }
 

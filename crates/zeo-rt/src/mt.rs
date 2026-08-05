@@ -114,6 +114,38 @@ impl Mt {
         Mt::from_words(&words)
     }
 
+    /// The state array as ruby's `Random#state` packs it: one Bignum, least
+    /// significant 32-bit word first (`rb_integer_unpack` LSWORD_FIRST).
+    pub fn state_bigint(&self) -> BigInt {
+        let bytes: Vec<u8> = self.state.iter().flat_map(|w| w.to_le_bytes()).collect();
+        BigInt::from_bytes_le(Sign::Plus, &bytes)
+    }
+
+    /// Ruby's `left` counter for this position. CRuby decrements BEFORE its
+    /// refill check (`mt19937.c` `--mt->left <= 0`), so its counter reads one
+    /// higher than the words actually remaining -- a fresh generator says 1,
+    /// a just-refilled one 624. zeo counts remaining words directly.
+    pub fn ruby_left(&self) -> u64 {
+        self.left as u64 + 1
+    }
+
+    /// A generator rebuilt at an exact stream position -- the restore half of
+    /// `marshal_load`. `ruby_left` is CRuby's counter and must be `1..=624`
+    /// (the CALLER validates; this clamps defensively).
+    pub fn from_state(state: &BigInt, ruby_left: u64) -> Mt {
+        let (_, bytes) = state.to_bytes_le();
+        let mut words = [0u32; N];
+        for (i, c) in bytes.chunks(4).take(N).enumerate() {
+            let mut w = [0u8; 4];
+            w[..c.len()].copy_from_slice(c);
+            words[i] = u32::from_le_bytes(w);
+        }
+        Mt {
+            state: words,
+            left: (ruby_left.saturating_sub(1) as usize).min(N),
+        }
+    }
+
     fn refill(&mut self) {
         let mag01 = [0u32, MATRIX_A];
         for i in 0..N {

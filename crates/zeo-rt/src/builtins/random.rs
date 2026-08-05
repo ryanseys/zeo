@@ -19,11 +19,18 @@ use crate::value::RubyValue;
 use crate::{ClassId, Signal};
 
 /// A `Random` instance: the live generator word plus the integer seed it was
-/// created from (what `Random#seed` reports).
+/// created from (what `Random#seed` reports). The seed is behind a `Mutex`
+/// only because `marshal_load` restores it in place.
 pub struct RandomObj {
     state: Mutex<crate::mt::Mt>,
-    seed: RubyValue,
+    seed: Mutex<RubyValue>,
     frozen: AtomicBool,
+}
+
+impl RandomObj {
+    fn seed_value(&self) -> RubyValue {
+        self.seed.lock().clone()
+    }
 }
 
 impl RubyObject for RandomObj {
@@ -48,7 +55,7 @@ impl RubyObject for RandomObj {
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(RandomObj {
             state: Mutex::new(self.state.lock().clone()),
-            seed: self.seed.clone(),
+            seed: Mutex::new(self.seed_value()),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
@@ -238,11 +245,25 @@ fn as_random(recv: &RubyValue) -> Arc<RandomObj> {
         .expect("Random method received a non-Random receiver")
 }
 
+/// `Random.allocate` -- a blank generator (`Class#allocate` and marshal's
+/// `U`-load path both need one; `marshal_load` then restores the stream).
+fn random_allocate(_id: ClassId) -> RObj {
+    Arc::new(RandomObj {
+        state: Mutex::new(crate::mt::Mt::from_u32(0)),
+        seed: Mutex::new(RubyValue::Int(0)),
+        frozen: AtomicBool::new(false),
+    })
+}
+
+pub fn register_random(registry: &mut crate::dispatch::ClassRegistry) {
+    registry.define_allocator(zeo_abi::RANDOM_CLASS, random_allocate);
+}
+
 fn new_random(seed_arg: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let (mt, seed) = seed_from(seed_arg)?;
     Ok(RubyValue::Object(Arc::new(RandomObj {
         state: Mutex::new(mt),
-        seed,
+        seed: Mutex::new(seed),
         frozen: AtomicBool::new(false),
     })))
 }
@@ -282,8 +303,16 @@ ruby_class! {
         Ok(DEFAULT
             .lock()
             .as_ref()
-            .map(|r| r.seed.clone())
+            .map(|r| r.seed_value())
             .unwrap_or(RubyValue::Int(0)))
+    }
+    // The DEFAULT generator's raw position, ruby's private pair on the class
+    // itself (`random.c` defines them on `CLASS_OF(rb_cRandom)`).
+    private def self."state"(_recv) {
+        Ok(int_value(default_state().state.lock().state_bigint()))
+    }
+    private def self."left"(_recv) {
+        Ok(RubyValue::Int(default_state().state.lock().ruby_left() as i64))
     }
     def self."new_seed"(_recv) {
         let r = default_state().state.lock().limited(u64::from(u32::MAX));
@@ -294,8 +323,8 @@ ruby_class! {
     def self."srand"(_recv, arg?) {
         let (mt, seed) = seed_from(arg)?;
         let mut guard = DEFAULT.lock();
-        let previous = guard.as_ref().map(|r| r.seed.clone()).unwrap_or(RubyValue::Int(0));
-        *guard = Some(Arc::new(RandomObj { state: Mutex::new(mt), seed, frozen: AtomicBool::new(false) }));
+        let previous = guard.as_ref().map(|r| r.seed_value()).unwrap_or(RubyValue::Int(0));
+        *guard = Some(Arc::new(RandomObj { state: Mutex::new(mt), seed: Mutex::new(seed), frozen: AtomicBool::new(false) }));
         Ok(previous)
     }
 
@@ -317,7 +346,7 @@ ruby_class! {
             Ok(random_bytes(&as_random(recv).state, *n as usize))
         }
         def "seed"(recv) {
-            Ok(as_random(recv).seed.clone())
+            Ok(as_random(recv).seed_value())
         }
     }
 
@@ -345,7 +374,89 @@ ruby_class! {
         // end -- an opposite-order deadlock under parallel threads).
         let mine = me.state.lock().clone().next_u32();
         let theirs = other.state.lock().clone().next_u32();
-        Ok(RubyValue::Bool(me.seed.rb_eq(&other.seed) && mine == theirs))
+        Ok(RubyValue::Bool(me.seed_value().rb_eq(&other.seed_value()) && mine == theirs))
+    }
+
+    // `Random#dup`/`#clone`'s hook: a full state clone, so the copy resumes
+    // the SAME stream (`rand_mt_copy`). Identity-guarded -- the same
+    // receiver on both sides would deadlock its own state mutex.
+    private def "initialize_copy"(recv, orig) {
+        let me = as_random(recv);
+        if me.is_frozen() {
+            return Err(raise_error(
+                "FrozenError",
+                format!("can't modify frozen Random: {}", recv.try_display_string()?),
+            ));
+        }
+        let ok = matches!(orig, RubyValue::Object(o) if downcast_robj::<RandomObj>(o).is_some());
+        if !ok {
+            return Err(type_error!("initialize_copy should take same class object"));
+        }
+        let RubyValue::Object(o) = orig else { unreachable!() };
+        let other = downcast_robj::<RandomObj>(o).expect("just matched");
+        if !Arc::ptr_eq(&me, &other) {
+            *me.state.lock() = other.state.lock().clone();
+            *me.seed.lock() = other.seed_value();
+        }
+        Ok(recv.clone())
+    }
+
+    // ---- ruby's private introspection of the raw MT position. `state` is
+    // the 624-word array as one little-endian Bignum, `left` CRuby's
+    // one-high draw counter; the dump triple `[state, left, seed]` resumes
+    // the stream word-for-word on load.
+    private def "state"(recv) {
+        Ok(int_value(as_random(recv).state.lock().state_bigint()))
+    }
+    private def "left"(recv) {
+        Ok(RubyValue::Int(as_random(recv).state.lock().ruby_left() as i64))
+    }
+    private def "marshal_dump"(recv) {
+        let r = as_random(recv);
+        let (state, left) = {
+            let g = r.state.lock();
+            (g.state_bigint(), g.ruby_left())
+        };
+        Ok(RubyValue::Array(crate::array_new(vec![
+            int_value(state),
+            RubyValue::Int(left as i64),
+            r.seed_value(),
+        ])))
+    }
+    private def "marshal_load"(recv, dump) {
+        let RubyValue::Array(a) = dump else {
+            return Err(type_error!(
+                "wrong argument type {} (expected Array)",
+                crate::builtins::class_name_of(dump)
+            ));
+        };
+        let items = a.lock().iter().cloned().collect::<Vec<_>>();
+        if items.is_empty() || items.len() > 3 {
+            return Err(arg_error!("wrong dump data"));
+        }
+        let state = match crate::builtins::convert::to_int(&items[0])? {
+            RubyValue::Int(n) => BigInt::from(n),
+            RubyValue::BigInt(b) => (*b).clone(),
+            _ => unreachable!("to_int post-checks its answer"),
+        };
+        let left = match items.get(1) {
+            None => 1,
+            Some(v) => match crate::builtins::convert::to_int(v)? {
+                RubyValue::Int(n) => n,
+                _ => -1,
+            },
+        };
+        if !(1..=624).contains(&left) {
+            return Err(arg_error!("wrong value"));
+        }
+        let seed = match items.get(2) {
+            None => RubyValue::Int(0),
+            Some(v) => crate::builtins::convert::to_int(v)?,
+        };
+        let r = as_random(recv);
+        *r.state.lock() = crate::mt::Mt::from_state(&state, left as u64);
+        *r.seed.lock() = seed;
+        Ok(recv.clone())
     }
 }
 
@@ -484,7 +595,7 @@ mod tests {
 
     #[test]
     fn seed_reports_the_integer_seed() {
-        assert!(matches!(r#gen(42).seed, RubyValue::Int(42)));
+        assert!(matches!(r#gen(42).seed_value(), RubyValue::Int(42)));
     }
 
     #[test]
