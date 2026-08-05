@@ -47,21 +47,23 @@ pub struct CompileOptions {
     pub input_path: Option<std::path::PathBuf>,
     /// Ordered `-I` search roots for plain `require "feature"`.
     pub load_roots: Vec<std::path::PathBuf>,
-    /// Ordered directories to discover `spin.toml` packages under,
-    /// searched AFTER every `-I` root; a nonexistent dir contributes
-    /// nothing. The CLI defaults to the input file's sibling `packages/`
-    /// then the compiler's own bundled `packages/` -- see `main.rs`.
+    /// Ordered directories of vendored gems (each subdirectory with a
+    /// `.gemspec` is a gem), searched AFTER every `-I` root, first name wins;
+    /// a nonexistent dir contributes nothing. The CLI fills this from
+    /// `--gems` plus the input file's sibling `gems/`; the compiler's own
+    /// bundled `gems/` is appended by the loader itself -- see `main.rs`.
     pub package_dirs: Vec<std::path::PathBuf>,
-    /// Where to write the gem disclosure record (`gem_report`).
-    /// `None` is the `--no-report` opt-out -- and the DEFAULT for the library
-    /// API, so in-process callers (the e2e/conformance harnesses) don't litter
-    /// the tree. The CLI defaults it to a path next to the output artifact.
+    /// Where to write the gem disclosure record (`gem_report`). `None` -- no
+    /// file -- is the DEFAULT, for the library API and the CLI alike (the
+    /// CLI's `--report` opts in with a path next to the output artifact).
     pub gem_report: Option<std::path::PathBuf>,
     /// Emit the once-per-library substitution warnings to stderr. Off by
-    /// default (keeps the harness path silent); the CLI turns it on.
+    /// default (keeps the harness path silent); the CLI always turns it on,
+    /// with `-W0`/`-W:no-<category>` as the off switch.
     pub gem_warnings: bool,
-    /// Warning slugs suppressed via `--nowarn=<slug>` -- a dial independent of
-    /// `gem_report`, so a caller can silence the noise but keep the file.
+    /// Warning categories suppressed (the CLI's `-W:no-<category>`) -- a dial
+    /// independent of `gem_report`, so a caller can silence the noise but
+    /// keep the file.
     pub nowarn: std::collections::HashSet<String>,
     /// Installed RubyGems store directories (`gem env gemdir`) to resolve
     /// locked gems against, probed in order (first hit per gem wins). The CLI
@@ -73,7 +75,8 @@ pub struct CompileOptions {
     /// derives it from `--bundle-gemfile`/`BUNDLE_GEMFILE`). Only meaningful
     /// together with a non-empty `gem_paths`.
     pub lockfile: Option<std::path::PathBuf>,
-    /// Render the generated Rust through prettyplease (the `-S` human view).
+    /// Render the generated Rust through prettyplease (the `--dump=rust`
+    /// human view).
     /// Off by default: the build path feeds rustc, which is insensitive to
     /// formatting, and the re-parse + pretty-print pair dominated emission
     /// at gem scale.

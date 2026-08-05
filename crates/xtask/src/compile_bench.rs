@@ -4,9 +4,9 @@
 //! generated binaries, this measures what the COMPILER produces and costs on a
 //! fixed program set spanning hello-world to bundler scale. Per program:
 //!
-//! - `frontend_ms` -- best-of-N wall time of `zeo <file> -S` (parse -> lower ->
+//! - `frontend_ms` -- best-of-N wall time of `zeo <file> --dump=rust` (parse -> lower ->
 //!   analyze -> codegen -> emit, no rustc)
-//! - `rust_lines`  -- line count of the `-S` (pretty) output
+//! - `rust_lines`  -- line count of the `--dump=rust` (pretty) output
 //! - `rust_bytes`  -- byte length of the build-path source (the `bytes=` field
 //!   of the compile's `zeo-timings:` line)
 //! - `rustc_ms` / `bin_bytes` -- one `zeo -o` build under `ZEO_CACHE=bypass`
@@ -177,22 +177,22 @@ fn report(row: &Row, base: Option<&Row>) {
 }
 
 fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, String> {
-    // Frontend: best-of-N `-S` wall time; the last run's stdout supplies the
-    // pretty line count.
+    // Frontend: best-of-N `--dump=rust` wall time; the last run's stdout
+    // supplies the pretty line count.
     let mut best_ms: Option<u64> = None;
     let mut rust_lines = 0u64;
     for _ in 0..runs {
         let started = Instant::now();
         let out = Command::new(zeo_bin)
             .arg(rb)
-            .arg("-S")
-            .arg("--no-report")
+            .arg("--dump=rust")
+            .arg("-W0")
             .output()
-            .map_err(|e| format!("invoking zeo -S: {e}"))?;
+            .map_err(|e| format!("invoking zeo --dump=rust: {e}"))?;
         let ms = started.elapsed().as_millis() as u64;
         if !out.status.success() {
             return Err(format!(
-                "zeo -S failed: {}",
+                "zeo --dump=rust failed: {}",
                 String::from_utf8_lossy(&out.stderr)
                     .lines()
                     .next()
@@ -210,7 +210,7 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         .arg(rb)
         .arg("-o")
         .arg(&bin_path)
-        .arg("--no-report")
+        .arg("-W0")
         .env("ZEO_TIMINGS", "1")
         .env("ZEO_CACHE", "bypass")
         .output()

@@ -5,10 +5,9 @@
 //! Why this exists (the GraalVM lesson): a substitution is silent by nature --
 //! zeo's `json` behaves *almost* like the gem until an edge case where it
 //! doesn't, and a user debugging that has no breadcrumb unless the swap was
-//! recorded up front. So the CLI writes this record by DEFAULT on every
-//! artifact-producing compile; `--no-report` opts out only for callers that
-//! already know substitutions happen (the conformance/example/test harnesses),
-//! and the once-per-library warning has its own separate `--nowarn` dial.
+//! recorded up front. So the CLI warns on every substitution by DEFAULT
+//! (`-W:no-<category>`/`-W0` is the off switch), and `--report` additionally
+//! writes this record next to the artifact.
 //!
 //! The record is populated by `parse::loader` as each require resolves and
 //! rides on `Hir::gem_records`; `lib::compile_to_rust_with` writes the JSON and
@@ -146,9 +145,9 @@ fn entry_body(r: &GemRecord) -> String {
     fields.join(", ")
 }
 
-/// Emit the once-per-library substitution warning to stderr, unless the slug
-/// is suppressed. Separate dial from `--no-report`: a caller can want the
-/// warnings without the file, or the file without the noise.
+/// Emit the once-per-library substitution warning to stderr, unless the
+/// category is suppressed. Separate dial from the report file: a caller can
+/// want the warnings without the file, or the file without the noise.
 pub fn emit_warnings(records: &[GemRecord], nowarn: &HashSet<String>) {
     if nowarn.contains(SUBSTITUTE_SLUG) {
         return;

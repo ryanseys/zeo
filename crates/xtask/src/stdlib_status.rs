@@ -1,6 +1,6 @@
 //! `cargo run -p xtask -- stdlib-status [<lib-dir>]`: sweeps every `*.rb`
 //! under a Ruby stdlib `lib` directory and records whether `zeo` can
-//! COMPILE it -- Ruby -> Rust codegen only (via `zeo -S`; no `rustc`, no
+//! COMPILE it -- Ruby -> Rust codegen only (via `zeo --dump=rust`; no `rustc`, no
 //! execution), the fast first-cut triage of how much real stdlib the compiler
 //! accepts today.
 //!
@@ -31,7 +31,7 @@ use crate::exec::run_with_timeout;
 /// against a pathological compiler hang so one bad file can't stall the sweep.
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The classification of one stdlib file against `zeo -S`.
+/// The classification of one stdlib file against `zeo --dump=rust`.
 enum Status {
     /// Ruby -> Rust codegen succeeded (rustc/runtime NOT exercised).
     Pass,
@@ -80,7 +80,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // `zeo -S` is the classifier; build it once up front so the parallel
+    // `zeo --dump=rust` is the classifier; build it once up front so the parallel
     // invocations below don't race each other into cargo.
     eprintln!("stdlib-status: building zeo...");
     let built = Command::new("cargo")
@@ -155,13 +155,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 }
 
-/// Compiles one file with `zeo <file> -I <lib-dir> -S` (codegen only) and
-/// maps the outcome to a [`Status`]. Exit 0 = codegen succeeded; a non-zero
-/// exit (a clean rejection or a compiler panic) = a failure, bucketed by its
-/// message.
+/// Compiles one file with `zeo <file> -I <lib-dir> --dump=rust` (codegen
+/// only) and maps the outcome to a [`Status`]. Exit 0 = codegen succeeded; a
+/// non-zero exit (a clean rejection or a compiler panic) = a failure,
+/// bucketed by its message.
 fn classify(zeo: &Path, lib_dir: &Path, file: &Path) -> Status {
     let mut cmd = Command::new(zeo);
-    cmd.arg(file).arg("-I").arg(lib_dir).arg("-S");
+    cmd.arg(file).arg("-I").arg(lib_dir).arg("--dump=rust");
     match run_with_timeout(cmd, None, COMPILE_TIMEOUT) {
         Err(e) => Status::HarnessError(e),
         Ok(ex) if ex.timed_out => Status::Timeout,

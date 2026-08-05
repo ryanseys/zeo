@@ -266,7 +266,7 @@ fn run_one(zeo_bin: &Path, rb: &Path, runs: usize) -> Result<f64, String> {
         .arg(rb)
         .arg("-o")
         .arg(&bin_path)
-        .arg("--no-report")
+        .arg("-W0")
         .output()
         .map_err(|e| format!("invoking zeo: {e}"))?;
     if !compile.status.success() {

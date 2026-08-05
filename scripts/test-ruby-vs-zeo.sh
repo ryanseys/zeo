@@ -61,7 +61,7 @@ echo
 rb_exit=$?
 
 # --- zeo (compile + run inline) ---
-( cd "$ROOT" && cargo run --release -q -p zeo -- --no-report -e "$(cat "$tmp")" ) \
+( cd "$ROOT" && cargo run --release -q -p zeo -- -W0 -e "$(cat "$tmp")" ) \
   > "$tmp.out.zeo" 2> "$tmp.err.zeo"
 zeo_exit=$?
 

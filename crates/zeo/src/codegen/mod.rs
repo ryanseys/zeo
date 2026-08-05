@@ -1076,7 +1076,7 @@ fn write_line_broken(ts: TokenStream, out: &mut String) {
     }
 }
 
-/// The HUMAN renderer behind `-S`: the historical `syn` round-trip (a free
+/// The HUMAN renderer behind `--dump=rust`: the historical `syn` round-trip (a free
 /// validity net) plus prettyplease formatting.
 pub fn codegen_to_string_pretty(
     analyzed: &Analyzed,
