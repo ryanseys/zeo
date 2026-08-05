@@ -1,22 +1,8 @@
 target/
 .DS_Store
 
-# gem-compat is lockfile/machine-specific; run `cargo xtask gem-compat <lock>` to regenerate
-conformance/gem-compat.tsv
-conformance/gem-compat.md
-
-# Local scratch: full rubygems name list, a resource for finding gems to test
-conformance/gemlist.txt
-
 # Generated per-compile gem-disclosure records (zeo CLI)
 zeo-gems.json
 
 # Vendored upstream sources for the bundler north-star (not part of the build)
 /vendor/
-
-# Scratch dirs the IO/Dir/socket goldens make and remove. A golden that dies
-# part-way leaves one behind; ignore them so the leftovers never get committed.
-tests/spinel_dir_suite/
-tests/spinel_rdp_test_dir/
-tests/spinel_iofd_test_dir/
-tests/spinel_sockkind_test_dir/

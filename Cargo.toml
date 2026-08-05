@@ -11,53 +11,53 @@ members = [
 
 [workspace.package]
 edition = "2024"
-# MSRV floor: edition 2024 needs >=1.85; the runtime uses std APIs stabilized
-# through 1.87 (f64::next_up, u{n}::is_multiple_of), and the locked dependency
-# tree needs 1.88 (home). Checked in CI; bump deliberately.
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 
-# Every third-party version is declared ONCE here; members inherit with
-# `dep = { workspace = true }` (adding `optional = true` locally where a
-# cargo feature gates the dep). Feature selections and default-features
-# choices live HERE, at the declaration, per cargo's inheritance rules.
 [workspace.dependencies]
-# Path deps between workspace crates, so members spell them uniformly.
 zeo = { path = "crates/zeo" }
 zeo-abi = { path = "crates/zeo-abi" }
 zeo-dsl = { path = "crates/zeo-dsl" }
 zeo-macros = { path = "crates/zeo-macros" }
+
 # The parser: prism, CRuby's own default parser since 3.4.
 ruby-prism = "1.9.0"
+
 # Diagnostics: typed compile errors, rendered as annotated source excerpts
 # by the CLI ("fancy" = the graphical handler, which auto-degrades for
 # pipes/NO_COLOR). insta pins the no-color rendering in snapshot tests.
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 insta = "1"
+
 # Compiler instrumentation: level-gated `trace!`/`debug!`/`instrument` spans
 # across the pipeline (loader -> lower -> analyze -> codegen). Zero output by
 # default; the CLI installs a subscriber only when `ZEO_LOG`/`RUST_LOG` is set.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # Data-driven tests: one `cargo test`/nextest case per golden `.rb` file
 # (conformance corpus, examples, gaps). By nextest-rs, same ecosystem as the
 # `cargo nextest` we already run.
 datatest-stable = "0.3"
+
 # Codegen: Rust emitted as TokenStreams, formatted for humans.
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing"] }
 prettyplease = "0.2"
+
 # Runtime foundations.
 parking_lot = "0.12"
 indexmap = "2"
 libc = "0.2"
+
 # Internal-map hashing (interner, dispatch registry, globals/constants):
 # SipHash's DoS resistance buys nothing for process-internal keys, and these
 # maps sit on the dynamic-dispatch hot path. Ruby-VISIBLE hashing
 # (`Object#hash`) stays on DefaultHasher -- see collections.rs.
 foldhash = "0.1"
+
 # The global allocator STATICALLY-linked generated binaries opt into (the
 # `zeo_static_alloc` cfg the backend passes for `-o` builds): Ruby workloads
 # are allocation-heavy (every Arc payload, String, Vec), and mimalloc
@@ -65,31 +65,38 @@ foldhash = "0.1"
 # system allocator -- an exe-defined allocator must not free the dylib's
 # allocations.
 mimalloc = "0.1"
+
 # Link-time auto-registration: the `ruby_class!` macro registers each class's
 # method/constant table into a `BUILTIN_TABLES` distributed slice the runtime
 # collects, replacing the hand-written `ClassId`->lookup match tables.
 linkme = "0.3"
 getrandom = "0.3"
 corosensei = "0.3"
+
 # The multibyte CJK mapping backend (zeo-enc): Shift_JIS/EUC-JP/GBK/Big5
 # tables via WHATWG's encoding_rs. Structural validity is zeo-enc's own
 # CRuby-faithful walk; encoding_rs supplies only the byte<->Unicode mapping.
 encoding_rs = "0.8"
+
 # Regex engines (regexp.rs docs cover the split; onig vendors its C library).
 regex = "1"
 fancy-regex = "0.14"
 onig = { version = "6.5", default-features = false }
+
 # libffi vendors and builds its own C library (like onig), for the runtime
 # variadic-call / callback-closure paths of the `ffi` gem (ext-ffi only).
 libffi = "5"
+
 # Numeric tower.
 num-bigint = "0.5"
 num-integer = "0.1"
 num-traits = "0.2"
+
 # Time zones and Unicode surfaces.
 jiff = "0.2"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
+
 # ext/ backends (feature-gated in zeo-rt).
 md-5 = "0.10"
 sha1 = "0.10"
@@ -99,62 +106,24 @@ flate2 = "1"
 serde_json = "1"
 yaml-rust2 = "0.10"
 rustyline = "15"
-# The `openssl` extension's backend: the official rust-openssl bindings over a
-# VENDORED OpenSSL 3.x (openssl-src builds the C library with cc+perl+make,
-# never linking a system libssl -- the onig/libffi precedent). Chosen over a
-# RustCrypto/rustls patchwork so digests, ciphers, BN and TLS are the same
-# EVP implementations CRuby's extension binds.
 openssl = { version = "0.10", features = ["vendored"] }
 
-# The workspace-wide lint gate (each member opts in with `[lints] workspace =
-# true`). Warnings are errors in CI (`cargo clippy -- -D warnings`); the lint
-# LEVELS here stay `warn` so local iteration isn't interrupted mid-edit.
 [workspace.lints.rust]
 unused = "warn"
 
 [workspace.lints.clippy]
 all = "warn"
 
-# Faster generated-program compiles + faster zeo-rt rebuilds. Every compiled
-# program links the runtime; it is a large, rarely-step-debugged artifact, so trim
-# its debug info. `line-tables-only` keeps panic backtraces and line numbers -- only
-# interactive lldb step-through of the runtime is lost.
 [profile.dev.package.zeo-rt]
 debug = "line-tables-only"
 
-# All third-party dependencies (regex, ruby-prism, num-bigint, ...): build them
-# optimized ONCE (they change rarely) and drop full debug info. Shrinks the linked
-# runtime and speeds its execution; one-time rebuild cost, no effect on incremental
-# rebuilds of the workspace crates themselves.
 [profile.dev.package."*"]
 opt-level = 1
 debug = "line-tables-only"
 
-# The runtime a SHIPPED binary links (`zeo foo.rb -o app` builds zeo-rt in
-# release and statically links it -- see build.rs's Profile). Optimized and stripped
-# so user binaries are small and fast, instead of embedding the ~10MB unoptimized
-# debug runtime. All behavior-preserving: NOT panic="abort" (catch_break, fiber
-# unwinding through corosensei, and deliberate divide-by-zero panics as a control
-# path all require panic=unwind).
-#
-# NO `lto`: with profile LTO on, cargo builds the release rlibs as bitcode-only
-# objects (deferring codegen to the final cargo link), but generated programs
-# link those rlibs through a bare `rustc` call (`build_binary`) with no LTO
-# step -- Apple's `ld` then feeds the bitcode to its own libLTO, which breaks
-# whenever its LLVM lags rustc's ("could not parse bitcode object file",
-# rustc 1.97/LLVM 22 vs Apple libLTO LLVM 21). `codegen-units = 1` already
-# provides whole-crate optimization.
 [profile.release]
 strip = "symbols"
 codegen-units = 1
 
-# ...but only for the workspace crates that need it. `codegen-units = 1` above
-# applies to the WHOLE release graph, and one whole-crate LLVM module per
-# dependency is the fattest configuration rustc has: `bindgen`, `clang-sys`,
-# `syn`, `regex-automata` and `jiff` are all in `zeo-rt`'s graph, and building
-# them that way is what let a runtime build exhaust memory. `package."*"` covers
-# dependencies only, so `zeo-rt` keeps its whole-crate optimization (the reason
-# the no-LTO note above holds) while its deps -- which gain nothing from it,
-# being optimized units already -- build in parallel chunks.
 [profile.release.package."*"]
 codegen-units = 16
