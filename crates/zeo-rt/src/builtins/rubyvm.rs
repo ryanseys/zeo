@@ -377,8 +377,10 @@ ruby_class! {
             iseq.label, iseq.path, iseq.first_lineno
         ))))
     }
-    def "to_a" | "to_binary" | "disasm" | "disassemble" (recv, *_args) {
-        let _ = recv;
+    def "to_a" | "disasm" | "disassemble" (_recv) {
+        Err(not_impl_error!("{}", NO_YARV))
+    }
+    def "to_binary"(_recv, *_args) {
         Err(not_impl_error!("{}", NO_YARV))
     }
 }

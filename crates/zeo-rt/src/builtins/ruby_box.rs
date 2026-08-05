@@ -23,6 +23,25 @@ mod ruby_ns {
     }
 }
 
+mod loader {
+    use super::*;
+
+    ruby_module! {
+        Loader = zeo_abi::RUBY_BOX_LOADER_MODULE;
+
+        // The box-aware load path. Outside an enabled box these are the
+        // ordinary dynamic require/load (Kernel's own body) -- CRuby's
+        // Loader methods degrade the same way.
+        module_function def "require" | "require_relative" (_recv, feature) {
+            crate::builtins::kernel::dynamic_require(feature)
+        }
+        module_function def "load"(_recv, *args) {
+            crate::builtins::check_arity(args.len(), 1, Some(2))?;
+            crate::builtins::kernel::dynamic_require(&args[0])
+        }
+    }
+}
+
 mod box_class {
     use super::*;
 
@@ -66,7 +85,12 @@ mod box_class {
         }
         // zeo requires are compile-time splices (`box.require` at the top
         // level already works); a DYNAMIC require has no source to splice.
-        def "require" | "require_relative" | "load" (_recv, _feature) {
+        def "require" | "require_relative" (_recv, _feature) {
+            Err(crate::builtins::not_impl_error!(
+                "dynamic `Ruby::Box#require`/`#load` isn't supported (zeo requires splice at compile time; write `box.require \"feature\"` as a top-level statement)"
+            ))
+        }
+        def "load"(_recv, *_args) {
             Err(crate::builtins::not_impl_error!(
                 "dynamic `Ruby::Box#require`/`#load` isn't supported (zeo requires splice at compile time; write `box.require \"feature\"` as a top-level statement)"
             ))

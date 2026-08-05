@@ -179,7 +179,7 @@ ruby_module! {
     // Compiled code has no retained AST -- byte-for-byte what ruby 4.0.6
     // itself answers (prism is its default compiler): a raise for Ruby-level
     // callables, `nil` for a C-defined method.
-    def self."of"(_recv, what) {
+    def self."of"(_recv, what, **_opts) {
         match what {
             RubyValue::Proc(_) => Err(raise_error("RuntimeError", PRISM_ERROR.to_string())),
             _ => Ok(RubyValue::Nil),

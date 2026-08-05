@@ -539,6 +539,7 @@ fn io_args(st: &BufState, args: &[RubyValue], skip: usize) -> Result<usize, Sign
 
 ruby_class! {
     Buffer = zeo_abi::IO_BUFFER_CLASS < zeo_abi::OBJECT_CLASS;
+    include zeo_abi::COMPARABLE_CLASS;
 
     const PAGE_SIZE = RubyValue::Int(page_size());
     const DEFAULT_SIZE = RubyValue::Int({
@@ -1144,7 +1145,7 @@ ruby_class! {
         Ok(RubyValue::Array(crate::array_new(out)))
     }
 
-    def "each_byte"(recv, &block) {
+    def "each_byte"(recv, *_args, &block) {
         let block = block_or_enum!(recv, &[], block);
         let b = recv_buffer(recv);
         let mut i = 0usize;

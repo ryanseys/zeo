@@ -1323,6 +1323,12 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("Ractor::MovedError", "Ractor::Error"),
         ("Ractor::RemoteError", "Ractor::Error"),
         ("Ractor::UnsafeError", "Ractor::Error"),
+        // The `IO::Buffer` error tree (io_buffer.c's split).
+        ("IO::Buffer::LockedError", "RuntimeError"),
+        ("IO::Buffer::AllocationError", "RuntimeError"),
+        ("IO::Buffer::AccessError", "RuntimeError"),
+        ("IO::Buffer::InvalidatedError", "RuntimeError"),
+        ("IO::Buffer::MaskError", "ArgumentError"),
     ] {
         register_class(
             compiler,
