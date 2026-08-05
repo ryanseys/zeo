@@ -1738,9 +1738,7 @@ dependencies = [
 name = "zeo"
 version = "0.1.0"
 dependencies = [
- "datatest-stable",
  "foldhash",
- "insta",
  "libc",
  "miette",
  "prettyplease",
@@ -1814,6 +1812,18 @@ dependencies = [
  "yaml-rust2",
  "zeo-abi",
  "zeo-macros",
+]
+
+[[package]]
+name = "zeo-tests"
+version = "0.1.0"
+dependencies = [
+ "datatest-stable",
+ "insta",
+ "miette",
+ "zeo",
+ "zeo-abi",
+ "zeo-dsl",
 ]
 
 [[package]]

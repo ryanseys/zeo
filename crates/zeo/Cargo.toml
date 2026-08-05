@@ -11,6 +11,9 @@ categories.workspace = true
 description = "An ahead-of-time Ruby compiler: compiles Ruby programs to self-contained native binaries by emitting Rust"
 readme = "../../README.md"
 default-run = "zeo"
+# Packaging whitelist: the integration/golden suites live in `zeo-tests`
+# (repo-rooted, unpublishable); the .crate ships only the compiler itself.
+include = ["/src", "/build.rs", "/README.md"]
 
 [dependencies]
 zeo-abi.workspace = true
@@ -38,13 +41,6 @@ zeo-dsl.workspace = true
 syn.workspace = true
 proc-macro2.workspace = true
 
-[dev-dependencies]
-insta.workspace = true
-datatest-stable.workspace = true
-# The arity drift test re-parses the runtime's DSL declarations with the same
-# grammar the macro expands, so what it checks is what the runtime registers.
-zeo-dsl = { workspace = true, features = ["spans"] }
-
 [lib]
 name = "zeo"
 path = "src/lib.rs"
@@ -52,24 +48,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "zeo"
 path = "src/main.rs"
-
-# Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
-# committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =
-# false` hands the target to datatest-stable. `ZEO_BLESS=1` rewrites goldens.
-[[test]]
-name = "gaps"
-path = "tests/gaps.rs"
-harness = false
-
-[[test]]
-name = "examples"
-path = "tests/examples.rs"
-harness = false
-
-[[test]]
-name = "spinel"
-path = "tests/spinel.rs"
-harness = false
 
 [lints]
 workspace = true

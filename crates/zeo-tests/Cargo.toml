@@ -1,0 +1,46 @@
+[package]
+name = "zeo-tests"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# The integration/golden test suites, split out of `zeo` so the published
+# crate carries no targets rooted at the repo's `tests/` corpus. Never
+# published; drives `zeo` through its public library API only.
+publish = false
+
+[dependencies]
+# Deliberately empty: everything lives in dev-dependencies -- this package
+# exists only for its `tests/` targets (the stub src/lib.rs satisfies cargo's
+# at-least-one-target rule).
+
+[dev-dependencies]
+zeo.workspace = true
+zeo-abi.workspace = true
+miette.workspace = true
+insta.workspace = true
+datatest-stable.workspace = true
+# The arity drift test re-parses the runtime's DSL declarations with the same
+# grammar the macro expands, so what it checks is what the runtime registers.
+zeo-dsl = { workspace = true, features = ["spans"] }
+
+# Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
+# committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =
+# false` hands the target to datatest-stable. `ZEO_BLESS=1` rewrites goldens.
+[[test]]
+name = "gaps"
+path = "tests/gaps.rs"
+harness = false
+
+[[test]]
+name = "examples"
+path = "tests/examples.rs"
+harness = false
+
+[[test]]
+name = "spinel"
+path = "tests/spinel.rs"
+harness = false
+
+[lints]
+workspace = true
