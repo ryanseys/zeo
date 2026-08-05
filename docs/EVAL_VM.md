@@ -137,8 +137,15 @@ call, not through `send`) is invisible at that call site.
 
 ## Non-goals
 
-`TracePoint`/`ObjectSpace`, Ractors, and refinements stay out of scope. So does
-a *reflective* eval the static analysis cannot see — a `send(:eval, str)` hides
-the eval site from `uses_runtime_eval`, so its binary may not link the VM; the
-honest failure mode there is the runtime's own `NotImplementedError`, never
-silent wrong output.
+`TracePoint`, `ObjectSpace`, Ractors, and refinements are all in scope and
+implemented in the runtime at large: `TracePoint` (and `set_trace_func`) via
+the armed-only tracing machinery in `zeo-rt/src/ext/tracepoint.rs`,
+`ObjectSpace` as an always-on builtin (`each_object` alone is a declared
+refusal), Ractors as real OS threads with shareability checks, and refinements
+both as the compile-time lexical rewrite and as runtime `Module#refine` /
+`using Module.new { … }` overlays. The one enduring non-goal here is a
+*reflective* eval the static analysis cannot see — a `send(m, str)` whose
+method name is computed at runtime hides the eval site from
+`uses_runtime_eval`, so its binary may not link the VM; the honest failure
+mode there is the runtime's own `NotImplementedError`, never silent wrong
+output.

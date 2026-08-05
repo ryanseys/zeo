@@ -1,0 +1,4 @@
+numeric_subclass_limits.rb:27:in 'Comparable#<': comparison of Deg with 0 failed (ArgumentError)
+	from numeric_subclass_limits.rb:27:in 'Complex#inspect'
+	from numeric_subclass_limits.rb:27:in 'Kernel#p'
+	from numeric_subclass_limits.rb:27:in '<main>'
