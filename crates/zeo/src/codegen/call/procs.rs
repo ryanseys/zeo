@@ -74,7 +74,12 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     // `super` inside it resolves through the runtime method-frame stack
     // (`emit_super_dynamic`), and a bare `super` raises ruby's define_method
     // refusal -- the same two markers the literal `DefMethod` form carries.
-    if cx.compiler.hir.dynamic_define_method_blocks.contains(&block_id) {
+    if cx
+        .compiler
+        .hir
+        .dynamic_define_method_blocks
+        .contains(&block_id)
+    {
         let mut dm_cx = cx.clone();
         dm_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
         dm_cx.defined_by_define_method = true;

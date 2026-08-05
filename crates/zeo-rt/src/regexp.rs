@@ -1449,7 +1449,12 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
     // matched, same as any failed match).
     let mut last_md = None;
     for caps in re.engine.captures_all(haystack) {
-        last_md = Some(build_match_data(re, haystack, &caps, crate::encoding::UTF_8));
+        last_md = Some(build_match_data(
+            re,
+            haystack,
+            &caps,
+            crate::encoding::UTF_8,
+        ));
         if has_groups {
             let group_vals: Vec<RubyValue> = (1..caps.len())
                 .map(|i| match caps.str(i, haystack) {

@@ -28,7 +28,10 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
 /// gates CONSTANT visibility, so pre-seeding `monitor` there would make
 /// `Monitor` resolve without its require.
 pub fn is_preloaded_at_boot(feature: &str) -> bool {
-    matches!(feature, "set" | "monitor" | "rational" | "complex" | "thread")
+    matches!(
+        feature,
+        "set" | "monitor" | "rational" | "complex" | "thread"
+    )
 }
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so

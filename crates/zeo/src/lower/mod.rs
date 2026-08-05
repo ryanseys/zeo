@@ -1751,13 +1751,14 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
-            let target = sent.first().and_then(|n| n.as_symbol_node()).map(|s| {
-                String::from_utf8_lossy(s.unescaped()).into_owned()
-            });
+            let target = sent
+                .first()
+                .and_then(|n| n.as_symbol_node())
+                .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned());
             match target.as_deref() {
-                Some(
-                    t @ ("block_given?" | "iterator?" | "binding" | "local_variables"),
-                ) if sent.len() == 1 => {
+                Some(t @ ("block_given?" | "iterator?" | "binding" | "local_variables"))
+                    if sent.len() == 1 =>
+                {
                     match t {
                         "block_given?" | "iterator?" => {
                             return Ok(hir.push(HirNode::BlockGiven));

@@ -29,9 +29,7 @@ fn goldens() -> impl Iterator<Item = PathBuf> {
             .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
             .filter_map(Result::ok)
             .map(|e| e.path())
-            .filter(|p| {
-                p.is_file() && p.to_string_lossy().ends_with(".expected")
-            })
+            .filter(|p| p.is_file() && p.to_string_lossy().ends_with(".expected"))
             .collect::<Vec<_>>()
     })
 }

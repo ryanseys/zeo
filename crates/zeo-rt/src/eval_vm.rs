@@ -293,10 +293,9 @@ mod imp {
         // SINGLETON (which owns no constants -- the miss is the answer, in
         // the #<Class:X> spelling).
         let (cref, cref_name) = match (&mode, &self_val) {
-            (EvalMode::ClassEval, RubyValue::Class(cid)) => (
-                Some(*cid),
-                crate::dispatch::class_name(*cid),
-            ),
+            (EvalMode::ClassEval, RubyValue::Class(cid)) => {
+                (Some(*cid), crate::dispatch::class_name(*cid))
+            }
             (EvalMode::InstanceEval, RubyValue::Class(cid)) => (
                 None,
                 crate::dispatch::class_name(*cid).map(|n| format!("#<Class:{n}>")),

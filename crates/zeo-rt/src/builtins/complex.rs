@@ -632,8 +632,11 @@ pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> Result<String, Sign
     // A raising component (a user subclass's `<` under `comp_negative`, or a
     // raising `inspect`) must show this C frame -- `p`'s internal render
     // reaches here without crossing the dispatch boundary.
-    let _frame =
-        crate::frames::synthetic_c_frame(if inspect { "Complex#inspect" } else { "Complex#to_s" });
+    let _frame = crate::frames::synthetic_c_frame(if inspect {
+        "Complex#inspect"
+    } else {
+        "Complex#to_s"
+    });
     let render = |v: &RubyValue| {
         if inspect {
             v.try_inspect_string()

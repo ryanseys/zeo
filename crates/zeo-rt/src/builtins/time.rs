@@ -708,8 +708,25 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         // set takes the generic pad.
         let string_directive = matches!(
             d,
-            'a' | 'A' | 'b' | 'h' | 'B' | 'p' | 'P' | 'Z' | 'n' | 't' | '%'
-                | 'F' | 'T' | 'X' | 'D' | 'x' | 'R' | 'r' | 'c' | 'v'
+            'a' | 'A'
+                | 'b'
+                | 'h'
+                | 'B'
+                | 'p'
+                | 'P'
+                | 'Z'
+                | 'n'
+                | 't'
+                | '%'
+                | 'F'
+                | 'T'
+                | 'X'
+                | 'D'
+                | 'x'
+                | 'R'
+                | 'r'
+                | 'c'
+                | 'v'
         );
         if string_directive && !left {
             if let Some(w) = width

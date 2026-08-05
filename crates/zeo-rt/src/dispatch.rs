@@ -905,8 +905,7 @@ fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&'static str
     if let Some(&label) = map.get(&key) {
         return Some(label);
     }
-    let label: &'static str =
-        Box::leak(format!("{}{sep}{n}", class_name(owner)?).into_boxed_str());
+    let label: &'static str = Box::leak(format!("{}{sep}{n}", class_name(owner)?).into_boxed_str());
     map.insert(key, label);
     Some(label)
 }
@@ -1035,7 +1034,11 @@ impl ClassRegistry {
     /// `flat_value_hit`'s class-receiver twin: user `def self.x` rows over
     /// the builtin class-method table for `id` itself (no ancestry -- the
     /// walk the caller falls back to covers Class/Module).
-    fn flat_class_hit(&self, id: ClassId, name: Symbol) -> Option<(ValueMethodFn, Option<&'static str>)> {
+    fn flat_class_hit(
+        &self,
+        id: ClassId,
+        name: Symbol,
+    ) -> Option<(ValueMethodFn, Option<&'static str>)> {
         let entry = self.entries.get(&id.0)?;
         let map = entry.flat_class.get_or_init(|| {
             let mut map = crate::FMap::default();
@@ -2726,7 +2729,9 @@ pub(crate) fn registry_allocator(id: ClassId) -> Option<AllocatorFn> {
 /// ancestor's struct, stamped with the SUBCLASS's id (see `ruby_class!`'s
 /// `__class` field).
 pub(crate) fn ancestor_allocator_of(id: ClassId) -> Option<AllocatorFn> {
-    ancestors_of_value(id).iter().find_map(|a| registry_allocator(*a))
+    ancestors_of_value(id)
+        .iter()
+        .find_map(|a| registry_allocator(*a))
 }
 
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
@@ -4400,9 +4405,7 @@ fn send_value_in_reason(
                 if let Some(table) = crate::builtins::class_table(anc)
                     && let Some(f) = table(n)
                 {
-                    return with_c_frame(c_frame_label(anc, name, '#'), || {
-                        f(recv, args, block)
-                    });
+                    return with_c_frame(c_frame_label(anc, name, '#'), || f(recv, args, block));
                 }
             }
         }
