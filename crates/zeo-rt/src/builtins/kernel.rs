@@ -511,7 +511,11 @@ ruby_module! {
     }
     def "dup"(recv) {
         Ok(match recv {
-            RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?,
+            RubyValue::Object(o) => {
+                let c = copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?;
+                crate::builtins::rstruct::refreeze_data_copy(&c);
+                c
+            }
             // A MODULE gets a real copy -- the whole point of duping one is to
             // edit it without touching the original (see
             // `runtime_module_dup`). A CLASS keeps the documented
@@ -554,7 +558,18 @@ ruby_module! {
         }
         let copy_frozen = freeze != Some(false);
         let copy = match recv {
-            RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(copy_frozen)))?,
+            RubyValue::Object(o) => {
+                // CRuby's order: the copy exists UNFROZEN while the copy
+                // hooks run and the frozen bit lands after -- a hook that
+                // refuses frozen receivers (Data's) sees the pre-freeze copy.
+                let c = copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?;
+                if copy_frozen && recv.is_frozen() {
+                    let _ = c.freeze_value();
+                }
+                // Data copies stay frozen even under `freeze: false` (#2716).
+                crate::builtins::rstruct::refreeze_data_copy(&c);
+                c
+            }
             _ => recv.dup_value(copy_frozen)?,
         };
         // `clone` carries the singleton class -- its methods and extended

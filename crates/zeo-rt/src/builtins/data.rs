@@ -30,10 +30,24 @@ ruby_class! {
         bind_members(recv, args, true)?;
         Ok(RubyValue::Nil)
     }
-    // A Data instance is frozen by construction, so its inherited
-    // `initialize_copy` can only ever raise -- ruby still OWNS the row here.
-    private def "initialize_copy"(recv, _other) {
-        Err(frozen_error(recv))
+    // A CONSTRUCTED Data instance is frozen, so a direct send can only
+    // raise -- but the copy hooks run on the pre-freeze copy (`Kernel#dup`/
+    // `#clone`'s ordering), where this copies slots exactly like Struct's.
+    private def "initialize_copy"(recv, other) {
+        if recv.is_frozen() {
+            return Err(frozen_error(recv));
+        }
+        let same_class = other.class_id() == recv.class_id() && meta_of(recv.class_id()).is_some();
+        if !same_class {
+            return Err(crate::builtins::type_error!(
+                "initialize_copy should take same class object"
+            ));
+        }
+        let values = slots_of(other);
+        for (i, v) in values.into_iter().enumerate() {
+            crate::builtins::rstruct::slot_set(recv, i, v);
+        }
+        Ok(recv.clone())
     }
     def "members"(recv) {
         build_members(recv)

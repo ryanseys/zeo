@@ -222,16 +222,27 @@ impl RubyObject for StructInstance {
         true
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        // A `Data` instance is frozen by construction and stays frozen through
-        // every copy -- dup and clone(freeze: false) alike; a `Struct`
-        // copy follows the ordinary rule (dup never freezes, clone copies it).
-        let is_data = meta_of(self.class_id).is_some_and(|m| m.is_data);
+        // The plain rule only: Data's copies-stay-frozen guarantee (#2716)
+        // is applied AFTER the copy hooks run ([`refreeze_data_copy`] from
+        // `Kernel#dup`/`#clone`), CRuby's ordering -- the hook must see the
+        // pre-freeze copy.
         Arc::new(StructInstance {
             class_id: self.class_id,
-            frozen: AtomicBool::new(is_data || (copy_frozen && self.is_frozen())),
+            frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
             slots: Mutex::new(self.slots.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
         })
+    }
+}
+
+/// A `Data` instance stays frozen through EVERY copy -- dup and
+/// `clone(freeze: false)` alike (#2716). Called by the `Kernel` copy rows
+/// after the hooks ran; a non-Data value is untouched.
+pub(crate) fn refreeze_data_copy(v: &RubyValue) {
+    if let RubyValue::Object(o) = v
+        && meta_of(o.class_id()).is_some_and(|m| m.is_data)
+    {
+        o.set_frozen();
     }
 }
 

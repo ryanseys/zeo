@@ -1334,7 +1334,14 @@ impl RubyValue {
                 }
                 RubyValue::Hash(fresh)
             }
-            RubyValue::Object(o) => RubyValue::Object(o.dup_object(copy_frozen)),
+            RubyValue::Object(o) => {
+                let c = RubyValue::Object(o.dup_object(copy_frozen));
+                // Data copies stay frozen through every copy (#2716) -- the
+                // hook-free fast path applies it here; the `Kernel` rows do
+                // the same after their hooks.
+                crate::builtins::rstruct::refreeze_data_copy(&c);
+                c
+            }
             RubyValue::Mutex(_) => {
                 let fresh = crate::mutex_new();
                 if keep_frozen && let RubyValue::Mutex(m) = &fresh {
