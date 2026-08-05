@@ -89,6 +89,7 @@ impl ClassRegistry {
         crate::builtins::converter::register_converter(&mut registry);
         crate::builtins::random::register_random(&mut registry);
         crate::builtins::stat::register_stat(&mut registry);
+        crate::builtins::io_buffer::register_io_buffer(&mut registry);
         registry
     }
 }

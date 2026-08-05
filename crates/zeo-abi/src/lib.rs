@@ -418,6 +418,11 @@ pub const RACTOR_PORT_CLASS: ClassId = ClassId(162);
 /// sends. Every method on it raises `Ractor::MovedError`.
 pub const RACTOR_MOVED_OBJECT_CLASS: ClassId = ClassId(163);
 
+/// `IO::Buffer` -- fixed-size byte storage with typed value access
+/// (`get_value(:U32, 0)`), slicing, file mapping, and direct IO transfer.
+/// Includes `Comparable` (byte-lexicographic `<=>`).
+pub const IO_BUFFER_CLASS: ClassId = ClassId(164);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -2027,6 +2032,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
+    BuiltinClass {
+        id: IO_BUFFER_CLASS,
+        name: "IO::Buffer",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[COMPARABLE_CLASS],
+        feature: None,
+    },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
@@ -2168,7 +2181,7 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &EXCEPTION_CLASS_ROWS;
 /// The rows written out by hand: every exception whose id does not depend on
 /// how many errnos the platform names. [`ERRNO_CLASSES`] follows this block,
 /// then [`WAIT_EXCEPTIONS`], which subclasses two of the `Errno` rows.
-const CORE_EXCEPTIONS: [ExceptionClass; 52] = [
+const CORE_EXCEPTIONS: [ExceptionClass; 57] = [
     ExceptionClass {
         id: exc_id(0),
         name: "Exception",
@@ -2500,6 +2513,38 @@ const CORE_EXCEPTIONS: [ExceptionClass; 52] = [
         id: exc_id(51),
         name: "Ractor::UnsafeError",
         superclass: Some(exc_id(46)),
+        is_module: false,
+    },
+    // The `IO::Buffer` error tree: four states under `RuntimeError`, plus
+    // the mask-shape complaint under `ArgumentError` (io_buffer.c's split).
+    ExceptionClass {
+        id: exc_id(52),
+        name: "IO::Buffer::LockedError",
+        superclass: Some(exc_id(22)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(53),
+        name: "IO::Buffer::AllocationError",
+        superclass: Some(exc_id(22)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(54),
+        name: "IO::Buffer::AccessError",
+        superclass: Some(exc_id(22)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(55),
+        name: "IO::Buffer::InvalidatedError",
+        superclass: Some(exc_id(22)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(56),
+        name: "IO::Buffer::MaskError",
+        superclass: Some(exc_id(5)),
         is_module: false,
     },
 ];

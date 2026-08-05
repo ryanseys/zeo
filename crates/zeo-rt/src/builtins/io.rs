@@ -590,6 +590,17 @@ fn recv_io(recv: &RubyValue) -> Result<&RubyValue, Signal> {
     Ok(recv)
 }
 
+/// Whether this IO has been `#close`d -- the `IO::Buffer` entry points
+/// raise IOError "closed stream" before touching the fd.
+pub(crate) fn io_is_closed(recv: &RubyValue) -> bool {
+    as_rio(recv).is_some_and(|io| {
+        matches!(
+            &*io.backend.lock(),
+            IoBackend::File(None) | IoBackend::Pipe(None)
+        )
+    })
+}
+
 pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
     match recv {
         RubyValue::Object(o) => o.as_any().downcast_ref::<RIo>(),
