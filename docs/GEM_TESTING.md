@@ -131,6 +131,22 @@ fails the build, whatever its new outcome. That gate runs in CI when a
 `gem-probe.md` is the same data rendered. Both are committed, so no absolute
 path may appear in them — diagnostics are scrubbed before they are written.
 
+**A count of gems is not a count of code.** The corpus is the dependency
+closure of the most downloaded gems, and that pulls in the whole `aws-sdk-*`
+family: 432 of 761 rows. Those are machine-generated from one template, so they
+share one construct and fail identically — 426 of them on `define_method`'s
+second argument alone. Read the corpus both ways:
+
+| | Whole corpus | Excluding `aws-*` |
+|---|---|---|
+| gems | 761 | 329 |
+| compiles | 160 | 156 |
+| lowering-gap | 567 | 140 |
+
+The second column is the better signal for the language; the first is the
+better signal for "will my Gemfile work", since a dependency that fails 432
+times still fails.
+
 The useful view is the clustering, not the total. Gaps concentrate into a few
 constructs, and one fix moves every gem behind it:
 

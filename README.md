@@ -320,9 +320,13 @@ This measures something the gem table above does not. A gem can be pure Ruby,
 resolve correctly, and still use a construct Zeo cannot lower. `gem-probe`
 runs the front end, so `compiles` means the compiler succeeded.
 
-Of the 93 gems in the corpus today, **43 compile**. The failures concentrate:
-`autoload` shadowing accounts for 11, and five constructs cover most of the
-rest, so a single fix moves many gems at once. Read
+The corpus is the dependency closure of the 200 most downloaded gems on
+rubygems.org — 761 of them. **160 compile.** Excluding the `aws-sdk-*` family,
+which is 432 machine-generated gems sharing one template and one failure,
+**156 of 329 compile**.
+
+Failures concentrate hard: three constructs account for 84% of them, so a
+single fix moves many gems at once. Read
 [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for what a
 `compiles` row does and does not claim, and
 [Does it support Rails?](#does-it-support-rails) for that closure in
