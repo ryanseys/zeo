@@ -133,11 +133,28 @@ pub fn emit_super(
             .find(|&&s| cx.compiler.scope(s).name == mname)
             .copied()
     };
+    // The two shapes above are the anticipated ones; a gem can arrive in a
+    // third. The scope does exist -- only which pool holds it is in question --
+    // so widen the search rather than treat a miss as unrecoverable.
+    //
+    // A `class << self` body that also holds a CONSTANT registers its `def`s
+    // against a singleton SURROGATE class (see `Scope::lexical_home`), and it
+    // is the surrogate that arrives here as `defining_class` -- while the
+    // scope itself belongs to the class the surrogate was written in. faker's
+    // `Faker::Base` is exactly that: `NOT_GIVEN = Object.new` beside a
+    // `method_missing` whose body calls bare `super`.
     let current_sid = if extend_shape {
         scope_of(&cx.compiler.class(defining_class).own_methods)
     } else {
         scope_of(&own_pool(cx.compiler, defining_class))
-    };
+    }
+    .or_else(|| scope_of(&cx.compiler.class(defining_class).own_class_methods))
+    .or_else(|| scope_of(&cx.compiler.class(defining_class).own_methods))
+    .or_else(|| {
+        let host = cx.compiler.class(defining_class).lexical_parent?;
+        scope_of(&cx.compiler.class(host).own_class_methods)
+            .or_else(|| scope_of(&cx.compiler.class(host).own_methods))
+    });
     let Some(current_sid) = current_sid else {
         // The current scope missing from the expected pool is an internal
         // inconsistency, but only a BARE `super` actually needs it (its

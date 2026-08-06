@@ -1986,6 +1986,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+ "unicode-ident",
  "zeo-abi",
  "zeo-dsl",
 ]

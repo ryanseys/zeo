@@ -2071,7 +2071,23 @@ fn civar_site(
     // Upper-cased only to satisfy `non_upper_case_globals` -- the emission must
     // stay warning-free. Two names differing solely in case (`@a` and `@A` are
     // distinct ivars) cannot collide: every site gets its own block.
-    let site = quote::format_ident!("__CIV_{}_{}", class.0, ivar.to_uppercase());
+    //
+    // Anything that is not alphanumeric becomes `_`, because the name arriving
+    // here has already been through `safe_ident`: a keyword-named ivar (`@type`,
+    // seahorse) comes in as the raw identifier `r#type`, and upper-casing that
+    // gave `R#TYPE`, which is not an identifier at all -- `format_ident!`
+    // panicked on it rather than reporting anything.
+    let key: String = ivar
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let site = quote::format_ident!("__CIV_{}_{}", class.0, key);
     let id = class.0;
     let inner = body(&site);
     quote! {

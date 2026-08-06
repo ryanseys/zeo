@@ -53,6 +53,7 @@ datatest-stable = "0.3"
 
 # Codegen: Rust emitted as TokenStreams, formatted for humans.
 proc-macro2 = "1"
+unicode-ident = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing"] }
 prettyplease = "0.2"

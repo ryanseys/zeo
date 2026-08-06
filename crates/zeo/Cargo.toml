@@ -21,6 +21,7 @@ include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
 zeo-abi.workspace = true
 ruby-prism.workspace = true
 proc-macro2.workspace = true
+unicode-ident.workspace = true
 quote.workspace = true
 syn.workspace = true
 prettyplease.workspace = true

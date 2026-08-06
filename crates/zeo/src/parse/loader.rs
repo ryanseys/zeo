@@ -526,6 +526,33 @@ impl Loader {
                     combined.extend(spliced);
                 }
             }
+            // Eager `autoload` (at any structural nesting): every `autoload :C,
+            // path` names a file that PROVIDES `C`, so each is spliced like a
+            // `require` and the call itself lowers to a no-op (see
+            // `lower::autoload_feature`). This is the compile-time stand-in for
+            // CRuby's lazy first-access trigger; the divergence is that the
+            // file loads here rather than at first access, and even if `C` is
+            // never referenced.
+            //
+            // At the position of the statement holding the autoload, for the
+            // same reason a nested require is: splicing the whole file's
+            // autoloads at the END ran the target's BODY after the statements
+            // that use it, so `autoload :Widget, ...` followed by
+            // `Widget::NAME` raised NameError while the module's constants were
+            // still unwritten. Method bodies survived that, which is why only
+            // constant and other executed-body reads showed it.
+            //
+            // Deduped through the shared `required` table, so two constants
+            // autoloaded from one file splice it once.
+            let mut autoloads = Vec::new();
+            collect_autoloads(&n, &mut autoloads);
+            for call in &autoloads {
+                let feature = crate::lower::autoload_feature(call)?;
+                let spliced =
+                    self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
+                combined.extend(spliced);
+            }
+
             combined.push(id);
             own.push(id);
         }
@@ -533,28 +560,6 @@ impl Loader {
             rename::isolate_file_locals(hir, &own, idx);
         }
         drop(frame);
-
-        // Eager `autoload` (any structural nesting): every `autoload :C, path`
-        // names a file that PROVIDES `C`; splice each so `C` is defined, like a
-        // `require`. The autoload CALL itself lowers to a no-op (see
-        // `parse::autoload_feature`). This is the compile-time stand-in for
-        // CRuby's lazy first-access trigger -- documented divergences: the
-        // file loads relative to THIS file's position (not at first constant
-        // access), and even if `C` is never referenced. `SourceFileFrame` is
-        // still this file (the splice guard outlives this call), so the
-        // `File.expand_path("...", __dir__)` form resolves against the right
-        // directory. Deduped through the shared `required` table, so two
-        // constants autoloaded from one file splice it once.
-        let mut autoloads = Vec::new();
-        for n in body.iter() {
-            collect_autoloads(&n, &mut autoloads);
-        }
-        for call in &autoloads {
-            let feature = crate::lower::autoload_feature(call)?;
-            let spliced =
-                self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
-            combined.extend(spliced);
-        }
 
         // `Dir.glob("#{__dir__}/smtp/auth_*.rb") { |r| require_relative r }` --
         // net/smtp's authenticators, rubygems' plugins. The pattern is a

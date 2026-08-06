@@ -1518,12 +1518,10 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
 
         // `define_method(:literal) { block }` -- desugars to a plain
         // `DefMethod`, identical treatment to `def`, mirroring zeo's
-        // `walk_scope`. Only reachable here with a literal symbol name and a
-        // block; anything else (computed name, no block) falls through to
-        // the generic `Call` case below and is a compile-time rejection --
-        // zeo has no runtime "define a method on any class from
-        // arbitrary code" path, only the two forms zeo itself supports
-        // plus the literal-and-desugared one.
+        // `walk_scope`. Every other shape -- a computed name, or a body passed
+        // as a value rather than written as a block -- falls through to the
+        // generic `Call` below and is served at run time by
+        // `Module#define_method`.
         if name == "define_method"
             && receiver.is_none()
             && let (Some(args), Some(block_node)) = (call.arguments(), call.block())
@@ -1574,28 +1572,33 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         is_def: false,
                     }));
                 }
-                let block = block_node
-                    .as_block_node()
-                    .ok_or("define_method's second argument must be a block")?;
-                let params = match block.parameters() {
-                    None => Params::default(),
-                    Some(p) => {
-                        let bp = p
-                            .as_block_parameters_node()
-                            .ok_or("unsupported block parameter form")?;
-                        lower_params(result, hir, bp.parameters())?
-                    }
-                };
-                let body = lower_body(result, hir, block.body())?;
-                return Ok(hir.push(HirNode::DefMethod {
-                    name: method_name,
-                    params,
-                    body,
-                    is_class_method: false,
-                    visibility: Visibility::Public,
-                    // An explicit `define_method` call, not a `def`.
-                    is_def: false,
-                }));
+                // `define_method(:name, &proc_expr)` -- the body is a value the
+                // program computes, so there is no source to desugar into a
+                // `def`. Fall through to the ordinary call, which reaches
+                // `Module#define_method` in the runtime; that row installs a
+                // Proc, a Method or an UnboundMethod body and exists for
+                // exactly the shapes this desugar cannot take.
+                if let Some(block) = block_node.as_block_node() {
+                    let params = match block.parameters() {
+                        None => Params::default(),
+                        Some(p) => {
+                            let bp = p
+                                .as_block_parameters_node()
+                                .ok_or("unsupported block parameter form")?;
+                            lower_params(result, hir, bp.parameters())?
+                        }
+                    };
+                    let body = lower_body(result, hir, block.body())?;
+                    return Ok(hir.push(HirNode::DefMethod {
+                        name: method_name,
+                        params,
+                        body,
+                        is_class_method: false,
+                        visibility: Visibility::Public,
+                        // An explicit `define_method` call, not a `def`.
+                        is_def: false,
+                    }));
+                }
             }
         }
 
@@ -2636,15 +2639,57 @@ pub fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
                 .into(),
         );
     }
-    if let Some(lit) = args[1].as_string_node() {
-        return Ok(String::from_utf8_lossy(lit.unescaped()).into_owned());
-    }
-    if let Some(feature) = expand_path_dir_feature(&args[1])? {
+    if let Some(feature) = compile_time_feature(&args[1])? {
         return Ok(feature);
     }
     Err(
-        "`autoload` with a non-literal feature isn't supported (zeo limitation) -- the target must resolve at compile time: a string literal, or `File.expand_path(\"...\", __dir__)`".to_string().into(),
+        "`autoload` with a non-literal feature isn't supported (zeo limitation) -- the target must resolve at compile time: a string literal, `\"#{__dir__}/...\"`, or `File.expand_path(\"...\", __dir__)`".to_string().into(),
     )
+}
+
+/// An autoload target's feature text, when every piece is known at compile
+/// time. Three forms, in the order gems use them: a plain string literal, an
+/// interpolation whose only computed part is `__dir__`, and
+/// `File.expand_path("<literal>", __dir__)`. `None` means the target is
+/// genuinely dynamic.
+fn compile_time_feature(node: &Node<'_>) -> PResult<Option<String>> {
+    if let Some(lit) = node.as_string_node() {
+        return Ok(Some(String::from_utf8_lossy(lit.unescaped()).into_owned()));
+    }
+    if let Some(feature) = interpolated_dir_feature(node)? {
+        return Ok(Some(feature));
+    }
+    expand_path_dir_feature(node)
+}
+
+/// `"#{__dir__}/puma/const"` -- how puma, rack and sidekiq name a sibling
+/// file. Every part must be a literal or `__dir__`; anything else makes the
+/// whole target dynamic.
+fn interpolated_dir_feature(node: &Node<'_>) -> PResult<Option<String>> {
+    let Some(interp) = node.as_interpolated_string_node() else {
+        return Ok(None);
+    };
+    let mut out = String::new();
+    for part in interp.parts().iter() {
+        if let Some(s) = part.as_string_node() {
+            out.push_str(&String::from_utf8_lossy(s.unescaped()));
+            continue;
+        }
+        let is_dir = part
+            .as_embedded_statements_node()
+            .and_then(|e| e.statements())
+            .map(|s| s.body().iter().collect::<Vec<_>>())
+            .and_then(|stmts| match stmts.as_slice() {
+                [only] => only.as_call_node(),
+                _ => None,
+            })
+            .is_some_and(|c| c.receiver().is_none() && c.name().as_slice() == b"__dir__");
+        if !is_dir {
+            return Ok(None);
+        }
+        out.push_str(&current_dir_str()?);
+    }
+    Ok(Some(out))
 }
 
 /// Recognizes `File.expand_path("<literal>", __dir__)` and computes the

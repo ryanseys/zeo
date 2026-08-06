@@ -123,10 +123,14 @@ const OPERATOR_METHOD_NAMES: &[(&str, &str)] = &[
 ];
 
 pub fn safe_ident(name: &str) -> Ident {
+    // A Rust path keyword has no raw form, so it needs a spelling of its own.
+    // These were assumed unreachable -- `self` is a Ruby keyword too -- but
+    // `def self(token)` is legal Ruby and defines a method named `self`
+    // (oracle-verified: `instance_methods(false)` answers `[:self]`). The
+    // `parser` gem ships one, and the assumption reached its users as a
+    // compiler panic.
     if UNESCAPABLE.contains(&name) {
-        panic!(
-            "internal error: `{name}` is a Rust path keyword with no raw-identifier form and isn't a legal Ruby identifier either, so safe_ident should never receive it"
-        );
+        return Ident::new(&format!("__pk_{name}"), Span::call_site());
     }
     // Ruby's `_` is an ordinary (readable) local; Rust's `_` is not a named
     // binding at all (`let mut _` won't parse, macro `$x:ident` matchers
@@ -150,10 +154,46 @@ pub fn safe_ident(name: &str) -> Ident {
 /// A Rust keyword can only be spelled as an identifier in its raw form.
 fn keyword_safe(name: &str) -> Ident {
     if RUST_KEYWORDS.contains(&name) {
-        Ident::new_raw(name, Span::call_site())
-    } else {
-        Ident::new(name, Span::call_site())
+        return Ident::new_raw(name, Span::call_site());
     }
+    match transliterate(name) {
+        Some(safe) => Ident::new(&safe, Span::call_site()),
+        None => Ident::new(name, Span::call_site()),
+    }
+}
+
+/// A spelling of `name` that Rust accepts as an identifier, or `None` when it
+/// already is one.
+///
+/// Ruby's identifier rule is far wider than Rust's: every byte above ASCII
+/// counts, so `@height´` is a legal ivar (fastimage ships one), as is any
+/// Latin-1 punctuation in a method name. Rust wants XID characters, and
+/// `Ident::new` PANICS on anything else -- which reached the user as an
+/// internal-error backtrace instead of a diagnostic.
+///
+/// Each rejected character becomes its `_uXXXX_` code point, so a name stays
+/// recognizable and two names cannot collide: the encoding is reversible.
+fn transliterate(name: &str) -> Option<String> {
+    let ok = |c: char, first: bool| {
+        c == '_'
+            || if first {
+                unicode_ident::is_xid_start(c)
+            } else {
+                unicode_ident::is_xid_continue(c)
+            }
+    };
+    if name.chars().enumerate().all(|(i, c)| ok(c, i == 0)) {
+        return None;
+    }
+    let mut out = String::with_capacity(name.len());
+    for (i, c) in name.chars().enumerate() {
+        if ok(c, i == 0 && out.is_empty()) {
+            out.push(c);
+        } else {
+            out.push_str(&format!("_u{:04X}_", c as u32));
+        }
+    }
+    Some(out)
 }
 
 /// The Rust identifier for a CLASS method (`def self.x`), as distinct from
