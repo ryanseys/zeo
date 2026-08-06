@@ -17,10 +17,23 @@
 //! Probing an unpacked tree needs no network and is deterministic, so a ledger
 //! row reproduces from its recorded version alone.
 //!
-//! A sweep survives a gem that panics the compiler: `parser` did, and took
-//! every verdict already gathered down with it. A panic is recorded as its own
-//! outcome rather than folded into `lowering-gap`, because a gap is a limit
-//! zeo reported and a panic is a bug it did not.
+//! `probe` runs the `zeo` BINARY, and the sweep runs `--jobs` of them at once
+//! against a shared work queue while a single thread ahead of them does the
+//! resolving and fetching. Both halves of that are load-bearing. One compile is
+//! seconds to minutes and there are hundreds, so a sequential sweep is hours --
+//! long enough that the last two were abandoned partway, which is how the
+//! ledger came to carry rows measured against a compiler two fixes old. And a
+//! subprocess contains every way a compile can die, not just the unwinding
+//! panic `parser` raised: an abort, a stack overflow and a run that never
+//! finishes all end the same way, the last of them via `--timeout`.
+//!
+//! A panic and a timeout are each recorded as their own outcome rather than
+//! folded into `lowering-gap`: a gap is a limit zeo reported, a panic is a bug
+//! it did not, and a timeout is no verdict at all.
+//!
+//! Only the recorder thread inserts and writes, so the ledger on disk stays the
+//! truth so far and an interrupted sweep keeps its work. Verdicts arrive out of
+//! order; the ledger does not, because it is a `BTreeMap` written whole.
 //!
 //! A gem is unpacked to `vendor/gems/<name>/`, named for the gem rather than
 //! `<name>-<version>`, and its gemspec is REPLACED with a stub. Both are
@@ -34,8 +47,14 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 const REGISTRY: &str = "https://rubygems.org";
+
+/// Long enough that a rails-scale require graph finishes -- those take minutes
+/// in the front end alone -- and short enough that a gem which will never
+/// finish cannot hold a sweep open.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// What a probe concluded. The first two are about zeo; the rest say the
 /// question could not be put.
@@ -57,6 +76,11 @@ enum Outcome {
     /// The compiler panicked. Distinct from a lowering gap on purpose: a gap
     /// is a known limit reported through the error path, a panic is a bug.
     CompilerPanic(String),
+    /// The compiler was still running after `--timeout` seconds and was killed.
+    /// Its own outcome, never a lowering gap: a stall is the absence of a
+    /// verdict, and recording it as one would put a diagnosis in the ledger
+    /// that zeo never made.
+    Timeout,
     FetchFailed(String),
 }
 
@@ -70,6 +94,7 @@ impl Outcome {
             Outcome::NoLibDir => "no-lib-dir",
             Outcome::NoEntryPoint => "no-entry-point",
             Outcome::CompilerPanic(_) => "compiler-panic",
+            Outcome::Timeout => "timeout",
             Outcome::FetchFailed(_) => "fetch-failed",
         }
     }
@@ -90,6 +115,7 @@ impl Outcome {
             "native-extension" => Outcome::NativeExtension,
             "no-lib-dir" => Outcome::NoLibDir,
             "no-entry-point" => Outcome::NoEntryPoint,
+            "timeout" => Outcome::Timeout,
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
@@ -311,7 +337,27 @@ fn isolate(root: &Path, name: &str, deps: &[String]) -> Result<PathBuf, String> 
     Ok(view)
 }
 
-fn probe(root: &Path, name: &str, dir: &Path, deps: &[String]) -> Outcome {
+/// Compiles the gem's entry point by running the `zeo` BINARY, not the library.
+///
+/// A sweep must survive a gem that kills the compiler, and a subprocess is the
+/// only containment that covers every way it can die. `catch_unwind` caught the
+/// unwinding panic `parser` raised, but it cannot catch an abort, a stack
+/// overflow, or a compile that simply never finishes -- and a run that never
+/// finishes is what stopped the last two sweeps partway and left the ledger
+/// carrying stale rows. The OS ends all four the same way, and `--timeout`
+/// bounds the last one.
+///
+/// The verdict is unchanged by the move: `--dump=rust` is the CLI spelling of
+/// `compile_to_rust_with`, and `message_of` already accepted either the plain
+/// `CompileError` text or the CLI's boxed rendering.
+fn probe(
+    root: &Path,
+    zeo: &Path,
+    name: &str,
+    dir: &Path,
+    deps: &[String],
+    timeout: Duration,
+) -> Outcome {
     if dir.join(".zeo-probe-native").exists() {
         return Outcome::NativeExtension;
     }
@@ -326,39 +372,52 @@ fn probe(root: &Path, name: &str, dir: &Path, deps: &[String]) -> Outcome {
         Ok(v) => v,
         Err(e) => return Outcome::FetchFailed(e),
     };
-    let opts = zeo::CompileOptions {
-        // The repo's own gems/ come too: a probed gem may require a stdlib
-        // feature, and answering that from zeo's bundled copy is what a real
-        // compile would do.
-        package_dirs: vec![view, root.join("gems")],
-        ..Default::default()
-    };
     let Some(feature) = entry_point(dir, name) else {
         return Outcome::NoEntryPoint;
     };
-    let src = format!("require {feature:?}\n");
 
-    // A sweep must survive a gem that panics the compiler. `parser` did
-    // exactly that, and the whole run died with it, losing every verdict
-    // already gathered. The panic message still reaches stderr; only the
-    // process-ending part is caught.
-    let compiled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        zeo::compile_to_rust_with(&src, &opts)
-    }));
-    match compiled {
-        Ok(Ok(_)) => Outcome::Compiles,
-        Ok(Err(e)) => classify(&String::from(e), root),
-        Err(payload) => {
-            let msg = payload
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| payload.downcast_ref::<&str>().copied())
-                .unwrap_or("compiler panicked");
-            Outcome::CompilerPanic(truncate(
-                &message_of(msg).replace(&format!("{}/", root.display()), ""),
-            ))
-        }
+    let mut cmd = std::process::Command::new(zeo);
+    cmd.arg("-e")
+        .arg(format!("require {feature:?}\n"))
+        // The repo's own gems/ come too: a probed gem may require a stdlib
+        // feature, and answering that from zeo's bundled copy is what a real
+        // compile would do. `-e` has no input path, so zeo adds no package dir
+        // of its own and the isolated view stays the whole world.
+        .arg("--gems")
+        .arg(&view)
+        .arg("--gems")
+        .arg(root.join("gems"))
+        .arg("--dump=rust");
+    match crate::exec::run_with_timeout(cmd, None, timeout) {
+        Err(e) => Outcome::FetchFailed(format!("running zeo: {e}")),
+        Ok(ex) if ex.timed_out => Outcome::Timeout,
+        // A successful compile still writes to stderr -- every builtin
+        // substitution warns there -- so the exit status is the verdict and
+        // stderr is only read once it is non-zero.
+        Ok(ex) if ex.success() => Outcome::Compiles,
+        Ok(ex) => classify_stderr(&ex.stderr, root),
     }
+}
+
+/// A failed `zeo` run's stderr, as an [`Outcome`].
+///
+/// A panic reaches stderr as `... panicked at <loc>:` with the message on the
+/// NEXT line, which no amount of reading the diagnostic text would reveal, so
+/// it is detected before `classify` gets a chance to call it a lowering gap.
+fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
+    let text = String::from_utf8_lossy(stderr);
+    if let Some(i) = text.lines().position(|l| l.contains("panicked at")) {
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let msg = lines
+            .get(i + 1)
+            .filter(|l| !l.is_empty())
+            .copied()
+            .unwrap_or(lines[i]);
+        return Outcome::CompilerPanic(truncate(
+            &message_of(msg).replace(&format!("{}/", root.display()), ""),
+        ));
+    }
+    classify(&text, root)
 }
 
 /// The compiler's message, as one line and free of local paths.
@@ -672,39 +731,30 @@ fn read_corpus(root: &Path) -> Vec<(String, Option<String>)> {
 
 // -------------------------------------------------------------------- run
 
-/// Probes `name`, fetching its runtime dependencies first unless `no_deps`.
-/// Probes one gem and writes the ledger immediately.
+/// A gem resolved and unpacked on disk, ready for the compile step.
+struct Ready {
+    name: String,
+    version: String,
+    dir: PathBuf,
+    deps: Vec<String>,
+}
+
+/// Resolves `name` to a version and unpacks it and its runtime dependencies.
 ///
-/// Writing once at the end throws away everything when a long sweep is
-/// interrupted -- and a sweep over the whole registry is measured in hours, so
-/// interruption is the normal case, not the exceptional one. Rewriting the
-/// whole file per gem is cheap next to fetching and compiling one, and it means
-/// the ledger on disk is always the truth so far.
-fn probe_one(
-    root: &Path,
-    name: &str,
-    want: Option<&str>,
-    no_deps: bool,
-    rows: &mut BTreeMap<String, Row>,
-) {
-    let version = match want
+/// This is the half that touches the network and writes to the shared
+/// `vendor/gems` cache, so it stays on one thread. Two gems routinely share a
+/// dependency, and letting two workers unpack the same one into the same
+/// directory would corrupt it.
+///
+/// `Err` is a row that already knows its verdict and needs no compile.
+fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result<Ready, Row> {
+    let version = want
         .map(String::from)
         .map_or_else(|| latest_version(name), Ok)
-    {
-        Ok(v) => v,
-        Err(e) => {
-            println!("  {name}: fetch-failed ({e})");
-            rows.insert(
-                name.to_string(),
-                Row {
-                    version: want.unwrap_or("-").to_string(),
-                    outcome: Outcome::FetchFailed(e),
-                },
-            );
-            let _ = write_ledger(root, rows);
-            return;
-        }
-    };
+        .map_err(|e| Row {
+            version: want.unwrap_or("-").to_string(),
+            outcome: Outcome::FetchFailed(e),
+        })?;
 
     let mut deps = Vec::new();
     if !no_deps && let Ok(declared) = runtime_deps(name, &version) {
@@ -717,24 +767,32 @@ fn probe_one(
         }
     }
 
-    let outcome = match fetch(root, name, &version) {
-        Ok(dir) => probe(root, name, &dir, &deps),
-        Err(e) => Outcome::FetchFailed(e),
-    };
-    let detail = outcome.detail();
+    match fetch(root, name, &version) {
+        Ok(dir) => Ok(Ready {
+            name: name.to_string(),
+            version,
+            dir,
+            deps,
+        }),
+        Err(e) => Err(Row {
+            version,
+            outcome: Outcome::FetchFailed(e),
+        }),
+    }
+}
+
+fn report(name: &str, row: &Row) {
+    let detail = row.outcome.detail();
     println!(
-        "  {name} {version}: {}{}",
-        outcome.tag(),
+        "  {name} {}: {}{}",
+        row.version,
+        row.outcome.tag(),
         if detail.is_empty() {
             String::new()
         } else {
             format!(" -- {detail}")
         }
     );
-    rows.insert(name.to_string(), Row { version, outcome });
-    if let Err(e) = write_ledger(root, rows) {
-        eprintln!("gem-probe: writing the ledger: {e}");
-    }
 }
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
@@ -745,6 +803,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut matching: Option<String> = None;
     let mut failing = false;
     let mut positional: Vec<String> = Vec::new();
+    let mut jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut timeout = DEFAULT_TIMEOUT;
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -764,6 +824,20 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 }
             },
             "--failing" => failing = true,
+            "--jobs" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) if n >= 1 => jobs = n,
+                _ => {
+                    eprintln!("gem-probe: --jobs needs a number of 1 or more");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--timeout" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) if n >= 1 => timeout = Duration::from_secs(n),
+                _ => {
+                    eprintln!("gem-probe: --timeout needs a number of seconds, 1 or more");
+                    return ExitCode::FAILURE;
+                }
+            },
             "--matching" => match it.next() {
                 Some(v) => matching = Some(v.clone()),
                 None => {
@@ -882,14 +956,101 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // The classifier is the `zeo` BINARY (see `probe`). Build it once up front
+    // so the workers below don't race each other into cargo.
+    eprintln!("gem-probe: building zeo...");
+    let built = std::process::Command::new("cargo")
+        .args(["build", "--quiet", "-p", "zeo"])
+        .current_dir(root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !built {
+        eprintln!("gem-probe: `cargo build -p zeo` failed");
+        return ExitCode::FAILURE;
+    }
+    let zeo = root.join("target").join("debug").join("zeo");
+
     let mut rows = before.clone();
     if skipped > 0 {
         println!("{skipped} gem(s) already recorded; --refresh re-probes them");
     }
-    println!("probing {} gem(s):", names.len());
-    for (name, want) in &names {
-        probe_one(root, name, want.as_deref(), no_deps, &mut rows);
-    }
+    let total = names.len();
+    println!("probing {total} gem(s) with {jobs} job(s):");
+
+    // Three roles, so the network and the compiles overlap without ever
+    // sharing a writer:
+    //
+    //   prep thread  -- resolve + fetch, sequentially (see `prepare`)
+    //   N workers    -- one `zeo` subprocess each, the long pole
+    //   this thread  -- receives verdicts, inserts, writes the ledger
+    //
+    // Keeping every `insert` and `write_ledger` here preserves the invariant a
+    // sequential sweep had: the ledger on disk is always the truth so far, so
+    // an interrupted run keeps its work. Results arrive out of order, but
+    // `rows` is a `BTreeMap` that `write_ledger` emits whole, so the file stays
+    // byte-identical to what a sequential run would have produced.
+    let (work_tx, work_rx) = std::sync::mpsc::channel::<Ready>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(String, Row)>();
+    let work_rx = std::sync::Mutex::new(work_rx);
+
+    std::thread::scope(|scope| {
+        let done_for_prep = done_tx.clone();
+        scope.spawn(move || {
+            for (name, want) in &names {
+                match prepare(root, name, want.as_deref(), no_deps) {
+                    Ok(ready) => {
+                        if work_tx.send(ready).is_err() {
+                            break;
+                        }
+                    }
+                    // Nothing to compile -- straight to the recorder.
+                    Err(row) => {
+                        if done_for_prep.send((name.clone(), row)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        for _ in 0..jobs {
+            let done = done_tx.clone();
+            let work_rx = &work_rx;
+            let zeo = &zeo;
+            scope.spawn(move || {
+                loop {
+                    // The lock is released before the compile, so the workers
+                    // only serialize on taking the next item.
+                    let Ok(ready) = work_rx.lock().unwrap().recv() else {
+                        break;
+                    };
+                    let outcome = probe(root, zeo, &ready.name, &ready.dir, &ready.deps, timeout);
+                    let row = Row {
+                        version: ready.version,
+                        outcome,
+                    };
+                    if done.send((ready.name, row)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        // Every live sender is now owned by a spawned thread; this one has to
+        // go or the drain below never sees the channel close.
+        drop(done_tx);
+
+        let mut seen = 0usize;
+        while let Ok((name, row)) = done_rx.recv() {
+            seen += 1;
+            print!("[{seen}/{total}]");
+            report(&name, &row);
+            rows.insert(name, row);
+            if let Err(e) = write_ledger(root, &rows) {
+                eprintln!("gem-probe: writing the ledger: {e}");
+            }
+        }
+    });
 
     if let Err(e) = write_ledger(root, &rows) {
         eprintln!("gem-probe: writing the ledger: {e}");
@@ -1041,6 +1202,45 @@ mod tests {
             classify("define_method's second argument must be a block", root),
             Outcome::LoweringGap(_)
         ));
+    }
+
+    /// A panic reaches stderr with its message on the line AFTER `panicked at`,
+    /// so reading the first line alone would file a compiler bug as a gap --
+    /// exactly the distinction the ledger exists to keep.
+    #[test]
+    fn a_panic_on_stderr_is_not_a_lowering_gap() {
+        let root = Path::new("/tmp/none");
+        let stderr = b"thread 'main' panicked at crates/zeo/src/lower/mod.rs:12:5:\n\
+             value payload root has a `new` constructor\n\
+             note: run with `RUST_BACKTRACE=1` ...\n";
+        match classify_stderr(stderr, root) {
+            Outcome::CompilerPanic(msg) => {
+                assert_eq!(msg, "value payload root has a `new` constructor");
+            }
+            other => panic!("expected a panic, got {other:?}"),
+        }
+    }
+
+    /// Ordinary rejections still reach `classify` unchanged -- the panic check
+    /// must not swallow the common path.
+    #[test]
+    fn a_rejection_on_stderr_still_classifies_normally() {
+        let root = Path::new("/tmp/none");
+        assert_eq!(
+            classify_stderr(b"zeo: cannot load such file -- rack/test\n", root),
+            Outcome::MissingDependency("rack/test".into())
+        );
+    }
+
+    /// A stall carries no diagnosis, so it must not borrow one: `timeout` has
+    /// to survive a ledger round trip as itself rather than decaying into the
+    /// `LoweringGap` catch-all `from_ledger` uses for unknown tags.
+    #[test]
+    fn a_timeout_round_trips_as_itself() {
+        assert_eq!(
+            Outcome::from_ledger(Outcome::Timeout.tag(), Outcome::Timeout.detail()),
+            Outcome::Timeout
+        );
     }
 
     fn lib_with(root: &Path, name: &str, files: &[&str]) -> PathBuf {

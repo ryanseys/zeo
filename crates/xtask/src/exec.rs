@@ -1,8 +1,9 @@
 //! Child-process execution with a wall-clock timeout and stderr capture,
 //! dependency-free: a reader thread drains stderr (so a chatty child never
 //! deadlocks on a full pipe) while the parent polls `try_wait`. stdout is
-//! discarded -- the sole caller (`stdlib-status`) judges compiles by exit
-//! status + stderr.
+//! discarded -- the callers (`stdlib-status`, `gem-probe`) judge compiles by
+//! exit status + stderr, and `--dump=rust` writes the Rust they don't want to
+//! stdout.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
