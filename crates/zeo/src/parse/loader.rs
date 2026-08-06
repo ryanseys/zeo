@@ -1,71 +1,45 @@
-//! Compile-time `require`/`require_relative`/`load` resolution: an
-//! HIR-level graft, not text surgery. When the FILE-LEVEL
-//! statement loop below hits one of the three call shapes (receiver-less,
-//! single string-literal argument, direct top-level statement position --
-//! anywhere else, `lower_node`'s unconditional rejection fires instead),
-//! the target file is resolved, parsed, and lowered into the SAME `Hir`
-//! arena, its statements spliced into the requiring file's statement list
-//! at the call's position, in document order. Dedup and provenance are
-//! per-`Hir` (`Hir::loaded_files`), and each spliced file's top-level locals
-//! are renamed for real per-file isolation (see `parse::rename`).
+//! Compile-time `require`/`require_relative`/`load` resolution: an HIR-level
+//! graft, not text surgery. A recognised call (receiver-less, one string
+//! literal, top-level statement position) has its target parsed and lowered
+//! into the SAME `Hir` arena and spliced in at the call's position. Dedup and
+//! provenance are per-`Hir`; each spliced file's top-level locals are renamed
+//! for per-file isolation (`parse::rename`).
 //!
-//! Faithfulness contract (each verified against CRuby source and/or
-//! empirically -- see the plan's Part 12 addendum):
-//! - `require` dedup is by canonicalized (symlink-resolved) path, mirroring
-//!   CRuby's realpath layer: every spelling of one file loads once.
-//! - The dedup entry is inserted BEFORE the file is lowered -- CRuby's
-//!   `loading_table` behavior -- so a circular require splices nothing the
-//!   second time and the statement order comes out exactly like Ruby's
-//!   execution order (A-start, all of B, A-rest).
-//! - `require` appends `.rb` unless already present; a plain feature is
-//!   searched against the ordered `-I` roots as `<root>/<feature>.rb`,
-//!   first hit wins (CRuby's `-I`-before-everything ordering; package
-//!   roots are appended AFTER these).
-//! - `require_relative` resolves against the requiring FILE's directory
-//!   (never cwd); with no input-path context the error is CRuby's own
-//!   "cannot infer basepath".
-//! - `load` never appends `.rb` and never dedups: every `load` statement
-//!   re-splices the file fresh (top-level side effects re-run, defs
-//!   re-register under the ordinary reopening rules, and the per-INSTANCE
-//!   local rename gives each execution the fresh local scope real Ruby
-//!   gives it). A `load` cycle -- infinite recursion at runtime in real
-//!   Ruby -- is a loud compile error here instead.
-//! - A plain `require "feature"` zeo can't resolve is NOT a compile error: a
-//!   resolvability pre-scan records it (`Hir::unresolvable_requires`) and its
-//!   CALL lowers to a runtime `Kernel#require` (raising CRuby's `LoadError`,
-//!   `cannot load such file -- <name>`). So a genuinely-missing feature crashes
-//!   at its require site and the optional-dependency idiom (`begin; require
-//!   "x"; rescue LoadError`) is caught at RUNTIME -- exactly CRuby's semantics
-//!   (zeo has a runtime loader that raises; it does not resolve `require` names
-//!   at compile time only). A missing `require_relative` DOES stay a compile
-//!   error: it names a project-local file that must exist, never an optional
-//!   dependency.
-//! - A plain `require` only a METHOD BODY names is NOT loaded. CRuby loads that
-//!   file when the method runs; zeo has no runtime loader, so loading it early
-//!   put it ahead of the requires the file itself makes at top level, and drew
-//!   every lazy dependency into the binary. The call becomes a runtime
-//!   `Kernel#require` instead, and the gem report discloses the omission
-//!   (`gem_report::DEFERRED_KIND`). A `require_relative` is exempt: it names a
-//!   file of this same program, not a library boundary.
+//! Faithfulness contract, each verified against CRuby:
+//! - `require` dedup is by canonicalized path, mirroring CRuby's realpath
+//!   layer: every spelling of one file loads once.
+//! - The dedup entry is inserted BEFORE the file is lowered, matching CRuby's
+//!   `loading_table`, so a circular require splices nothing the second time
+//!   and statement order matches Ruby's execution order.
+//! - `require` appends `.rb` unless present and searches the ordered `-I`
+//!   roots first, then package roots; first hit wins.
+//! - `require_relative` resolves against the requiring FILE's directory, never
+//!   cwd; with no input-path context the error is CRuby's "cannot infer
+//!   basepath".
+//! - `load` never appends `.rb` and never dedups: each statement re-splices
+//!   the file, and the per-instance local rename gives each execution the
+//!   fresh scope Ruby gives it. A `load` cycle is a compile error here rather
+//!   than Ruby's runtime infinite recursion.
+//! - An unresolvable plain `require` is NOT a compile error. It lowers to a
+//!   runtime `Kernel#require`, so a missing feature raises `LoadError` at its
+//!   require site and `begin; require "x"; rescue LoadError` still works. A
+//!   missing `require_relative` IS a compile error: it names a project-local
+//!   file, never an optional dependency.
+//! - A plain `require` named only in a METHOD BODY is not spliced. Loading it
+//!   early would order it ahead of the file's own top-level requires and pull
+//!   every lazy dependency into the binary, so it becomes a runtime
+//!   `Kernel#require` and the gem report discloses the omission.
 //!
-//! GEMS sit on top of that: a `.gemspec`-manifested directory
-//! contributing one or more search roots (`require_paths`, default
-//! `["lib"]` -- read from a real gemspec, see `Gem`'s docs),
-//! searched AFTER every `-I` root, with a feature provided by more than one
-//! gem a loud error and first-NAME-wins shadowing across gem dirs. `load`
-//! deliberately does NOT search gem roots (its compile-time uses are
-//! project-local; a gem's own files arrive via `require`).
+//! Gems contribute additional search roots from a `.gemspec`
+//! (`require_paths`), searched after every `-I` root. A feature provided by
+//! more than one gem is an error. `load` does not search gem roots: its
+//! compile-time uses are project-local.
 //!
-//! Documented divergences: a `require` that must SPLICE a file is still
-//! statement-position-only, so its return value is unobservable there (a
-//! `require` of a natively-provided feature does return real Ruby's
-//! true/false from any position -- see `parse::mod`); `load`'s
-//! plain relative names resolve against the roots then the requiring
-//! file's directory (real Ruby: `$LOAD_PATH` then cwd -- cwd is
-//! meaningless at compile time); `load`'s `wrap` parameter, `.so`/native
-//! features, and `~`/`./`-prefixed `require` forms are clean rejections;
-//! per-file magic comments (`frozen_string_literal`) and `__END__`/`DATA`
-//! are pre-existing unsupported territory, unchanged by splicing.
+//! Divergences: a spliced `require`'s return value is unobservable, since it
+//! is statement-position-only; `load`'s relative names resolve against the
+//! roots then the requiring file's directory, cwd being meaningless at compile
+//! time; `load`'s `wrap` parameter, native features, and `~`/`./`-prefixed
+//! `require` are clean rejections.
 
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
@@ -246,8 +220,8 @@ pub(super) fn lower_main_file(
             0,
         )
         .and_then(|main_stmts| {
-            // Demand-driven: the shim's ~100 lines of module code ride along
-            // only when something can actually reach RbConfig. Splicing AFTER
+            // Demand-driven: the shim's module code rides along only when
+            // something can actually reach RbConfig. Splicing AFTER
             // the main lowering (but prepending the statements, so the shim
             // still executes first) is what lets the decision see every
             // spliced file; an explicit `require "rbconfig"` already spliced

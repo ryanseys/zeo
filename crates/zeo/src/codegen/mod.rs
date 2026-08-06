@@ -1034,10 +1034,9 @@ pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, crate::diagnosti
 }
 
 /// `TokenStream`'s own `Display` spacing, plus a line break after every `;`
-/// and every brace group: `rustc` degrades badly on a multi-megabyte single
-/// line (net/http's 43MB one-line main sat >10min in the parser; the same
-/// tokens line-broken compile in ~100s), and `TokenStream::to_string`
-/// emits exactly one line. Tokens are atomic -- a string literal is a single
+/// and every brace group. `rustc` degrades badly on a multi-megabyte single
+/// line -- a gem-scale main can sit in the parser for many minutes -- and
+/// `TokenStream::to_string` emits exactly one line. Tokens are atomic -- a string literal is a single
 /// token -- so a break BETWEEN tokens is always semantically neutral
 /// whitespace, never a meaning change.
 fn write_line_broken(ts: TokenStream, out: &mut String) {
@@ -1124,8 +1123,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // `compiler::BUILTIN_CLASSES`) never get a generated Rust struct/
     // `impl RubyObject`/`ClassRegistry` entry via `ruby_class!` at all -- a
     // module's methods only ever manifest indirectly, MATERIALIZED onto
-    // whatever includes/prepends/extends it (see the plan's Part 6 and
-    // `ruby_class!`'s docs), and a built-in type's runtime representation
+    // whatever includes/prepends/extends it (see `ruby_class!`'s docs), and
+    // a built-in type's runtime representation
     // already IS a `RubyValue` variant, needing no separate struct (see
     // `builtin_registrations` below for how it still gets a `ClassRegistry`
     // entry so `is_a?`/`kind_of?` resolve correctly against it -- its

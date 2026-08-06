@@ -8,7 +8,7 @@
 //! **The thread-pinned table.** `corosensei::Coroutine` is deliberately
 //! `!Send` (no sound stackful-coroutine library can prove a suspended
 //! stack's contents are Send), so a coroutine can never live inside
-//! `RubyValue` -- which must stay `Send + Sync` (Part 9's foundation).
+//! `RubyValue` -- which must stay `Send + Sync`.
 //! Instead, `RubyValue::Fiber` carries only an [`RFiber`] handle (id +
 //! owning thread + state flag, trivially Send+Sync), and the coroutine
 //! itself lives in this thread-local table on the OS thread that created

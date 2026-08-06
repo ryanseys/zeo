@@ -73,7 +73,11 @@ fn try_resolve() -> Result<ZeoHome, String> {
 
 /// The pure resolution function -- every input injected so precedence is
 /// testable without faking `current_exe` or the environment.
-fn resolve(exe: Option<&Path>, env_home: Option<&OsStr>, dev_root: &Path) -> Result<ZeoHome, String> {
+fn resolve(
+    exe: Option<&Path>,
+    env_home: Option<&OsStr>,
+    dev_root: &Path,
+) -> Result<ZeoHome, String> {
     // 1. Explicit override. A set-but-broken ZEO_HOME is a hard error, never
     //    a silent fall-through -- the user asked for THIS payload.
     if let Some(dir) = env_home {

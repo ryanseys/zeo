@@ -8,7 +8,7 @@
 //! genuine, distinguishable "never set" state (`None`) -- real Ruby raises
 //! `NameError` for this, not `nil`; see `codegen::expr`'s `ClassRef`/
 //! `ConstWrite`/`QualifiedConstRead` handling for where that raise is
-//! constructed. Process-wide-shared (Part 9 style), same reasoning as
+//! constructed. Process-wide-shared, for the same reason as
 //! `cvars`/the Symbol interner: two threads referencing the same top-level
 //! constant must see the same value.
 

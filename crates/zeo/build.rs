@@ -131,9 +131,9 @@ fn generate_class_surface(rt_src: &Path) -> String {
 /// Render `shims/rbconfig.rb.in` -> `$OUT_DIR/rbconfig.rb`, substituting the
 /// build TARGET's platform facts (mirroring how CRuby's `configure` bakes
 /// them). The naming logic deliberately duplicates `crates/zeo-rt/build.rs`
-/// (`ruby_platform` and friends): ~40 lines shared by value, because a path
-/// `include!` across crates would break in a packaged crate and a cargo edge
-/// is heavier than the duplication. Keep the two in sync.
+/// (`ruby_platform` and friends). A path `include!` across crates would break
+/// in a packaged crate, and a cargo edge is heavier than the duplication.
+/// Keep the two in sync.
 fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
     let template_path = manifest_dir.join("src/parse/shims/rbconfig.rb.in");
     println!("cargo:rerun-if-changed=src/parse/shims/rbconfig.rb.in");
@@ -176,7 +176,10 @@ fn target_os() -> String {
 /// Ruby names a few CPUs differently from Rust's `target_arch` (notably
 /// `aarch64` -> `arm64`); everything else passes through unchanged.
 fn ruby_arch() -> String {
-    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+    match std::env::var("CARGO_CFG_TARGET_ARCH")
+        .unwrap_or_default()
+        .as_str()
+    {
         "aarch64" => "arm64".to_string(),
         "x86" => "i686".to_string(),
         other => other.to_string(),
@@ -188,7 +191,10 @@ fn ruby_arch() -> String {
 fn ruby_os() -> String {
     match target_os().as_str() {
         "macos" | "ios" | "tvos" | "watchos" => format!("darwin{}", darwin_major()),
-        "linux" => match std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default().as_str() {
+        "linux" => match std::env::var("CARGO_CFG_TARGET_ENV")
+            .unwrap_or_default()
+            .as_str()
+        {
             "musl" => "linux-musl".to_string(),
             _ => "linux".to_string(),
         },

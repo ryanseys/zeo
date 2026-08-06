@@ -1,6 +1,6 @@
 //! `Thread`/`Mutex`/`Queue` -- Ruby's threading surface over REAL OS
 //! threads (8MiB stacks, one per `Thread.new`), truly parallel by default:
-//! per-object `Arc`/`parking_lot::Mutex` state (Part 9) carries memory
+//! per-object `Arc`/`parking_lot::Mutex` state carries memory
 //! safety, and per-builtin-op atomicity matches the granularity CRuby's
 //! GVL actually guarantees for its C-implemented methods. `ZEO_GVL=1`
 //! arms the opt-in serialized scheduling mode (see `gvl`). Asynchronous
@@ -8,8 +8,8 @@
 //! loop back-edges, method prologues, block exits, and every blocking
 //! primitive here.
 //!
-//! Error contract (verified against CRuby `thread.c`/`thread_sync.c`, see
-//! the plan's Part 11 addendum): an uncaught exception inside a Thread is
+//! Error contract, verified against CRuby `thread.c`/`thread_sync.c`: an
+//! uncaught exception inside a Thread is
 //! STORED and re-raised in whoever calls `#join`/`#value` (`thread.c:1195`)
 //! AND, separately, reported to stderr as the thread terminates unless
 //! `report_on_exception` is off for it -- a program can see both; Ruby

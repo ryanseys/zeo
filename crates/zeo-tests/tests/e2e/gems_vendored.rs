@@ -126,9 +126,9 @@ fn the_vendored_versions_agree_with_their_manifest_tags() {
 }
 
 /// One compile of the whole graph, shared by the tests below: `require
-/// "rubygems"` alone pulls ~700 files through parse, analyze and codegen, so
-/// paying for it once and asserting several things about the result is the
-/// difference between a slow suite and an unusable one.
+/// "rubygems"` alone pulls hundreds of files through parse, analyze and
+/// codegen, so the suite pays for it once and asserts several things about
+/// the one result.
 fn compiled_graph() -> &'static (String, String) {
     use std::sync::OnceLock;
     static ONCE: OnceLock<(String, String)> = OnceLock::new();

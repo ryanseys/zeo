@@ -265,7 +265,11 @@ fn cmd_outdated(root: &Path, args: &[String]) -> Result<(), String> {
     );
     let mut behind = Vec::new();
     for entry in entries.iter().filter(|e| only.is_none_or(|n| n == e.name)) {
-        let pinned = entry.tag.strip_prefix('v').unwrap_or(&entry.tag).to_string();
+        let pinned = entry
+            .tag
+            .strip_prefix('v')
+            .unwrap_or(&entry.tag)
+            .to_string();
         let oracle = installed.get(&entry.name).cloned();
         let upstream = newest_tag(&format!("https://github.com/{}", entry.github));
         let action = match &oracle {
@@ -373,7 +377,10 @@ fn version_lt(a: &str, b: &str) -> bool {
     let num = |s: &str| -> Vec<u64> { s.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
     let (a, b) = (num(a), num(b));
     for i in 0..a.len().max(b.len()) {
-        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        let (x, y) = (
+            a.get(i).copied().unwrap_or(0),
+            b.get(i).copied().unwrap_or(0),
+        );
         if x != y {
             return x < y;
         }

@@ -1,10 +1,9 @@
 //! `cargo xtask gem-compat`: how each gem in a lockfile fares against zeo.
 //!
 //! Not lowering -- this classifies a gem STORE against a lockfile and is
-//! consumed by the xtask compat matrix (plus one e2e test). It lived at the
-//! top of `parse/mod.rs`, ahead of 4700 lines of prism-to-HIR lowering it has
-//! nothing to do with; it belongs beside the store/lockfile/gemspec readers it
-//! actually calls.
+//! consumed by the xtask compat matrix (plus one e2e test). It sits beside the
+//! store/lockfile/gemspec readers it calls, rather than in `parse/mod.rs`,
+//! which it has nothing to do with.
 
 use super::{gem_store, lockfile};
 

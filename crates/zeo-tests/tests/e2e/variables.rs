@@ -99,7 +99,7 @@ fn a_subclass_reassigning_a_cvar_mutates_the_shared_inherited_storage() {
     // class-variable semantics). This is also the exact scenario zeo's
     // own C implementation gets wrong (a subclass writing a superclass-only
     // cvar allocates fresh, separate storage there -- an outright compile
-    // failure in zeo's case; see the plan's Part 6).
+    // failure in zeo's case).
     let result = run_ruby(
         r#"
         class Base
@@ -710,7 +710,7 @@ fn reading_the_same_ivar_or_captured_local_twice_in_one_expression_does_not_dead
     // `parking_lot::Mutex` repro), so referencing the SAME ivar or
     // captured local TWICE in one expression/statement (a very common
     // shape: squaring, self-comparison, `total - total`, not just the
-    // already-audited read-modify-WRITE case Part 9 covered) silently
+    // already-audited read-modify-WRITE case) silently
     // deadlocked the whole generated program forever -- no panic, no
     // error, just a permanent hang. Fixed by binding the guard to an
     // explicit named local INSIDE its own block (confirmed empirically

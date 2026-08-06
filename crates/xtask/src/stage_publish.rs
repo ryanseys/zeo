@@ -91,7 +91,12 @@ fn run(root: &Path, check: bool) -> Result<(), String> {
 /// linger.
 fn generated_class_surface(root: &Path) -> Result<String, String> {
     let out = std::process::Command::new("cargo")
-        .args(["build", "-p", "zeo", "--message-format=json-render-diagnostics"])
+        .args([
+            "build",
+            "-p",
+            "zeo",
+            "--message-format=json-render-diagnostics",
+        ])
         .current_dir(root)
         .stderr(std::process::Stdio::inherit())
         .output()

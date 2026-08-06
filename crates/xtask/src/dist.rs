@@ -144,8 +144,7 @@ fn run(
     ] {
         let src = root.join(name);
         if src.is_file() {
-            std::fs::copy(&src, doc.join(name))
-                .map_err(|e| format!("copying {name}: {e}"))?;
+            std::fs::copy(&src, doc.join(name)).map_err(|e| format!("copying {name}: {e}"))?;
         }
     }
 
@@ -158,7 +157,10 @@ fn run(
             check.push("--offline");
         }
         run_cargo_quiet(&runtime, &check, "metadata --locked")?;
-        println!("dist: staged {} (stage-only, coherence OK)", stage.display());
+        println!(
+            "dist: staged {} (stage-only, coherence OK)",
+            stage.display()
+        );
         return Ok(());
     }
 
@@ -254,7 +256,10 @@ fn smoke_test(stage: &Path) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&cache);
     println!("dist: smoke test (cold runtime build -- takes a few minutes)...");
     let out = Command::new(stage.join("bin/zeo"))
-        .args(["-e", "require \"json\"; puts JSON.generate({smoke: \"ok\"})"])
+        .args([
+            "-e",
+            "require \"json\"; puts JSON.generate({smoke: \"ok\"})",
+        ])
         // An explicit cwd, so the test never depends on where dist was
         // launched from -- and never inherits a directory staging deletes.
         .current_dir(std::env::temp_dir())
@@ -342,8 +347,7 @@ fn run_cargo_quiet(dir: &Path, args: &[&str], label: &str) -> Result<(), String>
 
 fn copy_tree(src: &Path, dst: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| format!("creating {}: {e}", dst.display()))?;
-    let entries =
-        std::fs::read_dir(src).map_err(|e| format!("reading {}: {e}", src.display()))?;
+    let entries = std::fs::read_dir(src).map_err(|e| format!("reading {}: {e}", src.display()))?;
     for entry in entries.flatten() {
         let from = entry.path();
         if skip(&from) {
@@ -353,8 +357,7 @@ fn copy_tree(src: &Path, dst: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<(),
         if from.is_dir() {
             copy_tree(&from, &to, skip)?;
         } else {
-            std::fs::copy(&from, &to)
-                .map_err(|e| format!("copying {}: {e}", from.display()))?;
+            std::fs::copy(&from, &to).map_err(|e| format!("copying {}: {e}", from.display()))?;
         }
     }
     Ok(())

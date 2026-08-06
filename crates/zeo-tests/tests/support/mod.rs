@@ -62,8 +62,8 @@ pub fn run_ruby_packages(
         std::thread::current().id()
     ));
     let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
-    // Throwaway test binaries link the runtime DYNAMICALLY (one shared dylib,
-    // ~100KB each) so the golden/e2e bin-cache stays small; the dylib always
+    // Throwaway test binaries link the runtime DYNAMICALLY, against one shared
+    // dylib, so the bin-cache stays small. The dylib always
     // sits in `target/`, where these binaries are run from.
     let linkage = zeo::backend::Linkage::Dynamic;
     zeo::backend::ensure_runtime_built(harness_profile(), runtime, linkage)
@@ -178,8 +178,8 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         std::thread::current().id()
     ));
     let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
-    // Throwaway test binaries link the runtime DYNAMICALLY (one shared dylib,
-    // ~100KB each) so the golden/e2e bin-cache stays small; the dylib always
+    // Throwaway test binaries link the runtime DYNAMICALLY, against one shared
+    // dylib, so the bin-cache stays small. The dylib always
     // sits in `target/`, where these binaries are run from.
     let linkage = zeo::backend::Linkage::Dynamic;
     zeo::backend::ensure_runtime_built(harness_profile(), runtime, linkage)

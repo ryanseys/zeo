@@ -14,7 +14,7 @@
 //! block captures OWNED `Arc<parking_lot::Mutex<RubyValue>>` cells (and an
 //! owned `Arc<Self>` for `self`/ivar access) rather than references.
 //!
-//! `+ Send + Sync` (Part 9): a Rust closure is automatically `Send`/`Sync`
+//! `+ Send + Sync`: a Rust closure is automatically `Send`/`Sync`
 //! based purely on what it captures -- once every capture is `Arc`/`Mutex`-
 //! based, the closures codegen generates satisfy this bound with no manual
 //! annotation needed at the construction site.

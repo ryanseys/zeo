@@ -319,7 +319,7 @@ fn compile_and_run(
     ));
     let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
     // Golden binaries are throwaway: link the runtime DYNAMICALLY (shared dylib,
-    // ~100KB each) to keep the bin-cache small. See `run_ruby_packages`.
+    // to keep the bin-cache small. See `run_ruby_packages`.
     let linkage = zeo::backend::Linkage::Dynamic;
     zeo::backend::ensure_runtime_built(profile(), runtime, linkage)?;
     // Unoptimized: a golden test only diffs OUTPUT, its hot paths live in the

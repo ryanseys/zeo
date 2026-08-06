@@ -227,31 +227,60 @@ mod tests {
         (tbl.lookup)(name).unwrap_or_else(|| panic!("GC.{name} is defined"))
     }
 
+    fn gc_count(cls: &RubyValue) -> i64 {
+        match cmethod("count")(cls, &[], None).unwrap() {
+            RubyValue::Int(n) => n,
+            other => panic!("GC.count answered {other:?}, not an Integer"),
+        }
+    }
+
+    /// `COUNT` is process-global, so this compares against its own earlier
+    /// value: any absolute number would depend on test order.
     #[test]
-    fn gc_rows_are_no_ops_that_answer_ruby_shapes() {
+    fn gc_start_counts_a_collection_and_answers_ruby_shapes() {
         let cls = RubyValue::Class(zeo_abi::GC_CLASS);
+        let before = gc_count(&cls);
         assert!(matches!(
             cmethod("start")(&cls, &[], None).unwrap(),
             RubyValue::Nil
         ));
-        assert!(matches!(
-            cmethod("count")(&cls, &[], None).unwrap(),
-            RubyValue::Int(0)
-        ));
+        assert_eq!(gc_count(&cls), before + 1, "GC.start counts a collection");
         assert!(matches!(
             cmethod("enable")(&cls, &[], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
 
-    /// `GC.stat` is an empty Hash, not a fabricated one -- a miss reads nil.
+    /// Only `:count` is a number this heap can answer truthfully; MRI's
+    /// tracing-collector fields are left out rather than fabricated.
     #[test]
-    fn gc_stat_is_an_empty_hash() {
+    fn gc_stat_reports_the_collection_count() {
         let cls = RubyValue::Class(zeo_abi::GC_CLASS);
+        cmethod("start")(&cls, &[], None).unwrap();
+        let count = gc_count(&cls);
+
         let RubyValue::Hash(h) = cmethod("stat")(&cls, &[], None).unwrap() else {
             panic!("expected a Hash")
         };
-        assert_eq!(h.lock().len(), 0);
+        assert_eq!(h.lock().len(), 1);
+
+        let key = RubyValue::Symbol(crate::Symbol::intern("count"));
+        assert!(matches!(
+            cmethod("stat")(&cls, &[key.clone()], None).unwrap(),
+            RubyValue::Int(n) if n == count
+        ));
+
+        let target = crate::collections::hash_new(Vec::new());
+        let RubyValue::Hash(filled) =
+            cmethod("stat")(&cls, &[RubyValue::Hash(target.clone())], None).unwrap()
+        else {
+            panic!("expected a Hash")
+        };
+        assert!(
+            std::sync::Arc::ptr_eq(&filled, &target),
+            "stat(h) answers h itself"
+        );
+        assert_eq!(filled.lock().len(), 1);
     }
 
     #[test]

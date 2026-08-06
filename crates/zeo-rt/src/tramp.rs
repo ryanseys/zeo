@@ -1,5 +1,5 @@
 //! The fixed-arity dispatch trampolines, as one exported macro instead of a
-//! ~10-line closure per method in the generated program.
+//! closure per method in the generated program.
 //!
 //! `codegen`'s `emit_dynamic_trampoline`/`emit_value_trampoline` emit a
 //! `zeo_tramp!` invocation whenever a method's signature is PLAIN -- required

@@ -1,10 +1,10 @@
-//! `begin`/`rescue`/`else`/`ensure`/`retry`. See the plan's Part 8
-//! for the full design rationale -- translated from zeo's own
-//! `setjmp`/`longjmp`-based C implementation into ordinary `Result`/`?`-based
-//! propagation, since Rust's own exhaustive `match` and straight-line
-//! execution already give "`ensure` always runs, exactly once, after a
-//! `retry`-driven re-attempt has settled" for free, with no goto-funnel or
-//! deferred-return-flag bookkeeping needed the way zeo's C codegen does.
+//! `begin`/`rescue`/`else`/`ensure`/`retry`.
+//!
+//! These lower to ordinary `Result`/`?` propagation rather than to a
+//! `setjmp`/`longjmp` funnel. Rust's exhaustive `match` and straight-line
+//! execution already guarantee that `ensure` runs exactly once, after any
+//! `retry`-driven re-attempt settles. No goto funnel or deferred-return flag
+//! is necessary.
 //!
 //! **The closure boundary, and why `retry`/`break`/`next`/`redo`/`return`
 //! all change shape inside one.** `body`, each `rescue` clause's own body,

@@ -57,7 +57,7 @@ pub struct ClassInfo {
     /// `true` for classes from the built-in exceptions
     /// (`parse::BUILTIN_EXCEPTIONS_RB`) -- together with `is_builtin`, the
     /// "defined before any user program runs" set that stays visible inside
-    /// EVERY box (CRuby's dup-from-master rule; see the plan's Part 14).
+    /// EVERY box (CRuby's dup-from-master rule).
     /// Marked by `analyze` via `Hir::builtin_exceptions_len`.
     pub is_bootstrap: bool,
     /// `None` for `Object` (the implicit root) and for every MODULE (a

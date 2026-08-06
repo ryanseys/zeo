@@ -195,7 +195,7 @@ fn emit_ctor_struct(cx: &Ctx, cid: crate::compiler::ClassId) -> TokenStream {
     // for why the bare struct can't just derive `Clone` instead). `Arc<T>`
     // derefs transparently, so Path 1's `(recv_expr).method(...)` calls still
     // work unchanged against a `self: Arc<Self>`-shaped method. `Arc` (not
-    // `Rc`, Part 9): every generated struct is genuinely `Send + Sync`.
+    // `Rc`): every generated struct is genuinely `Send + Sync`.
     quote! { std::sync::Arc::new(#class_ident { #fields }) }
 }
 /// The actual construction logic behind `ClassName.new(...)`, factored out

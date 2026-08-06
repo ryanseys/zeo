@@ -2,16 +2,14 @@
 //!
 //! One Ruby core class/module per file (plus any it namespaces via nested
 //! `class`/`module` items), declared in a Ruby-like syntax whose method bodies
-//! stay real Rust. Parsed here with `syn` so the exact same grammar backs both
-//! consumers and they can never drift:
+//! stay real Rust. Parsed here with `syn` so one grammar backs both consumers
+//! and they cannot drift:
 //!
-//! - `zeo-macros`' `ruby_class!` proc-macro emits the runtime code (the method
-//!   fns, the `ClassId`-keyed lookup tables, the constant installers, the
-//!   `linkme` registration).
+//! - `zeo-macros`' `ruby_class!` proc-macro emits the runtime code.
 //! - `zeo`'s build.rs re-parses the same invocations out of the runtime source
-//!   and projects `CLASS_SURFACE` -- the shape (name/superclass/includes) and
-//!   method/constant NAMES the compiler folds `respond_to?`/`is_a?`/const
-//!   lookups against. (It reads only the headers; method bodies are opaque.)
+//!   and projects `CLASS_SURFACE` -- the shape and method/constant NAMES the
+//!   compiler folds `respond_to?`/`is_a?`/const lookups against. It reads only
+//!   the headers; method bodies are opaque.
 //!
 //! Grammar (the opening macro fixes the kind, so the header carries no
 //! `module`/`class` keyword -- just `NAME = ID`, plus `< SUPER` for a class):
@@ -56,14 +54,12 @@
 //! (recv, &block)                // 0        a block never counts
 //! ```
 //!
-//! The number follows CRuby's own equation (`proc.c:1655`, `proc.c:3452`):
-//! `min` and `max` from the signature, then `(min == max) ? min : -min-1`.
-//! CRuby applies it to C methods too, but C declares only `argc = N` or
-//! `argc = -1` -- it cannot say "one required plus one optional", which is why
-//! `String#index` reports -1 and why no C method reports below -1. A `cfunc`
-//! marker before the parameter list records that lost precision and collapses a
-//! ranged signature back to the -1 CRuby reports. It is one bit, and the only
-//! arity fact left for a human to write:
+//! The number follows CRuby's equation in `proc.c`: `min` and `max` from the
+//! signature, then `(min == max) ? min : -min-1`. CRuby applies it to C methods
+//! too, but C declares only `argc = N` or `argc = -1` -- it cannot say "one
+//! required plus one optional", which is why `String#index` reports -1 and why
+//! no C method reports below -1. A `cfunc` marker records that lost precision
+//! and collapses a ranged signature back to -1:
 //!
 //! ```text
 //! def "index" cfunc (recv, needle, start = nil) { .. }   // -2 by the equation, -1 in CRuby
@@ -71,23 +67,17 @@
 //!
 //! A per-name `arity N` override remains for the rare def whose `|`-joined
 //! names genuinely differ (`"<<"` takes exactly one where `push` is variadic).
-//!
-//! One caveat worth knowing: the guard is per-DEF (one shared body) while the
-//! reported arity is per-NAME, so a def whose names disagree cannot raise
-//! differently for each. That was equally true of the hand-written guards this
-//! replaced.
+//! The guard is per-DEF (one shared body) while the reported arity is per-NAME,
+//! so such a def cannot raise differently for each name.
 //!
 //! A class may declare `receiver NAME = VARIANT;`. Its table is keyed by
-//! `ClassId`, so a row's receiver is ALWAYS that `RubyValue` variant -- and
-//! unwrapping it was 234 identical `recv_str!(recv)` calls across String, Array
-//! and Hash. The header says it once and every body may name `NAME` directly;
-//! the untyped receiver slot is still there for the rows that need it.
+//! `ClassId`, so a row's receiver is ALWAYS that `RubyValue` variant; the
+//! header unwraps it once and every body may name `NAME` directly. The untyped
+//! receiver slot remains for rows that need it.
 //!
-//! A body may also read `__args`, the full argument slice, for the few rows
-//! that forward their arguments on verbatim -- an `Enumerator` that re-invokes
-//! the method it came from, or a delegator that hands the list to another
-//! object. The parameter list still declares the shape; `__args` only avoids
-//! rebuilding a slice the caller already passed.
+//! A body may also read `__args`, the full argument slice, for rows that
+//! forward their arguments verbatim. The parameter list still declares the
+//! shape; `__args` only avoids rebuilding a slice the caller already passed.
 //!
 //! Superclass and `include` targets are written as `ClassId` CONSTS (the one
 //! hard-ABI token), not names -- so the build.rs projection can emit them

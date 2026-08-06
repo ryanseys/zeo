@@ -291,7 +291,7 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
         if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
             let v = emit_expr(cx, *value);
             // Box an `Object`-typed RHS when `name`'s OWN storage disagrees
-            // (Tier 0 fix #2) -- see `emit_expr::box_for_local_storage`'s docs.
+            // See `emit_expr::box_for_local_storage`'s docs.
             let v = super::expr::box_for_local_storage(cx, name, *value, v);
             // `emit_local_write` picks the right shape (plain reassignment,
             // shadowing `let`, or a `RefCell` store) for whichever storage

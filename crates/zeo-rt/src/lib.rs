@@ -218,7 +218,7 @@ pub(crate) fn errno_ptr() -> *mut libc::c_int {
 /// GENERATED program's own crate, not this one) can reference
 /// `$crate::parking_lot::Mutex` without that program's own `Cargo.toml`
 /// needing a direct `parking_lot` dependency -- `parking_lot` stays an
-/// implementation detail of this runtime crate (Part 9).
+/// implementation detail of this runtime crate.
 pub use parking_lot;
 
 /// Mirrors CRuby's `Kernel#puts` for the single scalar-argument case (the
@@ -246,10 +246,9 @@ pub fn p(value: RubyValue) -> RubyValue {
 /// zeo's codegen hand-emits as raw C text per class (`emit_class_struct`,
 /// `emit_class_new`, etc.) -- see the plan's "The `ruby_class!` macro"
 /// section for the full rationale. Each ivar becomes an individually
-/// interior-mutable field (`parking_lot::Mutex<RubyValue>`, not `RefCell` --
-/// see the plan's Part 9) so every generated method can uniformly take a
-/// receiver (see "A named risk" in the plan), and so every generated struct
-/// is genuinely `Send + Sync` for `Thread`/`Ractor` to eventually use.
+/// interior-mutable field (`parking_lot::Mutex<RubyValue>`, not `RefCell`)
+/// so every generated method can uniformly take a receiver, and so every
+/// generated struct is genuinely `Send + Sync`.
 ///
 /// Every method receiver is `self: Arc<Self>`, not `&self` -- escaping
 /// closures need this: a real escaping `Proc` closure that references `self`/an ivar has
@@ -278,7 +277,7 @@ pub fn p(value: RubyValue) -> RubyValue {
 /// just forwards it. No separate `ruby_module!` macro exists: a Ruby
 /// `module`'s methods are never emitted as their own Rust struct/impl at
 /// all -- they're MATERIALIZED directly onto whichever class(es)
-/// include/prepend/extend them (see the plan's Part 6), so every method
+/// include/prepend/extend them, so every method
 /// this macro ever sees already belongs, concretely, to `$name`.
 /// Turns one ivar name into `()`, so `ruby_class!` can count its ivars with
 /// `<[()]>::len` -- a const expression, which is what the `IvarCell<N>` field
@@ -378,7 +377,7 @@ macro_rules! ruby_class {
             /// object-identity semantics (`b = Box.new(1); c = b` must alias,
             /// not duplicate). This just returns `inner` unchanged, relying on
             /// `Arc<Concrete> -> Arc<dyn RubyObject>` unsized coercion at the
-            /// return site to produce `RObj`. `Arc` (not `Rc`, Part 9): every
+            /// return site to produce `RObj`. `Arc`, not `Rc`: every
             /// generated struct is genuinely `Send + Sync` once its fields
             /// are `Mutex`-wrapped, needed for `Thread`/`Ractor` to ever cross
             /// a real OS thread boundary -- no `unsafe impl` involved, this
@@ -1150,7 +1149,7 @@ mod tests {
         assert_eq!(q.to_display_string(), "#<a queue, reopened>");
     }
 
-    /// Part 9 (Send+Sync migration) regression guard: fails to compile if
+    /// `Send + Sync` regression guard: fails to compile if
     /// `RubyValue`, `Signal`, or a generated class ever regains an `Rc`/
     /// `RefCell` anywhere in its type graph -- catches the mistake via the
     /// type system immediately, rather than silently reintroducing a

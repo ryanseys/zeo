@@ -6,8 +6,7 @@
 //! assigning a collection to another local aliases the same underlying
 //! storage rather than deep-copying it, matching Ruby's own reference
 //! semantics for these types. `Arc`/`Mutex` (not `Rc`/`RefCell`) so every
-//! `RubyValue` is genuinely `Send + Sync` -- see the plan's Part 9 for the
-//! full rationale; this migration needs no `unsafe` anywhere, since
+//! `RubyValue` is genuinely `Send + Sync`. This needs no `unsafe`:
 //! `Send`/`Sync` auto-derive through any compound type built entirely from
 //! `Send + Sync` leaves.
 //!

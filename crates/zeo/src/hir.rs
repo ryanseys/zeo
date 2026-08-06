@@ -1651,8 +1651,7 @@ pub enum HirNode {
     /// `String`s, resolved directly, never wrapped in this). Resolves to
     /// "the class/module object named X" for dispatch purposes only; there
     /// is no first-class runtime `Class`/`Module` VALUE (can't be stored in
-    /// a variable, compared, or reflected on at runtime) -- see the plan's
-    /// Part 6 "Explicit scope-cut" on this point.
+    /// a variable, compared, or reflected on at runtime).
     ClassRef(String),
     /// A literal-name-resolvable call: `recv.name(args) { block }`, or an
     /// implicit-self call (`receiver: None`). `send`/`public_send` are NOT a
@@ -2048,7 +2047,7 @@ pub enum HirNode {
     /// ordinary instance method body (`cx.current_class` is `Some`, see
     /// `codegen::expr::infer`'s special case); a class method/module
     /// function has no backing instance to be (zeo has no first-class
-    /// `Class`/`Module` runtime value -- see the plan's Part 6 scope-cut), so
+    /// `Class`/`Module` runtime value), so
     /// `codegen::expr::emit_expr`'s `SelfRef` arm rejects that case with a
     /// clear error instead of emitting a reference to a Rust `self` that
     /// doesn't exist in that generated function's signature.
@@ -2125,7 +2124,7 @@ pub enum HirNode {
     /// `codegen::exceptions::emit_retry`'s docs for what happens to a
     /// mis-scoped one instead (an uncaught `Signal`, not silent wrongness).
     Retry,
-    /// `$foo` read/write -- a flat, genuinely process-wide store (Part 9's
+    /// `$foo` read/write -- a flat, genuinely process-wide store (the
     /// `LazyLock<Mutex<_>>` pattern, same as `cvars`/the Symbol interner),
     /// needing no ancestor search at all: unlike `@@x`, there's exactly ONE
     /// global namespace, shared by every class and every thread. An unset

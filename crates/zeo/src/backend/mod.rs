@@ -12,45 +12,28 @@
 //! lets `cache::cache_path` hand back an earlier build instead of re-running
 //! `rustc`.
 //!
-//! This deliberately does NOT enumerate `zeo-rt`'s own transitive
-//! dependencies (`indexmap`/`parking_lot`/`regex`/...) by hand: `rustc`
-//! resolves those automatically via the `-L` search path, using the crate
-//! metadata already embedded in the built `zeo-rt` itself -- the generated
-//! program only ever references `zeo_rt` directly (`use zeo_rt::...`),
-//! never its transitive deps by name, so only ONE `--extern` is ever needed.
-//! Confirmed both correct (a real generated program links and runs) and
-//! dramatically cheaper this way: a fresh-`cargo`-project build (the
-//! previous approach here) recompiled `zeo-rt` and its whole dependency
-//! graph from scratch on EVERY call (no target-dir reuse across throwaway
-//! projects), costing ~3s per call; direct `rustc` against the already-built
-//! artifacts costs ~0.2s. This is the same "compile one generated file
-//! against already-built deps" shape tools like `trybuild`/`compiletest` use
-//! for the identical reason.
+//! Only ONE `--extern` is ever needed. `zeo-rt`'s transitive dependencies are
+//! deliberately not enumerated by hand: the generated program references
+//! `zeo_rt` alone, and `rustc` resolves the rest through the `-L` search path
+//! from metadata embedded in the built `zeo-rt`. This is the same shape
+//! `trybuild`/`compiletest` use, and it avoids the previous approach's
+//! throwaway cargo project, which rebuilt the whole dependency graph on every
+//! call because no target dir was reused.
 //!
-//! A generated program links the runtime either STATICALLY (the whole `zeo-rt`
-//! baked into a self-contained binary, for a shipped `zeo foo.rb -o app`) or
-//! DYNAMICALLY (against a shared `libzeo_rt.dylib`, for the throwaway test
-//! corpus). See [`Linkage`] -- dynamic linking is what keeps the golden/e2e
-//! bin-cache from ballooning, since the static runtime can't be dead-stripped
-//! (the builtin dispatch tables reference every method fn).
+//! A generated program links the runtime either STATICALLY (a self-contained
+//! binary, for `zeo foo.rb -o app`) or DYNAMICALLY (against a shared
+//! `libzeo_rt`, for the throwaway test corpus). See [`Linkage`] -- dynamic
+//! linking is what keeps the bin-cache from ballooning, since the static
+//! runtime cannot be dead-stripped: the builtin dispatch tables reference
+//! every method fn.
 //!
-//! `build_binary` is PURE: it only links an already-built `zeo-rt` and errors
-//! clearly if the artifact is missing. It never runs cargo and never mutates the
-//! workspace, so parallel `zeo` subprocesses never contend on Cargo's
-//! exclusive build-directory lock. Building the runtime is a separate, explicit
-//! step (`ensure_runtime_built`) that an entrypoint which can't assume a prior
-//! workspace build calls first -- the CLI (`main.rs`) on a fresh tree, and the
-//! in-process test harness (`tests/support`), since `zeo`'s own `Cargo.toml`
-//! has no dependency on `zeo-rt`. A driver that prebuilds the workspace (the
-//! conformance harness's `prebuild`) needs neither.
-//!
-//! `ensure_runtime_built` lives here (not `main.rs`) so the CLI and the
-//! in-process test harness call the exact same logic rather than re-derived
-//! copies.
-//!
-//! The content-addressed binary CACHE that keeps the golden corpus from
-//! recompiling identical programs lives in the `cache` submodule; this file is
-//! the compile/link + runtime-build path the CLI actually needs.
+//! `build_binary` is PURE. It links an already-built `zeo-rt` and errors if
+//! the artifact is missing, never running cargo or mutating the workspace, so
+//! parallel `zeo` subprocesses never contend on Cargo's exclusive build-
+//! directory lock. Building the runtime is the separate explicit step
+//! `ensure_runtime_built`, called by entrypoints that cannot assume a prior
+//! workspace build. It lives here rather than in `main.rs` so the CLI and the
+//! in-process test harness share one implementation.
 
 mod cache;
 
@@ -354,8 +337,8 @@ fn std_libdir() -> Option<PathBuf> {
 /// edge that would catch it). When the artifact is already current -- the common
 /// case under a driver that prebuilt the workspace (the conformance harness) --
 /// the gate is a handful of `stat`s that skip the build, with none of the cargo
-/// build-lock contention that made an unconditional per-call `cargo build` cost
-/// the conformance suite ~153s.
+/// build-lock contention that made an unconditional per-call `cargo build` a
+/// significant share of the conformance suite's runtime.
 pub fn ensure_runtime_built(
     profile: Profile,
     runtime: Runtime,
@@ -551,7 +534,9 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
         // The one place an installed zeo is slow: the first compile per
         // (zeo version, toolchain) builds the runtime into the cache. Say so,
         // or a first `zeo hello.rb` looks hung for minutes.
-        eprintln!("zeo: building the runtime for this toolchain (one-time per zeo/rustc version)...");
+        eprintln!(
+            "zeo: building the runtime for this toolchain (one-time per zeo/rustc version)..."
+        );
     }
     // Held for the whole cargo call: one runtime build machine-wide at a time.
     let _lock = lock_runtime_build();
@@ -658,7 +643,8 @@ fn materialize_anchor(anchor: &Path) -> Result<(), String> {
     let write = |rel: &str, contents: &str| -> Result<(), String> {
         let path = anchor.join(rel);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("creating {}: {e}", parent.display()))?;
         }
         std::fs::write(&path, contents).map_err(|e| format!("writing {}: {e}", path.display()))
     };
@@ -698,7 +684,10 @@ codegen-units = 16
         version = env!("CARGO_PKG_VERSION")
     );
     write("Cargo.toml", &manifest)?;
-    write("src/lib.rs", "// Intentionally empty: exists to anchor zeo-rt.\n")
+    write(
+        "src/lib.rs",
+        "// Intentionally empty: exists to anchor zeo-rt.\n",
+    )
 }
 
 /// The zeo-rt rlib path from a `--message-format=json` stream: the
@@ -807,9 +796,9 @@ fn build_label(profile: Profile, runtime: Runtime, linkage: Linkage) -> String {
 /// `Debug` is the fast-iteration answer: the run-once `-e` path, the e2e harness,
 /// and the conformance suite all use it so they never pay an optimized runtime
 /// build. `Release` is for a SHIPPED artifact (`zeo foo.rb -o app`): it links
-/// the release-profiled runtime (optimized + stripped, see `[profile.release]`),
-/// so the produced binary is small and fast instead of embedding the ~10MB
-/// unoptimized debug runtime. Keyed off intent (`-o` output vs `-e`/throwaway).
+/// the release-profiled runtime, so the produced binary is small and fast
+/// instead of embedding the unoptimized debug runtime. Keyed off intent
+/// (`-o` output vs `-e`/throwaway).
 ///
 /// Passed explicitly rather than read from the environment down here: the e2e
 /// harness calls this from a dozen `#[test]` threads at once, and a `set_var`
@@ -878,10 +867,10 @@ impl Profile {
     /// `set_line`) stay unoptimized calls. Debug keeps `-O0` for compile
     /// speed.
     ///
-    /// BOTH strip symbols from the final binary. The bulk of a statically-linked
-    /// generated program's size is the `zeo-rt` rlib's debug info (a Debug entry
-    /// was ~15MB, mostly symbols) -- worthless here because zeo stamps its OWN
-    /// Ruby backtraces (`stamp_backtrace`), never relying on Rust-level symbols.
+    /// BOTH strip symbols from the final binary. Most of a statically-linked
+    /// program's size is the `zeo-rt` rlib's debug info, which is worthless
+    /// here: zeo stamps its OWN Ruby backtraces (`stamp_backtrace`) and never
+    /// relies on Rust-level symbols.
     /// Stripping shrinks each cached binary several-fold; for dynamic linkage,
     /// where the runtime is a shared dylib and the binary is already tiny, it
     /// still trims the last of the per-program symbols.
@@ -908,9 +897,9 @@ impl Profile {
 /// deliberately decoupled from `Profile`, which also selects the runtime
 /// artifact. The golden suites link the RELEASE runtime (fast per-program
 /// link, and the hot paths all live in the runtime dylib) but build the
-/// generated crate `Unoptimized`: `-O2` over a gem-scale generated main
-/// costs rustc tens of minutes (net/http's 666K-line main: 60+ min, vs
-/// ~100s at `-O0`) for no output difference. `-o`/bench artifacts stay
+/// generated crate `Unoptimized`: `-O2` over a gem-scale generated main costs
+/// rustc orders of magnitude more time for no output difference. `-o`/bench
+/// artifacts stay
 /// `Optimized` -- the generated main is where the typed fast paths live,
 /// and a shipped binary is built once.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -993,11 +982,11 @@ impl Runtime {
 ///
 /// `Static` is for a SHIPPED artifact (`zeo foo.rb -o app`): the whole `zeo-rt`
 /// is baked in, so the user gets one standalone file with no external
-/// dependency. `Dynamic` is for the TEST corpus: the golden/e2e harness compiles
-/// thousands of throwaway programs, and baking the ~6MB runtime into each --
-/// which `-Wl,-dead_strip` can't shrink, since the builtin dispatch tables
-/// reference every method fn -- cost ~14GB of bin-cache. Linking each against
-/// ONE shared `libzeo_rt.dylib` drops it to ~100KB. Those binaries are only ever
+/// dependency. `Dynamic` is for the TEST corpus: the harness compiles thousands
+/// of throwaway programs, and baking the runtime into each -- which
+/// `-Wl,-dead_strip` cannot shrink, since the builtin dispatch tables reference
+/// every method fn -- made the bin-cache enormous. Linking each against ONE
+/// shared `libzeo_rt` drops it by orders of magnitude. Those binaries are only ever
 /// run from within `target/` by the harness, so the rpaths baked in (the dylib
 /// dir and [`std_libdir`]) always resolve; a shipped binary must never depend on
 /// a dylib sitting in a build tree, hence `Static` there.

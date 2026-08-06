@@ -550,8 +550,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
     // `__ENCODING__` would be `Encoding::UTF_8` (this compiler is UTF-8-only
     // throughout), but no `Encoding` CLASS exists yet to answer with -- it
-    // is the encoding phase's own deliverable (plan Part 4: an RObj wrapping
-    // an EncodingId, with `Encoding::UTF_8` et al as real constants).
+    // is the encoding work's own deliverable: an RObj wrapping an EncodingId,
+    // with `Encoding::UTF_8` and friends as real constants.
     // Rejected rather than stubbed: inventing a placeholder Encoding now
     // would pre-empt that design, and `__ENCODING__` is only useful if the
     // object it answers actually behaves like one.

@@ -11,7 +11,7 @@
 //! by `(owner_class_id, name)` since one class can own several distinct
 //! `@@` names.
 //!
-//! Genuinely process-wide-shared storage (Part 9), not per-thread: a real
+//! Genuinely process-wide-shared storage, not per-thread: a real
 //! CRuby `@@counter` incremented by one `Thread` must be visible to another,
 //! so this migrated from a `thread_local!` to a real `LazyLock<Mutex<_>>`
 //! static rather than just swapping `Rc`/`RefCell` for `Arc`/`Mutex` in

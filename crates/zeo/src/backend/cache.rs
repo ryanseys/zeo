@@ -32,8 +32,7 @@ fn cache_dir() -> PathBuf {
 /// Split in two so a generation can be swept wholesale. Every entry under a
 /// generation dies the moment the runtime is rebuilt -- generated programs link
 /// `libzeo_rt.rlib` statically -- and a generation runs to several GB across
-/// the golden corpus (measured 2026-07: ~5.5MB per release entry, ~15MB
-/// per debug entry), so a flat keyspace grew by that much per runtime rebuild
+/// the golden corpus, so a flat keyspace grew by that much per runtime rebuild
 /// and never shrank. `sweep_stale_cache_generations` reclaims dead generations
 /// when tooling invokes it between runs.
 ///
@@ -263,12 +262,11 @@ pub(super) fn link_or_copy(from: &Path, to: &Path) -> Result<(), String> {
 /// A fixed crate name also makes `-C incremental` theoretically useful for the
 /// small residue two generated programs still share, letting `rustc` reuse one
 /// program's codegen units for another. It is deliberately NOT enabled: `libtest`
-/// runs each `#[test]` on its own thread, so any per-thread keying produces one
-/// cold directory per test (measured: 449 directories, 7.7GB, and a 10s NET LOSS
-/// on the e2e suite). It would also buy little: per-program codegen is small
-/// -- the exception prelude lives in the prebuilt runtime (`main()` calls
-/// `zeo_rt::ClassRegistry::with_core()`; `puts 1` emits ~74 lines, not
-/// thousands), so the emitted crates share little to dedup.
+/// runs each `#[test]` on its own thread, so any per-thread keying produces
+/// one cold directory per test -- measured as a large disk cost and a net
+/// slowdown. It would also buy little: per-program codegen is small, because
+/// the exception prelude lives in the prebuilt runtime, so the emitted crates
+/// share little to dedup.
 /// The remaining per-program build cost is the link +
 /// codesign of the runtime artifact, not codegen -- so compile-time work
 /// belongs in `zeo-rt`, not here.

@@ -949,7 +949,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // mismatch storing one object instance inside another's ivar).
             let v = box_if_object_typed(cx, *value, v);
             // RHS bound to `__v` BEFORE `.lock()` is ever called -- with
-            // `parking_lot::Mutex` (non-reentrant, Part 9), a `#v` expression
+            // `parking_lot::Mutex` (non-reentrant), a `#v` expression
             // that itself reads this same ivar would otherwise call `.lock()`
             // while the write guard below is already held, hanging forever
             // instead of RefCell's old clean "already borrowed" panic.
@@ -1663,8 +1663,8 @@ pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCau
 }
 
 /// Builds the actual `RubyValue` to raise, mirroring zeo's own `raise`
-/// call-shape dispatch (translated to `emit_new`-style construction -- see
-/// the plan's Part 6): `raise SomeError` (bare class ref) defaults the
+/// call-shape dispatch, translated to `emit_new`-style construction:
+/// `raise SomeError` (bare class ref) defaults the
 /// message to the class's own name, as a COMPILE-TIME string literal (no
 /// runtime `self.class` reflection needed, since the raised class is
 /// statically known at the call site in every shape handled here);
@@ -2129,7 +2129,7 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     // `use` the trait by name. The one atomic load this adds to every ivar
     // write (including inside `initialize`, where it's always false) is
     // negligible; the message is built by `ivar_frozen_error`, out of line, so
-    // the write site carries a branch and a call rather than the ~380 bytes of
+    // the write site carries a branch and a call rather than the
     // `format!`/`inspect`/`construct_by_class_id` this used to inline at every
     // one of them.
     //

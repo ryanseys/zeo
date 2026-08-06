@@ -2,9 +2,8 @@
 //!
 //! The exception classes (`Exception`, `StandardError`, the whole tree) are
 //! FIXED -- identical in every program -- so they are compiled once here
-//! instead of embedding ~6,600 lines of `ruby_class!`-expanded classes plus a
-//! factory into every binary (~76% of the smallest program, recompiled cold
-//! once per binary). `register_exceptions` installs them into a program's
+//! instead of embedding the `ruby_class!`-expanded classes and a factory into
+//! every binary, which dominated the size of a small program. `register_exceptions` installs them into a program's
 //! `ClassRegistry` at the ids `zeo-abi` reserves for them (`EXCEPTION_CLASSES`),
 //! which the compiler independently assigns the same way and asserts.
 //!
@@ -1689,7 +1688,7 @@ fn exc_class_to_tty(
 
 /// Install the whole built-in exception hierarchy into `registry`. Called from
 /// `ClassRegistry::with_core`, so the fixed classes install here instead of
-/// emitting ~6,600 lines of `ruby_class!` blocks into each program. Ancestors
+/// emitting `ruby_class!` blocks into each program. Ancestors
 /// come from the single core-class linearizer (`declared_ancestors`), so
 /// `rescue`/`is_a?` agree with the compiler's own materialized `ancestors`.
 pub fn register_exceptions(registry: &mut ClassRegistry) {

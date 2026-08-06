@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 pub use zeo_abi::ClassId;
 
 /// Implemented (via `ruby_class!`) by every generated Ruby class, and by the
-/// built-in `Object` root below. `Send + Sync` supertrait bounds (Part 9):
+/// built-in `Object` root below. `Send + Sync` supertrait bounds:
 /// satisfied automatically for every generated class once its own fields are
 /// `parking_lot::Mutex`-wrapped, needing no manual `unsafe impl` anywhere.
 pub trait RubyObject: Any + Send + Sync {
@@ -581,9 +581,9 @@ pub fn downcast_robj_ref<T: RubyObject>(recv: &RObj) -> Option<&T> {
 }
 
 /// The frozen-receiver raise every ivar WRITE guards itself with, as one
-/// out-of-line call instead of the ~380 bytes of `format!` +
-/// `construct_by_class_id` codegen used to inline at each of the 1,802 ivar
-/// writes a program like prism emits. `#[cold]` so the caller's guard stays a
+/// out-of-line call instead of the `format!` + `construct_by_class_id`
+/// codegen this used to inline at every ivar write -- thousands of them in a
+/// program like prism. `#[cold]` so the caller's guard stays a
 /// predictable never-taken branch around a single relaxed atomic load, and by
 /// VALUE so the `Arc` bump the handle needs happens only on the raise path.
 ///
@@ -3549,7 +3549,7 @@ pub fn run_initialize(
 }
 
 /// The class registry is installed exactly once, from generated `main()`,
-/// before any `Thread`/`Ractor` spawns anything (Part 9) -- a `OnceLock`
+/// before any `Thread`/`Ractor` spawns anything -- a `OnceLock`
 /// (not a `thread_local!`, unlike before the Send+Sync migration) gives
 /// lock-free reads forever after that single write, and is itself the
 /// correct semantic choice regardless of concurrency: classes/methods are
@@ -4009,8 +4009,8 @@ pub fn raise_stop_iteration(result: RubyValue) -> Signal {
 /// The general dispatcher -- reached only on Path 2 (see module docs).
 /// Since every reachable method (own, inherited, or mixed-in) is already
 /// MATERIALIZED directly onto its receiver's own class at zeo compile
-/// time (see the plan's Part 6 -- no cloning-with-shadow-names,
-/// monomorphization instead), this is now a FLAT lookup on the receiver's
+/// time -- monomorphization, not cloning-with-shadow-names -- this is a
+/// FLAT lookup on the receiver's
 /// own class -- no ancestor walk needed here at all, only for `is_a`
 /// (above), which real dispatch doesn't need.
 ///

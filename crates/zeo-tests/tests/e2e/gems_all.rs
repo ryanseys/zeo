@@ -57,11 +57,7 @@ fn bundled_gems() -> Vec<String> {
         .filter(|e| e.path().is_dir())
         .filter(|e| {
             std::fs::read_dir(e.path()).is_ok_and(|mut d| {
-                d.any(|f| {
-                    f.is_ok_and(|f| {
-                        f.path().extension().is_some_and(|x| x == "gemspec")
-                    })
-                })
+                d.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "gemspec")))
             })
         })
         .map(|e| e.file_name().to_string_lossy().into_owned())

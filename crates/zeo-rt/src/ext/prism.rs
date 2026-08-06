@@ -6,8 +6,8 @@
 //! handful of `pm_serialize_*` calls that write a serialized buffer, which
 //! `Prism::Serialize` then decodes into the node tree in pure Ruby. That is
 //! the whole native surface, so these rows are that surface and nothing
-//! more: the ~40k lines of node classes, visitors and the deserializer are
-//! the gem's own Ruby, compiled like any other vendored gem.
+//! more. The node classes, visitors and deserializer are the gem's own Ruby,
+//! compiled like any other vendored gem.
 //!
 //! The library is the SAME prism zeo's own front end parses with (the
 //! `ruby-prism` crate's C half), so a program never carries two copies.

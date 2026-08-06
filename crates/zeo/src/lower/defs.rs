@@ -670,7 +670,7 @@ pub(crate) fn as_compiled_struct(value: &Node<'_>) -> Option<Vec<String>> {
 }
 
 /// `NAME = Struct.new(:a, :b)` as an ordinary `class NAME < Struct` with an
-/// accessor per member -- so the member is a field, and Phase 3's accessor
+/// accessor per member -- so the member is a field, and accessor
 /// devirtualization applies to reading it.
 ///
 /// The class body is SOURCE handed to `parse_and_lower_into`, the same route

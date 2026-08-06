@@ -66,9 +66,9 @@ pub enum LocalStorage {
     /// top of the scope, reassigned in place -- the common case.
     Hoisted,
     /// Captured by some escaping block (see `codegen::captures`) -- an
-    /// `Arc<parking_lot::Mutex<RubyValue>>` cell (Part 9: `Arc`/`Mutex`, not
-    /// `Rc`/`RefCell`, so a captured local is genuinely `Send + Sync` if a
-    /// `Thread`/`Ractor` ever needs it to be), declared once at the top of
+    /// `Arc<parking_lot::Mutex<RubyValue>>` cell (`Arc`/`Mutex`, not
+    /// `Rc`/`RefCell`, so a captured local is genuinely `Send + Sync`),
+    /// declared once at the top of
     /// the scope and shared (via `Arc::clone`) with every escaping closure
     /// that references this name, so a mutation from inside the closure is
     /// visible to the enclosing scope and vice versa (real Ruby closure

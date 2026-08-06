@@ -5,7 +5,7 @@
 //! same "defined earlier in the file" rule `superclass` resolution already
 //! enforces today.
 //!
-//! See the plan's Part 6 for the full design rationale. The short version:
+//! In short:
 //! rather than zeo's clone-with-mangled-shadow-name scheme (needed only
 //! because C has no generics), a module's method body gets MATERIALIZED --
 //! re-run through the exact same per-method analysis pipeline
