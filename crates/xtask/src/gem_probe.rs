@@ -128,6 +128,15 @@ impl Outcome {
 struct Row {
     version: String,
     outcome: Outcome,
+    /// The Ruby the verdict points at, `<repo-relative path>:<line>`, when zeo
+    /// named one.
+    ///
+    /// The detail alone says what zeo refused, not where: `subclassing the
+    /// built-in type \`Module\`` names a construct that appears in dozens of
+    /// files across a gem's dependency tree, and finding it meant grepping.
+    /// Repo-relative because this is committed and must not carry one
+    /// machine's directory layout.
+    site: Option<String>,
 }
 
 // ---------------------------------------------------------------- registry
@@ -357,12 +366,12 @@ fn probe(
     dir: &Path,
     deps: &[String],
     timeout: Duration,
-) -> Outcome {
+) -> (Outcome, Option<String>) {
     if dir.join(".zeo-probe-native").exists() {
-        return Outcome::NativeExtension;
+        return (Outcome::NativeExtension, None);
     }
     if !dir.join("lib").is_dir() {
-        return Outcome::NoLibDir;
+        return (Outcome::NoLibDir, None);
     }
     // An `ext/` directory is NOT decisive. Many gems ship an optional C
     // accelerator beside a pure-Ruby implementation -- concurrent-ruby is the
@@ -370,10 +379,10 @@ fn probe(
     // actually failed.
     let view = match isolate(root, name, deps) {
         Ok(v) => v,
-        Err(e) => return Outcome::FetchFailed(e),
+        Err(e) => return (Outcome::FetchFailed(e), None),
     };
     let Some(feature) = entry_point(dir, name) else {
-        return Outcome::NoEntryPoint;
+        return (Outcome::NoEntryPoint, None);
     };
 
     let mut cmd = std::process::Command::new(zeo);
@@ -389,13 +398,16 @@ fn probe(
         .arg(root.join("gems"))
         .arg("--dump=rust");
     match crate::exec::run_with_timeout(cmd, None, timeout) {
-        Err(e) => Outcome::FetchFailed(format!("running zeo: {e}")),
-        Ok(ex) if ex.timed_out => Outcome::Timeout,
+        Err(e) => (Outcome::FetchFailed(format!("running zeo: {e}")), None),
+        Ok(ex) if ex.timed_out => (Outcome::Timeout, None),
         // A successful compile still writes to stderr -- every builtin
         // substitution warns there -- so the exit status is the verdict and
         // stderr is only read once it is non-zero.
-        Ok(ex) if ex.success() => Outcome::Compiles,
-        Ok(ex) => classify_stderr(&ex.stderr, root),
+        Ok(ex) if ex.success() => (Outcome::Compiles, None),
+        Ok(ex) => {
+            let text = String::from_utf8_lossy(&ex.stderr);
+            (classify_stderr(&ex.stderr, root), site_of(&text, root))
+        }
     }
 }
 
@@ -404,6 +416,31 @@ fn probe(
 /// A panic reaches stderr as `... panicked at <loc>:` with the message on the
 /// NEXT line, which no amount of reading the diagnostic text would reveal, so
 /// it is detected before `classify` gets a chance to call it a lowering gap.
+/// The source location zeo pointed at, as `<repo-relative path>:<line>`.
+///
+/// miette's excerpt header is the one place the compiler prints a location in
+/// a fixed shape -- `╭─[<path>:<line>:<col>]` -- and both error kinds render it
+/// now that analyze stamps spans too. A gem outside the repo (nothing in a
+/// sweep is) keeps its absolute path, so the caller drops it rather than
+/// committing one machine's layout.
+fn site_of(stderr: &str, root: &Path) -> Option<String> {
+    let open = stderr.find("╭─[")? + "╭─[".len();
+    let rest = &stderr[open..];
+    let close = rest.find(']')?;
+    let located = &rest[..close];
+    // `path:line:col` -- keep the line, drop the column. A column is precise
+    // about a token, and the ledger is read to find a file.
+    let (path, line) = {
+        let mut parts = located.rsplitn(3, ':');
+        let _col = parts.next()?;
+        let line = parts.next()?;
+        (parts.next()?, line)
+    };
+    let prefix = format!("{}/", root.display());
+    let path = path.strip_prefix(&prefix)?;
+    Some(format!("{path}:{line}"))
+}
+
 fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
     let text = String::from_utf8_lossy(stderr);
     if let Some(i) = text.lines().position(|l| l.contains("panicked at")) {
@@ -523,9 +560,13 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
             let (Some(name), Some(version), Some(tag)) = (f.next(), f.next(), f.next()) else {
                 continue;
             };
+            // Four columns is the pre-`site` shape, and every committed row
+            // was written that way -- read it as a row that simply never
+            // recorded one, rather than invalidating the whole ledger.
             let row = Row {
                 version: version.to_string(),
                 outcome: Outcome::from_ledger(tag, f.next().unwrap_or("")),
+                site: f.next().filter(|s| !s.is_empty()).map(str::to_string),
             };
             if out.insert(name.to_string(), row).is_some() {
                 return Err(format!(
@@ -549,13 +590,16 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
             "# {header}\n\
              # Written by `cargo xtask gem-probe`. Each gem is in this file or in \
              its sibling, never both.\n\
-             # Columns: gem <TAB> version <TAB> outcome <TAB> detail\n"
+             # Columns: gem <TAB> version <TAB> outcome <TAB> detail <TAB> where\n"
         );
         for (name, r) in selected {
             tsv.push_str(&format!("{name}\t{}\t{}", r.version, r.outcome.tag()));
-            match r.outcome.detail() {
-                "" => tsv.push('\n'),
-                d => tsv.push_str(&format!("\t{d}\n")),
+            // `where` is appended, so a row with neither trailing field stays
+            // byte-identical to what the four-column writer produced.
+            match (r.outcome.detail(), &r.site) {
+                ("", None) => tsv.push('\n'),
+                (d, None) => tsv.push_str(&format!("\t{d}\n")),
+                (d, Some(site)) => tsv.push_str(&format!("\t{d}\t{site}\n")),
             }
         }
         tsv
@@ -754,6 +798,7 @@ fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result
         .map_err(|e| Row {
             version: want.unwrap_or("-").to_string(),
             outcome: Outcome::FetchFailed(e),
+            site: None,
         })?;
 
     let mut deps = Vec::new();
@@ -777,6 +822,7 @@ fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result
         Err(e) => Err(Row {
             version,
             outcome: Outcome::FetchFailed(e),
+            site: None,
         }),
     }
 }
@@ -1046,9 +1092,11 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                         break;
                     };
                     let outcome = probe(root, zeo, &ready.name, &ready.dir, &ready.deps, timeout);
+                    let (outcome, site) = outcome;
                     let row = Row {
                         version: ready.version,
                         outcome,
+                        site,
                     };
                     if done.send((ready.name, row)).is_err() {
                         break;
@@ -1252,6 +1300,53 @@ mod tests {
         );
     }
 
+    /// The `where` column is what turns a diagnostic into something you can
+    /// open, so the shape of miette's excerpt header is load-bearing here.
+    #[test]
+    fn the_site_comes_from_the_diagnostic_excerpt() {
+        let root = Path::new("/repo");
+        let stderr = "  × unsupported syntax at \"...\"\n   \
+             ╭─[/repo/vendor/gems/nokogiri/lib/nokogiri/xml.rb:22:20]\n \
+             22 │         Reader.new(...)\n";
+        assert_eq!(
+            site_of(stderr, root).as_deref(),
+            Some("vendor/gems/nokogiri/lib/nokogiri/xml.rb:22")
+        );
+    }
+
+    /// A diagnostic with no excerpt (a pre-parse failure, an error raised
+    /// outside any statement) simply has no site -- not a wrong one.
+    #[test]
+    fn a_diagnostic_without_an_excerpt_has_no_site() {
+        assert_eq!(site_of("  × compile failed\n", Path::new("/repo")), None);
+    }
+
+    /// A path the root doesn't own would commit one machine's directory
+    /// layout, which is the reason `classify` scrubs paths in the first place.
+    #[test]
+    fn a_site_outside_the_repo_is_dropped() {
+        let stderr = "   ╭─[/elsewhere/lib/x.rb:3:1]\n";
+        assert_eq!(site_of(stderr, Path::new("/repo")), None);
+    }
+
+    /// Every committed row predates the `where` column. Reading one as a row
+    /// that never recorded a site keeps the ledger valid across the change.
+    #[test]
+    fn a_four_column_row_still_reads() {
+        let root = scratch("legacy-ledger");
+        let [_, fails] = ledger_paths(&root);
+        std::fs::create_dir_all(fails.parent().unwrap()).unwrap();
+        std::fs::write(&fails, "# header\nalpha\t1.0.0\tlowering-gap\tsome gap\n").unwrap();
+
+        let back = read_ledger(&root).unwrap();
+        assert_eq!(
+            back["alpha"].outcome,
+            Outcome::LoweringGap("some gap".into())
+        );
+        assert_eq!(back["alpha"].site, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A stall carries no diagnosis, so it must not borrow one: `timeout` has
     /// to survive a ledger round trip as itself rather than decaying into the
     /// `LoweringGap` catch-all `from_ledger` uses for unknown tags.
@@ -1333,6 +1428,7 @@ mod tests {
             Row {
                 version: "1.0.0".into(),
                 outcome: Outcome::Compiles,
+                site: None,
             },
         );
         rows.insert(
@@ -1340,6 +1436,7 @@ mod tests {
             Row {
                 version: "2.1.0".into(),
                 outcome: Outcome::LoweringGap("some gap".into()),
+                site: Some("vendor/gems/beta/lib/beta.rb:12".into()),
             },
         );
         rows.insert(
@@ -1347,6 +1444,7 @@ mod tests {
             Row {
                 version: "3.0.0".into(),
                 outcome: Outcome::NativeExtension,
+                site: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
@@ -1360,6 +1458,13 @@ mod tests {
             Outcome::LoweringGap("some gap".into())
         );
         assert_eq!(back["gamma"].outcome, Outcome::NativeExtension);
+        // The site rides alongside the detail rather than replacing it, and a
+        // row that never had one still reads back as having none.
+        assert_eq!(
+            back["beta"].site.as_deref(),
+            Some("vendor/gems/beta/lib/beta.rb:12")
+        );
+        assert_eq!(back["alpha"].site, None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1375,6 +1480,7 @@ mod tests {
                 Row {
                     version: "1.0.0".into(),
                     outcome: Outcome::Compiles,
+                    site: None,
                 },
             );
         }
@@ -1412,6 +1518,7 @@ mod tests {
                 Row {
                     version: "1.0.0".into(),
                     outcome,
+                    site: None,
                 },
             );
         }
@@ -1436,6 +1543,7 @@ mod tests {
             Row {
                 version: "1.0.0".into(),
                 outcome: Outcome::LoweringGap("a gap".into()),
+                site: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
@@ -1640,6 +1748,7 @@ mod tests {
                 Row {
                     version: "1.0.0".into(),
                     outcome: Outcome::Compiles,
+                    site: None,
                 },
             );
             write_ledger(&root, &rows).unwrap();
@@ -1662,6 +1771,7 @@ mod tests {
             Row {
                 version: "1.0.0".into(),
                 outcome: Outcome::Compiles,
+                site: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
