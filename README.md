@@ -305,9 +305,11 @@ To use a gem that is not in this list, give `--gem-path` and
 ### Which gems compile
 
 `cargo xtask gem-probe` fetches a gem straight from rubygems.org, compiles it,
-and records the verdict in
-[`conformance/gem-probe.tsv`](conformance/gem-probe.tsv). The gem does not need
-to be installed.
+and records the verdict in one of two files — the gems that compile in
+[`conformance/gem-probe-compiles.tsv`](conformance/gem-probe-compiles.tsv), and
+the gems that do not, with the reason, in
+[`conformance/gem-probe-fails.tsv`](conformance/gem-probe-fails.tsv). The gem
+does not need to be installed.
 
 ```console
 $ cargo xtask gem-probe kramdown          # newest release
@@ -433,8 +435,9 @@ Beyond the framework, a Rails **application** needs more than these gems:
 
 So Rails is a useful target to measure against, and a clear statement of what
 is missing — not a supported configuration. Follow
-[`conformance/gem-probe.tsv`](conformance/gem-probe.tsv) for the current state,
-and [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for how to reproduce it.
+[`conformance/gem-probe-fails.tsv`](conformance/gem-probe-fails.tsv) for the
+current state, and [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for how to
+reproduce it.
 
 ### 2. Compile RubyGems and Bundler themselves
 

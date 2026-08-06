@@ -53,7 +53,7 @@ Four stages, and only the first touches the network:
 resolve   name [version]      -> an exact version        (rubygems JSON API)
 fetch     the .gem            -> vendor/gems/<name>/     (cached, gitignored)
 probe     require "<entry>"   -> an Outcome              (front end + codegen)
-record    the Outcome         -> conformance/gem-probe.{tsv,md}   (committed)
+record    the Outcome         -> conformance/gem-probe-*.tsv      (committed)
 ```
 
 Probing an unpacked tree needs no network and is deterministic, so a ledger row
@@ -135,13 +135,13 @@ reliably than anything written into the rows:
 
 ```console
 # when did any verdict last change, and in which commit?
-$ git log --oneline -- conformance/gem-probe.tsv
+$ git log --oneline -- conformance/gem-probe-*.tsv
 
 # when did ONE gem change, and to what?
-$ git log -p -S kramdown -- conformance/gem-probe.tsv
+$ git log -p -S kramdown -- conformance/gem-probe-*.tsv
 
 # what did a release improve?
-$ git diff v0.1.0..v0.2.0 -- conformance/gem-probe.tsv
+$ git diff v0.1.0..v0.2.0 -- conformance/gem-probe-*.tsv
 ```
 
 Writing the time and build into the file would duplicate that, and duplicating
@@ -156,9 +156,20 @@ ledger; that is what makes the result a record rather than a note.
 
 ## Reading the ledger
 
-[`../conformance/gem-probe.tsv`](../conformance/gem-probe.tsv) is the record;
-`gem-probe.md` is the same data rendered. Both are committed, so no absolute
-path may appear in them — diagnostics are scrubbed before they are written.
+The ledger is two files, one per verdict:
+
+| File | Holds |
+|---|---|
+| [`../conformance/gem-probe-compiles.tsv`](../conformance/gem-probe-compiles.tsv) | the gems Zeo compiles |
+| [`../conformance/gem-probe-fails.tsv`](../conformance/gem-probe-fails.tsv) | the gems it does not, and why |
+
+Both carry the same four columns, so a gem keeps its shape when a fix moves it
+across. A gem is in one file or the other, never both — `gem-probe` refuses to
+run if it finds one twice, because the two copies disagree about the verdict
+and there is no safe way to pick. `gem-probe.md` renders both.
+
+All three are committed, so no absolute path may appear in them — diagnostics
+are scrubbed before they are written.
 
 The registry name index is cached at `conformance/rubygems-names.txt` and is
 gitignored: ~3MB of upstream data that changes daily, and the repository
@@ -166,24 +177,25 @@ refuses tracked files that size. `--refresh-index` takes a newer copy.
 
 **A count of gems is not a count of code.** The corpus is the dependency
 closure of the most downloaded gems, and that pulls in the whole `aws-sdk-*`
-family: 432 of 761 rows. Those are machine-generated from one template, so they
-share one construct and fail identically — 426 of them on `define_method`'s
-second argument alone. Read the corpus both ways:
+family — well over half the rows. Those are machine-generated from one
+template, so they share one construct and fail identically: almost every one of
+them on `define_method`'s second argument. Read the corpus both ways.
 
-| | Whole corpus | Excluding `aws-*` |
-|---|---|---|
-| gems | 761 | 329 |
-| compiles | 160 | 156 |
-| lowering-gap | 567 | 140 |
-
-The second column is the better signal for the language; the first is the
-better signal for "will my Gemfile work", since a dependency that fails 432
+Excluding `aws-*` is the better signal for the language. Including them is the
+better signal for "will my Gemfile work", since a dependency that fails 400
 times still fails.
+
+```console
+# the split, both ways
+$ for f in conformance/gem-probe-*.tsv; do
+    echo "$f: $(grep -vc '^#' $f) total, $(grep -vc '^#\|^aws' $f) excluding aws-*"
+  done
+```
 
 The useful view is the clustering, not the total. Gaps concentrate into a few
 constructs, and one fix moves every gem behind it:
 
 ```console
-$ awk -F'\t' '$3=="lowering-gap" {print $4}' conformance/gem-probe.tsv \
+$ awk -F'\t' '$3=="lowering-gap" {print $4}' conformance/gem-probe-fails.tsv \
     | sed 's/(.*//' | sort | uniq -c | sort -rn
 ```

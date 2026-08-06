@@ -98,7 +98,7 @@ impl Outcome {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Row {
     version: String,
     outcome: Outcome,
@@ -432,50 +432,94 @@ fn truncate(s: &str) -> String {
 
 // ----------------------------------------------------------------- ledger
 
-fn ledger_path(root: &Path) -> PathBuf {
-    root.join("conformance/gem-probe.tsv")
+/// The ledger is two files, one per verdict: a gem that compiles and a gem
+/// that does not are read for different reasons, and interleaving them makes
+/// each list something you have to filter for rather than open.
+///
+/// Both carry the same four columns, so one parser and one writer serve both
+/// and a row keeps its meaning when a fix moves it between the files.
+fn ledger_paths(root: &Path) -> [PathBuf; 2] {
+    [
+        root.join("conformance/gem-probe-compiles.tsv"),
+        root.join("conformance/gem-probe-fails.tsv"),
+    ]
 }
 
-fn read_ledger(root: &Path) -> BTreeMap<String, Row> {
-    let mut out = BTreeMap::new();
-    let Ok(text) = std::fs::read_to_string(ledger_path(root)) else {
-        return out;
-    };
-    for line in text
-        .lines()
-        .filter(|l| !l.starts_with('#') && !l.is_empty())
-    {
-        let mut f = line.split('\t');
-        let (Some(name), Some(version), Some(tag)) = (f.next(), f.next(), f.next()) else {
+/// Reads both files into one map.
+///
+/// A gem in both files is a corruption -- a hand-edit, or a merge that kept
+/// two sides of a moved row -- and the two copies disagree about the verdict.
+/// There is no safe way to pick one, so this refuses rather than guesses.
+fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
+    let mut out: BTreeMap<String, Row> = BTreeMap::new();
+    for path in ledger_paths(root) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let detail = f.next().unwrap_or("");
-        out.insert(
-            name.to_string(),
-            Row {
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
+            let mut f = line.split('\t');
+            let (Some(name), Some(version), Some(tag)) = (f.next(), f.next(), f.next()) else {
+                continue;
+            };
+            let row = Row {
                 version: version.to_string(),
-                outcome: Outcome::from_ledger(tag, detail),
-            },
-        );
+                outcome: Outcome::from_ledger(tag, f.next().unwrap_or("")),
+            };
+            if out.insert(name.to_string(), row).is_some() {
+                return Err(format!(
+                    "{name} is recorded twice (second copy in {}); each gem belongs \
+                     to exactly one ledger -- delete the wrong row, then re-probe it",
+                    path.display()
+                ));
+            }
+        }
     }
-    out
+    Ok(out)
 }
 
 fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
-    let mut tsv = String::from(
-        "# Which real gems zeo compiles, measured by `cargo xtask gem-probe`.\n\
-         # Columns: gem <TAB> version <TAB> outcome <TAB> detail\n\
-         # A `compiles` row may not regress: `gem-probe --check` gates it.\n",
-    );
-    for (name, r) in rows {
-        tsv.push_str(&format!(
-            "{name}\t{}\t{}\t{}\n",
-            r.version,
-            r.outcome.tag(),
-            r.outcome.detail()
-        ));
-    }
-    std::fs::write(ledger_path(root), tsv).map_err(|e| e.to_string())?;
+    let [compiles_path, fails_path] = ledger_paths(root);
+    let compiles = || rows.iter().filter(|(_, r)| r.outcome == Outcome::Compiles);
+    let fails = || rows.iter().filter(|(_, r)| r.outcome != Outcome::Compiles);
+
+    let render = |header: &str, selected: &mut dyn Iterator<Item = (&String, &Row)>| {
+        let mut tsv = format!(
+            "# {header}\n\
+             # Written by `cargo xtask gem-probe`. Each gem is in this file or in \
+             its sibling, never both.\n\
+             # Columns: gem <TAB> version <TAB> outcome <TAB> detail\n"
+        );
+        for (name, r) in selected {
+            tsv.push_str(&format!("{name}\t{}\t{}", r.version, r.outcome.tag()));
+            match r.outcome.detail() {
+                "" => tsv.push('\n'),
+                d => tsv.push_str(&format!("\t{d}\n")),
+            }
+        }
+        tsv
+    };
+
+    std::fs::write(
+        &compiles_path,
+        render(
+            "Gems whose entry point zeo compiles. A row here may not regress: \
+             `gem-probe --check` gates it.",
+            &mut compiles(),
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &fails_path,
+        render(
+            "Gems zeo does not compile. The outcome says why; only `lowering-gap` \
+             and `compiler-panic` are zeo's to fix.",
+            &mut fails(),
+        ),
+    )
+    .map_err(|e| e.to_string())?;
 
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for r in rows.values() {
@@ -487,15 +531,21 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     for (tag, n) in &counts {
         md.push_str(&format!("| {tag} | {n} |\n"));
     }
-    md.push_str("\n| Gem | Version | Outcome | Detail |\n|---|---|---|---|\n");
-    for (name, r) in rows {
+    let mut table = |title: &str, selected: &mut dyn Iterator<Item = (&String, &Row)>| {
         md.push_str(&format!(
-            "| {name} | {} | {} | {} |\n",
-            r.version,
-            r.outcome.tag(),
-            r.outcome.detail().replace('|', "\\|")
+            "\n## {title}\n\n| Gem | Version | Outcome | Detail |\n|---|---|---|---|\n"
         ));
-    }
+        for (name, r) in selected {
+            md.push_str(&format!(
+                "| {name} | {} | {} | {} |\n",
+                r.version,
+                r.outcome.tag(),
+                r.outcome.detail().replace('|', "\\|")
+            ));
+        }
+    };
+    table("Compiles", &mut compiles());
+    table("Does not compile", &mut fails());
     std::fs::write(root.join("conformance/gem-probe.md"), md).map_err(|e| e.to_string())
 }
 
@@ -665,7 +715,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         }
     }
 
-    let before = read_ledger(root);
+    let before = match read_ledger(root) {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("gem-probe: reading the ledger: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if corpus {
         names.extend(read_corpus(root));
     }
@@ -731,10 +787,12 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         .values()
         .filter(|r| r.outcome == Outcome::Compiles)
         .count();
+    let [compiles_path, fails_path] = ledger_paths(root);
     println!(
-        "gem-probe: {compiles}/{} probed gems compile; ledger at {}",
+        "gem-probe: {compiles}/{} probed gems compile\n  {}\n  {}",
         rows.len(),
-        ledger_path(root).display()
+        compiles_path.display(),
+        fails_path.display()
     );
 
     // A gem that compiled and no longer does is a regression, whatever the new
@@ -960,7 +1018,7 @@ mod tests {
         );
         write_ledger(&root, &rows).unwrap();
 
-        let back = read_ledger(&root);
+        let back = read_ledger(&root).unwrap();
         assert_eq!(back.len(), 3);
         assert_eq!(back["alpha"].outcome, Outcome::Compiles);
         assert_eq!(back["beta"].version, "2.1.0");
@@ -988,17 +1046,91 @@ mod tests {
             );
         }
         write_ledger(&root, &rows).unwrap();
-        let first = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        let first = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
         write_ledger(&root, &rows).unwrap();
-        let second = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        let second = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
         assert_eq!(first, second);
         // BTreeMap ordering means the file is sorted, not insertion-ordered.
-        let names: Vec<&str> = first
-            .lines()
-            .filter(|l| !l.starts_with('#'))
+        assert_eq!(gem_names(&first[0]), ["alpha", "mu", "zeta"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn gem_names(tsv: &str) -> Vec<&str> {
+        tsv.lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
             .filter_map(|l| l.split('\t').next())
-            .collect();
-        assert_eq!(names, ["alpha", "mu", "zeta"]);
+            .collect()
+    }
+
+    /// The whole point of two files: a verdict decides which one a gem is in,
+    /// and it is in exactly one.
+    #[test]
+    fn the_ledger_routes_each_gem_by_its_verdict() {
+        let root = scratch("ledger-split");
+        let mut rows = BTreeMap::new();
+        for (name, outcome) in [
+            ("alpha", Outcome::Compiles),
+            ("beta", Outcome::LoweringGap("a gap".into())),
+            ("gamma", Outcome::Compiles),
+            ("delta", Outcome::NativeExtension),
+        ] {
+            rows.insert(
+                name.to_string(),
+                Row {
+                    version: "1.0.0".into(),
+                    outcome,
+                },
+            );
+        }
+        write_ledger(&root, &rows).unwrap();
+
+        let [compiles, fails] = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
+        assert_eq!(gem_names(&compiles), ["alpha", "gamma"]);
+        assert_eq!(gem_names(&fails), ["beta", "delta"]);
+        // Reading them back reassembles the one map the prober works from.
+        assert_eq!(read_ledger(&root).unwrap().len(), 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A fix moves a gem across the files. The stale row must not survive in
+    /// the file the gem left, or resume would read back the old verdict.
+    #[test]
+    fn a_gem_that_starts_compiling_leaves_the_failing_ledger() {
+        let root = scratch("ledger-move");
+        let mut rows = BTreeMap::new();
+        rows.insert(
+            "beta".to_string(),
+            Row {
+                version: "1.0.0".into(),
+                outcome: Outcome::LoweringGap("a gap".into()),
+            },
+        );
+        write_ledger(&root, &rows).unwrap();
+        rows.get_mut("beta").unwrap().outcome = Outcome::Compiles;
+        write_ledger(&root, &rows).unwrap();
+
+        let [compiles, fails] = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
+        assert_eq!(gem_names(&compiles), ["beta"]);
+        assert!(gem_names(&fails).is_empty());
+        assert_eq!(
+            read_ledger(&root).unwrap()["beta"].outcome,
+            Outcome::Compiles
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two files can disagree in a way one file never could. Guessing which
+    /// copy is current would silently publish a wrong verdict.
+    #[test]
+    fn a_gem_recorded_in_both_ledgers_is_refused() {
+        let root = scratch("ledger-dup");
+        let [compiles, fails] = ledger_paths(&root);
+        std::fs::create_dir_all(compiles.parent().unwrap()).unwrap();
+        std::fs::write(&compiles, "beta\t1.0.0\tcompiles\n").unwrap();
+        std::fs::write(&fails, "beta\t1.0.0\tlowering-gap\ta gap\n").unwrap();
+
+        let err = read_ledger(&root).unwrap_err();
+        assert!(err.contains("beta"), "{err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1179,7 +1311,7 @@ mod tests {
             );
             write_ledger(&root, &rows).unwrap();
             // Whatever has been probed so far is readable right now.
-            let ondisk = read_ledger(&root);
+            let ondisk = read_ledger(&root).unwrap();
             assert_eq!(ondisk.len(), i + 1);
             assert!(ondisk.contains_key(*name));
         }
@@ -1201,7 +1333,7 @@ mod tests {
         );
         write_ledger(&root, &rows).unwrap();
 
-        let before = read_ledger(&root);
+        let before = read_ledger(&root).unwrap();
         let mut wanted: Vec<(String, Option<String>)> = vec![
             ("done".into(), None),
             ("fresh".into(), None),

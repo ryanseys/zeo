@@ -51,7 +51,7 @@ use std::process::ExitCode;
 ///
 /// The manifest-relative form ends `crates/xtask/../..`, and every path built
 /// from it inherits those segments -- so a tool that prints where it wrote
-/// something shows `.../crates/xtask/../../conformance/gem-probe.tsv`. That is
+/// something shows `.../crates/xtask/../../conformance/gem-probe.md`. That is
 /// the same directory, and unreadable. Falls back to the literal path when the
 /// tree cannot be canonicalized, which only happens if it has been removed.
 fn workspace_root() -> PathBuf {
