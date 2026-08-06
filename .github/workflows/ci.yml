@@ -159,12 +159,27 @@ jobs:
       # which takes seconds rather than a full runtime build.
       - run: cargo run -p xtask -- dist --stage-only
 
-      # `cargo publish` rejects a package that does not build from its own
-      # .crate contents. Catch that here, not after four crates are already
-      # published and immutable.
-      - name: packages are well-formed
+      # `cargo package --list`, NOT `cargo package`. Both `cargo package` and
+      # `cargo publish --dry-run` resolve each dependency's version
+      # requirement against the real crates.io index, even with --no-verify.
+      # The internal deps are pinned `=0.1.0` and are not published, so those
+      # commands fail with "no matching package named zeo-abi" for every crate
+      # above the leaves. `--list` reads the manifest and walks the file set
+      # without touching the index, which is what this gate is actually for:
+      # proving the manifest parses and the right files ship.
+      #
+      # `zeo` is the one that matters. Its build script needs the two
+      # pregenerated artifacts, because the sibling crates it would otherwise
+      # read are absent from the .crate file.
+      - name: packages list cleanly and carry their pregen artifacts
         run: |
+          cargo run -p xtask -- stage-publish
           for c in zeo-abi zeo-dsl zeo-macros zeo-rt zeo; do
-            cargo package -p "$c" --no-verify --allow-dirty >/dev/null
-            echo "packaged $c"
+            n=$(cargo package -p "$c" --list --allow-dirty | wc -l)
+            echo "$c: $n files"
           done
+          for f in gems.pregen.tar.gz src/class_surface.pregen.rs; do
+            cargo package -p zeo --list --allow-dirty | grep -qx "$f" \
+              || { echo "::error::zeo package is missing $f"; exit 1; }
+          done
+          echo "zeo carries both pregen artifacts"

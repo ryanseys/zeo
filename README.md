@@ -140,9 +140,10 @@ Zeo aims at the full language. These features work today:
   `Integer` becomes `Bignum` when necessary. `Float`, `Rational` and `Complex`
   are also available. Coercion and error messages agree with CRuby.
 - **Strings and encodings.** A string is a sequence of bytes plus an encoding.
-  The engine has 24 encodings. These include UTF-8, the Windows-125x and
-  ISO-8859 families, and Shift_JIS, EUC-JP, GBK and Big5 through the WHATWG
-  tables. `docs/COMPATIBILITY.md` lists the differences.
+  `Encoding.list` reports 103 encodings, the same set and count as Ruby
+  4.0.6. 52 single-byte tables cover the Windows-125x and ISO-8859 families,
+  and Shift_JIS, EUC-JP, GBK and Big5 come from the WHATWG tables.
+  `docs/COMPATIBILITY.md` lists the differences.
 - **Core collections.** `Array`, `Hash`, `Range`, `Symbol` and `Struct` are
   available. `Enumerable` and `Comparable` are real ancestors in the method
   resolution order, and they use your `each` and `<=>`.
@@ -193,8 +194,7 @@ that Ruby 4.0.6 can reach with Zeo's surface
 `conformance/method-census-gaps.tsv`, holds **zero rows**. Read
 [`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md) for how the census works.
 
-- **The conformance suite** in `tests/spinel/` compiles approximately 2,509
-  programs. It compares stdout and stderr with real Ruby, byte for byte, as
+- **The conformance suite** in `tests/spinel/` compiles 2,568 programs. It compares stdout and stderr with real Ruby, byte for byte, as
   `cargo nextest` cases. `tests/gaps/` holds the programs that do not agree
   yet. Each of these must fail. If one starts to agree with Ruby, the suite
   fails, and that program then moves into the corpus.
@@ -481,7 +481,7 @@ limits of these measurements.
 
 ## The workspace
 
-Zeo is a Cargo workspace with six crates. It uses edition 2024, and the minimum
+Zeo is a Cargo workspace with seven crates. It uses edition 2024, and the minimum
 Rust version is 1.88.
 
 ```
@@ -491,6 +491,7 @@ crates/
   zeo-abi     a leaf crate with no dependencies: the ClassId numbers that both sides use
   zeo-dsl     the shared `syn` grammar for the ruby_class! and ruby_module! DSL
   zeo-macros  the macro that expands that DSL into runtime code
+  zeo-tests   the integration and golden suites (not published)
   xtask       development tools (bench, gem, gem-compat, stdlib-status)
 ```
 
@@ -517,6 +518,9 @@ crates/
   compiler and the runtime share.
 - **`zeo-dsl`** and **`zeo-macros`** hold the DSL for the core classes. Read
   the next section.
+- **`zeo-tests`** holds the integration and golden suites. It is `publish =
+  false`: its tests read the repository's own `tests/` and `gems/`
+  directories, which no published crate carries.
 - **`xtask`** holds the development commands. Use `cargo xtask <cmd>`. The
   commands are `bench` for the performance suite, `gem` to manage the gems in
   `gems.toml`, `gem-compat` to measure how much of a gem store compiles, and
@@ -671,7 +675,7 @@ $ ZEO_BLESS=1 cargo test -p zeo --test spinel     # record the expected output a
 $ cargo run -p xtask -- bench                     # the performance suite
 ```
 
-- **`spinel`** is the conformance corpus, with approximately 2,509 programs.
+- **`spinel`** is the conformance corpus, with 2,568 programs.
   The suite compares each one with real Ruby, byte for byte.
 - **`examples`** holds the programs that Zeo authors wrote, with their correct
   output.
@@ -688,7 +692,7 @@ the full procedure.
 ## Project layout
 
 ```
-crates/      the six crates of the workspace (above)
+crates/      the seven crates of the workspace (above)
 docs/        COMPATIBILITY, EXTENSIONS, EVAL_VM, METHOD_COVERAGE, ROADMAP
 tests/       the test suites: examples, the spinel corpus, the gaps tracker
 gems/        51 gems (gems.toml controls the git-pinned ones)
