@@ -1403,6 +1403,7 @@ impl Compiler {
                     | zeo_abi::STRING_SCANNER_CLASS
                     | zeo_abi::STRINGIO_CLASS
                     | zeo_abi::FILE_CLASS
+                    | zeo_abi::SET_CLASS
             )
         })
     }

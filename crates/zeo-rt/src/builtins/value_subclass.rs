@@ -158,6 +158,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::STRING_SCANNER_CLASS
             | zeo_abi::STRINGIO_CLASS
             | zeo_abi::FILE_CLASS
+            | zeo_abi::SET_CLASS
     )
 }
 
@@ -252,6 +253,7 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // with its own `initialize` seats the real payload through `super`,
         // which is the only way to get a File in the first place.
         zeo_abi::FILE_CLASS => RubyValue::Nil,
+        zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         _ => RubyValue::Nil,
     }
 }

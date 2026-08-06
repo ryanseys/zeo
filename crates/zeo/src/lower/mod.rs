@@ -1118,7 +1118,11 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 // compile-time one -- the subclass has to be built at runtime
                 // for the same reason. A name that is also a `class`
                 // definition stays on the static path.
-                Ok(n) => const_is_assigned(hir, &n) && !const_is_class_def(hir, &n),
+                Ok(n) => {
+                    (const_is_assigned(hir, &n)
+                        || crate::lower::defs::qualified_const_mints_runtime_class(hir, &n))
+                        && !const_is_class_def(hir, &n)
+                }
             };
             if runtime_parent {
                 return lower_runtime_class(result, hir, &name, &sc, class.body());

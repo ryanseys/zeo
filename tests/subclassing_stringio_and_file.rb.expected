@@ -3,3 +3,4 @@
 [true, Buffer, StringIO]
 [true, "data", Managed]
 false
+[[1, 2, 3], "tags(3)", Tags, true]

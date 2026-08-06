@@ -2063,6 +2063,7 @@ fn register_class(
                                 // family's blocker between them.
                                 | zeo_abi::STRINGIO_CLASS
                                 | zeo_abi::FILE_CLASS
+                                | zeo_abi::SET_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

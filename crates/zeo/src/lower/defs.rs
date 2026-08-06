@@ -786,6 +786,35 @@ fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {
     )
 }
 
+/// A QUALIFIED reference (`Aws::EmptyStructure`) to a constant that was written
+/// unqualified inside its own module.
+///
+/// `class EmptyStructure < Struct.new(...)` inside `module Aws` lowers to a
+/// bare `EmptyStructure = Class.new(...)`: the module nesting is the body's
+/// context, not part of the name. A later `class Output < Aws::EmptyStructure`
+/// spells it in full, so [`const_is_assigned`]'s exact match misses and the
+/// subclass takes the static path, where the name resolves to nothing.
+///
+/// Matching on the LEAF alone is safe only because the value must mint a
+/// class: an ordinary `X = 7` in some unrelated scope cannot misroute a
+/// subclass onto the runtime path.
+pub(crate) fn qualified_const_mints_runtime_class(hir: &Hir, name: &str) -> bool {
+    let Some(leaf) = name.rsplit("::").next() else {
+        return false;
+    };
+    if leaf == name {
+        return false;
+    }
+    hir.nodes().iter().any(|node| match node {
+        HirNode::ConstWrite {
+            scope: None,
+            name: n,
+            value,
+        } => n == leaf && value_mints_runtime_class(hir, *value),
+        _ => false,
+    })
+}
+
 /// Whether an already-lowered `class`/`module` DEFINES this name, making it a
 /// compile-time class even if some later statement also assigns the constant.
 pub(crate) fn const_is_class_def(hir: &Hir, name: &str) -> bool {

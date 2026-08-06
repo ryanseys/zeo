@@ -10,6 +10,7 @@
 
 require "stringio"
 require "tmpdir"
+require "set"
 
 class Buffer < StringIO
   def dump = "<#{string}>"
@@ -31,3 +32,11 @@ p [f.open?, f.read, f.class]
 f.close
 p f.open?
 File.unlink(path)
+
+class Tags < Set
+  def label = "tags(#{size})"
+end
+
+t = Tags.new([1, 2, 2])
+t << 3
+p [t.to_a.sort, t.label, t.class, t.is_a?(Set)]
