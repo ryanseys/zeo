@@ -499,6 +499,23 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     std::fs::write(root.join("conformance/gem-probe.md"), md).map_err(|e| e.to_string())
 }
 
+/// Every gem name the registry knows, from the compact index.
+///
+/// This is the whole corpus -- about 200k names -- so it is only useful with
+/// `--limit` and the resume behaviour: probe a slice, stop, come back to the
+/// next slice later.
+fn registry_names() -> Result<Vec<String>, String> {
+    let body = get("https://index.rubygems.org/names")?;
+    let text = String::from_utf8(body).map_err(|e| e.to_string())?;
+    Ok(text
+        .lines()
+        .map(str::trim)
+        // The index opens with a `---` header line.
+        .filter(|l| !l.is_empty() && *l != "---")
+        .map(String::from)
+        .collect())
+}
+
 fn corpus_path(root: &Path) -> PathBuf {
     root.join("conformance/gem-probe-corpus.txt")
 }
@@ -524,6 +541,13 @@ fn read_corpus(root: &Path) -> Vec<(String, Option<String>)> {
 // -------------------------------------------------------------------- run
 
 /// Probes `name`, fetching its runtime dependencies first unless `no_deps`.
+/// Probes one gem and writes the ledger immediately.
+///
+/// Writing once at the end throws away everything when a long sweep is
+/// interrupted -- and a sweep over the whole registry is measured in hours, so
+/// interruption is the normal case, not the exceptional one. Rewriting the
+/// whole file per gem is cheap next to fetching and compiling one, and it means
+/// the ledger on disk is always the truth so far.
 fn probe_one(
     root: &Path,
     name: &str,
@@ -545,6 +569,7 @@ fn probe_one(
                     outcome: Outcome::FetchFailed(e),
                 },
             );
+            let _ = write_ledger(root, rows);
             return;
         }
     };
@@ -575,19 +600,34 @@ fn probe_one(
         }
     );
     rows.insert(name.to_string(), Row { version, outcome });
+    if let Err(e) = write_ledger(root, rows) {
+        eprintln!("gem-probe: writing the ledger: {e}");
+    }
 }
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut names: Vec<(String, Option<String>)> = Vec::new();
     let (mut corpus, mut all, mut check, mut no_deps) = (false, false, false, false);
+    let (mut index, mut refresh) = (false, false);
+    let mut limit: Option<usize> = None;
     let mut positional: Vec<String> = Vec::new();
 
-    for arg in args {
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
         match arg.as_str() {
             "--corpus" => corpus = true,
             "--all" => all = true,
             "--check" => check = true,
             "--no-deps" => no_deps = true,
+            "--index" => index = true,
+            "--refresh" => refresh = true,
+            "--limit" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) => limit = Some(n),
+                None => {
+                    eprintln!("gem-probe: --limit needs a number");
+                    return ExitCode::FAILURE;
+                }
+            },
             other if other.starts_with("--") => {
                 eprintln!("gem-probe: unknown option {other:?}");
                 return ExitCode::FAILURE;
@@ -609,6 +649,15 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     if corpus {
         names.extend(read_corpus(root));
     }
+    if index {
+        match registry_names() {
+            Ok(all_names) => names.extend(all_names.into_iter().map(|n| (n, None))),
+            Err(e) => {
+                eprintln!("gem-probe: reading the registry index: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     if all {
         names.extend(
             before
@@ -617,8 +666,26 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         );
     }
     if names.is_empty() {
-        eprintln!("gem-probe: nothing to probe (give a gem name, --corpus or --all)");
+        eprintln!("gem-probe: nothing to probe (give a gem name, --corpus, --index or --all)");
         return ExitCode::FAILURE;
+    }
+
+    // Resume. A sweep of the registry is hours of work, so re-running must
+    // continue rather than start over. `--all` is the explicit re-probe, and
+    // `--refresh` forces it for any selection.
+    let skipped = if all || refresh {
+        0
+    } else {
+        let n = names.len();
+        names.retain(|(name, _)| !before.contains_key(name));
+        n - names.len()
+    };
+    if let Some(n) = limit {
+        names.truncate(n);
+    }
+    if names.is_empty() {
+        println!("gem-probe: nothing left to probe ({skipped} already in the ledger)");
+        return ExitCode::SUCCESS;
     }
 
     if let Err(e) = std::fs::create_dir_all(vendor_dir(root)) {
@@ -627,6 +694,9 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 
     let mut rows = before.clone();
+    if skipped > 0 {
+        println!("{skipped} gem(s) already recorded; --refresh re-probes them");
+    }
     println!("probing {} gem(s):", names.len());
     for (name, want) in &names {
         probe_one(root, name, want.as_deref(), no_deps, &mut rows);
@@ -1069,6 +1139,59 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(seen, ["target"], "the previous run's dep link survived");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The ledger on disk must be the truth so far, not the truth at the end.
+    /// A registry-scale sweep is hours long, so an interrupted run that wrote
+    /// nothing would throw away all of it.
+    #[test]
+    fn each_probe_persists_before_the_next_one_starts() {
+        let root = scratch("incremental");
+        let mut rows = BTreeMap::new();
+        for (i, name) in ["alpha", "beta", "gamma"].iter().enumerate() {
+            rows.insert(
+                name.to_string(),
+                Row {
+                    version: "1.0.0".into(),
+                    outcome: Outcome::Compiles,
+                },
+            );
+            write_ledger(&root, &rows).unwrap();
+            // Whatever has been probed so far is readable right now.
+            let ondisk = read_ledger(&root);
+            assert_eq!(ondisk.len(), i + 1);
+            assert!(ondisk.contains_key(*name));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Resume is a set difference against the ledger, so re-running a sweep
+    /// continues instead of starting over.
+    #[test]
+    fn a_rerun_skips_what_the_ledger_already_holds() {
+        let root = scratch("resume");
+        let mut rows = BTreeMap::new();
+        rows.insert(
+            "done".to_string(),
+            Row {
+                version: "1.0.0".into(),
+                outcome: Outcome::Compiles,
+            },
+        );
+        write_ledger(&root, &rows).unwrap();
+
+        let before = read_ledger(&root);
+        let mut wanted: Vec<(String, Option<String>)> = vec![
+            ("done".into(), None),
+            ("fresh".into(), None),
+            ("also-fresh".into(), None),
+        ];
+        wanted.retain(|(n, _)| !before.contains_key(n));
+        assert_eq!(
+            wanted.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["fresh", "also-fresh"]
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

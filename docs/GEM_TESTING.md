@@ -18,12 +18,32 @@ Do not quote a resolvability percentage as a compatibility number.
 $ cargo xtask gem-probe kramdown          # newest release
 $ cargo xtask gem-probe rake 13.3.1       # a pinned version
 $ cargo xtask gem-probe --corpus          # every gem in the corpus file
+$ cargo xtask gem-probe --index           # every gem on rubygems.org
+$ cargo xtask gem-probe --index --limit 500
 $ cargo xtask gem-probe --all             # re-probe at recorded versions
 $ cargo xtask gem-probe --all --check     # as above; fail if one regressed
+$ cargo xtask gem-probe --corpus --refresh
 $ cargo xtask gem-probe kramdown --no-deps
 ```
 
 The gem does not need to be installed. Nothing here needs Ruby.
+
+### It resumes, and it writes as it goes
+
+The ledger is rewritten after **every** gem, not once at the end, and a run
+skips whatever the ledger already holds. Both matter at registry scale: the
+compact index lists around 200,000 gems, so a full sweep is measured in hours
+and being interrupted is the normal case, not the exceptional one.
+
+```console
+$ cargo xtask gem-probe --index --limit 500     # a slice
+^C                                             # keep every result so far
+$ cargo xtask gem-probe --index --limit 500     # the NEXT 500, not the same ones
+```
+
+`--all` re-probes everything in the ledger at its recorded version, and
+`--refresh` re-probes a selection that resume would otherwise skip. Use those
+after a compiler change; use plain `--index`/`--corpus` to extend coverage.
 
 ## How a probe runs
 
@@ -87,9 +107,19 @@ nothing more.
 
 ## Growing the corpus
 
-Add a name to [`../conformance/gem-probe-corpus.txt`](../conformance/gem-probe-corpus.txt)
-and run `--corpus`. A gem earns its place when its failure would teach us
-something — a construct not yet covered, or a library people actually depend on.
+[`../conformance/gem-probe-corpus.txt`](../conformance/gem-probe-corpus.txt) is
+the transitive runtime-dependency closure of the 200 most downloaded gems on
+rubygems.org, resolved from the registry rather than guessed. Add a name and run
+`--corpus`.
+
+The corpus is the curated, reviewable list. `--index` goes wider, to every gem
+the registry knows — useful for finding constructs nothing in the corpus
+exercises, and the results simply accumulate in the same ledger.
+
+Rankings come from [rubygems.org/stats](https://rubygems.org/stats), which
+covers the top 100; beyond that the search API reports per-gem download counts.
+The [weekly PostgreSQL dumps](https://rubygems.org/pages/data) carry the full
+picture if a more precise ranking is ever needed.
 
 `--all --check` is the regression gate: a gem that compiled and no longer does
 fails the build, whatever its new outcome. That gate runs in CI when a
