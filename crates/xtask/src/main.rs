@@ -20,6 +20,13 @@
 //! - `xtask method-census`: re-records `conformance/method-census.tsv` -- what
 //!   every module CRuby reaches from `Object` owns -- which the
 //!   `method_census` coverage ratchet reads.
+//! - `xtask dist [--target <triple>]`: assembles the relocatable distribution
+//!   (`bin/zeo` + `share/zeo/{gems,runtime}`) and its tarball -- the single
+//!   artifact the GitHub Release, Homebrew, and the platform gems all carry
+//!   (see `dist.rs`).
+//! - `xtask stage-publish [--check]`: stages the two artifacts the published
+//!   `zeo` crate ships but the repo does not commit -- the pregenerated class
+//!   surface and the embedded gems archive (see `stage_publish.rs`).
 //!
 //! (The golden-file conformance corpus, examples, and gaps all run as
 //! `cargo test`/nextest -- see `crates/zeo/tests/`.)
@@ -27,6 +34,7 @@
 mod arity_oracle;
 mod bench;
 mod compile_bench;
+mod dist;
 mod exec;
 mod gem;
 mod gem_compat;
@@ -55,11 +63,12 @@ fn main() -> ExitCode {
         Some("arity-oracle") => arity_oracle::main(&root, &args),
         Some("method-census") => method_census::main(&root, &args),
         Some("stage-publish") => stage_publish::main(&root, &args),
+        Some("dist") => dist::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
                  <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
-                 arity-oracle|method-census|stage-publish>"
+                 arity-oracle|method-census|stage-publish|dist>"
             );
             ExitCode::FAILURE
         }

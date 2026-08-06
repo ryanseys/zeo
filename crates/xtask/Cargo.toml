@@ -18,6 +18,10 @@ zeo-dsl = { workspace = true, features = ["spans"] }
 serde_json.workspace = true
 tar.workspace = true
 flate2.workspace = true
+# dist: rewrites the root manifest into the payload's runtime workspace, and
+# checksums the release tarball.
+toml_edit.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

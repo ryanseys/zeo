@@ -1,5 +1,5 @@
-//! `cargo run -p xtask -- gem <add|sync|update>`: vendor pure-Ruby stdlib gems
-//! into `gems/` from their upstream git repos.
+//! `cargo run -p xtask -- gem <add|sync|update|outdated>`: vendor pure-Ruby
+//! stdlib gems into `gems/` from their upstream git repos.
 //!
 //! The model is **vendor-on-fetch**: a git URL + tag is the *source*, the
 //! committed `gems/<name>/` (a stub gemspec + the verbatim `lib/`) is the
@@ -23,6 +23,13 @@
 //!
 //! `rev` is trusted as-is once written (the user chose "trust the tag" -- no
 //! cross-check against the local install; `--check-oracle` is an optional extra).
+//!
+//! Nothing here discovers a new version on its own: `update` re-resolves the
+//! tag it is given. `outdated` is the discovery half -- it prints each pin
+//! beside the version the ORACLE ruby installs and the newest upstream tag, so
+//! a bump is a deliberate step. The target is the oracle's version, not the
+//! newest one: vendoring ahead of the ruby every golden is blessed against
+//! would manufacture divergences that are not bugs.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -60,9 +67,11 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         Some("add") => cmd_add(root, &args[1..]),
         Some("sync") => cmd_sync(root, &args[1..]),
         Some("update") => cmd_update(root, &args[1..]),
+        Some("outdated") => cmd_outdated(root, &args[1..]),
         _ => Err("usage: cargo run -p xtask -- gem \
              <add <owner/repo> [--tag <t>] [--name <n>] [--subdir <d>] | \
-             sync [<name>] [--check] [--check-oracle] | update <name> [--tag <t>]>"
+             sync [<name>] [--check] [--check-oracle] | update <name> [--tag <t>] | \
+             outdated>"
             .to_string()),
     };
     match result {
@@ -231,6 +240,145 @@ fn sync_entries(
         ));
     }
     Ok(())
+}
+
+/// `gem outdated`: one row per manifest entry -- the current pin, the version
+/// the ORACLE RUBY installs, and the newest upstream tag.
+///
+/// The oracle column is the one that matters. zeo's conformance target is the
+/// ruby in `mise.toml`, and every golden is blessed by running it, so a gem
+/// vendored AHEAD of what that ruby ships manufactures divergences that are
+/// not bugs. The upstream column is informational: it says how far the
+/// ecosystem has moved past the oracle.
+///
+/// Read-only -- it never writes `gems.toml`. Feed its `oracle` column back in
+/// via `gem update <name> --tag v<version>`.
+fn cmd_outdated(root: &Path, args: &[String]) -> Result<(), String> {
+    let parsed = parse_args(args)?;
+    let only = parsed.positional.first().map(String::as_str);
+    let entries = read_manifest(&root.join("gems.toml"))?;
+    let installed = installed_gem_versions();
+
+    println!(
+        "{:<14} {:<12} {:<12} {:<12} {}",
+        "gem", "pinned", "oracle", "upstream", "action"
+    );
+    let mut behind = Vec::new();
+    for entry in entries.iter().filter(|e| only.is_none_or(|n| n == e.name)) {
+        let pinned = entry.tag.strip_prefix('v').unwrap_or(&entry.tag).to_string();
+        let oracle = installed.get(&entry.name).cloned();
+        let upstream = newest_tag(&format!("https://github.com/{}", entry.github));
+        let action = match &oracle {
+            Some(v) if *v != pinned => {
+                behind.push((entry.name.clone(), v.clone()));
+                format!("gem update {} --tag v{v}", entry.name)
+            }
+            Some(_) => "-".to_string(),
+            // A gem the oracle does not ship (bundler/rubygems live outside
+            // the gem store's versioned layout) -- nothing to match against.
+            None => "(not in the oracle install)".to_string(),
+        };
+        println!(
+            "{:<14} {:<12} {:<12} {:<12} {}",
+            entry.name,
+            pinned,
+            oracle.as_deref().unwrap_or("?"),
+            upstream.as_deref().unwrap_or("?"),
+            action
+        );
+    }
+    if behind.is_empty() {
+        println!("\nEvery pinned gem matches the oracle install.");
+    } else {
+        println!("\n{} gem(s) differ from the oracle:", behind.len());
+        for (name, version) in &behind {
+            println!("  cargo run -p xtask -- gem update {name} --tag v{version}");
+        }
+    }
+    Ok(())
+}
+
+/// Every gem version the oracle ruby has installed, by name, from
+/// `<gemdir>/gems/<name>-<version>/`. Same `mise which gem` resolution
+/// [`check_against_oracle`] uses, for the same reason. Highest version wins
+/// when several are installed side by side.
+fn installed_gem_versions() -> std::collections::HashMap<String, String> {
+    let mut found: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let gemdir = match git_free_command("mise", &["which", "gem"]) {
+        Ok(path) if !path.trim().is_empty() => git_free_command(path.trim(), &["env", "gemdir"]),
+        _ => git_free_command("gem", &["env", "gemdir"]),
+    };
+    let Ok(gemdir) = gemdir else {
+        return found;
+    };
+    let Ok(entries) = std::fs::read_dir(PathBuf::from(gemdir.trim()).join("gems")) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.file_name();
+        let Some(dir) = dir.to_str() else { continue };
+        // `<name>-<version>`, where the name itself may contain dashes
+        // (`net-http-0.9.1`): split at the LAST dash that starts a digit.
+        let Some(split) = dir
+            .rmatch_indices('-')
+            .find(|(i, _)| dir[i + 1..].starts_with(|c: char| c.is_ascii_digit()))
+            .map(|(i, _)| i)
+        else {
+            continue;
+        };
+        let (name, version) = (&dir[..split], &dir[split + 1..]);
+        found
+            .entry(name.to_string())
+            .and_modify(|existing| {
+                if version_lt(existing, version) {
+                    *existing = version.to_string();
+                }
+            })
+            .or_insert_with(|| version.to_string());
+    }
+    found
+}
+
+/// The newest `vX.Y.Z` tag on a remote, by numeric component order.
+/// `None` when the remote is unreachable -- this column is informational, so
+/// a network hiccup must not fail the command.
+fn newest_tag(url: &str) -> Option<String> {
+    let out = git(None, &["ls-remote", "--tags", "--refs", url]).ok()?;
+    let mut newest: Option<String> = None;
+    for line in out.lines() {
+        let Some((_, refname)) = line.split_once('\t') else {
+            continue;
+        };
+        let tag = refname.trim_start_matches("refs/tags/");
+        let version = tag.strip_prefix('v').unwrap_or(tag);
+        // Releases only: skip `1.2.3.pre1`, `v1.2.3-rc`, and similar.
+        if version.is_empty()
+            || !version
+                .split('.')
+                .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        {
+            continue;
+        }
+        if newest.as_deref().is_none_or(|n| version_lt(n, version)) {
+            newest = Some(version.to_string());
+        }
+    }
+    newest
+}
+
+/// `a < b` comparing dot-separated numeric components, shorter-is-lower on a
+/// common prefix (`1.2` < `1.2.1`). Non-numeric components sort as 0, which is
+/// fine because callers filter to all-numeric versions first.
+fn version_lt(a: &str, b: &str) -> bool {
+    let num = |s: &str| -> Vec<u64> { s.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
+    let (a, b) = (num(a), num(b));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x < y;
+        }
+    }
+    false
 }
 
 // --- git --------------------------------------------------------------------
@@ -691,6 +839,15 @@ fn short(rev: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versions_order_by_numeric_component_not_lexically() {
+        assert!(version_lt("1.9.0", "1.10.0"), "10 > 9 numerically");
+        assert!(version_lt("0.2.2", "0.3.0"));
+        assert!(version_lt("1.2", "1.2.1"), "a prefix is lower");
+        assert!(!version_lt("4.0.16", "4.0.16"));
+        assert!(!version_lt("2.0.0", "1.99.99"));
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("zeo-xtask-gem-{name}-{}", std::process::id()));

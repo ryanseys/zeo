@@ -215,17 +215,30 @@ fn target_dir() -> PathBuf {
 /// exact rustc that built them (Rust has no stable ABI), so a toolchain
 /// update must land in a FRESH dir and rebuild cleanly rather than link a
 /// mismatched artifact. The version + fingerprint fold means a zeo upgrade
-/// gets the same treatment. Because every input to the artifact is part of
-/// the key, existence IS freshness inside the dir -- see
-/// [`runtime_artifact_is_stale`]'s installed-mode short-circuit.
+/// gets the same treatment.
+///
+/// Inherited `RUSTFLAGS` is folded in for the same reason, and it is why zeo
+/// does not strip the ambient environment: flags a user sets DO change the
+/// artifact, so the honest fix is a key that covers them, not a scrub that
+/// silently discards the user's configuration. (Cargo prefers
+/// `CARGO_ENCODED_RUSTFLAGS` and ignores `RUSTFLAGS` when it is set, so the
+/// key reads them in that order.)
+///
+/// Because every input to the artifact is part of the key, existence IS
+/// freshness inside the dir -- see [`runtime_artifact_is_stale`]'s
+/// installed-mode short-circuit.
 fn runtime_cache_key() -> &'static str {
     static KEY: OnceLock<String> = OnceLock::new();
     KEY.get_or_init(|| {
+        let rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS")
+            .or_else(|_| std::env::var("RUSTFLAGS"))
+            .unwrap_or_default();
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for part in [
             env!("CARGO_PKG_VERSION"),
             env!("ZEO_COMPILER_FINGERPRINT"),
             &rustc_version(),
+            &rustflags,
         ] {
             for &b in part.as_bytes() {
                 h ^= u64::from(b);
@@ -532,6 +545,7 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
         }
     }
     cmd.current_dir(&workspace);
+    decline_parent_jobserver(&mut cmd);
     let label = build_label(profile, runtime, linkage);
     if installed_payload().is_some() {
         // The one place an installed zeo is slow: the first compile per
@@ -606,6 +620,7 @@ fn build_runtime_from_registry(
     let variant_dir = variant_target_dir(runtime, linkage);
     cmd.arg("--target-dir").arg(&variant_dir);
     cmd.current_dir(&anchor);
+    decline_parent_jobserver(&mut cmd);
     // Keep cargo's progress/download chatter visible; only the JSON stream is
     // captured.
     cmd.stderr(std::process::Stdio::inherit());
@@ -711,6 +726,26 @@ fn zeo_rt_rlib_from_messages(stdout: &str) -> Option<PathBuf> {
         }
     }
     found
+}
+
+/// Decline an enclosing cargo's jobserver when zeo is itself run under cargo
+/// (its own test harness does exactly this, and so would a build script).
+///
+/// The descriptors named in `CARGO_MAKEFLAGS` are `FD_CLOEXEC` by default, so
+/// they do not survive into a grandchild; rustc then warns that the build
+/// environment looks misconfigured. Declining is the same thing the blessed
+/// mechanism does -- `jobserver::Client::configure` clobbers these variables
+/// for the child it configures -- and it is honest here: building the runtime
+/// is independent work, not a subtask of the outer build's job budget, and
+/// [`job_cap`] already governs its width via `--jobs`.
+///
+/// Nothing else is stripped. Inherited `RUSTFLAGS` genuinely does shape the
+/// artifact, so it is folded into [`runtime_cache_key`] rather than discarded:
+/// a cache key that covers every input is what makes honoring the environment
+/// safe.
+fn decline_parent_jobserver(cmd: &mut std::process::Command) {
+    cmd.env_remove("CARGO_MAKEFLAGS");
+    cmd.env_remove("MAKEFLAGS");
 }
 
 /// The payload dir when running from a relocatable install, `None` otherwise.
