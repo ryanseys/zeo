@@ -1041,27 +1041,23 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
 
     if let Some(sup) = node.as_super_node() {
-        // Positional args stay in `args`; a trailing keyword hash
-        // (`super(x: 1, y: 2)`) becomes `kwargs`, bound to the parent's
-        // keyword params by name.
-        let mut args = Vec::new();
-        let mut kwargs = Vec::new();
-        if let Some(a) = sup.arguments() {
-            for n in a.arguments().iter() {
-                if let Some(kw) = n.as_keyword_hash_node() {
-                    kwargs = lower_kwargs(result, hir, &kw.elements().iter().collect::<Vec<_>>())?;
-                } else {
-                    // Positional args carry splats (`super(m, *args)`) the same
-                    // way a call's do -- an `ArrayElem::Splat` forwards through
-                    // the runtime arg vector.
-                    args.push(lower_array_elem(result, hir, &n)?);
-                }
-            }
-        }
+        // The same argument lowering a CALL gets, for the same reasons:
+        // positional args stay positional (carrying splats as
+        // `ArrayElem::Splat`), a trailing keyword hash becomes `kwargs` bound
+        // to the parent's keyword params by name, and `super(...)` inside
+        // `def m(...)` expands to the three internal forwarding params.
+        //
+        // Lowering these by hand here is what made `super(...)` a gap while
+        // `n(...)` worked: the hand-rolled loop reached `lower_array_elem`,
+        // which has no forwarding arm, so the `...` fell through to the
+        // generic rejection.
+        let (args, kwargs, fwd_block) = lower_call_args(result, hir, sup.arguments())?;
         // A literal `super(x) { ... }` block vs a `super(x, &blk)` block-pass --
         // the same either/or a call carries (`BlockNode` vs `BlockArgumentNode`).
+        // A `...`-forwarded block is a block-pass the arguments produced, and
+        // an explicit one written beside it wins.
         let (block, block_arg) = match sup.block() {
-            None => (None, None),
+            None => (None, fwd_block),
             Some(b) => {
                 if let Some(barg) = b.as_block_argument_node() {
                     let expr = match barg.expression() {
@@ -1428,6 +1424,11 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 .map(|a| {
                     a.arguments().iter().any(|n| {
                         n.as_splat_node().is_some()
+                            // `Klass.new(...)` inside `def m(...)`. The
+                            // forwarding expands to `*rest, **kw, &blk`, which
+                            // is a runtime arg vector by definition -- exactly
+                            // what the static path cannot take.
+                            || n.as_forwarding_arguments_node().is_some()
                             || n.as_keyword_hash_node().is_some_and(|kw| {
                                 kw.elements()
                                     .iter()
@@ -2344,6 +2345,20 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
 
     if let Some(h) = node.as_hash_node() {
         let elements: Vec<Node<'_>> = h.elements().iter().collect();
+        let kwargs = lower_kwargs(result, hir, &elements)?;
+        return Ok(hir.push(HirNode::HashLit(kwargs)));
+    }
+
+    // The BRACE-LESS hash as the last element of an ARRAY literal
+    // (`[a, b, from: x, to: y]`). Ruby collapses it into one ordinary Hash
+    // there -- `[1, k: 2]` has two elements, not three -- so it lowers exactly
+    // like the braced form above; prism just spells it differently.
+    //
+    // A CALL's trailing hash never reaches here: `lower_call_args` peels it
+    // off first, because in that position it is keyword arguments rather than
+    // a value, and the two bind differently.
+    if let Some(kw) = node.as_keyword_hash_node() {
+        let elements: Vec<Node<'_>> = kw.elements().iter().collect();
         let kwargs = lower_kwargs(result, hir, &elements)?;
         return Ok(hir.push(HirNode::HashLit(kwargs)));
     }
