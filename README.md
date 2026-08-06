@@ -15,8 +15,11 @@ $ ./hello
 12
 ```
 
-zeo compares each behaviour with real Ruby, and writes down each difference. The
-goal is to compile **rubygems and bundler** without changes.
+zeo compares each behaviour with real Ruby, and writes down each difference.
+
+zeo reads **RubyGems and Bundler**. It ships both, and it compiles an
+application together with the gems that its `Gemfile.lock` selects. Read
+[RubyGems and Bundler](#rubygems-and-bundler).
 
 [Prism]: https://github.com/ruby/prism
 
@@ -235,14 +238,14 @@ gem. For the full source information and the licences, read
 | Gem | Version | Origin | Test | Differences |
 |---|---|---|---|---|
 | abbrev | 0.1.2 | git-pinned | `issue_abbrev_missing.rb` | — |
-| benchmark | 0.4.1 | git-pinned | `issue_benchmark_missing.rb` | — |
+| benchmark | 0.5.0 | git-pinned | `issue_benchmark_missing.rb` | — |
 | bigdecimal | 4.1.2 | upstream +zeo | `bigdecimal.rb` | zeo supplies the native part ([compat](docs/COMPATIBILITY.md)) |
-| bundler | 4.0.16 | git-pinned | `gem_bundler.rb` | the test starts at `bundler/version` ([roadmap](docs/ROADMAP.md)) |
+| bundler | 4.0.18 | git-pinned | `gem_bundler.rb` | the test starts at `bundler/version` ([roadmap](docs/ROADMAP.md)) |
 | csv | 3.3.6 | git-pinned | `gem_csv.rb` | — |
 | delegate | 0.6.1 | upstream | `issue_require_delegate_crashes.rb` | — |
 | drb | 2.2.3 | git-pinned | `gem_drb.rb` | — |
 | English | 0.8.1 | upstream | `english_special_globals.rb` | — |
-| erb | 6.0.6 | git-pinned | `erb_module_function.rb` | — |
+| erb | 6.0.7 | git-pinned | `erb_module_function.rb` | — |
 | ffi | 1.17.4 | zeo Ruby half | `ffi_struct.rb` | the native part uses `libffi` |
 | fiddle | 1.1.8 | upstream +zeo | `fiddle.rb` | no `Importer` DSL ([compat](docs/COMPATIBILITY.md)) |
 | fileutils | 1.8.0 | git-pinned | `fileutils.rb` | — |
@@ -272,13 +275,13 @@ gem. For the full source information and the licences, read
 | racc | 1.8.1 | git-pinned | `issue_racc_parser_missing.rb` | — |
 | reline | 0.6.3 | upstream +zeo | `reline_line_editor.rb` | one `zeo:` change in `io.rb` |
 | resolv | 0.7.1 | git-pinned | `issue_resolv_missing.rb` | — |
-| rubygems | 4.0.16 | git-pinned | `gem_rubygems.rb` | the test starts below the top-level require ([roadmap](docs/ROADMAP.md)) |
+| rubygems | 4.0.18 | git-pinned | `gem_rubygems.rb` | the test starts below the top-level require ([roadmap](docs/ROADMAP.md)) |
 | shellwords | 0.2.2 | upstream | `shellwords.rb` | — |
 | singleton | 0.3.0 | upstream | — | `singleton_class.include?` ([gap](tests/gaps/issue_singleton_class_include_after_extend.rb)) |
 | strscan | 3.1.6 | zeo Ruby half | `strscan_capture_surface.rb` | zeo supplies its own code ([compat](docs/COMPATIBILITY.md)) |
 | syslog | 0.4.0 | zeo Ruby half | `syslog.rb` | — |
 | tempfile | 0.3.1 | git-pinned | `issue_require_tempfile_codegen_path_attr.rb` | — |
-| time | 0.4.1 | git-pinned | `time_parse.rb` | — |
+| time | 0.4.2 | git-pinned | `time_parse.rb` | — |
 | timeout | 0.6.1 | upstream | — | — |
 | tmpdir | 0.3.1 | git-pinned | `io_encoding.rb` | — |
 | tsort | 0.2.0 | upstream | — | — |
@@ -296,6 +299,78 @@ and the error gives the name of the gem. The function `is_known_native_gem` in
 `eventmachine`, `sass` and `rmagick`. The list is deliberately not complete.
 For all other names, zeo gives CRuby's usual message, `cannot load such file`.
 The list does not include `ffi`, because zeo supplies `ffi`.
+
+## RubyGems and Bundler
+
+zeo supports RubyGems and Bundler in two different ways. Keep them separate,
+because they answer two different questions.
+
+### 1. Compile an application with its bundled gems
+
+This is the part that most applications need. Give zeo your `Gemfile` and the
+gem store that `bundle install` wrote. zeo then compiles your program **and its
+dependencies** into one binary.
+
+```console
+# Install the dependencies one time, with real Bundler.
+$ bundle install
+
+# Compile the application together with those gems.
+$ zeo app.rb -o app --gem-path "$(gem env gemdir)" --bundle-gemfile Gemfile
+
+# The same thing through the environment, which Bundler already sets.
+$ GEM_PATH="$(gem env gemdir)" BUNDLE_GEMFILE=Gemfile zeo app.rb -o app
+```
+
+zeo **reads** what Bundler and RubyGems already decided. It never resolves a
+dependency graph, never contacts a network, and never installs or builds a gem.
+The `Gemfile.lock` selects each version, and zeo reads the gemspec of that
+version from the store. Therefore the result agrees with `bundle exec`.
+
+Give both options together. A gem store alone does not change a compile,
+because without a lockfile zeo does not know which versions you mean.
+
+Three rules control which gems work:
+
+- **A pure-Ruby gem compiles.** zeo puts its source into the program, the same
+  as any other file.
+- **A gem with a C extension stops the compile**, and the error gives the name
+  of the gem. Read the list above.
+- **zeo needs the `ruby` platform gem, not a precompiled one.** A precompiled
+  platform gem carries a `.bundle` or `.so` file, which zeo cannot read. This
+  is the same rule as Bundler's `force_ruby_platform`.
+
+To see the result before you compile, ask:
+
+```console
+$ cargo xtask gem-compat Gemfile.lock --gem-path "$(gem env gemdir)"
+```
+
+That command reads your lockfile and puts each gem into a class: it compiles,
+zeo has a built-in for it, it needs a C extension, or it comes from a git or
+path source. It prints a table with the number of gems that resolve, and
+writes `conformance/gem-compat.tsv` and `.md`. This is a static
+classification, and not a compile.
+
+### 2. Compile RubyGems and Bundler themselves
+
+zeo ships both, from their own upstream repository (`rubygems/rubygems`,
+version 4.0.18, pinned by commit in `gems.toml`). A program can
+`require "rubygems"` or `require "bundler"`, and the whole require graph
+reaches code generation. The test
+`crates/zeo-tests/tests/e2e/gems_vendored.rs` compiles that graph and confirms
+that the classes each one registers survive it.
+
+One difference remains, and it is the reason the goldens
+`tests/gem_rubygems.rb` and `tests/gem_bundler.rb` start below the top file.
+`rubygems.rb` writes `require "bundler"` inside a **method body**. zeo resolves
+every require at compile time, so it lifts that require to where it is written.
+Bundler's `rubygems_ext` then runs before `rubygems/specification`, which is
+not the order CRuby uses. The program compiles; the load order is different.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) holds the remaining work.
+
+So: use `--bundle-gemfile` to compile **your application** today. Running
+`bundle` itself as a zeo binary is not finished.
 
 ## Standard-library extensions
 

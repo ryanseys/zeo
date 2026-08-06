@@ -31,6 +31,7 @@ mod etc;
 mod exceptions;
 mod ffi;
 mod gc_weak;
+mod gems_all;
 mod gems_require;
 mod gems_vendored;
 mod io_files;
