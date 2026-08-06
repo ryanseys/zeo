@@ -4,8 +4,8 @@ zeo compiles a full Ruby program into **one native executable**. It reads the
 source with [Prism], which is CRuby's own parser. It then analyzes the full
 program, writes Rust, and links a runtime that is already compiled.
 
-The result starts immediately. It does not start an interpreter, and it does
-not warm up a JIT. The machine that runs the binary does not need Ruby.
+The binary starts immediately. It boots no interpreter and warms up no JIT,
+and the machine that runs it needs no Ruby installation.
 
 ```console
 $ cat hello.rb
@@ -15,7 +15,9 @@ $ ./hello
 12
 ```
 
-zeo compares each behaviour with real Ruby, and writes down each difference.
+zeo's test suite runs each program against real Ruby and compares the output
+byte for byte. [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) records every
+difference that remains.
 
 zeo reads **RubyGems and Bundler**. It ships both, and it compiles an
 application together with the gems that its `Gemfile.lock` selects. Read
