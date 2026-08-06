@@ -17,8 +17,9 @@
 //! trade a generic Rust function already makes via monomorphization.
 
 use super::register_method;
+use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
-use crate::hir::{HirNode, NodeId, Visibility};
+use crate::hir::{HirNode, NodeId, Span, Visibility};
 use std::collections::HashSet;
 
 /// Real Ruby's actual linearization (not classic C3): for `class_id` with
@@ -58,6 +59,16 @@ fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
     }
 }
 
+/// Stamps a per-class pass's rejection with where that class was written.
+///
+/// `process_top_stmt` locates everything raised during the statement walk, but
+/// this pass runs after it and iterates CLASSES -- so a refusal here (an alias
+/// with no source, a method that cannot be materialized) would otherwise name
+/// only the construct. `Compiler::class_def_span` is the nearest true answer.
+fn at_class<T>(r: Result<T, String>, at: Option<Span>) -> Result<T, AnalyzeError> {
+    r.map_err(|e| AnalyzeError::from(e).with_span_if_missing(at))
+}
+
 /// Computes `ancestors` for every registered class/module, then
 /// materializes `methods`/`ivars` for every non-module class and
 /// `class_methods` for EVERY class/module (a module can have its own `def
@@ -65,7 +76,10 @@ fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
 /// struct at all -- see `codegen::mod::emit_class_methods`), then resolves
 /// class-variable ownership. Call once, after `analyze::analyze`'s
 /// top-level registration loop has processed every `ClassDef`.
-pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
+pub fn materialize(
+    compiler: &mut Compiler,
+    main_statements: &[NodeId],
+) -> Result<(), AnalyzeError> {
     record_top_level_consts(compiler, main_statements);
     index_document_order(compiler, main_statements);
     compiler.freeze_identity_caches();
@@ -83,15 +97,17 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
     // subclasses), so an alias OF an alias resolves against the already-added
     // one. See `HirNode::AliasMethod`.
     for &cid in &all_ids {
-        resolve_aliases(compiler, cid)?;
-        resolve_module_functions(compiler, cid)?;
+        let at = compiler.class_def_span(cid);
+        at_class(resolve_aliases(compiler, cid), at)?;
+        at_class(resolve_module_functions(compiler, cid), at)?;
     }
 
     for &cid in &all_ids {
+        let at = compiler.class_def_span(cid);
         if !compiler.class(cid).is_module {
-            materialize_methods(compiler, cid)?;
+            at_class(materialize_methods(compiler, cid), at)?;
         }
-        materialize_class_methods(compiler, cid)?;
+        at_class(materialize_class_methods(compiler, cid), at)?;
     }
 
     // A reopened builtin MODULE is never run through `materialize_methods`

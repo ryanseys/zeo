@@ -137,6 +137,14 @@ struct Row {
     /// Repo-relative because this is committed and must not carry one
     /// machine's directory layout.
     site: Option<String>,
+    /// The registry's sha256 of the `.gem` this verdict was measured against.
+    ///
+    /// The version alone names a release; this names the bytes. It is what
+    /// makes a disagreeing re-probe attributable -- zeo changed, rather than
+    /// the artifact did -- which matters exactly because this ledger's first
+    /// job was distinguishing a stale row from a real gap. Absent for
+    /// `--no-deps` runs, which never ask the registry anything.
+    digest: Option<String>,
 }
 
 // ---------------------------------------------------------------- registry
@@ -166,21 +174,49 @@ fn latest_version(name: &str) -> Result<String, String> {
     }
 }
 
-/// Runtime dependencies of one EXACT version. The v1 endpoint describes only
-/// the newest release, which would silently mis-resolve a pinned probe.
-fn runtime_deps(name: &str, version: &str) -> Result<Vec<String>, String> {
+/// What one EXACT version declares.
+struct VersionMeta {
+    /// The registry's own sha256 of the `.gem`. Recorded in the ledger so a row
+    /// names the artifact it was measured against, and checked against the
+    /// bytes on a real download.
+    sha: Option<String>,
+    runtime: Vec<String>,
+}
+
+/// Metadata for one EXACT version. The v1 endpoint describes only the newest
+/// release, which would silently mis-resolve a pinned probe.
+///
+/// The sha rides along on this request rather than being computed from the
+/// bytes, so a row records one whether or not the gem was already unpacked --
+/// hashing would have covered only the gems a sweep happened to re-download,
+/// which is the minority and an arbitrary one.
+fn version_meta(name: &str, version: &str) -> Result<VersionMeta, String> {
     let v = json(&format!(
         "{REGISTRY}/api/v2/rubygems/{name}/versions/{version}.json"
     ))?;
-    Ok(v.pointer("/dependencies/runtime")
-        .and_then(|d| d.as_array())
-        .map(|deps| {
-            deps.iter()
-                .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default())
+    Ok(VersionMeta {
+        sha: v
+            .get("sha")
+            .and_then(|s| s.as_str())
+            .map(str::to_ascii_lowercase),
+        runtime: v
+            .pointer("/dependencies/runtime")
+            .and_then(|d| d.as_array())
+            .map(|deps| {
+                deps.iter()
+                    .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ------------------------------------------------------------------ fetch
@@ -240,12 +276,6 @@ fn declares_extensions(dir: &Path) -> bool {
 }
 
 fn write_stub_gemspec(dir: &Path, name: &str, version: &str) -> Result<(), String> {
-    for existing in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let p = existing.map_err(|e| e.to_string())?.path();
-        if p.extension().is_some_and(|x| x == "gemspec") {
-            let _ = std::fs::remove_file(&p);
-        }
-    }
     std::fs::write(
         dir.join(format!("{name}.gemspec")),
         format!(
@@ -258,7 +288,53 @@ fn write_stub_gemspec(dir: &Path, name: &str, version: &str) -> Result<(), Strin
     .map_err(|e| e.to_string())
 }
 
-fn fetch(root: &Path, name: &str, version: &str) -> Result<PathBuf, String> {
+/// The version `vendor/gems/<gem>/` was unpacked at, for stubbing its gemspec
+/// in a view. Absent only if the cache was written by hand.
+fn unpacked_version(dir: &Path) -> String {
+    std::fs::read_to_string(stamp_path(dir))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
+/// One gem inside a view: its own contents, symlinked, except that the gemspec
+/// is replaced by a stub.
+///
+/// The stub is required, not stylistic -- zeo parses gemspecs statically, so
+/// the computed `s.version` most real gems use (`spec.version = Colorator::VERSION`)
+/// is rejected, and zeo also checks a gemspec's name against its directory
+/// name. What is stylistic is WHERE it goes, and it goes here rather than over
+/// the real file in `vendor/gems/`: overwriting made the cache no longer a copy
+/// of what rubygems shipped, so a ledger row could not be reproduced from it,
+/// `declares_extensions` could never be re-run, and changing the stub's format
+/// meant re-downloading every gem.
+fn link_gem_into_view(view: &Path, src: &Path, gem: &str) -> Result<(), String> {
+    let dest = view.join(gem);
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let p = entry.map_err(|e| e.to_string())?.path();
+        if p.extension().is_some_and(|x| x == "gemspec") {
+            continue;
+        }
+        let Some(base) = p.file_name() else { continue };
+        std::os::unix::fs::symlink(&p, dest.join(base)).map_err(|e| e.to_string())?;
+    }
+    write_stub_gemspec(&dest, gem, &unpacked_version(src))
+}
+
+/// Unpacks `name`-`version` into `vendor/gems/<name>/`, or confirms it is
+/// already there.
+///
+/// `expect_sha` is the registry's own digest when one was resolved. A download
+/// that doesn't match it is refused rather than probed: the whole point of
+/// recording a digest is that a verdict names the artifact it was measured
+/// against, and probing bytes the registry disowns would put a verdict in the
+/// ledger under an artifact that never produced it.
+fn fetch(
+    root: &Path,
+    name: &str,
+    version: &str,
+    expect_sha: Option<&str>,
+) -> Result<PathBuf, String> {
     let dir = vendor_dir(root).join(name);
     if std::fs::read_to_string(stamp_path(&dir)).is_ok_and(|s| s.trim() == version) {
         return Ok(dir);
@@ -268,11 +344,18 @@ fn fetch(root: &Path, name: &str, version: &str) -> Result<PathBuf, String> {
 
     let url = format!("{REGISTRY}/downloads/{name}-{version}.gem");
     let bytes = get(&url).map_err(|e| format!("{url}: {e}"))?;
+    if let Some(want) = expect_sha {
+        let got = sha256_hex(&bytes);
+        if got != want {
+            return Err(format!(
+                "{name}-{version}.gem is sha256 {got}, but the registry describes {want}"
+            ));
+        }
+    }
     unpack_gem(&bytes, &dir)?;
     if declares_extensions(&dir) {
         std::fs::write(dir.join(".zeo-probe-native"), "1").map_err(|e| e.to_string())?;
     }
-    write_stub_gemspec(&dir, name, version)?;
     std::fs::write(stamp_path(&dir), version).map_err(|e| e.to_string())?;
     Ok(dir)
 }
@@ -340,7 +423,7 @@ fn isolate(root: &Path, name: &str, deps: &[String]) -> Result<PathBuf, String> 
     for gem in std::iter::once(&name.to_string()).chain(deps) {
         let src = vendor_dir(root).join(gem);
         if src.is_dir() {
-            std::os::unix::fs::symlink(&src, view.join(gem)).map_err(|e| e.to_string())?;
+            link_gem_into_view(&view, &src, gem)?;
         }
     }
     Ok(view)
@@ -567,6 +650,7 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
                 version: version.to_string(),
                 outcome: Outcome::from_ledger(tag, f.next().unwrap_or("")),
                 site: f.next().filter(|s| !s.is_empty()).map(str::to_string),
+                digest: f.next().filter(|s| !s.is_empty()).map(str::to_string),
             };
             if out.insert(name.to_string(), row).is_some() {
                 return Err(format!(
@@ -590,17 +674,28 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
             "# {header}\n\
              # Written by `cargo xtask gem-probe`. Each gem is in this file or in \
              its sibling, never both.\n\
-             # Columns: gem <TAB> version <TAB> outcome <TAB> detail <TAB> where\n"
+             # Columns: gem <TAB> version <TAB> outcome <TAB> detail <TAB> where <TAB> sha256\n"
         );
         for (name, r) in selected {
             tsv.push_str(&format!("{name}\t{}\t{}", r.version, r.outcome.tag()));
-            // `where` is appended, so a row with neither trailing field stays
-            // byte-identical to what the four-column writer produced.
-            match (r.outcome.detail(), &r.site) {
-                ("", None) => tsv.push('\n'),
-                (d, None) => tsv.push_str(&format!("\t{d}\n")),
-                (d, Some(site)) => tsv.push_str(&format!("\t{d}\t{site}\n")),
+            // Both trailing columns are APPENDED, and trailing empties are
+            // dropped -- so a row that records neither stays byte-identical to
+            // what the four-column writer produced, and reading stays a
+            // positional split with no ambiguity about which field is missing.
+            let tail = [r.outcome.detail(), r.site.as_deref().unwrap_or("")]
+                .map(str::to_string)
+                .into_iter()
+                .chain(std::iter::once(r.digest.clone().unwrap_or_default()))
+                .collect::<Vec<_>>();
+            let keep = tail
+                .iter()
+                .rposition(|f| !f.is_empty())
+                .map_or(0, |i| i + 1);
+            for field in &tail[..keep] {
+                tsv.push('\t');
+                tsv.push_str(field);
             }
+            tsv.push('\n');
         }
         tsv
     };
@@ -781,6 +876,7 @@ struct Ready {
     version: String,
     dir: PathBuf,
     deps: Vec<String>,
+    digest: Option<String>,
 }
 
 /// Resolves `name` to a version and unpacks it and its runtime dependencies.
@@ -799,30 +895,40 @@ fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result
             version: want.unwrap_or("-").to_string(),
             outcome: Outcome::FetchFailed(e),
             site: None,
+            digest: None,
         })?;
 
+    // One request answers both questions. `--no-deps` skips it, so those rows
+    // record no digest -- the flag's whole purpose is to not ask the registry.
+    let meta = match no_deps {
+        true => None,
+        false => version_meta(name, &version).ok(),
+    };
     let mut deps = Vec::new();
-    if !no_deps && let Ok(declared) = runtime_deps(name, &version) {
-        for dep in declared {
-            if let Ok(dv) = latest_version(&dep)
-                && fetch(root, &dep, &dv).is_ok()
-            {
-                deps.push(dep);
-            }
+    for dep in meta.as_ref().map(|m| m.runtime.clone()).unwrap_or_default() {
+        // A dependency is a load-path entry, not a subject: it is never
+        // recorded, so its digest is never asked for.
+        if let Ok(dv) = latest_version(&dep)
+            && fetch(root, &dep, &dv, None).is_ok()
+        {
+            deps.push(dep);
         }
     }
 
-    match fetch(root, name, &version) {
+    let digest = meta.and_then(|m| m.sha);
+    match fetch(root, name, &version, digest.as_deref()) {
         Ok(dir) => Ok(Ready {
             name: name.to_string(),
             version,
             dir,
             deps,
+            digest,
         }),
         Err(e) => Err(Row {
             version,
             outcome: Outcome::FetchFailed(e),
             site: None,
+            digest,
         }),
     }
 }
@@ -1097,6 +1203,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                         version: ready.version,
                         outcome,
                         site,
+                        digest: ready.digest,
                     };
                     if done.send((ready.name, row)).is_err() {
                         break;
@@ -1429,6 +1536,7 @@ mod tests {
                 version: "1.0.0".into(),
                 outcome: Outcome::Compiles,
                 site: None,
+                digest: None,
             },
         );
         rows.insert(
@@ -1437,6 +1545,7 @@ mod tests {
                 version: "2.1.0".into(),
                 outcome: Outcome::LoweringGap("some gap".into()),
                 site: Some("vendor/gems/beta/lib/beta.rb:12".into()),
+                digest: Some("d0d0cafe".into()),
             },
         );
         rows.insert(
@@ -1445,6 +1554,7 @@ mod tests {
                 version: "3.0.0".into(),
                 outcome: Outcome::NativeExtension,
                 site: None,
+                digest: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
@@ -1481,6 +1591,7 @@ mod tests {
                     version: "1.0.0".into(),
                     outcome: Outcome::Compiles,
                     site: None,
+                    digest: None,
                 },
             );
         }
@@ -1519,6 +1630,7 @@ mod tests {
                     version: "1.0.0".into(),
                     outcome,
                     site: None,
+                    digest: None,
                 },
             );
         }
@@ -1544,6 +1656,7 @@ mod tests {
                 version: "1.0.0".into(),
                 outcome: Outcome::LoweringGap("a gap".into()),
                 site: None,
+                digest: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
@@ -1670,22 +1783,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The stub goes in the VIEW and the cache keeps what rubygems shipped.
+    ///
+    /// Overwriting the real gemspec is what made a committed row
+    /// irreproducible: the tree a verdict was measured against was no longer
+    /// the gem. It also meant `declares_extensions` could only ever run once,
+    /// and that changing the stub's format required re-downloading everything.
     #[test]
-    fn the_stub_gemspec_replaces_the_original() {
+    fn the_view_stubs_the_gemspec_and_the_cache_keeps_the_real_one() {
         let root = scratch("stub");
-        let dir = root.join("gem");
-        std::fs::create_dir_all(&dir).unwrap();
+        let src = vendor_dir(&root).join("thing");
+        std::fs::create_dir_all(src.join("lib")).unwrap();
+        std::fs::write(src.join("lib/thing.rb"), "# x\n").unwrap();
         // The shape zeo rejects: a computed version.
         std::fs::write(
-            dir.join("real.gemspec"),
+            src.join("real.gemspec"),
             "Gem::Specification.new { |s| s.version = Thing::VERSION }\n",
         )
         .unwrap();
-        write_stub_gemspec(&dir, "thing", "4.5.6").unwrap();
-        assert!(!dir.join("real.gemspec").exists());
-        let stub = std::fs::read_to_string(dir.join("thing.gemspec")).unwrap();
+        std::fs::write(stamp_path(&src), "4.5.6").unwrap();
+
+        let view = isolate(&root, "thing", &[]).unwrap();
+        let seen = view.join("thing");
+
+        // The view: a stub, and no trace of the computed-version original.
+        let stub = std::fs::read_to_string(seen.join("thing.gemspec")).unwrap();
         assert!(stub.contains(r#"s.version = "4.5.6".freeze"#), "{stub}");
         assert!(stub.contains(r#"s.name = "thing".freeze"#), "{stub}");
+        assert!(!seen.join("real.gemspec").exists());
+        // Everything else is still reachable through it.
+        assert!(seen.join("lib/thing.rb").exists());
+
+        // The cache: untouched.
+        assert!(src.join("real.gemspec").exists());
+        assert!(!src.join("thing.gemspec").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1749,6 +1880,7 @@ mod tests {
                     version: "1.0.0".into(),
                     outcome: Outcome::Compiles,
                     site: None,
+                    digest: None,
                 },
             );
             write_ledger(&root, &rows).unwrap();
@@ -1772,6 +1904,7 @@ mod tests {
                 version: "1.0.0".into(),
                 outcome: Outcome::Compiles,
                 site: None,
+                digest: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
@@ -1813,7 +1946,7 @@ mod tests {
         let marker = dir.join("lib/cached.rb");
         let before = std::fs::read_to_string(&marker).unwrap();
 
-        let got = fetch(&root, "cached", "2.0.0").unwrap();
+        let got = fetch(&root, "cached", "2.0.0", None).unwrap();
         assert_eq!(got, dir);
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), before);
         let _ = std::fs::remove_dir_all(&root);
@@ -1825,7 +1958,7 @@ mod tests {
         gem_at(&root, "moving", "1.0.0", "module Moving; end\n");
         // A different version must not be served from the 1.0.0 tree; with no
         // network in a test this surfaces as an error rather than a stale hit.
-        assert!(fetch(&root, "moving", "2.0.0").is_err());
+        assert!(fetch(&root, "moving", "2.0.0", None).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -1496,6 +1496,23 @@ impl Compiler {
             .map(|&sid| (self.scopes[sid.0 as usize].defining_class, sid))
     }
 
+    /// Where `class`'s body was written, for locating a rejection raised after
+    /// the statement walk has finished.
+    ///
+    /// The passes that run then (`mro`, chiefly) iterate CLASSES rather than
+    /// statements, so they have no statement to stamp -- but a class was
+    /// written somewhere, and its body site remembers the node. A class with no
+    /// site is one nothing declared in Ruby source: a builtin, or a forward
+    /// shell minted for a not-yet-seen superclass.
+    pub fn class_def_span(&self, class: ClassId) -> Option<crate::hir::Span> {
+        let node = self
+            .class_body_sites
+            .iter()
+            .find(|s| s.class == class)
+            .and_then(|s| s.def_node)?;
+        self.hir.span(node)
+    }
+
     /// The terminal source name of a BUILTIN alias visible on `class` --
     /// `Some("raise")` for `raise!` after `alias_method :raise!, :raise`,
     /// on the aliasing class and every subclass (MRO walk, closest wins).
