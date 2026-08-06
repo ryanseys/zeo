@@ -893,10 +893,10 @@ mod translate {
             );
             return node(cx, "MODULE", s, e, vec![cpath_node, scope]);
         }
-        if let Some(x) = n.as_parentheses_node() {
-            if let Some(body) = x.body().and_then(|b| b.as_statements_node()) {
-                return statements_body(&body, cx, in_block);
-            }
+        if let Some(x) = n.as_parentheses_node()
+            && let Some(body) = x.body().and_then(|b| b.as_statements_node())
+        {
+            return statements_body(&body, cx, in_block);
         }
         if let Some(x) = n.as_statements_node() {
             return statements_body(&x, cx, in_block);
