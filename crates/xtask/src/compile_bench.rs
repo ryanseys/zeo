@@ -35,8 +35,8 @@ const PROGRAMS: &[(&str, &str)] = &[
     ("core_classes", "tests/core_classes.rb"),
     ("uri_parse_and_build", "tests/uri_parse_and_build.rb"),
     ("optparse_subset", "tests/optparse_subset.rb"),
-    ("gem_rubygems", "tests/gem_rubygems.rb"),
-    ("gem_bundler", "tests/gem_bundler.rb"),
+    ("gem_rubygems", "tests/gems/rubygems.rb"),
+    ("gem_bundler", "tests/gems/bundler.rb"),
 ];
 
 #[derive(Clone)]

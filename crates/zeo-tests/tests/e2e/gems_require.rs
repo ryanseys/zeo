@@ -430,7 +430,7 @@ fn ripper_is_declined_and_the_load_error_says_so() {
     assert_eq!(rescued.stdout, "no ripper\n");
 
     // The alternative the message points at is real and already covered:
-    // `tests/gem_prism.rb` compiles `require "prism"` and diffs it against the
+    // `tests/gems/prism.rb` compiles `require "prism"` and diffs it against the
     // oracle. Not re-asserted here -- it pulls the gem and the eval-vm runtime,
     // which cost this test ~100s for no coverage the golden lacks.
 }

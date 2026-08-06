@@ -2,8 +2,8 @@
 //! ships from ONE upstream repo (`rubygems/rubygems`, bundler under its
 //! `bundler/` subdirectory).
 //!
-//! The behavioural proof is the ruby-oracle golden pair -- `tests/gem_rubygems.rb`
-//! and `tests/gem_bundler.rb`, which build real binaries and diff their output.
+//! The behavioural proof is the ruby-oracle golden pair -- `tests/gems/rubygems.rb`
+//! and `tests/gems/bundler.rb`, which build real binaries and diff their output.
 //! What lives here is everything cheaper than that: the vendoring is intact,
 //! the whole require graph still reaches codegen, the classes that matter
 //! survive it, and the disclosure record tells the truth about all of it. Those

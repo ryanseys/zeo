@@ -1,6 +1,6 @@
 # minitest, vendored whole. This drives `Minitest::Test` directly rather than
 # through the runner, because the runner's own report carries a random seed and
-# a wall-clock time; `tests/gem_minitest_autorun.rb` covers that path.
+# a wall-clock time; `tests/gems/minitest_autorun.rb` covers that path.
 require "minitest"
 require "minitest/test"
 

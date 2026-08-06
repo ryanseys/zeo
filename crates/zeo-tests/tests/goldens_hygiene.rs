@@ -1,4 +1,4 @@
-//! Golden-sidecar hygiene for the three datatest suites (`tests/`,
+//! Golden-sidecar hygiene for the datatest suites (`tests/`, `tests/gems/`,
 //! `tests/spinel/`, `tests/gaps/`).
 //!
 //! Two invariants, each of which has silently broken before:
@@ -20,7 +20,12 @@ fn suite_dirs() -> Vec<PathBuf> {
         .and_then(Path::parent)
         .expect("crates/zeo has a workspace root")
         .join("tests");
-    vec![root.clone(), root.join("spinel"), root.join("gaps")]
+    vec![
+        root.clone(),
+        root.join("gems"),
+        root.join("spinel"),
+        root.join("gaps"),
+    ]
 }
 
 fn goldens() -> impl Iterator<Item = PathBuf> {

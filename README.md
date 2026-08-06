@@ -229,7 +229,9 @@ The **Origin** column tells you where the Ruby source comes from:
   `crates/zeo-rt/src/ext/` supplies the native part. CRuby makes the same
   division between `rubylibdir` and `archdir`.
 
-The **Test** column gives a test in `tests/`. That test compiles the gem and
+The **Test** column gives a test, with a path relative to `tests/`. The
+programs that exercise one gem alone are in `tests/gems/`; the others are
+general tests that also use the gem. That test compiles the gem and
 compares its output with real Ruby 4.0.6, byte for byte. A dash means that no
 test measures this gem alone. Some gems run only as a dependency of another
 gem. For the full source information and the licences, read
@@ -237,55 +239,55 @@ gem. For the full source information and the licences, read
 
 | Gem | Version | Origin | Test | Differences |
 |---|---|---|---|---|
-| abbrev | 0.1.2 | git-pinned | `issue_abbrev_missing.rb` | — |
-| benchmark | 0.5.0 | git-pinned | `issue_benchmark_missing.rb` | — |
+| abbrev | 0.1.2 | git-pinned | `gems/abbrev.rb` | — |
+| benchmark | 0.5.0 | git-pinned | `gems/benchmark.rb` | — |
 | bigdecimal | 4.1.2 | upstream +zeo | `bigdecimal.rb` | zeo supplies the native part ([compat](docs/COMPATIBILITY.md)) |
-| bundler | 4.0.18 | git-pinned | `gem_bundler.rb` | the test starts at `bundler/version` ([roadmap](docs/ROADMAP.md)) |
-| csv | 3.3.6 | git-pinned | `gem_csv.rb` | — |
-| delegate | 0.6.1 | upstream | `issue_require_delegate_crashes.rb` | — |
-| drb | 2.2.3 | git-pinned | `gem_drb.rb` | — |
+| bundler | 4.0.18 | git-pinned | `gems/bundler.rb` | the test starts at `bundler/version` ([roadmap](docs/ROADMAP.md)) |
+| csv | 3.3.6 | git-pinned | `gems/csv.rb` | — |
+| delegate | 0.6.1 | upstream | `gems/delegate.rb` | — |
+| drb | 2.2.3 | git-pinned | `gems/drb.rb` | — |
 | English | 0.8.1 | upstream | `english_special_globals.rb` | — |
 | erb | 6.0.7 | git-pinned | `erb_module_function.rb` | — |
 | ffi | 1.17.4 | zeo Ruby half | `ffi_struct.rb` | the native part uses `libffi` |
 | fiddle | 1.1.8 | upstream +zeo | `fiddle.rb` | no `Importer` DSL ([compat](docs/COMPATIBILITY.md)) |
 | fileutils | 1.8.0 | git-pinned | `fileutils.rb` | — |
-| find | 0.2.0 | git-pinned | `issue_find_missing.rb` | — |
-| forwardable | 1.4.0 | upstream | `issue_3300_forwardable.rb` | — |
+| find | 0.2.0 | git-pinned | `gems/find.rb` | — |
+| forwardable | 1.4.0 | upstream | `gems/forwardable.rb` | — |
 | ipaddr | 1.2.9 | git-pinned | — | — |
 | irb | 1.18.0 | upstream | — | compiles, but stops at a refinement module that the program makes at run time ([gap](tests/gaps/issue_runtime_refinement_module.rb)) |
 | json | 2.18.0 | zeo Ruby half | `json_to_json.rb` | uses serde_json, not the json gem ([compat](docs/COMPATIBILITY.md)) |
-| logger | 1.7.0 | git-pinned | `issue_logger_missing.rb` | — |
-| minitest | 6.0.6 | upstream | `gem_minitest.rb` | a full-program compile includes the `MT_HELL` branch of `autorun`, which writes a note to stderr |
-| monitor | 0.1.0 | zeo Ruby half | `gem_two_halves.rb` | `Monitor` and `MonitorMixin` only |
-| net-ftp | 0.3.9 | git-pinned | `issue_net_ftp_missing.rb` | — |
-| net-http | 0.9.1 | git-pinned | `gem_net_http.rb` | — |
+| logger | 1.7.0 | git-pinned | `gems/logger.rb` | — |
+| minitest | 6.0.6 | upstream | `gems/minitest.rb` | a full-program compile includes the `MT_HELL` branch of `autorun`, which writes a note to stderr |
+| monitor | 0.1.0 | zeo Ruby half | `gems/two_halves.rb` | `Monitor` and `MonitorMixin` only |
+| net-ftp | 0.3.9 | git-pinned | `gems/net_ftp.rb` | — |
+| net-http | 0.9.1 | git-pinned | `gems/net_http.rb` | — |
 | net-protocol | 0.2.2 | git-pinned | — | — |
-| net-smtp | 0.5.1 | git-pinned | `gem_net_smtp.rb` | — |
+| net-smtp | 0.5.1 | git-pinned | `gems/net_smtp.rb` | — |
 | nkf | 0.3.0 | zeo Ruby half | `nkf.rb` | some options only; `guess` uses a different method ([compat](docs/COMPATIBILITY.md)) |
-| observer | 0.1.2 | git-pinned | `gem_observer.rb` | — |
+| observer | 0.1.2 | git-pinned | `gems/observer.rb` | — |
 | open3 | 0.2.1 | git-pinned | `open3_capture.rb` | — |
 | openssl | 4.0.2 | zeo Ruby half | `openssl_cipher.rb` and 6 more | no PKey generation, no X509 issue, no `SSLServer` ([compat](docs/COMPATIBILITY.md)) |
 | optparse | 0.8.1 | zeo Ruby half | `optparse_subset.rb` | the common `OptionParser` methods |
-| ostruct | 0.6.3 | upstream | `issue_3331_poly_to_sym_arm.rb` | — |
+| ostruct | 0.6.3 | upstream | `gems/ostruct.rb` | — |
 | pp | 0.6.4 | upstream | `pp_pretty_print.rb` | — |
 | prettyprint | 0.2.0 | upstream | — | — |
-| prism | 1.9.0 | upstream +zeo | `gem_prism.rb` | no `translation/` and no `ffi.rb` |
+| prism | 1.9.0 | upstream +zeo | `gems/prism.rb` | no `translation/` and no `ffi.rb` |
 | psych | 5.4.0 | zeo Ruby half | `psych_load_file_and_stream.rb` | uses yaml-rust2, not libyaml ([compat](docs/COMPATIBILITY.md)) |
 | pty | 0.5.9 | zeo Ruby half | `pty_spawn.rb` | — |
-| racc | 1.8.1 | git-pinned | `issue_racc_parser_missing.rb` | — |
+| racc | 1.8.1 | git-pinned | `gems/racc.rb` | — |
 | reline | 0.6.3 | upstream +zeo | `reline_line_editor.rb` | one `zeo:` change in `io.rb` |
-| resolv | 0.7.1 | git-pinned | `issue_resolv_missing.rb` | — |
-| rubygems | 4.0.18 | git-pinned | `gem_rubygems.rb` | the test starts below the top-level require ([roadmap](docs/ROADMAP.md)) |
+| resolv | 0.7.1 | git-pinned | `gems/resolv.rb` | — |
+| rubygems | 4.0.18 | git-pinned | `gems/rubygems.rb` | the test starts below the top-level require ([roadmap](docs/ROADMAP.md)) |
 | shellwords | 0.2.2 | upstream | `shellwords.rb` | — |
 | singleton | 0.3.0 | upstream | — | `singleton_class.include?` ([gap](tests/gaps/issue_singleton_class_include_after_extend.rb)) |
 | strscan | 3.1.6 | zeo Ruby half | `strscan_capture_surface.rb` | zeo supplies its own code ([compat](docs/COMPATIBILITY.md)) |
 | syslog | 0.4.0 | zeo Ruby half | `syslog.rb` | — |
-| tempfile | 0.3.1 | git-pinned | `issue_require_tempfile_codegen_path_attr.rb` | — |
+| tempfile | 0.3.1 | git-pinned | `gems/tempfile.rb` | — |
 | time | 0.4.2 | git-pinned | `time_parse.rb` | — |
 | timeout | 0.6.1 | upstream | — | — |
 | tmpdir | 0.3.1 | git-pinned | `io_encoding.rb` | — |
 | tsort | 0.2.0 | upstream | — | — |
-| un | 0.3.0 | git-pinned | `issue_un_missing.rb` | — |
+| un | 0.3.0 | git-pinned | `gems/un.rb` | — |
 | uri | 1.1.1 | git-pinned | `uri_parse_and_build.rb` | — |
 | zlib | 3.2.3 | zeo Ruby half | `zlib_classes.rb` | uses flate2; 4 functions are not available ([compat](docs/COMPATIBILITY.md)) |
 
@@ -362,7 +364,7 @@ reaches code generation. The test
 that the classes each one registers survive it.
 
 One difference remains, and it is the reason the goldens
-`tests/gem_rubygems.rb` and `tests/gem_bundler.rb` start below the top file.
+`tests/gems/rubygems.rb` and `tests/gems/bundler.rb` start below the top file.
 `rubygems.rb` writes `require "bundler"` inside a **method body**. zeo resolves
 every require at compile time, so it lifts that require to where it is written.
 Bundler's `rubygems_ext` then runs before `rubygems/specification`, which is

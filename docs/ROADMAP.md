@@ -219,7 +219,7 @@ whether to vendor power_assert too or to narrow the surface and say so.
 
 ### Promote the rubygems/bundler goldens to the umbrella require
 
-`tests/gem_rubygems.rb` and `tests/gem_bundler.rb` enter at their own files
+`tests/gems/rubygems.rb` and `tests/gems/bundler.rb` enter at their own files
 (`rubygems/version`, `rubygems/requirement`, `rubygems/dependency`,
 `rubygems/platform`; `bundler/version`) rather than `require "rubygems"` /
 `require "bundler"`, and each header says why.

@@ -289,7 +289,7 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
 
 /// `-O0`. A golden asserts what a program PRINTS, never how fast it runs, and
 /// `-C opt-level=2` is pure cost here -- ruinous once a vendored-gem golden
-/// splices a whole require graph into one crate (`gem_net_http.rb` generates
+/// splices a whole require graph into one crate (`gems/net_http.rb` generates
 /// 45MB of Rust, which rustc will not optimize inside ten minutes).
 /// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back.
 fn profile() -> zeo::backend::Profile {
