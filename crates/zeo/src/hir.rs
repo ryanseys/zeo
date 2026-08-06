@@ -1391,6 +1391,7 @@ impl MultiTargetGroup {
 /// exactly like a `case/in` pattern's bound names do (no new Ruby scope) --
 /// `codegen::hoisting`'s whole-scope local collection needs to see it up
 /// front, same treatment as `Pattern::for_each_bound_name`'s callers.
+#[derive(Clone)]
 pub struct RescueClause {
     /// The clause's STATIC exception classes -- plain constant references
     /// (`rescue Foo, Bar => e`), resolved to `ClassId`s and matched with a
@@ -1815,6 +1816,17 @@ pub enum HirNode {
     /// the class itself in the linearized `ancestors` list, so its methods
     /// take precedence over the class's own (reachable via `super`).
     Prepend(String),
+    /// `prepend Mod` written inside `class << self` -- the singleton half of
+    /// [`HirNode::Prepend`], exactly as [`HirNode::ClassMethodVisibility`] is
+    /// the singleton half of `MethodVisibility`. The module's INSTANCE methods
+    /// become the enclosing class's CLASS methods, ahead of its own `def
+    /// self.x` (which they may override, `super` reaching the original).
+    ///
+    /// `ClassInfo::class_method_prepends` -- the same field the equivalent
+    /// `C.singleton_class.prepend(M)` CALL form records (see
+    /// `analyze::try_prepend_call_edit`), so `mro::materialize_class_methods`
+    /// needs nothing new.
+    ClassMethodPrepend(String),
     /// A definition REPORT: `Klass.method_added(:name)`, or one of its five
     /// siblings. Ruby announces every definition to the class it landed on, and
     /// the announcement runs at the definition's own position -- but zeo
@@ -2189,6 +2201,14 @@ pub enum HirNode {
     /// this class -- which removes them from the one table both dispatch
     /// paths and `respond_to?` consult.
     Undef(Vec<String>),
+    /// `undef foo` / `undef_method :foo` written inside `class << self` -- the
+    /// singleton half of [`HirNode::Undef`], which makes those names raise
+    /// NoMethodError as CLASS methods of the enclosing class, inherited ones
+    /// included (oracle-verified against `class << self; undef_method :new`,
+    /// the shape optparse and rspec-mocks use to retire an inherited
+    /// constructor). `ClassInfo::class_undefined` records them and
+    /// `mro::materialize_class_methods` then refuses to materialize them.
+    ClassMethodUndef(Vec<String>),
     /// `alias new old` / `alias_method :new, :old` where `old` is NOT defined
     /// earlier in the same class/module body -- an INHERITED method (or one a
     /// later reopen adds). Lowering can't clone the source `DefMethod` because
@@ -2325,8 +2345,10 @@ impl HirNode {
             HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
+            | HirNode::ClassMethodPrepend(_)
             | HirNode::Refine { .. }
             | HirNode::Undef(_)
+            | HirNode::ClassMethodUndef(_)
             | HirNode::AliasMethod { .. }
             | HirNode::MethodVisibility { .. }
             | HirNode::ClassMethodVisibility { .. }
@@ -2668,6 +2690,7 @@ impl HirNode {
             | HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
+            | HirNode::ClassMethodPrepend(_)
             | HirNode::Refine {
                 target: _,
                 holder: _,
@@ -2676,6 +2699,7 @@ impl HirNode {
             | HirNode::DefHook { .. }
             | HirNode::MethodRedefine { .. }
             | HirNode::Undef(_)
+            | HirNode::ClassMethodUndef(_)
             | HirNode::AliasGlobal(_, _)
             | HirNode::AliasMethod {
                 new_name: _,

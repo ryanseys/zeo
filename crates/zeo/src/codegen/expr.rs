@@ -521,11 +521,13 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
@@ -1503,7 +1505,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // extend-on-include idiom (ActiveSupport::Concern and every DSL after
         // it) gives the base its class-side methods. Module's own default hook
         // is a no-op, so nothing is emitted unless the module defines one.
-        HirNode::Include(_) | HirNode::Extend(_) | HirNode::Prepend(_) => {
+        HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_) => {
             let (m, hook, primitive) = mixin_parts(&cx.compiler.hir[id]).expect("a mixin node");
             // The primitive FIRST when the module overrides it -- it is what
             // performs the mixin, and analyze suppressed the static edit on the
@@ -1565,6 +1570,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::ClassDef { .. }
         | HirNode::Refine { .. }
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
@@ -1710,6 +1716,12 @@ fn mixin_parts(node: &HirNode) -> Option<(&String, &'static str, Option<&'static
     match node {
         HirNode::Include(m) => Some((m, "included", Some("append_features"))),
         HirNode::Prepend(m) => Some((m, "prepended", Some("prepend_features"))),
+        // The singleton form fires the same hooks, but with the SINGLETON
+        // class as their argument -- which zeo has no compile-time class for.
+        // `analyze` rejects a module that defines either, so reaching here at
+        // all means both are Module's own no-op defaults and nothing is
+        // emitted; the pair is named so that stays true if one is added later.
+        HirNode::ClassMethodPrepend(m) => Some((m, "prepended", Some("prepend_features"))),
         HirNode::Extend(m) => Some((m, "extended", Some("extend_object"))),
         _ => None,
     }

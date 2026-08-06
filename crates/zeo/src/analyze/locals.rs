@@ -462,6 +462,7 @@ fn track_node(
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
@@ -473,6 +474,7 @@ fn track_node(
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }

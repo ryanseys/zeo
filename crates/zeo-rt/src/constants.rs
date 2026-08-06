@@ -166,6 +166,14 @@ fn const_search(owner_class_id: u32, name: &str, skip_object: bool) -> Option<Ru
     if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
         return Some(v.clone());
     }
+    // The owner's OWN nested class, before any ancestor is consulted: a
+    // subclass that redefines a nested name (`class L < B; class H`) owns it,
+    // and reaching `B::H` first answered the base's class for `L::H` /
+    // `L.const_get(:H)` -- the shape faraday's `self.class::Handler` is built
+    // on. The ancestry walk below checks the same table for each ancestor.
+    if let Some(cid) = nested_class_of(crate::ClassId(owner_class_id), name) {
+        return Some(RubyValue::Class(cid));
+    }
     // Ruby constant lookup continues into the owner's ancestry: a bare
     // constant in a class/module that includes another (e.g. `include Math`
     // then a bare `PI`) resolves against the included module's constants.

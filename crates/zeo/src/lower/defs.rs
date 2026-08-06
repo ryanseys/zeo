@@ -261,6 +261,82 @@ fn desugar_singleton_items(
 /// the branch that runs at load time defines the class method, and
 /// `analyze::register_conditional_defs` makes the names visible to compile-time
 /// reflection either way.
+/// Whether `id`'s subtree ever consults `self` -- an explicit `self`, or a
+/// receiver-less call, which sends to it. Statements that do are the only ones
+/// a `class << self` body cannot simply hand to the enclosing class body:
+/// `self` there is the class, not its singleton.
+fn mentions_self(hir: &Hir, id: NodeId) -> bool {
+    let mut stack = vec![id];
+    while let Some(n) = stack.pop() {
+        match &hir[n] {
+            HirNode::SelfRef | HirNode::Call { receiver: None, .. } => return true,
+            _ => {}
+        }
+        hir[n].for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
+
+/// Whether a `class << self` body opens ANOTHER singleton class -- directly,
+/// or inside a conditional the mapping keeps. That inner body belongs to the
+/// singleton's OWN singleton, one level beyond the enclosing-class retagging
+/// this mapping performs: flattened onto the enclosing class it would define
+/// `Foo.x` where ruby defines `Foo.singleton_class.x`. Rejected rather than
+/// quietly moved to the wrong owner.
+fn opens_a_nested_singleton(body: Option<&Node<'_>>) -> bool {
+    let Some(node) = body else { return false };
+    if node.as_singleton_class_node().is_some() {
+        return true;
+    }
+    if let Some(s) = node.as_statements_node() {
+        return s.body().iter().any(|n| opens_a_nested_singleton(Some(&n)));
+    }
+    if let Some(i) = node.as_if_node() {
+        return opens_a_nested_singleton(i.statements().map(|s| s.as_node()).as_ref())
+            || opens_a_nested_singleton(i.subsequent().as_ref());
+    }
+    if let Some(u) = node.as_unless_node() {
+        return opens_a_nested_singleton(u.statements().map(|s| s.as_node()).as_ref())
+            || opens_a_nested_singleton(u.else_clause().map(|e| e.as_node()).as_ref());
+    }
+    if let Some(e) = node.as_else_node() {
+        return opens_a_nested_singleton(e.statements().map(|s| s.as_node()).as_ref());
+    }
+    false
+}
+
+/// The names of an all-literal-symbol argument list (`:a, :b`), or `None` when
+/// any argument is computed -- a directive zeo can only serve at run time.
+fn literal_symbol_args(hir: &Hir, args: &[ArrayElem]) -> Option<Vec<String>> {
+    if args.is_empty() {
+        return None;
+    }
+    args.iter()
+        .map(|a| match a {
+            ArrayElem::Single(id) => match &hir[*id] {
+                HirNode::SymbolLit(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// `self.singleton_class` evaluated in the enclosing class body -- `self` there
+/// is the class object, so this is the very class `class << self` opens.
+fn own_singleton_class(hir: &mut Hir) -> NodeId {
+    let me = hir.push(HirNode::SelfRef);
+    hir.push(HirNode::Call {
+        receiver: Some(me),
+        name: "singleton_class".to_string(),
+        args: vec![],
+        kwargs: vec![],
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
 fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) -> PResult<()> {
     // Classify without holding the `&hir[id]` borrow across the mutations below.
     enum Item {
@@ -268,8 +344,21 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
         ClassAlias,
         Passthrough,
         Extend(String),
+        ClassPrepend(String),
+        ClassUndef(Vec<String>),
+        ClassVisibility(String, crate::hir::Visibility),
+        ExtendSingleton(String),
+        SingletonIvarWrite(String, NodeId),
+        SingletonIvarRead(String),
+        SingletonSelf,
+        SelfSend,
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
-        Skip,
+        Guarded(
+            Vec<NodeId>,
+            Vec<crate::hir::RescueClause>,
+            Option<Vec<NodeId>>,
+            Option<Vec<NodeId>>,
+        ),
         Reject,
     }
     for &id in ids {
@@ -297,6 +386,31 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // class body is both the simplest and the correct mapping.
             HirNode::ClassVarWrite(..) | HirNode::ClassVarRead(_) => Item::Passthrough,
             HirNode::Include(m) => Item::Extend(m.clone()),
+            // `extend M` here mixes M into the singleton's OWN singleton, one
+            // level further out than any compile-time ancestry zeo models. It
+            // is written for its macros (`extend Forwardable` so the
+            // `def_delegators` beside it resolves), so it becomes the runtime
+            // `self.singleton_class.extend(M)` real Ruby performs, and the
+            // macro call lands on the same receiver.
+            HirNode::Extend(m) => Item::ExtendSingleton(m.clone()),
+            // `prepend M` here mixes M into the SINGLETON class, so its
+            // instance methods become the enclosing class's class methods
+            // ahead of its own `def self.x` -- google-protobuf's
+            // `TypeSafety`, debug's `ForkInterceptor`. The singleton half of
+            // `Include`'s mapping just above, and the exact equivalent of the
+            // `C.singleton_class.prepend(M)` call form.
+            HirNode::Prepend(m) => Item::ClassPrepend(m.clone()),
+            // `undef :m` / `undef_method :m` here retires a CLASS method,
+            // inherited ones included (optparse's `undef_method :options`).
+            HirNode::Undef(names) => Item::ClassUndef(names.clone()),
+            // `private :m` naming a method this body does NOT define is the
+            // singleton half of `MethodVisibility` -- i.e. exactly
+            // `private_class_method :m` on the enclosing class. (A name the
+            // body DOES define was already marked in place on its `DefMethod`,
+            // which the retag above carries to the class-method side.)
+            HirNode::MethodVisibility { name, visibility } => {
+                Item::ClassVisibility(name.clone(), *visibility)
+            }
             // A conditional guarding class-method defs (erb/compiler.rb's
             // `class << self; if defined?(Ractor); def register_scanner ...`):
             // map each branch the same way and KEEP the runtime `if`, so the
@@ -306,40 +420,87 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                 then_body,
                 else_body,
             } => Item::Cond(*cond, then_body.clone(), else_body.clone()),
-            // A visibility directive (`public :a`) or a runtime call
-            // (`public(*METHODS)`) inside `class << self` would run at load
-            // in the enclosing MODULE's context, not the singleton's -- so
-            // `public(*METHODS)` over names the singleton doesn't yet carry
-            // would wrongly raise. It is a documented best-effort NO-OP
-            // (fileutils' Verbose/NoWrite/DryRun are load-time convenience
-            // wrappers; the singleton-visibility nuance is bundler-irrelevant).
-            // `private_constant` here names a constant of the SINGLETON class,
-            // which zeo hoists into the enclosing class along with the
-            // constant itself -- so honoring it would privatize a name on the
-            // wrong owner. Skipped for the same reason the visibility
-            // directives are, and with the same best-effort posture (csv's
-            // `class << self; ON_WINDOWS = ...; private_constant :ON_WINDOWS`).
+            // A `begin/rescue` guarding class-method definitions -- securerandom
+            // picks its `gen_random` implementation this way (`begin;
+            // Random.urandom(1); alias gen_random gen_random_urandom; rescue
+            // RuntimeError; require "openssl"; ...`). Map every clause the same
+            // way and keep the runtime control flow, exactly as the `if` above.
+            HirNode::Begin {
+                body,
+                rescues,
+                else_body,
+                ensure_body,
+            } => Item::Guarded(
+                body.clone(),
+                rescues.clone(),
+                else_body.clone(),
+                ensure_body.clone(),
+            ),
             // An `@x = v` here writes an ivar of the SINGLETON class, which is
-            // a different object from the class -- so the `attr_accessor`
-            // written beside it does NOT read what this wrote. Oracle-verified:
-            //
-            //   class Foo
-            //     class << self
-            //       @slack = "singleton-ivar"
-            //       attr_accessor :slack
-            //     end
-            //   end
-            //   Foo.slack  # => nil
-            //
-            // Dropping the write therefore MATCHES ruby wherever the value is
-            // read back through an accessor, which is every use of it seen in
-            // the gem graph (uniform_notifier's `@logger = nil`); only a direct
-            // `Foo.singleton_class.instance_variable_get` would tell the
-            // difference.
-            HirNode::IvarWrite { .. } | HirNode::IvarRead(_) => Item::Skip,
-            HirNode::MethodVisibility { .. }
-            | HirNode::ConstantVisibility { .. }
-            | HirNode::Call { .. } => Item::Skip,
+            // a DIFFERENT object from the class -- so the `attr_accessor`
+            // written beside it does not read what this wrote (oracle-verified:
+            // `class << self; @slack = "x"; attr_accessor :slack; end` leaves
+            // `Foo.slack` nil). Writing it on `self.singleton_class` keeps both
+            // halves of that: the accessor still answers nil, and a direct
+            // `Foo.singleton_class.instance_variable_get(:@slack)` answers what
+            // was written.
+            HirNode::IvarWrite(name, value) => Item::SingletonIvarWrite(name.clone(), *value),
+            HirNode::IvarRead(name) => Item::SingletonIvarRead(name.clone()),
+            // `private_constant :X` names a constant of the SINGLETON class,
+            // and zeo hoists such a constant into the enclosing class (the
+            // `ConstWrite` passthrough above). Passing the directive through
+            // WITH it keeps the pair together: `Foo::X` then raises NameError,
+            // which is what real Ruby answers too -- there the constant never
+            // lived on `Foo` at all. csv's `class << self; ON_WINDOWS = ...;
+            // private_constant :ON_WINDOWS`.
+            HirNode::ConstantVisibility { .. } => Item::Passthrough,
+            // Any other call runs with the SINGLETON class as `self` -- the
+            // DSL half of `class << self; extend Forwardable; def_delegators
+            // :@config, :timeout`, where the macro defines instance methods of
+            // the singleton, i.e. class methods of the enclosing class. Rebind
+            // it onto `self.singleton_class` so it reaches the receiver real
+            // Ruby gives it, exactly as `desugar_singleton_items` does for the
+            // per-object `class << obj` form. Dropping these silently defined
+            // nothing at all (fileutils' `public(*METHODS)`, memoist's
+            // `memoize`, `Gem::Deprecate`'s `deprecate`).
+            // `undef_method :m` is the `undef` keyword by another name, and the
+            // corpus writes it far more often (optparse, rspec-mocks). Taking
+            // it at compile time is what actually retires the CLASS method: as
+            // a runtime send it would only tombstone the singleton, which
+            // statically-resolved `Foo.m` call sites never consult.
+            HirNode::Call {
+                receiver: None,
+                name,
+                args,
+                kwargs,
+                block: None,
+                block_arg: None,
+                ..
+            } if name == "undef_method"
+                && kwargs.is_empty()
+                && let Some(names) = literal_symbol_args(hir, args) =>
+            {
+                Item::ClassUndef(names)
+            }
+            HirNode::Call { receiver: None, .. } => Item::SelfSend,
+            // An explicit `self` receiver is the singleton class here too.
+            HirNode::Call {
+                receiver: Some(r), ..
+            } if matches!(hir[*r], HirNode::SelfRef) => Item::SelfSend,
+            // A call on any OTHER receiver doesn't depend on `self` at all
+            // (backports' `class << self; attr_accessor :warned;
+            // Backports.warned = {}`), so it runs unchanged at this position.
+            HirNode::Call { .. } => Item::Passthrough,
+            // `class << self; self; end` -- the idiom whose VALUE is the
+            // singleton class (`SINGLETON = class << self; self; end`).
+            HirNode::SelfRef => Item::SingletonSelf,
+            // Anything else runs unchanged IF it never consults `self`: it
+            // then means the same thing in the enclosing class body, at the
+            // same position. backports' `Backports.warned = {}` is this --
+            // an attribute assignment, which lowering expands into a `Seq`
+            // around a temporary. A statement that DOES reach for `self`
+            // would silently retarget the enclosing class, so it is rejected.
+            _ if !mentions_self(hir, id) => Item::Passthrough,
             _ => Item::Reject,
         };
         match item {
@@ -353,6 +514,89 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             }
             Item::Passthrough => out.push(id),
             Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
+            Item::ClassPrepend(m) => out.push(hir.push(HirNode::ClassMethodPrepend(m))),
+            Item::ClassUndef(names) => out.push(hir.push(HirNode::ClassMethodUndef(names))),
+            Item::ClassVisibility(name, visibility) => {
+                out.push(hir.push(HirNode::ClassMethodVisibility { name, visibility }))
+            }
+            Item::ExtendSingleton(m) => {
+                let singleton = own_singleton_class(hir);
+                let module = hir.push(HirNode::ClassRef(m));
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: "extend".to_string(),
+                    args: vec![ArrayElem::Single(module)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+            Item::SingletonIvarWrite(name, value) => {
+                let singleton = own_singleton_class(hir);
+                // `IvarWrite`/`IvarRead` carry the BARE name; the reflection
+                // methods want the sigil.
+                let sym = hir.push(HirNode::SymbolLit(format!("@{name}")));
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: "instance_variable_set".to_string(),
+                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(value)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+            Item::SingletonIvarRead(name) => {
+                let singleton = own_singleton_class(hir);
+                let sym = hir.push(HirNode::SymbolLit(format!("@{name}")));
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: "instance_variable_get".to_string(),
+                    args: vec![ArrayElem::Single(sym)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+            Item::SingletonSelf => {
+                let singleton = own_singleton_class(hir);
+                out.push(singleton);
+            }
+            Item::Guarded(body, rescues, else_body, ensure_body) => {
+                let mut mapped_body = Vec::with_capacity(body.len());
+                map_class_self_items(hir, &body, &mut mapped_body)?;
+                let mut mapped_rescues = Vec::with_capacity(rescues.len());
+                for r in rescues {
+                    let mut rbody = Vec::with_capacity(r.body.len());
+                    map_class_self_items(hir, &r.body, &mut rbody)?;
+                    mapped_rescues.push(crate::hir::RescueClause { body: rbody, ..r });
+                }
+                let map_opt = |hir: &mut Hir, b: Option<Vec<NodeId>>| -> PResult<_> {
+                    b.map(|b| {
+                        let mut out = Vec::with_capacity(b.len());
+                        map_class_self_items(hir, &b, &mut out)?;
+                        Ok(out)
+                    })
+                    .transpose()
+                };
+                let else_body = map_opt(hir, else_body)?;
+                let ensure_body = map_opt(hir, ensure_body)?;
+                out.push(hir.push(HirNode::Begin {
+                    body: mapped_body,
+                    rescues: mapped_rescues,
+                    else_body,
+                    ensure_body,
+                }));
+            }
+            Item::SelfSend => {
+                let singleton = own_singleton_class(hir);
+                if let HirNode::Call { receiver, .. } = &mut hir[id] {
+                    *receiver = Some(singleton);
+                }
+                out.push(id);
+            }
             Item::Cond(cond, then_body, else_body) => match eval_static_class_self_guard(hir, cond)
             {
                 // A statically-decidable version/`defined?` guard: register ONLY
@@ -377,10 +621,15 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                     }));
                 }
             },
-            Item::Skip => {}
             Item::Reject => {
                 return Err(
-                    "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, visibility directives, conditionals, and `attr_*`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
+                    "unsupported statement in `class << self` (zeo limitation): it consults \
+                     `self`, which is the singleton class here, and zeo has no compile-time \
+                     class to retarget it to. `def`s, constants, `include`/`extend`/`prepend`, \
+                     `undef`, visibility directives, ivars, conditionals, `attr_*`/`alias` and \
+                     ordinary calls are all handled"
+                        .to_string()
+                        .into(),
                 );
             }
         }
@@ -1670,9 +1919,11 @@ fn lower_class_body_statement(
     //     resolves here where CRuby raises.
     //   - `include M` -> `extend M` on the enclosing class (M's instance
     //     methods become class methods either way -- same effect).
-    // `extend`/`prepend`/a nested `class << self` inside the singleton stay a
-    // clean rejection: those act on the singleton's OWN singleton, which plain
-    // enclosing-class retagging can't express (deferred).
+    //   - `prepend M`/`undef`/`private :m` -> their class-method halves
+    //     (`ClassMethodPrepend`/`ClassMethodUndef`/`ClassMethodVisibility`);
+    //   - any other call, and `extend M` -> rebound onto
+    //     `self.singleton_class`, the receiver real Ruby runs them against.
+    // A nested `class << self` stays a clean rejection.
     if let Some(singleton) = node.as_singleton_class_node() {
         // `class << HTTP` written INSIDE `class HTTP` IS `class << self` --
         // net/http spells its class-method aliases that way, and routing it
@@ -1687,6 +1938,15 @@ fn lower_class_body_statement(
             // `desugar_singleton_class_defs`).
             out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);
             return Ok(());
+        }
+        if opens_a_nested_singleton(singleton.body().as_ref()) {
+            return Err(
+                "a nested `class << self` isn't supported yet (zeo limitation) -- its \
+                        body belongs to the singleton's own singleton, which zeo has no \
+                        compile-time class for"
+                    .to_string()
+                    .into(),
+            );
         }
         let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
         let mut mapped = Vec::new();

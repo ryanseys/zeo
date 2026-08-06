@@ -386,7 +386,10 @@ fn is_pure_statement(cx: &Ctx, node: &HirNode) -> bool {
     // `expr::mixin_hook_runs`.
     if matches!(
         node,
-        HirNode::Include(_) | HirNode::Extend(_) | HirNode::Prepend(_)
+        HirNode::Include(_)
+            | HirNode::Extend(_)
+            | HirNode::Prepend(_)
+            | HirNode::ClassMethodPrepend(_)
     ) {
         return !super::expr::mixin_hook_runs(cx, node);
     }

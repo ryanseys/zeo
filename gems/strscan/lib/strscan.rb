@@ -4,6 +4,13 @@
 require "strscan.so"
 
 class StringScanner
+  # `strscan.c`'s own constants. rexml gates two compat shims on
+  # `StringScanner::Version` (`if StringScanner::Version < "3.0.8"`), so their
+  # absence was a NameError at load, not merely a reflection gap. Kept in step
+  # with the gemspec version by `gems/UPSTREAM.md`.
+  Version = "3.1.6"
+  Id = "$Id$"
+
   # CRuby defines this in C (`strscan.c`), but a feature-gated native class
   # cannot register a constructible exception in this runtime: an ABI row is
   # gated-but-constructor-less, and the exception table is constructible-but-

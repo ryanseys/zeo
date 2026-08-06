@@ -1197,6 +1197,41 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
+    // A SINGLETON class's instance methods are its owner's CLASS methods, so an
+    // alias written there copies one of those -- securerandom's `class << self;
+    // begin; Random.urandom(1); alias gen_random gen_random_urandom; rescue`.
+    // Resolved and installed on the owner's class-method side, since the
+    // singleton id has no instance table of its own.
+    if let Some(owner) = singleton_class_owner(id) {
+        let existing = maps()
+            .classes
+            .read()
+            .unwrap()
+            .get(&owner.0)
+            .and_then(|e| e.class_methods.get(&old).cloned());
+        let source = existing
+            .or_else(|| {
+                crate::dispatch::class_method_fn(owner, old)
+                    .map(|f| RProc::with_self_and_block(f, RubyValue::Nil, -1, true))
+            })
+            .or_else(|| extended_class_method(owner, old));
+        let Some(source) = source else {
+            return Err(name_error!(
+                "undefined method '{}' for class '{}'",
+                old.name(),
+                crate::dispatch::class_name(id).unwrap_or_default()
+            ));
+        };
+        {
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
+            e.class_methods.insert(new, source);
+            e.extended_class_methods.remove(&new);
+        }
+        patch_class(owner);
+        mark_live();
+        return Ok(RubyValue::Symbol(new));
+    }
     let snapshot = snapshot_instance_method(id, old).or_else(|| {
         // A parse-special Kernel source (`alias_method :block_given!,
         // :block_given?` reached at runtime): statically-resolved call sites
@@ -1304,6 +1339,35 @@ pub fn runtime_set_visibility(
     let mut syms = Vec::with_capacity(names.len());
     for name in &names {
         syms.push(coerce_method_name(Some(name))?);
+    }
+    // A SINGLETON class's instance methods are its owner's CLASS methods --
+    // `class << self; public(*METHODS); end` (fileutils' Verbose/NoWrite/
+    // DryRun) is `public_class_method(*METHODS)` on the owner, and that is the
+    // table those methods and their visibility actually live in. Without this
+    // the names resolve against an instance table the singleton id never had.
+    if let Some(owner) = singleton_class_owner(id) {
+        for &sym in &syms {
+            // Either provenance counts: a compiled `def self.x` (the owner's
+            // class-method table) or one the singleton itself gained at run
+            // time -- fileutils reaches this line right after `extend self`.
+            let resolves = crate::dispatch::class_method_owner(owner, sym).is_some()
+                || crate::dispatch::instance_method_visibility(id, sym).is_some()
+                || snapshot_instance_method(id, sym).is_some();
+            if !resolves {
+                return Err(name_error!(
+                    "undefined method '{}' for class '{}'",
+                    sym.name(),
+                    crate::dispatch::class_name(id).unwrap_or_default()
+                ));
+            }
+        }
+        let marks: Vec<RubyValue> = syms.iter().map(|&s| RubyValue::Symbol(s)).collect();
+        runtime_class_method_visibility(
+            owner,
+            &marks,
+            vis == crate::dispatch::MethodVisibility::Private,
+        )?;
+        return Ok(result);
     }
     for &sym in &syms {
         let resolves = crate::dispatch::instance_method_visibility(id, sym).is_some()

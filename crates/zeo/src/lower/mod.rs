@@ -1393,24 +1393,20 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `ClassRef(name)`) and are intercepted by
         // `codegen::call::emit_call`'s builtin-constructor dispatch.
         if name == "new"
-            && let Some(recv) = call
-                .receiver()
-                // Only a LITERAL constant/path receiver is a static `New`;
-                // any other receiver (`x.new` on a local holding a class
-                // value) falls through to the generic `Call`
-                // lowering and dispatches via `TyKind::ClassObj`/the
-                // runtime constructor.
-                .filter(|r| {
-                    r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some()
-                })
+            && let Some(recv) = call.receiver()
+            // `box::Widget.new(...)`: the ordinary static `New`, resolved
+            // inside the box.
+            && let Some((box_ctx, class_name)) = box_rooted_path(&recv)
+                .map(|(bx, path)| (Some(bx), path))
+                // Only a receiver that NAMES a class at compile time is a
+                // static `New`. A dynamic constant scope (faraday's
+                // `self.class::Handler.new`) spells a `ConstantPathNode` but
+                // resolves its constant only at run time, so it joins every
+                // other non-constant receiver (`x.new` on a local holding a
+                // class value) on the generic `Call` lowering, which
+                // dispatches via `TyKind::ClassObj`/the runtime constructor.
+                .or_else(|| constant_path_name(&recv).ok().map(|n| (None, n)))
         {
-            // `box::Widget.new(...)`: the ordinary static
-            // `New`, resolved inside the box.
-            let box_ctx = box_rooted_path(&recv);
-            let class_name = match &box_ctx {
-                Some((_, path)) => path.clone(),
-                None => constant_path_name(&recv)?,
-            };
             // `Enumerator.new { |y| ... }` joins the block-keeping set
             //: it falls through to the generic `Call`
             // lowering so the block reaches the runtime allocator via
@@ -1511,7 +1507,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     block,
                 });
                 return Ok(match box_ctx {
-                    Some((bx, _)) => hir.push(HirNode::BoxScope {
+                    Some(bx) => hir.push(HirNode::BoxScope {
                         box_id: bx,
                         body: vec![new_id],
                     }),

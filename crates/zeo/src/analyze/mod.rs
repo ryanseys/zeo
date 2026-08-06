@@ -521,7 +521,7 @@ fn process_top_stmt(
         // statement (codegen's `constfold::static_cond` already folds
         // decidable conditions at emission time).
         if !branch_has_top_defs(compiler, then_body) && !branch_has_top_defs(compiler, else_body) {
-            register_nested_class_defs(compiler, stmt)?;
+            register_nested_class_defs(compiler, stmt, &[], 0)?;
             main_statements.push(stmt);
             return Ok(());
         }
@@ -583,7 +583,7 @@ fn process_top_stmt(
         // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
         // class-body `prepend M` produces no runtime statement.
     } else {
-        register_nested_class_defs(compiler, stmt)?;
+        register_nested_class_defs(compiler, stmt, &[], 0)?;
         main_statements.push(stmt);
     }
     Ok(())
@@ -594,7 +594,12 @@ fn process_top_stmt(
 /// Registration is a compile-time fact about shape, so the marker stays put and
 /// `codegen::stmt`'s `ClassDef` arm still runs the body at its document
 /// position; the `BoxScope` arm above splits it the same way.
-fn register_nested_class_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<(), String> {
+fn register_nested_class_defs(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Result<(), String> {
     let mut nested = Vec::new();
     collect_nested_bodies(compiler, stmt, &mut nested);
     for s in nested {
@@ -615,8 +620,8 @@ fn register_nested_class_defs(compiler: &mut Compiler, stmt: NodeId) -> Result<(
             superclass,
             is_module,
             &body,
-            &[],
-            0,
+            cref,
+            box_id,
             Some(s),
         )?;
     }
@@ -942,11 +947,13 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
@@ -2278,6 +2285,15 @@ fn register_class(
                     .undefined
                     .extend(names);
             }
+            // The class-method half. See `HirNode::ClassMethodUndef`. No
+            // `SiteDef` rows: those drive the instance-side `method_undefined`
+            // hook and reopen ordering, and the singleton form has neither.
+            HirNode::ClassMethodUndef(names) => {
+                let names = names.clone();
+                compiler.classes[class_id.0 as usize]
+                    .class_undefined
+                    .extend(names);
+            }
             // A deferred `alias`/`alias_method` of an INHERITED method --
             // resolved by `mro::resolve_aliases` once ancestors are computed.
             // See `HirNode::AliasMethod`.
@@ -2377,6 +2393,38 @@ fn register_class(
                     None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
                 }
             }
+            // The singleton half. See `HirNode::ClassMethodPrepend`. A module
+            // that overrides `prepend_features` decides for itself whether the
+            // mixin happens at all, and the runtime deferral the instance side
+            // uses for that sends `prepend_features` to the CLASS -- the wrong
+            // receiver here -- so the pair stays a clean rejection rather than
+            // a silently wrong ancestry.
+            HirNode::ClassMethodPrepend(m) => {
+                let m = m.clone();
+                match resolve_module_target(compiler, &m, &child_cref, box_id)? {
+                    Some(target) => {
+                        // Both hooks take the SINGLETON class as their
+                        // argument, which zeo has no compile-time class for --
+                        // so a module that defines either stays a clean
+                        // rejection instead of being handed the wrong receiver.
+                        if compiler.overrides_mixin_primitive(target, "prepend_features")
+                            || compiler
+                                .class_method_in_chain(target, "prepended")
+                                .is_some()
+                        {
+                            return Err(format!(
+                                "`prepend {m}` inside `class << self` isn't supported when {m} \
+                                 defines `prepended`/`prepend_features` (zeo limitation: the hook \
+                                 takes the singleton class, which zeo cannot name)"
+                            ));
+                        }
+                        compiler.classes[class_id.0 as usize]
+                            .class_method_prepends
+                            .push(target);
+                    }
+                    None => defer_in_class_body(compiler, class_id, site_idx, stmt, &m),
+                }
+            }
             // `IvarWrite`: a bare `@x = expr` in a class body is an ivar on
             // the CLASS OBJECT (`self` in a class body is the class), i.e.
             // the same storage `def self.x; @x; end` reads -- the ordinary
@@ -2411,6 +2459,13 @@ fn register_class(
                 // can see it. This is what lets fileutils' platform-conditional
                 // `StreamUtils_#fu_windows?` reach `FileUtils` via `extend`.
                 register_conditional_defs(compiler, class_id, &[stmt])?;
+                // ...and a `class`/`module` nested in one of those branches --
+                // an undecided `if`, a `begin` whose body may raise
+                // (rubyntlm's `begin; OpenSSL::Cipher.new("rc4"); rescue;
+                // class Rc4`), a block. Registration is a compile-time fact
+                // about shape; the marker stays put and the body still runs at
+                // its document position, exactly as at the top level.
+                register_nested_class_defs(compiler, stmt, &child_cref, box_id)?;
                 // ...and, symmetrically, a guarded `undef` (`undef :to_a if
                 // respond_to?(:to_a)`, drb) reaches here as a runtime
                 // `undef_method` send. Whether it fires is a runtime fact, so
@@ -3125,6 +3180,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
@@ -3136,6 +3192,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
@@ -3402,6 +3459,7 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. }
         | HirNode::ClassMethodVisibility { .. }
@@ -3413,6 +3471,7 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }

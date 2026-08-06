@@ -2076,6 +2076,19 @@ pub fn class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
     scan_class_method_owner(cid, 0, name)
 }
 
+/// The compiled CLASS method `name` resolves to for `cid`, from whichever
+/// ancestor defines it -- the `class_methods` table, which is a different one
+/// from `value_method`'s. Used to COPY a class method (a runtime `alias` inside
+/// `class << self`); dispatch itself walks the chain inline.
+pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+    let owner = class_method_owner(cid, name)?;
+    registry()
+        .entries
+        .get(&owner.0)
+        .and_then(|e| e.class_methods.get(&name).copied())
+        .or_else(|| crate::builtins::class_method_table(owner).and_then(|l| l(&name.name())))
+}
+
 /// [`class_method_owner`]'s `#super_method` companion: the next definer
 /// strictly after `after`.
 pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> Option<ClassId> {

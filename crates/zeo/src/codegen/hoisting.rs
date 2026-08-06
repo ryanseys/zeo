@@ -499,6 +499,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod {
             new_name: _,
             old_name: _,
@@ -521,6 +522,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }

@@ -426,6 +426,7 @@ impl Walker {
             | HirNode::GlobalRead(_)
             | HirNode::LastMatchRef(_)
             | HirNode::Undef(_)
+            | HirNode::ClassMethodUndef(_)
             | HirNode::AliasMethod {
                 new_name: _,
                 old_name: _,
@@ -447,6 +448,7 @@ impl Walker {
             | HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
+            | HirNode::ClassMethodPrepend(_)
             | HirNode::Refine {
                 target: _,
                 holder: _,

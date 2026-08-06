@@ -504,6 +504,7 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod {
             new_name: _,
             old_name: _,
@@ -525,6 +526,7 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
@@ -791,6 +793,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod {
             new_name: _,
             old_name: _,
@@ -812,6 +815,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
@@ -1387,6 +1391,7 @@ fn walk(
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::ClassMethodUndef(_)
         | HirNode::AliasMethod {
             new_name: _,
             old_name: _,
@@ -1408,6 +1413,7 @@ fn walk(
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::ClassMethodPrepend(_)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::DefHook { .. }

@@ -484,6 +484,12 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
 /// Ruby, where `def self.x` on the module itself stays put). The nearest
 /// level (`class_id` itself) always wins over anything found further up.
 fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+    // `undef_method :m` inside this class's `class << self`: the name is not
+    // materialized onto it from any position, so it raises NoMethodError here
+    // while staying live on the ancestor that defined it. `seen` still claims
+    // the name first, so an undef also blocks a FURTHER ancestor from
+    // supplying it -- the instance-side rule in `materialize_methods`.
+    let undefined = compiler.class(class_id).class_undefined.clone();
     let mut seen: HashSet<String> = HashSet::new();
     let mut materialized = Vec::new();
     let mut singleton_targets: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
@@ -508,6 +514,9 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
             for sid in compiler.class(m).own_methods.clone() {
                 let name = compiler.scope(sid).name.clone();
                 let is_winner = seen.insert(name.clone());
+                if undefined.contains(&name) {
+                    continue;
+                }
                 let scope = compiler.scope(sid);
                 let (def_node, params, body, visibility) = (
                     scope.def_node,
@@ -527,6 +536,9 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
         for sid in compiler.class(cid).own_class_methods.clone() {
             let name = compiler.scope(sid).name.clone();
             let is_winner = seen.insert(name.clone());
+            if undefined.contains(&name) {
+                continue;
+            }
             if cid == class_id {
                 if is_winner {
                     materialized.push(sid); // this class's own definition -- reuse verbatim
@@ -567,6 +579,9 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 // resumes the chain here -- the `own_impls` distinction,
                 // on the singleton side.
                 let is_winner = seen.insert(name.clone());
+                if undefined.contains(&name) {
+                    continue;
+                }
                 let scope = compiler.scope(sid);
                 let (def_node, params, body, visibility) = (
                     scope.def_node,

@@ -393,7 +393,16 @@ pub fn infer_type_with_locals(
                 return TyKind::Poly;
             }
             match recv_ty {
-                TyKind::Object(cid) if compiler.method_in_chain(cid, "class").is_none() => {
+                // Only for a class nothing inherits from: `self.class` inside a
+                // shared inherited body answers the RECEIVER's class, which is
+                // any descendant, so folding it to the base silently resolved
+                // `self.class::Handler` / `self.class.const_get(:H)` against
+                // the wrong namespace. Subclassed receivers keep the dynamic
+                // read, which reports the real class.
+                TyKind::Object(cid)
+                    if compiler.method_in_chain(cid, "class").is_none()
+                        && !compiler.has_subclass(cid) =>
+                {
                     TyKind::ClassObj(cid)
                 }
                 TyKind::Int => TyKind::ClassObj(INTEGER_CLASS),

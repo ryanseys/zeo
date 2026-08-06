@@ -427,12 +427,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "internal error: `self` is a Rust path keyword")]
-    fn an_unescapable_rust_path_keyword_panics_clearly() {
-        // `self`/`Self`/`super`/`crate` can't be raw identifiers at all --
-        // none is a legal Ruby identifier either, so reaching here is an
-        // internal error worth a clear message rather than invalid output.
-        safe_ident("self");
+    fn a_rust_path_keyword_gets_a_prefix_instead_of_a_raw_identifier() {
+        // `self`/`Self`/`super`/`crate` can't be raw identifiers at all, so
+        // they take a prefix no Ruby name can collide with. Ruby reaches these
+        // as METHOD names (`def self` is legal, and `Method#name` still
+        // answers `:self`) -- the mangling is the Rust spelling only.
+        assert_eq!(safe_ident("self").to_string(), "__pk_self");
+        assert_eq!(safe_ident("Self").to_string(), "__pk_Self");
+        assert_eq!(safe_ident("super").to_string(), "__pk_super");
+        assert_eq!(safe_ident("crate").to_string(), "__pk_crate");
     }
 
     /// `class_ident` needs a real, ANALYZED `Compiler` (its arms read

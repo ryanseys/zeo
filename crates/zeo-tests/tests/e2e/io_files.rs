@@ -496,21 +496,24 @@ fn a_global_alias_shares_storage_in_both_directions() {
 
 #[test]
 fn class_shift_self_containing_an_unsupported_statement_is_a_clean_lowering_error() {
-    // `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled
-    // in `class << self`; an ivar assignment on the singleton (`@x = 1`) is not
-    // -- a clean rejection, not silently ignored.
+    // `def`s, constants, mixins, `undef`, visibility, ivars and ordinary calls
+    // are all handled in `class << self`; a NESTED `class << self` (the
+    // singleton's own singleton) is not -- a clean rejection, not silently
+    // ignored.
     let err = zeo::compile_to_rust(
         r#"
         class Foo
           class << self
-            @x = 1
+            class << self
+              def x; 1; end
+            end
           end
         end
         "#,
     )
     .unwrap_err();
     assert!(
-        err.contains("unsupported statement in `class << self`"),
+        err.contains("a nested `class << self` isn't supported yet"),
         "{err}"
     );
 }

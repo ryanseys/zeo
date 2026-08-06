@@ -111,6 +111,11 @@ pub struct ClassInfo {
     /// class, which is what makes an INHERITED name disappear here while
     /// staying live on the ancestor that defined it.
     pub undefined: std::collections::HashSet<String>,
+    /// The CLASS-method half of [`ClassInfo::undefined`] -- names retired by an
+    /// `undef`/`undef_method` inside `class << self` (`HirNode::ClassMethodUndef`).
+    /// `mro::materialize_class_methods` skips them, so an inherited class method
+    /// disappears here while staying live on the ancestor that defined it.
+    pub class_undefined: std::collections::HashSet<String>,
     /// Names this class's body may `undef_method` at RUNTIME -- an `undef :m`
     /// under a guard zeo can't decide (`undef :to_a if respond_to?(:to_a)`,
     /// drb), which lowers to a real send rather than the compile-time
@@ -685,6 +690,7 @@ impl Compiler {
                 extends: Vec::new(),
                 class_method_prepends: Vec::new(),
                 undefined: std::collections::HashSet::new(),
+                class_undefined: std::collections::HashSet::new(),
                 runtime_undefs: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
                 method_history: Vec::new(),
@@ -1222,6 +1228,7 @@ impl Compiler {
             extends: Vec::new(),
             class_method_prepends: Vec::new(),
             undefined: std::collections::HashSet::new(),
+            class_undefined: std::collections::HashSet::new(),
             runtime_undefs: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
             method_history: Vec::new(),
@@ -1336,6 +1343,15 @@ impl Compiler {
     /// `construct_by_class_id` rather than a per-class struct. The single source
     /// of truth for "is there a struct here?", which several `TyKind::Object`
     /// and `.new` sites gate on.
+    /// Whether any class in the program inherits from `cid` -- a whole-program
+    /// fact, and the guard on every fold that treats an instance's RUNTIME
+    /// class as its statically-known one. An inherited method compiles to ONE
+    /// shared body (`__sh*`) serving the base and every subclass, so `self`
+    /// there is typed as the base while its real class may be any descendant.
+    pub fn has_subclass(&self, cid: ClassId) -> bool {
+        self.classes.iter().any(|c| c.parent == Some(cid))
+    }
+
     pub fn has_generated_struct(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         !ci.is_module
