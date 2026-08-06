@@ -24,7 +24,15 @@ allow = [
   "Zlib",
   "Unicode-3.0",
   "CDLA-Permissive-2.0",
+  # Boost, reached through rustyline -> clipboard-win/error-code. Permissive,
+  # OSI-approved, and its attribution clause exempts binary distribution.
+  "BSL-1.0",
 ]
+
+# An allowed license that nothing currently uses is a warning by default. That
+# is noise here: this list is deliberately broader than today's tree, so a new
+# permissive dependency does not fail CI for a license we would have accepted.
+unused-allowed-license = "allow"
 
 [bans]
 multiple-versions = "warn"

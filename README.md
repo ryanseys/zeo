@@ -57,8 +57,9 @@ dispatch reads it.
 
 ## Quick start
 
-For now, you build Zeo from source. There is no `gem install zeo` yet. Build the
-compiler one time, then compile your Ruby programs with it.
+Today you build Zeo from source. Build the compiler one time, then compile your
+Ruby programs with it. The `cargo install zeo` and `gem install zeo` channels
+arrive with the 0.1.0 release.
 
 ```console
 # Build the compiler. This writes target/release/zeo.
@@ -481,7 +482,7 @@ limits of these measurements.
 ## The workspace
 
 Zeo is a Cargo workspace with six crates. It uses edition 2024, and the minimum
-Rust version is 1.87.
+Rust version is 1.88.
 
 ```
 crates/
@@ -609,7 +610,7 @@ target of a compiled program. It is not an API to call Ruby from Rust.
 
 You need only three items:
 
-- **Rust 1.87 or later**, because Zeo uses edition 2024. Read `rust-version`.
+- **Rust 1.88 or later**, because Zeo uses edition 2024. Read `rust-version`.
 - **A C compiler**, for Prism and Oniguruma.
 - **Ruby 4.0.6**, but only to record the expected test output again. The file
   `mise.toml` gives this version.
@@ -628,6 +629,33 @@ use a dynamic `eval`.
 
 The file `mise.toml` sets the development tools: `ruby = "4.0.6"` and
 `rust = "1.97.1"`.
+
+### A relocatable install
+
+`cargo xtask dist` assembles a tree that runs from any directory:
+
+```console
+$ cargo xtask dist                      # writes target/dist/zeo-<version>-<triple>.tar.gz
+$ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local
+$ zeo hello.rb -o hello
+```
+
+```
+zeo-<version>-<triple>/
+  bin/zeo
+  share/zeo/{gems, runtime, dist-manifest.json}
+  share/doc/zeo/
+```
+
+The binary finds its payload beside itself, through `bin/../share/zeo`, so the
+tree moves anywhere. `ZEO_HOME` overrides that search.
+
+**The target machine still needs cargo and rustc**, at 1.88 or later. A Rust
+`rlib` is tied to the exact compiler that built it, so Zeo builds `zeo-rt`
+one time with your toolchain, on your first compile. The tree carries a
+vendored dependency tree for that build, so it needs no network. The result
+goes in the user cache directory, not in the install tree, so the install
+stays read-only.
 
 ## Tests and conformance
 

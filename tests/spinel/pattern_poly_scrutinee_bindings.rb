@@ -1,7 +1,7 @@
 # Array-pattern bindings against a poly/untyped VALUE scrutinee must be boxed
 # (poly), not int. A helper widened to an untyped return by extra call sites
 # used to type the rest slice / required element as int and reinterpret the
-# boxed element bits -> garbage output (ryanseys/spinel#418).
+# boxed element bits -> garbage output.
 
 def poly(a) = a
 

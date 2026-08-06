@@ -6,12 +6,17 @@
 # `.expected`, which can diverge). Idempotent: re-running skips tests already
 # present and the ones listed in tests/spinel/REMOVED.txt.
 #
-#   scripts/import-spinel-corpus.sh [SPINEL_TEST_DIR]   # default ~/dev/spinel/test
+#   scripts/import-spinel-corpus.sh <SPINEL_TEST_DIR>
+#
+# SPINEL_TEST_DIR is a local checkout of the predecessor project's test suite.
+# The corpus it produces is already vendored in tests/spinel/, so this is a
+# maintainer tool for pulling in NEW upstream cases, not a build step.
 #
 # Run from the repo root.
 set -euo pipefail
 
-SP="${1:-$HOME/dev/spinel/test}"
+SP="${1:-}"
+[ -n "$SP" ] || { echo "usage: $0 <SPINEL_TEST_DIR>" >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TESTS="$ROOT/tests"
 SPINEL="$TESTS/spinel"

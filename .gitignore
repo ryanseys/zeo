@@ -24,3 +24,12 @@ compile_flags.txt
 .env.*
 !.env.example
 *.log
+
+# `zeo tests/foo.rb` writes its binary to tests/foo -- the input path with the
+# extension stripped. Three of those reached HEAD at 13MB each before the CI
+# size guard existed. Every real file here has an extension; LICENSE is the
+# one exception.
+/tests/**
+!/tests/**/
+!/tests/**/*.*
+!/tests/spinel/LICENSE
