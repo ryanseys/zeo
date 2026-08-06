@@ -4,7 +4,7 @@
 //! project automation without extra dependencies.
 //!
 //! (`examples/*.rb` + `.rb.expected` now run as `cargo test --test examples`
-//! via datatest-stable; `ZEO_BLESS=1 cargo test` re-records their goldens from
+//! via datatest-stable; `cargo xtask bless <filter>` re-records their goldens from
 //! ruby -- see `crates/zeo/tests/support/golden.rs`.)
 //!
 //! - `xtask bench [--filter <substr>] [--runs N] [--update-baseline]`: the
@@ -33,6 +33,7 @@
 
 mod arity_oracle;
 mod bench;
+mod bless;
 mod compile_bench;
 mod dist;
 mod exec;
@@ -43,6 +44,7 @@ mod method_census;
 mod prebuild;
 mod stage_publish;
 mod stdlib_status;
+mod sweep;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -64,6 +66,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(2).collect();
     match std::env::args().nth(1).as_deref() {
         Some("bench") => bench::main(&root, &args),
+        Some("bless") => bless::main(&root, &args),
         Some("compile-bench") => compile_bench::main(&root, &args),
         Some("prebuild-runtimes") => prebuild::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
@@ -74,11 +77,12 @@ fn main() -> ExitCode {
         Some("method-census") => method_census::main(&root, &args),
         Some("stage-publish") => stage_publish::main(&root, &args),
         Some("dist") => dist::main(&root, &args),
+        Some("sweep") => sweep::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
-                 <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
-                 arity-oracle|method-census|stage-publish|dist>"
+                 <bench|bless|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
+                 gem-probe|arity-oracle|method-census|stage-publish|dist|sweep>"
             );
             ExitCode::FAILURE
         }

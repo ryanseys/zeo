@@ -6,7 +6,7 @@
 //! The pattern matches the top level plus `tests/gems/`, never the
 //! `tests/spinel/` or `tests/gaps/` subdirectories (those are their own suites).
 //!
-//! `ZEO_BLESS=1 cargo test --test examples` re-records the goldens from ruby.
+//! `cargo xtask bless examples::` re-records the goldens from ruby.
 
 #[path = "support/golden.rs"]
 mod golden;

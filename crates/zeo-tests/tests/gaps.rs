@@ -6,7 +6,7 @@
 //! the zeo-authored suite -- NOT `tests/spinel/`, which mirrors the vendored
 //! spinel corpus.
 //!
-//! `ZEO_BLESS=1 cargo test --test gaps` re-records each gap's golden from ruby.
+//! `cargo xtask bless gaps::` re-records each gap's golden from ruby.
 
 #[path = "support/golden.rs"]
 mod golden;

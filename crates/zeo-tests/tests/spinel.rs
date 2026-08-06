@@ -9,7 +9,7 @@
 //! only the top level, never a deeper `.rb`. Compile-REJECTION coverage lives in
 //! the e2e suite (`compile_project(...).unwrap_err()`).
 //!
-//! `ZEO_BLESS=1 cargo test --test spinel` re-records the goldens from ruby.
+//! `cargo xtask bless spinel::` re-records the goldens from ruby.
 
 #[path = "support/golden.rs"]
 mod golden;

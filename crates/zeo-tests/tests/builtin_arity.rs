@@ -14,7 +14,7 @@
 //! one tagged row each -- but only two kinds are acceptable: a method zeo
 //! defines and CRuby does not, and a class the dump could not reach. A declared
 //! arity that simply disagrees with the oracle is a BUG, not a row: it fails
-//! here and cannot be blessed away. `ZEO_BLESS=1` rewrites the file from the
+//! here and cannot be blessed away. `cargo xtask bless builtin_arity` rewrites the file from the
 //! current state, the same convention the golden corpus uses.
 //!
 //! Both categories are now near-empty, which is what makes a NEW row worth
@@ -191,7 +191,7 @@ fn write_divergences(root: &Path, rows: &[Divergence]) {
     out.push_str("#! `oracle-missing` (the dump could not reach the class at all). An arity\n");
     out.push_str("#! that simply disagrees with the oracle is a BUG in the parameter list --\n");
     out.push_str("#! it fails the test and cannot be recorded here. Regenerate with\n");
-    out.push_str("#! `ZEO_BLESS=1 cargo nextest run -p zeo --test builtin_arity`.\n");
+    out.push_str("#! `cargo xtask bless builtin_arity`.\n");
     out.push_str("#!\n");
     out.push_str("#! Every PUBLIC method zeo declares on a class ruby also has now resolves,\n");
     out.push_str("#! so a public `zeo-only` row means one landed on the wrong class or was\n");
@@ -300,7 +300,7 @@ fn builtin_arity_matches_the_oracle() {
     found.sort_by_key(|d| (d.tag, key(d)));
 
     // A mismatch is a bug in the declaration, so it is reported before anything
-    // else and never written to the file -- `ZEO_BLESS` cannot launder one.
+    // else and never written to the file -- a bless cannot launder one.
     let mismatched: Vec<&Divergence> = found.iter().filter(|d| d.tag == Tag::Mismatch).collect();
     assert!(
         mismatched.is_empty(),
@@ -315,7 +315,7 @@ fn builtin_arity_matches_the_oracle() {
             .join("\n"),
     );
 
-    if std::env::var_os("ZEO_BLESS").is_some() {
+    if std::env::var_os("ZEO_BLESS_FROM_XTASK").is_some() {
         write_divergences(&root, &found);
         eprintln!("blessed {DIVERGENCES}: {} rows", found.len());
         return;

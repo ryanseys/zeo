@@ -20,6 +20,11 @@
 //! the file and fills in the rest. Progress lines are flushed per line so
 //! a piped/backgrounded run streams instead of block-buffering.
 //!
+//! Because it REWRITES, `--filter` has to be accounted for: a filtered run
+//! measures a subset, and writing only what it measured would drop every other
+//! row. So a filtered update starts from the existing baseline and upserts the
+//! rows it measured -- "re-measure X and bank it", not "the baseline is X now".
+//!
 //! Three data files under `bench/`:
 //! - `baseline.tsv` -- the committed regression reference (`name\tsecs`);
 //!   updated only by `--update-baseline`, its diff is the reviewable record
@@ -108,7 +113,14 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 
     // With --resume, rows already recorded are carried forward verbatim and
     // their benchmarks skipped; a fresh --update-baseline starts empty.
-    let mut recorded: Vec<BenchResult> = if resume {
+    //
+    // A FILTERED update carries them forward too, for a different reason. The
+    // filter `continue`s past every benchmark it doesn't select, so those are
+    // never measured -- and starting empty then made `--update-baseline` write
+    // a baseline containing only the filtered rows, silently discarding every
+    // other measurement in the file. `--filter X --update-baseline` means
+    // "re-measure X and bank it", not "the baseline is now X alone".
+    let mut recorded: Vec<BenchResult> = if resume || filter.is_some() {
         baseline
             .iter()
             .map(|(name, secs)| BenchResult {
@@ -182,7 +194,12 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 // Persist after EVERY benchmark so an interrupted run keeps
                 // its completed rows (see module docs).
                 if update_baseline {
-                    recorded.push(BenchResult { name, secs });
+                    // Upsert, not push: a filtered run starts from the whole
+                    // baseline, so the row being re-measured is already there.
+                    match recorded.iter_mut().find(|r| r.name == name) {
+                        Some(existing) => existing.secs = secs,
+                        None => recorded.push(BenchResult { name, secs }),
+                    }
                     write_baseline(&baseline_path, &recorded);
                 }
             }

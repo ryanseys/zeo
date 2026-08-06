@@ -12,7 +12,7 @@
 //! - `Mode::Xfail` (gaps): zeo must DIVERGE from the golden -- a match means the
 //!   gap is fixed and the test FAILS with a "promote" message.
 //!
-//! `ZEO_BLESS=1 cargo test` re-records the goldens from the real `ruby` oracle
+//! `cargo xtask bless <filter>` re-records the goldens from the real `ruby` oracle
 //! (`--disable-error_highlight --disable-did_you_mean`, resolved via `mise`)
 //! instead of asserting. This is the single golden writer.
 
@@ -382,7 +382,8 @@ fn run_oracle(
     run_bounded(&mut cmd, stdin, "ruby oracle")
 }
 
-/// `ZEO_BLESS=1`: (re)write `<rb>.expected` (+ `.err.expected`) from the oracle.
+/// Under `cargo xtask bless`: (re)write `<rb>.expected` (+ `.err.expected`)
+/// from the oracle.
 /// A stdout-only suite (`check_stderr == false`, i.e. examples) never keeps a
 /// stderr golden -- ruby's parse warnings / experimental notices / thread
 /// exception reports aren't part of the contract there.
@@ -436,7 +437,7 @@ pub fn run_golden(
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
 
-    if std::env::var_os("ZEO_BLESS").is_some() && mode != Mode::CompileFail {
+    if std::env::var_os("ZEO_BLESS_FROM_XTASK").is_some() && mode != Mode::CompileFail {
         return bless(rb, &source, &sc, run_cwd, check_stderr);
     }
 

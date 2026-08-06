@@ -8,7 +8,7 @@
 //!
 //! Every gap it finds must have a row in `conformance/method-census-gaps.tsv`.
 //! A NEW gap fails; a row that no longer diverges must be DELETED, so the file
-//! can only shrink. `ZEO_BLESS=1` rewrites it from the current state, the same
+//! can only shrink. `cargo xtask bless method_census` rewrites it from the current state, the same
 //! convention the golden corpus and the arity ledger use.
 //!
 //! Four tags, because the four need completely different work:
@@ -166,7 +166,7 @@ fn write_gaps(root: &Path, gaps: &[Gap]) {
     }
     let mut out = String::from(
         "# Coverage gaps against ruby 4.0.6, gated by crates/zeo/tests/method_census.rs.\n\
-         # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with ZEO_BLESS=1.\n\
+         # Columns: tag <TAB> module <TAB> kind <TAB> name. Regenerate with `cargo xtask bless method_census`.\n\
          # This file may only SHRINK -- a new gap fails the test, a closed one must be deleted.\n",
     );
     for (tag, n) in &counts {
@@ -199,7 +199,7 @@ fn method_coverage_only_shrinks() {
     );
     let found = diff(&oracle, &parse(&run.stdout));
 
-    if std::env::var_os("ZEO_BLESS").is_some() {
+    if std::env::var_os("ZEO_BLESS_FROM_XTASK").is_some() {
         write_gaps(&root, &found);
         eprintln!("blessed {GAPS}: {} rows", found.len());
         return;
@@ -237,7 +237,7 @@ fn method_coverage_only_shrinks() {
         accepted.iter().filter(|k| !live.contains(*k)).collect();
     assert!(
         closed.is_empty(),
-        "{} row(s) in {GAPS} no longer diverge -- re-bless with ZEO_BLESS=1:\n{}",
+        "{} row(s) in {GAPS} no longer diverge -- re-bless with `cargo xtask bless method_census`:\n{}",
         closed.len(),
         closed
             .iter()

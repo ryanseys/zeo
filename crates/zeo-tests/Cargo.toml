@@ -26,7 +26,7 @@ zeo-dsl = { workspace = true, features = ["spans"] }
 
 # Golden-file suites: one nextest case per `.rb`, comparing zeo's output to the
 # committed ruby-oracle `.expected` (see tests/support/golden.rs). `harness =
-# false` hands the target to datatest-stable. `ZEO_BLESS=1` rewrites goldens.
+# false` hands the target to datatest-stable. `cargo xtask bless <filter>` rewrites goldens.
 [[test]]
 name = "gaps"
 path = "tests/gaps.rs"
