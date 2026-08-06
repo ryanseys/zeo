@@ -458,7 +458,7 @@ pub fn run_golden(
     }
 
     // Pass / Xfail: build + run, then diff against the golden.
-    let actual = compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd);
+    let actual = compile_and_run_contained(rb, &source, &sc, run_cwd);
 
     // The reference: committed `.expected` (+ optional `.err.expected`), else a
     // live ruby-oracle run (a test without a committed stdout snapshot).
@@ -500,6 +500,36 @@ pub fn run_golden(
     }
 }
 
+/// `compile_and_run`, with a compiler panic turned into an ordinary `Err`.
+///
+/// A panic is a divergence like any other -- ruby ran the program, zeo did not
+/// -- but an uncaught one takes the whole test binary down, so a gap that
+/// panics could not be recorded at all. Containing it lets `tests/gaps/` hold
+/// the panicking program as an XFAIL, which is where a known bug belongs. The
+/// message is kept and prefixed, so a `Mode::Pass` failure still says plainly
+/// that zeo crashed rather than printing a bare output mismatch.
+fn compile_and_run_contained(
+    rb: &Path,
+    source: &str,
+    sc: &Sidecars,
+    run_cwd: &Path,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd)
+    }));
+    caught.unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic payload>");
+        Err(format!("{PANIC_PREFIX}{msg}"))
+    })
+}
+
+/// Marks an `Err` that came from a panic rather than a reported error.
+pub const PANIC_PREFIX: &str = "zeo PANICKED: ";
+
 fn mismatch_message(
     rb: &Path,
     actual: &Result<(Vec<u8>, Vec<u8>), String>,
@@ -528,6 +558,15 @@ fn mismatch_message(
             show(out),
             show(expected_err),
             show(err),
+        ),
+        // A panic and a reported error both arrive as `Err`, but they mean
+        // different things to whoever reads the failure: one is a bug in the
+        // compiler, the other a limit it stated.
+        Err(e) if e.starts_with(PANIC_PREFIX) => format!(
+            "{}: THE COMPILER PANICKED (an internal error, not a reported \
+             limitation): {}",
+            rb.display(),
+            e.trim_start_matches(PANIC_PREFIX)
         ),
         Err(e) => format!("{}: zeo failed to compile/run it: {e}", rb.display()),
     }

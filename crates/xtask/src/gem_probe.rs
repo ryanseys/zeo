@@ -17,6 +17,11 @@
 //! Probing an unpacked tree needs no network and is deterministic, so a ledger
 //! row reproduces from its recorded version alone.
 //!
+//! A sweep survives a gem that panics the compiler: `parser` did, and took
+//! every verdict already gathered down with it. A panic is recorded as its own
+//! outcome rather than folded into `lowering-gap`, because a gap is a limit
+//! zeo reported and a panic is a bug it did not.
+//!
 //! A gem is unpacked to `vendor/gems/<name>/`, named for the gem rather than
 //! `<name>-<version>`, and its gemspec is REPLACED with a stub. Both are
 //! required, not stylistic: zeo checks a gemspec's name against its directory
@@ -34,7 +39,7 @@ const REGISTRY: &str = "https://rubygems.org";
 
 /// What a probe concluded. The first two are about zeo; the rest say the
 /// question could not be put.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum Outcome {
     Compiles,
     /// zeo reached the gem's source and could not lower it. The payload is the
@@ -46,6 +51,9 @@ enum Outcome {
     MissingDependency(String),
     /// No `lib/` to put on the load path.
     NoLibDir,
+    /// The compiler panicked. Distinct from a lowering gap on purpose: a gap
+    /// is a known limit reported through the error path, a panic is a bug.
+    CompilerPanic(String),
     FetchFailed(String),
 }
 
@@ -57,13 +65,17 @@ impl Outcome {
             Outcome::NativeExtension => "native-extension",
             Outcome::MissingDependency(_) => "missing-dependency",
             Outcome::NoLibDir => "no-lib-dir",
+            Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::FetchFailed(_) => "fetch-failed",
         }
     }
 
     fn detail(&self) -> &str {
         match self {
-            Outcome::LoweringGap(d) | Outcome::MissingDependency(d) | Outcome::FetchFailed(d) => d,
+            Outcome::LoweringGap(d)
+            | Outcome::MissingDependency(d)
+            | Outcome::FetchFailed(d)
+            | Outcome::CompilerPanic(d) => d,
             _ => "",
         }
     }
@@ -75,6 +87,7 @@ impl Outcome {
             "no-lib-dir" => Outcome::NoLibDir,
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
+            "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
             _ => Outcome::LoweringGap(detail.to_string()),
         }
     }
@@ -240,7 +253,10 @@ fn entry_point(name: &str) -> String {
 /// isolated view makes the result a function of the gem and its deps, which is
 /// what the ledger claims to record.
 fn isolate(root: &Path, name: &str, deps: &[String]) -> Result<PathBuf, String> {
-    let view = vendor_dir(root).join(".probe").join(name);
+    // Outside vendor/gems, not under it. A view is a directory of gem
+    // directories, so nesting it inside the cache would make the cache
+    // contain something shaped like a gem.
+    let view = root.join("vendor/.probe").join(name);
     let _ = std::fs::remove_dir_all(&view);
     std::fs::create_dir_all(&view).map_err(|e| e.to_string())?;
     for gem in std::iter::once(&name.to_string()).chain(deps) {
@@ -275,9 +291,27 @@ fn probe(root: &Path, name: &str, dir: &Path, deps: &[String]) -> Outcome {
         ..Default::default()
     };
     let src = format!("require {:?}\n", entry_point(name));
-    match zeo::compile_to_rust_with(&src, &opts) {
-        Ok(_) => Outcome::Compiles,
-        Err(e) => classify(&String::from(e), root),
+
+    // A sweep must survive a gem that panics the compiler. `parser` did
+    // exactly that, and the whole run died with it, losing every verdict
+    // already gathered. The panic message still reaches stderr; only the
+    // process-ending part is caught.
+    let compiled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        zeo::compile_to_rust_with(&src, &opts)
+    }));
+    match compiled {
+        Ok(Ok(_)) => Outcome::Compiles,
+        Ok(Err(e)) => classify(&String::from(e), root),
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("compiler panicked");
+            Outcome::CompilerPanic(truncate(
+                &message_of(msg).replace(&format!("{}/", root.display()), ""),
+            ))
+        }
     }
 }
 
@@ -590,4 +624,378 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch root per test. `std::env::temp_dir` rather than a dev
+    /// dependency, since xtask has none and needs none for this.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "zeo-gem-probe-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("conformance")).unwrap();
+        dir
+    }
+
+    fn gem_at(root: &Path, name: &str, version: &str, body: &str) -> PathBuf {
+        let dir = vendor_dir(root).join(name);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("lib").join(format!("{name}.rb")), body).unwrap();
+        write_stub_gemspec(&dir, name, version).unwrap();
+        std::fs::write(stamp_path(&dir), version).unwrap();
+        dir
+    }
+
+    // ---------------------------------------------------------- diagnostics
+
+    #[test]
+    fn the_require_chain_is_stripped_from_a_message() {
+        let err = "/a/b/lib/x.rb: /a/b/lib/y.rb: unsupported statement in `class << self`";
+        assert_eq!(message_of(err), "unsupported statement in `class << self`");
+    }
+
+    #[test]
+    fn a_wrapped_boxed_diagnostic_is_rejoined() {
+        let err = "zeo::lower\n\n  × first part of the\n  │ message continues here\n    ╭─[x.rb:1:1]\n 1 │ code";
+        assert_eq!(message_of(err), "first part of the message continues here");
+    }
+
+    /// The ledger is committed, so no local path may survive into it -- not as
+    /// a leading prefix, and not buried inside a span tuple.
+    #[test]
+    fn no_absolute_path_reaches_the_ledger() {
+        let root = Path::new("/Users/someone/dev/zeo");
+        let err = "/Users/someone/dev/zeo/vendor/gems/i18n/lib/a.rb: bad thing at Some((\"/Users/someone/dev/zeo/vendor/gems/i18n/lib/a.rb\", 9))";
+        let detail = classify(err, root).detail().to_string();
+        assert!(!detail.contains("/Users/"), "{detail}");
+        assert!(detail.contains("bad thing"), "{detail}");
+    }
+
+    /// The two scrubbers do different jobs. A path UNDER the repository root
+    /// becomes relative, which stays readable; anything else absolute is
+    /// dropped outright as a last resort. Without the first, a useful location
+    /// would be deleted rather than shortened.
+    #[test]
+    fn a_path_under_the_root_is_made_relative_not_deleted() {
+        let root = Path::new("/Users/someone/dev/zeo");
+        let err = "trouble in /Users/someone/dev/zeo/vendor/gems/i18n/lib/a.rb here";
+        let detail = classify(err, root).detail().to_string();
+        assert!(
+            detail.contains("vendor/gems/i18n/lib/a.rb"),
+            "the location should survive, relative: {detail}"
+        );
+        assert!(!detail.contains("/Users/"), "{detail}");
+    }
+
+    #[test]
+    fn an_absolute_path_outside_the_root_is_dropped() {
+        let root = Path::new("/Users/someone/dev/zeo");
+        let detail = classify("trouble in /home/other/thing.rb here", root)
+            .detail()
+            .to_string();
+        assert!(!detail.contains("/home/"), "{detail}");
+        assert!(detail.contains("trouble in"), "{detail}");
+    }
+
+    /// A panicking gem must not be recorded as a lowering gap: one is a known
+    /// limit, the other a bug, and conflating them hides the bug.
+    #[test]
+    fn a_compiler_panic_is_its_own_outcome() {
+        let o = Outcome::CompilerPanic("internal error: boom".into());
+        assert_eq!(o.tag(), "compiler-panic");
+        assert_eq!(
+            Outcome::from_ledger("compiler-panic", "internal error: boom"),
+            o
+        );
+        assert_ne!(o, Outcome::LoweringGap("internal error: boom".into()));
+    }
+
+    #[test]
+    fn classify_separates_the_outcomes() {
+        let root = Path::new("/tmp/none");
+        assert_eq!(
+            classify("cannot load such file -- public_suffix", root),
+            Outcome::MissingDependency("public_suffix".into())
+        );
+        assert_eq!(
+            classify(
+                "`msgpack` has a native (C) extension zeo has no built-in for",
+                root
+            ),
+            Outcome::NativeExtension
+        );
+        assert!(matches!(
+            classify("define_method's second argument must be a block", root),
+            Outcome::LoweringGap(_)
+        ));
+    }
+
+    #[test]
+    fn a_hyphen_in_a_gem_name_is_a_path_separator() {
+        assert_eq!(entry_point("net-http"), "net/http");
+        assert_eq!(entry_point("colorator"), "colorator");
+    }
+
+    // --------------------------------------------------------------- ledger
+
+    #[test]
+    fn the_ledger_round_trips() {
+        let root = scratch("ledger");
+        let mut rows = BTreeMap::new();
+        rows.insert(
+            "alpha".to_string(),
+            Row {
+                version: "1.0.0".into(),
+                outcome: Outcome::Compiles,
+            },
+        );
+        rows.insert(
+            "beta".to_string(),
+            Row {
+                version: "2.1.0".into(),
+                outcome: Outcome::LoweringGap("some gap".into()),
+            },
+        );
+        rows.insert(
+            "gamma".to_string(),
+            Row {
+                version: "3.0.0".into(),
+                outcome: Outcome::NativeExtension,
+            },
+        );
+        write_ledger(&root, &rows).unwrap();
+
+        let back = read_ledger(&root);
+        assert_eq!(back.len(), 3);
+        assert_eq!(back["alpha"].outcome, Outcome::Compiles);
+        assert_eq!(back["beta"].version, "2.1.0");
+        assert_eq!(
+            back["beta"].outcome,
+            Outcome::LoweringGap("some gap".into())
+        );
+        assert_eq!(back["gamma"].outcome, Outcome::NativeExtension);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Writing the same rows twice must produce the same bytes, or a re-probe
+    /// would show as a diff even when nothing changed.
+    #[test]
+    fn writing_the_ledger_is_deterministic() {
+        let root = scratch("ledger-determinism");
+        let mut rows = BTreeMap::new();
+        for n in ["zeta", "alpha", "mu"] {
+            rows.insert(
+                n.to_string(),
+                Row {
+                    version: "1.0.0".into(),
+                    outcome: Outcome::Compiles,
+                },
+            );
+        }
+        write_ledger(&root, &rows).unwrap();
+        let first = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        write_ledger(&root, &rows).unwrap();
+        let second = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        assert_eq!(first, second);
+        // BTreeMap ordering means the file is sorted, not insertion-ordered.
+        let names: Vec<&str> = first
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.split('\t').next())
+            .collect();
+        assert_eq!(names, ["alpha", "mu", "zeta"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_corpus_ignores_comments_and_reads_pins() {
+        let root = scratch("corpus");
+        std::fs::write(
+            corpus_path(&root),
+            "# a comment\n\nrake\naddressable 2.9.0\nliquid   # trailing note\n",
+        )
+        .unwrap();
+        let got = read_corpus(&root);
+        assert_eq!(
+            got,
+            vec![
+                ("rake".to_string(), None),
+                ("addressable".to_string(), Some("2.9.0".to_string())),
+                ("liquid".to_string(), None),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ------------------------------------------------------------ unpacking
+
+    fn synthetic_gem(files: &[(&str, &str)]) -> Vec<u8> {
+        let mut inner = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut inner, flate2::Compression::default());
+            let mut b = tar::Builder::new(enc);
+            for (path, body) in files {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(body.len() as u64);
+                h.set_mode(0o644);
+                h.set_cksum();
+                b.append_data(&mut h, path, body.as_bytes()).unwrap();
+            }
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        let mut outer = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut outer);
+            for (name, body) in [("metadata.gz", b"x".as_slice()), ("data.tar.gz", &inner)] {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(body.len() as u64);
+                h.set_mode(0o644);
+                h.set_cksum();
+                b.append_data(&mut h, name, body).unwrap();
+            }
+            b.finish().unwrap();
+        }
+        outer
+    }
+
+    #[test]
+    fn a_gem_unpacks_from_its_inner_data_archive() {
+        let root = scratch("unpack");
+        let gem = synthetic_gem(&[("lib/thing.rb", "module Thing; end\n"), ("README", "hi")]);
+        let dest = root.join("out");
+        unpack_gem(&gem, &dest).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dest.join("lib/thing.rb")).unwrap(),
+            "module Thing; end\n"
+        );
+        assert!(dest.join("README").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_gem_without_a_data_archive_is_an_error() {
+        let root = scratch("unpack-bad");
+        assert!(unpack_gem(b"not a tar at all", &root.join("out")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_a_declared_extension_counts_as_native() {
+        let root = scratch("ext");
+        let with = root.join("with");
+        let without = root.join("without");
+        std::fs::create_dir_all(&with).unwrap();
+        std::fs::create_dir_all(&without).unwrap();
+        std::fs::write(
+            with.join("a.gemspec"),
+            "Gem::Specification.new do |s|\n  s.extensions = [\"ext/a/extconf.rb\"]\nend\n",
+        )
+        .unwrap();
+        // concurrent-ruby's shape: an empty declaration is not a native gem.
+        std::fs::write(
+            without.join("b.gemspec"),
+            "Gem::Specification.new do |s|\n  s.extensions = []\n  s.name = \"b\"\nend\n",
+        )
+        .unwrap();
+        assert!(declares_extensions(&with));
+        assert!(!declares_extensions(&without));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_stub_gemspec_replaces_the_original() {
+        let root = scratch("stub");
+        let dir = root.join("gem");
+        std::fs::create_dir_all(&dir).unwrap();
+        // The shape zeo rejects: a computed version.
+        std::fs::write(
+            dir.join("real.gemspec"),
+            "Gem::Specification.new { |s| s.version = Thing::VERSION }\n",
+        )
+        .unwrap();
+        write_stub_gemspec(&dir, "thing", "4.5.6").unwrap();
+        assert!(!dir.join("real.gemspec").exists());
+        let stub = std::fs::read_to_string(dir.join("thing.gemspec")).unwrap();
+        assert!(stub.contains(r#"s.version = "4.5.6".freeze"#), "{stub}");
+        assert!(stub.contains(r#"s.name = "thing".freeze"#), "{stub}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ------------------------------------------------- isolation, idempotency
+
+    /// The property that makes a verdict reproducible: a probe sees its own
+    /// gem and its declared dependencies, and nothing else that happens to be
+    /// cached beside them.
+    #[test]
+    fn a_probe_sees_only_its_gem_and_its_dependencies() {
+        let root = scratch("isolate");
+        gem_at(&root, "target", "1.0.0", "module Target; end\n");
+        gem_at(&root, "adep", "1.0.0", "module Adep; end\n");
+        gem_at(&root, "unrelated", "9.9.9", "module Unrelated; end\n");
+
+        let view = isolate(&root, "target", &["adep".to_string()]).unwrap();
+        let mut seen: Vec<String> = std::fs::read_dir(&view)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            ["adep", "target"],
+            "unrelated gems must not be visible"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Isolating twice must not accumulate. A stale link from an earlier probe
+    /// would silently widen what the next one can see.
+    #[test]
+    fn isolating_twice_does_not_accumulate() {
+        let root = scratch("isolate-twice");
+        gem_at(&root, "target", "1.0.0", "module Target; end\n");
+        gem_at(&root, "adep", "1.0.0", "module Adep; end\n");
+
+        isolate(&root, "target", &["adep".to_string()]).unwrap();
+        let view = isolate(&root, "target", &[]).unwrap();
+        let seen: Vec<String> = std::fs::read_dir(&view)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(seen, ["target"], "the previous run's dep link survived");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A fetch whose stamp already records the wanted version must not go to
+    /// the network. The absence of any URL here is the point: if `fetch` tried,
+    /// this test would need one.
+    #[test]
+    fn fetch_is_idempotent_for_an_already_unpacked_version() {
+        let root = scratch("idempotent");
+        let dir = gem_at(&root, "cached", "2.0.0", "module Cached; end\n");
+        let marker = dir.join("lib/cached.rb");
+        let before = std::fs::read_to_string(&marker).unwrap();
+
+        let got = fetch(&root, "cached", "2.0.0").unwrap();
+        assert_eq!(got, dir);
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_version_change_invalidates_the_cache() {
+        let root = scratch("stamp");
+        gem_at(&root, "moving", "1.0.0", "module Moving; end\n");
+        // A different version must not be served from the 1.0.0 tree; with no
+        // network in a test this surfaces as an error rather than a stale hit.
+        assert!(fetch(&root, "moving", "2.0.0").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

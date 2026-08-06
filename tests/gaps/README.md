@@ -7,7 +7,13 @@ plus optional `.err.expected` / `.args` / `.stdin` sidecars), so promoting a
 fixed gap is a plain move into the corpus.
 
 Every gap is a real divergence with a real cause, and its header comment says
-what that cause is. A divergence zeo has decided not to reproduce does not
+what that cause is.
+
+A gap may be a program that makes the compiler **panic**. The harness contains
+a panic and counts it as a divergence, so an internal error can be recorded
+here rather than taking the test binary down with it. A `Mode::Pass` failure
+names it as a panic, because a bug and a stated limitation want different
+work. A divergence zeo has decided not to reproduce does not
 belong here — it belongs in a passing test that documents it.
 
 ## The XFAIL contract
