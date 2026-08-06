@@ -6,3 +6,7 @@ zeo-gems.json
 
 # Vendored upstream sources for the bundler north-star (not part of the build)
 /vendor/
+
+# Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
+crates/zeo/gems.pregen.tar.gz
+crates/zeo/src/class_surface.pregen.rs

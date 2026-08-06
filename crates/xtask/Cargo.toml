@@ -13,6 +13,11 @@ zeo.workspace = true
 # links zeo-dsl without it, so expanding every `ruby_class!` does not pay for a
 # source map.
 zeo-dsl = { workspace = true, features = ["spans"] }
+# stage-publish: parses cargo's JSON message stream (serde_json) and packs
+# the deterministic gems archive (tar + flate2).
+serde_json.workspace = true
+tar.workspace = true
+flate2.workspace = true
 
 [lints]
 workspace = true

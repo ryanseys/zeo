@@ -32,6 +32,7 @@ mod gem;
 mod gem_compat;
 mod method_census;
 mod prebuild;
+mod stage_publish;
 mod stdlib_status;
 
 use std::path::PathBuf;
@@ -53,11 +54,12 @@ fn main() -> ExitCode {
         Some("gem") => gem::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
         Some("method-census") => method_census::main(&root, &args),
+        Some("stage-publish") => stage_publish::main(&root, &args),
         _ => {
             eprintln!(
                 "usage: cargo run -p xtask -- \
                  <bench|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
-                 arity-oracle|method-census>"
+                 arity-oracle|method-census|stage-publish>"
             );
             ExitCode::FAILURE
         }

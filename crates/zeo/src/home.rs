@@ -24,7 +24,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// The resolved home. See the module docs for the two shapes.
+/// The resolved home. See the module docs for the shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZeoHome {
     /// The zeo repo: payload dirs and `target/` both live at `root`.
@@ -32,6 +32,13 @@ pub enum ZeoHome {
     /// A relocatable install: read-only `payload` (= `<prefix>/share/zeo`),
     /// build output under the per-user `cache`.
     Installed { payload: PathBuf, cache: PathBuf },
+    /// A `cargo install`ed zeo: no payload directory anywhere. The gems ride
+    /// EMBEDDED in the binary (`gems.pregen.tar.gz`, staged into the crate at
+    /// publish time) and extract once into the cache; the runtime is fetched
+    /// from crates.io through a materialized anchor workspace pinning
+    /// `zeo-rt = "=X.Y.Z"` (see `backend`). Only constructible when the
+    /// binary carries the embedded archive (`zeo_embedded_gems` cfg).
+    Registry { cache: PathBuf },
 }
 
 /// The process-wide home, resolved once.
@@ -106,6 +113,15 @@ fn resolve(exe: Option<&Path>, env_home: Option<&OsStr>, dev_root: &Path) -> Res
         return Ok(ZeoHome::DevTree { root });
     }
 
+    // 4. No payload anywhere, but the binary carries the embedded gems
+    //    archive: a `cargo install`ed zeo, self-sufficient through the cache
+    //    and the crates.io-fetched runtime.
+    if cfg!(zeo_embedded_gems) {
+        return Ok(ZeoHome::Registry {
+            cache: cache_root(),
+        });
+    }
+
     Err(format!(
         "zeo cannot find its runtime payload.\n\
          Probed, in order:\n\
@@ -120,6 +136,48 @@ fn resolve(exe: Option<&Path>, env_home: Option<&OsStr>, dev_root: &Path) -> Res
             .unwrap_or_else(|| "could not determine the executable's path".into()),
         dev_root.display(),
     ))
+}
+
+/// The embedded gems archive, staged into the published crate by
+/// `cargo xtask stage-publish`. Absent (and the cfg off) in every dev build.
+#[cfg(zeo_embedded_gems)]
+static EMBEDDED_GEMS: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/gems.pregen.tar.gz"));
+
+/// The bundled-gems dir for a [`ZeoHome::Registry`] zeo: the embedded archive,
+/// extracted once per zeo version into the cache. Concurrent first runs race
+/// benignly: each extracts into its own temp dir and the `rename` into place
+/// is last-writer-wins on a directory that is content-identical either way.
+pub fn registry_gems_dir(cache: &Path) -> Option<PathBuf> {
+    #[cfg(zeo_embedded_gems)]
+    {
+        let dest = cache.join(format!("gems-{}", env!("CARGO_PKG_VERSION")));
+        if dest.is_dir() {
+            return Some(dest);
+        }
+        let staging = cache.join(format!(
+            ".gems-extract-{}-{}",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&staging);
+        std::fs::create_dir_all(&staging).ok()?;
+        let tar = flate2::read::GzDecoder::new(EMBEDDED_GEMS);
+        if tar::Archive::new(tar).unpack(&staging).is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+            return None;
+        }
+        if std::fs::rename(&staging, &dest).is_err() {
+            // A concurrent extraction won the rename; ours is redundant.
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+        dest.is_dir().then_some(dest)
+    }
+    #[cfg(not(zeo_embedded_gems))]
+    {
+        let _ = cache;
+        None
+    }
 }
 
 /// A payload directory is one `cargo xtask dist` laid out: the runtime
@@ -250,14 +308,35 @@ mod tests {
         let tmp = tempdir("nothing");
         let exe = tmp.join("bin/zeo");
         touch(&exe);
-        let err = resolve(Some(&exe), None, &tmp.join("no-repo")).unwrap_err();
-        assert!(err.contains("executable-relative"), "{err}");
-        assert!(err.contains("dev tree"), "{err}");
+        let resolved = resolve(Some(&exe), None, &tmp.join("no-repo"));
+        if cfg!(zeo_embedded_gems) {
+            // With the embedded archive armed (a staged tree), "no payload
+            // anywhere" IS the registry tier, not an error.
+            assert!(matches!(resolved, Ok(ZeoHome::Registry { .. })));
+        } else {
+            let err = resolved.unwrap_err();
+            assert!(err.contains("executable-relative"), "{err}");
+            assert!(err.contains("dev tree"), "{err}");
+        }
     }
 
     #[test]
     fn the_test_harness_itself_runs_in_the_dev_tree() {
         assert!(matches!(zeo_home(), ZeoHome::DevTree { .. }));
+    }
+
+    /// Runs only when a staged `gems.pregen.tar.gz` armed the embedded-gems
+    /// cfg (i.e. after `cargo xtask stage-publish`): the archive must extract
+    /// into a cache dir whose layout IS the bundled-gems dir.
+    #[cfg(zeo_embedded_gems)]
+    #[test]
+    fn embedded_gems_extract_into_the_cache() {
+        let cache = tempdir("registry-gems");
+        let dir = registry_gems_dir(&cache).expect("extraction succeeds");
+        assert!(dir.join("uri/lib/uri.rb").is_file());
+        assert!(dir.join("erb/lib/erb.rb").is_file());
+        // Second call takes the already-extracted fast path.
+        assert_eq!(registry_gems_dir(&cache), Some(dir));
     }
 
     fn tempdir(tag: &str) -> PathBuf {

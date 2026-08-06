@@ -48,16 +48,15 @@ fn ruby_os() -> String {
 /// the target, and the value is cosmetic (`RUBY_PLATFORM`'s suffix). Kept in
 /// sync with the copy in `crates/zeo/build.rs` (`render_rbconfig`).
 fn darwin_major() -> String {
-    if std::env::consts::OS == "macos" {
-        if let Some(major) = Command::new("uname")
+    if std::env::consts::OS == "macos"
+        && let Some(major) = Command::new("uname")
             .arg("-r")
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .and_then(|r| r.trim().split('.').next().map(str::to_string))
-        {
-            return major;
-        }
+    {
+        return major;
     }
     // ruby 4.0.6 era: Darwin 25 (macOS 26).
     "25".to_string()

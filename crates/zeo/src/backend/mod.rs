@@ -174,7 +174,18 @@ fn runtime_workspace_dir() -> PathBuf {
     match crate::home::zeo_home() {
         crate::home::ZeoHome::DevTree { root } => root.clone(),
         crate::home::ZeoHome::Installed { payload, .. } => payload.join("runtime"),
+        // The materialized anchor workspace (see `build_runtime_from_registry`).
+        crate::home::ZeoHome::Registry { cache } => registry_anchor_dir(cache),
     }
+}
+
+/// Whether this process runs from the zeo repo (where sources change and
+/// `target/` is cargo's own) rather than an installed/registry distribution.
+fn in_dev_tree() -> bool {
+    matches!(
+        crate::home::zeo_home(),
+        crate::home::ZeoHome::DevTree { .. }
+    )
 }
 
 /// The build root everything hangs off: variant target dirs, the runtime
@@ -192,7 +203,8 @@ fn target_dir() -> PathBuf {
             Some(dir) => PathBuf::from(dir),
             None => root.join("target"),
         },
-        crate::home::ZeoHome::Installed { cache, .. } => cache.join(runtime_cache_key()),
+        crate::home::ZeoHome::Installed { cache, .. }
+        | crate::home::ZeoHome::Registry { cache } => cache.join(runtime_cache_key()),
     }
 }
 
@@ -390,15 +402,13 @@ fn runtime_artifact_is_stale(profile: Profile, runtime: Runtime, linkage: Linkag
     let Ok(artifact) = runtime_artifact(profile, runtime, linkage) else {
         return true; // not built yet
     };
-    // Installed mode: existence IS freshness. The payload is immutable and
-    // every input to the artifact -- compiler version, fingerprint, exact
-    // rustc -- is folded into the cache dir's name (`runtime_cache_key`), so
-    // an input change lands in a different dir and builds there. The mtime
-    // walk below exists for the dev tree, where sources actually change.
-    if matches!(
-        crate::home::zeo_home(),
-        crate::home::ZeoHome::Installed { .. }
-    ) {
+    // Installed/registry mode: existence IS freshness. The payload (or the
+    // pinned registry dep) is immutable and every input to the artifact --
+    // compiler version, fingerprint, exact rustc -- is folded into the cache
+    // dir's name (`runtime_cache_key`), so an input change lands in a
+    // different dir and builds there. The mtime walk below exists for the
+    // dev tree, where sources actually change.
+    if !in_dev_tree() {
         return false;
     }
     let Some(artifact_mtime) = file_mtime(&artifact) else {
@@ -459,6 +469,9 @@ fn newest_mtime_under(path: &Path) -> SystemTime {
 /// combination builds into its own target dir so it never clobbers another --
 /// see [`variant_target_dir`].
 pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Result<(), String> {
+    if let crate::home::ZeoHome::Registry { cache } = crate::home::zeo_home() {
+        return build_runtime_from_registry(cache, profile, runtime, linkage);
+    }
     let mut cmd = std::process::Command::new("cargo");
     match linkage {
         Linkage::Static => {
@@ -473,11 +486,11 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             if runtime == Runtime::Eval {
                 cmd.arg("--features").arg("eval-vm");
             }
-            // The eval variant always needs its own dir; installed mode needs
-            // the redirect for EVERY variant -- without it cargo would write
-            // into the payload's own `target/`, and the prefix may be
-            // read-only (a Homebrew Cellar).
-            if runtime == Runtime::Eval || installed_payload().is_some() {
+            // The eval variant always needs its own dir; outside the dev tree
+            // the redirect is needed for EVERY variant -- without it cargo
+            // would write into the payload's own `target/`, and the prefix
+            // may be read-only (a Homebrew Cellar).
+            if runtime == Runtime::Eval || !in_dev_tree() {
                 cmd.arg("--target-dir")
                     .arg(variant_target_dir(runtime, linkage));
             }
@@ -537,18 +550,174 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
         Err(e) => Err(format!("running `{label}`: {e}")),
     };
     if result.is_ok()
-        && let crate::home::ZeoHome::Installed { cache, .. } = crate::home::zeo_home()
+        && let crate::home::ZeoHome::Installed { cache, .. }
+        | crate::home::ZeoHome::Registry { cache } = crate::home::zeo_home()
     {
         reap_stale_cache_keys(cache, runtime_cache_key());
     }
     result
 }
 
-/// The payload dir when running installed, `None` in the dev tree.
+/// Build the runtime for a `cargo install`ed zeo: no runtime sources anywhere,
+/// so a tiny ANCHOR workspace pinning `zeo-rt = "=X.Y.Z"` from crates.io is
+/// materialized in the cache and built; cargo fetches and compiles the exact
+/// runtime this compiler was released with.
+///
+/// A registry dependency's rlib lands under `deps/` with a HASHED filename
+/// (only workspace members get the plain `libzeo_rt.rlib` path
+/// `runtime_artifact` expects), so the build runs with
+/// `--message-format=json-render-diagnostics`, the artifact message for
+/// zeo-rt names the real file, and it is copied to the plain path. Everything
+/// downstream -- `runtime_artifact`, `build_binary`'s `--extern` + `-L
+/// dependency=deps` -- then works unchanged.
+fn build_runtime_from_registry(
+    cache: &Path,
+    profile: Profile,
+    runtime: Runtime,
+    linkage: Linkage,
+) -> Result<(), String> {
+    if linkage == Linkage::Dynamic {
+        // Dynamic linkage exists for the in-repo test harness's bin-cache;
+        // nothing reaches it from an installed CLI (which always ships
+        // self-contained static binaries).
+        return Err(
+            "dynamic runtime linkage is not supported for a registry-installed zeo".to_string(),
+        );
+    }
+    let anchor = registry_anchor_dir(cache);
+    materialize_anchor(&anchor)?;
+    eprintln!(
+        "zeo: fetching and building the zeo-rt runtime from crates.io \
+         (one-time per zeo/rustc version)..."
+    );
+    let _lock = lock_runtime_build();
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.arg("build")
+        .arg("--message-format=json-render-diagnostics")
+        .arg("--jobs")
+        .arg(job_cap().to_string());
+    if let Some(flag) = profile.cargo_flag() {
+        cmd.arg(flag);
+    }
+    cmd.args(["-p", "zeo-rt-anchor"]);
+    if runtime == Runtime::Eval {
+        cmd.arg("--features").arg("eval-vm");
+    }
+    let variant_dir = variant_target_dir(runtime, linkage);
+    cmd.arg("--target-dir").arg(&variant_dir);
+    cmd.current_dir(&anchor);
+    // Keep cargo's progress/download chatter visible; only the JSON stream is
+    // captured.
+    cmd.stderr(std::process::Stdio::inherit());
+    let out = cmd
+        .output()
+        .map_err(|e| format!("running cargo for the registry runtime build: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "the registry runtime build (in {}) exited with {}",
+            anchor.display(),
+            out.status
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let built = zeo_rt_rlib_from_messages(&stdout).ok_or_else(|| {
+        "the registry runtime build produced no zeo-rt rlib artifact message".to_string()
+    })?;
+    let dest_dir = variant_dir.join(profile.subdir());
+    let dest = dest_dir.join("libzeo_rt.rlib");
+    std::fs::create_dir_all(&dest_dir)
+        .and_then(|_| std::fs::copy(&built, &dest).map(|_| ()))
+        .map_err(|e| format!("copying {} to {}: {e}", built.display(), dest.display()))?;
+    Ok(())
+}
+
+/// The anchor workspace's dir: keyed by zeo version only (its CONTENT depends
+/// on nothing else); built artifacts go to the toolchain-keyed target dirs.
+fn registry_anchor_dir(cache: &Path) -> PathBuf {
+    cache.join(format!("anchor-{}", env!("CARGO_PKG_VERSION")))
+}
+
+/// Write the anchor package (idempotent; rewritten in full each time so a
+/// half-written earlier attempt can't wedge it).
+fn materialize_anchor(anchor: &Path) -> Result<(), String> {
+    let write = |rel: &str, contents: &str| -> Result<(), String> {
+        let path = anchor.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&path, contents).map_err(|e| format!("writing {}: {e}", path.display()))
+    };
+    // The [profile.*] sections MIRROR the zeo workspace's root Cargo.toml --
+    // they shape the runtime rlib exactly as much as source does. Keep in sync.
+    let manifest = format!(
+        r#"# @generated by zeo -- the anchor workspace a registry-installed zeo
+# builds its runtime through. Safe to delete; recreated on demand.
+[package]
+name = "zeo-rt-anchor"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+zeo-rt = "={version}"
+
+[features]
+eval-vm = ["zeo-rt/eval-vm"]
+
+[profile.dev.package.zeo-rt]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.release]
+strip = "symbols"
+codegen-units = 1
+
+[profile.release.package."*"]
+codegen-units = 16
+"#,
+        version = env!("CARGO_PKG_VERSION")
+    );
+    write("Cargo.toml", &manifest)?;
+    write("src/lib.rs", "// Intentionally empty: exists to anchor zeo-rt.\n")
+}
+
+/// The zeo-rt rlib path from a `--message-format=json` stream: the
+/// compiler-artifact message whose package id names zeo-rt, first `.rlib`
+/// filename. Serde-parsed per line; non-JSON lines are skipped.
+fn zeo_rt_rlib_from_messages(stdout: &str) -> Option<PathBuf> {
+    let mut found = None;
+    for line in stdout.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v["reason"].as_str() != Some("compiler-artifact") {
+            continue;
+        }
+        let target_name = v["target"]["name"].as_str().unwrap_or_default();
+        if target_name != "zeo-rt" && target_name != "zeo_rt" {
+            continue;
+        }
+        if let Some(files) = v["filenames"].as_array() {
+            for f in files {
+                if let Some(path) = f.as_str().filter(|p| p.ends_with(".rlib")) {
+                    found = Some(PathBuf::from(path));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The payload dir when running from a relocatable install, `None` otherwise.
 fn installed_payload() -> Option<&'static Path> {
     match crate::home::zeo_home() {
         crate::home::ZeoHome::Installed { payload, .. } => Some(payload),
-        crate::home::ZeoHome::DevTree { .. } => None,
+        crate::home::ZeoHome::DevTree { .. } | crate::home::ZeoHome::Registry { .. } => None,
     }
 }
 

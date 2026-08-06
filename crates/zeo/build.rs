@@ -41,6 +41,14 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let out_dir = Path::new(&out_dir);
 
+    // The embedded gems archive (`cargo xtask stage-publish` creates it; the
+    // published .crate ships it). Its presence arms the Registry home tier.
+    println!("cargo:rustc-check-cfg=cfg(zeo_embedded_gems)");
+    println!("cargo:rerun-if-changed=gems.pregen.tar.gz");
+    if manifest_dir.join("gems.pregen.tar.gz").is_file() {
+        println!("cargo:rustc-cfg=zeo_embedded_gems");
+    }
+
     let rt_src = manifest_dir.join("../zeo-rt/src");
     let pregen = manifest_dir.join("src/class_surface.pregen.rs");
     let dev_tree = rt_src.join("builtins").is_dir();
@@ -193,16 +201,15 @@ fn ruby_os() -> String {
 /// build host's kernel is meaningless for the target then). Only reached for
 /// Apple targets.
 fn darwin_major() -> String {
-    if std::env::consts::OS == "macos" {
-        if let Some(major) = std::process::Command::new("uname")
+    if std::env::consts::OS == "macos"
+        && let Some(major) = std::process::Command::new("uname")
             .arg("-r")
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .and_then(|r| r.trim().split('.').next().map(str::to_string))
-        {
-            return major;
-        }
+    {
+        return major;
     }
     // ruby 4.0.6 era: Darwin 25 (macOS 26). Cosmetic (RUBY_PLATFORM suffix).
     "25".to_string()

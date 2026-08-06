@@ -1249,6 +1249,10 @@ pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
     let dir = match crate::home::zeo_home() {
         crate::home::ZeoHome::DevTree { root } => root.join("gems"),
         crate::home::ZeoHome::Installed { payload, .. } => payload.join("gems"),
+        // Embedded in the binary at publish time; extracted once per version.
+        crate::home::ZeoHome::Registry { cache } => {
+            return crate::home::registry_gems_dir(cache);
+        }
     };
     dir.is_dir().then_some(dir)
 }

@@ -107,6 +107,12 @@ jiff = "0.2"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
 
+# The embedded-gems archive of a registry-installed zeo: tar + gzip (flate2's
+# pure-Rust miniz_oxide backend). xtask packs it at stage-publish; the zeo
+# binary extracts it on first run. serde_json also parses cargo's
+# --message-format=json stream for the registry runtime build.
+tar = "0.4"
+
 # ext/ backends (feature-gated in zeo-rt).
 md-5 = "0.10"
 sha1 = "0.10"
