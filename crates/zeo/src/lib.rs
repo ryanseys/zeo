@@ -13,6 +13,7 @@
 //! resulting binary), since that's a genuinely separate compilation unit.
 
 pub mod analyze;
+pub mod analyze_error;
 pub mod backend;
 pub mod builtin_surface;
 pub mod codegen;

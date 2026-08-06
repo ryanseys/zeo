@@ -45,8 +45,11 @@ fn an_unsupported_codegen_construct_is_an_error_not_a_panic() {
     insta::assert_snapshot!(render(err));
 }
 
-/// A failure past lowering carries its stage as the diagnostic code
-/// (message-only until analyze sites gain spans).
+/// A failure past lowering carries its stage as the diagnostic code, and the
+/// statement that provoked it: analyze refuses definitions, and the walk stamps
+/// the one it was handed (see `analyze_error`). Without that, a rejection names
+/// a construct rather than a place -- which for a gem is a search across every
+/// file that spells it.
 #[test]
 fn an_analyze_error_is_coded_with_its_stage() {
     let err = zeo::compile_to_rust_with("class Foo\nend\nmodule Foo\nend\n", &Default::default())

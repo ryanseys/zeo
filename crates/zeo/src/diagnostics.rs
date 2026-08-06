@@ -13,6 +13,7 @@
 //! via `Display`/`From`, so the in-process harnesses keep asserting on the
 //! exact message text they always have.
 
+use crate::analyze_error::AnalyzeError;
 use crate::hir::{SourceFile, Span};
 use crate::lower_error::{LowerError, LowerErrorKind};
 use miette::{Diagnostic, LabeledSpan, NamedSource, SourceCode};
@@ -106,6 +107,73 @@ impl Diagnostic for LowerDiagnostic {
     }
 }
 
+/// A located analyze failure -- `LowerDiagnostic`'s sibling, built at the pass
+/// boundary (`analyze::analyze`), the one place both the error and
+/// `Hir::files` are in scope.
+///
+/// Separate from `LowerDiagnostic` rather than shared with it because the two
+/// say different things to the reader: lowering refuses a CONSTRUCT and points
+/// at the token, analyze refuses a DEFINITION and points at the statement.
+/// The code and help text differ accordingly.
+#[derive(Debug)]
+pub struct AnalyzeDiagnostic {
+    message: String,
+    /// Boxed for the same reason `LowerDiagnostic`'s is -- see there.
+    src: Option<Box<NamedSource<String>>>,
+    /// `(byte offset, length)` into `src`.
+    span: Option<(usize, usize)>,
+}
+
+impl AnalyzeDiagnostic {
+    fn new(err: AnalyzeError, files: &[SourceFile]) -> AnalyzeDiagnostic {
+        let located = err.span.and_then(|s: Span| {
+            // A span outliving its file table would be a bug, but a panic in
+            // the error path would replace a real diagnostic with a worse one.
+            let f = files.get(s.file.0 as usize)?;
+            Some((
+                Box::new(NamedSource::new(&f.name, f.source.clone())),
+                (s.start as usize, (s.end - s.start) as usize),
+            ))
+        });
+        let (src, span) = match located {
+            Some((src, span)) => (Some(src), Some(span)),
+            None => (None, None),
+        };
+        AnalyzeDiagnostic {
+            message: err.message,
+            src,
+            span,
+        }
+    }
+}
+
+impl fmt::Display for AnalyzeDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for AnalyzeDiagnostic {}
+
+impl Diagnostic for AnalyzeDiagnostic {
+    fn code(&self) -> Option<Box<dyn fmt::Display + '_>> {
+        Some(Box::new("zeo::analyze"))
+    }
+
+    fn source_code(&self) -> Option<&dyn SourceCode> {
+        self.src.as_ref().map(|s| &**s as &dyn SourceCode)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        let (start, len) = self.span?;
+        Some(Box::new(std::iter::once(LabeledSpan::new(
+            Some("rejected here".to_string()),
+            start,
+            len,
+        ))))
+    }
+}
+
 /// One of Ruby's own PARSE-time warnings, carried from the compiler to the
 /// compiled program. CRuby prints these before the program runs; a zeo binary
 /// prints them at startup, which is the same position relative to any program
@@ -131,15 +199,9 @@ pub enum CompileError {
     #[diagnostic(transparent)]
     Lower(#[from] LowerDiagnostic),
 
-    #[error("{message}")]
-    #[diagnostic(code(zeo::analyze))]
-    Analyze {
-        message: String,
-        /// Reserved: analyze sites gain locations incrementally (a `NodeId`
-        /// in scope resolves to a span via `Hir::span`); none are stamped
-        /// yet, so rendering ignores this until they are.
-        span: Option<Span>,
-    },
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Analyze(AnalyzeDiagnostic),
 
     #[error("{message}")]
     #[diagnostic(code(zeo::codegen))]
@@ -156,11 +218,20 @@ impl CompileError {
         CompileError::Lower(LowerDiagnostic::new(err, files))
     }
 
+    /// An unlocated analyze rejection -- for callers outside the pass, which
+    /// have no `Hir::files` to resolve a span against.
     pub fn analyze(message: impl Into<String>) -> CompileError {
-        CompileError::Analyze {
+        CompileError::Analyze(AnalyzeDiagnostic {
             message: message.into(),
+            src: None,
             span: None,
-        }
+        })
+    }
+
+    /// The driver-boundary conversion for the analyze pass -- see
+    /// `AnalyzeDiagnostic`.
+    pub fn analyze_located(err: AnalyzeError, files: &[SourceFile]) -> CompileError {
+        CompileError::Analyze(AnalyzeDiagnostic::new(err, files))
     }
 
     pub fn codegen(message: impl Into<String>) -> CompileError {

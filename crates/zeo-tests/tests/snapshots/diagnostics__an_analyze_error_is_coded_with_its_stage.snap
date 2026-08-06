@@ -1,7 +1,13 @@
 ---
-source: crates/zeo/tests/diagnostics.rs
+source: crates/zeo-tests/tests/diagnostics.rs
 expression: render(err)
 ---
 zeo::analyze
 
   × Foo is not a module
+   ╭─[-e:3:1]
+ 2 │     end
+ 3 │ ╭─▶ module Foo
+ 4 │ ├─▶ end
+   · ╰──── rejected here
+   ╰────

@@ -14,6 +14,7 @@ pub(crate) mod mro;
 pub(crate) mod redefs;
 pub(crate) mod share;
 
+use crate::analyze_error::AnalyzeError;
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::hir::{
     ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility,
@@ -40,15 +41,40 @@ pub struct Analyzed {
 }
 
 pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, crate::diagnostics::CompileError> {
-    analyze_impl(hir, root).map_err(crate::diagnostics::CompileError::analyze)
+    // The `Compiler` is built HERE, not inside the pass, so that a failure
+    // still has `Hir::files` to resolve its span against -- the pass moves
+    // everything else into its result, and an error is exactly the case where
+    // that result never arrives.
+    let mut compiler = Compiler::new(hir);
+    match analyze_impl(&mut compiler, root) {
+        Ok(parts) => Ok(Analyzed {
+            compiler,
+            main_statements: parts.main_statements,
+            main_local_types: parts.main_local_types,
+            feature_units: parts.feature_units,
+            declined_units: parts.declined_units,
+        }),
+        Err(e) => Err(crate::diagnostics::CompileError::analyze_located(
+            e,
+            &compiler.hir.files,
+        )),
+    }
 }
 
-/// The whole pass, with the `String` errors its sites raise -- typed (and
-/// eventually located) at the public boundary above.
-fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
-    let mut compiler = Compiler::new(hir);
+/// Everything [`Analyzed`] holds except the `Compiler`, which the caller owns
+/// so that the error path can still read its source table.
+struct AnalyzedParts {
+    main_statements: Vec<NodeId>,
+    main_local_types: HashMap<String, TyKind>,
+    feature_units: Vec<(String, String, Vec<NodeId>)>,
+    declined_units: Vec<(String, String, String)>,
+}
+
+/// The whole pass. Its sites raise bare messages; the statement walk locates
+/// them (see `analyze_error`), and the boundary above types them.
+fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, AnalyzeError> {
     let HirNode::Program(statements) = &compiler.hir[root] else {
-        return Err("expected a Program root".to_string());
+        return Err("expected a Program root".into());
     };
     let statements = statements.clone();
     let builtin_exceptions_len = compiler.hir.builtin_exceptions_len;
@@ -68,7 +94,7 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
     // const-read/guard folding sees them exactly as the runtime `seed_*` will
     // install them. Must precede the walk below, which decides class-def guards.
-    seed_ext_const_owners(&mut compiler);
+    seed_ext_const_owners(compiler);
 
     let mut main_statements = Vec::new();
     // `BEGIN { ... }` bodies, hoisted to run before ANY main statement --
@@ -86,11 +112,11 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let mut tail_pinned = false;
     for (idx, stmt) in statements.into_iter().enumerate() {
         if idx >= builtin_exceptions_len && !tail_pinned {
-            pin_builtin_exceptions_tail(&mut compiler)?;
+            pin_builtin_exceptions_tail(compiler)?;
             tail_pinned = true;
         }
         process_top_stmt(
-            &mut compiler,
+            compiler,
             stmt,
             idx < builtin_exceptions_len,
             &mut main_statements,
@@ -107,7 +133,7 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // A program with no user statements after the built-in exceptions never
     // tripped the in-loop pin above -- run it now.
     if !tail_pinned {
-        pin_builtin_exceptions_tail(&mut compiler)?;
+        pin_builtin_exceptions_tail(compiler)?;
     }
 
     // The compiled-in load path. A unit's statements walk the SAME
@@ -124,8 +150,7 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         let mut unit_pre_exec = Vec::new();
         let mut failed = None;
         for stmt in unit.body {
-            if let Err(e) =
-                process_top_stmt(&mut compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
+            if let Err(e) = process_top_stmt(compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
             {
                 failed = Some(e);
                 break;
@@ -141,7 +166,7 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             // already registered stay registered -- inert unless the program
             // names them, which it can only do by requiring the feature it
             // just refused.
-            Some(e) => declined_units.push((unit.feature, unit.absolute, e)),
+            Some(e) => declined_units.push((unit.feature, unit.absolute, e.message)),
         }
     }
 
@@ -165,27 +190,26 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // registered, since `include`/`extend`/`prepend`/`< Super` targets must
     // already exist (same "defined earlier in the file" rule `superclass`
     // resolution already enforces). See `mro`'s module docs.
-    mro::materialize(&mut compiler, &main_statements)?;
+    mro::materialize(compiler, &main_statements)?;
 
     // Which redefinition timelines are observable and must be applied at
     // their document position. Before `def_hooks::resolve`: its `at` bumps
     // are what order a redefinition's install before its own hook report.
-    redefs::resolve(&mut compiler);
+    redefs::resolve(compiler);
 
     // Which compiled definitions announce themselves. Runs here because it
     // needs `class_methods` flattened over the ancestry to see the hook, and
     // before `mark_inline_iter_sites` because it feeds `runtime_patches`.
-    def_hooks::resolve(&mut compiler, &mut main_statements);
+    def_hooks::resolve(compiler, &mut main_statements);
 
-    let main_local_types = locals::infer_locals(&compiler, None, 0, &main_statements);
+    let main_local_types = locals::infer_locals(compiler, None, 0, &main_statements);
 
     // With every scope's local types final (reinfer ran inside materialize)
     // and the main scope's just computed, mark the typed-receiver iterator
     // sites codegen can fuse into native loops.
-    mark_inline_iter_sites(&mut compiler, &main_statements, &main_local_types);
+    mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
 
-    Ok(Analyzed {
-        compiler,
+    Ok(AnalyzedParts {
         main_statements,
         main_local_types,
         feature_units,
@@ -347,13 +371,34 @@ fn mark_inline_iter_sites(
 /// would or wouldn't execute at that point in the program. An undecidable
 /// condition over such a branch is a clean compile error: the definitions
 /// couldn't be registered, and codegen has no expression form for them.
+///
+/// This is also where a rejection gets LOCATED. Every site below raises a bare
+/// message, and the wrapper stamps the statement it was handed -- so a gap
+/// reported anywhere in the walk names the line of Ruby that provoked it,
+/// without the site having to carry a span itself. The statement is the right
+/// granularity because analyze refuses DEFINITIONS, and a definition is a
+/// statement. The recursive splice calls stamp too, and the innermost frame
+/// wins, so a definition inside a decidable `if` reports its own line rather
+/// than the guard's.
 fn process_top_stmt(
     compiler: &mut Compiler,
     stmt: NodeId,
     bootstrap: bool,
     main_statements: &mut Vec<NodeId>,
     pre_exec: &mut Vec<NodeId>,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
+    let span = compiler.hir.span(stmt);
+    process_top_stmt_inner(compiler, stmt, bootstrap, main_statements, pre_exec)
+        .map_err(|e: AnalyzeError| e.with_span_if_missing(span))
+}
+
+fn process_top_stmt_inner(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    bootstrap: bool,
+    main_statements: &mut Vec<NodeId>,
+    pre_exec: &mut Vec<NodeId>,
+) -> Result<(), AnalyzeError> {
     if let HirNode::PreExec(body) = &compiler.hir[stmt] {
         pre_exec.extend(body.clone());
         return Ok(());
@@ -607,7 +652,7 @@ fn process_top_stmt(
                     "class/module definition inside a top-level `if` is only supported when \
                      the condition is compile-time decidable (e.g. `defined?(SomeConstant)`), \
                      or a reopening of an already-defined class that only adds methods"
-                        .to_string(),
+                        .into(),
                 );
             }
         };
