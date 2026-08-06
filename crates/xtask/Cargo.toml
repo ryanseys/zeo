@@ -22,6 +22,7 @@ flate2.workspace = true
 # checksums the release tarball.
 toml_edit.workspace = true
 sha2.workspace = true
+ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 
 [lints]
 workspace = true

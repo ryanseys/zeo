@@ -153,6 +153,18 @@ jobs:
       # the .crate file. This fails if they drift from their sources.
       - run: cargo run -p xtask -- stage-publish --check
 
+      # A gem that compiled and no longer does is a regression. This reads the
+      # committed ledger and re-probes at the versions it records, so it needs
+      # the cached vendor/gems tree; it is skipped when that is absent rather
+      # than downloading the corpus on every CI run.
+      - name: no gem stopped compiling
+        run: |
+          if [ -d vendor/gems ]; then
+            cargo run -p xtask -- gem-probe --all --check
+          else
+            echo "vendor/gems not cached; skipping the gem-probe regression gate"
+          fi
+
       # The dist tree is assembled from a REWRITE of the root manifest, so it
       # can silently stop resolving when a workspace dependency moves.
       # --stage-only validates it with `cargo metadata --locked --offline`,

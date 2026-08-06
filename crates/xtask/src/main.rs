@@ -38,6 +38,7 @@ mod dist;
 mod exec;
 mod gem;
 mod gem_compat;
+mod gem_probe;
 mod method_census;
 mod prebuild;
 mod stage_publish;
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
         Some("prebuild-runtimes") => prebuild::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
+        Some("gem-probe") => gem_probe::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
         Some("method-census") => method_census::main(&root, &args),

@@ -302,6 +302,29 @@ gem. For the full source information and the licences, read
 To use a gem that is not in this list, give `--gem-path` and
 `--bundle-gemfile` (or set `GEM_PATH` and `BUNDLE_GEMFILE`).
 
+### Which gems compile
+
+`cargo xtask gem-probe` fetches a gem straight from rubygems.org, compiles it,
+and records the verdict in
+[`conformance/gem-probe.tsv`](conformance/gem-probe.tsv). The gem does not need
+to be installed.
+
+```console
+$ cargo xtask gem-probe kramdown          # newest release
+$ cargo xtask gem-probe rake 13.3.1       # a pinned version
+$ cargo xtask gem-probe --corpus          # every gem in gem-probe-corpus.txt
+$ cargo xtask gem-probe --all --check     # re-probe; fail if one regressed
+```
+
+This measures something the gem table above does not. A gem can be pure Ruby,
+resolve correctly, and still use a construct Zeo cannot lower. `gem-probe`
+runs the front end, so `compiles` means the compiler succeeded.
+
+Each probe sees only its own gem and that gem's dependencies, so a verdict does
+not depend on what else has been fetched. `--all` re-probes at the version the
+ledger recorded, which makes a run reproducible. To widen coverage, add a name
+to [`conformance/gem-probe-corpus.txt`](conformance/gem-probe-corpus.txt).
+
 If a gem needs a C extension that Zeo has no built-in for, the `require` fails
 and the error gives the name of the gem. The function `is_known_native_gem` in
 `crates/zeo/src/parse/loader.rs` holds 14 such names: `sqlite3`, `nokogiri`,
