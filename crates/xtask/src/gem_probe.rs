@@ -12,7 +12,7 @@
 //!   resolve  name [version]     -> an exact version
 //!   fetch    the .gem           -> vendor/gems/<name>/   (cached, gitignored)
 //!   probe    require "<entry>"  -> an Outcome
-//!   record   the Outcome        -> conformance/gem-probe.{tsv,md}  (committed)
+//!   record   the Outcome        -> conformance/gem-probe-*.tsv     (committed)
 //!
 //! Probing an unpacked tree needs no network and is deterministic, so a ledger
 //! row reproduces from its recorded version alone.
@@ -585,6 +585,69 @@ fn registry_names(root: &Path, refresh: bool) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// How many results one page of the search API carries.
+const POPULAR_PAGE: usize = 30;
+
+fn popular_cache(root: &Path) -> PathBuf {
+    root.join("conformance/rubygems-popular.txt")
+}
+
+/// The most-downloaded gems, in rank order.
+///
+/// The registry has no top-N endpoint -- `/api/v1/downloads/top.json` is gone,
+/// and `rubygems.org/stats` stops at 100 -- while the compact index is
+/// alphabetical, so a sweep of it meets popular gems only by chance. The
+/// search API answers a `*` query with every gem sorted by download count,
+/// which is the ranking neither of the others gives.
+///
+/// The cache is a prefix of that ranking, so asking for more extends it
+/// instead of re-fetching what is already known.
+fn popular_names(root: &Path, want: usize, refresh: bool) -> Result<Vec<String>, String> {
+    let cache = popular_cache(root);
+    let mut names: Vec<String> = match std::fs::read_to_string(&cache) {
+        Ok(t) if !refresh => t
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    while names.len() < want {
+        // Resume on a page boundary: a half-page tail would misalign every
+        // page number after it.
+        names.truncate(names.len() / POPULAR_PAGE * POPULAR_PAGE);
+        let page = names.len() / POPULAR_PAGE + 1;
+        let body = json(&format!(
+            "{REGISTRY}/api/v1/search.json?query=*&page={page}"
+        ))?;
+        let batch: Vec<String> = body
+            .as_array()
+            .map(|gems| {
+                gems.iter()
+                    .filter_map(|g| g.get("name")?.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let exhausted = batch.len() < POPULAR_PAGE;
+        names.extend(batch);
+        if exhausted {
+            break;
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    names.retain(|n| seen.insert(n.clone()));
+    if let Some(parent) = cache.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&cache, names.join("\n") + "\n").map_err(|e| e.to_string())?;
+    names.truncate(want);
+    Ok(names)
+}
+
 fn corpus_path(root: &Path) -> PathBuf {
     root.join("conformance/gem-probe-corpus.txt")
 }
@@ -678,7 +741,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut names: Vec<(String, Option<String>)> = Vec::new();
     let (mut corpus, mut all, mut check, mut no_deps) = (false, false, false, false);
     let (mut index, mut refresh, mut refresh_index) = (false, false, false);
-    let mut limit: Option<usize> = None;
+    let (mut limit, mut popular): (Option<usize>, Option<usize>) = (None, None);
     let mut positional: Vec<String> = Vec::new();
 
     let mut it = args.iter();
@@ -695,6 +758,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 Some(n) => limit = Some(n),
                 None => {
                     eprintln!("gem-probe: --limit needs a number");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--popular" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) => popular = Some(n),
+                None => {
+                    eprintln!("gem-probe: --popular needs a number");
                     return ExitCode::FAILURE;
                 }
             },
@@ -725,6 +795,15 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     if corpus {
         names.extend(read_corpus(root));
     }
+    if let Some(n) = popular {
+        match popular_names(root, n, refresh_index) {
+            Ok(ranked) => names.extend(ranked.into_iter().map(|n| (n, None))),
+            Err(e) => {
+                eprintln!("gem-probe: reading the download ranking: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     if index {
         match registry_names(root, refresh_index) {
             Ok(all_names) => names.extend(all_names.into_iter().map(|n| (n, None))),
@@ -742,7 +821,9 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         );
     }
     if names.is_empty() {
-        eprintln!("gem-probe: nothing to probe (give a gem name, --corpus, --index or --all)");
+        eprintln!(
+            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --index or --all)"
+        );
         return ExitCode::FAILURE;
     }
 

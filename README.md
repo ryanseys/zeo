@@ -315,6 +315,7 @@ does not need to be installed.
 $ cargo xtask gem-probe kramdown          # newest release
 $ cargo xtask gem-probe rake 13.3.1       # a pinned version
 $ cargo xtask gem-probe --corpus          # every gem in gem-probe-corpus.txt
+$ cargo xtask gem-probe --popular 1000    # the 1000 most downloaded gems
 $ cargo xtask gem-probe --all --check     # re-probe; fail if one regressed
 ```
 
@@ -322,13 +323,15 @@ This measures something the gem table above does not. A gem can be pure Ruby,
 resolve correctly, and still use a construct Zeo cannot lower. `gem-probe`
 runs the front end, so `compiles` means the compiler succeeded.
 
-The corpus is the dependency closure of the 200 most downloaded gems on
-rubygems.org — 761 of them. **160 compile.** Excluding the `aws-sdk-*` family,
-which is 432 machine-generated gems sharing one template and one failure,
-**156 of 329 compile**.
+The ledger holds 1,272 gems: the 1,000 most downloaded, plus the dependency
+closure of the top 200. **396 compile.** 451 of those rows are the `aws-sdk-*`
+family, which is machine-generated from one template and fails identically
+almost every time — excluding it, **392 of 821 compile**, and compiling gems
+outnumber lowering gaps.
 
-Failures concentrate hard: three constructs account for 84% of them, so a
-single fix moves many gems at once. Read
+Failures concentrate hard: `autoload`, `class << self` and constant paths
+account for two in five of the remaining gaps, so a single fix moves many gems
+at once. Read
 [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for what a
 `compiles` row does and does not claim, and
 [Does it support Rails?](#does-it-support-rails) for that closure in

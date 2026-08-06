@@ -37,3 +37,4 @@ compile_flags.txt
 !/tests/**/
 !/tests/**/*.*
 !/tests/spinel/LICENSE
+conformance/rubygems-popular.txt

@@ -18,6 +18,7 @@ Do not quote a resolvability percentage as a compatibility number.
 $ cargo xtask gem-probe kramdown          # newest release
 $ cargo xtask gem-probe rake 13.3.1       # a pinned version
 $ cargo xtask gem-probe --corpus          # every gem in the corpus file
+$ cargo xtask gem-probe --popular 1000    # the 1000 most downloaded gems
 $ cargo xtask gem-probe --index           # every gem on rubygems.org
 $ cargo xtask gem-probe --index --limit 500
 $ cargo xtask gem-probe --all             # re-probe at recorded versions
@@ -112,13 +113,21 @@ the transitive runtime-dependency closure of the 200 most downloaded gems on
 rubygems.org, resolved from the registry rather than guessed. Add a name and run
 `--corpus`.
 
-The corpus is the curated, reviewable list. `--index` goes wider, to every gem
-the registry knows — useful for finding constructs nothing in the corpus
-exercises, and the results simply accumulate in the same ledger.
+The corpus is the curated, reviewable list. Two selectors go wider, and both
+accumulate into the same ledger:
 
-Rankings come from [rubygems.org/stats](https://rubygems.org/stats), which
-covers the top 100; beyond that the search API reports per-gem download counts.
-The [weekly PostgreSQL dumps](https://rubygems.org/pages/data) carry the full
+- `--popular N` walks the download ranking, most-downloaded first.
+- `--index` walks every gem the registry knows — useful for finding constructs
+  nothing popular exercises, but it is **alphabetical**, so it meets a
+  well-known gem only by chance.
+
+Prefer `--popular` for coverage that means something. The registry has no top-N
+endpoint (`/api/v1/downloads/top.json` is gone) and
+[rubygems.org/stats](https://rubygems.org/stats) stops at 100, so the ranking
+comes from the search API, which answers a `*` query sorted by download count.
+The cache at `conformance/rubygems-popular.txt` is a prefix of that ranking, so
+raising N extends it rather than re-fetching. The
+[weekly PostgreSQL dumps](https://rubygems.org/pages/data) carry the full
 picture if a more precise ranking is ever needed.
 
 `--all --check` is the regression gate: a gem that compiled and no longer does
