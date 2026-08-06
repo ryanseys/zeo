@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Cargo only. The gems in gems/ are pinned by commit in gems.toml and
+  # vendored by `cargo xtask gem`; Dependabot would not understand that
+  # layout, and `cargo xtask gem outdated` is the tool for those.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for routine bumps. A dependency that lands in every
+      # compiled program deserves review as a set, not one PR at a time.
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

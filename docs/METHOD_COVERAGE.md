@@ -1,6 +1,6 @@
 # Method coverage: the census against CRuby 4.0.6
 
-zeo measures its method surface with a **transitive census**: every `Module`
+Zeo measures its method surface with a **transitive census**: every `Module`
 reachable from `Object`'s constant tree (depth 4), dumped from both engines
 and diffed. For each module the census records `instance_methods(false)`,
 `singleton_methods(false)`, `private_instance_methods(false)`,
@@ -9,7 +9,7 @@ separates "raises `NoMethodError`" from "works, but reflection disagrees".
 
 **The gap ledger is empty.** `conformance/method-census-gaps.tsv` holds zero
 rows: every module, method, constant, owner, and visibility that ruby 4.0.6's
-census reaches has a zeo answer. The suite keeps it that way — a new gap
+census reaches has a Zeo answer. The suite keeps it that way — a new gap
 fails the test, and the ledger may only shrink.
 
 ## How it works
@@ -27,7 +27,7 @@ fails the test, and the ledger may only shrink.
   surface to the diff.
 - Arity is a separate gate with the same shape:
   `cargo run -p xtask -- arity-oracle` records what ruby reports for every
-  builtin, and `crates/zeo/tests/builtin_arity.rs` diffs zeo's declared
+  builtin, and `crates/zeo/tests/builtin_arity.rs` diffs Zeo's declared
   parameter lists against it. A mismatch is not blessable.
 
 ## What "zero rows" does and does not claim
@@ -41,7 +41,7 @@ divergences are tracked as executable gaps in `tests/gaps/` and documented in
 
 Two asymmetries are deliberate:
 
-- The ledger records oracle-has-zeo-lacks only. A name zeo answers that ruby
+- The ledger records oracle-has-zeo-lacks only. A name Zeo answers that ruby
   does not have (for example, a legacy internal class) is not a census
   failure.
 - Compiler intrinsics (`block_given?`, `binding`, `__method__`, …) answer at
@@ -59,5 +59,5 @@ model with real `move:` semantics and `Process::Waiter`; and the final four
 subsystems — `IO::Buffer` (complete, with real `mmap`),
 `RubyVM::AbstractSyntaxTree` over Prism, `RubyVM::InstructionSequence`,
 `RubyVM::YJIT` (present, permanently disabled), and `Ruby`/`Ruby::Box` over
-zeo's compile-time box model. The git history carries the details; the
+Zeo's compile-time box model. The git history carries the details; the
 fixtures under `tests/` pin every surface the waves added.

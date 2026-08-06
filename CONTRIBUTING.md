@@ -1,4 +1,4 @@
-# Contributing to zeo
+# Contributing to Zeo
 
 ## Setup
 
@@ -10,7 +10,7 @@
 
 ## The one rule: oracle-verified, divergence-documented
 
-zeo's house style is *approximation is fine, silent wrongness is not*:
+Zeo's house style is *approximation is fine, silent wrongness is not*:
 
 - New behavior is verified against real `ruby` (the oracle), ideally as a
   conformance test or e2e case in the same change.

@@ -1,6 +1,6 @@
 # Extensions (`ext/`)
 
-zeo mirrors CRuby's `ext/` model: an extension is an in-tree module that a
+Zeo mirrors CRuby's `ext/` model: an extension is an in-tree module that a
 `require` activates. Each one is behind **two independent gates**:
 
 1. **Ruby require gate** — its constant is invisible until its `require` fires
@@ -14,7 +14,7 @@ zeo mirrors CRuby's `ext/` model: an extension is an in-tree module that a
 **Implementation status.** Every extension module carries real, oracle-matched
 methods — none are `todo!()` scaffolds. A few provide a deliberate *subset* of
 their upstream's surface (noted per row below); a call into an unimplemented
-corner raises `NoMethodError` rather than panicking. Where zeo's answer can
+corner raises `NoMethodError` rather than panicking. Where Zeo's answer can
 diverge from the upstream gem or C extension, the reason is catalogued in
 [`docs/COMPATIBILITY.md`](COMPATIBILITY.md).
 
@@ -34,7 +34,7 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | digest | `digest`, `digest/*` | `ext-digest` | **done** | `Digest::MD5`/`SHA1`/`SHA256`/`SHA512` — class + streaming API (RustCrypto) |
 | json | `json` | `ext-json` | **done** | `parse` (serde_json, `symbolize_names`), `generate`/`pretty_generate`/`dump` |
 | psych / yaml | `psych`, `yaml` | `ext-psych` | **done** | `load`/`safe_load`/`dump` (yaml-rust2, hand-rolled Psych block-style dump) |
-| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32`, `deflate`/`inflate`/`gzip`/`gunzip`, and the full class surface — `ZStream`/`Deflate`/`Inflate` over flate2's incremental API, `GzipFile`/`GzipWriter`/`GzipReader` over zeo's own gzip framing (flate2/miniz_oxide) |
+| zlib | `zlib` | `ext-zlib` | **done** | `crc32`/`adler32`, `deflate`/`inflate`/`gzip`/`gunzip`, and the full class surface — `ZStream`/`Deflate`/`Inflate` over flate2's incremental API, `GzipFile`/`GzipWriter`/`GzipReader` over Zeo's own gzip framing (flate2/miniz_oxide) |
 | date | `date` | `ext-date` | **done** | `Date`/`DateTime` over an in-tree Julian-day calendar core |
 | socket | `socket` | `ext-socket` | **done** | full `BasicSocket`/`IPSocket`/`TCPSocket`/`TCPServer`/`UDPSocket`/`UNIXSocket`/`UNIXServer`/`Addrinfo`/`Socket::Option` hierarchy over libc, including the non-blocking family (`accept_nonblock`/`recv_nonblock`/`connect_nonblock` and IO's `read_nonblock`/`write_nonblock`) |
 | openssl | `openssl` | `ext-openssl` | **subset** | the official rust-openssl bindings over a VENDORED OpenSSL 3.x — the same EVP implementations CRuby binds. `Digest` (+ the eight algorithm subclasses), `HMAC`, `KDF.pbkdf2_hmac`/`hkdf`/`scrypt` (`PKCS5` shim), `BN` over BIGNUM, `Cipher` (CBC/CTR/ECB/OFB/CFB + the AEAD modes, with `AuthTagError`), `Random`, secure compares, version constants, and CLIENT-side `SSL::SSLContext`/`SSLSocket` over libssl (HTTPS through net/http); the exception hierarchy and `Integer#to_bn` are the gem's Ruby half. PKey generation, X509 issuance, PKCS#7, ASN1 and `SSLServer` are declined — see `docs/COMPATIBILITY.md` |
@@ -45,10 +45,10 @@ roots (see `cargo xtask stdlib-status`), not the `ext/` model.
 | pty | `pty` | `ext-pty` | **done** | `PTY.open`/`spawn`/`getpty`/`check` over `openpty(3)`, the child under a real controlling terminal; `ChildExited` is the gem's Ruby half, and a `check(pid, true)` raise carries only the message — its `#status` answers nil (a by-name raise can't attach one) |
 | syslog | `syslog`, `syslog/logger` | `ext-syslog` | **done** | `Syslog` over `syslog(3)` — `open`/`log`/`mask` lifecycle, priority shortcuts, the full constant set, `LOG_MASK`/`LOG_UPTO`; the `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules are the gem's Ruby half, and `Syslog::Logger` is vendored upstream (its extend-on-include hook is a known gap: `tests/gaps/issue_included_hook_not_fired.rb`) |
 | readline | `readline` | `ext-readline` | **done** | `Readline.readline` — rustyline (pure Rust) on a terminal, a plain chomped read off `Readline.input =` or a non-tty stdin; the Enumerable `HISTORY` object, `completion_proc` wired into rustyline's completer, and the stored word-break/quote attribute surface. `VERSION` reports `"rustyline"` the way libedit builds report `"EditLine wrapper"` |
-| nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/COMPATIBILITY.md` |
+| nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over Zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/COMPATIBILITY.md` |
 | bigdecimal | `bigdecimal`, `bigdecimal/*` | `ext-bigdecimal` | **done** | `BigDecimal` over a BigUint coefficient — bigdecimal 4.x's C slice (exact add/sub/mult, division to the documented precision rule, the rounding engine, mode/limit state, conversions, `Kernel#BigDecimal`); `**`/`power`/`sqrt`/`BigMath`/`to_d` are the gem's own Ruby, vendored in `gems/bigdecimal` and compiled like user code |
 | coverage | `coverage` | `ext-coverage` | **subset** | line coverage over the AOT line instrumentation: requiring `coverage` makes the COMPILER emit per-statement hit counters plus a per-file coverable-line table, and `Coverage` replays CRuby's whole lifecycle (`start`/`setup`/`resume`/`suspend`/`result`/`peek_result`/`state`, oracle-matched errors included). A file is reported iff its top level began while measurement was set up — the entry script never is, exactly CRuby's rule. Lines only: `supported?(:branches)`/`(:methods)` answer false — see `docs/COMPATIBILITY.md` |
-| prism | `prism` | `ext-prism` | **done** | `Prism.parse`/`lex`/`parse_lex`/`parse_comments`/`dump`/`parse_success?` and their `_file` forms, over the SAME prism C library zeo's own front end parses with. The native surface is only the `pm_serialize_*` entry points, exactly as upstream's FFI backend has it — the node classes, the visitors and the deserializer are the gem's own Ruby, vendored under `gems/prism/`. `Prism::Translation` (the `parser`/`ripper` adapters) is not vendored; see `gems/UPSTREAM.md` |
+| prism | `prism` | `ext-prism` | **done** | `Prism.parse`/`lex`/`parse_lex`/`parse_comments`/`dump`/`parse_success?` and their `_file` forms, over the SAME prism C library Zeo's own front end parses with. The native surface is only the `pm_serialize_*` entry points, exactly as upstream's FFI backend has it — the node classes, the visitors and the deserializer are the gem's own Ruby, vendored under `gems/prism/`. `Prism::Translation` (the `parser`/`ripper` adapters) is not vendored; see `gems/UPSTREAM.md` |
 | TracePoint | *(core — no require)* | `ext-tracepoint` | **subset** | execution tracing over the instrumentation the runtime already carries for backtraces: `set_line` fires `:line`, `FrameGuard` push/pop fire `:call`/`:return`/`:class`/`:end` (classified by the frame label), and the raise channel fires `:raise`. `event`/`path`/`lineno`/`method_id`/`callee_id`/`defined_class`/`raised_exception`, the enable/disable lifecycle (block forms included), `TracePoint.trace`, reverse-enable-order dispatch, in-handler reentrancy suppression, and CRuby's inspect/error shapes — all oracle-matched. When nothing is enabled the hooks cost one relaxed atomic load per statement/call. `:b_call`/`:c_call`-family events, `#self`/`#binding`/`#return_value`, and the other bounds are in `docs/COMPATIBILITY.md` |
 
 The IO-core extensions have landed as unconditional rows on the `IO` table:
@@ -74,8 +74,8 @@ target.
 
 ## FFI — the real `ffi` gem, AOT-compiled
 
-zeo implements the **real `ffi` gem API**, not a custom DSL, so a program
-using it runs identically under CRuby+ffi and zeo (the north star). `require
+Zeo implements the **real `ffi` gem API**, not a custom DSL, so a program
+using it runs identically under CRuby+ffi and Zeo (the north star). `require
 "ffi"` is a native no-op; `extend FFI::Library` marks a module; `ffi_lib` and
 `attach_function` are recognized at **compile time** and emit a fn-local
 `extern "C"` declaration with `#[link(name = ..)]` plus a wrapper method that
@@ -150,10 +150,10 @@ are all oracle-matched against the C extension (`tests/fiddle.rb`); the
 ## Out of scope (VM internals / tooling)
 
 `rubyvm`, `continuation`, `ripper`, `win32`, `-test-`. `require`ing one raises
-the normal `cannot load such file` — except where zeo has a decision to state,
+the normal `cannot load such file` — except where Zeo has a decision to state,
 in which case the message carries it (`zeo_abi::declined_feature_reason`).
 `ripper` is the case today: it points at `require "prism"`, the same parser
-zeo's own front end runs, which answers with a syntax tree rather than
+Zeo's own front end runs, which answers with a syntax tree rather than
 parse.y's reduction stream. See "Declined" in
 [`docs/COMPATIBILITY.md`](COMPATIBILITY.md).
 

@@ -1,8 +1,8 @@
 # Roadmap
 
-Everything zeo still owes, in one file.
+Everything Zeo still owes, in one file.
 
-The rule this file lives by: a **divergence** — a program where zeo answers
+The rule this file lives by: a **divergence** — a program where Zeo answers
 differently from ruby — does not belong here. It belongs in
 [`tests/gaps/`](../tests/gaps) as an executable XFAIL, so the suite fails the
 day someone fixes it. This file holds only **work**: things to build, measure,
@@ -10,7 +10,7 @@ or decide.
 
 Where the surface stands: the method census is at **zero rows**
 ([`METHOD_COVERAGE.md`](METHOD_COVERAGE.md)) — every module, method, constant
-and visibility ruby 4.0.6 reaches has a zeo answer. What remains is
+and visibility ruby 4.0.6 reaches has a Zeo answer. What remains is
 behavioural: the gaps directory, and the build-work below.
 
 Each item states what is measured and what is only suspected. An item that
@@ -69,7 +69,7 @@ answers the receiver's own code point; `<=>` compares raw bytes.
 The 27 that remain are two classes, both recorded as executable gaps:
 
 - **23 — no validity gate.** Ruby REFUSES most operations on a string whose
-  bytes are invalid in its own encoding; zeo substitutes U+FFFD and answers.
+  bytes are invalid in its own encoding; Zeo substitutes U+FFFD and answers.
   Needs a `coderange != Broken` check raising `ArgumentError` /
   `Encoding::CompatibilityError`, not an encoding change.
   [`tests/gaps/issue_string_ops_on_broken_encoding.rb`](../tests/gaps/issue_string_ops_on_broken_encoding.rb)
@@ -109,7 +109,7 @@ through lossy text.
 [`tests/gaps/block_local_shadows_later_outer.rb`](../tests/gaps/block_local_shadows_later_outer.rb)
 records the divergence; the fix is real design work, so it earns a row here
 too. Ruby's rule is textual: a name assigned inside a block is block-local
-unless the enclosing scope assigned it EARLIER in the source. zeo's capture
+unless the enclosing scope assigned it EARLIER in the source. Zeo's capture
 analysis (`codegen/captures.rs::collect_escaping_captures`) is order-blind —
 it unions block-referenced names against names the scope assigns ANYWHERE, so
 a block-local that shares a name with a LATER outer local becomes a shared
@@ -140,7 +140,7 @@ all designed in the pass-4 plan:
   `NotImplementedError` naming the compile-time model.
 - **`Box.current` as a value.** Today it answers `nil` (the disabled-mode
   answer). The design: a codegen intrinsic answering the enclosing
-  `Ctx.box_id` — zeo's baked box id IS CRuby's "code runs in its defining
+  `Ctx.box_id` — Zeo's baked box id IS CRuby's "code runs in its defining
   file's box" rule — with the eval VM answering via `Env.box_id`.
 
 ### RubyVM::AbstractSyntaxTree — widen the mapped tier
@@ -161,10 +161,10 @@ Location today; CRuby answers per-kind lists — keyword, operator, …).
 ### Ractor deadlock detection
 
 A receive that can never be fed blocks forever; CRuby detects the cycle and
-raises. zeo has the pieces (every wait parks on a known port in a known
+raises. Zeo has the pieces (every wait parks on a known port in a known
 ractor), so detection is a wait-for graph over the port tables. Unmeasured:
 whether CRuby's message (`No live threads left. Deadlock?`-family) is
-reachable byte-for-byte from zeo's model. Related, larger, and owned by the
+reachable byte-for-byte from Zeo's model. Related, larger, and owned by the
 Ruby::Box overlay work above: globals and cvars are process-shared across
 ractors where CRuby raises `Ractor::IsolationError` on non-main access.
 
@@ -176,12 +176,12 @@ files; the frame machinery is the work after that:
 
 - **No C-method frames.** CRuby shows a frame for most C methods —
   `Array#each` between a block and its caller, `Integer#/` at a division's
-  line — attributed to the CALLER's file:line. zeo's builtins are native fns
+  line — attributed to the CALLER's file:line. Zeo's builtins are native fns
   that push no frame, so those rows are absent; surrounding Ruby-level frames
   are correct. Fixing this needs a frame push at the dynamic-dispatch boundary
   plus the codegen fast paths. Note `Class#new` is one CRuby itself omits.
 - **Arity-error attribution.** CRuby raises "wrong number of arguments" inside
-  the CALLEE's frame; zeo checks arity at the call site, so the innermost frame
+  the CALLEE's frame; Zeo checks arity at the call site, so the innermost frame
   is the caller's.
 - **`define_method(:m) { … }` labels.** The literal form desugars to a `def` at
   compile time, so frames say `Foo#m` where CRuby says `block in <class:Foo>`.
@@ -383,7 +383,7 @@ diffs beyond the intended shapes.
 ### `gem-compat --verify`: compile the gems, don't just classify them
 
 `cargo xtask gem-compat` reports a **resolvability** number, not a
-**compiles-successfully** one. Its `pure-ruby` bucket means "zeo resolved the
+**compiles-successfully** one. Its `pure-ruby` bucket means "Zeo resolved the
 gem's `lib/` and would attempt to compile it" — a static classification, never
 a real compile. So the headline overstates: many pure-Ruby gems still fail on
 stdlib or dependency gaps.

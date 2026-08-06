@@ -5,7 +5,7 @@
 output, times it, and compares against the banked baseline.
 
 Provenance is in [`UPSTREAM.md`](UPSTREAM.md): the programs come from the
-`benchmark/` suite of [spinel](https://github.com/matz/spinel), zeo's
+`benchmark/` suite of [spinel](https://github.com/matz/spinel), Zeo's
 C-emitting predecessor. Many are adaptations of the Computer Language
 Benchmarks Game and yjit-bench-style micros.
 
@@ -59,7 +59,7 @@ rather than once at the end, so an interrupted run keeps what it finished;
 
 ## Results
 
-Measured 2026-07-31 on one Apple-silicon laptop, zeo and CRuby 4.0.6 timed in
+Measured 2026-07-31 on one Apple-silicon laptop, Zeo and CRuby 4.0.6 timed in
 the **same run** under the same conditions. Read them as a shape, not a
 portable claim.
 
@@ -71,7 +71,7 @@ portable claim.
 | the 37 where CRuby takes ≥ 0.10 s | **1.23× faster** |
 
 The gap between those two numbers is process startup. 13 benchmarks finish in
-under 50 ms of CRuby time, where zeo's native binary starts instantly and the
+under 50 ms of CRuby time, where Zeo's native binary starts instantly and the
 interpreter pays ~35 ms of boot — that is a real advantage of shipping a
 binary, but it is not a claim about generated code. The second row is the one
 that describes generated code.
@@ -87,11 +87,11 @@ access, which the completed work already addressed.
 [`docs/ROADMAP.md`](../docs/ROADMAP.md) records what is measured about them
 and what the next lever would be.
 
-The separate figure sometimes quoted — **geomean ≈ −60%** — is zeo against
-zeo's OWN pre-overhaul baseline across four optimization sessions. It is a real
+The separate figure sometimes quoted — **geomean ≈ −60%** — is Zeo against
+Zeo's OWN pre-overhaul baseline across four optimization sessions. It is a real
 number and a different claim; it says nothing about CRuby.
 
-| benchmark | zeo (s) | ruby 4.0.6 (s) | ratio |
+| benchmark | Zeo (s) | ruby 4.0.6 (s) | ratio |
 |---|---|---|---|
 | `ackermann` | 0.211 | 0.329 | 1.56× |
 | `ao_render` | 1.817 | 1.683 | 0.93× |
@@ -152,4 +152,4 @@ number and a different claim; it says nothing about CRuby.
 | `throw` | 0.149 | 0.179 | 1.20× |
 | `wordfreq` | 0.006 | 0.037 | 6.17× |
 
-Ratio is `ruby ÷ zeo`: above 1.00× zeo is faster, below it CRuby is.
+Ratio is `ruby ÷ zeo`: above 1.00× Zeo is faster, below it CRuby is.

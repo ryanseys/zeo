@@ -4,14 +4,14 @@
 up in `parse/mod.rs`): the recognizer parses the literal, lowers it, and splices
 the resulting HIR into the arena at the call site — the same trick `require` uses
 for a file's contents. This works because the argument is a
-compile-time-constant `StringLit` (no interpolation): zeo already has the whole
+compile-time-constant `StringLit` (no interpolation): Zeo already has the whole
 program in front of it, so "the instant this code would run" and "compile time"
 are the same moment for a literal, and no runtime parser is ever needed.
 
 A **dynamic** `eval` — a runtime-computed string (interpolated, read from a
 variable, built from I/O) — is a different problem for a whole-program AOT
 compiler: the source being "compiled" isn't known until the program is already
-running. zeo handles it with a runtime tree-walking interpreter, the **eval
+running. Zeo handles it with a runtime tree-walking interpreter, the **eval
 VM**, linked into the generated binary behind the `eval-vm` cargo feature.
 
 ## The eval VM (`crates/zeo-rt/src/eval_vm.rs`)

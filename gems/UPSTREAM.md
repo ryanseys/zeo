@@ -1,6 +1,6 @@
 # Bundled gem provenance
 
-Every directory here is a pure-Ruby gem zeo compiles in when a program
+Every directory here is a pure-Ruby gem Zeo compiles in when a program
 `require`s it (resolved by `parse/loader.rs`; recorded `by: bundled-gem` in
 each compile's `zeo-gems.json`). Three origins -- git-sourced, vendored from
 the oracle's installation, and zeo-authored:
@@ -18,7 +18,7 @@ each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,
 oracle Ruby at the time of vendoring (4.0.5; the oracle now pins 4.0.6 in
 `mise.toml`) -- copied verbatim from its installation, versions below, and
 every one carrying its upstream license text (all are Ruby-license/2-clause
-BSD or MIT, compatible with zeo's MIT OR Apache-2.0).
+BSD or MIT, compatible with Zeo's MIT OR Apache-2.0).
 
 A Ruby default gem that ships no license file of its own is covered by Ruby's
 own dual license, so those dirs carry Ruby's `COPYING` + `BSDL` pair verbatim
@@ -26,7 +26,7 @@ own dual license, so those dirs carry Ruby's `COPYING` + `BSDL` pair verbatim
 `bigdecimal` carries its own upstream `LICENSE` + `BSDL`). `minitest` is MIT
 and reproduces its license in the vendored `README.rdoc`, exactly as upstream
 does. The zeo-authored Ruby halves listed further below carry no separate
-license: they are zeo's own code, under the repository's MIT OR Apache-2.0.
+license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 
 | gem | version | source |
 |---|---|---|
@@ -46,7 +46,7 @@ license: they are zeo's own code, under the repository's MIT OR Apache-2.0.
 
 `irb/` carries one removal: `lib/irb/ext/tracer.rb` is reduced to a
 comment-only file. It hangs off the `tracer` gem, which ruby 4.0.6 does not
-ship and zeo does not vendor.
+ship and Zeo does not vendor.
 
 **zeo-authored Ruby halves** of libraries whose native half lives in
 `zeo-rt` (`json`, `monitor`, `openssl`, `optparse`, `psych`, `strscan`,
@@ -86,19 +86,19 @@ whole Ruby half, which is where the node classes, the visitors and the
 deserializer live. Upstream picks between two backends over one C library (a
 C extension on CRuby, FFI everywhere else); both reduce to a handful of
 `pm_serialize_*` calls returning a buffer that `Prism::Serialize` decodes in
-Ruby. zeo takes a third branch of the same shape: `lib/prism/zeo.rb` is
+Ruby. Zeo takes a third branch of the same shape: `lib/prism/zeo.rb` is
 zeo-authored, adapted from upstream's `ffi.rb` with its option packing kept
 verbatim, and calls the built-in `Prism::Zeo` module (`ext-prism` in zeo-rt)
-over the SAME prism zeo's own front end parses with. Two removals, marked in
+over the SAME prism Zeo's own front end parses with. Two removals, marked in
 `lib/prism.rb`: `lib/prism/translation/` (the `parser`- and `ripper`-gem
-adapters, which subclass third-party gems zeo does not ship) and
+adapters, which subclass third-party gems Zeo does not ship) and
 `lib/prism/ffi.rb` (its backend, replaced).
 
 ## Choosing a version
 
-zeo tracks each gem's **latest upstream release**, not the version the oracle
+Zeo tracks each gem's **latest upstream release**, not the version the oracle
 Ruby happens to bundle. The stdlib gems release independently of Ruby itself,
-and pinning to a Ruby release would freeze zeo behind fixes its users want.
+and pinning to a Ruby release would freeze Zeo behind fixes its users want.
 
 `cargo run -p xtask -- gem outdated` prints, per git-sourced gem, the current
 pin beside two reference points: what the oracle install resolves, and the
