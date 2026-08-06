@@ -801,6 +801,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let (mut index, mut refresh, mut refresh_index) = (false, false, false);
     let (mut limit, mut popular): (Option<usize>, Option<usize>) = (None, None);
     let mut matching: Option<String> = None;
+    let mut matching_name: Option<String> = None;
     let mut failing = false;
     let mut positional: Vec<String> = Vec::new();
     let mut jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -842,6 +843,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 Some(v) => matching = Some(v.clone()),
                 None => {
                     eprintln!("gem-probe: --matching needs a substring of the outcome detail");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--matching-name" => match it.next() {
+                Some(v) => matching_name = Some(v.clone()),
+                None => {
+                    eprintln!("gem-probe: --matching-name needs a substring of the gem name");
                     return ExitCode::FAILURE;
                 }
             },
@@ -919,6 +927,18 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
         );
     }
+    // The name twin of `--matching`. A fix usually lands against one
+    // diagnostic, but a stale BAND is named by its gems rather than by what it
+    // says -- the aws-sdk rows all report a diagnostic their own dependency no
+    // longer produces, so no detail substring selects them.
+    if let Some(pat) = &matching_name {
+        names.extend(
+            before
+                .iter()
+                .filter(|(n, _)| n.contains(pat.as_str()))
+                .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
+        );
+    }
     if all {
         names.extend(
             before
@@ -928,7 +948,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
     if names.is_empty() {
         eprintln!(
-            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --failing, --matching <detail>, --index or --all)"
+            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --failing, --matching <detail>, --matching-name <name>, --index or --all)"
         );
         return ExitCode::FAILURE;
     }
@@ -936,7 +956,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     // Resume. A sweep of the registry is hours of work, so re-running must
     // continue rather than start over. `--all` is the explicit re-probe, and
     // `--refresh` forces it for any selection.
-    let skipped = if all || refresh || failing || matching.is_some() {
+    let skipped = if all || refresh || failing || matching.is_some() || matching_name.is_some() {
         0
     } else {
         let n = names.len();
