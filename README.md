@@ -1,8 +1,8 @@
 # zeo: an ahead-of-time Ruby compiler
 
 zeo compiles a full Ruby program into **one native executable**. It reads the
-source with [Prism], which is CRuby's own parser. It then analyzes the full
-program, writes Rust, and links a runtime that is already compiled.
+source with [Prism], analyzes the whole program, writes Rust, and links a
+runtime that is already compiled.
 
 The binary starts immediately. It boots no interpreter and warms up no JIT,
 and the machine that runs it needs no Ruby installation.
