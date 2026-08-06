@@ -125,11 +125,44 @@ picture if a more precise ranking is ever needed.
 fails the build, whatever its new outcome. That gate runs in CI when a
 `vendor/gems` cache is present.
 
+## Provenance: the ledger holds verdicts, git holds everything else
+
+The ledger records a gem, a version, an outcome and a detail. It carries no
+timestamp, no build SHA and no Zeo version — deliberately.
+
+It is a committed file, so git already holds all of that, and holds it more
+reliably than anything written into the rows:
+
+```console
+# when did any verdict last change, and in which commit?
+$ git log --oneline -- conformance/gem-probe.tsv
+
+# when did ONE gem change, and to what?
+$ git log -p -S kramdown -- conformance/gem-probe.tsv
+
+# what did a release improve?
+$ git diff v0.1.0..v0.2.0 -- conformance/gem-probe.tsv
+```
+
+Writing the time and build into the file would duplicate that, and duplicating
+it costs more than it gives: a timestamp column rewrites every row on every
+run, so a 700-line diff appears when nothing changed and the real signal is
+buried. Leaving it out makes the ledger a pure function of the corpus and the
+Zeo build — two runs on one build produce identical bytes, so **any diff is a
+real change**.
+
+The one thing this does not cover is a probe you never commit. Commit the
+ledger; that is what makes the result a record rather than a note.
+
 ## Reading the ledger
 
 [`../conformance/gem-probe.tsv`](../conformance/gem-probe.tsv) is the record;
 `gem-probe.md` is the same data rendered. Both are committed, so no absolute
 path may appear in them — diagnostics are scrubbed before they are written.
+
+The registry name index is cached at `conformance/rubygems-names.txt` and is
+gitignored: ~3MB of upstream data that changes daily, and the repository
+refuses tracked files that size. `--refresh-index` takes a newer copy.
 
 **A count of gems is not a count of code.** The corpus is the dependency
 closure of the most downloaded gems, and that pulls in the whole `aws-sdk-*`

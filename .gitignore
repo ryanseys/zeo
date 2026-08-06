@@ -7,6 +7,10 @@ zeo-gems.json
 # Vendored upstream sources for the bundler north-star (not part of the build)
 /vendor/
 
+# The registry's gem-name index, cached by `xtask gem-probe --index`. ~3MB of
+# upstream data that changes daily; `--refresh-index` takes a newer copy.
+conformance/rubygems-names.txt
+
 # Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs

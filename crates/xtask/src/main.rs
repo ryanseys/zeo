@@ -47,8 +47,16 @@ mod stdlib_status;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// The repository root, canonicalized.
+///
+/// The manifest-relative form ends `crates/xtask/../..`, and every path built
+/// from it inherits those segments -- so a tool that prints where it wrote
+/// something shows `.../crates/xtask/../../conformance/gem-probe.tsv`. That is
+/// the same directory, and unreadable. Falls back to the literal path when the
+/// tree cannot be canonicalized, which only happens if it has been removed.
 fn workspace_root() -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+    let literal = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    std::fs::canonicalize(&literal).unwrap_or(literal)
 }
 
 fn main() -> ExitCode {

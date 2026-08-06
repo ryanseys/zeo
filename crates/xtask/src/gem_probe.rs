@@ -499,14 +499,33 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     std::fs::write(root.join("conformance/gem-probe.md"), md).map_err(|e| e.to_string())
 }
 
+const NAMES_URL: &str = "https://index.rubygems.org/names";
+
+/// The cached copy of the registry's name index. Gitignored: it is ~3MB of
+/// upstream data that changes daily, and the repository already refuses
+/// tracked files that size.
+fn names_cache(root: &Path) -> PathBuf {
+    root.join("conformance/rubygems-names.txt")
+}
+
 /// Every gem name the registry knows, from the compact index.
 ///
-/// This is the whole corpus -- about 200k names -- so it is only useful with
-/// `--limit` and the resume behaviour: probe a slice, stop, come back to the
-/// next slice later.
-fn registry_names() -> Result<Vec<String>, String> {
-    let body = get("https://index.rubygems.org/names")?;
-    let text = String::from_utf8(body).map_err(|e| e.to_string())?;
+/// Cached on first use, because a sweep of ~200k names is worked through in
+/// slices across many runs and re-downloading the list each time is pointless.
+/// `--refresh-index` takes a newer copy.
+fn registry_names(root: &Path, refresh: bool) -> Result<Vec<String>, String> {
+    let cache = names_cache(root);
+    let text = match std::fs::read_to_string(&cache) {
+        Ok(t) if !refresh && !t.is_empty() => t,
+        _ => {
+            let body = get(NAMES_URL)?;
+            if let Some(parent) = cache.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&cache, &body).map_err(|e| e.to_string())?;
+            String::from_utf8(body).map_err(|e| e.to_string())?
+        }
+    };
     Ok(text
         .lines()
         .map(str::trim)
@@ -608,7 +627,7 @@ fn probe_one(
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut names: Vec<(String, Option<String>)> = Vec::new();
     let (mut corpus, mut all, mut check, mut no_deps) = (false, false, false, false);
-    let (mut index, mut refresh) = (false, false);
+    let (mut index, mut refresh, mut refresh_index) = (false, false, false);
     let mut limit: Option<usize> = None;
     let mut positional: Vec<String> = Vec::new();
 
@@ -621,6 +640,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             "--no-deps" => no_deps = true,
             "--index" => index = true,
             "--refresh" => refresh = true,
+            "--refresh-index" => refresh_index = true,
             "--limit" => match it.next().and_then(|v| v.parse().ok()) {
                 Some(n) => limit = Some(n),
                 None => {
@@ -650,7 +670,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         names.extend(read_corpus(root));
     }
     if index {
-        match registry_names() {
+        match registry_names(root, refresh_index) {
             Ok(all_names) => names.extend(all_names.into_iter().map(|n| (n, None))),
             Err(e) => {
                 eprintln!("gem-probe: reading the registry index: {e}");
@@ -1191,6 +1211,19 @@ mod tests {
         assert_eq!(
             wanted.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
             ["fresh", "also-fresh"]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cached index is read from disk. No URL appears in this test, which is
+    /// the point: if the cache were ignored, the test would need the network.
+    #[test]
+    fn the_registry_index_is_read_from_its_cache() {
+        let root = scratch("names");
+        std::fs::write(names_cache(&root), "---\nalpha\nbeta\n\ngamma\n").unwrap();
+        assert_eq!(
+            registry_names(&root, false).unwrap(),
+            vec!["alpha", "beta", "gamma"]
         );
         let _ = std::fs::remove_dir_all(&root);
     }
