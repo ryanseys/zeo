@@ -320,6 +320,12 @@ This measures something the gem table above does not. A gem can be pure Ruby,
 resolve correctly, and still use a construct Zeo cannot lower. `gem-probe`
 runs the front end, so `compiles` means the compiler succeeded.
 
+Of the 93 gems in the corpus today, **59 compile**. Rails 8.1 is among them:
+`activesupport`, `activemodel`, `activerecord`, `actionpack`, `actionview`,
+`actionmailer`, `actioncable`, `activejob`, `activestorage` and `railties` all
+reach code generation. The `rails` gem itself has no `lib/` at all — it is a
+meta-gem that only names dependencies.
+
 Each probe sees only its own gem and that gem's dependencies, so a verdict does
 not depend on what else has been fetched. `--all` re-probes at the version the
 ledger recorded, which makes a run reproducible. To widen coverage, add a name
