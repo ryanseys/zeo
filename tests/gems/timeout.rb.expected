@@ -1,0 +1,6 @@
+finished in time
+timed out: Timeout::Error
+custom class: ArgumentError
+message: slow thing
+no limit
+true

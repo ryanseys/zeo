@@ -12,6 +12,17 @@ rows: every module, method, constant, owner, and visibility that ruby 4.0.6's
 census reaches has a Zeo answer. The suite keeps it that way — a new gap
 fails the test, and the ledger may only shrink.
 
+**What the census does not reach.** `tools/method_census.rb` requires nothing,
+so it sees the surface a program has before its first `require`. A class that
+a `require` installs — `StringIO`, `Zlib`, `OpenSSL`, `Socket` and the other
+extensions — is absent from `Object`'s constant tree when the census runs, so
+an empty ledger says nothing about it. Those surfaces are covered by the
+per-extension goldens instead, which is a weaker guarantee: a golden proves
+what it exercises, where the census proves a whole class at once. A missing
+`StringIO#read_nonblock` reached `main` this way, found by writing a golden
+rather than by the census. `tools/builtin_arity_oracle.rb` shows the fix
+shape — it requires each gated feature before measuring.
+
 ## How it works
 
 - The oracle side is recorded in `conformance/method-census.tsv`, dumped from

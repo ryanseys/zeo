@@ -189,9 +189,14 @@ Zeo targets **CRuby 4.0.6**. The version has one source, `zeo-abi`. Therefore
 the compiler's version tests and the runtime's `RUBY_VERSION` always agree.
 
 The **method census** compares every module, method, constant and visibility
-that Ruby 4.0.6 can reach with Zeo's surface
-(`crates/zeo/tests/method_census.rs`). Its gap ledger,
-`conformance/method-census-gaps.tsv`, holds **zero rows**. Read
+Ruby 4.0.6 reaches from `Object`'s constant tree with Zeo's surface
+(`crates/zeo-tests/tests/method_census.rs`). Its gap ledger,
+`conformance/method-census-gaps.tsv`, holds **zero rows**.
+
+That surface is the one a program sees before it calls `require`. A class a
+`require` brings in — `StringIO`, `Zlib`, `OpenSSL` and the rest of the
+extensions below — is not in the constant tree at census time, so the census
+does not measure it. The per-extension goldens cover those. Read
 [`docs/METHOD_COVERAGE.md`](docs/METHOD_COVERAGE.md) for how the census works.
 
 - **The conformance suite** in `tests/spinel/` compiles 2,568 programs. It compares stdout and stderr with real Ruby, byte for byte, as
@@ -256,7 +261,7 @@ gem. For the full source information and the licences, read
 | fileutils | 1.8.0 | git-pinned | `fileutils.rb` | — |
 | find | 0.2.0 | git-pinned | `gems/find.rb` | — |
 | forwardable | 1.4.0 | upstream | `gems/forwardable.rb` | — |
-| ipaddr | 1.2.9 | git-pinned | — | — |
+| ipaddr | 1.2.9 | git-pinned | `gems/ipaddr.rb` | — |
 | irb | 1.18.0 | upstream | — | compiles, but stops at a refinement module that the program makes at run time ([gap](tests/gaps/issue_runtime_refinement_module.rb)) |
 | json | 2.18.0 | Zeo Ruby half | `json_to_json.rb` | uses serde_json, not the json gem ([compat](docs/COMPATIBILITY.md)) |
 | logger | 1.7.0 | git-pinned | `gems/logger.rb` | — |
@@ -264,7 +269,7 @@ gem. For the full source information and the licences, read
 | monitor | 0.1.0 | Zeo Ruby half | `gems/two_halves.rb` | `Monitor` and `MonitorMixin` only |
 | net-ftp | 0.3.9 | git-pinned | `gems/net_ftp.rb` | — |
 | net-http | 0.9.1 | git-pinned | `gems/net_http.rb` | — |
-| net-protocol | 0.2.2 | git-pinned | — | — |
+| net-protocol | 0.2.2 | git-pinned | `gems/net_protocol.rb` | — |
 | net-smtp | 0.5.1 | git-pinned | `gems/net_smtp.rb` | — |
 | nkf | 0.3.0 | Zeo Ruby half | `nkf.rb` | some options only; `guess` uses a different method ([compat](docs/COMPATIBILITY.md)) |
 | observer | 0.1.2 | git-pinned | `gems/observer.rb` | — |
@@ -273,7 +278,7 @@ gem. For the full source information and the licences, read
 | optparse | 0.8.1 | Zeo Ruby half | `optparse_subset.rb` | the common `OptionParser` methods |
 | ostruct | 0.6.3 | upstream | `gems/ostruct.rb` | — |
 | pp | 0.6.4 | upstream | `pp_pretty_print.rb` | — |
-| prettyprint | 0.2.0 | upstream | — | — |
+| prettyprint | 0.2.0 | upstream | `gems/prettyprint.rb` | — |
 | prism | 1.9.0 | upstream +Zeo | `gems/prism.rb` | no `translation/` and no `ffi.rb` |
 | psych | 5.4.0 | Zeo Ruby half | `psych_load_file_and_stream.rb` | uses yaml-rust2, not libyaml ([compat](docs/COMPATIBILITY.md)) |
 | pty | 0.5.9 | Zeo Ruby half | `pty_spawn.rb` | — |
@@ -287,9 +292,9 @@ gem. For the full source information and the licences, read
 | syslog | 0.4.0 | Zeo Ruby half | `syslog.rb` | — |
 | tempfile | 0.3.1 | git-pinned | `gems/tempfile.rb` | — |
 | time | 0.4.2 | git-pinned | `time_parse.rb` | — |
-| timeout | 0.6.1 | upstream | — | — |
+| timeout | 0.6.1 | upstream | `gems/timeout.rb` | — |
 | tmpdir | 0.3.1 | git-pinned | `io_encoding.rb` | — |
-| tsort | 0.2.0 | upstream | — | — |
+| tsort | 0.2.0 | upstream | `gems/tsort.rb` | — |
 | un | 0.3.0 | git-pinned | `gems/un.rb` | — |
 | uri | 1.1.1 | git-pinned | `uri_parse_and_build.rb` | — |
 | zlib | 3.2.3 | Zeo Ruby half | `zlib_classes.rb` | uses flate2; 4 functions are not available ([compat](docs/COMPATIBILITY.md)) |

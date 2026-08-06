@@ -123,6 +123,56 @@ fn bytes_to_binary(bytes: &[u8]) -> RubyValue {
     ))
 }
 
+/// `readpartial`/`sysread`/`read_nonblock`, which differ only at EOF.
+///
+/// `raises` false is `read_nonblock(n, exception: false)`, which answers nil
+/// where the others raise. A zero length never reaches EOF: CRuby answers `""`
+/// even on an exhausted buffer.
+fn partial_read(
+    recv: &RubyValue,
+    maxlen: &RubyValue,
+    buffer: Option<&RubyValue>,
+    raises: bool,
+) -> Result<RubyValue, crate::Signal> {
+    let n = crate::builtins::convert::to_index(maxlen)?;
+    if n < 0 {
+        return Err(crate::builtins::arg_error!("negative length {n} given"));
+    }
+    let outbuf = match buffer {
+        None | Some(RubyValue::Nil) => None,
+        Some(v) => Some(crate::builtins::convert::to_rstr(v)?),
+    };
+    let n = n as usize;
+
+    let mut s = io_of(recv).state.lock();
+    if s.pos >= s.bytes.len() && n > 0 {
+        // CRuby empties the buffer before reporting EOF, so a rescued end
+        // leaves no stale bytes from the previous read.
+        if let Some(buf) = &outbuf {
+            buf.lock().replace_utf8(String::new());
+        }
+        return if raises {
+            Err(crate::builtins::eof_error!("end of file reached"))
+        } else {
+            Ok(RubyValue::Nil)
+        };
+    }
+    let end = (s.pos + n).min(s.bytes.len());
+    let out = s.bytes[s.pos..end].to_vec();
+    s.pos = end;
+    drop(s);
+
+    match outbuf {
+        Some(buf) => {
+            buf.lock().replace_bytes(out, crate::encoding::ASCII_8BIT);
+            Ok(buffer
+                .expect("outbuf is Some only when a buffer was passed")
+                .clone())
+        }
+        None => Ok(bytes_to_binary(&out)),
+    }
+}
+
 /// Overwrite-from-`pos` write, extending the buffer as a file would.
 fn write_at(state: &mut State, data: &[u8]) {
     let end = state.pos + data.len();
@@ -179,6 +229,20 @@ ruby_class! {
                 Ok(bytes_to_binary(&out))
             }
         }
+    }
+    // The partial-read family. A StringIO never blocks, so all three take the
+    // same bytes `read` would; they differ from it only at EOF, where `read`
+    // answers nil and these raise. `read_nonblock`'s `exception: false` asks
+    // for nil back instead.
+    //
+    // `net/protocol` reaches `read_nonblock` through `Net::BufferedIO`, which
+    // is how net/http and net/smtp read from any IO.
+    def "readpartial" | "sysread" cfunc (recv, maxlen, buffer?, &_blk) {
+        partial_read(recv, maxlen, buffer, true)
+    }
+    def "read_nonblock" cfunc (recv, maxlen, buffer?, **opts, &_blk) {
+        let raises = crate::builtins::io::nonblock_raises(opts);
+        partial_read(recv, maxlen, buffer, raises)
     }
     def "write" (recv, *args, &_block) {
         let mut written = 0usize;
