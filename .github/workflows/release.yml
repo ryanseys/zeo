@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Lets a release be rehearsed against a branch without cutting a tag. The
+  # artifacts upload, but no GitHub Release is created.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Every target builds natively. Cross-compiling zeo-rt is not worth it: the
+  # runtime links C (Prism, Oniguruma, OpenSSL, libffi), and `xtask dist`
+  # finishes with a smoke test that COMPILES AND RUNS a Ruby program with the
+  # staged binary -- which a cross build could not do at all.
+  dist:
+    name: dist (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # zeo-rt's C dependencies. macOS gets these from the SDK already.
+      - name: Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      # Builds the tree, vendors the runtime workspace's crates.io deps, then
+      # proves the staged binary works: it resolves its payload relative to
+      # bin/, builds zeo-rt offline, and compiles and runs a program.
+      - run: cargo run -p xtask -- dist --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeo-${{ matrix.target }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: dist
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # One SHA256SUMS over every tarball, so a user verifies the whole set
+      # with a single `sha256sum -c`. The per-file .sha256 that dist writes
+      # stays alongside for anyone checking one download.
+      - name: collect checksums
+        run: |
+          cd artifacts
+          ls -la
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      # The tag must match the version the crates actually carry. A mismatch
+      # here means the tag, the crates.io release and the gem would disagree.
+      - name: tag matches the workspace version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag  Cargo.toml=$ver"
+          [ "$tag" = "$ver" ] || { echo "::error::tag v$tag != workspace version $ver"; exit 1; }
+
+      # Notes come from this version's own CHANGELOG section, not from the
+      # first section in the file -- that one is `## [Unreleased]`, and taking
+      # it would ship an empty release body.
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          notes=$(awk -v v="$ver" \
+            '$0 ~ "^## \\[" v "\\]" {n=1; next} n && /^## \[/ {exit} n' CHANGELOG.md)
+          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no section for [$ver]"; exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "$notes" \
+            artifacts/*.tar.gz artifacts/*.sha256 artifacts/SHA256SUMS
