@@ -2678,21 +2678,38 @@ fn register_body_def_method(
         *visibility,
     );
     // An OPERATOR definition on a builtin reopen (`class Integer; def +`) is
-    // rejected outright (zeo limitation): the native `Int`/`Float`/`Str`
-    // operator fast paths are emitted unconditionally at every static call
-    // site, so a user operator would be silently bypassed there -- a loud
-    // rejection beats dispatch that only sometimes honors the override.
-    // `BigDecimal` is exempt: it is an Object-payload builtin no call site
-    // fast-paths, and its own gem defines `**` in Ruby (bigdecimal 4.x
-    // splits the class between C and Ruby exactly there).
+    // rejected outright (zeo limitation): a native operator fast path is
+    // emitted at the static call site AHEAD of the reopened-builtin arm, so
+    // the user operator would be silently bypassed there -- a loud rejection
+    // beats dispatch that only sometimes honors the override.
     //
-    // A CLASS-method operator is exempt for the same reason, and it is the
-    // commoner shape: `JSON[str]` is `def self.[]` on a module, and no fast
-    // path exists for a call whose receiver is a class object -- those
-    // dispatch through the ordinary class-method tables.
+    // Only `Int` and `Float` have such a path. `codegen::call::dispatch`
+    // emits the four `ops::{INT,FLOAT}_{BINARY,UNARY}_OPS` arms and then the
+    // reopened-builtin arm, which is placed deliberately BEFORE the
+    // collection, Proc, Regexp and String fast paths precisely so a user
+    // redefinition wins there. The poly runtime-checked fallback below it
+    // matches the same two `RubyValue::Int`/`Float` shapes and sends
+    // everything else through `send_value_in`'s MRO walk, which reads the
+    // reopened row. So every OTHER builtin is safe to reopen, and the list
+    // here is the MRO of `Integer` and `Float` -- the classes a statically
+    // `Int`- or `Float`-typed receiver would consult.
+    //
+    // A CLASS-method operator is exempt whatever the class: `JSON[str]` is
+    // `def self.[]` on a module, and no fast path exists for a call whose
+    // receiver is a class object -- those dispatch through the ordinary
+    // class-method tables.
+    const NUMERIC_FAST_PATH_MRO: &[&str] = &[
+        "Integer",
+        "Float",
+        "Numeric",
+        "Comparable",
+        "Object",
+        "Kernel",
+        "BasicObject",
+    ];
     if compiler.class(class_id).is_builtin
         && !is_class_method
-        && compiler.class(class_id).name != "BigDecimal"
+        && NUMERIC_FAST_PATH_MRO.contains(&compiler.class(class_id).name.as_str())
         && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
     {
         return Err(format!(
