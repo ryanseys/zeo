@@ -742,6 +742,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let (mut corpus, mut all, mut check, mut no_deps) = (false, false, false, false);
     let (mut index, mut refresh, mut refresh_index) = (false, false, false);
     let (mut limit, mut popular): (Option<usize>, Option<usize>) = (None, None);
+    let mut matching: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut it = args.iter();
@@ -758,6 +759,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 Some(n) => limit = Some(n),
                 None => {
                     eprintln!("gem-probe: --limit needs a number");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--matching" => match it.next() {
+                Some(v) => matching = Some(v.clone()),
+                None => {
+                    eprintln!("gem-probe: --matching needs a substring of the outcome detail");
                     return ExitCode::FAILURE;
                 }
             },
@@ -813,6 +821,17 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             }
         }
     }
+    // Re-probe exactly the gems a fix targets. A fix lands against one
+    // diagnostic, so re-running the whole ledger to see whether it worked
+    // spends hours to learn about a few dozen rows.
+    if let Some(pat) = &matching {
+        names.extend(
+            before
+                .iter()
+                .filter(|(_, r)| r.outcome.detail().contains(pat.as_str()))
+                .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
+        );
+    }
     if all {
         names.extend(
             before
@@ -822,7 +841,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
     if names.is_empty() {
         eprintln!(
-            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --index or --all)"
+            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --matching <detail>, --index or --all)"
         );
         return ExitCode::FAILURE;
     }
@@ -830,7 +849,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     // Resume. A sweep of the registry is hours of work, so re-running must
     // continue rather than start over. `--all` is the explicit re-probe, and
     // `--refresh` forces it for any selection.
-    let skipped = if all || refresh {
+    let skipped = if all || refresh || matching.is_some() {
         0
     } else {
         let n = names.len();

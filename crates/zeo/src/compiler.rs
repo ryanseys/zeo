@@ -1397,7 +1397,12 @@ impl Compiler {
         self.superclass_chain(cid).find(|a| {
             matches!(
                 *a,
-                ARRAY_CLASS | STRING_CLASS | HASH_CLASS | zeo_abi::STRING_SCANNER_CLASS
+                ARRAY_CLASS
+                    | STRING_CLASS
+                    | HASH_CLASS
+                    | zeo_abi::STRING_SCANNER_CLASS
+                    | zeo_abi::STRINGIO_CLASS
+                    | zeo_abi::FILE_CLASS
             )
         })
     }

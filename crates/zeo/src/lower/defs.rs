@@ -319,6 +319,24 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // wrong owner. Skipped for the same reason the visibility
             // directives are, and with the same best-effort posture (csv's
             // `class << self; ON_WINDOWS = ...; private_constant :ON_WINDOWS`).
+            // An `@x = v` here writes an ivar of the SINGLETON class, which is
+            // a different object from the class -- so the `attr_accessor`
+            // written beside it does NOT read what this wrote. Oracle-verified:
+            //
+            //   class Foo
+            //     class << self
+            //       @slack = "singleton-ivar"
+            //       attr_accessor :slack
+            //     end
+            //   end
+            //   Foo.slack  # => nil
+            //
+            // Dropping the write therefore MATCHES ruby wherever the value is
+            // read back through an accessor, which is every use of it seen in
+            // the gem graph (uniform_notifier's `@logger = nil`); only a direct
+            // `Foo.singleton_class.instance_variable_get` would tell the
+            // difference.
+            HirNode::IvarWrite { .. } | HirNode::IvarRead(_) => Item::Skip,
             HirNode::MethodVisibility { .. }
             | HirNode::ConstantVisibility { .. }
             | HirNode::Call { .. } => Item::Skip,

@@ -4859,7 +4859,8 @@ fn send_in_reason(
             // value and re-wraps a self-return (`push`/`<<`) back to the
             // subclass; reopen rows always run against the boxed receiver.
             if hit.builtin
-                && payload_root == Some(hit.owner)
+                && payload_root
+                    .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, hit.owner))
                 && let Some(ref p) = payload
             {
                 let result = with_c_frame(hit.frame_label, || (hit.f)(p, args, block))?;
@@ -4890,7 +4891,8 @@ fn send_in_reason(
                     // At the payload root, run against the wrapped value
                     // and re-wrap a self-return (`push`/`<<`) back to the
                     // subclass.
-                    if payload_root == Some(anc)
+                    if payload_root
+                        .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, anc))
                         && let Some(ref p) = payload
                     {
                         let result = with_c_frame(label, || f(p, args, block))?;

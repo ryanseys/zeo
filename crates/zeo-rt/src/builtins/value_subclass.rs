@@ -152,8 +152,46 @@ impl RubyObject for ValueSubclass {
 pub fn is_payload_root(id: ClassId) -> bool {
     matches!(
         id,
-        ARRAY_CLASS | STRING_CLASS | HASH_CLASS | zeo_abi::STRING_SCANNER_CLASS
+        ARRAY_CLASS
+            | STRING_CLASS
+            | HASH_CLASS
+            | zeo_abi::STRING_SCANNER_CLASS
+            | zeo_abi::STRINGIO_CLASS
+            | zeo_abi::FILE_CLASS
     )
+}
+
+/// Whether a builtin method found on `anc` belongs to the PAYLOAD of a value
+/// subclass whose root is `root`, rather than to the boxed object.
+///
+/// The root itself always does. So does a builtin SUPERCLASS of the root:
+/// `File`'s payload is what `IO#read` reads, and aws-sdk's `ManagedFile <
+/// File` inherits every one of its methods from `IO`. Included modules and
+/// `Object`/`Kernel` never do -- `Stack.new.class` must answer `Stack`, not
+/// `Array`, and `class` resolves on `Object`.
+///
+/// A no-op for the roots whose superclass is already `Object` (every one but
+/// `File`).
+pub fn payload_owns(root: ClassId, anc: ClassId) -> bool {
+    if root == anc {
+        return true;
+    }
+    let mut at = root;
+    while let Some(parent) = builtin_superclass(at) {
+        if parent == zeo_abi::OBJECT_CLASS {
+            return false;
+        }
+        if parent == anc {
+            return true;
+        }
+        at = parent;
+    }
+    false
+}
+
+fn builtin_superclass(id: ClassId) -> Option<ClassId> {
+    let i = (id.0 as usize).checked_sub(1)?;
+    zeo_abi::BUILTINS.get(i)?.superclass
 }
 
 /// Allocate a value-subclass instance of `class_id` directly around `payload`,
@@ -204,10 +242,16 @@ fn empty_payload(root: ClassId) -> RubyValue {
         HASH_CLASS => RubyValue::Hash(hash_new(Vec::new())),
         // A scanner over the empty string -- built through the root's own
         // constructor, since the native object isn't a `RubyValue` variant.
-        zeo_abi::STRING_SCANNER_CLASS => {
+        // Built through the root's own constructor: the native object is not
+        // a `RubyValue` variant, so there is nothing to spell directly.
+        zeo_abi::STRING_SCANNER_CLASS | zeo_abi::STRINGIO_CLASS => {
             let empty = RubyValue::Str(string_new(String::new()));
             construct_root_payload(root, &[empty], None).unwrap_or(RubyValue::Nil)
         }
+        // A File has no empty form -- opening one needs a path. A subclass
+        // with its own `initialize` seats the real payload through `super`,
+        // which is the only way to get a File in the first place.
+        zeo_abi::FILE_CLASS => RubyValue::Nil,
         _ => RubyValue::Nil,
     }
 }

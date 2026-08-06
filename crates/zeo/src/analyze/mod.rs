@@ -2057,6 +2057,12 @@ fn register_class(
                                 // csv's `class Scanner < StringScanner` adds
                                 // ivars on top of the inherited behaviour.
                                 | zeo_abi::STRING_SCANNER_CLASS
+                                // `StringIO`/`File`: same payload shape again.
+                                // puma's `IOBuffer < StringIO` and aws-sdk's
+                                // `ManagedFile < File` are the whole aws-sdk-*
+                                // family's blocker between them.
+                                | zeo_abi::STRINGIO_CLASS
+                                | zeo_abi::FILE_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

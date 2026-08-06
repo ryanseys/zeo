@@ -1,0 +1,5 @@
+"<hello>"
+"hello"
+[true, Buffer, StringIO]
+[true, "data", Managed]
+false
