@@ -337,8 +337,11 @@ because without a lockfile Zeo does not know which versions you mean.
 
 Three rules control which gems work:
 
-- **A pure-Ruby gem compiles.** Zeo puts its source into the program, the same
-  as any other file.
+- **A pure-Ruby gem usually compiles.** Zeo puts its source into the program,
+  the same as any other file. Pure Ruby is necessary but not sufficient: a gem
+  can still use a construct Zeo does not lower yet, such as a class definition
+  inside a run-time conditional. The compile then stops and names that
+  construct.
 - **A gem with a C extension stops the compile**, and the error gives the name
   of the gem. Read the list above.
 - **Zeo needs the `ruby` platform gem, not a precompiled one.** A precompiled

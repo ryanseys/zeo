@@ -21,7 +21,7 @@ pub struct RunResult {
 /// `ZEO_RUNTIME_PROFILE=release` forces the optimized build back. Reading the
 /// env from many `#[test]` threads is safe: the data race `from_env_or` warns
 /// about is `set_var` vs `var_os`, and this only ever reads.
-fn harness_profile() -> zeo::backend::Profile {
+pub fn harness_profile() -> zeo::backend::Profile {
     zeo::backend::Profile::from_env_or(zeo::backend::Profile::Debug)
 }
 

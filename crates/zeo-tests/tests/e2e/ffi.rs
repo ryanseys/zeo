@@ -46,6 +46,55 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
     assert!(err.contains("native (C) extension"), "{err}");
 }
 
+/// The lockfile picks the version, not the store.
+///
+/// The fixture store holds purelib 1.0.0 AND 2.0.0 while the lockfile pins
+/// 1.0.0, so a resolver that took the newest -- which is what `require` does
+/// in a plain RubyGems process -- would answer 2.0.0. This compiles and RUNS
+/// the program, because reaching codegen only proves a version resolved, not
+/// which one ended up in the binary.
+#[test]
+fn the_lockfile_selects_the_version_when_the_store_holds_several() {
+    let store =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let opts = zeo::CompileOptions {
+        gem_paths: vec![store.clone()],
+        lockfile: Some(store.join("Gemfile.lock")),
+        ..Default::default()
+    };
+    let compiled = zeo::compile_to_rust_with("require \"purelib\"\nputs Purelib::VERSION\n", &opts)
+        .expect("the locked purelib resolves");
+
+    let bin = std::env::temp_dir().join(format!(
+        "zeo-lockver-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let runtime = zeo::backend::Runtime::for_prism(compiled.needs_prism_runtime);
+    let linkage = zeo::backend::Linkage::Dynamic;
+    zeo::backend::ensure_runtime_built(crate::support::harness_profile(), runtime, linkage)
+        .expect("building zeo-rt");
+    zeo::backend::build_binary(
+        &compiled.rust_source,
+        &bin,
+        crate::support::harness_profile(),
+        runtime,
+        linkage,
+        zeo::backend::GenOpt::Unoptimized,
+    )
+    .expect("linking the store program");
+    let out = std::process::Command::new(&bin)
+        .output()
+        .expect("running it");
+    let _ = std::fs::remove_file(&bin);
+
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1.0.0\n",
+        "the store also holds purelib 2.0.0; the lockfile pins 1.0.0"
+    );
+}
+
 #[test]
 fn file_read_applies_external_and_internal_encodings() {
     // File.read tags bytes with the external encoding (default UTF-8), or a
