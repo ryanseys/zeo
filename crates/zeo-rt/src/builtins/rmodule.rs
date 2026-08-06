@@ -881,8 +881,37 @@ ruby_class! {
         // declaration, re-declaring the same name included (oracle-verified).
         pending_autoloads()
             .lock()
-            .insert((recv_cid(recv).0, name.clone()), path);
+            .insert((recv_cid(recv).0, name.clone()), path.clone());
         crate::runtime_meta::fire_const_added(recv_cid(recv), &name)?;
+        // zeo loads the target HERE rather than on first reference to the
+        // constant: the constant is already registered (a compiled-in unit's
+        // classes are in the dispatch tables from startup), so there is no
+        // miss left to trigger a lazy load. Same eagerness the compile-time
+        // `autoload :Const, "literal"` splice has always had -- see
+        // `crate::features` -- and it is what makes an `autoload` DSL written
+        // in plain Ruby work: the path it computed lands on a real load.
+        if crate::features::has_feature(&path) {
+            crate::features::load_feature(&path).transpose()?;
+            pending_autoloads()
+                .lock()
+                .remove(&(recv_cid(recv).0, name.clone()));
+        } else if crate::builtins::kernel::feature_already_loaded(&path) {
+            // Spliced at compile time: the constant is already defined, and
+            // CRuby answers `nil` from `autoload?` once a feature has loaded.
+            pending_autoloads()
+                .lock()
+                .remove(&(recv_cid(recv).0, name.clone()));
+        } else if crate::features::any_units() {
+            // This program compiled a load path in precisely so a computed
+            // `autoload` could be served, and the string it built is not on
+            // it: nothing will ever define the constant. The LoadError the
+            // `require` it stands in for would raise is the honest answer, and
+            // far better than a `NameError` at first use. Without units the
+            // registration keeps its documented record-only behaviour, which
+            // is indistinguishable from CRuby's laziness until the constant is
+            // referenced.
+            return Err(crate::builtins::kernel::missing_feature_error(&path));
+        }
         Ok(RubyValue::Nil)
     }
     def "autoload?" cfunc (recv, sym, inherit?) {

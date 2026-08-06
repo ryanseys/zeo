@@ -1588,21 +1588,36 @@ pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Sign
     if feature_already_loaded(&path) {
         return Ok(RubyValue::Bool(false));
     }
+    // A unit the front end compiled in for exactly this case -- a require whose
+    // target only the running program knows. See `crate::features`.
+    if let Some(result) = crate::features::load_feature(&path) {
+        return result.map(RubyValue::Bool);
+    }
     // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
     // `require_relative` only, against the calling file's directory -- a
     // compiled binary has no such directory, so the argument stands.
     // A feature zeo DECLINES says so; everything else keeps CRuby's bare
     // wording. Shared with the compiler's loader through the ABI, the only
     // thing the two sides agree on.
-    let msg = match zeo_abi::declined_feature_reason(&path) {
+    Err(missing_feature_error(&path))
+}
+
+/// The `LoadError` a feature that is not compiled in raises, carrying `#path`
+/// and -- when the front end reached the file but could not lower it -- the
+/// reason it declined. Shared by `require` and by `Module#autoload`, which
+/// stands in for the same load.
+pub(crate) fn missing_feature_error(path: &str) -> crate::Signal {
+    let msg = match zeo_abi::declined_feature_reason(path)
+        .or_else(|| crate::features::decline_reason(path))
+    {
         Some(reason) => format!("cannot load such file -- {path}: {reason}"),
         None => format!("cannot load such file -- {path}"),
     };
     let sig = crate::dispatch::raise_error("LoadError", msg);
     if let crate::signal::Signal::Raise(exc) = &sig {
-        crate::builtins::exception::set_load_error_path(exc, &path);
+        crate::builtins::exception::set_load_error_path(exc, path);
     }
-    Err(sig)
+    sig
 }
 
 /// Whether `path` names a file the front end already spliced -- that is,

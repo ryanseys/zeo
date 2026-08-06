@@ -30,6 +30,13 @@ pub struct Analyzed {
     /// method body, but for `main_statements` -- there's no `Scope` for the
     /// top level to hang this off of.
     pub main_local_types: HashMap<String, TyKind>,
+    /// The compiled-in load path (see `Hir::feature_units`): each unit's
+    /// top-level statements under the feature name a `require` spells. Walked
+    /// exactly like `main_statements` -- their classes register at startup --
+    /// but emitted as a function the runtime calls on demand.
+    pub feature_units: Vec<(String, String, Vec<NodeId>)>,
+    /// Load-path files zeo could not lower -- see `Hir::declined_units`.
+    pub declined_units: Vec<(String, String, String)>,
 }
 
 pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, crate::diagnostics::CompileError> {
@@ -103,6 +110,41 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         pin_builtin_exceptions_tail(&mut compiler)?;
     }
 
+    // The compiled-in load path. A unit's statements walk the SAME
+    // `process_top_stmt` the main file's do -- that is what registers its
+    // classes, materializes its methods, and files its class-body sites -- but
+    // they collect into the unit's own list, which codegen emits as a function
+    // instead of inlining. A `BEGIN` block inside a lazily-loaded file has no
+    // sensible meaning (there is no "before the program" left to run at), so
+    // its statements simply join the unit's body in place.
+    let mut declined_units = std::mem::take(&mut compiler.hir.declined_units);
+    let mut feature_units = Vec::new();
+    for unit in std::mem::take(&mut compiler.hir.feature_units) {
+        let mut stmts = Vec::new();
+        let mut unit_pre_exec = Vec::new();
+        let mut failed = None;
+        for stmt in unit.body {
+            if let Err(e) =
+                process_top_stmt(&mut compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
+            {
+                failed = Some(e);
+                break;
+            }
+        }
+        match failed {
+            None => {
+                unit_pre_exec.append(&mut stmts);
+                feature_units.push((unit.feature, unit.absolute, unit_pre_exec));
+            }
+            // Declined like a lowering failure: requiring it raises LoadError
+            // naming the gap. The classes its statements BEFORE the failure
+            // already registered stay registered -- inert unless the program
+            // names them, which it can only do by requiring the feature it
+            // just refused.
+            Some(e) => declined_units.push((unit.feature, unit.absolute, e)),
+        }
+    }
+
     // Stage C invariant: the ids the compiler just assigned the built-in
     // exceptions MUST match `zeo-abi`'s table, because `zeo-rt`'s
     // `register_exceptions` installs those classes at those ids and generated
@@ -146,6 +188,8 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         compiler,
         main_statements,
         main_local_types,
+        feature_units,
+        declined_units,
     })
 }
 
@@ -2596,7 +2640,13 @@ fn register_body_def_method(
     // `BigDecimal` is exempt: it is an Object-payload builtin no call site
     // fast-paths, and its own gem defines `**` in Ruby (bigdecimal 4.x
     // splits the class between C and Ruby exactly there).
+    //
+    // A CLASS-method operator is exempt for the same reason, and it is the
+    // commoner shape: `JSON[str]` is `def self.[]` on a module, and no fast
+    // path exists for a call whose receiver is a class object -- those
+    // dispatch through the ordinary class-method tables.
     if compiler.class(class_id).is_builtin
+        && !is_class_method
         && compiler.class(class_id).name != "BigDecimal"
         && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
     {

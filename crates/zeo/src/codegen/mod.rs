@@ -2099,6 +2099,46 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         quote! { #toplevel_binding },
         true,
     );
+    // The compiled-in load path: one function per unit, plus the table the
+    // runtime resolves a computed `require`/`autoload` against. Each body is
+    // hoisted exactly like the main body -- a unit IS a top-level scope, with
+    // its own file-isolated locals. See `zeo_rt::features`.
+    let mut unit_fns = Vec::new();
+    let mut unit_rows = Vec::new();
+    for (i, (feature, absolute, stmts)) in analyzed.feature_units.iter().enumerate() {
+        let ident = proc_macro2::Ident::new(&format!("__unit_{i}"), proc_macro2::Span::call_site());
+        let body = hoisting::emit_hoisted_body_after_decls(&cx, stmts, quote! {}, true);
+        unit_fns.push(quote! {
+            fn #ident() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+                #body
+            }
+        });
+        // Both spellings a program can build resolve to the same unit: the
+        // load-path-relative feature name, and the absolute path
+        // `File.expand_path("x", __dir__)` produces.
+        let f = quote! { #ident as fn() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> };
+        unit_rows.push(quote! { (#feature, #f) });
+        unit_rows.push(quote! { (#absolute, #f) });
+    }
+    let install_units = if unit_rows.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            zeo_rt::features::install_feature_units(&[#(#unit_rows),*]);
+        }
+    };
+    let mut declined_rows = Vec::new();
+    for (feature, absolute, reason) in &analyzed.declined_units {
+        declined_rows.push(quote! { (#feature, #reason) });
+        declined_rows.push(quote! { (#absolute, #reason) });
+    }
+    let install_declined = if declined_rows.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            zeo_rt::features::install_declined_features(&[#(#declined_rows),*]);
+        }
+    };
     // The top level's own backtrace frame -- CRuby's `<main>` (its file is
     // the main script; statement emission stamps the line as it goes).
     let main_frame = match compiler.hir.files.first() {
@@ -2260,6 +2300,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#exc_containers)*
         #(#own_bridge_containers)*
         #(#sst_containers)*
+        #(#unit_fns)*
 
         fn main() {
             // This thread is the only Ruby thread until the program spawns
@@ -2306,6 +2347,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // answers an already-loaded feature, instead of raising LoadError
             // because an AOT binary has no runtime loader.
             zeo_rt::seed_loaded_features(&[#(#loaded_features),*]);
+            // Before the first statement: a `require` on line one must
+            // already see the compiled-in load path.
+            #install_units
+            #install_declined
             #coverage_install
             // Ruby's own PARSE-time warnings (a duplicated hash key, ...),
             // collected by the front end and replayed before the program's

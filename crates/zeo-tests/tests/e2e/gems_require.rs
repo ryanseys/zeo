@@ -286,14 +286,15 @@ fn plain_require_resolves_against_search_roots_including_nested_features() {
 }
 
 #[test]
-fn autoload_with_a_dynamic_feature_is_a_clean_compile_error() {
-    // The splice target must be compile-time-known; a computed path that
-    // isn't the `File.expand_path(..., __dir__)` idiom is a clean rejection
-    // (like a non-top-level `require`), not a silently-undefined constant.
-    let err = zeo::compile_to_rust("autoload :X, some_method_call").unwrap_err();
+fn autoload_with_a_dynamic_feature_defers_to_the_runtime_row() {
+    // A target the compile-time splice cannot name is no longer a rejection:
+    // it lowers to a real `Module#autoload` call, which resolves the string the
+    // program actually builds against the load path compiled in for it
+    // (`zeo_rt::features`). Compiling is the assertion -- what the call then
+    // finds is covered by `tests/autoload_dsl_computes_its_own_path.rb`.
     assert!(
-        err.contains("must resolve at compile time"),
-        "unexpected error: {err}"
+        zeo::compile_to_rust("autoload :X, some_method_call").is_ok(),
+        "a computed autoload target should compile and defer to the runtime"
     );
 }
 

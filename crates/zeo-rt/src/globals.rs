@@ -373,6 +373,16 @@ pub fn seed_loaded_features(paths: &[&str]) {
     );
 }
 
+/// Appends one feature to `$LOADED_FEATURES` -- what a unit loaded at RUNTIME
+/// records, so a second `require` of it answers `false` (see
+/// [`crate::features::load_feature`]).
+pub fn append_loaded_feature(name: &str) {
+    if let RubyValue::Array(a) = global_get(0, "$LOADED_FEATURES") {
+        a.lock()
+            .push(RubyValue::Str(crate::string_new(name.to_string())));
+    }
+}
+
 /// Whether `name` has ever been assigned in this box -- backs
 /// `defined?($g)`, which answers `"global-variable"` only for an assigned
 /// user global and `nil` for one that was never written (unlike `global_get`,

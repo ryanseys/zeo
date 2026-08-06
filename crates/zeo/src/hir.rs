@@ -234,6 +234,30 @@ pub struct Hir {
     /// (`begin; require "x"; rescue LoadError`) is caught at runtime -- exactly
     /// CRuby's semantics. (A missing `require_relative` stays a compile error.)
     pub unresolvable_requires: std::collections::HashSet<String>,
+    /// Load paths to compile in WHOLE, as callable units rather than splices --
+    /// keyed by owning package name, `None` for the `-I`/main roots. A file
+    /// lands here when it computes a `require`/`autoload` target zeo cannot
+    /// fold (`ActiveSupport::Autoload#autoload` joins the module name to the
+    /// constant and calls `super`), so the only honest answer is to compile in
+    /// everything that string could name. See `parse::loader::materialize_units`.
+    pub unit_demand: std::collections::BTreeSet<(Option<String>, std::path::PathBuf)>,
+    /// The package owning the file currently lowering, `None` for the main
+    /// file and the `-I` roots, and that file's own directory -- the pair
+    /// `demand_feature_units` records. The directory is what a
+    /// `File.expand_path("x", __dir__)` target is relative to, which is how
+    /// stdlib and bundler spell a sibling autoload.
+    pub lowering_package: Option<String>,
+    pub lowering_dir: Option<std::path::PathBuf>,
+    /// The materialized units, in discovery order: one file's top-level
+    /// statements, under the feature name a `require` would spell. Codegen
+    /// emits each as a function and registers it in `zeo_rt::features`.
+    pub feature_units: Vec<FeatureUnit>,
+    /// Load-path files that could NOT be lowered, as `(feature, absolute,
+    /// reason)`. A whole load path is compiled in, so it reaches files the
+    /// program may never require; one hitting a lowering gap is recorded here
+    /// instead of failing the build, and requiring it raises `LoadError` with
+    /// the reason (`zeo_rt::features::install_declined_features`).
+    pub declined_units: Vec<(String, String, String)>,
     /// Features named only from inside a method BODY, which zeo therefore does
     /// not load. CRuby loads such a file when the method runs; whole-program
     /// AOT has no runtime loader, so the honest answer is to leave it out and
@@ -277,6 +301,22 @@ pub struct Hir {
     /// [`cvar_is_toplevel`](Self::cvar_is_toplevel) and
     /// [`enclosing_class`](Self::enclosing_class).
     cref_names: Vec<String>,
+}
+
+/// One compiled-in load-path file -- see `Hir::feature_units`. Its statements
+/// are NOT part of the main statement list: codegen emits them as a function
+/// the runtime calls when a `require` names `feature`. Registration is
+/// unaffected -- the classes it defines are in the dispatch tables from
+/// startup, exactly as a spliced file's are.
+pub struct FeatureUnit {
+    /// The name a `require` spells: the path under its load-path root, with
+    /// no `.rb`.
+    pub feature: String,
+    /// The same file's absolute path, with no `.rb` -- the OTHER spelling a
+    /// program can build, and the one `File.expand_path("x", __dir__)` (the
+    /// `autoload` idiom stdlib and bundler use for a sibling file) produces.
+    pub absolute: String,
+    pub body: Vec<NodeId>,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -408,6 +448,15 @@ impl Hir {
     /// The provenance of `id` -- `None` for a synthetic node (see `Span`).
     pub fn span(&self, id: NodeId) -> Option<Span> {
         self.spans[id.0 as usize].known()
+    }
+
+    /// Records that the file currently lowering computes a `require`/`autoload`
+    /// target, so its whole load path must be compiled in as units. Keyed by
+    /// the file's owning package, which bounds the walk to that gem.
+    pub fn demand_feature_units(&mut self) {
+        let package = self.lowering_package.clone();
+        let dir = self.lowering_dir.clone().unwrap_or_default();
+        self.unit_demand.insert((package, dir));
     }
 
     /// Registers a source file for span provenance; the caller then sets

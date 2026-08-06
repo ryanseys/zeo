@@ -601,12 +601,21 @@ the fact they report is resolved at COMPILE time and left no runtime record:
   for one that does not. `[]` is exactly what CRuby answers for a constant
   defined in C, and every Zeo constant is: codegen resolves a constant path
   statically and the store keeps no file or line.
-- **`#autoload` registers, but never loads.** Zeo splices a literal
+- **`#autoload` loads EAGERLY, never lazily.** Zeo splices a literal
   `autoload :C, "feature"` at compile time and lowers the call to a no-op, so
   the constant is already defined and `#autoload?` answers `nil` — CRuby's own
-  answer once a feature has loaded. A call the structural collector cannot see
-  (an explicit receiver, a computed path) reaches the runtime row instead: it
-  records the path so `#autoload?` answers it, but the feature does not load.
+  answer once a feature has loaded. A computed target (including the
+  one-argument form an `autoload` DSL defines over `Module#autoload`, as
+  `ActiveSupport::Autoload` does) reaches the runtime row, which loads the unit
+  compiled in for it — at the `autoload` call, not at first reference to the
+  constant. A compiled-in class is in the dispatch tables from startup, so
+  there is no constant miss left to trigger a lazy load. Two consequences: a
+  file an autoload names always loads even if nothing ever references the
+  constant, and a later `require` of that same feature answers `false` where
+  CRuby answers `true` (CRuby had not loaded it yet). An `autoload` naming a
+  feature that is not compiled in raises `LoadError` at the declaration, where
+  CRuby would raise it only if something referenced the constant — a loud
+  failure in place of a constant that could never appear.
 - **`#refinements` is empty.** The compiler mints a `Refinement` module per
   `refine` block and marks it, but records no back-link to the refining
   module. Refined dispatch and `Refinement#target` are unaffected.

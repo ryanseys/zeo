@@ -2034,8 +2034,19 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `require`), so a genuinely dynamic autoload is a clean rejection
         // rather than a silently-undefined constant.
         if name == "autoload" && receiver.is_none() {
-            autoload_feature(&call)?;
-            return Ok(hir.push(HirNode::NilLit));
+            // Always a real call. A target the pre-pass could name is already
+            // spliced, so the runtime row finds it in `$LOADED_FEATURES` and
+            // does nothing; a computed one -- including the one-argument form
+            // every `autoload` DSL defines over `Module#autoload` -- computes
+            // its string there and loads the unit compiled in for it.
+            //
+            // Lowering it to a no-op on the strength of `autoload_feature`
+            // alone was a false pass: the pre-pass walks class/module bodies,
+            // not method bodies, so a literal `autoload` inside a `def`
+            // resolved here, spliced nowhere, and silently defined nothing.
+            if autoload_feature(&call).is_err() {
+                hir.demand_feature_units();
+            }
         }
 
         // `Ruby::Box` guard rails. Everything but ALLOCATION is an ordinary

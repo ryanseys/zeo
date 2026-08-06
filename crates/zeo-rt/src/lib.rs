@@ -29,6 +29,7 @@ mod coroutine;
 mod eval_vm;
 mod exec;
 mod ext;
+pub mod features;
 pub mod ffi;
 mod fiber;
 mod flipflop;

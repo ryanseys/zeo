@@ -184,6 +184,38 @@ ruby_module! {
         generate_into(arg1, Some(0), &mut out);
         Ok(RubyValue::Str(string_new(out)))
     }
+    // `JSON[x]` -- parse when `x` is a String (or converts to one via
+    // `to_str`), generate otherwise. CRuby spells this in `json/common.rb`
+    // (`ext/json/lib/json/common.rb`); the dispatch is on the ARGUMENT, which
+    // is why one name serves both directions.
+    // Singleton-only, not `module_function`: CRuby writes this one inside
+    // `class << self`, so there is no `JSON#[]` instance half.
+    def self."[]" (recv, object, opts?) {
+        let text = match object {
+            RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+            other => match crate::dispatch::responds_to(
+                other.class_id(),
+                crate::Symbol::intern("to_str"),
+                false,
+            ) {
+                true => Some(parse_text(other)?),
+                false => None,
+            },
+        };
+        match text {
+            Some(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;
+                Ok(to_ruby(&value, symbolize_opt(opts)))
+            }
+            None => {
+                let _ = recv;
+                let mut out = String::new();
+                generate_into(object, None, &mut out);
+                Ok(RubyValue::Str(string_new(out)))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

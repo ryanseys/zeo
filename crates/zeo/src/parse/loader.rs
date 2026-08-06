@@ -50,6 +50,36 @@ use crate::rename;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
+/// Every `.rb` under `dir`, recursively. Symlinked directories are followed
+/// like `require` follows them; a cycle is bounded by the filesystem, since a
+/// canonicalized repeat is skipped by the caller's dedup table.
+fn collect_rb_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rb_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rb") {
+            out.push(path);
+        }
+    }
+}
+
+/// The feature name `path` answers to under load-path root `root`: the
+/// relative path without its `.rb`, always `/`-separated (a `require` string
+/// is not a platform path).
+fn feature_name_under(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root).ok()?;
+    let rel = rel.with_extension("");
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 /// One gem: a named directory with a `.gemspec`, contributing one or more
 /// `require` search roots.
 ///
@@ -237,6 +267,14 @@ pub(super) fn lower_main_file(
         });
     hir.lowering_file = prev_file;
     let lowered = lowered?;
+    // AFTER every splice: the demanded load paths are compiled in as units,
+    // and `required` now holds every file that runs at a fixed position, so
+    // nothing is compiled in twice. A unit lowered here may itself demand more
+    // (a gem whose lazily-loaded files compute targets of their own), so this
+    // runs to fixpoint.
+    while !hir.unit_demand.is_empty() {
+        loader.materialize_units(hir)?;
+    }
     // Disclose the libraries no position outside a method body required, so
     // zeo left them out. `record_gem` is first-wins, and every real
     // satisfaction is already recorded, so only the truly absent ones land.
@@ -547,7 +585,14 @@ impl Loader {
             let mut autoloads = Vec::new();
             collect_autoloads(&n, &mut autoloads);
             for call in &autoloads {
-                let feature = crate::lower::autoload_feature(call)?;
+                // Only a target this pass can NAME is spliced. A computed one
+                // -- including the one-argument form an `autoload` DSL defines
+                // over `Module#autoload` -- is left to run: its lowering
+                // demands the load path as units, and the runtime row resolves
+                // the string the program actually builds (`zeo_rt::features`).
+                let Ok(feature) = crate::lower::autoload_feature(call) else {
+                    continue;
+                };
                 let spliced =
                     self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
                 combined.extend(spliced);
@@ -899,6 +944,67 @@ impl Loader {
     /// provenance -- one `LoadedFile` per SPLICE INSTANCE (see
     /// `Hir::loaded_files`' docs for why instance, not canonical file, is
     /// the unit).
+    /// Compiles in every `.rb` under the demanded load paths as a UNIT (see
+    /// `Hir::feature_units`), skipping the files already spliced.
+    ///
+    /// The demand comes from a file that computes a `require`/`autoload`
+    /// target: zeo cannot know which string it will build, so the honest
+    /// answer is to compile in everything that string could name -- which is
+    /// exactly its load path, and exactly what CRuby would have searched. The
+    /// walk is bounded to the DEMANDING package's own roots, so a gem that
+    /// resolves its own targets dynamically pays for itself and nothing else.
+    fn materialize_units(&mut self, hir: &mut Hir) -> PResult<()> {
+        for (package, dir) in std::mem::take(&mut hir.unit_demand) {
+            let roots: Vec<PathBuf> = match &package {
+                // No package: the `-I` roots the program was given, plus the
+                // demanding file's own directory -- what a `__dir__`-relative
+                // target names.
+                None => {
+                    let mut r = self.roots.clone();
+                    if dir.is_dir() {
+                        r.push(dir.clone());
+                    }
+                    r
+                }
+                Some(name) => match self.packages.iter().find(|g| &g.name == name) {
+                    Some(g) => g.roots.clone(),
+                    None => continue,
+                },
+            };
+            for root in roots {
+                let mut files = Vec::new();
+                collect_rb_files(&root, &mut files);
+                files.sort();
+                for path in files {
+                    let Ok(canonical) = path.canonicalize() else {
+                        continue;
+                    };
+                    if !self.required.insert((0, canonical.clone())) {
+                        continue; // already spliced: it runs at its own position
+                    }
+                    let Some(feature) = feature_name_under(&root, &path) else {
+                        continue;
+                    };
+                    let absolute = canonical.with_extension("").to_string_lossy().into_owned();
+                    match self.splice_file(hir, &canonical, None, package.clone(), 0) {
+                        Ok(body) => hir.feature_units.push(crate::hir::FeatureUnit {
+                            feature,
+                            absolute,
+                            body,
+                        }),
+                        // Never reached by a require -> never observed. Reached
+                        // by one -> a LoadError naming the gap, at the require.
+                        Err(e) => {
+                            hir.declined_units
+                                .push((feature, absolute, e.message().to_string()))
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn splice_file(
         &mut self,
         hir: &mut Hir,
@@ -963,6 +1069,17 @@ impl Loader {
         let _file = SourceFileFrame::push(Some(canonical));
         let file_id = hir.add_file(canonical.display().to_string(), source.clone());
         let prev_file = hir.lowering_file.replace(file_id);
+        // `loaded_files` and `files` are indexed independently (splice
+        // instances vs. span provenance), so the owning package rides
+        // alongside rather than being looked up from `lowering_file`.
+        let prev_package = std::mem::replace(
+            &mut hir.lowering_package,
+            hir.loaded_files[idx].package.clone(),
+        );
+        let prev_dir = std::mem::replace(
+            &mut hir.lowering_dir,
+            canonical.parent().map(Path::to_path_buf),
+        );
         let statements = self
             .lower_file_statements(
                 hir,
@@ -988,6 +1105,8 @@ impl Loader {
                 }
             });
         hir.lowering_file = prev_file;
+        hir.lowering_package = prev_package;
+        hir.lowering_dir = prev_dir;
         let statements = statements?;
         self.splicing.pop();
         Ok(statements)
