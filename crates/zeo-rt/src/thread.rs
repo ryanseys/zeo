@@ -574,8 +574,6 @@ pub fn thread_set_name(t: &RThread, name: Option<String>) {
     *t.name.lock() = name;
 }
 
-/// The `Thread.new` call site (`file:line`) shown in `#inspect`; `None` for
-/// the main thread.
 /// `Thread#inspect` -- `#<Thread:0xADDR file:line status>`, CRuby's shape,
 /// including the `Thread.new` call site (the main thread has none). Shared
 /// with the at-termination report, which names the thread the same way.
@@ -619,6 +617,8 @@ fn report_terminated(t: &RThread, exc: &RubyValue) {
     }
 }
 
+/// The `Thread.new` call site (`file:line`) that `#inspect` shows. `None` for
+/// the main thread.
 pub fn thread_origin(t: &RThread) -> Option<String> {
     t.origin.clone()
 }

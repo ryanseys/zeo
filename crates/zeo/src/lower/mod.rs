@@ -166,11 +166,6 @@ pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResu
     out.map_err(|e| e.with_span_if_missing(span))
 }
 
-/// One prism node's provenance in the file currently lowering, `Span::SYNTH`
-/// when there is none. Split out of [`lower_node`] for the lowerings that
-/// EXPAND a node into several `HirNode`s without descending through it
-/// (`attr_accessor` -> a pair of `DefMethod`s), which have to stamp that
-/// span themselves.
 /// Whether `recv` is the constant naming the `class`/`module` body being
 /// lowered, spelled the same way that body's own header spelled it.
 ///
@@ -204,6 +199,12 @@ fn superclass_name(hir: &Hir, sc: &Node<'_>) -> PResult<String> {
     consts::constant_path_name(sc)
 }
 
+/// One prism node's provenance in the file currently lowering, or
+/// `Span::SYNTH` when there is none.
+///
+/// Split out of [`lower_node`] for lowerings that EXPAND a node into several
+/// `HirNode`s without descending through it -- `attr_accessor` becomes a pair
+/// of `DefMethod`s -- because those must stamp the span themselves.
 pub(crate) fn span_of(hir: &Hir, node: &Node<'_>) -> Span {
     let loc = node.location();
     match hir.lowering_file {

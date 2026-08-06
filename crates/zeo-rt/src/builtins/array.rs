@@ -1640,13 +1640,12 @@ pub fn array_shift_checked(arr: &crate::collections::RArray) -> Result<RubyValue
     Ok(arr.lock().shift().unwrap_or(RubyValue::Nil))
 }
 
-/// `Array#join`: each element's `to_s`, joined by `sep`, with nested arrays
-/// flattened recursively under the SAME separator (`[1, [2, 3]].join("-")` ->
-/// `"1-2-3"`).
-/// `Array#join`'s body: append each element's bytes to `out`, separated by
-/// `sep`, flattening nested arrays as Ruby does. Byte-faithful -- a String
-/// element contributes its own bytes under its own encoding, and only a
-/// NON-String goes through `to_s`.
+/// `Array#join`'s body: appends each element's bytes to `out`, separated by
+/// `sep`, and flattens nested arrays recursively under that same separator --
+/// `[1, [2, 3]].join("-")` gives `"1-2-3"`.
+///
+/// Byte-faithful: a String element contributes its own bytes under its own
+/// encoding, and only a non-String goes through `to_s`.
 fn join_into(
     out: &mut crate::enc::StrBuf,
     elems: &[RubyValue],

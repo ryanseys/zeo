@@ -2838,16 +2838,6 @@ fn expand_core(id: ClassId, out: &mut Vec<ClassId>) {
     }
 }
 
-/// A core class's DECLARED linearized ancestors -- what the abi declares for it
-/// before any program reopens it. Covers builtins AND exceptions with one DFS:
-/// e.g. `declared_ancestors(StandardError)` walks its superclass chain up to
-/// `Exception`, then `Object`'s own tail, giving
-/// `[StandardError, Exception, Object, Kernel, BasicObject]`.
-///
-/// The runtime installs these once (`ClassRegistry::with_core`); the compiler
-/// emits a per-program OVERRIDE only when a program actually changes a builtin's
-/// ancestors (so `class Array; include M; end` still works, full-parity, without
-/// every program re-listing the unchanged hierarchy).
 /// Whether this builtin needs a per-program registry entry: `register_builtins`
 /// installs exactly the UNGATED ones, so a `require`-gated class must be
 /// registered by the program that activates it.
@@ -2861,6 +2851,18 @@ pub fn is_gated_builtin(id: ClassId) -> bool {
         .any(|b| b.id.0 == id.0 && b.feature.is_some())
 }
 
+/// A core class's DECLARED linearized ancestors -- what the ABI declares for
+/// it before any program reopens it.
+///
+/// One DFS covers builtins and exceptions alike. For example,
+/// `declared_ancestors(StandardError)` walks its superclass chain up to
+/// `Exception`, then `Object`'s own tail, giving
+/// `[StandardError, Exception, Object, Kernel, BasicObject]`.
+///
+/// The runtime installs these once, in `ClassRegistry::with_core`. The
+/// compiler emits a per-program OVERRIDE only when a program actually changes
+/// a builtin's ancestors, so `class Array; include M; end` keeps full parity
+/// without every program re-listing the unchanged hierarchy.
 pub fn declared_ancestors(id: ClassId) -> Vec<ClassId> {
     let mut out = Vec::new();
     expand_core(id, &mut out);

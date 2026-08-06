@@ -1569,18 +1569,6 @@ pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Nil)
 }
 
-/// `Kernel#warn`: each message on its own line (no trailing newline
-/// doubling, same rule as `puts`) to `$stderr`; returns nil. The
-/// `uplevel:` keyword isn't modeled (kwargs never reach the
-/// Kernel-function path).
-/// Whether `path` names a file the front end already spliced -- i.e. whether it
-/// is in `$LOADED_FEATURES` (see `globals::seed_loaded_features`).
-///
-/// Compared as a suffix on a path boundary, not for equality: the seeded entries
-/// are canonical absolute paths, while a dynamic require may name the file
-/// relatively (`require_relative "smtp/auth_plain"`, with or without `.rb`).
-/// Suffix matching is what makes both spellings find it, and a `/` boundary is
-/// what keeps `auth_plain.rb` from matching `not_auth_plain.rb`.
 /// The `require`/`require_relative` runtime body, shared by the Kernel rows
 /// above and `Ractor._require`. Whole-program AOT already spliced every
 /// compile-time-resolvable require, so the only calls that land here are
@@ -1617,6 +1605,14 @@ pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Sign
     Err(sig)
 }
 
+/// Whether `path` names a file the front end already spliced -- that is,
+/// whether it is in `$LOADED_FEATURES` (see `globals::seed_loaded_features`).
+///
+/// Compared as a suffix on a path boundary, not for equality. The seeded
+/// entries are canonical absolute paths, while a dynamic require may name the
+/// file relatively (`require_relative "smtp/auth_plain"`, with or without
+/// `.rb`). Suffix matching finds both spellings, and the `/` boundary keeps
+/// `auth_plain.rb` from matching `not_auth_plain.rb`.
 pub(crate) fn feature_already_loaded(path: &str) -> bool {
     let RubyValue::Array(features) = crate::globals::global_get(0, "$LOADED_FEATURES") else {
         return false;
@@ -1664,6 +1660,10 @@ fn caller_window(start: Option<&RubyValue>, length: Option<&RubyValue>) -> (usiz
     }
 }
 
+/// `Kernel#warn`: writes each message on its own line to `$stderr` and
+/// returns nil. It does not double a trailing newline, the same rule `puts`
+/// follows. The `uplevel:` keyword is not modelled, because kwargs never
+/// reach the Kernel-function path.
 pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // A trailing keyword Hash (`category:`/`uplevel:`) is consumed, not printed.
     // CRuby leaves `Warning[:deprecated]` off by default (so a :deprecated

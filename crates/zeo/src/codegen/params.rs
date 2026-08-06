@@ -120,21 +120,6 @@ fn signature_param_pairs(
     items
 }
 
-/// The callee's own prologue: shadows every `Option<RubyValue>`/raw
-/// collection Rust parameter with a `let mut` binding of the same Ruby name
-/// holding a real `RubyValue` -- see the module's docs. Emitted in `Params`'
-/// declared order so a later default expression can reference an earlier
-/// parameter, matching Ruby's own rule that a default may only depend on
-/// parameters declared before it. A named `&blk` shadows `__blk` into an
-/// ordinary `RubyValue` local (`Nil` when unyielded, matching real Ruby --
-/// NOT absent, unlike every other kind's `None`-becomes-a-default rule).
-/// Finally, ANY of this method's own parameter names that some escaping
-/// block inside its body captures (see `codegen::captures`) get one more
-/// wrapping shadow into `Arc<parking_lot::Mutex<RubyValue>>` -- captured
-/// method PARAMETERS need this too, not just captured plain locals, since
-/// `codegen::hoisting`'s prelude only ever sees names `collect_locals` finds
-/// (which never includes a method's own params -- they're bound via the
-/// Rust fn signature, not that prelude).
 /// The parenthesized-destructuring params (`|a, (b, c)|`), replayed as the
 /// ordinary multi-assignments they are: each slot was bound under an internal
 /// name by the normal positional rules, and this splits that value into the
@@ -170,6 +155,23 @@ fn emit_destructures(cx: &Ctx, params: &Params) -> TokenStream {
     quote! { #(#decls)* #(#writes)* }
 }
 
+/// The callee's own prologue. Shadows every `Option<RubyValue>` or raw
+/// collection Rust parameter with a `let mut` binding of the same Ruby name,
+/// holding a real `RubyValue`.
+///
+/// Emitted in `Params`' declared order, so a later default expression can
+/// reference an earlier parameter. That matches Ruby's rule that a default
+/// may depend only on parameters declared before it.
+///
+/// A named `&blk` shadows `__blk` into an ordinary `RubyValue` local, `Nil`
+/// when unyielded. That matches real Ruby, and differs from every other
+/// kind's None-becomes-a-default rule.
+///
+/// Finally, any of this method's own parameter names that an escaping block
+/// captures get one more shadow, into `Arc<parking_lot::Mutex<RubyValue>>`.
+/// Captured method PARAMETERS need this as much as captured plain locals do,
+/// because `codegen::hoisting`'s prelude only sees names `collect_locals`
+/// finds, and those never include a method's own params.
 pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream {
     // Destructured names are excluded from capture wraps: a wrap turns a
     // by-value Rust PARAMETER into its capture cell, and a destructured name

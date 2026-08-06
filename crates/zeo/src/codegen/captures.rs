@@ -843,12 +843,6 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
 /// `at_exit`/`__method__` forms it intercepts just above them). Mentioning
 /// one inside a block therefore doesn't make the block need a receiver.
 ///
-/// Kept deliberately CONSERVATIVE: a name wrongly listed here loses its
-/// receiver (a real bug -- an `instance_exec`'d block calling it would
-/// dispatch on the wrong object); a name wrongly MISSING just makes some
-/// block carry a self it never reads, which costs nothing but a moved
-/// `RubyValue`. So when in doubt, leave it out. `method`/`send`/`raise` are
-/// deliberately absent: they genuinely consult the implicit receiver.
 /// Whether the class this block is being compiled under has a real method of
 /// this name -- in which case a receiver-less call to it is NOT the Kernel free
 /// function [`is_kernel_free_fn`] assumes. `Object` is excluded: every class
@@ -880,6 +874,15 @@ fn nested_proc_binding_needs_self(
     }
 }
 
+/// Whether `name` is a Kernel free function, which a receiver-less call can
+/// reach without consulting `self`.
+///
+/// Deliberately CONSERVATIVE. A name wrongly listed here loses its receiver,
+/// which is a real bug: an `instance_exec`'d block calling it would dispatch
+/// on the wrong object. A name wrongly missing only makes some block carry a
+/// self it never reads, which costs one moved `RubyValue`. So when in doubt,
+/// leave it out. `method`, `send` and `raise` are absent on purpose, because
+/// they genuinely consult the implicit receiver.
 fn is_kernel_free_fn(name: &str) -> bool {
     matches!(
         name,

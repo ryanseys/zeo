@@ -561,22 +561,20 @@ impl Hir {
 
     /// Whether this program can reach the RUNTIME eval VM.
     ///
-    /// Only two builtins funnel into `zeo_rt::eval_value`/`eval_string` (the
-    /// sole prism users): `Kernel#eval` and string-form `instance_eval`. A
-    /// LITERAL `eval("...")` never counts -- the recognizer already spliced it
-    /// into the arena as `HirNode::Eval` at lowering time (no runtime parser),
-    /// so any surviving `Call` named `eval` is the dynamic form. A block-form
-    /// `instance_eval { ... }` runs a real block (no VM), and carries its block
-    /// in `block`, not `args` -- so a POSITIONAL argument is what distinguishes
-    /// the string form that reaches the VM.
+    /// Only `Kernel#eval` and string-form `instance_eval` funnel into
+    /// `zeo_rt::eval_value`/`eval_string`. A literal `eval("...")` does not
+    /// count: lowering already spliced it into the arena as `HirNode::Eval`,
+    /// so any surviving `Call` named `eval` is the dynamic form. Block-form
+    /// `instance_eval { ... }` runs a real block and carries it in `block`,
+    /// so a POSITIONAL argument marks the string form.
     ///
-    /// A plain scan of the whole arena (every node, not a root traversal) so it
-    /// also catches eval sites inside spliced `require`d files and method
-    /// bodies. Over-approximation is safe: a false positive only links the
-    /// larger runtime; the honest failure mode of a miss (a `send(name, src)`
-    /// whose method name is COMPUTED, which no static analysis can see) is the
-    /// runtime's own `NotImplementedError` naming `--features eval-vm`, not
-    /// silent wrong output.
+    /// This scans the whole arena rather than traversing from the roots, so
+    /// it also catches eval sites inside spliced files and method bodies.
+    /// Over-approximation is safe: a false positive only links the larger
+    /// runtime. A miss -- `send(name, src)` with a computed name, which no
+    /// static analysis can see -- raises the runtime's own
+    /// `NotImplementedError` naming `--features eval-vm`, never silent
+    /// wrong output.
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
             HirNode::Call { name, args, .. } => match name.as_str() {
@@ -770,26 +768,23 @@ pub struct Params {
     /// clean lowering error -- see `parse/mod.rs::lower_params`'s docs.
     pub block: Option<Option<String>>,
     /// BLOCK-LOCAL declarations -- the names after the `;` in `|x; sum|`.
-    /// Always empty for a method's `Params` (the syntax exists only on a
-    /// block).
+    /// Always empty for a method's `Params`; the syntax exists only on a
+    /// block.
     ///
-    /// Not parameters: nothing is ever bound to them from the argument
+    /// These are not parameters. Nothing binds to them from the argument
     /// list, so they take no signature slot and count toward no arity rule.
-    /// They are fresh locals scoped to the block, re-initialized to `nil` on
-    /// EVERY invocation -- which is the part that makes them more than a
-    /// naming convention, and is oracle-verified:
+    /// They are fresh locals, re-initialized to `nil` on EVERY invocation.
+    /// That is what makes them more than a naming convention:
     ///
     /// ```ruby
     /// total = 42
     /// [1, 2, 3].each { |x; total| total = (total || 0) + x }
-    /// total  # => 42 -- never written, AND never accumulated:
-    ///        #    `total` is nil again at the top of each call
+    /// total  # => 42 -- never written, and never accumulated
     /// ```
     ///
-    /// They ARE in `bound_names`, though, which is what makes them shadow an
-    /// enclosing local correctly: that one enumeration is what
-    /// `captures::own_param_names` (capture classification), `Ctx::in_proc`
-    /// (static-type/cell shadowing) and hoisting all read.
+    /// They do appear in `bound_names`, which is what shadows an enclosing
+    /// local correctly. `captures::own_param_names`, `Ctx::in_proc` and
+    /// hoisting all read that one enumeration.
     pub block_locals: Vec<String>,
     /// The block's IMPLICIT block-locals: names in prism's block-scope local
     /// table that are first-assigned inside the body (so not parameters and not
@@ -1308,24 +1303,24 @@ impl MultiTarget {
         }
     }
 
-    /// Every LEAF target this one denotes, at any nesting depth -- a `Nested`
-    /// group recurses, everything else yields itself. The companion to
-    /// `for_each_node`: that one yields the sub-EXPRESSIONS embedded in a
-    /// target, this one yields the targets themselves, so a pass collecting
-    /// names BY STORAGE CLASS (the ivar/cvar/const registration that decides a
-    /// generated struct's fields and a constant's owning scope) has something
-    /// to match on.
+    /// Every LEAF target this one denotes, at any nesting depth. A `Nested`
+    /// group recurses; everything else yields itself.
     ///
-    /// Using `for_each_node` for that silently dropped every ivar, cvar and
-    /// constant written ONLY via a multi-assignment or a `for` target -- those
-    /// arms yield nothing, being leaves with no embedded expression. An ivar
-    /// with no collected name gets no struct field, and the write emitted
-    /// against it doesn't compile (erb's `@src, @encoding, @frozen_string =
-    /// *compiler.compile(str)`); a cvar or constant silently registers against
-    /// the wrong owner, which is worse, because it compiles.
+    /// The companion to `for_each_node`, which yields the sub-EXPRESSIONS
+    /// embedded in a target. This yields the targets themselves, so a pass
+    /// collecting names by storage class -- the ivar/cvar/const registration
+    /// that decides a struct's fields and a constant's owning scope -- has
+    /// something to match on.
     ///
-    /// `Global` targets need nothing from this: `emit_target_write` lowers
-    /// them through the dynamic `zeo_rt::global_set`, which declares no storage.
+    /// `for_each_node` silently dropped every ivar, cvar and constant
+    /// written only via a multi-assignment or a `for` target, because those
+    /// arms are leaves with no embedded expression. An ivar with no
+    /// collected name gets no struct field, and its write does not compile.
+    /// A cvar or constant registers against the wrong owner, which is worse:
+    /// it compiles.
+    ///
+    /// `Global` targets need nothing from this. `emit_target_write` lowers
+    /// them through `zeo_rt::global_set`, which declares no storage.
     pub fn for_each_target(&self, visit: &mut impl FnMut(&MultiTarget)) {
         match self {
             MultiTarget::Nested(group) => group.for_each_target(visit),
@@ -1654,34 +1649,25 @@ pub enum HirNode {
     /// a variable, compared, or reflected on at runtime).
     ClassRef(String),
     /// A literal-name-resolvable call: `recv.name(args) { block }`, or an
-    /// implicit-self call (`receiver: None`). `send`/`public_send` are NOT a
-    /// separate node kind (mirroring prism/zeo: they're just calls named
-    /// "send") -- codegen inspects `name` and, for `send`, `args[0]` to
-    /// decide Path 1 (static) vs. Path 2 (`zeo_rt::send`). `safe: true`
-    /// is `&.` (`recv.is_safe_navigation()` in prism -- a flag on the same
-    /// `CallNode`, not a separate node kind): the call short-circuits to
-    /// `nil` without evaluating at all when `receiver` is `nil` at runtime.
-    /// `kwargs` are the call site's own `name: value` pairs (`foo(x: 1)`) --
-    /// a distinct `KeywordHashNode` prism peels off the tail of the ordinary
-    /// argument list at lowering time (see `parse/mod.rs`), resolved by NAME
-    /// against the callee's declared keyword params at codegen time (the
-    /// callee's `Params` is always statically known at a Path 1 call site).
-    /// `args` reuses `ArrayElem` (a plain positional value, or a `*expr`
-    /// splat whose contents are flattened in at runtime -- see
-    /// `ArrayElem`'s docs and `codegen::params::emit_call_args`'s Path 1
-    /// splat-flattening); `kwargs` is the ordered `KwArg` list (literal
-    /// `name: value` pairs INTERLEAVED with `**h` double-splats in source
-    /// order -- Ruby's Hash is insertion-ordered and the merge is
-    /// left-to-right last-one-wins, so the order is observable). A `kwargs`
-    /// containing any `DoubleSplat` routes to the runtime arg-vector path;
-    /// a pairs-only `kwargs` stays on the static Path 1 fast path.
-    /// `block_arg` is `foo(&existing_proc)` --
-    /// forwarding an already-built `Proc` value as the call's block (a
-    /// distinct `BlockArgumentNode`), separate from `block` (a literal `{
-    /// }`/`do..end` at the call site); real Ruby rejects having both on the
-    /// same call, which zeo doesn't separately re-validate (whichever
-    /// lowers last silently wins -- harmless, since `ruby-prism` itself
-    /// already rejects this at parse time before lowering ever runs).
+    /// implicit-self call (`receiver: None`).
+    ///
+    /// - `send`/`public_send` are ordinary calls named "send", not a separate
+    ///   node kind. Codegen reads `name` and, for `send`, `args[0]`, to
+    ///   choose static Path 1 or `zeo_rt::send` Path 2.
+    /// - `safe: true` is `&.`, a flag on prism's same `CallNode`. The call
+    ///   short-circuits to `nil` without evaluating when `receiver` is `nil`.
+    /// - `args` reuses `ArrayElem`: a positional value, or a `*expr` splat
+    ///   that flattens at runtime.
+    /// - `kwargs` is the ordered `KwArg` list. Literal `name: value` pairs
+    ///   interleave with `**h` double-splats in source order, and the merge
+    ///   is left-to-right last-one-wins, so the order is observable. Any
+    ///   `DoubleSplat` routes to the runtime arg-vector path; a pairs-only
+    ///   list stays on Path 1. Codegen resolves the names against the
+    ///   callee's declared keyword params, which a Path 1 site always knows.
+    /// - `block_arg` is `foo(&existing_proc)`, forwarding an already-built
+    ///   `Proc`. It is separate from `block`, a literal `{ }`/`do..end` at
+    ///   the call site. Ruby rejects both on one call, and `ruby-prism`
+    ///   rejects it at parse time, so zeo does not re-validate.
     Call {
         receiver: Option<NodeId>,
         name: String,
@@ -2016,25 +2002,24 @@ pub enum HirNode {
     /// this stays one optional node (mirroring `Break`/`Next`).
     Return(Option<NodeId>),
     /// `yield` / `yield(args)` -- invokes the enclosing method's implicit
-    /// block. Only recognized directly within a method's own control flow
-    /// (if/case/while/etc.), not inside a NESTED block literal -- `yield`
-    /// lexically inside a block passed elsewhere refers to a different
-    /// thing in real Ruby (the block's own enclosing method, not this one),
-    /// a genuinely harder case zeo doesn't attempt; see
-    /// `analyze::register_class`'s `uses_bare_block` scan, which enforces
-    /// this restriction with a clean rejection. Compiles to invoking the
-    /// method's implicit `__blk` parameter (see `codegen::params`), panicking
-    /// with a clear "no block given" message (mirroring real Ruby's
-    /// `LocalJumpError`) if the method was called without one.
+    /// block.
     ///
-    /// `Vec<ArrayElem>`, the same shape `Call`'s positional arguments use,
-    /// so `yield(*a)` needs no machinery of its own -- a `Splat` element
-    /// flattens at runtime exactly as it does at a call site. A trailing
-    /// `yield(k: 1)`/`yield(**h)` is folded by lowering into one trailing
-    /// `HashLit`/merge element, which is what
-    /// `codegen::params::emit_proc_param_bindings` already binds a block's
-    /// own keyword params from (real Ruby's auto-conversion of a trailing
-    /// Hash into block keywords).
+    /// Recognized only directly within a method's own control flow, not
+    /// inside a nested block literal. In real Ruby a `yield` lexically
+    /// inside a block passed elsewhere refers to that block's own enclosing
+    /// method; zeo does not attempt that case, and
+    /// `analyze::register_class`'s `uses_bare_block` scan rejects it
+    /// cleanly.
+    ///
+    /// Compiles to an invocation of the method's implicit `__blk` parameter
+    /// (see `codegen::params`), raising real Ruby's `LocalJumpError` message
+    /// when the method was called without a block.
+    ///
+    /// `Vec<ArrayElem>` is the shape `Call`'s positional arguments use, so
+    /// `yield(*a)` needs no machinery of its own. Lowering folds a trailing
+    /// `yield(k: 1)`/`yield(**h)` into one `HashLit`/merge element, which
+    /// `codegen::params::emit_proc_param_bindings` binds a block's keyword
+    /// params from.
     Yield(Vec<ArrayElem>),
     /// `block_given?` -- a zero-arg, no-receiver call-shape recognized at
     /// lowering time (mirrors `loop`/`define_method`'s desugars), not a
@@ -2144,24 +2129,20 @@ pub enum HirNode {
     /// convention, an unset constant raises a real `NameError` -- matches
     /// actual Ruby.
     QualifiedConstRead(String, String),
-    /// A LENIENT constant read (`None` if never assigned, instead of raising
-    /// a `NameError`) -- `scope: None` for a bare name, `scope:
-    /// Some(class_name)` for `Foo::NAME`, same shape as `QualifiedConstRead`/
-    /// `ConstWrite`. Never produced by ordinary Ruby SOURCE (a real
-    /// constant read always raises when unset -- see `QualifiedConstRead`'s
-    /// docs); exists ONLY as `parse::lower_or_write`'s internal desugar for
-    /// `CONST ||= value` specifically. Confirmed against real Ruby that this
-    /// leniency is a genuine, narrow special case: `CONST ||= v` on a
-    /// never-before-assigned constant quietly defines it (no `NameError`),
-    /// but `CONST += v`/`CONST &&= v` on the same undefined constant DOES
-    /// still raise -- Ruby's own `||=`-on-constant sugar treats "never
-    /// assigned" as equivalent to a falsy read, `&&=`/other compound ops
-    /// don't get that same leniency. `codegen::expr::emit_defined`'s
-    /// existing `Defined`-node approximation can't back this (it's a
-    /// syntax-only "was this written as a constant read" classifier, not a
-    /// real "was this constant ever actually assigned" check -- see that
-    /// function's docs), so this needs its own real, `zeo_rt::const_get`-
-    /// backed codegen instead of reusing `Defined`.
+    /// A LENIENT constant read: `None` when never assigned, rather than a
+    /// `NameError`. `scope: None` for a bare name, `scope: Some(class_name)`
+    /// for `Foo::NAME`.
+    ///
+    /// Ordinary Ruby source never produces this. It exists only as
+    /// `parse::lower_or_write`'s desugar for `CONST ||= value`. Real Ruby
+    /// confirms the leniency is that narrow: `CONST ||= v` on a
+    /// never-assigned constant quietly defines it, while `CONST += v` and
+    /// `CONST &&= v` on the same constant still raise.
+    ///
+    /// `codegen::expr::emit_defined`'s `Defined` node cannot back this. It
+    /// classifies syntax -- whether something was written as a constant read
+    /// -- not whether the constant was ever assigned. So this needs its own
+    /// `zeo_rt::const_get`-backed codegen.
     ConstReadOrNil(Option<String>, String),
     /// `NAME = value` / `Foo::NAME = value` -- `scope: None` for the bare
     /// form (owned by the LEXICALLY-enclosing class/module body it's written
@@ -2277,43 +2258,43 @@ pub enum HirNode {
     /// `zeo_rt::lastmatch`, including the frame-locality divergence.
     LastMatchRef(LastMatch),
     /// A statement sequence evaluated in order, answering its LAST
-    /// statement's value -- emitted as one tail-value Rust block expression
-    /// via `emit_body` (the same codegen shape as `Eval`'s).
+    /// statement's value. `emit_body` emits it as one tail-value Rust block,
+    /// the same shape `Eval` uses.
     ///
     /// Two sources reach here:
-    ///   - a parenthesized multi-statement expression written in real
-    ///     source (`x = (a; b)`, `(puts "hi"; 42)`);
-    ///   - lowering itself, binding a compound-assignment target's
-    ///     receiver/index expression(s) to a hidden local exactly ONCE
-    ///     before reading-then-writing through them (`obj.attr += 1`,
-    ///     `arr[i] ||= 1`), matching Ruby's "evaluate the receiver once"
-    ///     rule; see `parse::lower_call_operator_write`'s docs.
+    ///   - a parenthesized multi-statement expression in real source
+    ///     (`x = (a; b)`, `(puts "hi"; 42)`);
+    ///   - lowering, which binds a compound-assignment target's receiver and
+    ///     index expressions to a hidden local exactly once before reading
+    ///     and writing through them (`obj.attr += 1`, `arr[i] ||= 1`). This
+    ///     matches Ruby's evaluate-the-receiver-once rule; see
+    ///     `parse::lower_call_operator_write`.
     ///
-    /// Introduces NO scope of its own in either case: a local assigned
-    /// inside is visible afterwards (`y = (a = 5; a * 2)` leaves `a == 5`
-    /// readable), which is both what real Ruby does with `(a; b)` and what
-    /// the compound-assignment lowering needs from its hidden locals.
+    /// It introduces no scope of its own. A local assigned inside stays
+    /// readable afterwards, which is both what Ruby does with `(a; b)` and
+    /// what the compound-assignment lowering needs from its hidden locals.
     ///
-    /// Distinct from `Eval` (which is specifically a literal
-    /// `eval("...")`'s spliced body) because the two mean different things
-    /// to a Ruby reader and to tooling, not because they generate
+    /// Distinct from `Eval`, a literal `eval("...")`'s spliced body, because
+    /// the two mean different things to a reader, not because they generate
     /// differently.
     Seq(Vec<NodeId>),
-    /// `left..right` / `left...right` used AS a condition -- Ruby's flip-flop,
-    /// a two-state latch rather than a Range. Off, it evaluates `left` and
-    /// turns on when that is truthy; on, it evaluates `right` and turns off
-    /// when that is truthy. Either way it answers true whenever it is (or just
-    /// became) on. The two-dot form additionally tests `right` in the very
-    /// evaluation that turned it on, so `(i == 3)..(i == 3)` is true for one
-    /// iteration; the three-dot form (`exclusive`) waits for the next one.
+    /// `left..right` / `left...right` used AS a condition -- Ruby's
+    /// flip-flop, a two-state latch rather than a Range.
+    ///
+    /// Off, it evaluates `left` and turns on when that is truthy. On, it
+    /// evaluates `right` and turns off when that is truthy. Either way it
+    /// answers true whenever it is, or just became, on. The two-dot form
+    /// also tests `right` in the evaluation that turned it on, so
+    /// `(i == 3)..(i == 3)` is true for one iteration. The three-dot form
+    /// (`exclusive`) waits for the next one.
     ///
     /// prism mints this node only in a conditional position -- a `..`
     /// anywhere else is an ordinary `RangeLit` -- so no context flag is
-    /// needed here. An omitted side is nil, hence falsy: `..(i == 3)` never
-    /// turns on and `(i == 2)..` never turns off, both oracle-verified.
+    /// needed. An omitted side is nil, hence falsy: `..(i == 3)` never turns
+    /// on and `(i == 2)..` never turns off, both oracle-verified.
     ///
-    /// `state` indexes the runtime's latch table. It is minted per SYNTACTIC
-    /// occurrence, which is what Ruby scopes the latch to -- two flip-flops in
+    /// `state` indexes the runtime's latch table, minted per SYNTACTIC
+    /// occurrence. That is what Ruby scopes the latch to: two flip-flops in
     /// one loop body keep separate state, and one flip-flop keeps its state
     /// across separate runs of its loop.
     FlipFlop {

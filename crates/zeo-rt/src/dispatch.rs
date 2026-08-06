@@ -1916,21 +1916,6 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
     RubyValue::Array(crate::array_new(names))
 }
 
-/// `recv.respond_to?(:name)` -- MRO-faithful: walks the
-/// receiver's real ancestor chain probing, per ancestor, the registry
-/// (materialized user methods live flat on the OWN class -- the first
-/// ancestor -- and builtin reopens hang off whichever ancestor was
-/// reopened), the builtin method tables, and the Enumerable/Comparable
-/// name sets. Kernel PRIVATE functions (`puts`, ...) are deliberately
-/// invisible, real Ruby's rule. Doesn't consult
-/// `method_missing`/`respond_to_missing?`, which this runtime doesn't model.
-/// `respond_to?`'s answer: does `recv_class` (or any ancestor) provide
-/// `name`? `include_all` is the method's own second parameter -- false (the
-/// default) skips PRIVATE methods, exactly as in CRuby.
-/// `respond_to?` on a VALUE receiver -- like `responds_to` but also honors a
-/// per-object singleton method, which is keyed by object identity and
-/// so invisible to the class-id-only `responds_to`. Codegen's `respond_to?`
-/// fast path routes here so a `def obj.foo` singleton answers `true`.
 /// Whether `recv` carries a not-implemented stub named `name` (see
 /// [`is_notimplement_row`]). Reflection that asks whether a row EXISTS --
 /// `method`, `instance_method` -- must answer yes exactly where `respond_to?`
@@ -1940,6 +1925,11 @@ pub fn has_notimplement_row(recv: &RubyValue, name: Symbol) -> bool {
         || matches!(recv, RubyValue::Class(cid) if is_notimplement_row(*cid, name))
 }
 
+/// `respond_to?` on a VALUE receiver. Like [`responds_to`], but it also
+/// honours a per-object singleton method. Those are keyed by object identity,
+/// so the class-id-only [`responds_to`] cannot see them. Codegen's
+/// `respond_to?` fast path routes here, so a `def obj.foo` singleton answers
+/// true.
 pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> bool {
     // Asked HERE and not in `responds_to`, which doubles as an EXISTENCE
     // predicate -- `instance_method(:syscall)` must still build an
@@ -2180,6 +2170,19 @@ pub(crate) fn value_singleton_visibility(sclass: ClassId, name: Symbol) -> Metho
     crate::runtime_meta::overlay_method_visibility(sclass, name).unwrap_or(MethodVisibility::Public)
 }
 
+/// Does `recv_class`, or any ancestor, provide `name`?
+///
+/// Walks the receiver's real ancestor chain. Per ancestor it probes the
+/// registry, the builtin method tables, and the Enumerable/Comparable name
+/// sets. Materialized user methods live flat on the OWN class, the first
+/// ancestor; builtin reopens hang off whichever ancestor was reopened.
+///
+/// `include_all` is the Ruby method's own second parameter. False, the
+/// default, skips private methods, as in CRuby. Kernel's private functions
+/// (`puts` and friends) stay invisible for the same reason.
+///
+/// This does not consult `method_missing`/`respond_to_missing?`, which this
+/// runtime does not model.
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
     // A definition hook on the stack has not seen the rest of its class yet --
     // see `runtime_meta::not_yet_defined`.
@@ -2841,18 +2844,6 @@ pub fn construct_by_class_id(
     }
 }
 
-/// The `super` dispatch for an exception-backed receiver (D3): resume the MRO
-/// walk in the RECEIVER's own ancestors at the entry AFTER `defining_class`
-/// (the class whose body this `super` is lexically written in) and invoke the
-/// first `name` registered there -- a native default or a user delta,
-/// uniformly. This is the runtime counterpart of codegen's `emit_super_inline`
-/// HIR splice, which CANNOT serve a `super` into a native exception method: an
-/// exception's message lives in a hidden slot, independent of any `@message`
-/// ivar, so the retained `Exception#initialize` HIR (a fictional `@message =
-/// msg`) would set a visible ivar and leave the real message untouched. Walking
-/// the registry -- where every exception id carries the native `exc_*` fns --
-/// runs the true behavior instead. Also the exact shape the eval VM needs for
-/// `super`, so it lands here rather than as a codegen special case.
 /// `defined?(super)`'s probe: whether a super target exists for `name` past
 /// `defining_class` on `recv`'s chain -- the same resolution
 /// [`send_super_from`] walks, answered as a boolean instead of a call.
@@ -2860,6 +2851,22 @@ pub fn super_defined(recv: &RubyValue, defining_class: ClassId, name: Symbol) ->
     method_owner_after(recv.class_id(), defining_class, name).is_some()
 }
 
+/// The `super` dispatch for an exception-backed receiver.
+///
+/// Resumes the MRO walk in the RECEIVER's own ancestors, at the entry after
+/// `defining_class` -- the class whose body this `super` is written in -- and
+/// invokes the first `name` registered there, whether a native default or a
+/// user delta.
+///
+/// Codegen's `emit_super_inline` HIR splice cannot serve a `super` into a
+/// native exception method. An exception's message lives in a hidden slot,
+/// independent of any `@message` ivar, so the retained `Exception#initialize`
+/// HIR would set a visible ivar and leave the real message untouched. Walking
+/// the registry, where every exception id carries the native `exc_*` fns,
+/// runs the true behaviour instead.
+///
+/// This is also the shape the eval VM needs for `super`, so it lands here
+/// rather than in codegen.
 pub fn send_super_from(
     recv: &RubyValue,
     defining_class: ClassId,
@@ -4174,15 +4181,7 @@ pub fn validate_class_aliases(id: ClassId) -> Result<(), Signal> {
     Ok(())
 }
 
-/// `send_value` with the CALLER's box -- the statically-known
-/// defining box every codegen dynamic-dispatch site passes, the AOT
-/// translation of CRuby's `cme->def->box` (no frame walk). Only the
-/// per-ancestor value-method probe consumes it: a box's builtin patches
-/// resolve from that box's code, root patches everywhere. This crate's own
-/// internal callers (Enumerable driving `each`, Comparable driving `<=>`,
-/// ...) go through the box-0 wrapper above -- builtins run in ROOT, which
-/// is CRuby's own documented builtins-call-builtins leak, faithfully.
-/// `public_send`'s dispatch: `send_value_in` plus the visibility gate.
+/// `public_send`'s dispatch: [`send_value_in`] plus the visibility gate.
 ///
 /// CRuby implements `public_send` as an ordinary send carrying the
 /// `CALL_PUBLIC` scope, and `rb_method_call_status` (`vm_eval.c:837`) then
@@ -4227,6 +4226,18 @@ pub fn send_value_public_in(
     }
 }
 
+/// [`send_value`] with the CALLER's box.
+///
+/// The box is the statically-known defining box every codegen
+/// dynamic-dispatch site passes -- the AOT translation of CRuby's
+/// `cme->def->box`, with no frame walk. Only the per-ancestor value-method
+/// probe consumes it: a box's builtin patches resolve from that box's code,
+/// and root patches resolve everywhere.
+///
+/// This crate's own internal callers, such as Enumerable driving `each` or
+/// Comparable driving `<=>`, go through the box-0 wrapper instead. Builtins
+/// run in ROOT, which faithfully reproduces CRuby's documented
+/// builtins-call-builtins leak.
 pub fn send_value_in(
     box_id: u32,
     recv: &RubyValue,

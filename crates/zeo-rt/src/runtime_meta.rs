@@ -929,14 +929,6 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     Ok(RubyValue::Symbol(name))
 }
 
-/// Installs a COMPILED trampoline as the current body of `id`'s `name` --
-/// the runtime half of a positional method redefinition (a reopen's `def`
-/// over an existing method, a `def x; def x` pair a `method_added` hook
-/// observes). The static tables keep the final body; codegen calls this at
-/// boot with the FIRST body and again at each redefinition's document
-/// position, so dynamic dispatch tracks ruby's install-where-it-stands
-/// timeline. No hook fires here -- the spliced `DefHook` at the same
-/// position is the report, exactly as for a statically-registered `def`.
 /// Seeds the singleton mint with a COMPILE-registered singleton class: the
 /// surrogate a constant-bearing `class << self` body registered for `owner`
 /// (its constants live on the surrogate's id in the frozen tables). After
@@ -962,6 +954,17 @@ pub fn register_singleton_surrogate(owner: ClassId, surrogate: ClassId) {
         .insert(surrogate.0, owner_val);
 }
 
+/// Installs a COMPILED trampoline as the current body of `id`'s `name`.
+///
+/// This is the runtime half of a positional method redefinition: a reopen's
+/// `def` over an existing method, or a `def x; def x` pair that a
+/// `method_added` hook observes. The static tables keep the final body.
+/// Codegen calls this at boot with the FIRST body, and again at each
+/// redefinition's document position, so dynamic dispatch tracks Ruby's
+/// install-where-it-stands timeline.
+///
+/// No hook fires here. The spliced `DefHook` at the same position is the
+/// report, exactly as for a statically-registered `def`.
 pub fn runtime_replace_method(id: ClassId, name: Symbol, f: crate::dispatch::MethodFn) {
     {
         let mut w = maps().classes.write().unwrap();
@@ -2658,11 +2661,6 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Class(new_id))
 }
 
-/// `Module.new { body }` -- allocate a runtime MODULE id (ancestors = just
-/// itself, no superclass, no constructor -- `Module.new.new` is a NoMethodError)
-/// and run the optional body block with `self` bound to it. The result composes
-/// with `obj.extend`/`include`: its `define_method`-installed methods are
-/// retrievable by id from the overlay.
 /// `SomeModule.dup`/`.clone` -- a real, independent copy: a fresh runtime
 /// module id carrying its own snapshot of the original's OWN instance
 /// methods. Handing the original's handle back instead is silently
@@ -2739,6 +2737,13 @@ pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Class(new_id))
 }
 
+/// `Module.new { body }` -- allocate a runtime MODULE id and run the optional
+/// body block with `self` bound to it.
+///
+/// A module's ancestors are just itself. It has no superclass and no
+/// constructor, so `Module.new.new` raises NoMethodError. The result composes
+/// with `obj.extend`/`include`: its `define_method`-installed methods are
+/// retrievable by id from the overlay.
 pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
     let new_id = ClassId(id_num);
