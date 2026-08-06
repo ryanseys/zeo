@@ -6,7 +6,7 @@ module Psych
   # fallback (e.g. rubygems/yaml_serializer.rb) -- zeo always ships the native
   # engine, so this is always defined (and the fallback, which would define a
   # PARTIAL error hierarchy, is correctly skipped -- hence the full set below).
-  VERSION = "5.3.1"
+  VERSION = "5.4.0"
 
   # CRuby's error hierarchy (oracle-verified against ruby 4.0.5):
   # `Exception < RuntimeError`; `SyntaxError`/`DisallowedClass`/`BadAlias` under

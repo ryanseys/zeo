@@ -1,7 +1,7 @@
-# Vendored from https://github.com/ruby/resolv @ v0.7.0 (a0e89bbe48a7465e8298f99936fb4589932123ef); managed by `xtask gem`.
+# Vendored from https://github.com/ruby/resolv @ v0.7.1 (8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c); managed by `xtask gem`.
 # Do not edit by hand -- see gems.toml.
 Gem::Specification.new do |s|
   s.name = "resolv"
-  s.version = "0.7.0"
+  s.version = "0.7.1"
   s.require_paths = ["lib"]
 end

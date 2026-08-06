@@ -36,12 +36,12 @@ license: they are zeo's own code, under the repository's MIT OR Apache-2.0.
 | irb | 1.18.0 | ruby 4.0.6 bundled gem |
 | minitest | 6.0.6 | ruby 4.0.6 bundled gem |
 | ostruct | 0.6.3 | ruby 4.0.5 default gem |
-| pp | 0.6.3 | ruby 4.0.6 default gem |
+| pp | 0.6.4 | upstream ruby/pp |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
 | reline | 0.6.3 | ruby 4.0.6 default gem |
 | shellwords | 0.2.2 | ruby 4.0.5 stdlib |
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
-| timeout | 0.6.0 | ruby 4.0.6 default gem |
+| timeout | 0.6.1 | upstream ruby/timeout |
 | tsort | 0.2.0 | ruby 4.0.5 default gem |
 
 `irb/` carries one removal: `lib/irb/ext/tracer.rb` is reduced to a
@@ -94,28 +94,29 @@ over the SAME prism zeo's own front end parses with. Two removals, marked in
 adapters, which subclass third-party gems zeo does not ship) and
 `lib/prism/ffi.rb` (its backend, replaced).
 
-## Reading a version off the oracle install
+## Choosing a version
 
-The version to vendor is **what the oracle Ruby ships**, not what its gem
-store happens to hold. Those differ: `gem install` (or any gem pulling a
-dependency) drops newer copies into the same store, and `require` then
-activates the newest, so both `gem list` and a `require`-and-print probe
-report versions Ruby never shipped. Several gems here were vendored ahead of
-the oracle exactly that way.
+zeo tracks each gem's **latest upstream release**, not the version the oracle
+Ruby happens to bundle. The stdlib gems release independently of Ruby itself,
+and pinning to a Ruby release would freeze zeo behind fixes its users want.
 
-Two reliable sources, in order:
+`cargo run -p xtask -- gem outdated` prints, per git-sourced gem, the current
+pin beside two reference points: what the oracle install resolves, and the
+newest upstream tag. Bump with `gem update <name> --tag vX.Y.Z` -- nothing
+bumps automatically, so every move is deliberate.
 
-- **Default gems**: `<gemdir>/specifications/default/*.gemspec`. Ruby owns
-  this directory; nothing else writes to it.
-- **Bundled gems** (`Gem::BUNDLED_GEMS::SINCE` names them -- `abbrev`,
-  `benchmark`, `bigdecimal`, `csv`, `drb`, `fiddle`, `irb`, `logger`, `nkf`,
-  `observer`, `ostruct`, `racc`, `reline`, `syslog`, `tsort`, ...): these sit
-  in the ordinary store beside user gems. Separate them by install timestamp
-  -- everything Ruby installed shares one mtime, and `stat` on a known default
-  gemspec gives you that batch.
+Where a gem ends up ahead of the Ruby it is compared against, expect the
+oracle to disagree about that gem's `VERSION`, and record the divergence in
+`docs/COMPATIBILITY.md`. `bundler` and `rubygems` ship from one repository and
+must move together, on a single shared `tag`/`rev` -- a test enforces it.
 
-`cargo run -p xtask -- gem outdated` prints the comparison for the
-git-sourced gems.
+Reading a version off the install is easy to get wrong, which is how several
+gems here drifted: `gem install` drops newer copies into the same store and
+`require` activates the newest, so neither `gem list` nor a require-and-print
+probe reports what Ruby actually shipped. For that, read
+`<gemdir>/specifications/default/*.gemspec` (Ruby owns that directory), and
+for bundled gems (`Gem::BUNDLED_GEMS::SINCE` names them) separate Ruby's
+install batch from later user installs by gemspec mtime.
 
-When bumping the oracle Ruby, re-vendor the first table from the new
+When bumping the oracle Ruby, re-check the first table against the new
 installation and update the versions here.

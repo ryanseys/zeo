@@ -8,13 +8,13 @@ rev    = "b362e8e3b92c48a9e8f34fc0f782d3396858db1f"
 
 [gems.benchmark]
 github = "ruby/benchmark"
-tag    = "v0.4.1"
-rev    = "6d878b4c0b96afaa6b234a13bf0ed36910c56913"
+tag    = "v0.5.0"
+rev    = "efa6e613cee9e3e47831c6767a1df08ac35b18cc"
 
 [gems.bundler]
 github = "rubygems/rubygems"
-tag    = "v4.0.16"
-rev    = "fc18079dba6c2caf60ea45a68dcd7840e25b38ea"
+tag    = "v4.0.18"
+rev    = "7e934435ff880a9a6f78b9ca5fea396a275bd5c4"
 subdir = "bundler"
 
 [gems.csv]
@@ -29,8 +29,8 @@ rev    = "a4f74442da5ece44f99fd4ff4f0299a3efa25004"
 
 [gems.erb]
 github = "ruby/erb"
-tag    = "v6.0.1.1"
-rev    = "93450765b5319cfb552a3d9719df137e8fbb75e9"
+tag    = "v6.0.7"
+rev    = "9907393a1f1dfc027e8e7f2a9f5fcc7c60632762"
 
 [gems.fileutils]
 github = "ruby/fileutils"
@@ -44,8 +44,8 @@ rev    = "192237e766c191fbba4578fafbad94f4c9d3d3a4"
 
 [gems.ipaddr]
 github = "ruby/ipaddr"
-tag    = "v1.2.8"
-rev    = "93ef50bc04285e61785c8539a81b8b8dc4eb7935"
+tag    = "v1.2.9"
+rev    = "f17f68bcab9cfb256cceac4546bf4e11876b2aa8"
 
 [gems.logger]
 github = "ruby/logger"
@@ -89,13 +89,13 @@ rev    = "5229883dca5b451c8bfd322272ccd2ca6d526695"
 
 [gems.resolv]
 github = "ruby/resolv"
-tag    = "v0.7.0"
-rev    = "a0e89bbe48a7465e8298f99936fb4589932123ef"
+tag    = "v0.7.1"
+rev    = "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
 
 [gems.rubygems]
 github = "rubygems/rubygems"
-tag    = "v4.0.16"
-rev    = "fc18079dba6c2caf60ea45a68dcd7840e25b38ea"
+tag    = "v4.0.18"
+rev    = "7e934435ff880a9a6f78b9ca5fea396a275bd5c4"
 
 [gems.tempfile]
 github = "ruby/tempfile"
