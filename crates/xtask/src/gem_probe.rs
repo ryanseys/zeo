@@ -51,6 +51,9 @@ enum Outcome {
     MissingDependency(String),
     /// No `lib/` to put on the load path.
     NoLibDir,
+    /// A `lib/` with no file this gem's name could name. Probing would compile
+    /// an unresolvable require, which says nothing about the gem.
+    NoEntryPoint,
     /// The compiler panicked. Distinct from a lowering gap on purpose: a gap
     /// is a known limit reported through the error path, a panic is a bug.
     CompilerPanic(String),
@@ -65,6 +68,7 @@ impl Outcome {
             Outcome::NativeExtension => "native-extension",
             Outcome::MissingDependency(_) => "missing-dependency",
             Outcome::NoLibDir => "no-lib-dir",
+            Outcome::NoEntryPoint => "no-entry-point",
             Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::FetchFailed(_) => "fetch-failed",
         }
@@ -85,6 +89,7 @@ impl Outcome {
             "compiles" => Outcome::Compiles,
             "native-extension" => Outcome::NativeExtension,
             "no-lib-dir" => Outcome::NoLibDir,
+            "no-entry-point" => Outcome::NoEntryPoint,
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
@@ -239,10 +244,48 @@ fn fetch(root: &Path, name: &str, version: &str) -> Result<PathBuf, String> {
 
 // ------------------------------------------------------------------ probe
 
-/// The feature a gem's users require, when it is not the gem's own name. A
-/// hyphen is a path separator (`net-http` -> `net/http`).
-fn entry_point(name: &str) -> String {
-    name.replace('-', "/")
+/// The feature a gem's users require, resolved against the files the gem
+/// actually ships.
+///
+/// Guessing from the name alone is not good enough, and failing quietly is the
+/// reason: `require "activerecord"` names no file, zeo lowers an unresolvable
+/// require to a RUNTIME `Kernel#require` rather than failing, and codegen then
+/// trivially succeeds having compiled none of the gem. Every Rails gem
+/// reported `compiles` that way while measuring nothing at all.
+///
+/// So the entry point is a file that exists, or the probe declines to answer.
+fn entry_point(dir: &Path, name: &str) -> Option<String> {
+    let lib = dir.join("lib");
+    // `net-http` -> `net/http`, `ruby-progressbar` -> `ruby_progressbar`.
+    for candidate in [
+        name.replace('-', "/"),
+        name.replace('-', "_"),
+        name.to_string(),
+    ] {
+        if lib.join(format!("{candidate}.rb")).is_file() {
+            return Some(candidate);
+        }
+    }
+    // `activerecord` ships `active_record.rb`: the separators differ, so
+    // compare with them removed.
+    let squash = |s: &str| s.replace(['-', '_', '/'], "").to_lowercase();
+    let target = squash(name);
+    let mut tops: Vec<String> = std::fs::read_dir(&lib)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rb"))
+        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    if let Some(hit) = tops.iter().find(|stem| squash(stem) == target) {
+        return Some(hit.clone());
+    }
+    // A gem with exactly one top-level file has named its entry point.
+    tops.sort();
+    match tops.len() {
+        1 => Some(tops.remove(0)),
+        _ => None,
+    }
 }
 
 /// A package directory holding ONLY this gem and its declared dependencies.
@@ -290,7 +333,10 @@ fn probe(root: &Path, name: &str, dir: &Path, deps: &[String]) -> Outcome {
         package_dirs: vec![view, root.join("gems")],
         ..Default::default()
     };
-    let src = format!("require {:?}\n", entry_point(name));
+    let Some(feature) = entry_point(dir, name) else {
+        return Outcome::NoEntryPoint;
+    };
+    let src = format!("require {feature:?}\n");
 
     // A sweep must survive a gem that panics the compiler. `parser` did
     // exactly that, and the whole run died with it, losing every verdict
@@ -736,10 +782,63 @@ mod tests {
         ));
     }
 
+    fn lib_with(root: &Path, name: &str, files: &[&str]) -> PathBuf {
+        let dir = vendor_dir(root).join(name);
+        for f in files {
+            let p = dir.join("lib").join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "# x\n").unwrap();
+        }
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        dir
+    }
+
+    /// An entry point must name a file that exists. Guessing and hoping is how
+    /// every Rails gem came back `compiles` while compiling none of itself:
+    /// `require "activerecord"` resolves to nothing, zeo defers it to runtime,
+    /// and codegen then succeeds trivially.
     #[test]
-    fn a_hyphen_in_a_gem_name_is_a_path_separator() {
-        assert_eq!(entry_point("net-http"), "net/http");
-        assert_eq!(entry_point("colorator"), "colorator");
+    fn the_entry_point_comes_from_the_files_the_gem_ships() {
+        let root = scratch("entry");
+        let plain = lib_with(&root, "colorator", &["colorator.rb"]);
+        assert_eq!(
+            entry_point(&plain, "colorator").as_deref(),
+            Some("colorator")
+        );
+
+        let nested = lib_with(&root, "net-http", &["net/http.rb"]);
+        assert_eq!(
+            entry_point(&nested, "net-http").as_deref(),
+            Some("net/http")
+        );
+
+        // The separator differs from the gem name entirely.
+        let rails = lib_with(&root, "activerecord", &["active_record.rb", "arel.rb"]);
+        assert_eq!(
+            entry_point(&rails, "activerecord").as_deref(),
+            Some("active_record")
+        );
+
+        let under = lib_with(&root, "ruby-progressbar", &["ruby_progressbar.rb"]);
+        assert_eq!(
+            entry_point(&under, "ruby-progressbar").as_deref(),
+            Some("ruby_progressbar")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_lib_naming_nothing_recognisable_declines_to_answer() {
+        let root = scratch("entry-none");
+        // Two unrelated top-level files: neither matches, and picking one
+        // would be a guess.
+        let odd = lib_with(&root, "mystery", &["alpha.rb", "beta.rb"]);
+        assert_eq!(entry_point(&odd, "mystery"), None);
+
+        // A single file names itself, whatever it is called.
+        let one = lib_with(&root, "solo", &["something_else.rb"]);
+        assert_eq!(entry_point(&one, "solo").as_deref(), Some("something_else"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // --------------------------------------------------------------- ledger
