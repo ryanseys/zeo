@@ -16,9 +16,17 @@ each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,
 
 **Faithful vendored copies** of the default/bundled gems shipping with the
 oracle Ruby at the time of vendoring (4.0.5; the oracle now pins 4.0.6 in
-`mise.toml`) -- copied verbatim from its installation, versions below,
-upstream licenses kept where the gem ships one (all are Ruby-license/2-clause
-BSD, compatible with zeo's MIT OR Apache-2.0):
+`mise.toml`) -- copied verbatim from its installation, versions below, and
+every one carrying its upstream license text (all are Ruby-license/2-clause
+BSD or MIT, compatible with zeo's MIT OR Apache-2.0).
+
+A Ruby default gem that ships no license file of its own is covered by Ruby's
+own dual license, so those dirs carry Ruby's `COPYING` + `BSDL` pair verbatim
+(`delegate`, `English`, `fiddle`, `forwardable`, `shellwords`, `singleton`;
+`bigdecimal` carries its own upstream `LICENSE` + `BSDL`). `minitest` is MIT
+and reproduces its license in the vendored `README.rdoc`, exactly as upstream
+does. The zeo-authored Ruby halves listed further below carry no separate
+license: they are zeo's own code, under the repository's MIT OR Apache-2.0.
 
 | gem | version | source |
 |---|---|---|
@@ -28,12 +36,12 @@ BSD, compatible with zeo's MIT OR Apache-2.0):
 | irb | 1.18.0 | ruby 4.0.6 bundled gem |
 | minitest | 6.0.6 | ruby 4.0.6 bundled gem |
 | ostruct | 0.6.3 | ruby 4.0.5 default gem |
-| pp | 0.6.4 | ruby 4.0.5 default gem |
+| pp | 0.6.3 | ruby 4.0.6 default gem |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
 | reline | 0.6.3 | ruby 4.0.6 default gem |
 | shellwords | 0.2.2 | ruby 4.0.5 stdlib |
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
-| timeout | 0.6.1 | ruby 4.0.5 default gem |
+| timeout | 0.6.0 | ruby 4.0.6 default gem |
 | tsort | 0.2.0 | ruby 4.0.5 default gem |
 
 `irb/` carries one removal: `lib/irb/ext/tracer.rb` is reduced to a
@@ -85,6 +93,29 @@ over the SAME prism zeo's own front end parses with. Two removals, marked in
 `lib/prism.rb`: `lib/prism/translation/` (the `parser`- and `ripper`-gem
 adapters, which subclass third-party gems zeo does not ship) and
 `lib/prism/ffi.rb` (its backend, replaced).
+
+## Reading a version off the oracle install
+
+The version to vendor is **what the oracle Ruby ships**, not what its gem
+store happens to hold. Those differ: `gem install` (or any gem pulling a
+dependency) drops newer copies into the same store, and `require` then
+activates the newest, so both `gem list` and a `require`-and-print probe
+report versions Ruby never shipped. Several gems here were vendored ahead of
+the oracle exactly that way.
+
+Two reliable sources, in order:
+
+- **Default gems**: `<gemdir>/specifications/default/*.gemspec`. Ruby owns
+  this directory; nothing else writes to it.
+- **Bundled gems** (`Gem::BUNDLED_GEMS::SINCE` names them -- `abbrev`,
+  `benchmark`, `bigdecimal`, `csv`, `drb`, `fiddle`, `irb`, `logger`, `nkf`,
+  `observer`, `ostruct`, `racc`, `reline`, `syslog`, `tsort`, ...): these sit
+  in the ordinary store beside user gems. Separate them by install timestamp
+  -- everything Ruby installed shares one mtime, and `stat` on a known default
+  gemspec gives you that batch.
+
+`cargo run -p xtask -- gem outdated` prints the comparison for the
+git-sourced gems.
 
 When bumping the oracle Ruby, re-vendor the first table from the new
 installation and update the versions here.

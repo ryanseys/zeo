@@ -113,6 +113,11 @@ unicode-segmentation = "1"
 # --message-format=json stream for the registry runtime build.
 tar = "0.4"
 
+# `xtask dist` rewrites the root manifest into the payload's runtime
+# mini-workspace, preserving comments and formatting (hence toml_edit, not a
+# serialize round-trip).
+toml_edit = "0.22"
+
 # ext/ backends (feature-gated in zeo-rt).
 md-5 = "0.10"
 sha1 = "0.10"

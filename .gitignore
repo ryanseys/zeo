@@ -10,3 +10,17 @@ zeo-gems.json
 # Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs
+
+# Jujutsu (some of us drive git through jj; the store is local-only state)
+.jj/
+
+# Agent/editor scratch: settings, worktrees, session state
+.claude/
+.worktrees/
+compile_flags.txt
+
+# Local environment and logs
+.env
+.env.*
+!.env.example
+*.log

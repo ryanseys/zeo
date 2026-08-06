@@ -2,7 +2,9 @@
 
 `tests/spinel/` is vendored from the `test/` suite of
 [spinel](https://github.com/matz/spinel) (MIT License, Copyright (c) 2024-
-Yukihiro Matsumoto), zeo's C-emitting predecessor: ~2,300 golden-output
+Yukihiro Matsumoto), zeo's C-emitting predecessor. Upstream's license text is
+reproduced verbatim beside this file, in [`LICENSE`](LICENSE), as the MIT
+license requires of any redistribution: ~2,300 golden-output
 programs (`*.rb` + `.rb.expected` stdout snapshots, `.err.expected` /
 `.args` / `.stdin` sidecars, and fixture subdirectories), every snapshot
 oracle-verified against real `ruby`.
