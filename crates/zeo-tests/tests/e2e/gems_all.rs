@@ -35,17 +35,17 @@ fn entry_point(dir: &str) -> &str {
     }
 }
 
-/// Gems deliberately not swept, each for a reason that would not be fixed by
-/// this test failing.
+/// Gems deliberately not swept, each for a reason this test failing would not
+/// fix. `the_skip_list_names_real_gems` reads the same list, so a renamed gem
+/// cannot drop silently out of the sweep.
+const SKIPPED: &[(&str, &str)] = &[
+    // Requiring irb reaches a runtime-refinement construct zeo does not lower
+    // yet. It is tracked as a gap, and irb is not usable AOT regardless.
+    ("irb", "runtime refinements (known gap)"),
+];
+
 fn skip_reason(dir: &str) -> Option<&'static str> {
-    match dir {
-        // Requiring irb reaches a runtime-refinement construct zeo does not
-        // lower yet; tracked as a gap, and irb is not usable AOT regardless.
-        "irb" => Some("runtime refinements (known gap)"),
-        // Not a gem directory.
-        "UPSTREAM.md" => Some("not a gem"),
-        _ => None,
-    }
+    SKIPPED.iter().find(|(n, _)| *n == dir).map(|(_, why)| *why)
 }
 
 /// Every subdirectory of `gems/` that carries a gemspec -- the same rule
@@ -102,15 +102,18 @@ fn every_bundled_gem_compiles() {
     );
 }
 
-/// The skip list must name gems that actually exist -- otherwise a rename
-/// silently drops a gem out of the sweep instead of failing it.
+/// A skip entry naming a gem that no longer exists would drop that gem out of
+/// the sweep instead of failing it.
 #[test]
 fn the_skip_list_names_real_gems() {
     let gems = bundled_gems();
-    for dir in ["irb"] {
-        assert!(
-            gems.contains(&dir.to_string()),
-            "{dir} is skipped by name but is not a bundled gem any more"
-        );
-    }
+    let stale: Vec<&str> = SKIPPED
+        .iter()
+        .map(|(n, _)| *n)
+        .filter(|n| !gems.iter().any(|g| g == n))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "skipped by name but no longer a bundled gem: {stale:?}"
+    );
 }

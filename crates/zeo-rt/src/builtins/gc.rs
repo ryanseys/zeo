@@ -4,11 +4,9 @@
 //! harness, a test's `GC.start` between cases) and raising NoMethodError
 //! there would be a worse lie than doing nothing.
 //!
-//! Cycles genuinely leak; that is documented in the plan as an accepted
-//! trade, not something these rows paper over. `GC.stat` carries exactly one
-//! real number -- `:count`, the explicit collections run -- and answers
-//! `nil` for every statistic this heap has no truthful value for. No
-//! fabricated statistics.
+//! Cycles genuinely leak. That is an accepted trade, not something these rows
+//! paper over. `GC.stat` carries exactly one real number, `:count`, and
+//! answers `nil` for every statistic this heap has no truthful value for.
 
 use crate::{RubyValue, Signal};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -266,7 +264,7 @@ mod tests {
 
         let key = RubyValue::Symbol(crate::Symbol::intern("count"));
         assert!(matches!(
-            cmethod("stat")(&cls, &[key.clone()], None).unwrap(),
+            cmethod("stat")(&cls, std::slice::from_ref(&key), None).unwrap(),
             RubyValue::Int(n) if n == count
         ));
 

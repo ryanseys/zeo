@@ -260,8 +260,8 @@ fn cmd_outdated(root: &Path, args: &[String]) -> Result<(), String> {
     let installed = installed_gem_versions();
 
     println!(
-        "{:<14} {:<12} {:<12} {:<12} {}",
-        "gem", "pinned", "oracle", "upstream", "action"
+        "{:<14} {:<12} {:<12} {:<12} action",
+        "gem", "pinned", "oracle", "upstream"
     );
     let mut behind = Vec::new();
     for entry in entries.iter().filter(|e| only.is_none_or(|n| n == e.name)) {
