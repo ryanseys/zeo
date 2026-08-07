@@ -1762,6 +1762,17 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
     if let Some(b) = platform_match(node) {
         return Some(b);
     }
+    // `defined?(RUBY_ENGINE)` -- the interpreter always defines it, so the
+    // question is only ever "am I old enough to have it", answered at build
+    // time. binding_of_caller opens on `defined?(RUBY_ENGINE) && RUBY_ENGINE ==
+    // "ruby"`, and without this the `and` stayed unfolded and every `elsif`
+    // branch loaded -- including the JRuby one, whose `class
+    // org::jruby::runtime::ThreadContext` no CRuby build could ever compile.
+    if let Some(d) = node.as_defined_node()
+        && baked_constant(&d.value()).is_some()
+    {
+        return Some(true);
+    }
     // `if File::ALT_SEPARATOR` -- the oldest "am I on windows" test there is,
     // and how sys-filesystem picks its half. The constant is `"\\"` on windows
     // and `nil` everywhere else, so its TRUTH is a property of the build.
