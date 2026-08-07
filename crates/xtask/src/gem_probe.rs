@@ -63,6 +63,48 @@ use std::time::Duration;
 
 const REGISTRY: &str = "https://rubygems.org";
 
+/// `--help`. Selection comes first because that is the choice a run starts
+/// with, and the stage flags say plainly what is OFF by default: nothing here
+/// builds a binary or executes gem code unless asked twice.
+const HELP: &str = "\
+usage: cargo xtask gem-probe [<name> [version]] [selection] [options]
+
+Compiles real rubygems with zeo and records how far each one got in
+conformance/gem-probe-{compiles,fails}.tsv (plus gem-probe.md).
+
+selection (at least one, they add up):
+  <name> [version]        one gem; the newest version unless one is given
+  --corpus                every name in conformance/rubygems-names.txt
+  --popular <n>           the n most-downloaded gems in the index
+  --index                 every gem in the index
+  --all                   re-probe every gem already in the ledger
+  --failing               re-probe every ledger row that isn't `ok`
+  --matching <text>       re-probe rows whose outcome detail contains <text>
+                          -- how a landed fix is measured
+  --matching-name <text>  re-probe rows whose gem NAME contains <text>, for a
+                          stale band no detail substring can select
+
+stages (the ladder is fetch -> unpack -> emits-rs -> builds-bin -> runs):
+  (default)               stop at emits-rs: generate Rust, keep the .rs, build
+                          nothing
+  --build                 also compile the generated Rust to a binary
+  --run                   also EXECUTE it. This runs code downloaded from
+                          rubygems, so it needs --allow-running-untrusted-gem-
+                          code, named gems only, a sandbox, and a prompt
+  --allow-running-untrusted-gem-code
+                          the second half of --run's consent
+
+options:
+  --check                 exit non-zero if any probed gem regressed
+  --refresh               re-probe even names already in the ledger
+  --refresh-index         fetch a fresh copy of the rubygems index
+  --no-deps               don't resolve or fetch the gem's dependencies
+  --limit <n>             stop after n gems
+  --jobs <n>              gems in flight at once (default: cpu count)
+  --timeout <seconds>     kill a gem that outruns it (default: 600)
+  -h, --help              this message
+";
+
 /// Long enough that a rails-scale require graph finishes -- those take minutes
 /// in the front end alone -- and short enough that a gem which will never
 /// finish cannot hold a sweep open.
@@ -1516,6 +1558,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "-h" | "--help" => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
             "--corpus" => corpus = true,
             "--all" => all = true,
             "--check" => check = true,
