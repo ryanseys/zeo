@@ -23,13 +23,17 @@ use proc_macro2::TokenStream;
 /// against a receiver whose class isn't statically known) asks the same
 /// question at RUN time instead -- see [`caller_class`], which is how the site
 /// tells the runtime which of the two rules applies to it.
+/// The visibility read here is the ENTRY's, not the definition's: ruby lets a
+/// subclass re-scope a method it inherited (`private :inherited_method`)
+/// without redefining it, and reading the definition would report the
+/// ancestor's visibility and wave the call through.
 pub(super) fn enforce_visibility(
     cx: &Ctx,
     recv_id: NodeId,
-    scope: &crate::compiler::Scope,
+    entry: &crate::compiler::MethodEntry,
     method_name: &str,
 ) -> Option<TokenStream> {
-    match scope.visibility {
+    match entry.visibility {
         Visibility::Public => {}
         Visibility::Private => {
             if !matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
@@ -37,9 +41,7 @@ pub(super) fn enforce_visibility(
             }
         }
         Visibility::Protected => {
-            let owner = scope
-                .class
-                .expect("a materialized method always has an owner class");
+            let owner = entry.owner;
             let related = cx.current_class.is_some_and(|caller_cid| {
                 caller_cid == owner
                     || cx.compiler.class(caller_cid).ancestors.contains(&owner)
@@ -57,8 +59,8 @@ pub(super) fn enforce_visibility(
 /// block, a `Class.new`-body method) has no compile-time caller class to
 /// check against, so only the runtime barrier -- asked with this site's
 /// [`Caller::Runtime`] class -- can decide it.
-pub(super) fn defers_to_runtime(cx: &Ctx, scope: &crate::compiler::Scope, bypass: bool) -> bool {
-    !bypass && cx.self_is_dynamic && matches!(scope.visibility, Visibility::Protected)
+pub(super) fn defers_to_runtime(cx: &Ctx, visibility: Visibility, bypass: bool) -> bool {
+    !bypass && cx.self_is_dynamic && matches!(visibility, Visibility::Protected)
 }
 
 /// The caller class a Path 2 site carries -- the same question

@@ -1447,11 +1447,22 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
         // can report own methods only -- the materialized `methods` list above
         // flattens inheritance in. Sorted for stable generated source.
-        let mut own: Vec<&String> = compiler
+        let mut own: Vec<&str> = compiler
             .class(ClassId(id))
             .own_methods
             .iter()
-            .map(|&sid| &compiler.scope(sid).name)
+            .map(|&sid| compiler.scope(sid).name.as_str())
+            // A method this class only RE-SCOPED (`private :inherited_method`)
+            // is its own too -- ruby plants a real entry for it, which is what
+            // makes it answer `private_instance_methods(false)` here while
+            // still running the ancestor's body. See `MethodEntry::zsuper`.
+            .chain(
+                compiler
+                    .methods_of(ClassId(id))
+                    .iter()
+                    .filter(|e| e.zsuper)
+                    .map(|e| compiler.names.str(e.name)),
+            )
             .collect();
         own.sort();
         if !own.is_empty() {
@@ -1464,6 +1475,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         for &sid in &compiler.class(ClassId(id)).own_methods {
             let scope = compiler.scope(sid);
             push_method_meta_row(compiler, ClassId(id), scope, false);
+        }
+        // A re-scoped inherited method reflects on THIS class -- ruby answers
+        // the subclass for `instance_method(:x).owner` after `private :x`,
+        // while still running the ancestor's body.
+        for entry in compiler.methods_of(ClassId(id)).iter().filter(|e| e.zsuper) {
+            push_method_meta_row(compiler, ClassId(id), compiler.scope(entry.def), false);
         }
         // Every `undef name` in this class's body is recorded so
         // `respond_to?` stops its ancestor walk here -- dispatch itself

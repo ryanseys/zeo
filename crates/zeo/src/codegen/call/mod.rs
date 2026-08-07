@@ -3234,15 +3234,15 @@ fn dispatch(
     // never reach this arm).
     if let Some(cid) = infer_any_class(cx, recv_id)
         && cx.compiler.class(cid).is_builtin
-        && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name)
-        && !visibility::defers_to_runtime(cx, cx.compiler.scope(sid), bypass_visibility)
+        && let Some(entry) = cx.compiler.lookup_method(cid, name).copied()
+        && !visibility::defers_to_runtime(cx, entry.visibility, bypass_visibility)
     {
-        let scope = cx.compiler.scope(sid);
         if !bypass_visibility
-            && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name)
+            && let Some(err) = visibility::enforce_visibility(cx, recv_id, &entry, name)
         {
             return err;
         }
+        let scope = cx.compiler.scope(entry.def);
         let mod_ident = super::ident::class_ident(cx.compiler, cid);
         let method_ident = safe_ident(name);
         return super::params::emit_call_args_to(
@@ -3485,12 +3485,13 @@ fn dispatch(
     if let Some(cid) = recv_class.filter(|&c| {
         !cx.compiler.may_be_undefined_at_runtime(c, name)
             && !cx.compiler.may_be_patched_at_runtime(name)
-    }) && let Some((_, sid)) = cx.compiler.method_in_chain(cid, name)
-        && !visibility::defers_to_runtime(cx, cx.compiler.scope(sid), bypass_visibility)
+    }) && let Some(entry) = cx.compiler.lookup_method(cid, name).copied()
+        && !visibility::defers_to_runtime(cx, entry.visibility, bypass_visibility)
     {
+        let sid = entry.def;
         let scope = cx.compiler.scope(sid);
         if !bypass_visibility
-            && let Some(err) = visibility::enforce_visibility(cx, recv_id, scope, name)
+            && let Some(err) = visibility::enforce_visibility(cx, recv_id, &entry, name)
         {
             return err;
         }

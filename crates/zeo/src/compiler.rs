@@ -330,6 +330,12 @@ pub struct MethodEntry {
     /// inherited without redefining it (`private :inherited_method`), which
     /// CRuby models as a real entry of its own in the subclass.
     pub visibility: Visibility,
+    /// This class RE-DECLARED an inherited method's visibility without
+    /// redefining it. CRuby plants a real `VM_METHOD_TYPE_ZSUPER` entry in the
+    /// subclass for this (vm_method.c:2304-2341), which is why the name then
+    /// answers `private_instance_methods(false)` and `instance_method(:x).owner`
+    /// on the SUBCLASS while still running the ancestor's body.
+    pub zsuper: bool,
     /// Whether this is one of the pristine `BUILTIN_EXCEPTIONS_RB` bodies that
     /// `zeo-rt`'s `register_exceptions` already installs, so codegen emits
     /// nothing for it. Inherited copies stay pristine; a reopen does not.

@@ -79,6 +79,7 @@ pub fn materialize(
     compiler: &mut Compiler,
     main_statements: &[NodeId],
 ) -> Result<(), AnalyzeError> {
+    let started = std::time::Instant::now();
     record_top_level_consts(compiler, main_statements);
     index_document_order(compiler, main_statements);
     compiler.freeze_identity_caches();
@@ -88,6 +89,19 @@ pub fn materialize(
         let ancestors = compute_ancestors(compiler, cid);
         compiler.classes[cid.0 as usize].ancestors = ancestors;
     }
+    // Every stage of this pass reports as it FINISHES, not at the end: a
+    // Rails-sized graph can be killed mid-pass, and a log that only prints on
+    // success says nothing at all about where the time and the memory went.
+    // `--log-level info` turns them on.
+    tracing::info!(
+        classes = all_ids.len(),
+        links = all_ids
+            .iter()
+            .map(|&c| compiler.class(c).ancestors.len())
+            .sum::<usize>(),
+        ms = started.elapsed().as_millis(),
+        "mro: ancestors"
+    );
 
     // Deferred `alias`/`alias_method` of an inherited method -- resolved here,
     // after ancestors are linearized but BEFORE method materialization, so the
@@ -100,13 +114,34 @@ pub fn materialize(
         at_class(resolve_aliases(compiler, cid), at)?;
         at_class(resolve_module_functions(compiler, cid), at)?;
     }
+    tracing::info!(
+        defs = compiler.scopes.len(),
+        ms = started.elapsed().as_millis(),
+        "mro: aliases and module functions"
+    );
 
-    for &cid in &all_ids {
+    for (done, &cid) in all_ids.iter().enumerate() {
         let at = compiler.class_def_span(cid);
         if !compiler.class(cid).is_module {
             at_class(materialize_methods(compiler, cid), at)?;
         }
         at_class(materialize_class_methods(compiler, cid), at)?;
+        apply_visibility_overrides(compiler, cid);
+        // Progress, not a summary: this loop is where a Rails-scale compile
+        // spends its memory, and a line every so often is what tells a live
+        // `tail` that it is advancing rather than stuck -- and WHERE it stopped
+        // when it doesn't finish.
+        if done % 512 == 511 {
+            let (entries, super_targets) = totals(compiler);
+            tracing::info!(
+                done = done + 1,
+                of = all_ids.len(),
+                entries,
+                super_targets,
+                ms = started.elapsed().as_millis(),
+                "mro: materializing"
+            );
+        }
     }
 
     // A reopened builtin MODULE is never run through `materialize_methods`
@@ -141,22 +176,40 @@ pub fn materialize(
     // number this pass exists to keep small: `entries` is what used to be
     // `defs` -- one cloned Scope per (class, visible method) -- and the ratio
     // between them is how much the entry/definition split is buying.
+    let (entries, super_targets) = totals(compiler);
     tracing::info!(
         classes = compiler.classes.len(),
         defs = compiler.scopes.len(),
-        entries = compiler
-            .classes
-            .iter()
-            .map(|c| c.methods.len() + c.class_methods.len())
-            .sum::<usize>(),
-        "materialized"
+        entries,
+        super_targets,
+        ivars = compiler.classes.iter().map(|c| c.ivars.len()).sum::<usize>(),
+        ms = started.elapsed().as_millis(),
+        "mro: materialized"
     );
 
     reinfer_local_types(compiler);
+    tracing::info!(
+        defs = compiler.scopes.len(),
+        ms = started.elapsed().as_millis(),
+        "mro: local types re-inferred"
+    );
 
     resolve_cvars_and_consts(compiler, main_statements)?;
+    tracing::info!(ms = started.elapsed().as_millis(), "mro: done");
 
     Ok(())
+}
+
+/// `(method entries, singleton super targets)` across every class -- the two
+/// per-class tables that grow with classes x visible methods, so the two worth
+/// watching while the pass runs.
+fn totals(compiler: &Compiler) -> (usize, usize) {
+    compiler.classes.iter().fold((0, 0), |(e, s), c| {
+        (
+            e + c.methods.len() + c.class_methods.len(),
+            s + c.singleton_super_targets.len(),
+        )
+    })
 }
 
 /// Re-run every method scope's local-type inference now that ancestors and
@@ -397,7 +450,18 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
             // skips it), while a reopen/override body propagates as a real
             // delta onto each descendant -- which is now just the entry
             // carrying the definition's own flag.
-            materialized.push(entry_for(compiler, name_id, sid, class_id));
+            let mut entry = entry_for(compiler, name_id, sid, class_id);
+            // What this class inherits is the ancestor's ENTRY, whose
+            // visibility the ancestor may have re-declared without redefining
+            // (`private :inherited_method` up the chain). Ancestors are
+            // materialized first -- a superclass always registers before its
+            // subclass -- so that answer is already final here.
+            if anc_id != class_id
+                && let Some(inherited) = compiler.lookup_method(anc_id, &name)
+            {
+                entry.visibility = inherited.visibility;
+            }
+            materialized.push(entry);
         }
     }
 
@@ -520,6 +584,39 @@ fn entry_for(compiler: &Compiler, name: NameId, def: ScopeId, owner: ClassId) ->
         owner,
         visibility: scope.visibility,
         native_default: scope.native_default,
+        zsuper: false,
+    }
+}
+
+/// Applies this class's `private`/`public`/`protected :m` re-declarations onto
+/// its own entries.
+///
+/// A re-declaration that names a method the class INHERITED is ruby's ZSUPER
+/// entry: the name becomes the subclass's own, at the new visibility, still
+/// running the ancestor's body. It has to land on the entry rather than only in
+/// a runtime row, because a Path-1 call site resolves visibility at compile
+/// time and would otherwise let a private call through -- `Sub.new.visible`
+/// after `private :visible` ran fine instead of raising NoMethodError.
+fn apply_visibility_overrides(compiler: &mut Compiler, class_id: ClassId) {
+    for (name, visibility) in compiler.class(class_id).visibility_overrides.clone() {
+        let Some(id) = compiler.names.get(&name) else {
+            continue;
+        };
+        let entries = &mut compiler.classes[class_id.0 as usize].methods;
+        if let Some(entry) = entries.iter_mut().find(|e| e.name == id) {
+            let inherited = entry.owner != compiler.scopes[entry.def.0 as usize].defining_class;
+            entry.visibility = visibility;
+            entry.zsuper |= inherited;
+        }
+    }
+    for (name, visibility) in compiler.class(class_id).class_visibility_overrides.clone() {
+        let Some(id) = compiler.names.get(&name) else {
+            continue;
+        };
+        let entries = &mut compiler.classes[class_id.0 as usize].class_methods;
+        if let Some(entry) = entries.iter_mut().find(|e| e.name == id) {
+            entry.visibility = visibility;
+        }
     }
 }
 

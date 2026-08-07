@@ -1,0 +1,13 @@
+[]
+[:visible]
+Sub
+Base
+"private method 'visible' called for an instance of Sub"
+:visible
+:visible
+true
+true
+true
+:hidden
+[:hidden]
+[:also, :visible]

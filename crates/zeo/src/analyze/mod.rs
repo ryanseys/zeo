@@ -206,6 +206,18 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         );
     }
 
+    // What the statement walk found, before `mro` turns it into method tables.
+    // Reported here rather than only at the end because these three numbers
+    // decide everything downstream, and a compile that dies in `mro` never
+    // reaches a summary. `--log-level info`.
+    tracing::info!(
+        classes = compiler.classes.len(),
+        defs = compiler.scopes.len(),
+        hir_nodes = compiler.hir.iter().count(),
+        statements = main_statements.len(),
+        "analyze: walk"
+    );
+
     // Ancestor linearization + method/class-method materialization + class
     // variable ownership -- must run AFTER every `ClassDef` above has been
     // registered, since `include`/`extend`/`prepend`/`< Super` targets must
