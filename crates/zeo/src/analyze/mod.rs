@@ -450,6 +450,21 @@ fn process_top_stmt_inner(
         pre_exec.extend(body.clone());
         return Ok(());
     }
+    // A `Seq` at statement position is a lowering wrapper, not a construct --
+    // `class << obj` at the top level desugars to a list of statements and has
+    // to hand back ONE node, so it wraps them. Walk through it, or the
+    // statements inside are never seen as top-level statements: a
+    // `class << Base; prepend M; end` would reach neither
+    // `try_prepend_call_edit` nor `register_nested_class_defs`, and the
+    // compile-time ancestry edit it spells would be dropped with no diagnostic.
+    // Inside a class body the same desugar splices its statements directly
+    // (`lower_class_body_stmt`), which is why only this path needed it.
+    if let HirNode::Seq(body) = &compiler.hir[stmt] {
+        for s in body.clone() {
+            process_top_stmt(compiler, s, bootstrap, main_statements, pre_exec)?;
+        }
+        return Ok(());
+    }
     if let HirNode::ClassDef {
         name,
         superclass,
@@ -726,6 +741,8 @@ fn process_top_stmt_inner(
         // A reachable `C.prepend(M)` -- recorded as a compile-time ancestry edit
         // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
         // class-body `prepend M` produces no runtime statement.
+    } else if declines_a_singleton_prepend(compiler, stmt) {
+        return Err(UNHONOURED_SINGLETON_PREPEND.into());
     } else {
         register_nested_class_defs(compiler, stmt, &[], 0)?;
         main_statements.push(stmt);
@@ -1124,6 +1141,45 @@ fn try_prepend_call_edit(
 /// The class/module a bare-constant expression names (resolved in `cref`), or
 /// `None` for anything that isn't a compile-time-resolvable class reference.
 /// Used to statically resolve a `prepend` call's receiver and module arguments.
+const UNHONOURED_SINGLETON_PREPEND: &str =
+    "`prepend` onto a singleton class needs modules zeo can name at compile time \
+     (constants), and a receiver that resolves to a known class -- a runtime one \
+     writes a singleton method table that statically resolved calls never consult, \
+     so it would compile and then override nothing (zeo limitation)";
+
+/// A `<expr>.singleton_class.prepend(...)` that [`try_prepend_call_edit`] just
+/// DECLINED -- because the receiver or an argument isn't a module zeo can name
+/// at compile time.
+///
+/// Left to run as an ordinary send it reaches `runtime_extend`, which writes
+/// the object's singleton METHOD TABLE; a statically resolved `X.m` call site
+/// never consults that table, so the prepend compiles and then does nothing at
+/// all. The whole point of `prepend` is to override a method that already
+/// exists, which is exactly the case that would come out wrong. Refused for the
+/// same reason `lower::defs` refuses `undef :close` in a singleton body: a
+/// silent wrong answer is worse than a rejection.
+///
+/// activerecord-jdbc-adapter is the corpus case -- `class << Base; m =
+/// Module.new do ... end; self.prepend(m); end`, with ten adapter gems behind
+/// it.
+fn declines_a_singleton_prepend(compiler: &Compiler, stmt: NodeId) -> bool {
+    let HirNode::Call {
+        receiver: Some(recv),
+        name,
+        ..
+    } = &compiler.hir[stmt]
+    else {
+        return false;
+    };
+    if name != "prepend" {
+        return false;
+    }
+    matches!(
+        &compiler.hir[*recv],
+        HirNode::Call { name, args, .. } if name == "singleton_class" && args.is_empty()
+    )
+}
+
 fn const_node_class(
     compiler: &Compiler,
     node: NodeId,
@@ -3110,6 +3166,9 @@ fn register_class(
                 // nothing, exactly as at the top level.
                 if try_prepend_call_edit(compiler, stmt, &child_cref, box_id) {
                     continue;
+                }
+                if declines_a_singleton_prepend(compiler, stmt) {
+                    return Err(UNHONOURED_SINGLETON_PREPEND.into());
                 }
                 // A `def` nested in an `if`/`case` branch also runs at document
                 // position (the taken branch's runtime `define_method` gives the

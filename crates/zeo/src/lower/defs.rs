@@ -95,6 +95,7 @@ fn desugar_singleton_items(
         Alias(String, String),
         SingletonSelf,
         SelfSend,
+        Passthrough,
         Mixin(&'static str, String),
         Guarded(Vec<NodeId>, Vec<crate::hir::RescueClause>),
         Skip,
@@ -173,6 +174,14 @@ fn desugar_singleton_items(
             // rebind it onto `recv.singleton_class` so it targets the object's
             // singleton, not the enclosing method's self.
             HirNode::Call { receiver: None, .. } => Item::SelfSend,
+            // An explicit `self` receiver names the same singleton class the
+            // arm above reaches implicitly, so it retargets identically.
+            // `class << Base; self.prepend(m)` (activerecord-jdbc-adapter, and
+            // ten adapter gems behind it), `self.ancestors` (hirb),
+            // `self.prepend(ClassMethods)` (the active_hash family).
+            HirNode::Call {
+                receiver: Some(r), ..
+            } if matches!(hir[*r], HirNode::SelfRef) => Item::SelfSend,
             // `undef :close` inside a singleton (logging) stays REJECTED. It
             // would map to `recv.singleton_class.undef_method(:close)`, which
             // compiles -- and then a statically-resolved `obj.close` call site
@@ -195,6 +204,14 @@ fn desugar_singleton_items(
                 else_body: None,
                 ensure_body: None,
             } => Item::Guarded(body.clone(), rescues.clone()),
+            // Anything that never consults `self` means the same thing wherever
+            // it runs, so it runs unchanged at this position -- the rule the
+            // `Guarded` rescue bodies below already apply, and the one the
+            // `class << self` mapping applies to its own leftovers.
+            // `m = Module.new do ... end` is the case that matters: the
+            // module's `def`s bind `self` at CALL time, not here, which is why
+            // `mentions_self` stops at a definition boundary.
+            _ if !mentions_self(hir, id) => Item::Passthrough,
             other => {
                 // Name the construct. `self` in this body is the object's
                 // singleton class, so a statement the mapping has no rule for
@@ -238,7 +255,7 @@ fn desugar_singleton_items(
                     safe: false,
                 }));
             }
-            Item::Const => out.push(id),
+            Item::Const | Item::Passthrough => out.push(id),
             Item::Nested(name, superclass, body, is_module) => {
                 out.push(runtime_nested_class(
                     hir, name, superclass, body, is_module,
@@ -371,11 +388,20 @@ fn desugar_singleton_items(
 /// receiver-less call, which sends to it. Statements that do are the only ones
 /// a `class << self` body cannot simply hand to the enclosing class body:
 /// `self` there is the class, not its singleton.
+///
+/// The walk STOPS at a definition boundary. A `def`'s body binds `self` to
+/// whatever receives the call, not to the `self` in scope where the `def` was
+/// written, so what it consults says nothing about where the enclosing
+/// statement can run. `m = Module.new do def x; connection; end end` is the
+/// shape: `connection` is the module's business, and the assignment itself is
+/// self-free. A block that is NOT a method body does capture the enclosing
+/// `self`, and is still walked.
 fn mentions_self(hir: &Hir, id: NodeId) -> bool {
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
         match &hir[n] {
             HirNode::SelfRef | HirNode::Call { receiver: None, .. } => return true,
+            HirNode::DefMethod { .. } | HirNode::Lambda { method_body: true, .. } => continue,
             _ => {}
         }
         hir[n].for_each_child(&mut |child| stack.push(child));
@@ -595,8 +621,13 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             } if matches!(hir[*r], HirNode::SelfRef) => Item::SelfSend,
             // A call on any OTHER receiver doesn't depend on `self` at all
             // (backports' `class << self; attr_accessor :warned;
-            // Backports.warned = {}`), so it runs unchanged at this position.
-            HirNode::Call { .. } => Item::Passthrough,
+            // Backports.warned = {}`), so it runs unchanged at this position --
+            // PROVIDED nothing under it reaches for `self` either. An argument
+            // or a nested receiver can (`Foo.bar(baz)`, treetop's
+            // `included_modules - Object.included_modules`), and passing one of
+            // those through unchanged would retarget it at the enclosing class
+            // and answer silently wrong.
+            HirNode::Call { .. } if !mentions_self(hir, id) => Item::Passthrough,
             // `class << self; self; end` -- the idiom whose VALUE is the
             // singleton class (`SINGLETON = class << self; self; end`).
             HirNode::SelfRef => Item::SingletonSelf,
