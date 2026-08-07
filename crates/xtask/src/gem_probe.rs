@@ -652,7 +652,7 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
             // recorded one, rather than invalidating the whole ledger.
             let row = Row {
                 version: version.to_string(),
-                outcome: Outcome::from_ledger(tag, f.next().unwrap_or("")),
+                outcome: Outcome::from_ledger(tag, &tsv_unfield(f.next().unwrap_or(""))),
                 site: f.next().filter(|s| !s.is_empty()).map(str::to_string),
                 digest: f.next().filter(|s| !s.is_empty()).map(str::to_string),
             };
@@ -668,6 +668,29 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
     Ok(out)
 }
 
+/// One field, quoted when it has to be.
+///
+/// A compiler diagnostic quotes the source it rejected (`unsupported syntax at
+/// "..."`), so a detail routinely carries `"` -- and a tab-separated file is
+/// still read by a CSV parser, which sees an unbalanced quote and gives up on
+/// the whole file. RFC 4180's rule: wrap the field and double the quotes
+/// inside it.
+fn tsv_field(s: &str) -> String {
+    if s.contains('"') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// [`tsv_field`]'s inverse.
+fn tsv_unfield(s: &str) -> String {
+    match s.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+        Some(inner) => inner.replace("\"\"", "\""),
+        None => s.to_string(),
+    }
+}
+
 fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
     let [compiles_path, fails_path] = ledger_paths(root);
     let compiles = || rows.iter().filter(|(_, r)| r.outcome == Outcome::Compiles);
@@ -681,16 +704,16 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     let render = |selected: &mut dyn Iterator<Item = (&String, &Row)>| {
         let mut tsv = String::from("gem\tversion\toutcome\tdetail\twhere\tsha256\n");
         for (name, r) in selected {
-            let detail = r.outcome.detail();
             let fields = [
                 name.as_str(),
                 r.version.as_str(),
                 r.outcome.tag(),
-                detail.as_str(),
+                r.outcome.detail(),
                 r.site.as_deref().unwrap_or(""),
                 r.digest.as_deref().unwrap_or(""),
             ];
-            tsv.push_str(&fields.join("\t"));
+            let row: Vec<String> = fields.iter().map(|f| tsv_field(f)).collect();
+            tsv.push_str(&row.join("\t"));
             tsv.push('\n');
         }
         tsv
@@ -1564,6 +1587,36 @@ mod tests {
             Some("vendor/gems/beta/lib/beta.rb:12")
         );
         assert_eq!(back["alpha"].site, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A diagnostic quotes the source it rejected, so a detail routinely
+    /// carries `"`. Left raw, a CSV reader sees an unbalanced quote and
+    /// abandons the file -- which is how GitHub stopped rendering it.
+    #[test]
+    fn a_detail_containing_quotes_survives_the_round_trip() {
+        let root = scratch("ledger-quotes");
+        let detail = r#"unsupported syntax at "'Resource' => resource""#;
+        let mut rows = BTreeMap::new();
+        rows.insert(
+            "quoted".to_string(),
+            Row {
+                version: "1.0.0".into(),
+                outcome: Outcome::LoweringGap(detail.into()),
+                site: None,
+                digest: None,
+            },
+        );
+        write_ledger(&root, &rows).unwrap();
+
+        let text = std::fs::read_to_string(&ledger_paths(&root)[1]).unwrap();
+        let row = text.lines().nth(1).unwrap();
+        assert_eq!(row.split('\t').count(), 6, "every row keeps six fields");
+        assert!(
+            row.split('\t').nth(3).unwrap().starts_with('"'),
+            "the detail is quoted: {row}"
+        );
+        assert_eq!(read_ledger(&root).unwrap()["quoted"].outcome.detail(), detail);
         let _ = std::fs::remove_dir_all(&root);
     }
 
