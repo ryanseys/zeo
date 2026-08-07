@@ -119,6 +119,41 @@ fn cmp_versions(a: &str, b: &str) -> Ordering {
     Ordering::Equal
 }
 
+/// rubygems' `Gem::Version.correct?` -- whether `<=>` will COERCE this string
+/// rather than raise `ArgumentError`. Its `ANCHORED_VERSION_PATTERN` is a
+/// numeric first segment, then `.`-joined alphanumeric segments, then an
+/// optional `-` prerelease of `.`-joined `[0-9A-Za-z-]` runs; surrounding
+/// whitespace is allowed, and an empty string IS correct (it means version 0).
+/// Rejecting something rubygems would have accepted only leaves a guard
+/// undecided, so this errs strict.
+fn correct_version(v: &str) -> bool {
+    let v = v.trim_matches(|c: char| c.is_ascii_whitespace());
+    if v.is_empty() {
+        return true;
+    }
+    // The numeric core can hold no `-`, so the first one opens the prerelease.
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
+    let mut segs = core.split('.');
+    let Some(first) = segs.next() else {
+        return false;
+    };
+    if first.is_empty() || !first.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    if !segs.all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric())) {
+        return false;
+    }
+    match pre {
+        None => true,
+        Some(pre) => pre
+            .split('.')
+            .all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')),
+    }
+}
+
 fn apply(op: &str, ord: Ordering) -> Option<bool> {
     Some(match op {
         "<" => ord == Ordering::Less,
@@ -198,6 +233,14 @@ fn is_gem_version(compiler: &Compiler, cref: &[ClassId], box_id: u32, name: &str
         compiler.resolve_class("Gem::Version", cref, box_id),
     ) {
         (Some(a), Some(b)) => a == b,
+        // Nothing is registered under either name. Ruby preloads rubygems into
+        // every program, so a gem may reach for `Gem::Version` without ever
+        // requiring it -- unparser gates its two `Builder` definitions on one --
+        // while zeo compiles rubygems in only when a program asks for it. With
+        // no class to compare, the name AS WRITTEN is the only evidence, and it
+        // is enough: a `Version` naming anything else would have resolved, and
+        // answered above.
+        (None, None) => matches!(name, "Gem::Version" | "::Gem::Version"),
         _ => false,
     }
 }
@@ -296,9 +339,15 @@ fn static_gem_version(
 }
 
 /// A comparison guard whose operands both reduce to build-time version
-/// constants: `Gem::Version` (version-segment) semantics first, then plain
-/// `String` (lexicographic) semantics -- a mixed Version/String comparison,
-/// which Ruby itself raises on, stays `None`.
+/// constants: `Gem::Version` (version-segment) semantics when EITHER side is
+/// one, then plain `String` (lexicographic) semantics for the rest.
+///
+/// A `Gem::Version` compared against a plain string is version semantics, not
+/// lexicographic: rubygems' `<=>` runs `Gem::Version.create` over a `String`
+/// operand it can parse (and raises `ArgumentError` over one it can't, which
+/// stays undecided here). `Gem::Version.new(RUBY_VERSION) <= "3.4"` is the
+/// spelling gems reach for most often -- unparser gates its two `Builder`
+/// definitions on it.
 fn cmp_fold(
     compiler: &Compiler,
     cref: &[ClassId],
@@ -307,11 +356,31 @@ fn cmp_fold(
     l: NodeId,
     r: NodeId,
 ) -> Option<bool> {
-    if let (Some(lv), Some(rv)) = (
-        static_gem_version(compiler, cref, box_id, l),
-        static_gem_version(compiler, cref, box_id, r),
-    ) {
-        return apply(op, cmp_versions(&lv, &rv));
+    let lv = static_gem_version(compiler, cref, box_id, l);
+    let rv = static_gem_version(compiler, cref, box_id, r);
+    match (&lv, &rv) {
+        (Some(lv), Some(rv)) => return apply(op, cmp_versions(lv, rv)),
+        (Some(lv), None) => {
+            if let Some(rs) = static_string(compiler, cref, box_id, r)
+                && correct_version(&rs)
+            {
+                return apply(op, cmp_versions(lv, &rs));
+            }
+        }
+        // The other way round. `String#<=>` hands an operand it can't compare
+        // back to that operand's own `<=>` and negates the answer, so the
+        // ORDERING operators still read as version comparisons. `==`/`!=` do
+        // not: those are `String#==`, which is plain false against anything
+        // that isn't a string, so they are left undecided rather than folded to
+        // the answer the other direction would give.
+        (None, Some(rv)) if matches!(op, "<" | "<=" | ">" | ">=") => {
+            if let Some(ls) = static_string(compiler, cref, box_id, l)
+                && correct_version(&ls)
+            {
+                return apply(op, cmp_versions(&ls, rv));
+            }
+        }
+        _ => {}
     }
     if let (Some(ls), Some(rs)) = (
         static_string(compiler, cref, box_id, l),
@@ -706,6 +775,21 @@ mod tests {
         // A prerelease (string segment) orders before the release.
         assert_eq!(cmp_versions("1.0.a", "1.0"), Ordering::Less);
         assert_eq!(cmp_versions("1.0", "1.0.a"), Ordering::Greater);
+    }
+
+    /// Every case checked against `Gem::Version.correct?` under ruby 4.0.6.
+    #[test]
+    fn correct_version_matches_rubygems() {
+        for ok in ["3.4", "1", "4.0.6", "1.0.0.rc1", "1.0-beta.2", "10.20.30", ""] {
+            assert!(correct_version(ok), "{ok:?} is a version rubygems accepts");
+        }
+        // Leading whitespace is allowed; a leading `v`, an empty segment or a
+        // non-alphanumeric one is not -- rubygems raises `ArgumentError` on
+        // these, so a guard using one must stay undecided rather than fold.
+        assert!(correct_version("  3.4  "));
+        for bad in ["v3.4", "3..4", "3.4.", ".4", "3.4+build", "three"] {
+            assert!(!correct_version(bad), "{bad:?} is one rubygems rejects");
+        }
     }
 
     #[test]
