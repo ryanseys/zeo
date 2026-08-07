@@ -655,7 +655,12 @@ impl RubyValue {
             // ancestor chain). Outside a generated program (no registry --
             // this crate's own unit tests) the class case is assumed.
             RubyValue::Class(cid) => {
-                if crate::dispatch::class_is_refinement(*cid) {
+                // A module a `class X < Module` minted answers X, not Module:
+                // it IS an instance of X, and stays a real module besides. See
+                // `runtime_meta::module_owner_class`.
+                if let Some(owner) = crate::runtime_meta::module_owner_class(*cid) {
+                    owner
+                } else if crate::dispatch::class_is_refinement(*cid) {
                     zeo_abi::REFINEMENT_CLASS
                 } else if crate::dispatch::class_is_module(*cid).unwrap_or(false) {
                     MODULE_CLASS

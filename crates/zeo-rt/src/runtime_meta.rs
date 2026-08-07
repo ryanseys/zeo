@@ -115,6 +115,16 @@ struct OverlayEntry {
     /// `ClassEntry::refinement_of`. Definition only: nothing installs these
     /// methods anywhere until a `using` activates them.
     refinement_of: Option<(ClassId, ClassId)>,
+    /// The user class this minted module is an INSTANCE of -- what
+    /// `class DeprecatedConstantProxy < Module; end` produces when its `new`
+    /// runs. Rails' whole deprecation layer is this shape, and 22 of the
+    /// corpus's `Module` rows come from that one file.
+    ///
+    /// The value stays a real module id, so `include`, `Module#===`,
+    /// `ancestors` and constant lookup keep working unchanged; only the
+    /// question "what is your class?" changes answer. `None` for every
+    /// ordinary `Module.new`, whose class is `Module` itself.
+    owner_class: Option<ClassId>,
 }
 
 impl Default for OverlayEntry {
@@ -135,6 +145,7 @@ impl Default for OverlayEntry {
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
             uninitialized: false,
             refinement_of: None,
+            owner_class: None,
         }
     }
 }
@@ -2809,6 +2820,35 @@ pub fn runtime_module_dup(mid: ClassId) -> Result<RubyValue, Signal> {
 /// with `obj.extend`/`include`: its `define_method`-installed methods are
 /// retrievable by id from the overlay.
 pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
+    runtime_module_new_owned(body, None)
+}
+
+/// The class a minted module is an INSTANCE of -- `Some(X)` only for one
+/// `X.new` where `class X < Module`. `None` for every ordinary `Module.new`
+/// and for every frozen id, so the hot `.class` path pays one overlay probe
+/// and only once anything has been minted at run time at all.
+///
+/// This is the whole of the "class-valued instance": the value is still a real
+/// module id, so `include`, `Module#===`, `ancestors` and constant lookup are
+/// untouched. Only its class differs.
+pub fn module_owner_class(id: ClassId) -> Option<ClassId> {
+    if !is_live() {
+        return None;
+    }
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .and_then(|e| e.owner_class)
+}
+
+/// [`runtime_module_new`] with the minted module tagged as an instance of
+/// `owner` -- what `X.new` runs for a `class X < Module`.
+pub fn runtime_module_new_owned(
+    body: Option<RProc>,
+    owner: Option<ClassId>,
+) -> Result<RubyValue, Signal> {
     let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
     let new_id = ClassId(id_num);
     let leaked: &'static [ClassId] = Box::leak(vec![new_id].into_boxed_slice());
@@ -2819,6 +2859,7 @@ pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
             OverlayEntry {
                 is_module: true,
                 ancestors: leaked,
+                owner_class: owner,
                 ..Default::default()
             },
         );

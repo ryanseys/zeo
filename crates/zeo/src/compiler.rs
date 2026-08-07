@@ -1458,6 +1458,26 @@ impl Compiler {
         self.value_payload_root(cid).is_some()
     }
 
+    /// Whether `cid` is a user `class X < Module` -- a MODULE FACTORY, whose
+    /// instances are real runtime module ids tagged as belonging to `X`.
+    ///
+    /// Deliberately NOT a `value_payload_root`: a `ValueSubclass` wrapper would
+    /// produce an object with a module inside it, which is not a module -- it
+    /// would fail `include`, `Module#===`, constant lookup and `ancestors`. The
+    /// two lists must stay disjoint, or `codegen::call::new` and
+    /// `super_calls` emit the wrong constructor.
+    ///
+    /// Rails' `ActiveSupport::Deprecation::DeprecatedConstantProxy` is the
+    /// shape, and 22 of the corpus's `Module` rows reach the ledger through
+    /// that one file.
+    pub fn is_module_subclass(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap {
+            return false;
+        }
+        self.superclass_chain(cid).any(|a| a == MODULE_CLASS)
+    }
+
     /// Whether `cid` is a BLANK SLATE -- a `BasicObject` subclass, which does
     /// NOT inherit the Object/Kernel surface (`class`, `inspect`, `dup`,
     /// `respond_to?`, `send`, ...).
