@@ -28,9 +28,8 @@ use ruby_prism::{CallNode, Node, ParseResult};
 
 use assign::{
     Storage, bind_call_target_once, bind_dynamic_const_scope, bind_index_target_once,
-    build_call_target_write,
-    build_index_target_write, index_arguments, lower_and_write, lower_compound_op_write,
-    lower_multi_target, lower_multi_target_group, lower_or_write,
+    build_call_target_write, build_index_target_write, index_arguments, lower_and_write,
+    lower_compound_op_write, lower_multi_target, lower_multi_target_group, lower_or_write,
 };
 use calls::{lower_block, lower_block_like_params, lower_call_args};
 use consts::{
@@ -189,13 +188,15 @@ pub(crate) fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
 /// mutually exclusive flags. See [`zeo_abi::RegexpEncoding`] for what the answer
 /// is observable through.
 ///
-/// `/e` and `/s` pin an encoding zeo's engines do not speak -- source lowering
-/// is UTF-8 throughout (see `docs/limitations.md`). For an ASCII-ONLY pattern
-/// that costs nothing: every byte means the same thing in EUC-JP, Windows-31J
-/// and UTF-8 alike, so the only difference is what the regexp REPORTS about
-/// itself, which the flag now carries. A pattern holding a non-ASCII byte is the
-/// case where the bytes really would be read differently, and stays a clean
-/// rejection.
+/// `/n`, `/e` and `/s` name an encoding that is not the source's, which is only
+/// answerable for an ASCII-only pattern: every byte then means the same thing in
+/// ASCII-8BIT, EUC-JP, Windows-31J and UTF-8 alike, so the flag changes nothing
+/// but what the regexp REPORTS about itself. One non-ASCII byte and the readings
+/// genuinely differ -- and ruby refuses to guess which was meant, in the PARSER
+/// (`regexp encoding option 'e' differs from source encoding 'UTF-8'`, a
+/// `SyntaxError`). prism is that parser, so `parse_and_lower_into` has already
+/// turned those away by the time this runs; there is nothing left here to
+/// reject, and re-deriving the rule would only be a second, worse copy of it.
 ///
 /// ruby2ruby and ruby_parser both open with `ENC_EUC = /x/e.options` -- a
 /// throwaway ASCII pattern whose only purpose is the flag bits.
@@ -204,28 +205,15 @@ fn forced_regexp_encoding(
     euc_jp: bool,
     windows_31j: bool,
     utf_8: bool,
-    pattern: &str,
-) -> PResult<zeo_abi::RegexpEncoding> {
+) -> zeo_abi::RegexpEncoding {
     use zeo_abi::RegexpEncoding;
-    let encoding = match (ascii_8bit, euc_jp, windows_31j, utf_8) {
+    match (ascii_8bit, euc_jp, windows_31j, utf_8) {
         (true, ..) => RegexpEncoding::None,
         (_, true, ..) => RegexpEncoding::EucJp,
         (_, _, true, _) => RegexpEncoding::Windows31j,
         (.., true) => RegexpEncoding::Utf8,
         _ => RegexpEncoding::Source,
-    };
-    if matches!(encoding, RegexpEncoding::EucJp | RegexpEncoding::Windows31j)
-        && !pattern.is_ascii()
-    {
-        return Err(
-            "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) is only supported for an \
-             ASCII-only pattern, where the bytes mean the same thing either way (zeo limitation, \
-             UTF-8-only)"
-                .to_string()
-                .into(),
-        );
     }
-    Ok(encoding)
 }
 
 /// The class a `class Sub < ... end` header names as its superclass.
@@ -2372,8 +2360,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             re.is_euc_jp(),
             re.is_windows_31j(),
             re.is_utf_8(),
-            &content,
-        )?;
+        );
         return Ok(hir.push(HirNode::RegexpLit(
             vec![StrPart::Lit(content)],
             RegexpFlags {
@@ -2387,22 +2374,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
 
     if let Some(re) = node.as_interpolated_regular_expression_node() {
         let parts = lower_string_parts(result, hir, re.parts().iter())?;
-        // An interpolated pattern's own literal segments are all that can be
-        // checked here; what an interpolation contributes is a runtime string.
-        let literal: String = parts
-            .iter()
-            .filter_map(|p| match p {
-                StrPart::Lit(s) => Some(s.as_str()),
-                _ => None,
-            })
-            .collect();
         let encoding = forced_regexp_encoding(
             re.is_ascii_8bit(),
             re.is_euc_jp(),
             re.is_windows_31j(),
             re.is_utf_8(),
-            &literal,
-        )?;
+        );
         return Ok(hir.push(HirNode::RegexpLit(
             parts,
             RegexpFlags {
@@ -2880,4 +2857,46 @@ fn current_dir_str() -> PResult<String> {
         .parent()
         .ok_or("the source file has no parent directory")?;
     Ok(dir.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod regexp_encoding_tests {
+    use crate::lower_error::LowerErrorKind;
+
+    fn lower(src: &str) -> Result<(), crate::lower_error::LowerError> {
+        let mut hir = crate::hir::Hir::default();
+        crate::lower::parse_and_lower_into(&mut hir, src).map(|_| ())
+    }
+
+    /// An ASCII pattern reads the same in every one of these encodings, so the
+    /// flag is free -- it changes only what the regexp reports about itself.
+    /// ruby2ruby opens with `ENC_EUC = /x/e.options` for exactly that.
+    #[test]
+    fn an_ascii_pattern_takes_any_encoding_flag() {
+        for src in ["p(/x/n)", "p(/x/e)", "p(/x/s)", "p(/x/u)", "p(/x/)"] {
+            lower(src).unwrap_or_else(|e| panic!("{src} lowers: {e}"));
+        }
+    }
+
+    /// One non-ASCII byte and the readings genuinely differ, which ruby refuses
+    /// to guess at. It settles that in the PARSER, so the rejection is prism's
+    /// and the wording is ruby's -- this pins that zeo passes it through as the
+    /// user's `SyntaxError` rather than dressing it up as a zeo gap.
+    #[test]
+    fn a_non_ascii_pattern_rejects_a_foreign_encoding_flag() {
+        for (src, flag) in [("p(/fôo/n)", 'n'), ("p(/fôo/e)", 'e'), ("p(/fôo/s)", 's')] {
+            let err = lower(src).expect_err("ruby refuses to guess which reading was meant");
+            assert_eq!(err.kind, LowerErrorKind::Syntax, "{src}");
+            assert!(
+                err.message().ends_with(&format!(
+                    "regexp encoding option '{flag}' differs from source encoding 'UTF-8'"
+                )),
+                "{src}: {}",
+                err.message()
+            );
+        }
+        // `/u` names the encoding the source already has, so it imposes nothing.
+        lower("p(/fôo/u)").expect("the source is already UTF-8");
+        lower("p(/fôo/)").expect("no flag, no question");
+    }
 }
