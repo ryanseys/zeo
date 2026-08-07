@@ -2267,9 +2267,11 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 /// emits once for a whole hierarchy, whose members all place the name at the
 /// same index. `None` everywhere else, which keeps the by-name path.
 fn dyn_ivar_slot(cx: &Ctx, name: &str) -> Option<usize> {
-    cx.self_slots
-        .then(|| ivar_slot(cx, cx.current_class?, name))
-        .flatten()
+    if !cx.self_slots {
+        return None;
+    }
+    cx.ask_opt(super::class_query::ClassQuery::IvarSlot(name.to_string()))?
+        .slot()
 }
 
 /// Which slot of the receiver's `IvarCell` one ivar occupies -- its position in

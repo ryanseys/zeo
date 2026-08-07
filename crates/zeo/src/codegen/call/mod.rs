@@ -77,15 +77,25 @@ fn inline_block_binding_names(
 /// materialization has copied it into the including class, so only the receiver
 /// still knows, while a reopened builtin keeps its methods where it wrote them.
 fn kernel_name_shadowed(cx: &Ctx, name: &str) -> bool {
-    cx.class_self.is_none()
-        && [cx.current_class, cx.defining_class]
-            .into_iter()
-            .flatten()
-            // NOT `Object`: a Kernel function's own Ruby-level definition
-            // materializes there (`Kernel#pp` is pp.rb's), so every top-level
-            // call would decline a fold that is already the right answer.
-            .filter(|&owner| owner != crate::compiler::OBJECT_CLASS)
-            .any(|owner| cx.compiler.method_in_chain(owner, name).is_some())
+    if cx.class_self.is_some() {
+        return false;
+    }
+    // The RECEIVER's class is the per-class half, and is asked as a recorded
+    // query; the class the body was WRITTEN in is the same for every member of
+    // a sharing group, so it is read directly. Both are asked because a
+    // module's own `methods` list is emptied once materialization has copied it
+    // into the including class -- only the receiver still knows -- while a
+    // reopened builtin keeps its methods where it wrote them.
+    let shadowed_by_receiver = cx
+        .ask_opt(super::class_query::ClassQuery::ShadowsKernel(
+            name.to_string(),
+        ))
+        .is_some_and(|a| a.yes());
+    shadowed_by_receiver
+        || cx.defining_class.is_some_and(|owner| {
+            owner != crate::compiler::OBJECT_CLASS
+                && cx.compiler.method_in_chain(owner, name).is_some()
+        })
 }
 
 fn emit_eval_in_scope(cx: &Ctx, scope: TokenStream, args: &[NodeId]) -> TokenStream {
@@ -1285,8 +1295,8 @@ pub fn emit_call(
             && block_arg.is_none()
             && !(cx.class_self.is_none()
                 && cx
-                    .current_class
-                    .is_some_and(|c| cx.compiler.method_in_chain(c, "eval").is_some()))
+                    .ask_opt(super::class_query::ClassQuery::InChain("eval".to_string()))
+                    .is_some_and(|a| a.yes()))
         {
             let scope = emit_binding_value(cx, "(eval)", 0);
             return emit_eval_in_scope(cx, scope, args);

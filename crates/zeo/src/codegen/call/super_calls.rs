@@ -214,7 +214,27 @@ pub fn emit_super(
     // ancestor overrides `mname`; a user parent still splices. (Not for the
     // extend shape: a class-method `super` never targets a value builtin's
     // INSTANCE method -- it keeps its runtime handoff below.)
-    if found.is_none() && pos.is_some() && cx.compiler.is_value_subclass(receiver_class) {
+    // Asked as a recorded query rather than read directly: which of the two
+    // instance-method `super` channels fires is the one thing about a `super`
+    // that varies with the RECEIVER, and `codegen::share` has to see it. The
+    // runtime hand-off below bakes `defining_class` only, so it is the same
+    // tokens for every class in a sharing group.
+    let value_channel = !in_class_method
+        && cx
+            .ask_opt(crate::codegen::class_query::ClassQuery::ValueSuper {
+                defining_class,
+                mname: mname.to_string(),
+            })
+            .is_some_and(|a| a.yes());
+    debug_assert_eq!(
+        value_channel,
+        !in_class_method
+            && found.is_none()
+            && pos.is_some()
+            && cx.compiler.is_value_subclass(receiver_class),
+        "`ClassQuery::ValueSuper` must decide the channel the same way this site does"
+    );
+    if value_channel {
         return emit_value_super(
             cx,
             mname,

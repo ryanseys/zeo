@@ -41,12 +41,11 @@ pub(super) fn enforce_visibility(
             }
         }
         Visibility::Protected => {
-            let owner = entry.owner;
-            let related = cx.current_class.is_some_and(|caller_cid| {
-                caller_cid == owner
-                    || cx.compiler.class(caller_cid).ancestors.contains(&owner)
-                    || cx.compiler.class(owner).ancestors.contains(&caller_cid)
-            });
+            let related = cx
+                .ask_opt(crate::codegen::class_query::ClassQuery::ProtectedRelated(
+                    entry.owner,
+                ))
+                .is_some_and(|a| a.yes());
             if !related {
                 return Some(emit_visibility_error(cx, recv_id, "protected", method_name));
             }

@@ -16,6 +16,7 @@
 
 mod call;
 mod captures;
+mod class_query;
 mod collections;
 mod constfold;
 mod exceptions;
@@ -226,6 +227,15 @@ struct Ctx<'a> {
     /// site INDEX differs between two members, so the group's emissions would
     /// no longer be token-identical and nothing would share at all.
     shared_body: bool,
+    /// Where [`Ctx::ask`] records what this emission asked about its receiver
+    /// class. `Some` only while `codegen::share` is emitting a candidate body;
+    /// the resulting [`class_query::Trace`] is what tells it whether another
+    /// class can be served by the same function -- see `class_query`'s docs for
+    /// why the questions are recorded rather than listed.
+    ///
+    /// Shared by reference so a cloned `Ctx` -- every nested block, every
+    /// spliced `super` -- writes into the same trace as the body it came from.
+    trace: Option<&'a std::cell::RefCell<class_query::Trace>>,
     /// `Some` exactly while emitting the body of a RUNTIME-defined method -- a
     /// `def`/`define_method` installed inside a `Class.new`/`Struct.new`/
     /// `Data.define` block, whose class is minted at runtime and so has no
@@ -422,11 +432,34 @@ impl<'a> Ctx<'a> {
             // group, so it must stay cache-free too or the group's emissions
             // stop matching.
             shared_body: self.shared_body,
+            trace: self.trace,
             captured_locals: shadow(self.captured_locals.clone()),
             local_types,
             block_depth: self.block_depth + 1,
             ..self.clone()
         }
+    }
+
+    /// Ask one question about the RECEIVER class, recording it when this
+    /// emission is being traced. Every per-class read in the emitter should go
+    /// through here: what is not recorded is what `codegen::share` cannot know
+    /// two classes disagree about. See [`class_query`].
+    fn ask(&self, query: class_query::ClassQuery) -> class_query::Answer {
+        let cid = self
+            .current_class
+            .expect("a class query needs a receiver class");
+        let answer = query.answer(self.compiler, cid);
+        if let Some(trace) = self.trace {
+            trace.borrow_mut().record(query, answer);
+        }
+        answer
+    }
+
+    /// [`Ctx::ask`] where the receiver class may be absent (a class method, the
+    /// top level). Nothing untraceable is recorded, because nothing that has no
+    /// receiver class can vary with one.
+    fn ask_opt(&self, query: class_query::ClassQuery) -> Option<class_query::Answer> {
+        self.current_class.is_some().then(|| self.ask(query))
     }
 }
 
@@ -2194,6 +2227,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         self_is_dynamic: false,
         self_slots: false,
         shared_body: false,
+        trace: None,
         runtime_super_params: None,
         defined_by_define_method: false,
         lexical_frame_label: None,
@@ -2690,6 +2724,7 @@ pub(crate) fn emit_class_body_site(
         self_is_dynamic: false,
         self_slots: false,
         shared_body: false,
+        trace: None,
         runtime_super_params: None,
         defined_by_define_method: false,
         lexical_frame_label: None,
@@ -3049,6 +3084,7 @@ fn emit_class_method_fn(
         self_is_dynamic: false,
         self_slots: false,
         shared_body: false,
+        trace: None,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -3297,19 +3333,24 @@ fn emit_builtin_method_fn(
     let method_ident = safe_ident(&compiler.scope(sid).name);
     // A reopened builtin has no generated struct, so its ivars are name-keyed
     // with nowhere for a slot index to point.
-    emit_value_self_method_fn(compiler, cid, sid, &method_ident, false)
+    emit_value_self_method_fn(compiler, cid, sid, &method_ident, false, None)
 }
 
 /// `emit_builtin_method_fn` with the function's own name supplied, since a
 /// SHARED body (`codegen::share`) is emitted under a group name rather than the
 /// method's. The receiver is a `RubyValue` either way, which is what makes one
 /// body servable by classes with different concrete structs.
+///
+/// `trace`, when present, collects every question this emission asks about
+/// `cid` -- see [`class_query`]. `share` records one member's body and then
+/// replays the trace against the rest instead of emitting them at all.
 fn emit_value_self_method_fn(
     compiler: &Compiler,
     cid: ClassId,
     sid: crate::compiler::ScopeId,
     method_ident: &proc_macro2::Ident,
     self_slots: bool,
+    trace: Option<&std::cell::RefCell<class_query::Trace>>,
 ) -> TokenStream {
     let scope = compiler.scope(sid);
     let needs_block = scope.needs_block_param();
@@ -3359,6 +3400,7 @@ fn emit_value_self_method_fn(
         self_is_dynamic: true,
         self_slots,
         shared_body: self_slots,
+        trace,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -3449,6 +3491,7 @@ pub(crate) fn emit_instance_method_body(
         self_is_dynamic: false,
         self_slots: false,
         shared_body: false,
+        trace: None,
         runtime_super_params: None,
         block_depth: 0,
         has_blk_binding: needs_block,
@@ -3563,7 +3606,7 @@ fn emit_redef_containers(compiler: &Compiler) -> Vec<TokenStream> {
         let container = redef_container_ident(cid);
         let fns = class.redef_scopes.iter().map(|&sid| {
             let ident = redef_ident(sid, &compiler.scope(sid).name);
-            emit_value_self_method_fn(compiler, cid, sid, &ident, false)
+            emit_value_self_method_fn(compiler, cid, sid, &ident, false, None)
         });
         containers.push(quote! {
             #[allow(non_snake_case)]

@@ -70,6 +70,7 @@ impl SharedBodies {
         let mut fns: Vec<TokenStream> = Vec::new();
         let (mut agreed, mut differed) = (0usize, 0usize);
         let (mut rejected, mut too_small, mut copies) = (0usize, 0usize, 0usize);
+        let (mut queries, mut untraced) = (0usize, 0usize);
         let mut report = String::new();
 
         let candidates = crate::analyze::share::groups(compiler);
@@ -82,21 +83,62 @@ impl SharedBodies {
             let fn_ident = format_ident!("__sh{}", fns.len());
             let mut rendered: Vec<(ClassId, String)> = Vec::with_capacity(group.members.len());
             let mut bodies = Vec::with_capacity(group.members.len());
-            for &(cid, sid) in &group.members {
-                let body = super::emit_value_self_method_fn(compiler, cid, sid, &fn_ident, true);
+            // The FIRST member's emission is traced: every question it asks
+            // about its receiver class, with the answer it got. The rest are
+            // still emitted and compared here -- see `plan`'s docs for why the
+            // trace is being measured before it is trusted.
+            let trace = std::cell::RefCell::new(super::class_query::Trace::default());
+            for (i, &(cid, sid)) in group.members.iter().enumerate() {
+                let recording = (i == 0).then_some(&trace);
+                let body = super::emit_value_self_method_fn(
+                    compiler, cid, sid, &fn_ident, true, recording,
+                );
                 rendered.push((cid, body.to_string()));
                 bodies.push(body);
+            }
+            // The property the trace has to have before it can replace the
+            // comparison: agreeing on every recorded question must MEAN the
+            // emissions match. A class that agrees and yet renders differently
+            // is a per-class read the emitter makes without asking through
+            // `Ctx::ask`, which is the one way this mechanism can be wrong.
+            if verify {
+                let trace = trace.borrow();
+                queries += trace.len();
+                for (cid, r) in &rendered[1..] {
+                    if trace.agrees_for(compiler, *cid) && r != &rendered[0].1 {
+                        untraced += 1;
+                        if report.len() < 8000 {
+                            report += &format!(
+                                "{}#{} renders differently on {} but every recorded question \
+                                 agrees -- an unrecorded per-class read\n",
+                                compiler.fq_name(group.defining_class),
+                                group.name,
+                                compiler.fq_name(*cid),
+                            );
+                        }
+                    }
+                }
             }
             let (base_cid, base) = &rendered[0];
             if let Some((other_cid, other)) = rendered[1..].iter().find(|(_, r)| r != base) {
                 differed += 1;
                 if verify && report.len() < 8000 {
+                    // Which recorded question explains it, when one does. That
+                    // is the healthy case: the trace saw the divergence coming.
+                    let why = trace
+                        .borrow()
+                        .first_disagreement(compiler, *other_cid)
+                        .map_or_else(
+                            || "  no recorded question explains it".to_string(),
+                            |(q, mine, theirs)| format!("  {q:?}: {mine:?} vs {theirs:?}"),
+                        );
                     report += &format!(
-                        "{}#{} differs between {} and {}\n  {}\n  {}\n",
+                        "{}#{} differs between {} and {}\n{}\n  {}\n  {}\n",
                         compiler.fq_name(group.defining_class),
                         group.name,
                         compiler.fq_name(*base_cid),
                         compiler.fq_name(*other_cid),
+                        why,
                         first_divergence(base, other),
                         first_divergence(other, base),
                     );
@@ -119,12 +161,25 @@ impl SharedBodies {
             eprintln!(
                 "zeo-verify-share: {agreed} of {} groups share ({copies} of \
                  {candidate_copies} duplicate bodies removed); rejected {rejected}, \
-                 under the size gate {too_small}, disagreed {differed}",
+                 under the size gate {too_small}, disagreed {differed}; \
+                 {queries} recorded question(s), {untraced} unrecorded per-class read(s)",
                 agreed + rejected + too_small + differed,
             );
-            if differed > 0 {
+            if !report.is_empty() {
+                eprintln!("{report}");
+            }
+            // A group whose members render differently is HEALTHY -- `class A <
+            // Base; include M` and `class B; include M` genuinely place `@x` at
+            // different slots, and the group correctly declines to share. What
+            // is not healthy is that happening with no recorded question to
+            // explain it, because that is a per-class read the emitter makes
+            // without going through `Ctx::ask`, and it is the one way sharing
+            // can produce a wrong program.
+            if untraced > 0 {
                 crate::codegen::record_unsupported(format!(
-                    "ZEO_VERIFY_SHARE found {differed} disagreeing group(s):\n{report}"
+                    "ZEO_VERIFY_SHARE found {untraced} group(s) whose emissions differ with \
+                     no recorded question to explain it -- a per-class read that does not go \
+                     through `Ctx::ask`:\n{report}"
                 ));
             }
         }

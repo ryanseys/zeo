@@ -268,6 +268,7 @@ mod tests {
                 self_is_dynamic: false,
                 self_slots: false,
                 shared_body: false,
+                trace: None,
                 runtime_super_params: None,
                 defined_by_define_method: false,
                 lexical_frame_label: None,
