@@ -1390,8 +1390,13 @@ fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
 /// `<name>-<version>/` convention: a mismatch means a `require` would resolve
 /// out of a directory that doesn't name the gem it provides.
 ///
-/// Every declared `require_paths` entry must exist -- a gem whose `lib/` is
-/// missing is a loud configuration error, not a silently empty search root.
+/// A declared `require_paths` entry that doesn't exist contributes no search
+/// root, and is not an error. RubyGems puts the directory on `$LOAD_PATH`
+/// whether or not it is there, and `require` simply never matches inside it --
+/// oracle-verified against ruby 4.0.6. Metagems rely on this: `rails` itself
+/// declares `require_paths: [lib]` and ships only a README and a licence, so
+/// rejecting the gem would refuse to compile every program that depends on it.
+/// An unsatisfiable `require` still fails, which is where the real error is.
 fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
     let manifest_path =
         gemspec_path(pkg_dir).ok_or_else(|| format!("{}: no `.gemspec`", pkg_dir.display()))?;
@@ -1408,23 +1413,12 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
         )
         .into());
     }
-    let roots = spec
+    let roots: Vec<PathBuf> = spec
         .require_paths
         .iter()
-        .map(|rp| {
-            let root = pkg_dir.join(rp);
-            if root.is_dir() {
-                Ok(root)
-            } else {
-                Err(format!(
-                    "{}: require_paths entry \"{rp}\" doesn't exist under {}",
-                    manifest_path.display(),
-                    pkg_dir.display()
-                )
-                .into())
-            }
-        })
-        .collect::<PResult<Vec<PathBuf>>>()?;
+        .map(|rp| pkg_dir.join(rp))
+        .filter(|root| root.is_dir())
+        .collect();
     Ok(Gem {
         name: spec.name,
         roots,

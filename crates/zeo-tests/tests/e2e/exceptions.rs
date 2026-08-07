@@ -1,4 +1,4 @@
-use crate::support::{compile_packages, run_ruby};
+use crate::support::{compile_packages, run_ruby, run_ruby_packages};
 
 #[test]
 fn raise_with_a_splat_argument_reraises_the_class_and_message() {
@@ -1862,26 +1862,39 @@ fn bad_manifests_are_loud_configuration_errors() {
     )
     .unwrap_err();
     assert!(err.contains("sets no `name`"), "unexpected error: {err}");
+}
 
-    // Default require_paths (["lib"]) pointing at a missing lib/.
-    let err = compile_packages(
+#[test]
+fn a_metagem_whose_declared_lib_is_absent_contributes_no_load_path() {
+    // `rails` is the real case: its gemspec declares `require_paths: [lib]` and
+    // the gem ships only a README and a licence. RubyGems puts the missing
+    // directory on `$LOAD_PATH` regardless and `require` simply never matches
+    // inside it, so a metagem sitting in the gem set must not fail the build --
+    // 43 gems in one corpus sweep depended on this. Verified against ruby 4.0.6.
+    let result = run_ruby_packages(
         &[
             (
                 "packages/aaa/aaa.gemspec",
                 "Gem::Specification.new do |s|\n  s.name = \"aaa\"\n  s.version = \"1.0.0\"\nend\n",
             ),
-            ("packages/aaa/aaa.rb", "puts 1\n"),
-            ("main.rb", "puts :ok\n"),
+            ("packages/aaa/README.md", "a metagem\n"),
+            (
+                "packages/bbb/bbb.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"bbb\"\n  s.version = \"1.0.0\"\nend\n",
+            ),
+            ("packages/bbb/lib/bbb.rb", "BBB = :loaded\n"),
+            (
+                "main.rb",
+                "require \"bbb\"\np BBB\nbegin\n  require \"aaa\"\nrescue LoadError => e\n  \
+                 puts e.message\nend\nputs :ok\n",
+            ),
         ],
         "main.rb",
         &[],
         &["packages"],
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("doesn't exist under"),
-        "unexpected error: {err}"
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, ":loaded\ncannot load such file -- aaa\nok\n");
 }
 
 #[test]

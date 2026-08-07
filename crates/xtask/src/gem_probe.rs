@@ -637,8 +637,16 @@ fn classify(err: &str, root: &Path) -> Outcome {
     Outcome::LoweringGap(truncate(&msg))
 }
 
+/// The diagnostic reaches the ledger whole.
+///
+/// The cap used to be 160 characters, which cut real messages mid-path -- the
+/// gem name, the require_paths entry and the directory it was looked for under
+/// all sat past it, so the row said less than the compiler did and `--matching`
+/// could not select on the part that was missing. The limit that remains is a
+/// runaway guard for a message no diagnostic should produce, not a display
+/// width: nothing zeo emits comes close to it.
 fn truncate(s: &str) -> String {
-    const LIMIT: usize = 160;
+    const LIMIT: usize = 2000;
     match s.char_indices().nth(LIMIT) {
         Some((i, _)) => format!("{}...", &s[..i]),
         None => s.to_string(),
@@ -711,11 +719,19 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
 /// still read by a CSV parser, which sees an unbalanced quote and gives up on
 /// the whole file. RFC 4180's rule: wrap the field and double the quotes
 /// inside it.
+/// A tab or a newline inside a field would end the column or the row, and
+/// `read_ledger` is line-based, so quoting cannot rescue either -- they become
+/// spaces. `message_of` already collapses whitespace, but a `fetch-failed`
+/// detail is an io error that never went through it.
 fn tsv_field(s: &str) -> String {
+    let s: String = s
+        .chars()
+        .map(|c| if c.is_control() || c == '\t' { ' ' } else { c })
+        .collect();
     if s.contains('"') {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
-        s.to_string()
+        s
     }
 }
 
