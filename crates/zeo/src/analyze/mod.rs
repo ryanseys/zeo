@@ -1623,15 +1623,24 @@ fn collect_runtime_undefs(compiler: &Compiler, stmt: NodeId) -> Vec<String> {
 /// is in there by construction, and a name written only on a dead branch still
 /// counts (see the field's docs -- over-collection is the safe direction).
 fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> {
-    hir.all_nodes()
-        .iter()
-        .filter_map(|node| match node {
-            // `name` is already the leaf -- an explicit `Foo::NAME = ...` keeps
-            // its namespace in the separate `scope` field.
-            HirNode::ConstWrite { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
+    let mut out = std::collections::HashSet::new();
+    for node in hir.all_nodes() {
+        // `name` is already the leaf -- an explicit `Foo::NAME = ...` keeps its
+        // namespace in the separate `scope` field.
+        let HirNode::ConstWrite { scope, name, .. } = node else {
+            continue;
+        };
+        out.insert(name.clone());
+        // The QUALIFIED spelling as well, so a reader that names a scope can
+        // ask about that scope rather than settling for "some constant with
+        // this leaf exists somewhere". Anchors are stripped: `::A::B` and
+        // `A::B` name the same constant, and there is only one top level.
+        if let Some(scope) = scope {
+            let scope = crate::constpath::ConstPath::parse(scope).unanchored();
+            out.insert(format!("{scope}::{name}"));
+        }
+    }
+    out
 }
 
 /// The runtime definition verbs -- the calls that install a method body the
@@ -1904,9 +1913,7 @@ fn register_class(
     if let (Some(s), Some(def_node)) = (&superclass, def_node) {
         let known = compiler.resolve_class(s, cref, box_id).is_some()
             || resolve_or_create_lexical(compiler, s, cref, box_id).is_some()
-            || compiler
-                .assigned_const_names
-                .contains(crate::constpath::ConstPath::parse(s).base());
+            || compiler.assigns_const_path(s);
         if !known {
             defer_unresolved_directive(compiler, def_node, s);
             return Ok(());
@@ -2807,12 +2814,7 @@ fn resolve_module_target(
         .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id));
     match resolved {
         Some(cid) => Ok(Some(cid)),
-        None if !compiler
-            .assigned_const_names
-            .contains(crate::constpath::ConstPath::parse(name).base()) =>
-        {
-            Ok(None)
-        }
+        None if !compiler.assigns_const_path(name) => Ok(None),
         None => Err(format!(
             "unknown module `{name}` (must be defined earlier in the file)"
         )),

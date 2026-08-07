@@ -367,7 +367,9 @@ fn instance_class(
         // The three standard streams are IO instances, and highline probes one
         // (`unless STDIN.respond_to? :getbyte`). They are constants rather than
         // classes, so nothing else here would reach them.
-        HirNode::ClassRef(n) if matches!(n.trim_start_matches("::"), "STDIN" | "STDOUT" | "STDERR") => {
+        HirNode::ClassRef(n)
+            if matches!(n.trim_start_matches("::"), "STDIN" | "STDOUT" | "STDERR") =>
+        {
             Some(zeo_abi::IO_CLASS)
         }
         _ => None,
@@ -524,9 +526,7 @@ fn call_fold(
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.
-        "!" if args.is_empty() => {
-            Some(!static_bool(compiler, cref, box_id, receiver?)?)
-        }
+        "!" if args.is_empty() => Some(!static_bool(compiler, cref, box_id, receiver?)?),
         "freeze" if args.is_empty() => static_bool(compiler, cref, box_id, receiver?),
         "respond_to?" => respond_to_fold(compiler, cref, box_id, receiver, args),
         "const_defined?" => const_defined_fold(compiler, cref, box_id, receiver, args),
@@ -599,7 +599,7 @@ fn const_name_fold(
     if compiler.resolve_class(joined, cref, box_id).is_some() {
         return Some(true);
     }
-    let path = crate::constpath::ConstPath::parse(&joined);
+    let path = crate::constpath::ConstPath::parse(joined);
     // A definition the walk hasn't reached yet, or one written under a scope
     // this reference spells differently (`Psych::Visitors` from inside
     // `module Psych`) -- undecidable, so let the guard run.

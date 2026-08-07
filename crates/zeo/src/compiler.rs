@@ -1488,6 +1488,26 @@ impl Compiler {
     /// needs to walk `ancestors` explicitly, since it must search PAST
     /// wherever the currently-executing method was actually defined, not
     /// just find the winner from scratch.
+    /// Whether the program assigns the constant `path` NAMES -- as opposed to
+    /// some constant that merely shares its last segment.
+    ///
+    /// A bare `Template` can be assigned in any lexical scope, so its leaf is
+    /// the only question worth asking. `::Tilt::Template` is a different
+    /// question: temple writes `class Tilt < ::Tilt::Template` and, with tilt
+    /// absent from the require graph, the leaf test found some unrelated
+    /// `Template` and called the superclass known -- so the definition was
+    /// registered rather than deferred, and failed later as an unknown
+    /// superclass instead of raising the `NameError` CRuby raises there.
+    pub fn assigns_const_path(&self, path: &str) -> bool {
+        let path = crate::constpath::ConstPath::parse(path);
+        let key = if path.is_bare() {
+            path.base()
+        } else {
+            path.unanchored()
+        };
+        self.assigned_const_names.contains(key)
+    }
+
     pub fn method_in_chain(&self, class: ClassId, name: &str) -> Option<(ClassId, ScopeId)> {
         let info = &self.classes[class.0 as usize];
         info.methods
