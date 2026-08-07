@@ -46,12 +46,12 @@ pub fn groups(compiler: &Compiler) -> Vec<Group> {
         if !compiler.has_generated_struct(cid) {
             continue;
         }
-        for &sid in &class.methods {
-            let scope = compiler.scope(sid);
+        for entry in &class.methods {
+            let scope = compiler.scope(entry.def);
             by_key
                 .entry((scope.defining_class, scope.name.as_str(), scope.def_node))
                 .or_default()
-                .push((cid, sid));
+                .push((cid, entry.def));
         }
     }
     let mut out: Vec<Group> = by_key

@@ -136,10 +136,13 @@ pub(crate) fn builtin_override(
         && compiler.classes.iter().any(|c| {
             c.builtin_overlay == Some(cid)
                 && c.box_id == box_id
-                && c.own_methods
+                && (c
+                    .own_methods
                     .iter()
-                    .chain(&c.methods)
                     .any(|&sid| compiler.scope(sid).name == name)
+                    || c.methods
+                        .iter()
+                        .any(|e| compiler.names.str(e.name) == name))
         })
 }
 

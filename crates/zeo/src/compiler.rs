@@ -218,12 +218,16 @@ pub struct ClassInfo {
     pub own_methods: Vec<ScopeId>,
     /// The full MRO-resolved set `codegen::mod::emit_class` actually emits
     /// one Rust method per entry for -- own ∪ every name reachable via
-    /// `ancestors` (superclass, `include`, `prepend`), each carrying its own
-    /// `Scope::defining_class` for `super` to search from. Always populated
-    /// by `analyze::mro::materialize`, even for a class with no mixins at
-    /// all (closes a latent gap: the compiler never generated a Rust
-    /// method for a purely-inherited, non-overridden method at all).
-    pub methods: Vec<ScopeId>,
+    /// `ancestors` (superclass, `include`, `prepend`). Always populated by
+    /// `analyze::mro::materialize`, even for a class with no mixins at all
+    /// (closes a latent gap: the compiler never generated a Rust method for a
+    /// purely-inherited, non-overridden method at all).
+    ///
+    /// Read it through [`methods_of`](Compiler::methods_of) /
+    /// [`lookup_method`](Compiler::lookup_method), never directly: the backing
+    /// store is meant to become a memoized ancestor walk, which is what CRuby
+    /// does (it flattens nothing -- see [`MethodEntry`]).
+    pub methods: Vec<MethodEntry>,
     /// `def self.name` written literally in this class/module's own body.
     pub own_class_methods: Vec<ScopeId>,
     /// MRO-resolved class methods: `own_class_methods` (always wins) ∪
@@ -232,7 +236,8 @@ pub struct ClassInfo {
     /// rule). Codegen emits these as plain associated functions (no `self`
     /// receiver) alongside the class's ordinary `impl` block, or as a
     /// `pub mod` of free functions for a module with no struct of its own.
-    pub class_methods: Vec<ScopeId>,
+    /// The singleton-side twin of `methods`, and read the same way.
+    pub class_methods: Vec<MethodEntry>,
     /// `@@x` storage ownership, resolved once at analyze time (not per
     /// access, unlike zeo -- see `analyze::mro::resolve_cvars`'s docs):
     /// name -> the class/module that actually OWNS the runtime storage
@@ -293,6 +298,87 @@ pub struct ClassInfo {
     /// exactly as in CRuby (see `Compiler::feature_active`). `None` for every
     /// always-on class (all user classes and all core builtins).
     pub feature_gate: Option<&'static str>,
+}
+
+/// One name, bound on one class -- CRuby's `rb_method_entry_t` (method.h:55).
+///
+/// The pair it forms with [`Scope`] is the whole point: a `Scope` is the
+/// DEFINITION (params, body, inferred local types), written once at one `def`
+/// and never copied; a `MethodEntry` is the BINDING of that definition onto a
+/// class, and the only thing a class inheriting a method needs. CRuby splits
+/// them the same way and for the same reason -- `rb_method_definition_t` is
+/// refcounted and shared, and the per-class entry is 5 fields.
+///
+/// zeo used to fuse the two, so `mro::materialize` minted a fresh `Scope` with
+/// a cloned body for every (class, inherited method) pair. That is quadratic in
+/// classes x visible methods, which is invisible until a Rails-sized graph and
+/// then fatal: `require "active_record"` ran 845s and died past 5GB.
+#[derive(Clone, Copy, Debug)]
+pub struct MethodEntry {
+    /// CRuby's `called_id` -- the name this class answers to, interned. Equal
+    /// to the definition's own name (an `alias` gets a real `Scope` of its
+    /// own), but kept here so a lookup compares integers.
+    pub name: NameId,
+    /// The one `Scope` holding params/body/local_types.
+    pub def: ScopeId,
+    /// The class this entry hangs on -- CRuby's `owner`, what `Method#owner`
+    /// answers. NOT where the body was written; that is the definition's
+    /// `defining_class`, CRuby's `defined_class`, which is where `super`
+    /// resumes from.
+    pub owner: ClassId,
+    /// Per-CLASS, not per-definition: ruby lets a subclass re-scope a method it
+    /// inherited without redefining it (`private :inherited_method`), which
+    /// CRuby models as a real entry of its own in the subclass.
+    pub visibility: Visibility,
+    /// Whether this is one of the pristine `BUILTIN_EXCEPTIONS_RB` bodies that
+    /// `zeo-rt`'s `register_exceptions` already installs, so codegen emits
+    /// nothing for it. Inherited copies stay pristine; a reopen does not.
+    pub native_default: bool,
+}
+
+impl MethodEntry {
+    /// Where the body was WRITTEN -- CRuby's `defined_class`, the point `super`
+    /// resumes after. Equal to `owner` for a class's own `def`.
+    pub fn defined_class(&self, compiler: &Compiler) -> ClassId {
+        compiler.scope(self.def).defining_class
+    }
+}
+
+/// An interned method name. Method tables are the one place in the compiler
+/// with a name per (class, name) pair rather than per definition, so this is
+/// where string comparison and per-entry `String` allocation actually cost
+/// something -- the `HashSet<String>::insert` that was 47% of the Rails-scale
+/// profile was exactly this.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct NameId(u32);
+
+#[derive(Default)]
+pub struct Names {
+    ids: HashMap<Box<str>, NameId>,
+    list: Vec<Box<str>>,
+}
+
+impl Names {
+    pub fn intern(&mut self, name: &str) -> NameId {
+        if let Some(&id) = self.ids.get(name) {
+            return id;
+        }
+        let id = NameId(self.list.len() as u32);
+        let boxed: Box<str> = name.into();
+        self.list.push(boxed.clone());
+        self.ids.insert(boxed, id);
+        id
+    }
+
+    /// The id `name` already has, or `None` -- a lookup, which must not mint a
+    /// new id for a name nothing ever defined.
+    pub fn get(&self, name: &str) -> Option<NameId> {
+        self.ids.get(name).copied()
+    }
+
+    pub fn str(&self, id: NameId) -> &str {
+        &self.list[id.0 as usize]
+    }
 }
 
 pub struct Scope {
@@ -398,6 +484,8 @@ pub struct Compiler {
     pub hir: Hir,
     pub classes: Vec<ClassInfo>,
     pub scopes: Vec<Scope>,
+    /// Interned method names -- see [`NameId`].
+    pub names: Names,
     /// Each box's TOP-LEVEL SURROGATE: a module-shaped
     /// `ClassInfo` named `#<Ruby::Box:N>` that owns the box's top-level
     /// constants and doubles as the handle's runtime `RubyValue::Class`
@@ -751,6 +839,7 @@ impl Compiler {
                 feature_gate: None,
             }],
             scopes: Vec::new(),
+            names: Names::default(),
             box_surrogates: HashMap::new(),
             class_body_sites: Vec::new(),
             global_def_hooks: Default::default(),
@@ -1649,12 +1738,35 @@ impl Compiler {
         self.assigned_const_names.contains(key)
     }
 
+    /// Every name `class` answers to, in MRO order -- the reading side of
+    /// [`ClassInfo::methods`]. Nothing outside this file should index that
+    /// field: the store is meant to become a memoized ancestor walk, and these
+    /// two accessors are the whole surface that has to keep working when it
+    /// does.
+    pub fn methods_of(&self, class: ClassId) -> &[MethodEntry] {
+        &self.classes[class.0 as usize].methods
+    }
+
+    /// The singleton-side twin of [`methods_of`](Self::methods_of).
+    pub fn class_methods_of(&self, class: ClassId) -> &[MethodEntry] {
+        &self.classes[class.0 as usize].class_methods
+    }
+
+    /// What `class` resolves `name` to -- CRuby's `search_method` answer.
+    pub fn lookup_method(&self, class: ClassId, name: &str) -> Option<&MethodEntry> {
+        let id = self.names.get(name)?;
+        self.methods_of(class).iter().find(|e| e.name == id)
+    }
+
+    /// The singleton-side twin of [`lookup_method`](Self::lookup_method).
+    pub fn lookup_class_method(&self, class: ClassId, name: &str) -> Option<&MethodEntry> {
+        let id = self.names.get(name)?;
+        self.class_methods_of(class).iter().find(|e| e.name == id)
+    }
+
     pub fn method_in_chain(&self, class: ClassId, name: &str) -> Option<(ClassId, ScopeId)> {
-        let info = &self.classes[class.0 as usize];
-        info.methods
-            .iter()
-            .find(|&&s| self.scopes[s.0 as usize].name == name)
-            .map(|&sid| (self.scopes[sid.0 as usize].defining_class, sid))
+        self.lookup_method(class, name)
+            .map(|e| (e.defined_class(self), e.def))
     }
 
     /// Where `class`'s body was written, for locating a rejection raised after
@@ -1753,11 +1865,8 @@ impl Compiler {
     /// `methods` -- used for `ClassName.foo(...)` call sites (see
     /// `HirNode::ClassRef`'s docs).
     pub fn class_method_in_chain(&self, class: ClassId, name: &str) -> Option<(ClassId, ScopeId)> {
-        let info = &self.classes[class.0 as usize];
-        info.class_methods
-            .iter()
-            .find(|&&s| self.scopes[s.0 as usize].name == name)
-            .map(|&sid| (self.scopes[sid.0 as usize].defining_class, sid))
+        self.lookup_class_method(class, name)
+            .map(|e| (e.defined_class(self), e.def))
     }
 }
 

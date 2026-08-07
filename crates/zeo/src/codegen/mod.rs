@@ -1404,10 +1404,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // a call inside `ruby_class!`, which has no visibility channel of
         // its own. See `ClassRegistry::mark_visibility_rows`.
         let id = idx as u32;
-        for &sid in &compiler.class(ClassId(id)).methods {
-            let scope = compiler.scope(sid);
-            let key = &scope.name;
-            match scope.visibility {
+        for entry in compiler.methods_of(ClassId(id)) {
+            let key = compiler.names.str(entry.name);
+            match entry.visibility {
                 crate::hir::Visibility::Private => push_vis_row(id, key, 0),
                 // A protected method is recorded so the `protected_*` reflection
                 // and `protected_method_defined?` can report it (and `public_*`
@@ -1431,9 +1430,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
         // The CLASS-method half (verb 3/4): `private_class_method`, either on a
         // `def self.x` in this body or naming one this class inherits.
-        for &sid in &compiler.class(ClassId(id)).class_methods {
-            if compiler.scope(sid).visibility == crate::hir::Visibility::Private {
-                push_vis_row(id, &compiler.scope(sid).name, 3);
+        for entry in compiler.class_methods_of(ClassId(id)) {
+            if entry.visibility == crate::hir::Visibility::Private {
+                push_vis_row(id, compiler.names.str(entry.name), 3);
             }
         }
         for (name, vis) in &compiler.class(ClassId(id)).class_visibility_overrides {
@@ -1555,8 +1554,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // `mark_private` is: the macro has no channel for it, and a MODULE
         // (`def self.x` on a module -- `Math.sqrt`-shaped) has no generated
         // `__register` at all, yet needs its class methods reachable too.
-        for &sid in &compiler.class(ClassId(id)).class_methods {
-            let scope = compiler.scope(sid);
+        for entry in compiler.class_methods_of(ClassId(id)) {
+            let scope = compiler.scope(entry.def);
             let container = ident::class_ident(compiler, ClassId(id));
             let method_ident = ident::class_method_ident(&scope.name);
             let fn_path = quote! { #container::#method_ident };
@@ -1603,14 +1602,19 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let shadowed: Vec<(ClassId, crate::compiler::ScopeId)> = ci
             .singleton_super_targets
             .iter()
-            .filter(|(_, sid)| !ci.class_methods.contains(sid))
+            .filter(|(_, sid)| !ci.class_methods.iter().any(|e| e.def == *sid))
             .copied()
             .collect();
         // One container per (class, module): the same NAME can be shadowed
         // in several sibling modules, and each copy is a distinct fn.
+        // Deduped: one DEFINITION now serves every position that inherited it,
+        // so the same `(module, def)` pair can be reached twice down one chain
+        // (a class and its parent both `extend M`). Two copies would emit the
+        // same `fn` name twice into one container.
         let mut by_module: Vec<(ClassId, Vec<crate::compiler::ScopeId>)> = Vec::new();
         for &(m, sid) in &shadowed {
             match by_module.iter_mut().find(|(bm, _)| *bm == m) {
+                Some((_, sids)) if sids.contains(&sid) => {}
                 Some((_, sids)) => sids.push(sid),
                 None => by_module.push((m, vec![sid])),
             }
@@ -1618,7 +1622,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         for (m, sids) in by_module {
             let flat = ci.name.replace("::", "_");
             let container = format_ident!("__sst_{}_{}_{}", idx, m.0, flat);
-            let fns = sids.iter().map(|&sid| emit_class_method_fn(compiler, sid));
+            // Emitted in THIS class's context, not the module's: the copy's
+            // `super` has to resume the singleton chain here, and its class
+            // ivars are this class's slots.
+            let fns = sids
+                .iter()
+                .map(|&sid| emit_class_method_fn(compiler, ClassId(id), sid));
             sst_containers.push(quote! {
                 #[allow(non_snake_case)]
                 pub mod #container {
@@ -1654,7 +1663,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         for &(m, sid) in ci
             .singleton_super_targets
             .iter()
-            .filter(|(_, sid)| ci.class_methods.contains(sid))
+            .filter(|(_, sid)| ci.class_methods.iter().any(|e| e.def == *sid))
         {
             let scope = compiler.scope(sid);
             let container = ident::class_ident(compiler, ClassId(id));
@@ -1948,8 +1957,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // slightly earlier than their file position (builtins register
         // ahead of user classes), a documented approximation that only
         // matters if a builtin's class body reads a user class.
-        for &sid in &class.methods {
-            let scope = compiler.scope(sid);
+        for entry in &class.methods {
+            let scope = compiler.scope(entry.def);
             let mod_ident = ident::class_ident(compiler, ClassId(id));
             let method_ident = safe_ident(&scope.name);
             let fn_path = quote! { #mod_ident::#method_ident };
@@ -1990,8 +1999,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let own_cm: Vec<&String> = class
             .class_methods
             .iter()
-            .map(|&sid| {
-                let scope = compiler.scope(sid);
+            .map(|entry| {
+                let scope = compiler.scope(entry.def);
                 let mod_ident = ident::class_ident(compiler, ClassId(id));
                 let method_ident = ident::class_method_ident(&scope.name);
                 let fn_path = quote! { #mod_ident::#method_ident };
@@ -2018,9 +2027,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // on a REOPENED BUILTIN was enforced on the call (codegen knows the
         // def is private) but recorded nowhere, so `respond_to?` and
         // `singleton_methods` both reported the method as public.
-        for &sid in &class.class_methods {
-            if compiler.scope(sid).visibility == crate::hir::Visibility::Private {
-                push_vis_row(id, &compiler.scope(sid).name, 3);
+        for entry in &class.class_methods {
+            if entry.visibility == crate::hir::Visibility::Private {
+                push_vis_row(id, compiler.names.str(entry.name), 3);
             }
         }
         for (cm_name, vis) in &class.class_visibility_overrides {
@@ -2923,7 +2932,7 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let fns = ci
         .class_methods
         .iter()
-        .map(|&sid| emit_class_method_fn(compiler, sid));
+        .map(|e| emit_class_method_fn(compiler, e.owner, e.def));
     // A container without a generated struct to attach an `impl` to -- a module,
     // OR a native-backed class (`RubyException`/`ValueSubclass`), OR an immediate
     // subclass (registry-only) -- emits `def self.x` into a `pub mod` of free
@@ -2954,7 +2963,15 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     }
 }
 
-fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> TokenStream {
+/// `owner` is the class this copy is emitted INTO -- CRuby's `owner`, and what
+/// class-level ivar storage keys on, so `Sub.reg` reads Sub's slot even though
+/// the body came from Base. It is passed in rather than read off the scope
+/// because one definition now serves every class that inherited it.
+fn emit_class_method_fn(
+    compiler: &Compiler,
+    owner: ClassId,
+    sid: crate::compiler::ScopeId,
+) -> TokenStream {
     let scope = compiler.scope(sid);
     let params = &scope.params;
     let needs_block = scope.needs_block_param();
@@ -2988,13 +3005,12 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         // ownership lookup (`codegen::expr::cvar_owner_id`).
         current_class: None,
         defining_class: Some(lexical),
-        // `scope.class` (the OWNER -- which class this body is emitted
-        // into), deliberately NOT `defining_class` (where it was written).
-        // The two differ exactly when a class method is inherited, and
-        // that is precisely the case class-ivar storage must tell apart:
-        // `Sub.reg` reads Sub's slot even though the body came from Base.
-        // See `Ctx::class_self`'s docs.
-        class_self: scope.class,
+        // The OWNER -- which class this body is emitted into -- deliberately
+        // NOT `defining_class` (where it was written). The two differ exactly
+        // when a class method is inherited, and that is precisely the case
+        // class-ivar storage must tell apart: `Sub.reg` reads Sub's slot even
+        // though the body came from Base. See `Ctx::class_self`'s docs.
+        class_self: Some(owner),
         current_method: Some(scope.name.clone()),
         current_method_origin: scope.alias_of.clone(),
         defined_by_define_method: scope_is_define_method(compiler, scope),
@@ -3041,13 +3057,14 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         || captures::body_contains_escaping_return(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, body);
     let frame = scope_frame_guard(compiler, scope, true);
-    // A class method's traced `self` is the class object itself.
-    let self_note = scope.class.map(|c| {
-        let id = c.0;
+    // A class method's traced `self` is the class object itself -- the OWNER,
+    // which is the class the call actually landed on.
+    let self_note = {
+        let id = owner.0;
         quote! {
             zeo_rt::trace_frame_self(|| zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)));
         }
-    });
+    };
     // `check_ints` after the frame push: the method-prologue interruption
     // checkpoint (pairs with the back-edge check in `loops`), so recursion-
     // driven busy work is killable even with no native loop in sight.
@@ -3143,7 +3160,7 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let instance_fns = ci
         .methods
         .iter()
-        .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+        .map(|e| emit_builtin_method_fn(compiler, cid, e.def));
     // Instance and class methods share this one container but not their
     // idents (`x` vs `__cm_x`), so a reopen defining both -- `module Kernel;
     // def URI(u); end; module_function :URI; end`, which is what
@@ -3151,7 +3168,7 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let class_fns = ci
         .class_methods
         .iter()
-        .map(|&sid| emit_class_method_fn(compiler, sid));
+        .map(|e| emit_class_method_fn(compiler, e.owner, e.def));
     // `use super::*;` for the same reason a module's class-method container
     // needs it (see `emit_class_methods`): a `pub mod` is a real child
     // module, and these bodies reference sibling top-level items.
@@ -3179,11 +3196,10 @@ fn emit_exception_deltas(
         .class(cid)
         .methods
         .iter()
-        .copied()
-        .filter(|&sid| {
-            let scope = compiler.scope(sid);
-            !scope.native_default && compiler.is_native_backed(scope.defining_class)
+        .filter(|e| {
+            !e.native_default && compiler.is_native_backed(compiler.scope(e.def).defining_class)
         })
+        .map(|e| e.def)
         .collect();
     if deltas.is_empty() {
         return None;
@@ -3565,7 +3581,8 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
     // the other, and member order is `Struct.new`'s argument order.
     let hidden_idents = ci.hidden_ivars.iter().map(|iv| safe_ident(iv));
 
-    let methods = ci.methods.iter().map(|&sid| {
+    let methods = ci.methods.iter().map(|entry| {
+        let sid = entry.def;
         let scope = compiler.scope(sid);
         let method_ident = safe_ident(&scope.name);
         let needs_block = scope.needs_block_param();
@@ -3589,8 +3606,8 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
             }
         }
     });
-    let dispatch_entries = ci.methods.iter().map(|&sid| {
-        let scope = compiler.scope(sid);
+    let dispatch_entries = ci.methods.iter().map(|entry| {
+        let scope = compiler.scope(entry.def);
         let frame = scope_frame_guard(compiler, scope, false);
         let tramp = match compiler.accessor_shape(cid, scope) {
             Some(shape) => {

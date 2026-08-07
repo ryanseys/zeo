@@ -16,9 +16,8 @@
 //! generated Rust text ends up with one copy per class, exactly the same
 //! trade a generic Rust function already makes via monomorphization.
 
-use super::register_method;
 use crate::analyze_error::AnalyzeError;
-use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
+use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
 use crate::hir::{HirNode, NodeId, Span, Visibility};
 use std::collections::HashSet;
 
@@ -126,10 +125,32 @@ pub fn materialize(
         if is_builtin_module {
             let own = compiler.class(cid).own_methods.clone();
             if !own.is_empty() {
-                compiler.classes[cid.0 as usize].methods = own;
+                let entries = own
+                    .into_iter()
+                    .map(|sid| {
+                        let name = compiler.names.intern(&compiler.scope(sid).name.clone());
+                        entry_for(compiler, name, sid, cid)
+                    })
+                    .collect();
+                compiler.classes[cid.0 as usize].methods = entries;
             }
         }
     }
+
+    // The shape of the program the rest of the compiler works over, and the one
+    // number this pass exists to keep small: `entries` is what used to be
+    // `defs` -- one cloned Scope per (class, visible method) -- and the ratio
+    // between them is how much the entry/definition split is buying.
+    tracing::info!(
+        classes = compiler.classes.len(),
+        defs = compiler.scopes.len(),
+        entries = compiler
+            .classes
+            .iter()
+            .map(|c| c.methods.len() + c.class_methods.len())
+            .sum::<usize>(),
+        "materialized"
+    );
 
     reinfer_local_types(compiler);
 
@@ -333,8 +354,8 @@ fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Resul
 /// is freshly re-typechecked against `class_id`'s own concrete struct.
 fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
     let ancestors = compiler.class(class_id).ancestors.clone();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut materialized: Vec<_> = Vec::new();
+    let mut seen: HashSet<crate::compiler::NameId> = HashSet::new();
+    let mut materialized: Vec<MethodEntry> = Vec::new();
     for &anc_id in &ancestors {
         // A BUILTIN class never materializes `Object`'s methods (top-level
         // `def`s / `Object` reopens): re-emitting each body per builtin
@@ -351,7 +372,8 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         let own = compiler.class(anc_id).own_methods.clone();
         for sid in own {
             let name = compiler.scope(sid).name.clone();
-            if !seen.insert(name.clone()) {
+            let name_id = compiler.names.intern(&name);
+            if !seen.insert(name_id) {
                 continue; // a closer ancestor already won this name
             }
             // `undef name` in THIS class's body: the name is not
@@ -369,27 +391,13 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
             if compiler.class(class_id).undefined.contains(&name) {
                 continue;
             }
-            if anc_id == class_id {
-                materialized.push(sid); // this class's own definition -- reuse verbatim
-            } else {
-                let scope = compiler.scope(sid);
-                let (def_node, params, body, visibility, native_default) = (
-                    scope.def_node,
-                    scope.params.clone(),
-                    scope.body.clone(),
-                    scope.visibility,
-                    scope.native_default,
-                );
-                let new_id = register_method(
-                    compiler, class_id, anc_id, name, def_node, params, body, visibility,
-                )?;
-                // A pristine exception body stays pristine when inherited: the
-                // subclass's copy is served by `register_exceptions` too, so
-                // codegen skips it. A reopen/override body (`native_default ==
-                // false`) propagates as a real delta onto each descendant.
-                compiler.scopes[new_id.0 as usize].native_default = native_default;
-                materialized.push(new_id);
-            }
+            // Inheriting a method BINDS its one definition here; it does not
+            // copy it. A pristine exception body stays pristine when inherited
+            // (`register_exceptions` serves the subclass's too, so codegen
+            // skips it), while a reopen/override body propagates as a real
+            // delta onto each descendant -- which is now just the entry
+            // carrying the definition's own flag.
+            materialized.push(entry_for(compiler, name_id, sid, class_id));
         }
     }
 
@@ -501,6 +509,20 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
 /// pulling in the module's INSTANCE methods, `own_methods` -- matching real
 /// Ruby, where `def self.x` on the module itself stays put). The nearest
 /// level (`class_id` itself) always wins over anything found further up.
+/// Binds one definition onto `owner`. Everything but the owner comes from the
+/// definition itself, which is the whole content of the entry/definition split:
+/// inheriting a method is an entry, not a copy.
+fn entry_for(compiler: &Compiler, name: NameId, def: ScopeId, owner: ClassId) -> MethodEntry {
+    let scope = compiler.scope(def);
+    MethodEntry {
+        name,
+        def,
+        owner,
+        visibility: scope.visibility,
+        native_default: scope.native_default,
+    }
+}
+
 fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
     // `undef_method :m` inside this class's `class << self`: the name is not
     // materialized onto it from any position, so it raises NoMethodError here
@@ -508,8 +530,8 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
     // the name first, so an undef also blocks a FURTHER ancestor from
     // supplying it -- the instance-side rule in `materialize_methods`.
     let undefined = compiler.class(class_id).class_undefined.clone();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut materialized = Vec::new();
+    let mut seen: HashSet<crate::compiler::NameId> = HashSet::new();
+    let mut materialized: Vec<MethodEntry> = Vec::new();
     let mut singleton_targets: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
     let mut level = Some(class_id);
 
@@ -531,35 +553,27 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
         {
             for sid in compiler.class(m).own_methods.clone() {
                 let name = compiler.scope(sid).name.clone();
-                let is_winner = seen.insert(name.clone());
+                let name_id = compiler.names.intern(&name);
+                let is_winner = seen.insert(name_id);
                 if undefined.contains(&name) {
                     continue;
                 }
-                let scope = compiler.scope(sid);
-                let (def_node, params, body, visibility) = (
-                    scope.def_node,
-                    scope.params.clone(),
-                    scope.body.clone(),
-                    scope.visibility,
-                );
-                let new_id = register_method(
-                    compiler, class_id, m, name, def_node, params, body, visibility,
-                )?;
                 if is_winner {
-                    materialized.push(new_id);
+                    materialized.push(entry_for(compiler, name_id, sid, class_id));
                 }
-                singleton_targets.push((m, new_id));
+                singleton_targets.push((m, sid));
             }
         }
         for sid in compiler.class(cid).own_class_methods.clone() {
             let name = compiler.scope(sid).name.clone();
-            let is_winner = seen.insert(name.clone());
+            let name_id = compiler.names.intern(&name);
+            let is_winner = seen.insert(name_id);
             if undefined.contains(&name) {
                 continue;
             }
             if cid == class_id {
                 if is_winner {
-                    materialized.push(sid); // this class's own definition -- reuse verbatim
+                    materialized.push(entry_for(compiler, name_id, sid, class_id));
                 } else {
                     // SHADOWED by a singleton prepend above: this class's own
                     // `def self.x` is no longer the dispatched method, but the
@@ -569,22 +583,10 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                     // consults; see `codegen`'s shadowed-target registration).
                     singleton_targets.push((class_id, sid));
                 }
+            } else if is_winner {
+                materialized.push(entry_for(compiler, name_id, sid, class_id));
             } else {
-                let scope = compiler.scope(sid);
-                let (def_node, params, body, visibility) = (
-                    scope.def_node,
-                    scope.params.clone(),
-                    scope.body.clone(),
-                    scope.visibility,
-                );
-                let new_id = register_method(
-                    compiler, class_id, cid, name, def_node, params, body, visibility,
-                )?;
-                if is_winner {
-                    materialized.push(new_id);
-                } else {
-                    singleton_targets.push((cid, new_id));
-                }
+                singleton_targets.push((cid, sid));
             }
         }
         for &m in compiler.class(cid).extends.clone().iter().rev() {
@@ -596,24 +598,15 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 // emitted in THIS class's context so its own `super`
                 // resumes the chain here -- the `own_impls` distinction,
                 // on the singleton side.
-                let is_winner = seen.insert(name.clone());
+                let name_id = compiler.names.intern(&name);
+                let is_winner = seen.insert(name_id);
                 if undefined.contains(&name) {
                     continue;
                 }
-                let scope = compiler.scope(sid);
-                let (def_node, params, body, visibility) = (
-                    scope.def_node,
-                    scope.params.clone(),
-                    scope.body.clone(),
-                    scope.visibility,
-                );
-                let new_id = register_method(
-                    compiler, class_id, m, name, def_node, params, body, visibility,
-                )?;
                 if is_winner {
-                    materialized.push(new_id);
+                    materialized.push(entry_for(compiler, name_id, sid, class_id));
                 }
-                singleton_targets.push((m, new_id));
+                singleton_targets.push((m, sid));
             }
         }
         level = compiler.class(cid).parent;

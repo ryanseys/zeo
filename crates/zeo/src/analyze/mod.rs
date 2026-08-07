@@ -4332,7 +4332,7 @@ mod tests {
         let names: Vec<&str> = ci
             .methods
             .iter()
-            .map(|&sid| a.compiler.scope(sid).name.as_str())
+            .map(|e| a.compiler.names.str(e.name))
             .collect();
         assert!(
             names.contains(&"stat"),
@@ -4361,7 +4361,7 @@ mod builtin_reopen_tests {
         let names: Vec<&str> = ci
             .methods
             .iter()
-            .map(|&sid| a.compiler.scope(sid).name.as_str())
+            .map(|e| a.compiler.names.str(e.name))
             .collect();
         assert!(names.contains(&"blank?") && names.contains(&"shout"));
         assert!(a.compiler.method_in_chain(STRING_CLASS, "blank?").is_some());
@@ -4388,7 +4388,7 @@ mod builtin_reopen_tests {
         let tags = ci
             .methods
             .iter()
-            .filter(|&&sid| a.compiler.scope(sid).name == "tag")
+            .filter(|e| a.compiler.names.str(e.name) == "tag")
             .count();
         assert_eq!(tags, 1);
     }
@@ -4415,7 +4415,7 @@ mod builtin_reopen_tests {
                 .class(cid)
                 .methods
                 .iter()
-                .filter(|&&sid| a.compiler.scope(sid).name == "probe")
+                .filter(|e| a.compiler.names.str(e.name) == "probe")
                 .count();
             assert_eq!(probes, 1, "expected one `probe` for: {src}");
         }

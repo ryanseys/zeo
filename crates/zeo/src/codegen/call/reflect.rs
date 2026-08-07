@@ -19,12 +19,13 @@ use proc_macro2::TokenStream;
 /// actual class). Free for programs with no reopens: every builtin's
 /// materialized method table is empty.
 pub(super) fn any_builtin_overrides(cx: &Ctx, name: &str) -> bool {
-    cx.compiler.classes.iter().any(|c| {
-        c.is_builtin
-            && c.methods
-                .iter()
-                .any(|&sid| cx.compiler.scope(sid).name == name)
-    })
+    let Some(id) = cx.compiler.names.get(name) else {
+        return false;
+    };
+    cx.compiler
+        .classes
+        .iter()
+        .any(|c| c.is_builtin && c.methods.iter().any(|e| e.name == id))
 }
 /// The shared core behind `ClassName.foo(...)` (`emit_call`'s
 /// constant-receiver interception, `target` resolved from the literal
