@@ -99,3 +99,34 @@ p c.class
 p c.shout
 p c.name
 p c.is_a?(OpenSSL::Cipher)
+
+class Named2 < OpenSSL::Digest
+  def label = "#{name} digest"
+end
+
+d = Named2.new("SHA256")
+p Named2.superclass
+p d.class
+p d.label
+p d.hexdigest("abc")
+
+# `Fiber` is `Thread`'s shape: the block IS the body, so `super(&block)` is the
+# only way to seat one. hexapdf's `FiberWithLength` records a length it knows
+# before the fiber runs.
+class Measured < Fiber
+  def initialize(length, &block)
+    super(&block)
+    @length = length || -1
+  end
+
+  attr_reader :length
+end
+
+f = Measured.new(3) { Fiber.yield(:a); Fiber.yield(:b); :done }
+p Measured.superclass
+p f.class
+p f.length
+p f.resume
+p f.resume
+p f.resume
+p f.alive?

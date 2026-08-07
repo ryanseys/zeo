@@ -1671,6 +1671,8 @@ impl Compiler {
                     | zeo_abi::IO_CLASS
                     | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
                     | zeo_abi::OPENSSL_CIPHER_CLASS
+                    | zeo_abi::OPENSSL_DIGEST_CLASS
+                    | zeo_abi::FIBER_CLASS
                     | zeo_abi::RANGE_CLASS
             )
         })

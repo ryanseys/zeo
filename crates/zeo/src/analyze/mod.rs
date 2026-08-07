@@ -2711,6 +2711,18 @@ fn register_class(
                                 // either. openssl's OWN `AES`/`DES`/... are
                                 // `Class.new(Cipher)` subclasses.
                                 | zeo_abi::OPENSSL_CIPHER_CLASS
+                                // `OpenSSL::Digest`: same again -- the
+                                // algorithm is the argument. openssl's own
+                                // deprecated `Digest::Digest` alias class is
+                                // one, and hits two gems.
+                                | zeo_abi::OPENSSL_DIGEST_CLASS
+                                // `Fiber`: the `Thread` shape -- the block IS
+                                // the body, so a blockless fiber cannot be
+                                // built and a subclass seats the real one
+                                // through `super(&block)`. hexapdf's
+                                // `FiberWithLength` adds the length it knows
+                                // up front.
+                                | zeo_abi::FIBER_CLASS
                                 // `Range`: chronic's `Span < Range`. Its
                                 // class-method table had no `new` row until
                                 // one was added for exactly this path -- the

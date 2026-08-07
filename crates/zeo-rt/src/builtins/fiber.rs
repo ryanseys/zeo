@@ -114,6 +114,19 @@ ruby_class! {
 
     receiver f = crate::RubyValue::Fiber;
 
+    // Codegen intercepts the literal `Fiber.new { ... }`; this row serves a
+    // `send`, and is what a `class F < Fiber` reaches through `super`. The
+    // block IS the fiber's body, so a blockless call is the same
+    // ArgumentError CRuby raises out of `Proc.new`.
+    def self."new" cfunc (_recv, &block) {
+        match block {
+            Some(b) => Ok(fiber::fiber_new(b.clone())),
+            None => Err(raise_error(
+                "ArgumentError",
+                "tried to create Proc object without a block".to_string(),
+            )),
+        }
+    }
     def self."current"(_recv) {
         Ok(fiber::fiber_current())
     }

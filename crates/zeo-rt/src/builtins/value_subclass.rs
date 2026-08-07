@@ -174,6 +174,8 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::IO_CLASS
             | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
             | zeo_abi::OPENSSL_CIPHER_CLASS
+            | zeo_abi::OPENSSL_DIGEST_CLASS
+            | zeo_abi::FIBER_CLASS
             | zeo_abi::RANGE_CLASS
     )
 }
@@ -424,7 +426,10 @@ fn empty_payload(root: ClassId) -> RubyValue {
         | zeo_abi::UDP_SOCKET_CLASS
         | zeo_abi::UNIX_SOCKET_CLASS
         | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
-        | zeo_abi::OPENSSL_CIPHER_CLASS => RubyValue::Nil,
+        | zeo_abi::OPENSSL_CIPHER_CLASS
+        | zeo_abi::OPENSSL_DIGEST_CLASS
+        // A blockless `Fiber` cannot be built either -- the block is the body.
+        | zeo_abi::FIBER_CLASS => RubyValue::Nil,
         // `Range.new` demands both endpoints, so there is no empty form here
         // either -- the `File` shape again.
         zeo_abi::RANGE_CLASS => RubyValue::Nil,

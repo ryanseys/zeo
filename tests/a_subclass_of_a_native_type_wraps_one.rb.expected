@@ -22,3 +22,14 @@ Loud
 "LOUD"
 "AES-256-CBC"
 true
+OpenSSL::Digest
+Named2
+"SHA256 digest"
+"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+Fiber
+Measured
+3
+:a
+:b
+:done
+false
