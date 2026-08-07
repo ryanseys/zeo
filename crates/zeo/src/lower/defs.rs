@@ -1644,29 +1644,14 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
     // Classify without holding the `&hir[id]` borrow across the node-building
     // mutations below (each rewrite pushes fresh nodes).
     enum Rewrite {
-        Mixin(&'static str, String),
-        Alias(String, String),
-        Visibility(&'static str, String),
-        ModuleFunction(String),
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
-        Undef(Vec<String>),
+        Directive,
         Keep,
     }
     let mut out = Vec::with_capacity(body.len());
     for id in body {
         let rewrite = match &hir[id] {
-            HirNode::Include(m) => Rewrite::Mixin("include", m.clone()),
-            HirNode::Extend(m) => Rewrite::Mixin("extend", m.clone()),
-            HirNode::Prepend(m) => Rewrite::Mixin("prepend", m.clone()),
-            HirNode::AliasMethod {
-                new_name, old_name, ..
-            } => Rewrite::Alias(new_name.clone(), old_name.clone()),
-            HirNode::MethodVisibility { name, visibility } => {
-                Rewrite::Visibility(visibility_name(*visibility), name.clone())
-            }
-            HirNode::Undef(names) => Rewrite::Undef(names.clone()),
-            HirNode::ModuleFunction(name) => Rewrite::ModuleFunction(name.clone()),
             HirNode::ClassDef {
                 name,
                 superclass,
@@ -1682,29 +1667,10 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                 then_body,
                 else_body,
             } => Rewrite::Cond(*cond, then_body.clone(), else_body.clone()),
+            node if node.is_class_body_directive() => Rewrite::Directive,
             _ => Rewrite::Keep,
         };
         let node = match rewrite {
-            Rewrite::Mixin(method, m) => {
-                let arg = class_ref(hir, &m);
-                runtime_self_send(hir, method, vec![arg])
-            }
-            Rewrite::Alias(new_name, old_name) => {
-                let args = vec![sym_lit(hir, new_name), sym_lit(hir, old_name)];
-                runtime_self_send(hir, "alias_method", args)
-            }
-            Rewrite::Visibility(vis, name) => {
-                let args = vec![sym_lit(hir, name)];
-                runtime_self_send(hir, vis, args)
-            }
-            Rewrite::Undef(names) => {
-                let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
-                runtime_self_send(hir, "undef_method", args)
-            }
-            Rewrite::ModuleFunction(name) => {
-                let args = vec![sym_lit(hir, name)];
-                runtime_self_send(hir, "module_function", args)
-            }
             Rewrite::Nested(name, superclass, inner, is_module) => {
                 runtime_nested_class(hir, name, superclass, inner, is_module)?
             }
@@ -1717,18 +1683,15 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                     else_body,
                 })
             }
-            // Anything with no runtime spelling of its own passes through --
-            // but a class-body DIRECTIVE reaching here means the two halves of
-            // the table have drifted, and codegen would report it far from its
-            // cause ("top-level-only node in expression position").
-            Rewrite::Keep => {
-                debug_assert!(
-                    !hir[id].is_class_body_directive(),
-                    "class-body directive with no runtime rewrite -- add it to \
-                     `transform_runtime_class_body` alongside `is_class_body_directive`"
-                );
-                id
-            }
+            // `is_class_body_directive` says this node cannot stand in block
+            // position, so the shared table owes it a spelling. A `None` here
+            // means the two have drifted, and codegen would report it far from
+            // its cause ("top-level-only node in expression position").
+            Rewrite::Directive => runtime_directive_spelling(hir, id)?.ok_or(
+                "a class-body directive has no runtime spelling -- add it to \
+                 `runtime_directive_spelling` alongside `is_class_body_directive`",
+            )?,
+            Rewrite::Keep => id,
         };
         out.push(node);
     }
@@ -1751,58 +1714,18 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
 /// alias old_lineno= lineno=; ...` -- a debug hook whose guard is a real
 /// runtime question.
 pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -> Vec<NodeId> {
-    enum Rewrite {
-        Mixin(&'static str, String),
-        Alias(String, String),
-        Visibility(&'static str, String),
-        ModuleFunction(String),
-        Undef(Vec<String>),
-        Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
-        Keep,
-    }
     let mut out = Vec::with_capacity(body.len());
     for &id in body {
-        let rewrite = match &hir[id] {
-            HirNode::Include(m) => Rewrite::Mixin("include", m.clone()),
-            HirNode::Extend(m) => Rewrite::Mixin("extend", m.clone()),
-            HirNode::Prepend(m) => Rewrite::Mixin("prepend", m.clone()),
-            HirNode::AliasMethod {
-                new_name, old_name, ..
-            } => Rewrite::Alias(new_name.clone(), old_name.clone()),
-            HirNode::MethodVisibility { name, visibility } => {
-                Rewrite::Visibility(visibility_name(*visibility), name.clone())
-            }
-            HirNode::ModuleFunction(name) => Rewrite::ModuleFunction(name.clone()),
-            HirNode::Undef(names) => Rewrite::Undef(names.clone()),
+        let nested = match &hir[id] {
             HirNode::If {
                 cond,
                 then_body,
                 else_body,
-            } => Rewrite::Cond(*cond, then_body.clone(), else_body.clone()),
-            _ => Rewrite::Keep,
+            } => Some((*cond, then_body.clone(), else_body.clone())),
+            _ => None,
         };
-        out.push(match rewrite {
-            Rewrite::Mixin(method, m) => {
-                let arg = class_ref(hir, &m);
-                runtime_self_send(hir, method, vec![arg])
-            }
-            Rewrite::Alias(new_name, old_name) => {
-                let args = vec![sym_lit(hir, new_name), sym_lit(hir, old_name)];
-                runtime_self_send(hir, "alias_method", args)
-            }
-            Rewrite::Visibility(vis, name) => {
-                let args = vec![sym_lit(hir, name)];
-                runtime_self_send(hir, vis, args)
-            }
-            Rewrite::ModuleFunction(name) => {
-                let args = vec![sym_lit(hir, name)];
-                runtime_self_send(hir, "module_function", args)
-            }
-            Rewrite::Undef(names) => {
-                let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
-                runtime_self_send(hir, "undef_method", args)
-            }
-            Rewrite::Cond(cond, then_body, else_body) => {
+        out.push(match nested {
+            Some((cond, then_body, else_body)) => {
                 let then_body = transform_conditional_class_body(hir, &then_body);
                 let else_body = transform_conditional_class_body(hir, &else_body);
                 hir.push(HirNode::If {
@@ -1811,15 +1734,128 @@ pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -
                     else_body,
                 })
             }
-            Rewrite::Keep => id,
+            // A directive with no spelling stays put rather than failing the
+            // compile: unlike the runtime-class path, the class here is real and
+            // statically laid out, so a `refine` in the branch is analyze's to
+            // answer, not this rewrite's.
+            None => runtime_directive_spelling(hir, id)
+                .ok()
+                .flatten()
+                .unwrap_or(id),
         });
     }
     out
 }
 
+/// The runtime spelling of one class-body DIRECTIVE: the self-send a block
+/// whose `self` is the class serves, standing in for a layout the compiler
+/// would otherwise have baked. `None` means the node already stands on its own
+/// in block position (a `def`, a nested `class`, an ordinary statement), and
+/// the caller decides what to do with it.
+///
+/// ONE table, read by both callers -- a class whose superclass is only known at
+/// runtime ([`transform_runtime_class_body`]) and an undecidable class-body
+/// `if` ([`transform_conditional_class_body`]). They kept two tables between
+/// them, and both drifted from [`HirNode::is_class_body_directive`]: three gems
+/// (danger, gitlab-labkit, activeadmin_settings_cached) reached codegen through
+/// a directive neither had a row for.
+fn runtime_directive_spelling(hir: &mut Hir, id: NodeId) -> PResult<Option<NodeId>> {
+    /// Classified without holding the `&hir[id]` borrow across the node-building
+    /// mutations below (each rewrite pushes fresh nodes).
+    enum Rewrite {
+        /// A send taking a module REFERENCE (`include M`).
+        Mixin(&'static str, String),
+        /// A send whose arguments are all symbols (`private :x`,
+        /// `undef_method :a, :b`, `alias_method :new, :old`).
+        Syms(&'static str, Vec<String>),
+        /// Either of the above, but to the class's SINGLETON class -- the
+        /// `class << self` half, where a class's own methods live.
+        SingletonMixin(&'static str, String),
+        SingletonSyms(&'static str, Vec<String>),
+    }
+    let rewrite = match &hir[id] {
+        HirNode::Include(m) => Rewrite::Mixin("include", m.clone()),
+        HirNode::Extend(m) => Rewrite::Mixin("extend", m.clone()),
+        HirNode::Prepend(m) => Rewrite::Mixin("prepend", m.clone()),
+        HirNode::ClassMethodPrepend(m) => Rewrite::SingletonMixin("prepend", m.clone()),
+        HirNode::AliasMethod {
+            new_name, old_name, ..
+        } => Rewrite::Syms("alias_method", vec![new_name.clone(), old_name.clone()]),
+        HirNode::MethodVisibility { name, visibility } => {
+            Rewrite::Syms(visibility_name(*visibility), vec![name.clone()])
+        }
+        // `private`/`public`/`protected` are PRIVATE methods of Module, so the
+        // singleton form has to go through `send` -- which is also the only
+        // spelling that covers `protected`, ruby having no
+        // `protected_class_method` to match its two siblings.
+        HirNode::ClassMethodVisibility { name, visibility } => Rewrite::SingletonSyms(
+            "send",
+            vec![visibility_name(*visibility).to_string(), name.clone()],
+        ),
+        HirNode::ConstantVisibility { names, private } => Rewrite::Syms(
+            if *private {
+                "private_constant"
+            } else {
+                "public_constant"
+            },
+            names.clone(),
+        ),
+        HirNode::ModuleFunction(name) => Rewrite::Syms("module_function", vec![name.clone()]),
+        HirNode::Undef(names) => Rewrite::Syms("undef_method", names.clone()),
+        HirNode::ClassMethodUndef(names) => Rewrite::SingletonSyms("undef_method", names.clone()),
+        // The one directive with no self-send that reproduces it: a refinement
+        // is activated LEXICALLY by `using`, over the text that follows it, and
+        // only the static path lays that out. A runtime `refine` send would
+        // build the module and activate it nowhere.
+        HirNode::Refine { target, .. } => {
+            return Err(format!(
+                "`refine {target}` inside a class built at runtime isn't supported (zeo \
+                 limitation) -- a refinement activates lexically, which needs the enclosing \
+                 class laid out at compile time"
+            )
+            .into());
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(match rewrite {
+        Rewrite::Mixin(method, m) => {
+            let arg = class_ref(hir, &m);
+            runtime_self_send(hir, method, vec![arg])
+        }
+        Rewrite::SingletonMixin(method, m) => {
+            let arg = class_ref(hir, &m);
+            runtime_singleton_send(hir, method, vec![arg])
+        }
+        Rewrite::Syms(method, names) => {
+            let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
+            runtime_self_send(hir, method, args)
+        }
+        Rewrite::SingletonSyms(method, names) => {
+            let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
+            runtime_singleton_send(hir, method, args)
+        }
+    }))
+}
+
 fn runtime_self_send(hir: &mut Hir, name: &str, args: Vec<NodeId>) -> NodeId {
     hir.push(HirNode::Call {
         receiver: None,
+        name: name.to_string(),
+        args: args.into_iter().map(ArrayElem::Single).collect(),
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
+/// `singleton_class.<name>(args)` -- the same dispatch one level up. A class
+/// body's `self` is the class, so its CLASS methods are its singleton class's
+/// instance methods, which is where the `class << self` directives have to land.
+fn runtime_singleton_send(hir: &mut Hir, name: &str, args: Vec<NodeId>) -> NodeId {
+    let singleton = runtime_self_send(hir, "singleton_class", Vec::new());
+    hir.push(HirNode::Call {
+        receiver: Some(singleton),
         name: name.to_string(),
         args: args.into_iter().map(ArrayElem::Single).collect(),
         kwargs: Vec::new(),

@@ -847,11 +847,11 @@ fn register_nested_class_defs(
         // A definition ruby RAISES on, somewhere a `rescue` can see it, becomes
         // that raise -- see `raise_instead_of_defining`. Anywhere else the
         // refusal stands.
-        if let Err(e) = registered {
-            if !(rescuable && raise_instead_of_defining(compiler)) {
-                compiler.pending_ruby_raise = None;
-                return Err(e);
-            }
+        if let Err(e) = registered
+            && !(rescuable && raise_instead_of_defining(compiler))
+        {
+            compiler.pending_ruby_raise = None;
+            return Err(e);
         }
     }
     Ok(())
