@@ -38,6 +38,19 @@ end
 p App::Adapters::MySQL.new.kind
 p App::Adapters::MySQL.ancestors.take(3)
 
+# The same shape ACROSS FILES, which is how rails has it: the abstract file
+# writes `class Dumper < Dumper` and the adapters inherit through it. Split
+# across a require graph, the name the superclass clause must skip is one the
+# other files have already referenced.
+require_relative "a_class_is_not_its_own_superclass/base"
+require_relative "a_class_is_not_its_own_superclass/abstract"
+require_relative "a_class_is_not_its_own_superclass/adapter"
+
+p Store::Adapters::Dumper.superclass
+p Store::Adapters::Dumper.new.extra
+p Store::Adapters::MySQL.new.kind
+p Store::Adapters::MySQL.ancestors.take(3)
+
 # A deeper name still wins when it is a REAL definition rather than the one
 # being written: nothing here is skipped.
 module App

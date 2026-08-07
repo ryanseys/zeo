@@ -4,5 +4,9 @@ App::Dumper
 Object
 [:mysql, :outer]
 [App::Adapters::MySQL, App::Adapters::Dumper, App::Dumper]
+Store::Dumper
+:extra
+[:mysql, :base]
+[Store::Adapters::MySQL, Store::Adapters::Dumper, Store::Dumper]
 :nested
 App::Adapters::Real

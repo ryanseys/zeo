@@ -738,12 +738,71 @@ fn process_top_stmt_inner(
 /// Registration is a compile-time fact about shape, so the marker stays put and
 /// `codegen::stmt`'s `ClassDef` arm still runs the body at its document
 /// position; the `BoxScope` arm above splits it the same way.
+/// Records that this refusal is one ruby has an EXCEPTION for, so a `rescue`
+/// around the definition can be given the raise instead of the compile error.
+/// See [`Compiler::pending_ruby_raise`] and [`raise_instead_of_defining`].
+///
+/// A definition with no node behind it (a synthesized/bootstrap registration)
+/// records nothing: there is no site to rewrite, and nothing wraps it.
+fn ruby_raises(compiler: &mut Compiler, def_node: Option<NodeId>, class: &'static str, msg: &str) {
+    if let Some(node) = def_node {
+        compiler.pending_ruby_raise = Some((node, class, msg.to_string()));
+    }
+}
+
+/// Whether a raise from inside `stmt` could be caught there -- i.e. whether
+/// `stmt` is a `begin` with `rescue` clauses, anywhere in its subtree.
+///
+/// Only that shape earns the rewrite in [`raise_instead_of_defining`]: with
+/// nothing to catch it, ruby's own behaviour is to abort, and a compile error
+/// that names the same problem is the better version of aborting.
+fn is_rescuable(compiler: &Compiler, stmt: NodeId) -> bool {
+    let mut stack = vec![stmt];
+    while let Some(id) = stack.pop() {
+        if matches!(&compiler.hir[id], HirNode::Begin { rescues, .. } if !rescues.is_empty()) {
+            return true;
+        }
+        compiler.hir[id].for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
+
+/// Turns a definition ruby would have RAISED on into the raise itself, in
+/// place, so an enclosing `rescue` sees exactly what it sees in ruby.
+///
+/// `class A; class B < A; class A < B` is `TypeError: superclass mismatch for
+/// class A` -- a real exception at the definition, not a broken program. Wrapped
+/// in `begin ... rescue TypeError`, ruby prints the message and carries on, so
+/// zeo has to compile that program and carry on too. The class stays
+/// unregistered, which is also ruby's outcome: a definition that raised changed
+/// nothing.
+fn raise_instead_of_defining(compiler: &mut Compiler) -> bool {
+    let Some((node, class, message)) = compiler.pending_ruby_raise.take() else {
+        return false;
+    };
+    let class_ref = compiler.hir.push(HirNode::ClassRef(class.to_string()));
+    let message = compiler
+        .hir
+        .push(HirNode::StringLit(vec![StrPart::Lit(message)]));
+    compiler.hir[node] = HirNode::Call {
+        receiver: None,
+        name: "raise".to_string(),
+        args: vec![ArrayElem::Single(class_ref), ArrayElem::Single(message)],
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    };
+    true
+}
+
 fn register_nested_class_defs(
     compiler: &mut Compiler,
     stmt: NodeId,
     cref: &[ClassId],
     box_id: u32,
 ) -> Result<(), String> {
+    let rescuable = is_rescuable(compiler, stmt);
     let mut nested = Vec::new();
     collect_nested_bodies(compiler, stmt, &mut nested);
     for s in nested {
@@ -758,7 +817,7 @@ fn register_nested_class_defs(
         };
         let (name, superclass, body, is_module) =
             (name.clone(), superclass.clone(), body.clone(), *is_module);
-        register_class(
+        let registered = register_class(
             compiler,
             name,
             superclass,
@@ -767,7 +826,16 @@ fn register_nested_class_defs(
             cref,
             box_id,
             Some(s),
-        )?;
+        );
+        // A definition ruby RAISES on, somewhere a `rescue` can see it, becomes
+        // that raise -- see `raise_instead_of_defining`. Anywhere else the
+        // refusal stands.
+        if let Err(e) = registered {
+            if !(rescuable && raise_instead_of_defining(compiler)) {
+                compiler.pending_ruby_raise = None;
+                return Err(e);
+            }
+        }
     }
     Ok(())
 }
@@ -2407,6 +2475,12 @@ fn register_class(
                         format!("unknown superclass `{s}` (must be defined earlier in the file)")
                     })?;
                 if compiler.class(cid).parent != Some(want) {
+                    ruby_raises(
+                        compiler,
+                        def_node,
+                        "TypeError",
+                        &format!("superclass mismatch for class {name}"),
+                    );
                     return Err(format!("superclass mismatch for class {name}"));
                 }
             }
@@ -2423,6 +2497,10 @@ fn register_class(
         // (`TypeError: superclass mismatch for class Foo`).
         Some(cid) => {
             if compiler.class(cid).is_module != is_module {
+                ruby_raises(compiler, def_node, "TypeError", &format!(
+                    "{name} is not a {}",
+                    if is_module { "module" } else { "class" }
+                ));
                 return Err(format!(
                     "{name} is not a {}",
                     if is_module { "module" } else { "class" }
@@ -2459,7 +2537,42 @@ fn register_class(
                     // conflict -- `class Sub < A` then `class Sub < B` -- still
                     // errors, because `explicit_superclass` is set by then.
                     if compiler.class(cid).explicit_superclass {
-                        return Err(format!("superclass mismatch for class {name}"));
+                        ruby_raises(
+                            compiler,
+                            def_node,
+                            "TypeError",
+                            &format!("superclass mismatch for class {name}"),
+                        );
+                        ruby_raises(
+                        compiler,
+                        def_node,
+                        "TypeError",
+                        &format!("superclass mismatch for class {name}"),
+                    );
+                    return Err(format!("superclass mismatch for class {name}"));
+                    }
+                    // ... and establishing one that already descends from THIS
+                    // class would close a loop: `class A; class B < A; class A <
+                    // B` is `superclass mismatch` in ruby too, so this is the
+                    // same rejection, not a zeo limitation. It has to be checked
+                    // rather than assumed -- a `parent` chain that points back
+                    // at itself is what every walk over it runs forever on, and
+                    // the walk that noticed was `require "active_record"` dying
+                    // after twelve minutes.
+                    if compiler.superclass_chain_contains(want, cid) {
+                        ruby_raises(
+                            compiler,
+                            def_node,
+                            "TypeError",
+                            &format!("superclass mismatch for class {name}"),
+                        );
+                        ruby_raises(
+                        compiler,
+                        def_node,
+                        "TypeError",
+                        &format!("superclass mismatch for class {name}"),
+                    );
+                    return Err(format!("superclass mismatch for class {name}"));
                     }
                     compiler.classes[cid.0 as usize].parent = Some(want);
                 }

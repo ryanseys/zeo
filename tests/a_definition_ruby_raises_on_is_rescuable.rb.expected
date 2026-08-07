@@ -1,0 +1,8 @@
+"superclass mismatch for class A"
+Object
+A
+"superclass mismatch for class D"
+String
+D
+true
+:after

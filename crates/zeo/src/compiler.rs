@@ -536,6 +536,17 @@ pub struct Compiler {
     pub scopes: Vec<Scope>,
     /// Interned method names -- see [`NameId`].
     pub names: Names,
+    /// Set when a class/module definition was refused for a reason ruby has an
+    /// EXCEPTION for rather than a limitation of zeo's -- `superclass mismatch
+    /// for class A`, `C is not a module`. Carries the definition's node, the
+    /// exception class, and ruby's own message.
+    ///
+    /// The refusal is still a compile error wherever nothing would catch it.
+    /// But ruby raises these at the definition, so a `begin ... rescue
+    /// TypeError` around one CATCHES it and the program continues -- and a
+    /// program that does that has to compile. See
+    /// `analyze::raise_instead_of_defining`.
+    pub pending_ruby_raise: Option<(crate::hir::NodeId, &'static str, String)>,
     /// Each box's TOP-LEVEL SURROGATE: a module-shaped
     /// `ClassInfo` named `#<Ruby::Box:N>` that owns the box's top-level
     /// constants and doubles as the handle's runtime `RubyValue::Class`
@@ -892,6 +903,7 @@ impl Compiler {
             }],
             scopes: Vec::new(),
             names: Names::default(),
+            pending_ruby_raise: None,
             box_surrogates: HashMap::new(),
             class_body_sites: Vec::new(),
             global_def_hooks: Default::default(),
@@ -1594,6 +1606,12 @@ impl Compiler {
         std::iter::successors(Some(cid), |&c| self.class(c).parent).take(MAX_NESTING)
     }
 
+    /// Whether `needle` is `cid` or one of its superclasses -- asked BEFORE a
+    /// parent link is established, so the link cannot close a loop.
+    pub fn superclass_chain_contains(&self, cid: ClassId, needle: ClassId) -> bool {
+        self.superclass_chain(cid).any(|c| c == needle)
+    }
+
     /// Whether `cid`'s instances are the native `RubyException`: the
     /// bootstrap exception classes themselves, and any user subclass of one
     /// (`class MyErr < StandardError`). Such a class has NO generated struct --
@@ -1980,4 +1998,67 @@ pub fn is_basic_object_method(name: &str) -> bool {
             | "singleton_method_removed"
             | "singleton_method_undefined"
     )
+}
+
+/// The walks over `parent`/`lexical_parent` must terminate on a CYCLE.
+///
+/// `analyze` rejects the source shapes that build one (see
+/// `analyze::resolve_superclass` and the superclass-mismatch guard), so these
+/// construct the cycle directly: the point is that the guards hold even if a
+/// future path lets one through. Every case is written to FAIL rather than hang
+/// -- a bounded walk answers, an unbounded one never returns, and a test that
+/// hangs tells no one anything.
+#[cfg(test)]
+mod cycle_guards {
+    use super::*;
+
+    /// `A -> B -> A`, built by hand.
+    fn cyclic_pair() -> (Compiler, ClassId, ClassId) {
+        let mut compiler = Compiler::new(crate::hir::Hir::default());
+        let a = compiler.add_class("A".to_string(), Some(OBJECT_CLASS), false);
+        let b = compiler.add_class("B".to_string(), Some(a), false);
+        compiler.classes[a.0 as usize].parent = Some(b);
+        (compiler, a, b)
+    }
+
+    #[test]
+    fn the_superclass_chain_is_bounded() {
+        let (compiler, a, _) = cyclic_pair();
+        assert_eq!(compiler.superclass_chain(a).count(), MAX_NESTING);
+    }
+
+    /// The shape of what `is_exception_backed` asks -- a membership question
+    /// over the chain. It spun forever here, flat on memory, while `require
+    /// "active_record"` looked like it was doing work.
+    #[test]
+    fn asking_the_chain_a_question_terminates() {
+        let (mut compiler, a, b) = cyclic_pair();
+        let unrelated = compiler.add_class("Unrelated".to_string(), Some(OBJECT_CLASS), false);
+        assert!(compiler.superclass_chain_contains(a, b));
+        // The answer a cycle must NOT invent: nothing outside the loop is in it,
+        // and asking has to come back to say so.
+        assert!(!compiler.superclass_chain_contains(a, unrelated));
+    }
+
+    /// The check that keeps the cycle from being built at all.
+    #[test]
+    fn a_would_be_cycle_is_visible_before_the_link_is_made() {
+        let mut compiler = Compiler::new(crate::hir::Hir::default());
+        let a = compiler.add_class("A".to_string(), Some(OBJECT_CLASS), false);
+        let b = compiler.add_class("B".to_string(), Some(a), false);
+        // `class A < B` would close the loop, and this is what says so.
+        assert!(compiler.superclass_chain_contains(b, a));
+        assert!(!compiler.superclass_chain_contains(a, b));
+    }
+
+    #[test]
+    fn a_lexical_parent_cycle_still_yields_a_name_and_a_cref() {
+        let mut compiler = Compiler::new(crate::hir::Hir::default());
+        let outer = compiler.add_class("Outer".to_string(), Some(OBJECT_CLASS), false);
+        let inner = compiler.add_class("Inner".to_string(), Some(OBJECT_CLASS), false);
+        compiler.classes[inner.0 as usize].lexical_parent = Some(outer);
+        compiler.classes[outer.0 as usize].lexical_parent = Some(inner);
+        assert!(compiler.fq_name(inner).ends_with("Inner"));
+        assert!(compiler.cref_of(Some(inner)).len() <= MAX_NESTING + 1);
+    }
 }
