@@ -391,6 +391,35 @@ fn cmp_fold(
     None
 }
 
+/// A Regexp literal that is nothing but `|`-separated LITERAL text, split into
+/// its alternatives -- `/mswin|mingw|windows/` -> `["mswin", "mingw", "windows"]`.
+/// Matching one is then a substring test, which needs no regexp engine and
+/// cannot disagree with one.
+///
+/// `None` for anything carrying regexp syntax (anchors, classes, quantifiers,
+/// groups, escapes), an interpolated pattern, or a flag that changes matching
+/// (`/i`, `/x`). Those stay undecided rather than being answered by an
+/// approximation of a regexp.
+fn literal_alternatives(compiler: &Compiler, node: NodeId) -> Option<Vec<String>> {
+    let HirNode::RegexpLit(parts, flags) = &compiler.hir[node] else {
+        return None;
+    };
+    if flags.ignore_case || flags.extended || flags.multiline {
+        return None;
+    }
+    let [StrPart::Lit(src)] = parts.as_slice() else {
+        return None;
+    };
+    const SYNTAX: &[char] = &[
+        '\\', '^', '$', '.', '[', ']', '(', ')', '*', '+', '?', '{', '}',
+    ];
+    if src.is_empty() || src.contains(SYNTAX) {
+        return None;
+    }
+    let alts: Vec<String> = src.split('|').map(str::to_string).collect();
+    alts.iter().all(|a| !a.is_empty()).then_some(alts)
+}
+
 /// A literal method-name argument (`:validate_for_resolution` / its string
 /// form), the first argument of a `respond_to?`/`method_defined?` probe.
 fn probe_name(compiler: &Compiler, args: &[ArrayElem]) -> Option<String> {
@@ -601,6 +630,25 @@ fn call_fold(
         // condition that folds on its own negates; anything else stays `None`.
         "!" if args.is_empty() => Some(!static_bool(compiler, cref, box_id, receiver?)?),
         "freeze" if args.is_empty() => static_bool(compiler, cref, box_id, receiver?),
+        // `if RUBY_PLATFORM =~ /mswin|mingw|windows/` -- the platform gate half
+        // the corpus writes, and the reason a windows-only file gets compiled
+        // at all. Only a pattern that is literal alternatives folds (see
+        // `literal_alternatives`); anything with real regexp syntax in it stays
+        // undecided rather than being matched by an approximation.
+        "=~" | "match?" => {
+            let [ArrayElem::Single(arg)] = args else {
+                return None;
+            };
+            let recv = receiver?;
+            // Either side may hold the pattern: `RUBY_PLATFORM =~ /x/` and
+            // `/x/ =~ RUBY_PLATFORM` are the same question.
+            let (subject, pattern) = match literal_alternatives(compiler, *arg) {
+                Some(p) => (recv, p),
+                None => (*arg, literal_alternatives(compiler, recv)?),
+            };
+            let subject = static_string(compiler, cref, box_id, subject)?;
+            Some(pattern.iter().any(|alt| subject.contains(alt.as_str())))
+        }
         // `if RUBY_VERSION.start_with?('1.9')` -- the same build-time question
         // the comparison operators above answer, asked by prefix. Ruby takes any
         // number of candidates and is true if ANY matches; a Regexp candidate

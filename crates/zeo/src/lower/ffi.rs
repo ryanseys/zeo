@@ -78,7 +78,15 @@ pub(crate) fn lower_ffi_directive(
     let Some(call) = node.as_call_node() else {
         return Ok(false);
     };
-    if call.receiver().is_some() {
+    // `FFI.add_typedef(:uint32, :OM_uint32)` is `typedef` spelled on the FFI
+    // module itself, same argument order. gssapi declares its whole C type
+    // vocabulary that way, in a file above the structs that use it -- which the
+    // program-wide table (`Hir::ffi_types`) is what makes reachable.
+    let on_ffi_module = call
+        .receiver()
+        .and_then(|r| const_path_string(&r))
+        .is_some_and(|p| p == "FFI" || p == "::FFI");
+    if call.receiver().is_some() && !(on_ffi_module && call.name().as_slice() == b"add_typedef") {
         return Ok(false);
     }
     let args: Vec<Node<'_>> = call
@@ -86,6 +94,20 @@ pub(crate) fn lower_ffi_directive(
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
     match call.name().as_slice() {
+        b"add_typedef" => {
+            if args.len() != 2 {
+                return Err(format!(
+                    "FFI.add_typedef expects 2 arguments (existing_type, new_name), got {}",
+                    args.len()
+                )
+                .into());
+            }
+            let existing = ffi_type_node(&args[0], aliases)?;
+            let new_name = ffi_symbol_str(&args[1])?;
+            hir.declare_ffi_type(&new_name, &existing);
+            aliases.insert(new_name, existing);
+            Ok(true)
+        }
         b"ffi_lib" => {
             // `ffi_lib "m"` / `ffi_lib FFI::Library::LIBC`. The most-recently
             // declared library links every subsequent `attach_function`.
