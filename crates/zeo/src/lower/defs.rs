@@ -2410,7 +2410,17 @@ fn lower_class_body_statement(
         {
             let arg_list: Vec<_> = args.arguments().iter().collect();
             if let (1, Some(block)) = (arg_list.len(), block.as_block_node()) {
-                let target = constant_path_name(&arg_list[0])?;
+                // A refinement is resolved and installed at COMPILE time, so
+                // its target has to be a constant zeo can name. A computed one
+                // (acpc_table_manager's `refine Time.class()`) is a real
+                // limitation rather than a syntax question, and saying so beats
+                // "expected a constant name or path", which reads as though the
+                // argument were misspelled.
+                let target = constant_path_name(&arg_list[0]).map_err(|_| {
+                    "`refine` needs a class or module zeo can name at compile time (a constant), \
+                     not a computed one -- refinements are resolved and installed at compile time \
+                     (zeo limitation)"
+                })?;
                 let holder = refinement_holder_name(&target);
                 let body = lower_class_body(result, hir, block.body(), None, Some(&holder))?;
                 hir.push_span(crate::lower::span_of(hir, node));
