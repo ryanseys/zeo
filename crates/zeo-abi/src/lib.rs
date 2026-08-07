@@ -448,6 +448,10 @@ pub const RUBY_BOX_ENTRY_CLASS: ClassId = ClassId(173);
 /// `Ruby::Box::Loader`.
 pub const RUBY_BOX_LOADER_MODULE: ClassId = ClassId(174);
 
+/// `FFI::Union < FFI::Struct` -- the same `layout` directive, every member at
+/// offset 0. sassc declares its tagged value that way.
+pub const FFI_UNION_CLASS: ClassId = ClassId(175);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -2144,6 +2148,16 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: None,
+    },
+    // A row's POSITION here is its id (`BUILTINS` is asserted contiguous from
+    // 1), so a new class is appended -- never inserted beside its relatives.
+    BuiltinClass {
+        id: FFI_UNION_CLASS,
+        name: "FFI::Union",
+        is_module: false,
+        superclass: Some(FFI_STRUCT_CLASS),
+        includes: &[],
+        feature: Some("ffi"),
     },
 ];
 

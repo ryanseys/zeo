@@ -49,3 +49,40 @@ tv = Timing::TimeVal.new
 p Timing.gettimeofday(tv, nil)
 p tv[:tv_sec] > 1_700_000_000
 p Timing::TimeVal.members
+
+# A struct field may be an enum too. In memory it is an `int`; what comes back
+# out of it is the member's SYMBOL, and either spelling goes in.
+module Shapes
+  extend FFI::Library
+
+  Kind = enum(:round, :square, :odd)
+
+  class Tagged < FFI::Struct
+    layout :kind, Kind,
+           :n, :int32
+  end
+
+  # `FFI::Union` is the same declaration with every member at offset 0, and is
+  # as wide as its widest member. A type declared in the library module reaches
+  # the struct classes nested inside it.
+  class Either < FFI::Union
+    layout :as_int, :int32,
+           :as_double, :double
+  end
+end
+
+t = Shapes::Tagged.new
+t[:kind] = 2
+p t[:kind]
+t[:kind] = :square
+p t[:kind]
+t[:n] = 9
+p t[:n]
+p Shapes::Tagged.size
+p Shapes::Tagged.offset_of(:n)
+
+e = Shapes::Either.new
+e[:as_double] = 1.5
+p e[:as_double]
+p Shapes::Either.size
+p Shapes::Either.offset_of(:as_double)

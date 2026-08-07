@@ -67,7 +67,9 @@ pub(crate) fn lower_ffi_directive(
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
         let name = String::from_utf8_lossy(write.name().as_slice()).into_owned();
-        aliases.insert(name, crate::hir::FfiType::Enum(parse_enum_members(&args)?));
+        let ty = crate::hir::FfiType::Enum(parse_enum_members(&args)?);
+        hir.declare_ffi_type(&name, &ty);
+        aliases.insert(name, ty);
         // Consumed, like every other declaration here: the enum is a TYPE, and
         // zeo has no `FFI::Enum` object to bind the constant to. A program that
         // reads the constant at runtime gets a NameError -- loud, not wrong.
@@ -105,6 +107,7 @@ pub(crate) fn lower_ffi_directive(
             }
             let existing = ffi_type_node(&args[0], aliases)?;
             let new_name = ffi_symbol_str(&args[1])?;
+            hir.declare_ffi_type(&new_name, &existing);
             aliases.insert(new_name, existing);
             Ok(true)
         }
@@ -125,7 +128,9 @@ pub(crate) fn lower_ffi_directive(
                     );
                 }
             };
-            aliases.insert(tag, crate::hir::FfiType::Enum(members));
+            let ty = crate::hir::FfiType::Enum(members);
+            hir.declare_ffi_type(&tag, &ty);
+            aliases.insert(tag, ty);
             Ok(true)
         }
         b"callback" => {
@@ -145,10 +150,9 @@ pub(crate) fn lower_ffi_directive(
             };
             let arg_types = ffi_type_array(params, aliases)?;
             let ret_ty = ffi_type_node(ret, aliases)?;
-            aliases.insert(
-                tag,
-                crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)),
-            );
+            let ty = crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty));
+            hir.declare_ffi_type(&tag, &ty);
+            aliases.insert(tag, ty);
             Ok(true)
         }
         b"attach_function" => {
@@ -221,6 +225,7 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
 /// if `node` isn't a `layout` call.
 pub(crate) fn as_ffi_layout(
     node: &Node<'_>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<Option<Vec<(String, crate::hir::FfiType)>>> {
     let Some(call) = node.as_call_node() else {
         return Ok(None);
@@ -237,13 +242,11 @@ pub(crate) fn as_ffi_layout(
             .to_string()
             .into());
     }
-    // Struct field types are the base scalars/pointer -- no per-library aliases.
-    let no_aliases = std::collections::HashMap::new();
     let mut fields = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let name = ffi_symbol_str(&args[i])?;
-        let ty = ffi_type_of(&ffi_symbol_str(&args[i + 1])?, &no_aliases)?;
+        let ty = ffi_type_node(&args[i + 1], aliases)?;
         fields.push((name, ty));
         i += 2;
     }
@@ -271,6 +274,10 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         Float(32) => ("get_float32".into(), "put_float32".into(), 4, 4),
         Float(64) => ("get_float64".into(), "put_float64".into(), 8, 8),
         Pointer => ("get_pointer".into(), "put_pointer".into(), 8, 8),
+        // An enum field is a C `int` in memory. What comes back OUT of it is
+        // the member's symbol, which the generated accessor maps -- see
+        // `synthesize_ffi_struct`.
+        Enum(_) => ("get_int32".into(), "put_int32".into(), 4, 4),
         other => return Err(format!(
             "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
         )
@@ -284,36 +291,73 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
 /// `members`. Offsets follow C alignment (each field aligned to its own size;
 /// total rounded to the max field alignment), matching `ffi 1.17.4` and the C
 /// ABI. Returned as source for `parse_and_lower_into`.
-pub(crate) fn synthesize_ffi_struct(fields: &[(String, crate::hir::FfiType)]) -> PResult<String> {
+pub(crate) fn synthesize_ffi_struct(
+    fields: &[(String, crate::hir::FfiType)],
+    union: bool,
+) -> PResult<String> {
     let round_up = |n: usize, a: usize| -> usize { n.div_ceil(a) * a };
     let mut offset = 0usize;
     let mut max_align = 1usize;
-    // (field, getter, putter, offset)
-    let mut placed: Vec<(String, String, String, usize)> = Vec::new();
+    // A union's members all start at offset 0 and it is as wide as its widest
+    // member -- the only two places its layout differs from a struct's.
+    let mut widest = 0usize;
+    // (field, getter, putter, offset, enum members if the field is one)
+    type Placed = (String, String, String, usize, Option<Vec<(String, i64)>>);
+    let mut placed: Vec<Placed> = Vec::new();
     for (name, ty) in fields {
         let (getter, putter, size, align) = ffi_field_accessor(ty)?;
-        let off = round_up(offset, align);
-        placed.push((name.clone(), getter, putter, off));
+        let off = if union { 0 } else { round_up(offset, align) };
+        let members = match ty {
+            crate::hir::FfiType::Enum(m) => Some(m.clone()),
+            _ => None,
+        };
+        placed.push((name.clone(), getter, putter, off, members));
         offset = off + size;
+        widest = widest.max(size);
         max_align = max_align.max(align);
     }
-    let total = round_up(offset, max_align);
+    let total = round_up(if union { widest } else { offset }, max_align);
 
+    // An enum field reads back as its member SYMBOL and accepts either a symbol
+    // or the raw integer, which is `Enum#from_native`/`#to_native`. A value with
+    // no member keeps its number, exactly as the gem's do.
     let read_arms: String = placed
         .iter()
-        .map(|(name, getter, _, off)| {
-            format!("        when :{name} then @__ffi_ptr.{getter}({off})\n")
+        .map(|(name, getter, _, off, members)| {
+            let read = format!("@__ffi_ptr.{getter}({off})");
+            match members {
+                None => format!("        when :{name} then {read}\n"),
+                Some(m) => {
+                    let table = m
+                        .iter()
+                        .map(|(n, v)| format!("{v} => :{n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("        when :{name} then {{{table}}}.fetch({read}) {{ |__v| __v }}\n")
+                }
+            }
         })
         .collect();
     let write_arms: String = placed
         .iter()
-        .map(|(name, _, putter, off)| {
-            format!("        when :{name} then @__ffi_ptr.{putter}({off}, __ffi_value)\n")
+        .map(|(name, _, putter, off, members)| {
+            let value = match members {
+                None => "__ffi_value".to_string(),
+                Some(m) => {
+                    let table = m
+                        .iter()
+                        .map(|(n, v)| format!("{n}: {v}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{{{table}}}.fetch(__ffi_value, __ffi_value)")
+                }
+            };
+            format!("        when :{name} then @__ffi_ptr.{putter}({off}, {value})\n")
         })
         .collect();
     let offset_arms: String = placed
         .iter()
-        .map(|(name, _, _, off)| format!("        when :{name} then {off}\n"))
+        .map(|(name, _, _, off, _)| format!("        when :{name} then {off}\n"))
         .collect();
     let members: String = placed
         .iter()

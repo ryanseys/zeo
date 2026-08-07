@@ -129,6 +129,18 @@ pub struct Hir {
     proc_binding: std::sync::OnceLock<bool>,
     /// Per-node provenance, parallel to `nodes` -- see `Span`.
     spans: Vec<Span>,
+    /// Every FFI type name declared so far (`typedef`/`enum`/`callback`), so a
+    /// nested body can name one its ENCLOSING library declared -- sassc writes
+    /// `SassTag = enum(...)` in `module Native` and then `layout :tag, SassTag`
+    /// inside a struct class nested in it, which is a different class body and
+    /// a different alias map.
+    ///
+    /// A name redeclared to a DIFFERENT type is poisoned (`None`) rather than
+    /// overwritten: two libraries may legitimately use one name for two types,
+    /// and each still resolves it from its OWN map. Only this cross-body
+    /// fallback becomes unavailable, so the result is a clean "isn't a declared
+    /// FFI type" rejection instead of a silently wrong width.
+    pub ffi_types: std::collections::HashMap<String, Option<FfiType>>,
     /// `Call` nodes that are VCALLS (prism's `is_variable_call`: a bare
     /// identifier, implicit self, no args/parens -- something that could have
     /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
@@ -356,6 +368,30 @@ pub struct LoadedFile {
 }
 
 impl Hir {
+    /// Records an FFI type name for the cross-body fallback -- see
+    /// [`Hir::ffi_types`]. Redeclaring one to a different type poisons it.
+    pub fn declare_ffi_type(&mut self, name: &str, ty: &FfiType) {
+        match self.ffi_types.get(name) {
+            Some(Some(prev)) if prev == ty => {}
+            Some(_) => {
+                self.ffi_types.insert(name.to_string(), None);
+            }
+            None => {
+                self.ffi_types.insert(name.to_string(), Some(ty.clone()));
+            }
+        }
+    }
+
+    /// The alias map a class body starts from: every unpoisoned name declared
+    /// by an enclosing (or earlier) FFI library. Bodies lower in source order,
+    /// so a nested struct sees what the module above it declared.
+    pub fn inherited_ffi_types(&self) -> std::collections::HashMap<String, FfiType> {
+        self.ffi_types
+            .iter()
+            .filter_map(|(k, v)| v.clone().map(|t| (k.clone(), t)))
+            .collect()
+    }
+
     /// Records that an in-tree `ext/` feature's `require` fired -- exposes
     /// the gated builtin's constant program-wide (see `activated_features`).
     pub fn activate_feature(&mut self, feature: &str) {

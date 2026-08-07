@@ -1893,7 +1893,10 @@ pub(crate) fn lower_class_body(
     // A `class T < FFI::Struct` turns its `layout` directive into
     // synthesized `[]`/`[]=`/`size`/`offset_of`/`pointer` methods over an
     // `FFI::MemoryPointer` ivar -- see `synthesize_ffi_struct`.
-    let is_ffi_struct = superclass == Some("FFI::Struct");
+    // `FFI::Union` is the same synthesis with every field at offset 0 -- see
+    // `synthesize_ffi_struct`. sassc's `SassValue < FFI::Union` is the case.
+    let is_ffi_union = superclass == Some("FFI::Union");
+    let is_ffi_struct = is_ffi_union || superclass == Some("FFI::Struct");
     let mut out = Vec::new();
     // The DEFAULT visibility for every subsequent `def` in this class body,
     // switched by a bare `private`/`public`/`protected` (no arguments) --
@@ -1909,8 +1912,12 @@ pub(crate) fn lower_class_body(
     let mut ffi_lib: Option<String> = None;
     // `typedef :existing, :alias` names accumulated in source order, so a later
     // `attach_function` can name an alias the gem requires be declared first.
+    // Seeded with what enclosing/earlier FFI libraries declared, so a struct
+    // nested in a library module can name that module's `enum`/`typedef`
+    // types -- see `Hir::ffi_types`. Bodies lower in source order, so the
+    // declaration is already recorded by the time the nested body starts.
     let mut ffi_aliases: std::collections::HashMap<String, crate::hir::FfiType> =
-        std::collections::HashMap::new();
+        hir.inherited_ffi_types();
     // This is the ONE place a `class`/`module` body's statements are lowered
     // (the runtime-class desugars route through here too), so it is also the
     // one place the cref chain deepens -- see `Hir::cvar_is_toplevel`.
@@ -1925,10 +1932,10 @@ pub(crate) fn lower_class_body(
                     continue;
                 }
             }
-            if is_ffi_struct && let Some(fields) = as_ffi_layout(stmt)? {
+            if is_ffi_struct && let Some(fields) = as_ffi_layout(stmt, &ffi_aliases)? {
                 // Replace `layout ...` in place with the synthesized accessors,
                 // so any user methods after it can still override them.
-                let source = synthesize_ffi_struct(&fields)?;
+                let source = synthesize_ffi_struct(&fields, is_ffi_union)?;
                 out.extend(parse_and_lower_into(hir, &source)?);
                 continue;
             }

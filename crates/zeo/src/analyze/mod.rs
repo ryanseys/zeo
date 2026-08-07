@@ -2690,6 +2690,9 @@ fn register_class(
                                 // its `layout` over an `FFI::MemoryPointer` ivar
                                 // -- see `parse`'s `synthesize_ffi_struct`.
                                 | FFI_STRUCT_CLASS
+                                // `FFI::Union`: the same synthesis with every
+                                // member at offset 0.
+                                | zeo_abi::FFI_UNION_CLASS
                                 | DATA_CLASS
                                 | NUMERIC_CLASS
                                 | ARRAY_CLASS
