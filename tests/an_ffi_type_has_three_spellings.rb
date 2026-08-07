@@ -86,3 +86,30 @@ e[:as_double] = 1.5
 p e[:as_double]
 p Shapes::Either.size
 p Shapes::Either.offset_of(:as_double)
+
+# A `:bool` field is one byte and reads back as true/false; a `:string` field
+# is a `char *`, read through the pointer and NOT writable -- there would be
+# nowhere to keep the bytes alive, so ruby refuses.
+class Row < FFI::Struct
+  layout :t, :int32,
+         :flag, :bool,
+         :name, :string,
+         :n, :int32
+end
+
+p Row.size
+p [Row.offset_of(:flag), Row.offset_of(:name), Row.offset_of(:n)]
+
+r = Row.new
+p r[:flag]
+r[:flag] = true
+p r[:flag]
+r[:flag] = false
+p r[:flag]
+p r[:name]
+
+begin
+  r[:name] = "hi"
+rescue ArgumentError => err
+  p err.message
+end

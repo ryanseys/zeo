@@ -141,6 +141,9 @@ pub struct Hir {
     /// fallback becomes unavailable, so the result is a clean "isn't a declared
     /// FFI type" rejection instead of a silently wrong width.
     pub ffi_types: std::collections::HashMap<String, Option<FfiType>>,
+    /// Module paths that have been `extend FFI::Library`'d -- see
+    /// [`Hir::mark_ffi_library`].
+    ffi_library_crefs: std::collections::HashSet<String>,
     /// `Call` nodes that are VCALLS (prism's `is_variable_call`: a bare
     /// identifier, implicit self, no args/parens -- something that could have
     /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
@@ -430,16 +433,40 @@ impl Hir {
         self.cref_names.last().map(String::as_str)
     }
 
+    /// `name` as written, qualified by the cref chain in place RIGHT NOW --
+    /// so `Native` inside `module SassC` is `SassC::Native`. Ask it with the
+    /// definition's own cref NOT yet pushed (the name is the last component).
+    pub(crate) fn cref_path(&self, name: &str) -> String {
+        match name.strip_prefix("::") {
+            Some(absolute) => absolute.to_string(),
+            None if self.cref_names.is_empty() => name.to_string(),
+            None => format!("{}::{name}", self.cref_names.join("::")),
+        }
+    }
+
     /// Records one `class`/`module` definition in `class_def_paths`. Call it
     /// with the definition's OWN cref in place -- i.e. after its body has
     /// lowered and `in_class_body` has popped again.
     pub(crate) fn record_class_def(&mut self, name: &str) {
-        let path = match name.strip_prefix("::") {
-            Some(absolute) => absolute.to_string(),
-            None if self.cref_names.is_empty() => name.to_string(),
-            None => format!("{}::{name}", self.cref_names.join("::")),
-        };
+        let path = self.cref_path(name);
         self.class_def_paths.insert(path);
+    }
+
+    /// Marks a module path as an FFI library, and answers whether one already
+    /// is. `extend FFI::Library` is written ONCE, in whichever file opens the
+    /// module first, but the module is then reopened in others -- sassc's
+    /// `SassC::Native` extends in `native.rb` and declares its enums in
+    /// `native/sass_value.rb`. Lowering sees one body at a time, so without
+    /// this the second file's `enum`/`typedef` are not directives at all.
+    ///
+    /// Keyed by the FULL cref path, so two unrelated `Native` modules stay
+    /// unrelated.
+    pub(crate) fn mark_ffi_library(&mut self, path: &str) {
+        self.ffi_library_crefs.insert(path.to_string());
+    }
+
+    pub(crate) fn is_ffi_library(&self, path: &str) -> bool {
+        self.ffi_library_crefs.contains(path)
     }
 
     /// Whether an already-lowered `class`/`module` definition binds `name` AS

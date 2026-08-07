@@ -274,10 +274,15 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         Float(32) => ("get_float32".into(), "put_float32".into(), 4, 4),
         Float(64) => ("get_float64".into(), "put_float64".into(), 8, 8),
         Pointer => ("get_pointer".into(), "put_pointer".into(), 8, 8),
-        // An enum field is a C `int` in memory. What comes back OUT of it is
-        // the member's symbol, which the generated accessor maps -- see
-        // `synthesize_ffi_struct`.
+        // An enum field is a C `int` in memory, a bool a one-byte `_Bool`.
+        // Neither reads back as the number it stores; the generated accessor
+        // converts -- see `synthesize_ffi_struct`.
         Enum(_) => ("get_int32".into(), "put_int32".into(), 4, 4),
+        Bool => ("get_int8".into(), "put_int8".into(), 1, 1),
+        // A `:string` field is a `char *`: read through the pointer, and NOT
+        // writable -- CRuby's ffi raises `Cannot set :string fields`, because
+        // storing one would need somewhere to keep the bytes alive.
+        Str => ("get_pointer".into(), "put_pointer".into(), 8, 8),
         other => return Err(format!(
             "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
         )
@@ -301,17 +306,26 @@ pub(crate) fn synthesize_ffi_struct(
     // A union's members all start at offset 0 and it is as wide as its widest
     // member -- the only two places its layout differs from a struct's.
     let mut widest = 0usize;
-    // (field, getter, putter, offset, enum members if the field is one)
-    type Placed = (String, String, String, usize, Option<Vec<(String, i64)>>);
-    let mut placed: Vec<Placed> = Vec::new();
+    // How a field's stored bytes become a ruby value and back. Most fields are
+    // the number itself.
+    enum Conv {
+        Plain,
+        Enum(Vec<(String, i64)>),
+        Bool,
+        Str,
+    }
+    // (field, getter, putter, offset, conversion)
+    let mut placed: Vec<(String, String, String, usize, Conv)> = Vec::new();
     for (name, ty) in fields {
         let (getter, putter, size, align) = ffi_field_accessor(ty)?;
         let off = if union { 0 } else { round_up(offset, align) };
-        let members = match ty {
-            crate::hir::FfiType::Enum(m) => Some(m.clone()),
-            _ => None,
+        let conv = match ty {
+            crate::hir::FfiType::Enum(m) => Conv::Enum(m.clone()),
+            crate::hir::FfiType::Bool => Conv::Bool,
+            crate::hir::FfiType::Str => Conv::Str,
+            _ => Conv::Plain,
         };
-        placed.push((name.clone(), getter, putter, off, members));
+        placed.push((name.clone(), getter, putter, off, conv));
         offset = off + size;
         widest = widest.max(size);
         max_align = max_align.max(align);
@@ -323,27 +337,39 @@ pub(crate) fn synthesize_ffi_struct(
     // no member keeps its number, exactly as the gem's do.
     let read_arms: String = placed
         .iter()
-        .map(|(name, getter, _, off, members)| {
+        .map(|(name, getter, _, off, conv)| {
             let read = format!("@__ffi_ptr.{getter}({off})");
-            match members {
-                None => format!("        when :{name} then {read}\n"),
-                Some(m) => {
+            let read = match conv {
+                Conv::Plain => read,
+                Conv::Bool => format!("{read} != 0"),
+                Conv::Str => format!("((__p = {read}).null? ? nil : __p.read_string)"),
+                Conv::Enum(m) => {
                     let table = m
                         .iter()
                         .map(|(n, v)| format!("{v} => :{n}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("        when :{name} then {{{table}}}.fetch({read}) {{ |__v| __v }}\n")
+                    format!("{{{table}}}.fetch({read}) {{ |__v| __v }}")
                 }
-            }
+            };
+            format!("        when :{name} then {read}\n")
         })
         .collect();
     let write_arms: String = placed
         .iter()
-        .map(|(name, _, putter, off, members)| {
-            let value = match members {
-                None => "__ffi_value".to_string(),
-                Some(m) => {
+        .map(|(name, _, putter, off, conv)| {
+            // A `:string` field has nowhere to keep the bytes alive, so ruby
+            // refuses the write rather than storing a dangling pointer.
+            if matches!(conv, Conv::Str) {
+                return format!(
+                    "        when :{name} then raise ArgumentError, \"Cannot set :string fields\"\n"
+                );
+            }
+            let value = match conv {
+                Conv::Plain => "__ffi_value".to_string(),
+                Conv::Bool => "(__ffi_value ? 1 : 0)".to_string(),
+                Conv::Str => unreachable!("returned above"),
+                Conv::Enum(m) => {
                     let table = m
                         .iter()
                         .map(|(n, v)| format!("{n}: {v}"))

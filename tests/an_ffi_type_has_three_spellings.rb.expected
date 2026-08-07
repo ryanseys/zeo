@@ -13,3 +13,10 @@ true
 1.5
 8
 0
+24
+[4, 8, 16]
+false
+true
+false
+nil
+"Cannot set :string fields"

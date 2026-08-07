@@ -1908,7 +1908,14 @@ pub(crate) fn lower_class_body(
     // methods over `extern "C"` symbols -- see `lower_ffi_directive`. A
     // NON-FFI statement in such a module still lowers normally (a module may
     // mix), so this only re-routes the recognized directives.
-    let is_ffi = stmts.iter().any(is_extend_ffi_library);
+    // `extend FFI::Library` marks the module ONCE; a reopening in another file
+    // inherits it by path -- see `Hir::mark_ffi_library`.
+    let ffi_path = cref.map(|n| hir.cref_path(n));
+    let is_ffi = stmts.iter().any(is_extend_ffi_library)
+        || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p));
+    if is_ffi && let Some(p) = &ffi_path {
+        hir.mark_ffi_library(p);
+    }
     let mut ffi_lib: Option<String> = None;
     // `typedef :existing, :alias` names accumulated in source order, so a later
     // `attach_function` can name an alias the gem requires be declared first.
