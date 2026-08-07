@@ -1,0 +1,17 @@
+[Class, Object]
+[true, true, true]
+"a+b%26c%3Dd"
+"a b&c"
+"Usage: foo &quot;bar&quot; &lt;baz&gt;"
+"<x>&\"y\""
+"a%20b%26c"
+"a b&c"
+["&lt;x&gt;", "<x>"]
+["a%20b", "a b"]
+[CGI, {path: "/a b/c"}, "%2Fa+b%2Fc"]
+[true, true, [CGIWrapper, CGI]]
+"%2FX+Y"
+[CGIWrapper, [Loud, CGIWrapper, CGI]]
+["CGI", "CGI"]
+[true, false]
+[:@env]

@@ -2692,6 +2692,12 @@ fn register_class(
                             // the whole ancestry and the Object/Kernel surface
                             // is simply absent.
                             BASIC_OBJECT_CLASS
+                                // `CGI`: a plain `Object` subclass with no
+                                // payload of its own -- the escape methods are
+                                // all class methods -- so a subclass is an
+                                // ordinary ivar object. thin wraps rails in
+                                // `class CGIWrapper < ::CGI`.
+                                | zeo_abi::CGI_MODULE
                                 | STRUCT_CLASS
                                 // `FFI::Struct`: a subclass is a plain
                                 // ivar object (no native payload) whose `[]`/

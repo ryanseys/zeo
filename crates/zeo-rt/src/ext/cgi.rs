@@ -9,7 +9,7 @@
 //! URL escapers is alphanumerics plus `_.-~`.
 
 use crate::{RubyValue, string_new};
-use zeo_macros::ruby_module;
+use zeo_macros::ruby_class;
 
 fn in_bytes(v: &RubyValue) -> Vec<u8> {
     match v {
@@ -133,11 +133,15 @@ fn html_unescape(text: &str) -> String {
     out
 }
 
-ruby_module! {
-    CGI = zeo_abi::CGI_MODULE;
+ruby_class! {
+    CGI = zeo_abi::CGI_MODULE < zeo_abi::OBJECT_CLASS;
 
-    // CRuby exposes these as `CGI.escape` etc. (singleton methods on the module),
-    // so they migrate as `def self.`. Arities match ruby 4.0.6.
+    // CRuby reaches these through `extend CGI::Escape`, so they answer on the
+    // CLASS -- `CGI.escape`. zeo hangs them straight on CGI's singleton, which
+    // agrees on every call and differs only in what `CGI.method(:escape).owner`
+    // reports (CGI, not CGI::Escape). The DSL has no `extend`; a real
+    // `CGI::Escape` module is what would close that.
+    // Arities match ruby 4.0.6.
     def self."escape" (_recv, arg) {
         Ok(out(percent_encode(&in_bytes(arg), true)))
     }
@@ -175,7 +179,7 @@ mod tests {
             other => panic!("expected Str, got {other:?}"),
         }
     }
-    /// `CGI`'s `ruby_module!`-generated functions have mangled Rust idents, so
+    /// `CGI`'s `ruby_class!`-generated functions have mangled Rust idents, so
     /// the tests call them through the registered class-method `lookup`.
     fn f(name: &str) -> crate::builtins::BuiltinMethodFn {
         let tbl = crate::builtins::registered_table(zeo_abi::CGI_MODULE)

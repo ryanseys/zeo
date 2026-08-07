@@ -1163,10 +1163,13 @@ pub const BUILTINS: &[BuiltinClass] = &[
         feature: Some("strscan"),
     },
     BuiltinClass {
+        // CRuby's CGI is a CLASS (`CGI.new(...)` is the whole CGI API), and
+        // cgi/escape.rb opens it as one. The id keeps its `_MODULE` name so
+        // every reference to it stays put.
         id: CGI_MODULE,
         name: "CGI",
-        is_module: true,
-        superclass: None,
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: Some("cgi/escape"),
     },
