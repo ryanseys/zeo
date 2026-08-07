@@ -53,6 +53,26 @@ pub(crate) fn lower_ffi_directive(
     aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
 ) -> PResult<bool> {
+    // `SassTag = enum(:sass_boolean, :sass_number, ...)` -- the ANONYMOUS enum,
+    // named by the constant it is assigned to rather than by a `:tag` argument.
+    // sassc and google-protobuf both declare every one of their enums this way,
+    // and then use the constant as a field/argument type.
+    if let Some(write) = node.as_constant_write_node()
+        && let Some(call) = write.value().as_call_node()
+        && call.receiver().is_none()
+        && call.name().as_slice() == b"enum"
+    {
+        let args: Vec<Node<'_>> = call
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        let name = String::from_utf8_lossy(write.name().as_slice()).into_owned();
+        aliases.insert(name, crate::hir::FfiType::Enum(parse_enum_members(&args)?));
+        // Consumed, like every other declaration here: the enum is a TYPE, and
+        // zeo has no `FFI::Enum` object to bind the constant to. A program that
+        // reads the constant at runtime gets a NameError -- loud, not wrong.
+        return Ok(true);
+    }
     let Some(call) = node.as_call_node() else {
         return Ok(false);
     };
@@ -83,26 +103,28 @@ pub(crate) fn lower_ffi_directive(
                 )
                 .into());
             }
-            let existing = ffi_type_of(&ffi_symbol_str(&args[0])?, aliases)?;
+            let existing = ffi_type_node(&args[0], aliases)?;
             let new_name = ffi_symbol_str(&args[1])?;
             aliases.insert(new_name, existing);
             Ok(true)
         }
         b"enum" => {
             // `enum :tag, [:sym, val, :sym, ...]` -- register `:tag` as an enum
-            // type usable in a later type list. (An anonymous `enum [...]`,
-            // whose bare symbols become module values, is a follow-on.)
-            let (tag, list) = match (args.first(), args.get(1)) {
-                (Some(n), Some(l)) if n.as_symbol_node().is_some() => (ffi_symbol_str(n)?, l),
+            // type usable in a later type list. (A bare `enum [...]` statement,
+            // whose members become module values with no type name at all, is
+            // still a follow-on; the constant-assigned form is handled above.)
+            let (tag, members) = match (args.first(), args.get(1)) {
+                (Some(n), Some(l)) if n.as_symbol_node().is_some() => {
+                    (ffi_symbol_str(n)?, parse_enum_members(std::slice::from_ref(l))?)
+                }
                 _ => {
                     return Err(
-                        "enum expects `:tag, [members]` (anonymous enums are a follow-on)"
+                        "enum expects `:tag, [members]` (a nameless `enum [...]` is a follow-on)"
                             .to_string()
                             .into(),
                     );
                 }
             };
-            let members = parse_enum_members(list)?;
             aliases.insert(tag, crate::hir::FfiType::Enum(members));
             Ok(true)
         }
@@ -122,7 +144,7 @@ pub(crate) fn lower_ffi_directive(
                 }
             };
             let arg_types = ffi_type_array(params, aliases)?;
-            let ret_ty = ffi_type_of(&ffi_symbol_str(ret)?, aliases)?;
+            let ret_ty = ffi_type_node(ret, aliases)?;
             aliases.insert(
                 tag,
                 crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)),
@@ -147,11 +169,25 @@ pub(crate) fn lower_ffi_directive(
 /// are symbols, each optionally followed by an explicit integer value; an
 /// omitted value auto-increments from the previous (starting at 0), exactly as
 /// the `ffi` gem's `enum` does.
-fn parse_enum_members(node: &Node<'_>) -> PResult<Vec<(String, i64)>> {
-    let array = node
-        .as_array_node()
-        .ok_or_else(|| "enum members must be a literal array".to_string())?;
-    let elems: Vec<Node<'_>> = array.elements().iter().collect();
+fn parse_enum_members(args: &[Node<'_>]) -> PResult<Vec<(String, i64)>> {
+    // The members are either one literal array or the argument list itself --
+    // `enum :tag, [:a, :b]` and `enum(:a, :b)` both reach here.
+    let unwrapped: Vec<Node<'_>>;
+    let elems: &[Node<'_>] = match args {
+        [one] if one.as_array_node().is_some() => {
+            unwrapped = one
+                .as_array_node()
+                .expect("just matched")
+                .elements()
+                .iter()
+                .collect();
+            &unwrapped
+        }
+        _ => args,
+    };
+    if elems.is_empty() {
+        return Err("enum expects at least one member".to_string().into());
+    }
     let mut out: Vec<(String, i64)> = Vec::new();
     let mut next = 0i64;
     let mut i = 0;
@@ -378,7 +414,7 @@ fn lower_attach_function(
         }
     };
     let (arg_types, variadic) = ffi_arg_types(types_node, aliases)?;
-    let ret = ffi_type_of(&ffi_symbol_str(ret_node)?, aliases)?;
+    let ret = ffi_type_node(ret_node, aliases)?;
 
     // The wrapper's params: one required positional per FIXED C argument, named
     // so a `LocalRead` in the `Ffi` body reaches it; a variadic function also
@@ -422,6 +458,51 @@ fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
         .ok_or_else(|| "expected a literal symbol in an FFI declaration".into())
 }
 
+/// One FFI type as WRITTEN in a declaration. Three spellings reach a type
+/// position:
+///
+///  - a literal symbol -- `:int`, `:pointer`, or a declared alias;
+///  - `Status.by_ref` / `Status.ptr` -- a POINTER to a struct, which is what
+///    the C prototype takes and what libffi is handed either way. The struct's
+///    own layout never enters the call, so this needs nothing from it. (`.by_value`
+///    passes the struct itself and does need the layout, so it stays rejected);
+///  - a constant naming a declared `enum`/`typedef`/`callback`, which is how
+///    the anonymous `Tag = enum(...)` form is referred to afterwards. Only the
+///    LEAF name is looked up: the table is keyed by the name as declared, and
+///    these are always written inside the library module that declared them.
+fn ffi_type_node(
+    node: &Node<'_>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+) -> PResult<crate::hir::FfiType> {
+    if let Some(call) = node.as_call_node()
+        && call.receiver().is_some()
+        && call.arguments().is_none()
+    {
+        match call.name().as_slice() {
+            b"by_ref" | b"ptr" => return Ok(crate::hir::FfiType::Pointer),
+            b"by_value" | b"val" => {
+                return Err("an FFI struct passed BY VALUE isn't supported yet (zeo limitation) \
+                            -- `.by_ref` (a pointer) is"
+                    .to_string()
+                    .into());
+            }
+            _ => {}
+        }
+    }
+    if let Some(path) = const_path_string(node) {
+        let leaf = path.rsplit("::").next().unwrap_or(&path);
+        return match aliases.get(leaf) {
+            Some(t) => Ok(t.clone()),
+            None => Err(format!(
+                "`{path}` isn't a declared FFI type (expected an `enum`/`typedef`/`callback` \
+                 declared earlier in this library)"
+            )
+            .into()),
+        };
+    }
+    ffi_type_of(&ffi_symbol_str(node)?, aliases)
+}
+
 /// The argument-type list of an `attach_function`, splitting a trailing
 /// `:varargs` marker: `[:string, :varargs]` -> `([Str], true)`. `:varargs` is
 /// only legal as the final element (a variadic function's fixed prototype ends
@@ -437,8 +518,10 @@ fn ffi_arg_types(
     let mut types = Vec::new();
     let mut variadic = false;
     for (i, el) in elems.iter().enumerate() {
-        let sym = ffi_symbol_str(el)?;
-        if sym == "varargs" {
+        // `:varargs` is a marker rather than a type, so it is read off the
+        // literal symbol before anything else; every other element is an
+        // ordinary type position and may be written any of the three ways.
+        if el.as_symbol_node().is_some() && ffi_symbol_str(el)? == "varargs" {
             if i != elems.len() - 1 {
                 return Err("`:varargs` must be the last FFI argument type"
                     .to_string()
@@ -446,7 +529,7 @@ fn ffi_arg_types(
             }
             variadic = true;
         } else {
-            types.push(ffi_type_of(&sym, aliases)?);
+            types.push(ffi_type_node(el, aliases)?);
         }
     }
     Ok((types, variadic))
@@ -464,7 +547,7 @@ fn ffi_type_array(
     array
         .elements()
         .iter()
-        .map(|el| ffi_type_of(&ffi_symbol_str(&el)?, aliases))
+        .map(|el| ffi_type_node(&el, aliases))
         .collect()
 }
 
