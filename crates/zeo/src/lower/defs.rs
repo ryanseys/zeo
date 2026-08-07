@@ -95,6 +95,7 @@ fn desugar_singleton_items(
         Alias(String, String),
         SingletonSelf,
         SelfSend,
+        Guarded(Vec<NodeId>, Vec<crate::hir::RescueClause>),
         Skip,
     }
     let mut out = Vec::with_capacity(ids.len());
@@ -157,8 +158,50 @@ fn desugar_singleton_items(
             // rebind it onto `recv.singleton_class` so it targets the object's
             // singleton, not the enclosing method's self.
             HirNode::Call { receiver: None, .. } => Item::SelfSend,
-            _ => {
-                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, aliases, and conditionals here (zeo limitation)".to_string().into());
+            // `undef :close` inside a singleton (logging) stays REJECTED. It
+            // would map to `recv.singleton_class.undef_method(:close)`, which
+            // compiles -- and then a statically-resolved `obj.close` call site
+            // never consults it, so the call succeeds where CRuby raises
+            // NoMethodError. The `class << self` path can do this because
+            // `ClassInfo::class_undefined` records it at COMPILE time; the
+            // per-instance path has no such record, and a silent wrong answer
+            // is worse than the rejection.
+            //
+            // `remove_method :now rescue nil` (tins) -- the rescue modifier,
+            // which lowers to a `Begin` with one bare clause. Guarding a
+            // definition-level statement this way is ordinary in a singleton
+            // body, so map the guarded statements and keep the guard. An
+            // `else`/`ensure` is not part of the modifier form and would need
+            // its own decision about where its statements run, so it stays
+            // rejected rather than silently flattened.
+            HirNode::Begin {
+                body,
+                rescues,
+                else_body: None,
+                ensure_body: None,
+            } => Item::Guarded(body.clone(), rescues.clone()),
+            other => {
+                // Name the construct. `self` in this body is the object's
+                // singleton class, so a statement the mapping has no rule for
+                // cannot simply be run in the enclosing scope -- and which
+                // statement it was is the first thing anyone reading the
+                // rejection needs.
+                let _ = other;
+                // Quote the statement. The mapping accepts a fixed set of
+                // items, so the useful half of this rejection is WHICH one it
+                // met -- and the source text says that better than a node name
+                // would, to a reader who is looking at Ruby.
+                let quoted = hir
+                    .span(id)
+                    .and_then(|s| {
+                        let f = hir.files.get(s.file.0 as usize)?;
+                        let text = f.source.get(s.start as usize..s.end as usize)?;
+                        Some(format!(" -- found `{}`", text.trim()))
+                    })
+                    .unwrap_or_default();
+                return Err(format!(
+                    "`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, aliases, `undef`, and conditionals here{quoted} (zeo limitation)"
+                ).into());
             }
         };
         match item {
@@ -245,6 +288,32 @@ fn desugar_singleton_items(
                     *receiver = Some(singleton);
                 }
                 out.push(id);
+            }
+            Item::Guarded(body, rescues) => {
+                let body = desugar_singleton_items(result, hir, recv_node, body)?;
+                // The handler is ordinarily a VALUE -- `rescue nil` is the
+                // whole idiom -- and a value is not one of the items this
+                // mapper knows. Only a handler that consults `self` needs
+                // mapping, since that `self` is the singleton class; anything
+                // self-free means the same wherever it runs and passes through.
+                let rescues = rescues
+                    .into_iter()
+                    .map(|r| {
+                        let needs_mapping = r.body.iter().any(|&s| mentions_self(hir, s));
+                        let body = if needs_mapping {
+                            desugar_singleton_items(result, hir, recv_node, r.body)?
+                        } else {
+                            r.body
+                        };
+                        Ok(crate::hir::RescueClause { body, ..r })
+                    })
+                    .collect::<PResult<Vec<_>>>()?;
+                out.push(hir.push(HirNode::Begin {
+                    body,
+                    rescues,
+                    else_body: None,
+                    ensure_body: None,
+                }));
             }
             Item::Skip => {}
         }
@@ -1497,10 +1566,10 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
         Mixin(&'static str, String),
         Alias(String, String),
         Visibility(&'static str, String),
-        Undef(Vec<String>),
         ModuleFunction(String),
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        Undef(Vec<String>),
         Keep,
     }
     let mut out = Vec::with_capacity(body.len());
