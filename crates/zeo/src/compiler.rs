@@ -609,6 +609,10 @@ pub(crate) struct Refinement {
     pub target: ClassId,
     /// The hidden module holding the refined methods.
     pub holder: ClassId,
+    /// The [`crate::hir::HirNode::Refine`] marker this came from. A
+    /// refinement runs nothing where it was written, so codegen drops the
+    /// marker -- but only one it can prove reached registration here.
+    pub marker: crate::hir::NodeId,
 }
 
 /// One `using M`, as the byte range of source it covers: from the `using`
@@ -1020,6 +1024,13 @@ impl Compiler {
             .iter()
             .find(|r| r.holder == holder)
             .map(|r| (r.module, r.target))
+    }
+
+    /// Whether `node` is a `refine` marker registration already consumed --
+    /// what lets codegen emit nothing for it. An UNREGISTERED marker stays a
+    /// loud rejection: dropping one would lose the refinement silently.
+    pub(crate) fn refinement_marker_registered(&self, node: crate::hir::NodeId) -> bool {
+        self.refinements.iter().any(|r| r.marker == node)
     }
 
     /// The class `holder` refines, or `None` when `holder` is an ordinary

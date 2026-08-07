@@ -1566,6 +1566,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // records already decided which call sites route through the
         // refinement, so nothing is left to run where it was written.
         HirNode::Using(_) => quote! { zeo_rt::RubyValue::Nil },
+        // A `refine` whose registration analyze already consumed is spent the
+        // same way: the holder module owns the methods and the `Refinement`
+        // row says what they refine, so the marker runs nothing where it was
+        // written. Reached only when the marker sits inside a statement the
+        // class-body walk kept whole -- power_assert's refinements under a
+        // runtime `if`. An UNregistered marker falls through to the rejection
+        // below rather than losing the refinement.
+        HirNode::Refine { .. } if cx.compiler.refinement_marker_registered(id) => {
+            quote! { zeo_rt::RubyValue::Nil }
+        }
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
         | HirNode::Refine { .. }

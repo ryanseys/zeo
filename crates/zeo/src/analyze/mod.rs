@@ -717,6 +717,72 @@ fn register_nested_class_defs(
     Ok(())
 }
 
+/// Records one `refine Target do ... end` against the module that wrote it.
+/// The holder module is already registered (the `ClassDef` this marker
+/// follows) and owns the methods; all that is left is what they refine.
+///
+/// A target or holder that resolves nowhere registers nothing, and the marker
+/// then stays unregistered -- which is what makes
+/// [`Compiler::refinement_marker_registered`] a real test rather than a
+/// formality.
+fn register_refinement(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) {
+    let HirNode::Refine { target, holder } = &compiler.hir[stmt] else {
+        return;
+    };
+    let (target, holder) = (target.clone(), holder.clone());
+    let target = compiler.resolve_class(&target, cref, box_id);
+    let holder = compiler.class_in_scope(Some(class_id), &holder, box_id);
+    let (Some(target), Some(holder)) = (target, holder) else {
+        return;
+    };
+    compiler.refinements.push(crate::compiler::Refinement {
+        module: class_id,
+        target,
+        holder,
+        marker: stmt,
+    });
+    // A refinement is active inside its OWN block, so an explicit-receiver
+    // call there sees the module's whole set. (A bare name reaches the same
+    // set through `Compiler::refinements_beside`, which needs no span.)
+    if let Some(span) = compiler.hir.span(stmt).and_then(|s| s.known()) {
+        compiler.activations.push(crate::compiler::Activation {
+            module: class_id,
+            file: span.file,
+            start: span.start,
+            end: span.end,
+        });
+    }
+}
+
+/// The `refine` markers nested inside a class-body statement the walk keeps
+/// whole -- power_assert writes its whole refinement set inside a
+/// `module PowerAssert` reopened under a runtime `if`. Which class a
+/// refinement refines is a compile-time fact about shape, exactly like the
+/// nested `class`/`module` registered beside it, so it is recorded here even
+/// though the branch may never run. Call this AFTER
+/// [`register_nested_class_defs`]: the holder module has to exist first.
+fn register_nested_refinements(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) {
+    let mut nested = Vec::new();
+    collect_nested_bodies(compiler, stmt, &mut nested);
+    for s in nested {
+        if matches!(compiler.hir[s], HirNode::Refine { .. }) {
+            register_refinement(compiler, class_id, s, cref, box_id);
+        }
+    }
+}
+
 /// Every statement nested inside `node`'s sub-bodies, in document order. Bound
 /// with explicit fields rather than a `..` rest so a new statement-bearing
 /// variant can't join silently.
@@ -2328,29 +2394,8 @@ fn register_class(
             // methods; all that is left is to record what they refine. The
             // marker never joins the site's statements: a refinement runs
             // nothing where it was written.
-            HirNode::Refine { target, holder } => {
-                let (target, holder) = (target.clone(), holder.clone());
-                let target = compiler.resolve_class(&target, &child_cref, box_id);
-                let holder = compiler.class_in_scope(Some(class_id), &holder, box_id);
-                if let (Some(target), Some(holder)) = (target, holder) {
-                    compiler.refinements.push(crate::compiler::Refinement {
-                        module: class_id,
-                        target,
-                        holder,
-                    });
-                    // A refinement is active inside its OWN block, so an
-                    // explicit-receiver call there sees the module's whole
-                    // set. (A bare name reaches the same set through
-                    // `Compiler::refinements_beside`, which needs no span.)
-                    if let Some(span) = compiler.hir.span(stmt).and_then(|s| s.known()) {
-                        compiler.activations.push(crate::compiler::Activation {
-                            module: class_id,
-                            file: span.file,
-                            start: span.start,
-                            end: span.end,
-                        });
-                    }
-                }
+            HirNode::Refine { .. } => {
+                register_refinement(compiler, class_id, stmt, &child_cref, box_id)
             }
             // `using M` inside a class/module body scopes to THAT body, so
             // the activation ends where the enclosing definition does.
@@ -2562,6 +2607,10 @@ fn register_class(
                 // about shape; the marker stays put and the body still runs at
                 // its document position, exactly as at the top level.
                 register_nested_class_defs(compiler, stmt, &child_cref, box_id)?;
+                // ...and the `refine` markers beside those holder modules,
+                // which is how power_assert's whole refinement set reaches
+                // registration from inside a runtime `if`.
+                register_nested_refinements(compiler, class_id, stmt, &child_cref, box_id);
                 // ...and, symmetrically, a guarded `undef` (`undef :to_a if
                 // respond_to?(:to_a)`, drb) reaches here as a runtime
                 // `undef_method` send. Whether it fires is a runtime fact, so

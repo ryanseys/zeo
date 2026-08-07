@@ -211,6 +211,19 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             quote! { #site_body }
         };
     }
+    if matches!(&cx.compiler.hir[stmt], HirNode::Refine { .. })
+        && cx.compiler.refinement_marker_registered(stmt)
+    {
+        // A `refine` marker analyze already recorded runs nothing where it was
+        // written (see `emit_expr`'s arm). As a non-tail statement it emits
+        // literally nothing, so rustc gets no bare `RubyValue::Nil` path
+        // statement to warn about.
+        return if is_tail {
+            tail_nil(wrap_ok)
+        } else {
+            quote! {}
+        };
+    }
     if let HirNode::MethodVisibility { name, visibility } = &cx.compiler.hir[stmt] {
         // Only a reopen's re-mark of the class's OWN method joins a site's
         // statements (see analyze's `MethodVisibility` arm) -- applied here,
