@@ -2257,6 +2257,18 @@ fn register_class(
                                 // one was added for exactly this path -- the
                                 // same prerequisite `Enumerator` needed.
                                 | zeo_abi::RANGE_CLASS
+                                // `Module`: NOT a payload root -- a wrapper
+                                // holding a module is not a module. A user
+                                // `class X < Module` is a module FACTORY whose
+                                // instances are real runtime module ids tagged
+                                // as belonging to X. See
+                                // `Compiler::is_module_subclass`.
+                                | crate::compiler::MODULE_CLASS
+                                // `ObjectSpace::WeakMap`: the subclass IS
+                                // the native type -- `weakmap_construct`
+                                // already builds `WeakMap::new(class)` from
+                                // the receiver. activesupport's `WeakSet`.
+                                | zeo_abi::WEAKMAP_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

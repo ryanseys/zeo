@@ -537,6 +537,28 @@ fn collectable(v: &RubyValue) -> bool {
     )
 }
 
+/// Register a user `class WeakSet < ObjectSpace::WeakMap`: name + linearized
+/// ancestors + the root's own constructor, unchanged. This is the cleanest of
+/// the native shapes -- [`weakmap_construct`] already builds
+/// `WeakMap::new(class)` from the receiver, so a subclass instance is the
+/// native type tagged with the subclass id and needs no payload wrapper and no
+/// re-tagging. Its own `def`s arrive as `RubyValue`-self deltas, like the
+/// other struct-less shapes.
+pub fn register_weakmap_subclass(
+    registry: &mut crate::dispatch::ClassRegistry,
+    id: ClassId,
+    name: &str,
+    ancestors: Vec<ClassId>,
+) {
+    registry.register(
+        id,
+        name,
+        false,
+        ancestors,
+        Some(weakmap_construct as crate::dispatch::ConstructorFn),
+    );
+}
+
 /// `ObjectSpace::WeakMap.new` -- the registered constructor.
 fn weakmap_construct(
     class: ClassId,

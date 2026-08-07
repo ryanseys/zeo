@@ -1,0 +1,14 @@
+[LazilyDefineAttributes, true, true, true]
+true
+[:a, :b]
+[:x]
+false
+Module
+true
+[9, [:@attributes, :@extra]]
+nil
+[DeprecatedConstantProxy, "DeprecatedConstantProxy(OLD -> NEW)", "NEW", true]
+[Sub, "B", true, true]
+[Bare, true]
+[WeakSet, true, ObjectSpace::WeakMap]
+[["one", "two"], 2, true]

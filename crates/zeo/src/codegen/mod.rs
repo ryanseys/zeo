@@ -1307,6 +1307,40 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
                 );
             }
+        } else if compiler.is_weakmap_subclass(ClassId(idx as u32)) {
+            // A user `class WeakSet < ObjectSpace::WeakMap`: no generated
+            // struct -- its instances ARE the native `WeakMap`, built by the
+            // root's own constructor from the receiver class. Its `def`s
+            // arrive as `RubyValue`-self deltas.
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                zeo_rt::register_weakmap_subclass(
+                    &mut __registry,
+                    zeo_rt::ClassId(#id),
+                    #fq_name,
+                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                );
+            }
+        } else if compiler.is_module_subclass(ClassId(idx as u32)) {
+            // A user `class X < Module`: no generated struct -- its instances
+            // are real runtime MODULE ids tagged as belonging to X, so
+            // `include X.new(...)`, `Module#===` and constant lookup all keep
+            // working on them. Register the runtime entry + the shared
+            // `module_subclass_construct`; X's own `def`s arrive as
+            // `RubyValue`-self deltas (`is_native_backed` covers this shape).
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                zeo_rt::register_module_subclass(
+                    &mut __registry,
+                    zeo_rt::ClassId(#id),
+                    #fq_name,
+                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                );
+            }
         } else if compiler.is_immediate_subclass(ClassId(idx as u32)) {
             // A user `class MyInt < Integer`: allowed as a DEFINITION but
             // has NO instances. Register just the name + ancestors with NO
@@ -3152,12 +3186,37 @@ fn emit_exception_deltas(
             let name = &scope.name;
             let method_ident = safe_ident(name);
             let fn_path = quote! { #mod_ident::#method_ident };
+            let frame = scope_frame_guard(compiler, scope, false);
+            // A `class X < Module` instance is a `RubyValue::Class`, not an
+            // `RObj`: `emit_exc_trampoline` would downcast it to
+            // `RubyException` and miss. The value-shaped trampoline passes the
+            // receiver straight through to the same
+            // `emit_builtin_method_fn` body, which already takes a `RubyValue`
+            // self -- so only the REGISTRATION differs.
+            if compiler.is_module_subclass(cid) {
+                let tramp = params::emit_value_trampoline(
+                    &fn_path,
+                    name,
+                    &scope.params,
+                    scope.needs_block_param(),
+                    params::RecvMode::Pass,
+                    &frame,
+                );
+                return quote! {
+                    __registry.define_value_method(
+                        zeo_rt::ClassId(#id),
+                        0,
+                        zeo_rt::Symbol::intern(#name),
+                        #tramp,
+                    );
+                };
+            }
             let tramp = params::emit_exc_trampoline(
                 &fn_path,
                 name,
                 &scope.params,
                 scope.needs_block_param(),
-                &scope_frame_guard(compiler, scope, false),
+                &frame,
             );
             quote! {
                 __registry.define_method(

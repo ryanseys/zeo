@@ -79,7 +79,9 @@ pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rat
 pub use builtins::rstruct::register_compiled_struct;
 pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use builtins::warning::emit_parse_warnings;
+pub use builtins::weak::register_weakmap_subclass;
 pub use builtins::weak::run_finalizers;
+pub use runtime_meta::register_module_subclass;
 // Re-exported for the `#[global_allocator]` a STATICALLY-linked generated
 // program declares under the backend's `zeo_static_alloc` cfg -- see
 // `backend::build_binary` and codegen's main assembly.

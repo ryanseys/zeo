@@ -1383,6 +1383,13 @@ impl Compiler {
             && !self.is_exception_backed(cid)
             && !self.is_value_subclass(cid)
             && !self.is_immediate_subclass(cid)
+            // A `class X < Module` instance is a `RubyValue::Class`. Typing
+            // `X.new` as `TyKind::Object(X)` bakes `X::new_handle` calls to a
+            // struct codegen never emits -- the exact failure the comment
+            // below describes, hit while wiring this shape up.
+            && !self.is_module_subclass(cid)
+            // A WeakMap subclass's instances are the native `WeakMap` RObj.
+            && !self.is_weakmap_subclass(cid)
     }
 
     /// Walks the recorded `parent` (superclass) links from `cid` toward the
@@ -1470,6 +1477,22 @@ impl Compiler {
     /// Rails' `ActiveSupport::Deprecation::DeprecatedConstantProxy` is the
     /// shape, and 22 of the corpus's `Module` rows reach the ledger through
     /// that one file.
+    /// Whether `cid` is a user subclass of `ObjectSpace::WeakMap`.
+    ///
+    /// A THIRD native shape, and the cleanest of them: `weakmap_construct`
+    /// already takes the receiver class and builds `WeakMap::new(class)`, so
+    /// the subclass simply IS the native type -- no payload wrapper, no
+    /// re-tagging. activesupport's `DescendantsTracker::WeakSet` is the case,
+    /// and it gates eleven Rails gems.
+    pub fn is_weakmap_subclass(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap {
+            return false;
+        }
+        self.superclass_chain(cid)
+            .any(|a| a == zeo_abi::WEAKMAP_CLASS)
+    }
+
     pub fn is_module_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap {
@@ -1502,7 +1525,13 @@ impl Compiler {
     /// an exception subclass (`RubyException`) or a value-builtin subclass
     /// (`ValueSubclass`). The shared gate for the delta/construct/reopen paths.
     pub fn is_native_backed(&self, cid: ClassId) -> bool {
-        self.is_exception_backed(cid) || self.is_value_subclass(cid)
+        self.is_exception_backed(cid)
+            || self.is_value_subclass(cid)
+            // A `class X < Module` instance is a `RubyValue::Class` -- no
+            // struct to downcast to, so its methods emit as `RubyValue`-self
+            // free functions exactly as the other two shapes' do.
+            || self.is_module_subclass(cid)
+            || self.is_weakmap_subclass(cid)
     }
 
     /// Whether `cid` is a user subclass of an IMMEDIATE builtin -- `Integer`/

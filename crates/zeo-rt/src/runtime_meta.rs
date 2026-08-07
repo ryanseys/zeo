@@ -2138,7 +2138,14 @@ pub(crate) fn fire_mixin_hook(
         return Ok(());
     };
     let sym = Symbol::intern(hook);
-    if crate::dispatch::class_method_owner(*mid, sym).is_none() {
+    // A module minted by `class X < Module` reaches the hook as an INSTANCE
+    // method of X -- CRuby looks it up through the module's singleton chain,
+    // which runs into its class. `class_method_owner` only sees class methods
+    // of the module itself, so it misses that one; Rails' `included` hooks on
+    // `DeprecatedConstantProxy` are exactly this shape.
+    let defined = crate::dispatch::class_method_owner(*mid, sym).is_some()
+        || module_owner_class(*mid).is_some_and(|owner| module_subclass_defines(owner, sym));
+    if !defined {
         return Ok(());
     }
     crate::dispatch::send_value(module, sym, std::slice::from_ref(target), None)?;
@@ -2843,6 +2850,63 @@ pub fn module_owner_class(id: ClassId) -> Option<ClassId> {
         .and_then(|e| e.owner_class)
 }
 
+/// Register a user `class X < Module`: name + linearized ancestors + the
+/// shared [`module_subclass_construct`]. Like the other struct-less shapes it
+/// installs no methods -- `X`'s own `def`s register as `RubyValue`-self
+/// `define_method` deltas (`Compiler::is_native_backed` covers it).
+pub fn register_module_subclass(
+    registry: &mut crate::dispatch::ClassRegistry,
+    id: ClassId,
+    name: &str,
+    ancestors: Vec<ClassId>,
+) {
+    registry.register(
+        id,
+        name,
+        false,
+        ancestors,
+        Some(module_subclass_construct as crate::dispatch::ConstructorFn),
+    );
+}
+
+/// Whether the module subclass `owner` (or an ancestor of it BELOW `Module`)
+/// defines `name` as one of its own instance methods.
+///
+/// `value_method`, not `has_instance_method`: a module subclass's methods take
+/// a `RubyValue::Class` self, so they register into `value_methods`, which the
+/// `methods` table `has_instance_method` reads never sees. Stopping at `Module`
+/// is what keeps `Module`'s own defaults out -- they are not what the user
+/// wrote, and running them here would be wrong for both callers.
+pub(crate) fn module_subclass_defines(owner: ClassId, name: Symbol) -> bool {
+    crate::dispatch::ancestors_of_value(owner)
+        .iter()
+        .take_while(|&&a| a != zeo_abi::MODULE_CLASS)
+        .any(|&a| crate::dispatch::value_method(a, 0, name).is_some())
+}
+
+/// The `ConstructorFn` behind every `class X < Module`. Mints a real runtime
+/// module tagged as an instance of `X`, then runs `X`'s own `initialize`
+/// against it with the MODULE as `self` -- which is what Rails'
+/// `DeprecatedConstantProxy#initialize` expects when it stores `@old_const`.
+///
+/// The result is a `RubyValue::Class`, so `include X.new(...)` reaches
+/// `runtime_include` unchanged and the user's `included` hook fires from
+/// `fire_mixin_hook` like any module's.
+pub fn module_subclass_construct(
+    class_id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let val = runtime_module_new_owned(None, Some(class_id))?;
+    let init = Symbol::intern("initialize");
+    // A USER `initialize` only: `Module`'s own takes no arguments and would
+    // raise on `X.new(attrs)`.
+    if module_subclass_defines(class_id, init) {
+        crate::dispatch::send_value_in(0, &val, init, args, block)?;
+    }
+    Ok(val)
+}
+
 /// [`runtime_module_new`] with the minted module tagged as an instance of
 /// `owner` -- what `X.new` runs for a `class X < Module`.
 pub fn runtime_module_new_owned(
@@ -3369,7 +3433,14 @@ pub fn overlay_class_name(id: ClassId) -> Option<String> {
     if let Some(name) = entry.name.read().unwrap().clone() {
         return Some(name);
     }
-    let kind = if entry.is_module { "Module" } else { "Class" };
+    // An anonymous value renders as `#<ITS CLASS:0xADDR>`, so a module a
+    // `class X < Module` minted reads `#<X:0x...>` -- CRuby's rule, and the
+    // reason the owner is consulted before the plain Class/Module split.
+    let kind = match entry.owner_class.and_then(crate::dispatch::class_name) {
+        Some(owner) => owner,
+        None if entry.is_module => "Module".to_string(),
+        None => "Class".to_string(),
+    };
     Some(format!("#<{kind}:0x{:016x}>", entry.addr))
 }
 
