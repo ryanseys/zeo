@@ -411,7 +411,13 @@ fn track_node(
             for r in rescues {
                 let mut b = before.clone();
                 if let Some(name) = &r.binding {
-                    b.entry(name.clone()).or_insert(TyKind::Poly);
+                    // OVERWRITES rather than fills in: inside the handler the
+                    // slot holds the exception, whatever the name meant before.
+                    // Leaving an earlier concrete type in place emitted the
+                    // handler's `e.message` as a call on that type while the
+                    // value was a runtime exception -- rustc caught it, but a
+                    // name reused across a `rescue =>` is ordinary ruby.
+                    b.insert(name.clone(), TyKind::Poly);
                 }
                 for &n in &r.body {
                     track_node(compiler, defining, box_id, &mut b, n);

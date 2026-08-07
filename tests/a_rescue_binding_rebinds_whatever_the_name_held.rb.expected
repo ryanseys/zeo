@@ -1,0 +1,20 @@
+"box(1)"
+"boom"
+ArgumentError
+ArgumentError
+"boom"
+"first"
+"box(2)"
+ArgumentError
+true
+"PLAIN"
+"typed"
+TypeError
+[:arg, "arg"]
+ArgumentError
+[:type, "type"]
+TypeError
+"outer"
+"inner"
+"inner"
+"box(kept)"
