@@ -187,7 +187,21 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
             // already registered stay registered -- inert unless the program
             // names them, which it can only do by requiring the feature it
             // just refused.
-            Some(e) => declined_units.push((unit.feature, unit.absolute, e.message)),
+            //
+            // Logged, because the swallowed reason is the whole diagnosis: a
+            // unit that declines mid-body leaves its enclosing `class`/`module`
+            // site holding a nested definition nothing registered, and what
+            // codegen reports THEN is "in a position the analyze walk doesn't
+            // register" -- pointing at the leftover, never at the refusal that
+            // caused it.
+            Some(e) => {
+                tracing::warn!(
+                    feature = unit.feature,
+                    reason = e.message,
+                    "analyze: unit declined"
+                );
+                declined_units.push((unit.feature, unit.absolute, e.message));
+            }
         }
     }
 
@@ -2198,9 +2212,17 @@ fn resolve_or_create_lexical(
     let cref: &[ClassId] = if anchored { &[] } else { cref };
     let mut scopes: Vec<ClassId> = cref.iter().rev().copied().collect();
     let mut parent = cref.last().and_then(|&c| compiler.class(c).lexical_parent);
+    // A repeat is ordinary here -- `cref` already holds the lexical parents of
+    // its own innermost entry -- so the walk SKIPS rather than stops, and it is
+    // the step count that keeps a `lexical_parent` cycle from spinning.
+    let mut steps = 0;
     while let Some(c) = parent {
         if !scopes.contains(&c) {
             scopes.push(c);
+        }
+        steps += 1;
+        if steps > crate::compiler::MAX_NESTING {
+            break;
         }
         parent = compiler.class(c).lexical_parent;
     }
@@ -2414,15 +2436,13 @@ fn register_class(
                 compiler.classes[cid.0 as usize].feature_gate = None;
             }
             if let Some(s) = &superclass {
-                let want = compiler
-                    .resolve_class(s, cref, box_id)
-                    .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
-                    // A superclass named through a constant ALIAS
-                    // (`Base = Some::Other::Class`) is that class.
-                    .or_else(|| resolve_const_alias(compiler, s, cref, box_id))
-                    .ok_or_else(|| {
-                        format!("unknown superclass `{s}` (must be defined earlier in the file)")
-                    })?;
+                // Same rule as a fresh definition: this "reopen" may be the
+                // FIRST real definition, of a name some other file forward-
+                // referenced into a shell, and ruby resolves the superclass
+                // before binding the name. See `resolve_superclass`.
+                let want = resolve_superclass(compiler, s, &name, cref, box_id).ok_or_else(
+                    || format!("unknown superclass `{s}` (must be defined earlier in the file)"),
+                )?;
                 if compiler.class(cid).parent != Some(want) {
                     // A class opened BARE first (`class Sub`, often just to
                     // hold a nested class) defaulted its parent to Object
@@ -2457,17 +2477,7 @@ fn register_class(
                     // class being opened): real Ruby evaluates the
                     // superclass expression before the new class exists.
                     Some(s) => {
-                        let cid = compiler
-                            .resolve_class(s, cref, box_id)
-                            // A superclass defined LATER in the flattened list
-                            // (a hoisted deferred require whose subclass precedes
-                            // its base, e.g. `class MismatchedChecksumError <
-                            // Error` before `class Error`): create the base as a
-                            // forward shell, resolving the bare name lexically.
-                            .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
-                            // A superclass named through a constant ALIAS
-                            // (`Base = Some::Other::Class`) is that class.
-                            .or_else(|| resolve_const_alias(compiler, s, cref, box_id))
+                        let cid = resolve_superclass(compiler, s, &name, cref, box_id)
                             .ok_or_else(|| {
                                 format!(
                                     "unknown superclass `{s}` (must be defined earlier in the file)"
@@ -3224,6 +3234,52 @@ fn resolve_module_target(
         None => Err(format!(
             "unknown module `{name}` (must be defined earlier in the file)"
         )),
+    }
+}
+
+/// The class a `class Name < Super` clause names, resolved the way ruby
+/// resolves it: the superclass expression runs BEFORE `Name` is bound, so the
+/// class being defined is never a candidate for its own superclass.
+///
+/// Rails writes, literally, `class SchemaDumper < SchemaDumper` inside
+/// `ActiveRecord::ConnectionAdapters`, and means `ActiveRecord::SchemaDumper` --
+/// the lexical search skips the unbound inner name and continues OUTWARD. zeo
+/// handed back the forward shell it had already minted for
+/// `ConnectionAdapters::SchemaDumper` (an earlier adapter file referenced it),
+/// which made the class its own parent. `materialize_class_methods` then walked
+/// that superclass chain forever: `require "active_record"` ran 12 minutes,
+/// climbed past 5GB and was killed with no diagnostic.
+fn resolve_superclass(
+    compiler: &mut Compiler,
+    superclass: &str,
+    name: &str,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Option<ClassId> {
+    // The one name that is off-limits, fixed BEFORE the search narrows: it is
+    // the path this definition binds, not whatever the current scope would bind.
+    let defining = match cref.last() {
+        Some(&enclosing) => format!("{}::{name}", compiler.fq_name(enclosing)),
+        None => name.to_string(),
+    };
+    let mut scopes = cref;
+    loop {
+        let found = compiler
+            .resolve_class(superclass, scopes, box_id)
+            // A superclass defined LATER in the flattened list (a hoisted
+            // deferred require whose subclass precedes its base, e.g. `class
+            // MismatchedChecksumError < Error` before `class Error`): create
+            // the base as a forward shell, resolving the bare name lexically.
+            .or_else(|| resolve_or_create_lexical(compiler, superclass, scopes, box_id))
+            // A superclass named through a constant ALIAS (`Base =
+            // Some::Other::Class`) is that class.
+            .or_else(|| resolve_const_alias(compiler, superclass, scopes, box_id));
+        match found {
+            Some(cid) if !scopes.is_empty() && compiler.fq_name(cid) == defining => {
+                scopes = &scopes[..scopes.len() - 1];
+            }
+            other => return other,
+        }
     }
 }
 

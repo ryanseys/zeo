@@ -1,0 +1,8 @@
+App::Dumper
+:outer
+:extra
+Object
+[:mysql, :outer]
+[App::Adapters::MySQL, App::Adapters::Dumper, App::Dumper]
+:nested
+App::Adapters::Real

@@ -19,7 +19,7 @@
 use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
 use crate::hir::{HirNode, NodeId, Span, Visibility};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Real Ruby's actual linearization (not classic C3): for `class_id` with
 /// prepends `P1..Pk` and includes `M1..Mn`, both in source order,
@@ -54,6 +54,19 @@ fn expand_into(compiler: &Compiler, class_id: ClassId, out: &mut Vec<ClassId>) {
         expand_into(compiler, m, out);
     }
     if let Some(parent) = info.parent {
+        // A module reached twice is an ordinary diamond and the `contains`
+        // check above absorbs it. A SUPERCLASS reached twice is a cycle in a
+        // chain that is supposed to be a list, and every walk over it that
+        // isn't guarded the way this one is runs forever -- which is how
+        // `require "active_record"` died. Say so once, here, where the shape is
+        // visible.
+        if out.contains(&parent) {
+            tracing::warn!(
+                class = compiler.fq_name(class_id),
+                superclass = compiler.fq_name(parent),
+                "mro: superclass cycle -- the chain already holds this class"
+            );
+        }
         expand_into(compiler, parent, out);
     }
 }
@@ -122,11 +135,29 @@ pub fn materialize(
 
     for (done, &cid) in all_ids.iter().enumerate() {
         let at = compiler.class_def_span(cid);
+        let class_started = std::time::Instant::now();
         if !compiler.class(cid).is_module {
             at_class(materialize_methods(compiler, cid), at)?;
         }
+        let instance_ms = class_started.elapsed().as_millis();
         at_class(materialize_class_methods(compiler, cid), at)?;
         apply_visibility_overrides(compiler, cid);
+        // One class that costs more than the whole pass should, named. A
+        // per-class cost is a product -- ancestors x their own methods -- and
+        // at Rails scale one bad product is the difference between a compile
+        // and a kill; the summary line cannot show which class it was.
+        if class_started.elapsed().as_millis() >= 50 {
+            tracing::warn!(
+                class = compiler.fq_name(cid),
+                ancestors = compiler.class(cid).ancestors.len(),
+                methods = compiler.class(cid).methods.len(),
+                class_methods = compiler.class(cid).class_methods.len(),
+                super_targets = compiler.class(cid).singleton_super_targets.len(),
+                instance_ms,
+                total_ms = class_started.elapsed().as_millis(),
+                "mro: slow class"
+            );
+        }
         // Progress, not a summary: this loop is where a Rails-scale compile
         // spends its memory, and a line every so often is what tells a live
         // `tail` that it is advancing rather than stuck -- and WHERE it stopped
@@ -171,6 +202,10 @@ pub fn materialize(
             }
         }
     }
+
+    // Nothing rewrites a method table past this point, so the name indexes can
+    // be built once -- every `method_in_chain` from here on is a binary search.
+    compiler.index_methods();
 
     // The shape of the program the rest of the compiler works over, and the one
     // number this pass exists to keep small: `entries` is what used to be
@@ -409,7 +444,20 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     let ancestors = compiler.class(class_id).ancestors.clone();
     let mut seen: HashSet<crate::compiler::NameId> = HashSet::new();
     let mut materialized: Vec<MethodEntry> = Vec::new();
+    // Every `private :inherited_method` seen so far in the walk. Ancestors run
+    // nearest-first and `or_insert` keeps the first, so by the time a name's
+    // definition turns up, this holds the NEAREST re-declaration above it --
+    // which is the entry ruby would have found. Collected from each ancestor's
+    // own (small) override list rather than asked of its finished method table:
+    // one lookup per inherited name, against a table with one entry per
+    // inherited name, is quadratic per class, and at Rails scale that is one
+    // class taking minutes.
+    let mut rescoped: HashMap<crate::compiler::NameId, Visibility> = HashMap::new();
     for &anc_id in &ancestors {
+        for (name, visibility) in compiler.class(anc_id).visibility_overrides.clone() {
+            let id = compiler.names.intern(&name);
+            rescoped.entry(id).or_insert(visibility);
+        }
         // A BUILTIN class never materializes `Object`'s methods (top-level
         // `def`s / `Object` reopens): re-emitting each body per builtin
         // would multiply generated code ~30x and re-type `self` as every
@@ -452,14 +500,10 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
             // carrying the definition's own flag.
             let mut entry = entry_for(compiler, name_id, sid, class_id);
             // What this class inherits is the ancestor's ENTRY, whose
-            // visibility the ancestor may have re-declared without redefining
-            // (`private :inherited_method` up the chain). Ancestors are
-            // materialized first -- a superclass always registers before its
-            // subclass -- so that answer is already final here.
-            if anc_id != class_id
-                && let Some(inherited) = compiler.lookup_method(anc_id, &name)
-            {
-                entry.visibility = inherited.visibility;
+            // visibility an ancestor may have re-declared without redefining
+            // (`private :inherited_method` up the chain).
+            if let Some(&visibility) = rescoped.get(&name_id) {
+                entry.visibility = visibility;
             }
             materialized.push(entry);
         }
@@ -573,6 +617,14 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
 /// pulling in the module's INSTANCE methods, `own_methods` -- matching real
 /// Ruby, where `def self.x` on the module itself stays put). The nearest
 /// level (`class_id` itself) always wins over anything found further up.
+///
+/// The walk is guarded: `parent` is a graph the front end builds, not a
+/// verified list, and a cycle in it (a reopen that establishes a superclass
+/// already below this one) turns this loop into an infinite one that appends
+/// entries until the process is killed. That is exactly how `require
+/// "active_record"` died -- 12 minutes, no diagnostic, RSS climbing 13MB a
+/// second, every sample inside this function.
+///
 /// Binds one definition onto `owner`. Everything but the owner comes from the
 /// definition itself, which is the whole content of the entry/definition split:
 /// inheriting a method is an entry, not a copy.
@@ -631,8 +683,17 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
     let mut materialized: Vec<MethodEntry> = Vec::new();
     let mut singleton_targets: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
     let mut level = Some(class_id);
+    let mut walked: HashSet<ClassId> = HashSet::new();
 
     while let Some(cid) = level {
+        if !walked.insert(cid) {
+            tracing::warn!(
+                class = compiler.fq_name(class_id),
+                at = compiler.fq_name(cid),
+                "mro: superclass chain revisits a class -- ending the singleton walk"
+            );
+            break;
+        }
         // Singleton-PREPENDED modules (`C.singleton_class.prepend(M)`): their
         // INSTANCE methods become this level's class methods at HIGHER priority
         // than its own `def self.x`, which they shadow (`super` reaching the

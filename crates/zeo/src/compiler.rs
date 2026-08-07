@@ -238,6 +238,15 @@ pub struct ClassInfo {
     /// `pub mod` of free functions for a module with no struct of its own.
     /// The singleton-side twin of `methods`, and read the same way.
     pub class_methods: Vec<MethodEntry>,
+    /// `(name, index into methods)` and its class-method twin, sorted by name
+    /// so [`lookup_method`](Compiler::lookup_method) is a binary search.
+    ///
+    /// A scan would be O(visible methods), and `method_in_chain` is asked once
+    /// per call site: that product is what took spinel's Rails-scale front end
+    /// down seven separate times. Built once, at the end of
+    /// `analyze::mro::materialize`, after the last thing that rewrites a table.
+    method_index: Vec<(NameId, u32)>,
+    class_method_index: Vec<(NameId, u32)>,
     /// `@@x` storage ownership, resolved once at analyze time (not per
     /// access, unlike zeo -- see `analyze::mro::resolve_cvars`'s docs):
     /// name -> the class/module that actually OWNS the runtime storage
@@ -348,6 +357,41 @@ impl MethodEntry {
     pub fn defined_class(&self, compiler: &Compiler) -> ClassId {
         compiler.scope(self.def).defining_class
     }
+}
+
+/// How deep a `lexical_parent` chain may go before the walk decides it is a
+/// cycle. Real source nests a handful of modules; nothing legitimate is near
+/// this. The walks that use it run on every constant lookup, so they bound the
+/// depth instead of carrying a visited set.
+pub(crate) const MAX_NESTING: usize = 256;
+
+/// `(name, position)` for every entry, sorted by name. Ties keep the EARLIEST
+/// position, which is the MRO winner -- a table can hold the same name twice
+/// only on the singleton side, where a shadowed copy trails its winner.
+fn sorted_index(entries: &[MethodEntry]) -> Vec<(NameId, u32)> {
+    let mut index: Vec<(NameId, u32)> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.name, i as u32))
+        .collect();
+    index.sort_unstable();
+    index.dedup_by_key(|(name, _)| *name);
+    index
+}
+
+/// The entry `name` resolves to, through a built index; falls back to a scan
+/// when the index has not been built yet (every lookup before
+/// [`Compiler::index_methods`] runs).
+fn find_indexed<'a>(
+    index: &[(NameId, u32)],
+    entries: &'a [MethodEntry],
+    name: NameId,
+) -> Option<&'a MethodEntry> {
+    if index.is_empty() {
+        return entries.iter().find(|e| e.name == name);
+    }
+    let at = index.binary_search_by_key(&name, |&(n, _)| n).ok()?;
+    Some(&entries[index[at].1 as usize])
 }
 
 /// An interned method name. Method tables are the one place in the compiler
@@ -835,6 +879,8 @@ impl Compiler {
                 explicit_superclass: false,
                 own_class_methods: Vec::new(),
                 class_methods: Vec::new(),
+                method_index: Vec::new(),
+                class_method_index: Vec::new(),
                 cvar_owners: HashMap::new(),
                 const_owners: HashMap::new(),
                 class_body_stmts: Vec::new(),
@@ -1266,6 +1312,12 @@ impl Compiler {
         let mut cur = defining;
         while let Some(cid) = cur {
             chain.push(cid);
+            // Nesting deeper than this is a `lexical_parent` cycle, not real
+            // source. Bounded rather than tracked with a set: this runs on
+            // every constant lookup, and a real chain is a handful of links.
+            if chain.len() > MAX_NESTING {
+                break;
+            }
             let ci = self.class(cid);
             cur = if ci.qualified_def {
                 None
@@ -1299,6 +1351,9 @@ impl Compiler {
         let mut cur = self.class(cid).lexical_parent;
         while let Some(p) = cur {
             segments.push(self.class(p).name.clone());
+            if segments.len() > MAX_NESTING {
+                break;
+            }
             cur = self.class(p).lexical_parent;
         }
         segments.reverse();
@@ -1384,6 +1439,8 @@ impl Compiler {
             explicit_superclass: false,
             own_class_methods: Vec::new(),
             class_methods: Vec::new(),
+            method_index: Vec::new(),
+            class_method_index: Vec::new(),
             cvar_owners: HashMap::new(),
             const_owners: HashMap::new(),
             class_body_stmts: Vec::new(),
@@ -1524,8 +1581,17 @@ impl Compiler {
     /// Superclass-chain membership is equivalent to the linearized test for
     /// every predicate here: each targets CLASS ids, which only ever enter
     /// an ancestry through `< Super`, never through a mixin.
+    ///
+    /// BOUNDED, because `parent` is a graph the front end builds rather than a
+    /// verified list: a cycle in it makes an unbounded `successors` spin
+    /// forever inside whatever predicate asked, with no allocation to show for
+    /// it and nothing in the log. That is a real shape --
+    /// `ActiveRecord::ConnectionAdapters::SchemaDumper` became its own parent
+    /// (see `analyze::resolve_superclass`) and hung `is_exception_backed`. The
+    /// bound costs nothing: a cycle repeats within one lap, so every answer
+    /// here is the same one an unbounded walk would give.
     fn superclass_chain(&self, cid: ClassId) -> impl Iterator<Item = ClassId> + '_ {
-        std::iter::successors(Some(cid), |&c| self.class(c).parent)
+        std::iter::successors(Some(cid), |&c| self.class(c).parent).take(MAX_NESTING)
     }
 
     /// Whether `cid`'s instances are the native `RubyException`: the
@@ -1761,13 +1827,25 @@ impl Compiler {
     /// What `class` resolves `name` to -- CRuby's `search_method` answer.
     pub fn lookup_method(&self, class: ClassId, name: &str) -> Option<&MethodEntry> {
         let id = self.names.get(name)?;
-        self.methods_of(class).iter().find(|e| e.name == id)
+        let info = &self.classes[class.0 as usize];
+        find_indexed(&info.method_index, &info.methods, id)
     }
 
     /// The singleton-side twin of [`lookup_method`](Self::lookup_method).
     pub fn lookup_class_method(&self, class: ClassId, name: &str) -> Option<&MethodEntry> {
         let id = self.names.get(name)?;
-        self.class_methods_of(class).iter().find(|e| e.name == id)
+        let info = &self.classes[class.0 as usize];
+        find_indexed(&info.class_method_index, &info.class_methods, id)
+    }
+
+    /// Builds the per-class name indexes. Call once, after the last pass that
+    /// rewrites a method table -- every lookup before this point is answered by
+    /// a scan, and every one after it by a binary search.
+    pub fn index_methods(&mut self) {
+        for info in &mut self.classes {
+            info.method_index = sorted_index(&info.methods);
+            info.class_method_index = sorted_index(&info.class_methods);
+        }
     }
 
     pub fn method_in_chain(&self, class: ClassId, name: &str) -> Option<(ClassId, ScopeId)> {
