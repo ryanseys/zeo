@@ -67,6 +67,27 @@ end
 p SEEN
 p Quiet.tag
 
+# A bare `singleton_class` in a class body IS that class's singleton, with no
+# constant naming it. activesupport writes its ERB patch that way, and pundit --
+# and every gem behind activesupport -- reaches the ledger through it.
+class Bare
+  def self.greet = "bare"
+
+  singleton_class.prepend Wrap
+end
+
+p Bare.greet
+
+module Namespaced
+  class Deep
+    def self.greet = "deep"
+
+    singleton_class.prepend Wrap
+  end
+end
+
+p Namespaced::Deep.greet
+
 # And the per-object form still defines per-object methods.
 obj = Object.new
 

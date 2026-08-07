@@ -3,5 +3,7 @@
 "paged(records)"
 [:body_ran]
 :quiet
+"wrapped(bare)"
+"wrapped(deep)"
 :loud
 [:shout]

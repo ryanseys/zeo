@@ -1081,10 +1081,15 @@ fn try_prepend_call_edit(
             return false;
         }
         // The receiver is either a class constant (instance-side prepend) or a
-        // bare `CONST.singleton_class` (class-method-side prepend).
+        // `singleton_class` call (class-method-side prepend), whose own
+        // receiver may be a constant or implicit -- a bare `singleton_class`
+        // in a class body IS that class. activesupport writes
+        // `singleton_class.prepend ActiveSupport::CoreExt::ERBUtil` inside
+        // `module ERB::Util`, and pundit and every gem behind activesupport
+        // reach the ledger through it.
         let (target, on_singleton) = match &compiler.hir[*recv] {
             HirNode::Call {
-                receiver: Some(inner),
+                receiver: inner,
                 name,
                 args,
                 kwargs,
@@ -1098,7 +1103,11 @@ fn try_prepend_call_edit(
                 && block_arg.is_none()
                 && !*safe =>
             {
-                match const_node_class(compiler, *inner, cref, box_id) {
+                let resolved = match inner {
+                    Some(inner) => const_node_class(compiler, *inner, cref, box_id),
+                    None => cref.last().copied(),
+                };
+                match resolved {
                     Some(c) => (c, true),
                     None => return false,
                 }
