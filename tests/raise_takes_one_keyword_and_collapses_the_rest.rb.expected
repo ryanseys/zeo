@@ -1,0 +1,11 @@
+"denied show?"
+{query: :show?, record: 7}
+"{message: \"params must be a Hash\"}"
+{query: :edit?}
+"prior"
+{}
+"prior"
+{query: :splatted, record: 1}
+"explicit"
+"prior"
+{query: :destroy?}

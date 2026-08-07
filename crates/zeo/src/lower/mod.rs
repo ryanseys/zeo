@@ -1924,38 +1924,61 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             let (kw_nodes, positional): (Vec<_>, Vec<_>) = arg_list
                 .iter()
                 .partition(|n| n.as_keyword_hash_node().is_some());
+            // `cause:` is the ONE keyword `raise` reads. Every other one is not
+            // a keyword at all: ruby collapses the rest into a single Hash and
+            // hands it over as an ordinary positional argument, so
+            // `raise NotAuthorizedError, query: q, record: r` (pundit) is
+            // `raise NotAuthorizedError, {query: q, record: r}` and reaches
+            // `NotAuthorizedError.exception(hash)`. With nothing left after
+            // `cause:` is taken out, no extra positional is passed at all.
             let mut cause = RaiseCause::Absent;
+            let mut rest: Vec<crate::hir::KwArg> = Vec::new();
             for kw in &kw_nodes {
                 let hash = kw.as_keyword_hash_node().expect("partitioned on this");
                 for element in hash.elements().iter() {
-                    let assoc = element
-                        .as_assoc_node()
-                        .ok_or("`raise` accepts only a `cause:` keyword")?;
+                    let Some(assoc) = element.as_assoc_node() else {
+                        // `**h` -- part of the collapsed hash like any pair.
+                        let splat = element
+                            .as_assoc_splat_node()
+                            .ok_or("unsupported element in a `raise` keyword list")?;
+                        let value = splat.value().ok_or("`**` needs a hash to splat")?;
+                        rest.push(crate::hir::KwArg::DoubleSplat(lower_node(
+                            result, hir, &value,
+                        )?));
+                        continue;
+                    };
                     let key = assoc
                         .key()
                         .as_symbol_node()
                         .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
                         .unwrap_or_default();
-                    if key != "cause" {
-                        return Err(format!("`raise` doesn't accept the `{key}:` keyword").into());
+                    if key == "cause" {
+                        cause = RaiseCause::Explicit(lower_node(result, hir, &assoc.value())?);
+                        continue;
                     }
-                    cause = RaiseCause::Explicit(lower_node(result, hir, &assoc.value())?);
+                    let k = lower_node(result, hir, &assoc.key())?;
+                    let v = lower_node(result, hir, &assoc.value())?;
+                    rest.push(crate::hir::KwArg::Pair(k, v));
                 }
             }
-            if positional.len() > 3 {
+            let collapsed = usize::from(!rest.is_empty());
+            if positional.len() + collapsed > 3 {
                 return Err(format!(
                     "wrong number of arguments (given {}, expected 0..3)",
-                    positional.len()
+                    positional.len() + collapsed
                 )
                 .into());
             }
-            if positional.is_empty() && matches!(cause, RaiseCause::Explicit(_)) {
+            if positional.is_empty() && collapsed == 0 && matches!(cause, RaiseCause::Explicit(_)) {
                 return Err("only cause is given with no arguments".to_string().into());
             }
-            let args = positional
+            let mut args = positional
                 .iter()
                 .map(|n| lower_node(result, hir, n))
                 .collect::<PResult<Vec<_>>>()?;
+            if !rest.is_empty() {
+                args.push(hir.push(HirNode::HashLit(rest)));
+            }
             return Ok(hir.push(HirNode::Raise(args, cause)));
         }
 
