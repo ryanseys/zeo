@@ -1582,7 +1582,66 @@ struct RequireCollector<'a> {
     defs: u32,
 }
 
+/// A build-time-decidable platform guard's answer, or `None` for every other
+/// condition. Deliberately much narrower than [`crate::guard_fold`]: this runs
+/// while FILES ARE STILL BEING LOADED, before any `Compiler` exists, so it can
+/// only read constants the build bakes in.
+///
+/// The one shape it needs is the one gems actually write:
+/// `RUBY_PLATFORM =~ /mswin|mingw|windows/`, and its `match?` and `==`
+/// spellings. That decides whether a windows-only file is part of this program
+/// -- mixlib-shellout requires one from inside `class ShellOut`, and its
+/// `:dword` FFI types exist nowhere else.
+fn baked_constant(node: &ruby_prism::Node<'_>) -> Option<&'static str> {
+    let name = node.as_constant_read_node()?;
+    match name.name().as_slice() {
+        b"RUBY_PLATFORM" => Some(env!("ZEO_RUBY_PLATFORM")),
+        b"RUBY_ENGINE" => Some("ruby"),
+        b"RUBY_VERSION" | b"RUBY_ENGINE_VERSION" => Some(zeo_abi::RUBY_VERSION),
+        _ => None,
+    }
+}
+
+/// `Some(<baked constant> matches <pattern>)` for `RUBY_PLATFORM =~ /mswin|
+/// mingw|windows/` and its `match?` spelling, either operand order.
+///
+/// Only a pattern of `|`-separated LITERAL text folds, so the match is a
+/// substring test that cannot disagree with a regexp engine -- the same rule,
+/// and the same reason, as `guard_fold::literal_alternatives`.
+fn platform_match(node: &ruby_prism::Node<'_>) -> Option<bool> {
+    let call = node.as_call_node()?;
+    if !matches!(call.name().as_slice(), b"=~" | b"match?") {
+        return None;
+    }
+    let recv = call.receiver()?;
+    let mut args = call.arguments()?.arguments().iter();
+    let (arg, None) = (args.next()?, args.next()) else {
+        return None;
+    };
+    let (subject, pattern) = match baked_constant(&recv) {
+        Some(s) => (s, arg),
+        None => (baked_constant(&arg)?, recv),
+    };
+    let re = pattern.as_regular_expression_node()?;
+    if re.is_ignore_case() || re.is_extended() || re.is_multi_line() {
+        return None;
+    }
+    let src = String::from_utf8_lossy(re.unescaped()).into_owned();
+    const SYNTAX: &[char] = &[
+        '\\', '^', '$', '.', '[', ']', '(', ')', '*', '+', '?', '{', '}',
+    ];
+    if src.is_empty() || src.contains(SYNTAX) {
+        return None;
+    }
+    let alts: Vec<&str> = src.split('|').collect();
+    if alts.iter().any(|a| a.is_empty()) {
+        return None;
+    }
+    Some(alts.iter().any(|a| subject.contains(a)))
+}
+
 impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
+
     fn visit_branch_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
         if let Some(call) = node.as_call_node()
             && call.receiver().is_none()
@@ -1699,6 +1758,9 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
             (Some(false), Some(false)) => Some(false),
             _ => None,
         };
+    }
+    if let Some(b) = platform_match(node) {
+        return Some(b);
     }
     if let Some(call) = node.as_call_node() {
         let name = call.name().as_slice();
