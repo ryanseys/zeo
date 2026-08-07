@@ -164,6 +164,16 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::ENUMERATOR_CLASS
             | zeo_abi::TIME_CLASS
             | zeo_abi::THREAD_CLASS
+            | zeo_abi::QUEUE_CLASS
+            | zeo_abi::TCPSOCKET_CLASS
+            | zeo_abi::UDP_SOCKET_CLASS
+            | zeo_abi::UNIX_SOCKET_CLASS
+            | zeo_abi::IP_SOCKET_CLASS
+            | zeo_abi::SOCKET_CLASS
+            | zeo_abi::BASIC_SOCKET_CLASS
+            | zeo_abi::IO_CLASS
+            | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
+            | zeo_abi::OPENSSL_CIPHER_CLASS
             | zeo_abi::RANGE_CLASS
     )
 }
@@ -398,6 +408,23 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // is the `File` shape again. The gems subclass Thread precisely to wrap
         // `initialize`, which seats the real thread through `super`.
         zeo_abi::THREAD_CLASS => RubyValue::Nil,
+        // `Queue.new` takes no arguments, so an empty queue IS the empty form.
+        // A subclass that writes its own `initialize` still calls `super()`
+        // and gets this same queue back.
+        zeo_abi::QUEUE_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
+        // The IO family, `OpenSSL::SSL::SSLSocket` and `OpenSSL::Cipher`: no
+        // descriptor, peer or algorithm can be conjured, so every one of these
+        // is the `File` shape -- the subclass's own `initialize` seats the real
+        // payload through `super`, which is why it was subclassed at all.
+        zeo_abi::IO_CLASS
+        | zeo_abi::BASIC_SOCKET_CLASS
+        | zeo_abi::IP_SOCKET_CLASS
+        | zeo_abi::SOCKET_CLASS
+        | zeo_abi::TCPSOCKET_CLASS
+        | zeo_abi::UDP_SOCKET_CLASS
+        | zeo_abi::UNIX_SOCKET_CLASS
+        | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
+        | zeo_abi::OPENSSL_CIPHER_CLASS => RubyValue::Nil,
         // `Range.new` demands both endpoints, so there is no empty form here
         // either -- the `File` shape again.
         zeo_abi::RANGE_CLASS => RubyValue::Nil,

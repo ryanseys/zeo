@@ -1657,6 +1657,20 @@ impl Compiler {
                     | zeo_abi::ENUMERATOR_CLASS
                     | zeo_abi::TIME_CLASS
                     | zeo_abi::THREAD_CLASS
+                    | zeo_abi::QUEUE_CLASS
+                    // The IO family. Several roots sit on one chain, and the
+                    // walk above picks the NEAREST -- so `class TCP <
+                    // TCPSocket` seeds its payload from `TCPSocket.new`, not
+                    // from the `IO.new` four links further up.
+                    | zeo_abi::TCPSOCKET_CLASS
+                    | zeo_abi::UDP_SOCKET_CLASS
+                    | zeo_abi::UNIX_SOCKET_CLASS
+                    | zeo_abi::IP_SOCKET_CLASS
+                    | zeo_abi::SOCKET_CLASS
+                    | zeo_abi::BASIC_SOCKET_CLASS
+                    | zeo_abi::IO_CLASS
+                    | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
+                    | zeo_abi::OPENSSL_CIPHER_CLASS
                     | zeo_abi::RANGE_CLASS
             )
         })

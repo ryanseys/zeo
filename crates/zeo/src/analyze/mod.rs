@@ -2677,6 +2677,40 @@ fn register_class(
                                 // the real one through `super`, which is
                                 // exactly why these gems subclass it.
                                 | zeo_abi::THREAD_CLASS
+                                // `Queue`: the payload is the
+                                // `RubyValue::Queue` handle, and `Queue.new`
+                                // takes no arguments, so the empty form is a
+                                // real one. actionpool's `Queue < ::Queue`
+                                // adds a `@pool` on top of the inherited
+                                // behaviour and reaches the ledger through
+                                // four gems.
+                                | zeo_abi::QUEUE_CLASS
+                                // The IO family, `File`'s shape one level up:
+                                // no descriptor can be conjured, so a subclass
+                                // seats the real one through `super`, which is
+                                // the whole reason these are subclassed.
+                                // kgio's `Kgio::Pipe < IO` and serialport's
+                                // `SerialPort < IO`; dalli's `TCP < TCPSocket`
+                                // and `UNIX < UNIXSocket`.
+                                | zeo_abi::IO_CLASS
+                                | zeo_abi::BASIC_SOCKET_CLASS
+                                | zeo_abi::IP_SOCKET_CLASS
+                                | zeo_abi::SOCKET_CLASS
+                                | zeo_abi::TCPSOCKET_CLASS
+                                | zeo_abi::UDP_SOCKET_CLASS
+                                | zeo_abi::UNIX_SOCKET_CLASS
+                                // `OpenSSL::SSL::SSLSocket`: the same shape --
+                                // it wraps an existing socket, so `super` is
+                                // the only way to build one. Nine ledger rows
+                                // go through bunny's, dalli's and mongo's
+                                // `SSLSocket` between them, the single biggest
+                                // subclassing bucket.
+                                | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
+                                // `OpenSSL::Cipher`: a cipher is named at
+                                // construction, so there is no empty form
+                                // either. openssl's OWN `AES`/`DES`/... are
+                                // `Class.new(Cipher)` subclasses.
+                                | zeo_abi::OPENSSL_CIPHER_CLASS
                                 // `Range`: chronic's `Span < Range`. Its
                                 // class-method table had no `new` row until
                                 // one was added for exactly this path -- the

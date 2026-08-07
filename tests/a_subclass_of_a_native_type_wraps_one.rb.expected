@@ -1,0 +1,24 @@
+"work"
+3
+1
+Jobs
+true
+Thread::Queue
+[Jobs, Thread::Queue, Object]
+Tagged
+:note
+true
+"note: alpha\n"
+"beta\n"
+true
+IO
+TCPSocket
+true
+Named
+OpenSSL::SSL::SSLSocket
+:needs_a_socket
+OpenSSL::Cipher
+Loud
+"LOUD"
+"AES-256-CBC"
+true
