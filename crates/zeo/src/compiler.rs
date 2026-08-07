@@ -1686,33 +1686,6 @@ impl Compiler {
         self.value_payload_root(cid).is_some()
     }
 
-    /// Whether `cid` is a user `class X < Module` -- a MODULE FACTORY, whose
-    /// instances are real runtime module ids tagged as belonging to `X`.
-    ///
-    /// Deliberately NOT a `value_payload_root`: a `ValueSubclass` wrapper would
-    /// produce an object with a module inside it, which is not a module -- it
-    /// would fail `include`, `Module#===`, constant lookup and `ancestors`. The
-    /// two lists must stay disjoint, or `codegen::call::new` and
-    /// `super_calls` emit the wrong constructor.
-    ///
-    /// Rails' `ActiveSupport::Deprecation::DeprecatedConstantProxy` is the
-    /// shape, and 22 of the corpus's `Module` rows reach the ledger through
-    /// that one file.
-    /// Whether `cid` is a user subclass of `ObjectSpace::WeakMap`.
-    ///
-    /// A THIRD native shape, and the cleanest of them: `weakmap_construct`
-    /// already takes the receiver class and builds `WeakMap::new(class)`, so
-    /// the subclass simply IS the native type -- no payload wrapper, no
-    /// re-tagging. activesupport's `DescendantsTracker::WeakSet` is the case,
-    /// and it gates eleven Rails gems.
-    /// Whether `cid` is a user subclass of `Date`/`DateTime`.
-    ///
-    /// A FOURTH native shape: `Date`'s class-method rows already allocate
-    /// through the receiver (`RDate::new(jdn, class_of(recv))`), and an
-    /// `RDate` carries its class id directly -- so the subclass needs no
-    /// payload wrapper and no re-tagging, only to be passed along. tzinfo's
-    /// `DateTimeWithOffset` is the case, and activesupport reaches the ledger
-    /// through it.
     /// Whether `cid` is a user `class P < Proc`.
     ///
     /// The FIFTH native shape, and it is deliberately not a payload wrapper:
@@ -1735,6 +1708,14 @@ impl Compiler {
         (0..self.classes.len() as u32).any(|i| self.is_proc_subclass(ClassId(i)))
     }
 
+    /// Whether `cid` is a user subclass of `Date`/`DateTime`.
+    ///
+    /// A THIRD native shape: `Date`'s class-method rows already allocate
+    /// through the receiver (`RDate::new(jdn, class_of(recv))`), and an
+    /// `RDate` carries its class id directly -- so the subclass needs no
+    /// payload wrapper and no re-tagging, only to be passed along. tzinfo's
+    /// `DateTimeWithOffset` is the case, and activesupport reaches the ledger
+    /// through it.
     pub fn is_date_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap {
@@ -1743,6 +1724,13 @@ impl Compiler {
         self.superclass_chain(cid).any(|a| a == zeo_abi::DATE_CLASS)
     }
 
+    /// Whether `cid` is a user subclass of `ObjectSpace::WeakMap`.
+    ///
+    /// A FOURTH native shape, and the cleanest of them: `weakmap_construct`
+    /// already takes the receiver class and builds `WeakMap::new(class)`, so
+    /// the subclass simply IS the native type -- no payload wrapper, no
+    /// re-tagging. activesupport's `DescendantsTracker::WeakSet` is the case,
+    /// and it gates eleven Rails gems.
     pub fn is_weakmap_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap {
@@ -1752,6 +1740,18 @@ impl Compiler {
             .any(|a| a == zeo_abi::WEAKMAP_CLASS)
     }
 
+    /// Whether `cid` is a user `class X < Module` -- a MODULE FACTORY, whose
+    /// instances are real runtime module ids tagged as belonging to `X`.
+    ///
+    /// Deliberately NOT a `value_payload_root`: a `ValueSubclass` wrapper would
+    /// produce an object with a module inside it, which is not a module -- it
+    /// would fail `include`, `Module#===`, constant lookup and `ancestors`. The
+    /// two lists must stay disjoint, or `codegen::call::new` and
+    /// `super_calls` emit the wrong constructor.
+    ///
+    /// Rails' `ActiveSupport::Deprecation::DeprecatedConstantProxy` is the
+    /// shape, and 22 of the corpus's `Module` rows reach the ledger through
+    /// that one file.
     pub fn is_module_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap {
