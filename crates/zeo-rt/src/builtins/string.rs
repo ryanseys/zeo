@@ -1338,7 +1338,7 @@ ruby_class! {
     // fresh buffer); a source string is copied, keeping its own encoding
     // unless `encoding:` overrides it. `capacity:` only hints allocation, so
     // it is accepted and ignored.
-    def self."new"(_recv, source?, **opts) {
+    def self."new" allocs (_recv, source?, **opts) {
         let enc_override = kw_encoding(opts)?;
         let (bytes, enc) = match source {
             None => (Vec::new(), crate::encoding::ASCII_8BIT),

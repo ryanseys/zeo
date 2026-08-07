@@ -659,7 +659,7 @@ ruby_class! {
         Ok(RubyValue::Int(n))
     }
 
-    def self."new" cfunc (_recv, string, opts?) {
+    def self."new" cfunc allocs (_recv, string, opts?) {
         let s = &crate::builtins::convert::to_rstr(string)?;
         let text = s.lock().to_utf8_lossy().into_owned();
         let fixed_anchor = match opts {

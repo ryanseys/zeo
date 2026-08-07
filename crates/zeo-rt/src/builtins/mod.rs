@@ -122,6 +122,12 @@ pub struct MethodTable {
     /// of. A separate fn rather than a widened `is_private`, because the two
     /// readers ask the two questions separately.
     pub is_protected: fn(&str) -> bool,
+    /// CLASS-method rows only: this one allocates through the RECEIVER class,
+    /// so a subclass receiver gets an instance of itself. CRuby keeps the same
+    /// knowledge inside each class-method C function -- see
+    /// `zeo_dsl::MethodDef::allocs`. `false` for every instance table and for
+    /// every class-method row that answers the base class.
+    pub allocs: fn(&str) -> bool,
 }
 
 /// One builtin class/module's tables, registered by the `ruby_class!`/
@@ -264,6 +270,16 @@ pub(crate) fn builtin_class_method_is_private(id: ClassId, name: &str) -> bool {
     registered_table(id)
         .and_then(|t| t.class.as_ref())
         .is_some_and(|m| (m.is_private)(name))
+}
+
+/// Whether a builtin CLASS-method row allocates through the RECEIVER class --
+/// what decides if a value subclass re-tags the result as itself. See
+/// `zeo_dsl::MethodDef::allocs`; the row itself carries the answer, as the
+/// equivalent C function does in CRuby.
+pub(crate) fn builtin_class_method_allocs(id: ClassId, name: &str) -> bool {
+    registered_table(id)
+        .and_then(|t| t.class.as_ref())
+        .is_some_and(|m| (m.allocs)(name))
 }
 
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin

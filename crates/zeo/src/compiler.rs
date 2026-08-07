@@ -1444,6 +1444,7 @@ impl Compiler {
                     | zeo_abi::SET_CLASS
                     | zeo_abi::ENUMERATOR_CLASS
                     | zeo_abi::TIME_CLASS
+                    | zeo_abi::THREAD_CLASS
             )
         })
     }

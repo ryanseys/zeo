@@ -36,5 +36,8 @@ compile_flags.txt
 /tests/**
 !/tests/**/
 !/tests/**/*.*
+# ...which re-includes `.DS_Store` too, since the leading dot satisfies `*.*`.
+# The top-level rule cannot reach it through the negation above.
+/tests/**/.DS_Store
 !/tests/spinel/LICENSE
 conformance/rubygems-popular.txt

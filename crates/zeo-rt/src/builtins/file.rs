@@ -677,7 +677,7 @@ ruby_class! {
         Err(crate::builtins::runtime_error!("reinitializing File"))
     }
 
-    def self."open" | "new" cfunc (_recv, path, mode?, perm?, &block) {
+    def self."open" | "new" cfunc allocs (_recv, path, mode?, perm?, &block) {
         let trailing = perm.or(mode);
         if let RubyValue::Int(fd) = path {
             let io = file_from_fd(*fd, trailing)?;

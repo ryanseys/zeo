@@ -2247,6 +2247,11 @@ fn register_class(
                                 // form (`now`). rubyzip's `DOSTime < Time`
                                 // reaches the ledger through four gems.
                                 | zeo_abi::TIME_CLASS
+                                // `Thread`: the `File` shape -- a blockless
+                                // thread cannot be built, so a subclass seats
+                                // the real one through `super`, which is
+                                // exactly why these gems subclass it.
+                                | zeo_abi::THREAD_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

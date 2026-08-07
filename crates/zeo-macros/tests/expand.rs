@@ -32,6 +32,7 @@ pub mod builtins {
         pub arity: fn(&str) -> Option<i64>,
         pub is_private: fn(&str) -> bool,
         pub is_protected: fn(&str) -> bool,
+        pub allocs: fn(&str) -> bool,
     }
 
     pub struct BuiltinClassTable {

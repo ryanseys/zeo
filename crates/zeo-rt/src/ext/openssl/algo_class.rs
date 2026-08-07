@@ -43,6 +43,7 @@ const fn alias_table(id: ClassId) -> BuiltinClassTable {
             arity: lookup_class_arity,
             is_private: lookup_class_is_private,
             is_protected: lookup_class_is_protected,
+            allocs: lookup_class_allocs,
         }),
         install_constants: None,
     }

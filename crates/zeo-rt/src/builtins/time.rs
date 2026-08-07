@@ -1391,7 +1391,7 @@ ruby_class! {
     Time = zeo_abi::TIME_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
-    def self."now" as time_now cfunc (_recv) {
+    def self."now" as time_now cfunc allocs (_recv) {
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before the Unix epoch");
@@ -1403,7 +1403,7 @@ ruby_class! {
     // The `in:` keyword supplies the DISPLAY utc_offset (the instant itself is
     // the absolute epoch value, so no shift -- unlike `Time.new`, whose
     // components are local to that offset).
-    def self."at"(_recv, time, subsec?, unit?, **opts) {
+    def self."at" allocs (_recv, time, subsec?, unit?, **opts) {
         use num_bigint::BigInt;
         let in_offset = opts.map(|h| match h {
             RubyValue::Hash(h) => crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in"))),
@@ -1447,7 +1447,7 @@ ruby_class! {
     // ArgumentError ("mon out of range"). Needs a range check per field
     // before the call. Also unsupported: the string-month form
     // (`Time.utc(2023, "nov", 1)`).
-    def self."utc" | "gm" cfunc (_recv, *args) {
+    def self."utc" | "gm" cfunc allocs (_recv, *args) {
         check_civil_argc(args)?;
         let norm = normalize_civil_args(args);
         let args = norm.as_slice();
@@ -1465,7 +1465,7 @@ ruby_class! {
     // microseconds. With no offset given it is local time, like `Time.local`.
     // TODO(plan P-B): the `in:` keyword form isn't handled.
     // The `in:` keyword offset takes the place of the 7th positional argument.
-    def self."new" cfunc (recv, year?, mon?, mday?, hour?, min?, sec?, zone?, **opts) {
+    def self."new" cfunc allocs (recv, year?, mon?, mday?, hour?, min?, sec?, zone?, **opts) {
         // `Time.new("2021-12-25 10:00:00 +09:00")` parses a time string.
         if let Some(RubyValue::Str(s)) = year {
             return parse_time_string(&s.lock().to_utf8_lossy());
@@ -1514,7 +1514,7 @@ ruby_class! {
     // the offset at the UTC instant rather than the local one is off by an
     // hour for civil times inside a DST transition; that edge is a
     // documented approximation, not a silent one.)
-    def self."local" | "mktime" cfunc (_recv, *args) {
+    def self."local" | "mktime" cfunc allocs (_recv, *args) {
         check_civil_argc(args)?;
         let norm = normalize_civil_args(args);
         let args = norm.as_slice();

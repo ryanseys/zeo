@@ -459,7 +459,7 @@ ruby_class! {
     }
 
     // `mode` is ignored for now.
-    def self."new" | "open" (_recv, string?, _mode?) {
+    def self."new" | "open" allocs (_recv, string?, _mode?) {
         // An empty `StringIO.new` is UTF-8, as the `""` it stands in for is.
         let (bytes, enc) = match string {
             None | Some(RubyValue::Nil) => (Vec::new(), crate::encoding::UTF_8),

@@ -103,3 +103,35 @@ end
 
 s = Stamped.new(2000, 1, 2)
 p [s.class, s.year, s.month, s.day, s.tag]
+
+# `Thread`: the `File` shape again -- a blockless thread cannot be built, so
+# a subclass seats the real one through `super`, which is exactly why
+# newrelic_rpm and celluloid subclass it.
+class Traced < Thread
+  attr_accessor :busy
+
+  def initialize(*args, &block)
+    @busy = false
+    super(*args) { |*a| block.call(*a) }
+  end
+
+  def celluloid? = true
+end
+
+t = Traced.new(3) { |n| n * 2 }
+p [t.class, t.value, t.celluloid?, t.is_a?(Thread)]
+t.busy = true
+p t.busy
+
+# Which inherited class methods re-tag as the subclass is a PER-METHOD fact,
+# not "the result is a root value": `Thread.current` hands back a thread that
+# already exists, and `Enumerator.produce` builds a plain Enumerator, while
+# `Time.now` and `Array[]` allocate through the receiver. All four are CRuby's
+# own answers.
+p [Traced.current.class, Thread.current.class]
+
+class Seq < Enumerator; end
+p [Seq.produce(1) { |x| x + 1 }.first(2), Seq.produce(1) { |x| x + 1 }.class]
+
+class Bag < Hash; end
+p [Bag[[[1, 2]]].class, Bag.try_convert({}).class]

@@ -29,7 +29,7 @@ ruby_class! {
     // `Hash.new` / `Hash.new(default)` / `Hash.new { |hash, key| ... }`. The
     // default value and default block are mutually exclusive -- passing both
     // is an ArgumentError, matching CRuby.
-    def self."new"(_recv, arg?, &block) {
+    def self."new" allocs (_recv, arg?, &block) {
         if let Some(RubyValue::Proc(_)) = &block {
             if !arg.is_none() {
                 return Err(arg_error!("wrong number of arguments (given 1, expected 0)"));
@@ -61,7 +61,7 @@ ruby_class! {
         }
         Ok(RubyValue::Bool(false))
     }
-    def self."[]" (_recv, *args, &_block) {
+    def self."[]" allocs (_recv, *args, &_block) {
         if args.len() == 1 {
             match &args[0] {
                 RubyValue::Hash(h) => {

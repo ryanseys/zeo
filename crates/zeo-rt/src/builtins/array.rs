@@ -148,7 +148,7 @@ ruby_class! {
 
     // `Array[1, 2, 3]` -- the literal-like constructor, which takes its
     // arguments as the elements rather than as a size and a fill.
-    def self."[]" (_recv, *items, &_block) {
+    def self."[]" allocs (_recv, *items, &_block) {
         Ok(RubyValue::Array(crate::array_new(items.to_vec())))
     }
 
@@ -168,7 +168,7 @@ ruby_class! {
     def self."try_convert" (_recv, arg) {
         Ok(convert::try_convert_value(arg, "Array", "to_ary")?.unwrap_or(RubyValue::Nil))
     }
-    def self."new"(_recv, size?, fill?, &block) {
+    def self."new" allocs (_recv, size?, fill?, &block) {
         // `Array.new(other_array)` is the COPY form (CRuby `rb_ary_initialize`):
         // a shallow copy of the given array, ignoring any block. Only when the
         // sole argument is an Array -- otherwise the arg is a size below.

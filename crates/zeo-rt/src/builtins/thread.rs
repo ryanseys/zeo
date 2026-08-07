@@ -74,7 +74,7 @@ ruby_class! {
     // spellings of one constructor. Codegen intercepts the literal
     // `Thread.new` form; this row serves the rest and is what makes all
     // three appear in `Thread.singleton_methods`.
-    def self."new" | "start" | "fork" (_recv, *args, &block) {
+    def self."new" | "start" | "fork" allocs (_recv, *args, &block) {
         let Some(block) = block else {
             return Err(raise_error("ThreadError", "must be called with a block".to_string()));
         };

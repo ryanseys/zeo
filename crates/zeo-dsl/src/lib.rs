@@ -187,6 +187,24 @@ pub struct MethodDef {
     /// away (`rb_define_method(..., -1)` plus `rb_scan_args` inside). See
     /// [`MethodDef::derived_arity`].
     pub cfunc: bool,
+    /// `allocs`: this CLASS method allocates through the RECEIVER class, so a
+    /// subclass receiver gets an instance of itself.
+    ///
+    /// CRuby hands every class-method C function the real receiver as `klass`
+    /// and lets the function decide, which is why no list of these exists
+    /// there -- the fact lives at each definition. Three behaviours, all in
+    /// CRuby today: `rb_ary_s_create` threads it (`ary_new(klass, argc)`);
+    /// `enumerator_s_produce` ignores it (`rb_enumeratorize_with_size_kw`
+    /// pins `base_class = rb_cEnumerator`); `thread_s_current` ignores it and
+    /// hands back an object that already exists. zeo's value-builtin payloads
+    /// carry no class id of their own, so the wrapper outside the row has to
+    /// know -- and this marker is how the row tells it, at the definition,
+    /// where CRuby keeps the same knowledge.
+    ///
+    /// Defaults to false, i.e. "answers the base class". That is the safe
+    /// direction: an unmarked new row demotes rather than inventing a
+    /// subclass instance.
+    pub allocs: bool,
     /// The `{ ... }` body -- real Rust, kept verbatim for the proc-macro.
     pub body: TokenStream,
 }
@@ -504,6 +522,15 @@ fn parse_def(
         false
     };
 
+    // `allocs`: allocates through the receiver class -- see `MethodDef::allocs`.
+    // Sits beside `cfunc` because both qualify the def that follows.
+    let allocs = if peek_ident(input, "allocs") {
+        input.parse::<Ident>()?;
+        true
+    } else {
+        false
+    };
+
     let buf;
     parenthesized!(buf in input);
     let recv: Ident = buf.parse()?;
@@ -527,6 +554,7 @@ fn parse_def(
         kwrest,
         block,
         cfunc,
+        allocs,
         body,
     })
 }

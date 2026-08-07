@@ -1040,7 +1040,7 @@ ruby_class! {
     // SUBCLASS path: `value_subclass::construct_root_payload` builds a payload
     // by calling the root's own `new` out of this table, which is what lets
     // `class NdjsonToMessageEnumerator < Enumerator` seat one through `super()`.
-    def self."new"(_recv, size?, &block) {
+    def self."new" allocs (_recv, size?, &block) {
         let args: Vec<RubyValue> = size.into_iter().cloned().collect();
         enumerator_new(&args, block)
     }

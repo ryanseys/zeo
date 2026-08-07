@@ -274,7 +274,7 @@ ruby_class! {
     include zeo_abi::ENUMERABLE_CLASS;
 
     // `Set.new` / `Set.new(enum)` / `Set.new(enum) { |o| transform(o) }`.
-    def self."new"(_recv, arg?, &block) {
+    def self."new" allocs (_recv, arg?, &block) {
         let out = empty_set();
         if let Some(source) = arg
             && !source.is_nil() {
@@ -292,7 +292,7 @@ ruby_class! {
         Ok(out)
     }
     // `Set[a, b, c]` -- every argument is a member (deduplicated).
-    def self."[]"(_recv, *args, &_block) {
+    def self."[]" allocs (_recv, *args, &_block) {
         Ok(set_from(args.iter().cloned()))
     }
 

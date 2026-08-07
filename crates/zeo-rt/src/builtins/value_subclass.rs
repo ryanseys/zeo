@@ -161,6 +161,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::SET_CLASS
             | zeo_abi::ENUMERATOR_CLASS
             | zeo_abi::TIME_CLASS
+            | zeo_abi::THREAD_CLASS
     )
 }
 
@@ -260,17 +261,19 @@ pub fn root_class_method_target(class_id: ClassId, name: &str) -> Option<ClassId
         .map(|_| root)
 }
 
-/// CRuby's conversion class methods answer with the BASE class even when the
-/// receiver is a subclass (`Sub.try_convert("x").class` is `String`), unlike
-/// every constructor beside them. The instance-side twin of this list is
-/// [`DEMOTING_CONVERSIONS`].
-const DEMOTING_CLASS_METHODS: &[&str] = &["try_convert"];
-
-/// Run a class method inherited from the payload root, re-tagging a freshly
-/// built root value as the SUBCLASS -- CRuby allocates through the receiver
-/// class, so `DOSTime.local(...)` is a `DOSTime`. A result that is not a bare
-/// root value passes through untouched: `Managed.read(path)` answers a String
-/// because `File.read` does.
+/// Run a class method inherited from the payload root. A row marked `allocs`
+/// comes back re-tagged as the SUBCLASS, because that row allocates through the
+/// receiver class -- `DOSTime.local(...)` is a `DOSTime`. Everything else
+/// passes through untouched, so `Managed.read(path)` still answers a String,
+/// `Traced.current` still answers the `Thread` that already exists, and
+/// `Seq.produce {}` still answers a plain `Enumerator`.
+///
+/// The marker lives on the row, which is where CRuby keeps the same knowledge:
+/// every class-method C function receives the real receiver as `klass` and
+/// decides for itself, so `rb_ary_s_create` threads it while
+/// `enumerator_s_produce` and `thread_s_current` ignore it. zeo needs the
+/// answer OUT here only because a value-builtin payload carries no class id of
+/// its own. See `zeo_dsl::MethodDef::allocs`.
 pub fn call_root_class_method(
     class_id: ClassId,
     root: ClassId,
@@ -282,10 +285,7 @@ pub fn call_root_class_method(
         .expect("root_class_method_target proved the table exists");
     let f = table(name).expect("root_class_method_target proved the row exists");
     let result = f(&RubyValue::Class(root), args, block)?;
-    if DEMOTING_CLASS_METHODS.contains(&name) {
-        return Ok(result);
-    }
-    match result.class_id() == root {
+    match crate::builtins::builtin_class_method_allocs(root, name) && result.class_id() == root {
         true => Ok(RubyValue::Object(ValueSubclass::alloc(
             class_id, root, result,
         ))),
@@ -321,6 +321,10 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // `Time.new` with no arguments IS the empty form -- it answers `now`,
         // exactly as CRuby's does.
         zeo_abi::TIME_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
+        // A blockless Thread cannot be built -- the block IS the work -- so this
+        // is the `File` shape again. The gems subclass Thread precisely to wrap
+        // `initialize`, which seats the real thread through `super`.
+        zeo_abi::THREAD_CLASS => RubyValue::Nil,
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         _ => RubyValue::Nil,
     }

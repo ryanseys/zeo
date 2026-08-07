@@ -74,6 +74,8 @@ struct Entry {
     /// makes that copy private, which is why `Math.instance_methods(false)` is
     /// empty while `Math.private_instance_methods(false)` has 28.
     is_private: bool,
+    /// See `zeo_dsl::MethodDef::allocs` -- CLASS-method rows only.
+    allocs: bool,
     /// `protected def` -- reachable only from a receiver the caller is a kind
     /// of. Never set by `module_function`, which splits private/public only.
     is_protected: bool,
@@ -160,6 +162,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 attrs: method.attrs.clone(),
                 is_private: declared_private,
                 is_protected: declared_protected,
+                allocs: method.allocs,
             };
             if method.is_module_function {
                 // CRuby's `module_function` splits the visibility: the instance
@@ -197,6 +200,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     attrs: t.attrs.clone(),
                     is_private: t.is_private,
                     is_protected: t.is_protected,
+                    allocs: t.allocs,
                 };
                 // Mirror the target's bucket.
                 if class.iter().any(|e| e.ruby == alias.old_name) {
@@ -407,6 +411,7 @@ fn gen_method_table(
     let arity_fn = format_ident!("{arity}");
     let private_fn = format_ident!("{lookup}_is_private");
     let protected_fn = format_ident!("{lookup}_is_protected");
+    let allocs_fn = format_ident!("{lookup}_allocs");
 
     let lookup_arms = entries.iter().map(|e| {
         let (ruby, fn_ident, attrs) = (&e.ruby, &e.fn_ident, &e.attrs);
@@ -428,6 +433,13 @@ fn gen_method_table(
         quote! { #( #attrs )* #ruby => true, }
     });
     let protected_arms = entries.iter().filter(|e| e.is_protected).map(|e| {
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        quote! { #( #attrs )* #ruby => true, }
+    });
+    // Only the rows marked `allocs` get an arm, so an unmarked row -- and a
+    // whole table that marks none, which is nearly all of them -- compiles to
+    // `false`: answer the base class. See `zeo_dsl::MethodDef::allocs`.
+    let allocs_arms = entries.iter().filter(|e| e.allocs).map(|e| {
         let (ruby, attrs) = (&e.ruby, &e.attrs);
         quote! { #( #attrs )* #ruby => true, }
     });
@@ -464,6 +476,13 @@ fn gen_method_table(
                 _ => false,
             }
         }
+        #[allow(dead_code)]
+        pub(crate) fn #allocs_fn(name: &str) -> bool {
+            match name {
+                #( #allocs_arms )*
+                _ => false,
+            }
+        }
     };
     let table = quote! {
         Some(crate::builtins::MethodTable {
@@ -472,6 +491,7 @@ fn gen_method_table(
             arity: #arity_fn,
             is_private: #private_fn,
             is_protected: #protected_fn,
+            allocs: #allocs_fn,
         })
     };
     (items, table)
