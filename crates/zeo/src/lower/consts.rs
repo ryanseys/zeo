@@ -60,6 +60,28 @@ pub(crate) fn constant_path_scope_and_name(
     Ok((scope, name))
 }
 
+/// A constant path whose SCOPE is an ordinary expression rather than a
+/// resolvable constant path -- `self::OPTION_NAMES` in a `Struct.new` block,
+/// `adapter::GitExecuteError` on a parameter, `self.class::Reason`. Returns
+/// `(the scope expression, the constant's name)`, or `None` for the static
+/// forms `constant_path_scope_and_name` already handles (including `::NAME`,
+/// which anchors at `Object`).
+pub(crate) fn dynamic_const_scope<'pr>(
+    node: &ruby_prism::ConstantPathNode<'pr>,
+) -> PResult<Option<(Node<'pr>, String)>> {
+    let Some(parent) = node.parent() else {
+        return Ok(None);
+    };
+    if constant_path_name(&parent).is_ok() {
+        return Ok(None);
+    }
+    let name = node.name().ok_or(
+        "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
+    )?;
+    let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+    Ok(Some((parent, name)))
+}
+
 /// `box::A::B` -- a constant path rooted at a LOCAL bound to a box handle
 ///. Returns the box id plus the path INSIDE the box (`"A::B"`).
 pub(crate) fn box_rooted_path(node: &Node<'_>) -> Option<(u32, String)> {

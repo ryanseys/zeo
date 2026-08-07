@@ -4062,6 +4062,10 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         }
         HirNode::GlobalWrite(_, value) => scan_bare_block_use(hir, *value),
         HirNode::ConstWrite { value, .. } => scan_bare_block_use(hir, *value),
+        HirNode::DynConstRead { scope, .. } => scan_bare_block_use(hir, *scope),
+        HirNode::DynConstWrite { scope, value, .. } => {
+            scan_bare_block_use(hir, *scope) | scan_bare_block_use(hir, *value)
+        }
         HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => scan_bare_block_use_body(hir, body),
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => match v {
             Some(v) => scan_bare_block_use(hir, *v),
@@ -4341,6 +4345,10 @@ pub(crate) fn scan_contains_super(hir: &Hir, id: NodeId) -> bool {
         }
         HirNode::GlobalWrite(_, value) => scan_contains_super(hir, *value),
         HirNode::ConstWrite { value, .. } => scan_contains_super(hir, *value),
+        HirNode::DynConstRead { scope, .. } => scan_contains_super(hir, *scope),
+        HirNode::DynConstWrite { scope, value, .. } => {
+            scan_contains_super(hir, *scope) | scan_contains_super(hir, *value)
+        }
         HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => scan_contains_super_body(hir, body),
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => match v {
             Some(v) => scan_contains_super(hir, *v),

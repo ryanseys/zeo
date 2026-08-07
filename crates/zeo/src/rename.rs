@@ -233,6 +233,19 @@ impl Walker {
                 name: _,
                 value,
             } => self.visit(hir, *value),
+            HirNode::DynConstRead {
+                scope,
+                name: _,
+                lenient: _,
+            } => self.visit(hir, *scope),
+            HirNode::DynConstWrite {
+                scope,
+                name: _,
+                value,
+            } => {
+                self.visit(hir, *scope);
+                self.visit(hir, *value);
+            }
             HirNode::Call {
                 receiver,
                 name: _,

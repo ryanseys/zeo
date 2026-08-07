@@ -26,6 +26,14 @@ pub(crate) enum Storage {
         scope: Option<String>,
         name: String,
     },
+    /// `expr::NAME op= v` -- the scope is already bound to the hidden local
+    /// `tmp` by a preceding statement, so the read half and the write half
+    /// consult the SAME evaluation of it (`registry_for(key)::CACHE ||= {}`
+    /// must call `registry_for` once). See `bind_scope_once`.
+    DynConst {
+        tmp: String,
+        name: String,
+    },
 }
 
 impl Storage {
@@ -40,6 +48,14 @@ impl Storage {
                 scope: Some(scope),
                 name,
             } => hir.push(HirNode::QualifiedConstRead(scope.clone(), name.clone())),
+            Storage::DynConst { tmp, name } => {
+                let scope = hir.push(HirNode::LocalRead(tmp.clone()));
+                hir.push(HirNode::DynConstRead {
+                    scope,
+                    name: name.clone(),
+                    lenient: false,
+                })
+            }
         }
     }
 
@@ -54,8 +70,34 @@ impl Storage {
                 name: name.clone(),
                 value,
             }),
+            Storage::DynConst { tmp, name } => {
+                let scope = hir.push(HirNode::LocalRead(tmp.clone()));
+                hir.push(HirNode::DynConstWrite {
+                    scope,
+                    name: name.clone(),
+                    value,
+                })
+            }
         }
     }
+}
+
+/// The scope half of a DYNAMIC constant-path target (`expr::NAME op= rhs`):
+/// lowers `parent` and binds it to a hidden local, so the read half and the
+/// write half consult ONE evaluation of it -- `registry_for(key)::CACHE ||= {}`
+/// calls `registry_for` once, exactly as `bind_call_target_once` does for
+/// `obj.attr op= rhs`. Returns `(bind statement, target)`; the caller
+/// sequences the bind ahead of whatever its operator builds.
+pub(crate) fn bind_dynamic_const_scope(
+    result: &ParseResult,
+    hir: &mut Hir,
+    parent: &Node<'_>,
+    name: String,
+) -> PResult<(NodeId, Storage)> {
+    let scope = lower_node(result, hir, parent)?;
+    let tmp = hir.gensym("__cscope");
+    let bind = hir.push(HirNode::LocalWrite(tmp.clone(), scope));
+    Ok((bind, Storage::DynConst { tmp, name }))
 }
 
 /// `target op= rhs` -- e.g. `x += 1`, desugared to `x = x + 1` (evaluating
@@ -100,6 +142,14 @@ pub(crate) fn lower_or_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> Nod
     let read = match &target {
         Storage::Const { scope, name } => {
             hir.push(HirNode::ConstReadOrNil(scope.clone(), name.clone()))
+        }
+        Storage::DynConst { tmp, name } => {
+            let scope = hir.push(HirNode::LocalRead(tmp.clone()));
+            hir.push(HirNode::DynConstRead {
+                scope,
+                name: name.clone(),
+                lenient: true,
+            })
         }
         // `@@x ||= v` gets the same leniency (an unassigned `@@x` reads nil
         // and the write defines it -- the memoization idiom); `+=`/`&&=`

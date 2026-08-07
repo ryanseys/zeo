@@ -306,6 +306,13 @@ fn track_node(
         }
         HirNode::GlobalWrite(_, value) => track_node(compiler, defining, box_id, locals, *value),
         HirNode::ConstWrite { value, .. } => track_node(compiler, defining, box_id, locals, *value),
+        HirNode::DynConstRead { scope, .. } => {
+            track_node(compiler, defining, box_id, locals, *scope)
+        }
+        HirNode::DynConstWrite { scope, value, .. } => {
+            track_node(compiler, defining, box_id, locals, *scope);
+            track_node(compiler, defining, box_id, locals, *value);
+        }
         HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 track_node(compiler, defining, box_id, locals, n);

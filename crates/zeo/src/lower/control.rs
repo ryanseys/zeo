@@ -103,11 +103,13 @@ pub(crate) fn lower_begin(
                     .expression()
                     .ok_or("`rescue *` needs an expression after the `*`")?;
                 splats.push(lower_node(result, hir, &expr)?);
-            } else if n.as_constant_read_node().is_some() || n.as_constant_path_node().is_some() {
-                classes.push(constant_path_name(&n)?);
+            } else if let Ok(name) = constant_path_name(&n) {
+                classes.push(name);
             } else {
                 // A COMPUTED exception class -- e.g. net/http's `rescue
-                // defined?(OpenSSL::SSL) ? OpenSSL::SSL::SSLError : IOError`.
+                // defined?(OpenSSL::SSL) ? OpenSSL::SSL::SSLError : IOError`,
+                // or a constant path rooted at one (1hdoc's `rescue
+                // adapter::GitExecuteError`, whose `adapter` is a parameter).
                 // There is no compile-time class to resolve, so lower the
                 // expression and match it at runtime exactly like a splat
                 // (`rescue_matches_any` matches a single class as well as an

@@ -358,6 +358,30 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
+    // `defined?(obj::NAME)` -- the scope is a value, so only the run time can
+    // answer. It is `"constant"` when the scope operator finds the name and nil
+    // otherwise, including when the scope is not a module at all: `defined?`
+    // swallows that TypeError rather than raising it (oracle-verified against
+    // `defined?(1::Here)`).
+    if let HirNode::DynConstRead { scope, name, .. } = &cx.compiler.hir[id] {
+        let s = emit_expr(cx, *scope);
+        let s = box_if_object_typed(cx, *scope, s);
+        let name = name.as_str();
+        // Same closure the receiver case above uses, for the same reason: the
+        // scope really is evaluated, and CRuby's catch entry over the whole
+        // expression turns a raise from it into nil rather than a propagated
+        // error.
+        return quote! {
+            (|| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+                Ok(if zeo_rt::scope_const_defined(&#s, #name) {
+                    zeo_rt::RubyValue::Str(zeo_rt::string_new("constant".to_string()))
+                } else {
+                    zeo_rt::RubyValue::Nil
+                })
+            })()
+            .unwrap_or(zeo_rt::RubyValue::Nil)
+        };
+    }
     let global_var =
         quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("global-variable".to_string())) };
     // `defined?($g)` is `"global-variable"` only if the global has been
@@ -501,6 +525,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::ClassVarWrite(..)
         | HirNode::GlobalWrite(..)
         | HirNode::ConstWrite { .. }
+        | HirNode::DynConstWrite { .. }
         | HirNode::MultiWrite { .. } => Some("assignment"),
         // Handled by the early returns at the top of this function.
         HirNode::Call { .. }
@@ -509,7 +534,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::LastMatchRef(_)
         | HirNode::ArrayLit(_)
         | HirNode::HashLit(_)
-        | HirNode::IvarRead(_) => {
+        | HirNode::IvarRead(_)
+        | HirNode::DynConstRead { .. } => {
             unreachable!("defined? runtime-checked nodes handled above")
         }
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) | HirNode::Retry => None,
@@ -1194,6 +1220,43 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 )
             });
             quote! { { let __v: zeo_rt::RubyValue = #v; #write #announce __v } }
+        }
+        // `expr::NAME` / `expr::NAME = v` -- the scope is a VALUE, so the whole
+        // search happens at run time. `zeo_rt::scope_const_*` run the scope
+        // operator's own search (not `const_get`'s, which reaches through
+        // `Object` and past a `private_constant`, and which a class can
+        // override), and reject a non-module scope with ruby's TypeError.
+        HirNode::DynConstRead {
+            scope,
+            name,
+            lenient,
+        } => {
+            let s = emit_expr(cx, *scope);
+            let s = box_if_object_typed(cx, *scope, s);
+            let f = if *lenient {
+                quote! { scope_const_get_or_nil }
+            } else {
+                quote! { scope_const_get }
+            };
+            quote! { zeo_rt::#f(&#s, #name)? }
+        }
+        HirNode::DynConstWrite { scope, name, value } => {
+            // Ruby evaluates the scope first and the value second, and does NOT
+            // demand a module of the scope until both are in hand: `1::X =
+            // (puts 2; 3)` prints before it raises (oracle-verified) -- unlike
+            // the static `Scope::NAME = ...` just above, which raises on an
+            // unresolvable scope without touching the right-hand side.
+            let s = emit_expr(cx, *scope);
+            let s = box_if_object_typed(cx, *scope, s);
+            let v = emit_expr(cx, *value);
+            let v = box_if_object_typed(cx, *value, v);
+            quote! {
+                {
+                    let __cscope: zeo_rt::RubyValue = #s;
+                    let __v: zeo_rt::RubyValue = #v;
+                    zeo_rt::scope_const_set(&__cscope, #name, __v)?
+                }
+            }
         }
         // Brace-wrapped into a single Rust block EXPRESSION, not spliced as
         // bare statements: every `emit_expr` caller assumes one expression,

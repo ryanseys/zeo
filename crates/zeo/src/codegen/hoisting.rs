@@ -265,6 +265,11 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             name: _,
             value,
         } => collect_locals(compiler, *value, out),
+        HirNode::DynConstRead { scope, .. } => collect_locals(compiler, *scope, out),
+        HirNode::DynConstWrite { scope, value, .. } => {
+            collect_locals(compiler, *scope, out);
+            collect_locals(compiler, *value, out);
+        }
         HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 collect_locals(compiler, n, out);

@@ -27,12 +27,15 @@ use crate::lower_error::LowerError;
 use ruby_prism::{CallNode, Node, ParseResult};
 
 use assign::{
-    Storage, bind_call_target_once, bind_index_target_once, build_call_target_write,
+    Storage, bind_call_target_once, bind_dynamic_const_scope, bind_index_target_once,
+    build_call_target_write,
     build_index_target_write, index_arguments, lower_and_write, lower_compound_op_write,
     lower_multi_target, lower_multi_target_group, lower_or_write,
 };
 use calls::{lower_block, lower_block_like_params, lower_call_args};
-use consts::{box_rooted_path, constant_path_name, constant_path_scope_and_name};
+use consts::{
+    box_rooted_path, constant_path_name, constant_path_scope_and_name, dynamic_const_scope,
+};
 use control::{lower_begin, lower_if_chain, lower_single_optional_argument};
 use defs::{
     const_holds_runtime_class, const_is_assigned, const_is_class_def, desugar_singleton_class_defs,
@@ -668,8 +671,15 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // (`ConstantPathNode` and its write/operator-write/and-write/or-write
     // relatives). See `constant_path_scope_and_name`'s docs.
     if let Some(op) = node.as_constant_path_operator_write_node() {
-        let (scope, name) = constant_path_scope_and_name(&op.target())?;
+        let target = op.target();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        if let Some((parent, name)) = dynamic_const_scope(&target)? {
+            let (bind, storage) = bind_dynamic_const_scope(result, hir, &parent, name)?;
+            let rhs = lower_node(result, hir, &op.value())?;
+            let write = lower_compound_op_write(hir, storage, op_name, rhs);
+            return Ok(hir.push(HirNode::Seq(vec![bind, write])));
+        }
+        let (scope, name) = constant_path_scope_and_name(&target)?;
         let rhs = lower_node(result, hir, &op.value())?;
         return Ok(lower_compound_op_write(
             hir,
@@ -682,7 +692,14 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         ));
     }
     if let Some(op) = node.as_constant_path_and_write_node() {
-        let (scope, name) = constant_path_scope_and_name(&op.target())?;
+        let target = op.target();
+        if let Some((parent, name)) = dynamic_const_scope(&target)? {
+            let (bind, storage) = bind_dynamic_const_scope(result, hir, &parent, name)?;
+            let rhs = lower_node(result, hir, &op.value())?;
+            let write = lower_and_write(hir, storage, rhs);
+            return Ok(hir.push(HirNode::Seq(vec![bind, write])));
+        }
+        let (scope, name) = constant_path_scope_and_name(&target)?;
         let rhs = lower_node(result, hir, &op.value())?;
         return Ok(lower_and_write(
             hir,
@@ -694,7 +711,14 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         ));
     }
     if let Some(op) = node.as_constant_path_or_write_node() {
-        let (scope, name) = constant_path_scope_and_name(&op.target())?;
+        let target = op.target();
+        if let Some((parent, name)) = dynamic_const_scope(&target)? {
+            let (bind, storage) = bind_dynamic_const_scope(result, hir, &parent, name)?;
+            let rhs = lower_node(result, hir, &op.value())?;
+            let write = lower_or_write(hir, storage, rhs);
+            return Ok(hir.push(HirNode::Seq(vec![bind, write])));
+        }
+        let (scope, name) = constant_path_scope_and_name(&target)?;
         let rhs = lower_node(result, hir, &op.value())?;
         return Ok(lower_or_write(
             hir,
@@ -706,7 +730,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         ));
     }
     if let Some(cpw) = node.as_constant_path_write_node() {
-        let (scope, name) = constant_path_scope_and_name(&cpw.target())?;
+        let target = cpw.target();
+        // A dynamic scope needs no hidden binding here -- a plain write reads
+        // the scope exactly once -- but it must still be evaluated BEFORE the
+        // right-hand side, which is ruby's order and the node's own.
+        if let Some((parent, name)) = dynamic_const_scope(&target)? {
+            let scope = lower_node(result, hir, &parent)?;
+            let value = lower_node(result, hir, &cpw.value())?;
+            return Ok(hir.push(HirNode::DynConstWrite { scope, name, value }));
+        }
+        let (scope, name) = constant_path_scope_and_name(&target)?;
         let value = lower_node(result, hir, &cpw.value())?;
         return Ok(hir.push(HirNode::ConstWrite {
             scope: Some(scope),
@@ -739,27 +772,14 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // the WHOLE parent spells a constant path rather than just its outer
         // node -- `self::Readline::HISTORY` (irb's input-method.rb) has a
         // parent that is itself a path, and only its root is dynamic.
-        // Evaluate the scope as a value and read the constant off it at
-        // runtime via `Module#const_get` (which walks the scope's ancestry --
-        // matching `::`'s lookup for a class/module scope). optparse's
-        // `self.class::Reason`.
-        if let Some(parent) = cp.parent()
-            && constant_path_name(&parent).is_err()
-        {
-            let name = cp.name().ok_or(
-                    "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
-                )?;
-            let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+        // Evaluate the scope as a value and run the SCOPE OPERATOR's own
+        // search on it. optparse's `self.class::Reason`.
+        if let Some((parent, name)) = dynamic_const_scope(&cp)? {
             let scope = lower_node(result, hir, &parent)?;
-            let sym = hir.push(HirNode::SymbolLit(name));
-            return Ok(hir.push(HirNode::Call {
-                receiver: Some(scope),
-                name: "const_get".to_string(),
-                args: vec![ArrayElem::Single(sym)],
-                kwargs: Vec::new(),
-                block: None,
-                block_arg: None,
-                safe: false,
+            return Ok(hir.push(HirNode::DynConstRead {
+                scope,
+                name,
+                lenient: false,
             }));
         }
         let (scope, name) = constant_path_scope_and_name(&cp)?;

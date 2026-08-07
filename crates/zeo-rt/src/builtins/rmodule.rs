@@ -172,6 +172,77 @@ pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
     const_lookup(cid, name, Search::Scoped).is_some()
 }
 
+/// The scope operator's own receiver check, for the DYNAMIC form (`obj::NAME`,
+/// where the compiler could not name the scope). CRuby evaluates the left side
+/// first and demands a class or module of it, whichever way the constant is
+/// then used -- read, write, or `||=`.
+fn scope_cid(scope: &RubyValue) -> Result<crate::ClassId, crate::Signal> {
+    match scope {
+        RubyValue::Class(cid) => Ok(*cid),
+        other => Err(type_error!(
+            "{} is not a class/module",
+            other.inspect_string()
+        )),
+    }
+}
+
+/// `obj::NAME` -- the scope operator on a value. The same search a compile-time
+/// `Scope::NAME` runs (`Search::Scoped`, so a constant `Object` owns stays out
+/// of reach), the same `private_constant` gate, and the same `const_missing`
+/// dispatch on a miss. NOT `const_get`, which reaches through `Object` and past
+/// a private mark, and which a class may override.
+pub fn scope_const_get(scope: &RubyValue, name: &str) -> Result<RubyValue, crate::Signal> {
+    let cid = scope_cid(scope)?;
+    if crate::constants::const_is_private(cid.0, name) {
+        let owner = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
+        return Err(name_error!("private constant {owner}::{name} referenced"));
+    }
+    match const_lookup(cid, name, Search::Scoped) {
+        Some(v) => Ok(v),
+        None => crate::dispatch::const_miss(cid, name),
+    }
+}
+
+/// The lenient half of `obj::NAME ||= value`: nil where `scope_const_get` would
+/// raise `NameError`, so the write half defines the constant instead. A
+/// non-module scope is still a `TypeError` -- the leniency is about the NAME,
+/// not the receiver. See `HirNode::ConstReadOrNil` for the static twin.
+pub fn scope_const_get_or_nil(scope: &RubyValue, name: &str) -> Result<RubyValue, crate::Signal> {
+    let cid = scope_cid(scope)?;
+    if crate::constants::const_is_private(cid.0, name) {
+        return Ok(RubyValue::Nil);
+    }
+    Ok(const_lookup(cid, name, Search::Scoped).unwrap_or(RubyValue::Nil))
+}
+
+/// `defined?(obj::NAME)`'s membership test. A scope that is not a module
+/// answers false rather than raising -- `defined?` swallows that TypeError, as
+/// it swallows every raise from the expression it classifies.
+pub fn scope_const_defined(scope: &RubyValue, name: &str) -> bool {
+    let RubyValue::Class(cid) = scope else {
+        return false;
+    };
+    !crate::constants::const_is_private(cid.0, name) && const_defined_in(*cid, name)
+}
+
+/// `obj::NAME = value` -- defines the constant on `obj` itself (no ancestry:
+/// assignment always writes the receiver's own table) and answers the value, as
+/// every assignment does. Records the writing line so a rewrite reports
+/// "previous definition of NAME was here" against the right one.
+pub fn scope_const_set(
+    scope: &RubyValue,
+    name: &str,
+    value: RubyValue,
+) -> Result<RubyValue, crate::Signal> {
+    let cid = scope_cid(scope)?;
+    match crate::frames::current_location() {
+        Some((file, line)) => crate::constants::const_set_at(cid.0, name, value.clone(), file, line),
+        None => crate::constants::const_set(cid.0, name, value.clone()),
+    }
+    crate::runtime_meta::fire_const_added(cid, name)?;
+    Ok(value)
+}
+
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
 fn inherit_flag(v: Option<&RubyValue>) -> bool {

@@ -1,0 +1,24 @@
+1
+:set
+:set
+scope
+value
+42
+rhs still ran
+"1 is not a class/module"
+"#<Object:0xXXXX> is not a class/module"
+[:entry, :entry]
+0
+11
+11
+"uninitialized constant Counter::MISSING"
+[2, :first]
+"no"
+["constant", nil]
+[nil, nil]
+"uninitialized constant #<Module:0xXXXX>::TOP_LEVEL"
+:visible
+"private constant Sealed::HIDDEN referenced"
+nil
+:inherited
+[1, 2, 1, 2]

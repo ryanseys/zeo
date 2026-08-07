@@ -401,6 +401,8 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
             name: _,
             value,
         } => sub(*value),
+        HirNode::DynConstRead { scope, .. } => sub(*scope),
+        HirNode::DynConstWrite { scope, value, .. } => sub(*scope) || sub(*value),
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             sub(*n)
@@ -708,6 +710,10 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             name: _,
             value,
         } => node_contains_begin(compiler, *value),
+        HirNode::DynConstRead { scope, .. } => node_contains_begin(compiler, *scope),
+        HirNode::DynConstWrite { scope, value, .. } => {
+            node_contains_begin(compiler, *scope) || node_contains_begin(compiler, *value)
+        }
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_begin(compiler, *n)
@@ -1078,6 +1084,11 @@ fn walk(
             name: _,
             value,
         } => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
+        HirNode::DynConstRead { scope, .. } => walk(compiler, *scope, in_escaping, param_exclusions, caps, self_class),
+        HirNode::DynConstWrite { scope, value, .. } => {
+            walk(compiler, *scope, in_escaping, param_exclusions, caps, self_class);
+            walk(compiler, *value, in_escaping, param_exclusions, caps, self_class);
+        }
         HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);

@@ -691,7 +691,7 @@ impl Hir {
     /// [`is_internal_local`], which is what keeps them out of
     /// `local_variables`.
     pub const INTERNAL_LOCAL_PREFIXES: &'static [&'static str] =
-        &["__recv", "__idx", "__asgn", "__mval", "__destr"];
+        &["__recv", "__idx", "__asgn", "__mval", "__destr", "__cscope"];
 
     pub fn gensym(&self, prefix: &str) -> String {
         debug_assert!(
@@ -2339,6 +2339,34 @@ pub enum HirNode {
         name: String,
         value: NodeId,
     },
+    /// `expr::NAME` where `expr` names no class the compiler can resolve --
+    /// `self::OPTION_NAMES` in a `Struct.new` block, `adapter::GitExecuteError`
+    /// on a parameter, `self.class::Reason`. The scope is an ordinary
+    /// expression, evaluated first, and the constant is found on whatever it
+    /// answers.
+    ///
+    /// `lenient` is `obj::NAME ||= v`'s read half, exactly as
+    /// `ConstReadOrNil` is `Foo::NAME ||= v`'s: nil instead of a `NameError`
+    /// when the name was never assigned, so the write half can define it. Only
+    /// `||=` gets that leniency -- `+=` and `&&=` still raise.
+    DynConstRead {
+        scope: NodeId,
+        name: String,
+        lenient: bool,
+    },
+    /// `expr::NAME = value`. Writes the scope's OWN constant table (assignment
+    /// never walks an ancestry) and answers `value`.
+    ///
+    /// Ruby allows this only where a plain `NAME = value` would also be legal:
+    /// inside a method body `obj::NAME = v` is the `dynamic constant
+    /// assignment` SyntaxError, and prism reports it before lowering ever runs.
+    /// `obj::NAME ||= v` in a method is legal, though -- the check is on the
+    /// plain form alone -- which is the shape act_as_attribute is built on.
+    DynConstWrite {
+        scope: NodeId,
+        name: String,
+        value: NodeId,
+    },
     /// `BEGIN { ... }` -- its body runs before ANY main statement, and
     /// several run in source order (oracle-verified).
     ///
@@ -2590,6 +2618,8 @@ impl HirNode {
             | HirNode::QualifiedConstRead(..)
             | HirNode::ConstReadOrNil(..)
             | HirNode::ConstWrite { .. }
+            | HirNode::DynConstRead { .. }
+            | HirNode::DynConstWrite { .. }
             | HirNode::PreExec(_)
             | HirNode::AliasGlobal(..)
             | HirNode::LastMatchRef(_)
@@ -2703,6 +2733,19 @@ impl HirNode {
                 name: _,
                 value,
             } => visit(*value),
+            HirNode::DynConstRead {
+                scope,
+                name: _,
+                lenient: _,
+            } => visit(*scope),
+            HirNode::DynConstWrite {
+                scope,
+                name: _,
+                value,
+            } => {
+                visit(*scope);
+                visit(*value);
+            }
             HirNode::Call {
                 receiver,
                 name: _,
