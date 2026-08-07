@@ -87,6 +87,9 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
     compiler.shell_kinds = shell_kinds;
     compiler.assigned_const_names = collect_assigned_const_names(&compiler.hir);
+    let mut aliases = HashMap::new();
+    collect_top_level_const_aliases(&compiler.hir, &statements, &mut aliases);
+    compiler.top_level_const_aliases = aliases;
     (compiler.runtime_patches, compiler.runtime_patches_any_name) =
         collect_runtime_patches(&compiler.hir);
 
@@ -1613,15 +1616,23 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
 /// aliased `ClassId`. Real Ruby's `class CONST; ...; end` REOPENS that class
 /// (the `INTEGER_KLASS = 1.class; class INTEGER_KLASS; ...` shape),
 /// rather than minting a fresh one named `CONST`.
+///
+/// TOP-LEVEL is load-bearing on both sides, and used not to be. Ruby binds a
+/// definition's name in the immediately enclosing scope and never searches
+/// outward for it, so a write in some other scope cannot be what a definition
+/// reopens. Consulting this from a nested definition made
+/// `module Mongoid::Criteria::Queryable::Extensions::Boolean` bind to the
+/// unrelated `Mongoid::Boolean` -- a class, so `Boolean is not a module` --
+/// and made optparse's nested `class ParseError < RuntimeError` bind to racc's
+/// top-level `ParseError = Racc::ParseError`, whose parent is `StandardError`,
+/// reported as `superclass mismatch`. 30 gems, five distinct constant names.
+///
+/// The caller supplies `lexical_parent` and only calls here when it is `None`;
+/// this end filters the WRITES, which the `scope` field cannot do -- `scope` is
+/// `None` for `NAME = ...` at any depth, recording only the explicit
+/// `Foo::NAME = ...` prefix.
 fn const_alias_target(compiler: &Compiler, leaf: &str, box_id: u32) -> Option<ClassId> {
-    let value = compiler.hir.nodes().iter().find_map(|n| match n {
-        HirNode::ConstWrite {
-            scope: None,
-            name,
-            value,
-        } if name == leaf => Some(*value),
-        _ => None,
-    })?;
+    let value = *compiler.top_level_const_aliases.get(leaf)?;
     match &compiler.hir[value] {
         HirNode::ClassRef(n) => compiler.resolve_class(n, &[], box_id),
         HirNode::QualifiedConstRead(scope, n) => {
@@ -1707,6 +1718,36 @@ fn collect_assigned_const_names(hir: &Hir) -> std::collections::HashSet<String> 
         }
     }
     out
+}
+
+/// Walk populating [`Compiler::top_level_const_aliases`]: `NAME = <value>`
+/// reached without ever entering a `class`/`module` body.
+///
+/// Descends through the statement wrappers a top-level write can hide behind
+/// (`if`, `begin`, `Seq`, a box scope) and stops at `ClassDef`, which is
+/// exactly the boundary that makes a write "top-level". First write wins, so a
+/// later reassignment does not change which class a reopen attaches to -- the
+/// arena scan this replaces had the same first-match-wins behaviour.
+fn collect_top_level_const_aliases(hir: &Hir, stmts: &[NodeId], out: &mut HashMap<String, NodeId>) {
+    for &s in stmts {
+        match &hir[s] {
+            HirNode::ConstWrite {
+                scope: None,
+                name,
+                value,
+            } => {
+                out.entry(name.clone()).or_insert(*value);
+            }
+            // A definition's body is a different scope; nothing inside it can
+            // be what a top-level `class CONST` reopens.
+            HirNode::ClassDef { .. } => {}
+            _ => {
+                let mut children = Vec::new();
+                hir[s].for_each_child(&mut |c| children.push(c));
+                collect_top_level_const_aliases(hir, &children, out);
+            }
+        }
+    }
 }
 
 /// The runtime definition verbs -- the calls that install a method body the
@@ -2029,10 +2070,13 @@ fn register_class(
     // backed builtin fallbacks).
     let existing = compiler
         .class_in_scope(lexical_parent, &leaf, box_id)
-        // A bare `class CONST` where CONST aliases an existing class reopens
-        // it (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`).
+        // A bare TOP-LEVEL `class CONST` where CONST aliases an existing class
+        // reopens it (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`).
+        // A nested definition never consults it: Ruby binds the leaf in the
+        // enclosing scope and does not search outward, so an alias written
+        // elsewhere is a different constant. See `const_alias_target`.
         .or_else(|| {
-            if qualified_def {
+            if qualified_def || lexical_parent.is_some() {
                 None
             } else {
                 const_alias_target(compiler, &leaf, box_id)

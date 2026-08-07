@@ -452,6 +452,17 @@ pub struct Compiler {
     /// stays a compile error -- deferring that one would silently DROP the
     /// mixin, since zeo's compiled classes dispatch off a static MRO.
     pub assigned_const_names: std::collections::HashSet<String>,
+    /// `NAME = <value>` written at the TOP LEVEL (never inside a `class`/
+    /// `module` body), leaf name -> the assigned value node. First write wins.
+    ///
+    /// `analyze::const_alias_target` needs the opposite of
+    /// `assigned_const_names`' over-approximation: it decides class IDENTITY,
+    /// so a write it consults has to be one a bare `class CONST` could really
+    /// be reopening, and Ruby only lets a TOP-LEVEL definition reopen a
+    /// top-level alias. A write's `scope` field cannot answer this -- it is
+    /// `None` for `NAME = ...` at any depth, recording only the explicit
+    /// `Foo::NAME = ...` prefix -- so the nesting has to come from the walk.
+    pub top_level_const_aliases: HashMap<String, crate::hir::NodeId>,
     /// Every method name a RUNTIME site could change out from under a folded
     /// call. Two kinds, because both land in the overlay that only DYNAMIC
     /// dispatch consults:
@@ -738,6 +749,7 @@ impl Compiler {
             top_level_defs: Vec::new(),
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
+            top_level_const_aliases: HashMap::new(),
             runtime_patches: std::collections::HashSet::new(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,

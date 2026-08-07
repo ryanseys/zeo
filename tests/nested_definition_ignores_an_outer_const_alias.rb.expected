@@ -1,0 +1,12 @@
+Class
+Module
+false
+true
+Thor::Shell::Basic
+:html
+Module
+StandardError
+RuntimeError
+false
+:yes
+true
