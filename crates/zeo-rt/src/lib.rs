@@ -170,6 +170,10 @@ pub use ractor::{
 /// `Ractor::MovedObject`'s numeric class id, spelled where `ruby_class!`'s
 /// generated `retag_moved` can reach it through `$crate`.
 pub const MOVED_OBJECT_CLASS_ID: u32 = zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0;
+
+/// Re-exported so generated programs can name it (`regexp_new_enc`'s last
+/// argument) without depending on `zeo-abi` themselves.
+pub use zeo_abi::RegexpEncoding;
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{

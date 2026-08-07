@@ -27,6 +27,11 @@ pub struct RegexpData {
     pub ignore_case: bool,
     pub extended: bool,
     pub multiline: bool,
+    /// The encoding a `/n`/`/e`/`/s`/`/u` literal FORCED, reported by
+    /// `#options`, `#encoding` and `#fixed_encoding?`. `Source` for every
+    /// runtime-built regexp (`Regexp.new` has no spelling for these) and for a
+    /// plain literal, whose encoding follows its own bytes.
+    pub encoding: zeo_abi::RegexpEncoding,
     /// `.frozen?` state. A regexp LITERAL is frozen at birth (real Ruby
     /// since 3.0 -- `/a/.frozen?` is true; codegen's literal emission sets
     /// this), `Regexp.new` starts unfrozen. Freezing changes nothing beyond
@@ -58,6 +63,7 @@ impl RegexpData {
             ignore_case: self.ignore_case,
             extended: self.extended,
             multiline: self.multiline,
+            encoding: self.encoding,
             frozen: std::sync::atomic::AtomicBool::new(frozen),
         })
     }
@@ -779,6 +785,26 @@ pub fn regexp_new(
     extended: bool,
     multiline: bool,
 ) -> Result<RRegexp, String> {
+    regexp_new_enc(
+        source,
+        ignore_case,
+        extended,
+        multiline,
+        zeo_abi::RegexpEncoding::Source,
+    )
+}
+
+/// `regexp_new` for a LITERAL, which may carry a forced encoding (`/n`, `/e`,
+/// `/s`, `/u`). The flag changes nothing about matching -- the pattern is
+/// ASCII-only wherever the encoding would otherwise differ, which lowering
+/// enforces -- only what the regexp reports about itself.
+pub fn regexp_new_enc(
+    source: &str,
+    ignore_case: bool,
+    extended: bool,
+    multiline: bool,
+    encoding: zeo_abi::RegexpEncoding,
+) -> Result<RRegexp, String> {
     validate_posix_classes(source)?;
     // A pattern with Ruby-specific semantics goes straight to Oniguruma (the
     // raw source, no escape translation).
@@ -790,6 +816,7 @@ pub fn regexp_new(
                 ignore_case,
                 extended,
                 multiline,
+                encoding,
                 frozen: std::sync::atomic::AtomicBool::new(false),
             })),
             Err(e) => Err(cruby_regex_error(source, &e)),
@@ -844,6 +871,7 @@ pub fn regexp_new(
         ignore_case,
         extended,
         multiline,
+        encoding,
         frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
@@ -1420,6 +1448,11 @@ pub fn regexp_to_s(re: &RRegexp) -> RubyValue {
 
 /// `Regexp#inspect` -- the `/pattern/flags` literal form, flags in `m,i,x`
 /// order (verified against real `ruby`).
+///
+/// Of the four ENCODING letters only `/n` shows: it says the pattern is
+/// encoding-agnostic, which re-reading the printed form has no other way to
+/// learn. `/e`, `/s` and `/u` print bare (`/x/e.inspect` is `"/x/"`), since the
+/// encoding rides on the object rather than on its source (oracle-verified).
 pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
     let mut flags = String::new();
     if re.multiline {
@@ -1430,6 +1463,9 @@ pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
     }
     if re.extended {
         flags.push('x');
+    }
+    if re.encoding == zeo_abi::RegexpEncoding::None {
+        flags.push('n');
     }
     RubyValue::Str(string_new(format!(
         "/{}/{flags}",

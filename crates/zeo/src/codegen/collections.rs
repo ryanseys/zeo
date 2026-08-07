@@ -352,13 +352,30 @@ pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> Token
     let ignore_case = flags.ignore_case;
     let extended = flags.extended;
     let multiline = flags.multiline;
+    // The `/n`/`/e`/`/s`/`/u` letter, if any. It changes nothing about
+    // matching (lowering only lets the flag through where the pattern is
+    // ASCII-only) -- it is what the regexp REPORTS: `#options`, `#encoding`,
+    // `#fixed_encoding?`.
+    let encoding = match flags.encoding {
+        zeo_abi::RegexpEncoding::Source => quote! { Source },
+        zeo_abi::RegexpEncoding::None => quote! { None },
+        zeo_abi::RegexpEncoding::EucJp => quote! { EucJp },
+        zeo_abi::RegexpEncoding::Windows31j => quote! { Windows31j },
+        zeo_abi::RegexpEncoding::Utf8 => quote! { Utf8 },
+    };
     let regexp_error = emit_boxed_new(
         cx,
         "RegexpError",
         vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(__err)) }],
     );
     quote! {
-        match zeo_rt::regexp_new(&(#pattern_expr), #ignore_case, #extended, #multiline) {
+        match zeo_rt::regexp_new_enc(
+            &(#pattern_expr),
+            #ignore_case,
+            #extended,
+            #multiline,
+            zeo_rt::RegexpEncoding::#encoding,
+        ) {
             // A regexp LITERAL is frozen at birth (real Ruby since 3.0,
             // interpolated ones included); `Regexp.new`/`.union` stay
             // unfrozen by not passing through this emission.

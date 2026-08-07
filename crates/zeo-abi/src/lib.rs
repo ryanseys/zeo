@@ -57,6 +57,60 @@ pub const ENV_SINGLETON_CLASS: ClassId = ClassId(u32::MAX);
 /// guard must fold against the SAME string the running program reports.
 pub const RUBY_VERSION: &str = "4.0.6";
 
+/// The encoding a Regexp literal's trailing flag letter FORCES -- `/n`, `/e`,
+/// `/s`, `/u`. `Source` is a plain literal, whose encoding follows its own
+/// source bytes.
+///
+/// Shared between the compiler (which reads the letter off the literal) and the
+/// runtime (which reports it), because it is observable three ways and the two
+/// halves must not drift:
+///
+/// | | `#options` | `#encoding` | `#fixed_encoding?` |
+/// |---|---|---|---|
+/// | `Source` | `0` | its own bytes' | true only if non-ASCII |
+/// | `/n` | `32` | `US-ASCII` (ASCII-only source) | `false` |
+/// | `/e` | `16` | `EUC-JP` | `true` |
+/// | `/s` | `16` | `Windows-31J` | `true` |
+/// | `/u` | `16` | `UTF-8` | `true` |
+///
+/// ruby2ruby and ruby_parser both open by reading exactly those bits back out
+/// of four throwaway literals (`ENC_EUC = /x/e.options`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RegexpEncoding {
+    #[default]
+    Source,
+    /// `/n` -- ruby's ARG_ENCODING_NONE.
+    None,
+    /// `/e` -- EUC-JP.
+    EucJp,
+    /// `/s` -- Windows-31J.
+    Windows31j,
+    /// `/u` -- UTF-8.
+    Utf8,
+}
+
+impl RegexpEncoding {
+    /// The `Regexp::` bits this flag contributes to `#options`, above the
+    /// `i`/`x`/`m` bits: `FIXEDENCODING` (16) for the three that pin a real
+    /// encoding, `NOENCODING` (32) for `/n`.
+    pub fn option_bits(self) -> i64 {
+        match self {
+            RegexpEncoding::Source => 0,
+            RegexpEncoding::None => 32,
+            RegexpEncoding::EucJp | RegexpEncoding::Windows31j | RegexpEncoding::Utf8 => 16,
+        }
+    }
+
+    /// Whether `#fixed_encoding?` is true on the flag alone. `/n` is not: it
+    /// declares the pattern encoding-agnostic rather than pinning one.
+    pub fn is_fixed(self) -> bool {
+        matches!(
+            self,
+            RegexpEncoding::EucJp | RegexpEncoding::Windows31j | RegexpEncoding::Utf8
+        )
+    }
+}
+
 /// One reserved built-in class/module -- see [`BUILTINS`].
 pub struct BuiltinClass {
     pub id: ClassId,

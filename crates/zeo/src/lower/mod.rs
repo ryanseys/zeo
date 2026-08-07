@@ -185,6 +185,49 @@ pub(crate) fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
     consts::constant_path_name(recv).is_ok_and(|name| name == enclosing)
 }
 
+/// Which encoding a Regexp literal's flag letter forces, from prism's four
+/// mutually exclusive flags. See [`zeo_abi::RegexpEncoding`] for what the answer
+/// is observable through.
+///
+/// `/e` and `/s` pin an encoding zeo's engines do not speak -- source lowering
+/// is UTF-8 throughout (see `docs/limitations.md`). For an ASCII-ONLY pattern
+/// that costs nothing: every byte means the same thing in EUC-JP, Windows-31J
+/// and UTF-8 alike, so the only difference is what the regexp REPORTS about
+/// itself, which the flag now carries. A pattern holding a non-ASCII byte is the
+/// case where the bytes really would be read differently, and stays a clean
+/// rejection.
+///
+/// ruby2ruby and ruby_parser both open with `ENC_EUC = /x/e.options` -- a
+/// throwaway ASCII pattern whose only purpose is the flag bits.
+fn forced_regexp_encoding(
+    ascii_8bit: bool,
+    euc_jp: bool,
+    windows_31j: bool,
+    utf_8: bool,
+    pattern: &str,
+) -> PResult<zeo_abi::RegexpEncoding> {
+    use zeo_abi::RegexpEncoding;
+    let encoding = match (ascii_8bit, euc_jp, windows_31j, utf_8) {
+        (true, ..) => RegexpEncoding::None,
+        (_, true, ..) => RegexpEncoding::EucJp,
+        (_, _, true, _) => RegexpEncoding::Windows31j,
+        (.., true) => RegexpEncoding::Utf8,
+        _ => RegexpEncoding::Source,
+    };
+    if matches!(encoding, RegexpEncoding::EucJp | RegexpEncoding::Windows31j)
+        && !pattern.is_ascii()
+    {
+        return Err(
+            "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) is only supported for an \
+             ASCII-only pattern, where the bytes mean the same thing either way (zeo limitation, \
+             UTF-8-only)"
+                .to_string()
+                .into(),
+        );
+    }
+    Ok(encoding)
+}
+
 /// The class a `class Sub < ... end` header names as its superclass.
 ///
 /// `< self` inside a class body is the ENCLOSING class -- a compile-time fact,
@@ -2312,42 +2355,54 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
 
     // `/pattern/flags` / `%r{pattern}flags` (`RegularExpressionNode` covers
     // BOTH delimiter spellings -- prism only distinguishes opening/closing
-    // `Location`s, not a separate node kind). `e`/`s` (EUC-JP/Windows-31J)
-    // are a clean rejection: source lowering is UTF-8-only throughout (see
-    // `docs/limitations.md`), unlike `o`/`n`/`u`, which are harmless no-ops
-    // here (`o`'s "only interpolate once" has no effect when every regex
-    // literal is freshly constructed anyway; `n`/`u` just reassert the
-    // encoding the lowering already assumes).
+    // `Location`s, not a separate node kind). `o` is the one genuinely
+    // ignorable flag: "only interpolate once" has no effect when every regexp
+    // literal is freshly constructed anyway.
     if let Some(re) = node.as_regular_expression_node() {
-        if re.is_euc_jp() || re.is_windows_31j() {
-            return Err(
-                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (zeo limitation, UTF-8-only)".to_string().into(),
-            );
-        }
         let content = String::from_utf8_lossy(re.unescaped()).into_owned();
+        let encoding = forced_regexp_encoding(
+            re.is_ascii_8bit(),
+            re.is_euc_jp(),
+            re.is_windows_31j(),
+            re.is_utf_8(),
+            &content,
+        )?;
         return Ok(hir.push(HirNode::RegexpLit(
             vec![StrPart::Lit(content)],
             RegexpFlags {
                 ignore_case: re.is_ignore_case(),
                 extended: re.is_extended(),
                 multiline: re.is_multi_line(),
+                encoding,
             },
         )));
     }
 
     if let Some(re) = node.as_interpolated_regular_expression_node() {
-        if re.is_euc_jp() || re.is_windows_31j() {
-            return Err(
-                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (zeo limitation, UTF-8-only)".to_string().into(),
-            );
-        }
         let parts = lower_string_parts(result, hir, re.parts().iter())?;
+        // An interpolated pattern's own literal segments are all that can be
+        // checked here; what an interpolation contributes is a runtime string.
+        let literal: String = parts
+            .iter()
+            .filter_map(|p| match p {
+                StrPart::Lit(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        let encoding = forced_regexp_encoding(
+            re.is_ascii_8bit(),
+            re.is_euc_jp(),
+            re.is_windows_31j(),
+            re.is_utf_8(),
+            &literal,
+        )?;
         return Ok(hir.push(HirNode::RegexpLit(
             parts,
             RegexpFlags {
                 ignore_case: re.is_ignore_case(),
                 extended: re.is_extended(),
                 multiline: re.is_multi_line(),
+                encoding,
             },
         )));
     }

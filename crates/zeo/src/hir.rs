@@ -1620,6 +1620,10 @@ pub struct RegexpFlags {
     /// `zeo_rt::regexp::regexp_new`'s docs for how this is modeled
     /// (`multi_line(true)` is unconditional, independent of this field).
     pub multiline: bool,
+    /// `n`/`e`/`s`/`u` -- the encoding the literal FORCES. Not decoration:
+    /// `#options`, `#encoding` and `#fixed_encoding?` each report it. See
+    /// [`zeo_abi::RegexpEncoding`].
+    pub encoding: zeo_abi::RegexpEncoding,
 }
 
 /// A C ABI type for one FFI argument or return value (the real `ffi`

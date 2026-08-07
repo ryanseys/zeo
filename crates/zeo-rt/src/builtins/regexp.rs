@@ -142,11 +142,20 @@ ruby_class! {
     def "===" (recv, other) {
         Ok(RubyValue::Bool(recv.rb_case_eq(other)))
     }
+    // A literal that FORCED an encoding (`/e`, `/s`, `/u`) answers that one;
+    // `/n` and a plain literal answer what their own source bytes compute to.
     def "encoding" (recv) {
         let RubyValue::Regexp(re) = recv else {
             unreachable!("the Regexp table only dispatches on Regexp receivers")
         };
-        let id = crate::builtins::encoding::computed_encoding_of(&re.source);
+        let id = match re.encoding {
+            zeo_abi::RegexpEncoding::EucJp => crate::encoding::EUC_JP,
+            zeo_abi::RegexpEncoding::Windows31j => crate::encoding::WINDOWS_31J,
+            zeo_abi::RegexpEncoding::Utf8 => crate::encoding::UTF_8,
+            zeo_abi::RegexpEncoding::None | zeo_abi::RegexpEncoding::Source => {
+                crate::builtins::encoding::computed_encoding_of(&re.source)
+            }
+        };
         Ok(crate::builtins::encoding::encoding_value(id))
     }
     // Every reachable zeo Regexp is compiled: a frozen one (every literal)
@@ -181,19 +190,21 @@ ruby_class! {
         let Some(h) = subject_arg(other)? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
-    // `casefold?` reports the `/i` flag; `fixed_encoding?` is always false
-    // (zeo regexps are encoding-agnostic over the supported set).
+    // `casefold?` reports the `/i` flag.
     def "casefold?" (recv) {
         Ok(RubyValue::Bool(re_of(recv).ignore_case))
     }
     // A regexp is fixed-encoding when it is tied to a specific encoding rather
-    // than the ASCII-agnostic default -- here, when its source carries a
-    // non-ASCII (multibyte) character, so `computed_encoding_of` resolves to
-    // something other than US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` ->
-    // US-ASCII -> false). The flag-forced cases (`/u`, `/n`) are a documented
-    // gap: no encoding flag is threaded onto the compiled regexp yet.
+    // than the ASCII-agnostic default. Two ways to get there: a flag PINNED one
+    // (`/e`, `/s`, `/u` -- but not `/n`, which declares the opposite), or the
+    // source itself carries a non-ASCII character, so `computed_encoding_of`
+    // resolves past US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` -> false).
     def "fixed_encoding?" (recv) {
-        let enc = crate::builtins::encoding::computed_encoding_of(&re_of(recv).source);
+        let re = re_of(recv);
+        if re.encoding.is_fixed() {
+            return Ok(RubyValue::Bool(true));
+        }
+        let enc = crate::builtins::encoding::computed_encoding_of(&re.source);
         Ok(RubyValue::Bool(enc != crate::encoding::US_ASCII))
     }
     // `names` lists the named capture groups in order; `named_captures` maps
@@ -247,7 +258,10 @@ ruby_class! {
         let re = re_of(recv);
         let bits = (re.ignore_case as i64) * IGNORECASE
             + (re.extended as i64) * EXTENDED
-            + (re.multiline as i64) * MULTILINE;
+            + (re.multiline as i64) * MULTILINE
+            // `FIXEDENCODING` (16) for `/e`/`/s`/`/u`, `NOENCODING` (32) for
+            // `/n` -- the bits ruby2ruby reads back out of `/x/e.options`.
+            + re.encoding.option_bits();
         Ok(RubyValue::Int(bits))
     }
 
