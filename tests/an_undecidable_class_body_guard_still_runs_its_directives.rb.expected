@@ -1,0 +1,11 @@
+1
+[false, false, L]
+[true, true]
+[1, :mixed_in, true]
+[false, true]
+[false, false]
+true
+[:yes, :no]
+[:yes, :no]
+[:yes, :no]
+[0, nil, nil]

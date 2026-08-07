@@ -400,7 +400,50 @@ fn cmp_fold(
 /// groups, escapes), an interpolated pattern, or a flag that changes matching
 /// (`/i`, `/x`). Those stay undecided rather than being answered by an
 /// approximation of a regexp.
-fn literal_alternatives(compiler: &Compiler, node: NodeId) -> Option<Vec<String>> {
+/// A regexp whose whole meaning is a plain string test -- so folding it here
+/// cannot disagree with a real regexp engine. Either `|`-separated literal
+/// alternatives matched as substrings, or ONE literal anchored at the start
+/// and/or end.
+struct LiteralPattern {
+    anchored_start: bool,
+    anchored_end: bool,
+    alts: Vec<String>,
+}
+
+impl LiteralPattern {
+    fn matches(&self, subject: &str) -> bool {
+        self.alts.iter().any(|a| {
+            match (self.anchored_start, self.anchored_end) {
+                (false, false) => subject.contains(a.as_str()),
+                (true, false) => subject.starts_with(a.as_str()),
+                (false, true) => subject.ends_with(a.as_str()),
+                (true, true) => subject == a,
+            }
+        })
+    }
+}
+
+/// One alternative's literal text, or `None` if it uses any regexp syntax.
+/// `\.` is the one escape allowed through -- it is how a version test spells
+/// the dot (`/^1\.8/`), and it means exactly the character.
+fn literal_alternative(src: &str) -> Option<String> {
+    const SYNTAX: &[char] = &['^', '$', '.', '[', ']', '(', ')', '*', '+', '?', '{', '}'];
+    let mut out = String::new();
+    let mut chars = src.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some('.') => out.push('.'),
+                _ => return None,
+            },
+            c if SYNTAX.contains(&c) => return None,
+            c => out.push(c),
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn literal_pattern(compiler: &Compiler, node: NodeId) -> Option<LiteralPattern> {
     let HirNode::RegexpLit(parts, flags) = &compiler.hir[node] else {
         return None;
     };
@@ -410,14 +453,35 @@ fn literal_alternatives(compiler: &Compiler, node: NodeId) -> Option<Vec<String>
     let [StrPart::Lit(src)] = parts.as_slice() else {
         return None;
     };
-    const SYNTAX: &[char] = &[
-        '\\', '^', '$', '.', '[', ']', '(', ')', '*', '+', '?', '{', '}',
-    ];
-    if src.is_empty() || src.contains(SYNTAX) {
+    let mut src = src.as_str();
+    let anchored_start = ["\\A", "^"].iter().any(|p| match src.strip_prefix(p) {
+        Some(rest) => {
+            src = rest;
+            true
+        }
+        None => false,
+    });
+    let anchored_end = ["\\z", "$"].iter().any(|s| match src.strip_suffix(s) {
+        Some(rest) => {
+            src = rest;
+            true
+        }
+        None => false,
+    });
+    // An anchor binds only ONE alternative in ruby -- `/^a|b/` is `(^a)|b`, not
+    // `^(a|b)` -- so an anchored pattern that alternates is not this simple.
+    if (anchored_start || anchored_end) && src.contains('|') {
         return None;
     }
-    let alts: Vec<String> = src.split('|').map(str::to_string).collect();
-    alts.iter().all(|a| !a.is_empty()).then_some(alts)
+    let alts: Vec<String> = src
+        .split('|')
+        .map(literal_alternative)
+        .collect::<Option<_>>()?;
+    Some(LiteralPattern {
+        anchored_start,
+        anchored_end,
+        alts,
+    })
 }
 
 /// A literal method-name argument (`:validate_for_resolution` / its string
@@ -642,12 +706,12 @@ fn call_fold(
             let recv = receiver?;
             // Either side may hold the pattern: `RUBY_PLATFORM =~ /x/` and
             // `/x/ =~ RUBY_PLATFORM` are the same question.
-            let (subject, pattern) = match literal_alternatives(compiler, *arg) {
+            let (subject, pattern) = match literal_pattern(compiler, *arg) {
                 Some(p) => (recv, p),
-                None => (*arg, literal_alternatives(compiler, recv)?),
+                None => (*arg, literal_pattern(compiler, recv)?),
             };
             let subject = static_string(compiler, cref, box_id, subject)?;
-            Some(pattern.iter().any(|alt| subject.contains(alt.as_str())))
+            Some(pattern.matches(&subject))
         }
         // `if RUBY_VERSION.start_with?('1.9')` -- the same build-time question
         // the comparison operators above answer, asked by prefix. Ruby takes any
@@ -838,6 +902,47 @@ mod tests {
         for bad in ["v3.4", "3..4", "3.4.", ".4", "3.4+build", "three"] {
             assert!(!correct_version(bad), "{bad:?} is one rubygems rejects");
         }
+    }
+
+    /// The fold decides which branch of a program is COMPILED, so a pattern it
+    /// reads wrongly picks the wrong half. Every expectation checked against
+    /// ruby 4.0.6.
+    #[test]
+    fn a_literal_alternative_is_the_text_it_spells() {
+        // `\.` is the one escape allowed through, and it means a real dot.
+        assert_eq!(literal_alternative(r"1\.8").as_deref(), Some("1.8"));
+        assert_eq!(literal_alternative("mingw").as_deref(), Some("mingw"));
+        // Anything with real regexp meaning must not reduce to text.
+        for src in [
+            "1.8",      // an unescaped dot matches any character
+            "a+",       // repetition
+            "[0-9]",    // a class
+            "(a)",      // a group
+            r"\d",      // an escape that is not `\.`
+            r"a\",      // a dangling backslash
+            "",         // nothing to match
+        ] {
+            assert_eq!(literal_alternative(src), None, "{src:?} is not literal");
+        }
+    }
+
+    #[test]
+    fn an_anchored_pattern_matches_by_position() {
+        let p = |anchored_start, anchored_end, alts: &[&str]| LiteralPattern {
+            anchored_start,
+            anchored_end,
+            alts: alts.iter().map(|s| s.to_string()).collect(),
+        };
+        // `RUBY_VERSION =~ /^1\.8/` on 4.0.6 -- the ipaddress guard.
+        assert!(!p(true, false, &["1.8"]).matches("4.0.6"));
+        assert!(p(true, false, &["1.8"]).matches("1.8.7"));
+        // Unanchored is a substring test, which is how the platform gates read.
+        assert!(p(false, false, &["mingw", "mswin"]).matches("x64-mingw32"));
+        assert!(!p(false, false, &["mingw", "mswin"]).matches("arm64-darwin24"));
+        // A `$` anchor is a suffix, and both anchors together are equality.
+        assert!(p(false, true, &["darwin24"]).matches("arm64-darwin24"));
+        assert!(!p(true, true, &["ruby"]).matches("ruby3"));
+        assert!(p(true, true, &["ruby"]).matches("ruby"));
     }
 
     #[test]

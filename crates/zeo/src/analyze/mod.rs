@@ -2887,6 +2887,23 @@ fn register_class(
     // target-version / feature-probe compat gate) into its taken branch.
     let body = splice_dead_rescues(compiler, body);
     let body = splice_decidable_ifs(compiler, &body, &child_cref, box_id);
+    // Whatever `if` is LEFT has a condition no compile-time fold can decide, so
+    // both branches survive to run at this site -- and a directive in one has no
+    // expression form of its own. Rewrite the directives INSIDE those, to the
+    // runtime self-sends this body serves. Only inside them: a directive written
+    // straight in the class body is registered at compile time, and rewriting it
+    // here would throw that away.
+    let body: Vec<NodeId> = body
+        .iter()
+        .map(|&stmt| match &compiler.hir[stmt] {
+            HirNode::If { .. } => {
+                crate::lower::defs::transform_conditional_class_body(&mut compiler.hir, &[stmt])
+                    .pop()
+                    .expect("one statement in, one out")
+            }
+            _ => stmt,
+        })
+        .collect();
     for &stmt in &body {
         match &compiler.hir[stmt] {
             HirNode::DefMethod {

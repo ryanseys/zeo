@@ -1734,6 +1734,86 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
 
 /// A receiver-less (implicit-`self`) runtime call node -- the class body block's
 /// `self` is the runtime class, so this dispatches to its class/module builtin.
+/// The directives inside a class-body `if` whose condition analyze could not
+/// decide, rewritten to the runtime self-send the enclosing class body serves
+/// (`self` there IS the class). Without this they reach codegen as directives in
+/// EXPRESSION position -- "a definition-level construct used as a VALUE".
+///
+/// `def`s and nested `class`es are deliberately left alone: a conditional `def`
+/// already has its own registration (`analyze::register_conditional_defs`) and
+/// its own runtime `define_method` emission, and a nested class its own site.
+/// Only the directives with no expression form of their own are rewritten.
+///
+/// ruby_parser closes with `if ENV["RP_LINENO_DEBUG"] then class RubyLexer;
+/// alias old_lineno= lineno=; ...` -- a debug hook whose guard is a real
+/// runtime question.
+pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -> Vec<NodeId> {
+    enum Rewrite {
+        Mixin(&'static str, String),
+        Alias(String, String),
+        Visibility(&'static str, String),
+        ModuleFunction(String),
+        Undef(Vec<String>),
+        Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        Keep,
+    }
+    let mut out = Vec::with_capacity(body.len());
+    for &id in body {
+        let rewrite = match &hir[id] {
+            HirNode::Include(m) => Rewrite::Mixin("include", m.clone()),
+            HirNode::Extend(m) => Rewrite::Mixin("extend", m.clone()),
+            HirNode::Prepend(m) => Rewrite::Mixin("prepend", m.clone()),
+            HirNode::AliasMethod {
+                new_name, old_name, ..
+            } => Rewrite::Alias(new_name.clone(), old_name.clone()),
+            HirNode::MethodVisibility { name, visibility } => {
+                Rewrite::Visibility(visibility_name(*visibility), name.clone())
+            }
+            HirNode::ModuleFunction(name) => Rewrite::ModuleFunction(name.clone()),
+            HirNode::Undef(names) => Rewrite::Undef(names.clone()),
+            HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => Rewrite::Cond(*cond, then_body.clone(), else_body.clone()),
+            _ => Rewrite::Keep,
+        };
+        out.push(match rewrite {
+            Rewrite::Mixin(method, m) => {
+                let arg = class_ref(hir, &m);
+                runtime_self_send(hir, method, vec![arg])
+            }
+            Rewrite::Alias(new_name, old_name) => {
+                let args = vec![sym_lit(hir, new_name), sym_lit(hir, old_name)];
+                runtime_self_send(hir, "alias_method", args)
+            }
+            Rewrite::Visibility(vis, name) => {
+                let args = vec![sym_lit(hir, name)];
+                runtime_self_send(hir, vis, args)
+            }
+            Rewrite::ModuleFunction(name) => {
+                let args = vec![sym_lit(hir, name)];
+                runtime_self_send(hir, "module_function", args)
+            }
+            Rewrite::Undef(names) => {
+                let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
+                runtime_self_send(hir, "undef_method", args)
+            }
+            Rewrite::Cond(cond, then_body, else_body) => {
+                let then_body = transform_conditional_class_body(hir, &then_body);
+                let else_body = transform_conditional_class_body(hir, &else_body);
+                hir.push(HirNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                })
+            }
+            Rewrite::Keep => id,
+        });
+    }
+    out
+}
+
 fn runtime_self_send(hir: &mut Hir, name: &str, args: Vec<NodeId>) -> NodeId {
     hir.push(HirNode::Call {
         receiver: None,
