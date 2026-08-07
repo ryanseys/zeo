@@ -50,6 +50,16 @@ end
 
 p defined?(WINDOWS_MARKER)
 
+# `File::ALT_SEPARATOR` is the oldest windows test there is -- `"\\"` there and
+# `nil` everywhere else, so its TRUTH is a property of the build. sys-filesystem
+# picks its half with it.
+if File::ALT_SEPARATOR
+  require_relative "a_platform_guarded_require_is_not_loaded/windows_only"
+end
+
+p File::ALT_SEPARATOR
+p defined?(WINDOWS_MARKER)
+
 # An engine gate is the same shape, on a different baked constant.
 if RUBY_ENGINE =~ /jruby|truffleruby/
   require_relative "a_platform_guarded_require_is_not_loaded/windows_only"
