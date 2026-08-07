@@ -1616,7 +1616,10 @@ mod tests {
             row.split('\t').nth(3).unwrap().starts_with('"'),
             "the detail is quoted: {row}"
         );
-        assert_eq!(read_ledger(&root).unwrap()["quoted"].outcome.detail(), detail);
+        assert_eq!(
+            read_ledger(&root).unwrap()["quoted"].outcome.detail(),
+            detail
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
