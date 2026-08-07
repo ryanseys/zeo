@@ -140,9 +140,7 @@ pub(crate) fn builtin_override(
                     .own_methods
                     .iter()
                     .any(|&sid| compiler.scope(sid).name == name)
-                    || c.methods
-                        .iter()
-                        .any(|e| compiler.names.str(e.name) == name))
+                    || c.methods.iter().any(|e| compiler.names.str(e.name) == name))
         })
 }
 

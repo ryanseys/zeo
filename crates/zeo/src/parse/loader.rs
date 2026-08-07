@@ -1641,7 +1641,6 @@ fn platform_match(node: &ruby_prism::Node<'_>) -> Option<bool> {
 }
 
 impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
-
     fn visit_branch_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
         if let Some(call) = node.as_call_node()
             && call.receiver().is_none()
@@ -1777,14 +1776,23 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
     // and how sys-filesystem picks its half. The constant is `"\\"` on windows
     // and `nil` everywhere else, so its TRUTH is a property of the build.
     if let Some(path) = node.as_constant_path_node()
-        && path.name().is_some_and(|n| n.as_slice() == b"ALT_SEPARATOR")
+        && path
+            .name()
+            .is_some_and(|n| n.as_slice() == b"ALT_SEPARATOR")
         && path
             .parent()
-            .and_then(|p| p.as_constant_read_node().map(|c| c.name().as_slice() == b"File"))
+            .and_then(|p| {
+                p.as_constant_read_node()
+                    .map(|c| c.name().as_slice() == b"File")
+            })
             .unwrap_or(false)
     {
         let plat = env!("ZEO_RUBY_PLATFORM");
-        return Some(["mswin", "mingw", "windows"].iter().any(|w| plat.contains(w)));
+        return Some(
+            ["mswin", "mingw", "windows"]
+                .iter()
+                .any(|w| plat.contains(w)),
+        );
     }
     if let Some(call) = node.as_call_node() {
         let name = call.name().as_slice();

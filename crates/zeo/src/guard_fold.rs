@@ -412,14 +412,14 @@ struct LiteralPattern {
 
 impl LiteralPattern {
     fn matches(&self, subject: &str) -> bool {
-        self.alts.iter().any(|a| {
-            match (self.anchored_start, self.anchored_end) {
+        self.alts
+            .iter()
+            .any(|a| match (self.anchored_start, self.anchored_end) {
                 (false, false) => subject.contains(a.as_str()),
                 (true, false) => subject.starts_with(a.as_str()),
                 (false, true) => subject.ends_with(a.as_str()),
                 (true, true) => subject == a,
-            }
-        })
+            })
     }
 }
 
@@ -892,7 +892,15 @@ mod tests {
     /// Every case checked against `Gem::Version.correct?` under ruby 4.0.6.
     #[test]
     fn correct_version_matches_rubygems() {
-        for ok in ["3.4", "1", "4.0.6", "1.0.0.rc1", "1.0-beta.2", "10.20.30", ""] {
+        for ok in [
+            "3.4",
+            "1",
+            "4.0.6",
+            "1.0.0.rc1",
+            "1.0-beta.2",
+            "10.20.30",
+            "",
+        ] {
             assert!(correct_version(ok), "{ok:?} is a version rubygems accepts");
         }
         // Leading whitespace is allowed; a leading `v`, an empty segment or a
@@ -914,13 +922,13 @@ mod tests {
         assert_eq!(literal_alternative("mingw").as_deref(), Some("mingw"));
         // Anything with real regexp meaning must not reduce to text.
         for src in [
-            "1.8",      // an unescaped dot matches any character
-            "a+",       // repetition
-            "[0-9]",    // a class
-            "(a)",      // a group
-            r"\d",      // an escape that is not `\.`
-            r"a\",      // a dangling backslash
-            "",         // nothing to match
+            "1.8",   // an unescaped dot matches any character
+            "a+",    // repetition
+            "[0-9]", // a class
+            "(a)",   // a group
+            r"\d",   // an escape that is not `\.`
+            r"a\",   // a dangling backslash
+            "",      // nothing to match
         ] {
             assert_eq!(literal_alternative(src), None, "{src:?} is not literal");
         }

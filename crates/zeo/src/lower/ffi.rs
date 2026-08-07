@@ -139,9 +139,10 @@ pub(crate) fn lower_ffi_directive(
             // whose members become module values with no type name at all, is
             // still a follow-on; the constant-assigned form is handled above.)
             let (tag, members) = match (args.first(), args.get(1)) {
-                (Some(n), Some(l)) if n.as_symbol_node().is_some() => {
-                    (ffi_symbol_str(n)?, parse_enum_members(std::slice::from_ref(l))?)
-                }
+                (Some(n), Some(l)) if n.as_symbol_node().is_some() => (
+                    ffi_symbol_str(n)?,
+                    parse_enum_members(std::slice::from_ref(l))?,
+                ),
                 _ => {
                     return Err(
                         "enum expects `:tag, [members]` (a nameless `enum [...]` is a follow-on)"
@@ -573,10 +574,12 @@ fn ffi_type_node(
         match call.name().as_slice() {
             b"by_ref" | b"ptr" => return Ok(crate::hir::FfiType::Pointer),
             b"by_value" | b"val" => {
-                return Err("an FFI struct passed BY VALUE isn't supported yet (zeo limitation) \
+                return Err(
+                    "an FFI struct passed BY VALUE isn't supported yet (zeo limitation) \
                             -- `.by_ref` (a pointer) is"
-                    .to_string()
-                    .into());
+                        .to_string()
+                        .into(),
+                );
             }
             _ => {}
         }

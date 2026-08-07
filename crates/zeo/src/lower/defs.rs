@@ -401,7 +401,10 @@ fn mentions_self(hir: &Hir, id: NodeId) -> bool {
     while let Some(n) = stack.pop() {
         match &hir[n] {
             HirNode::SelfRef | HirNode::Call { receiver: None, .. } => return true,
-            HirNode::DefMethod { .. } | HirNode::Lambda { method_body: true, .. } => continue,
+            HirNode::DefMethod { .. }
+            | HirNode::Lambda {
+                method_body: true, ..
+            } => continue,
             _ => {}
         }
         hir[n].for_each_child(&mut |child| stack.push(child));

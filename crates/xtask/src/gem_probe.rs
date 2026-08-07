@@ -2080,7 +2080,10 @@ mod tests {
         ));
         // ... but a message that merely MENTIONS parsing still is one.
         assert!(matches!(
-            classify("a pattern can't bind a variable inside a `|` alternation", root),
+            classify(
+                "a pattern can't bind a variable inside a `|` alternation",
+                root
+            ),
             Outcome::LoweringGap(_)
         ));
     }

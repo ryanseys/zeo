@@ -236,7 +236,9 @@ pub fn scope_const_set(
 ) -> Result<RubyValue, crate::Signal> {
     let cid = scope_cid(scope)?;
     match crate::frames::current_location() {
-        Some((file, line)) => crate::constants::const_set_at(cid.0, name, value.clone(), file, line),
+        Some((file, line)) => {
+            crate::constants::const_set_at(cid.0, name, value.clone(), file, line)
+        }
         None => crate::constants::const_set(cid.0, name, value.clone()),
     }
     crate::runtime_meta::fire_const_added(cid, name)?;

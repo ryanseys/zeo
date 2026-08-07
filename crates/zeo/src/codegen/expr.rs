@@ -2882,10 +2882,7 @@ mod tests {
         ] {
             let slot = const_slot(name);
             assert!(
-                !slot.is_empty()
-                    && slot
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                !slot.is_empty() && slot.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
                 "{name:?} -> {slot:?}"
             );
             // Proves it: this is the call that used to panic.

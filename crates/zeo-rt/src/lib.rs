@@ -171,9 +171,6 @@ pub use ractor::{
 /// generated `retag_moved` can reach it through `$crate`.
 pub const MOVED_OBJECT_CLASS_ID: u32 = zeo_abi::RACTOR_MOVED_OBJECT_CLASS.0;
 
-/// Re-exported so generated programs can name it (`regexp_new_enc`'s last
-/// argument) without depending on `zeo-abi` themselves.
-pub use zeo_abi::RegexpEncoding;
 pub use regexp::*;
 pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
@@ -196,6 +193,9 @@ pub use value::rb_eq_checked;
 pub use value::{RubyValue, observed_class_id};
 pub use value::{case_eq, case_eq_any};
 pub use value::{range_checked, range_endpoint, range_endpoint_error};
+/// Re-exported so generated programs can name it (`regexp_new_enc`'s last
+/// argument) without depending on `zeo-abi` themselves.
+pub use zeo_abi::RegexpEncoding;
 
 /// The interruption checkpoint generated code plants at loop back-edges and
 /// method prologues: ONE relaxed load of the process-wide pending counter

@@ -217,7 +217,11 @@ pub fn materialize(
         defs = compiler.scopes.len(),
         entries,
         super_targets,
-        ivars = compiler.classes.iter().map(|c| c.ivars.len()).sum::<usize>(),
+        ivars = compiler
+            .classes
+            .iter()
+            .map(|c| c.ivars.len())
+            .sum::<usize>(),
         ms = started.elapsed().as_millis(),
         "mro: materialized"
     );

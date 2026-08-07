@@ -1150,8 +1150,7 @@ fn try_prepend_call_edit(
 /// The class/module a bare-constant expression names (resolved in `cref`), or
 /// `None` for anything that isn't a compile-time-resolvable class reference.
 /// Used to statically resolve a `prepend` call's receiver and module arguments.
-const UNHONOURED_SINGLETON_PREPEND: &str =
-    "`prepend` onto a singleton class needs modules zeo can name at compile time \
+const UNHONOURED_SINGLETON_PREPEND: &str = "`prepend` onto a singleton class needs modules zeo can name at compile time \
      (constants), and a receiver that resolves to a known class -- a runtime one \
      writes a singleton method table that statically resolved calls never consult, \
      so it would compile and then override nothing (zeo limitation)";
@@ -2562,10 +2561,15 @@ fn register_class(
         // (`TypeError: superclass mismatch for class Foo`).
         Some(cid) => {
             if compiler.class(cid).is_module != is_module {
-                ruby_raises(compiler, def_node, "TypeError", &format!(
-                    "{name} is not a {}",
-                    if is_module { "module" } else { "class" }
-                ));
+                ruby_raises(
+                    compiler,
+                    def_node,
+                    "TypeError",
+                    &format!(
+                        "{name} is not a {}",
+                        if is_module { "module" } else { "class" }
+                    ),
+                );
                 return Err(format!(
                     "{name} is not a {}",
                     if is_module { "module" } else { "class" }
@@ -2583,9 +2587,10 @@ fn register_class(
                 // FIRST real definition, of a name some other file forward-
                 // referenced into a shell, and ruby resolves the superclass
                 // before binding the name. See `resolve_superclass`.
-                let want = resolve_superclass(compiler, s, &name, cref, box_id).ok_or_else(
-                    || format!("unknown superclass `{s}` (must be defined earlier in the file)"),
-                )?;
+                let want =
+                    resolve_superclass(compiler, s, &name, cref, box_id).ok_or_else(|| {
+                        format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                    })?;
                 if compiler.class(cid).parent != Some(want) {
                     // A class opened BARE first (`class Sub`, often just to
                     // hold a nested class) defaulted its parent to Object
@@ -2609,12 +2614,12 @@ fn register_class(
                             &format!("superclass mismatch for class {name}"),
                         );
                         ruby_raises(
-                        compiler,
-                        def_node,
-                        "TypeError",
-                        &format!("superclass mismatch for class {name}"),
-                    );
-                    return Err(format!("superclass mismatch for class {name}"));
+                            compiler,
+                            def_node,
+                            "TypeError",
+                            &format!("superclass mismatch for class {name}"),
+                        );
+                        return Err(format!("superclass mismatch for class {name}"));
                     }
                     // ... and establishing one that already descends from THIS
                     // class would close a loop: `class A; class B < A; class A <
@@ -2632,12 +2637,12 @@ fn register_class(
                             &format!("superclass mismatch for class {name}"),
                         );
                         ruby_raises(
-                        compiler,
-                        def_node,
-                        "TypeError",
-                        &format!("superclass mismatch for class {name}"),
-                    );
-                    return Err(format!("superclass mismatch for class {name}"));
+                            compiler,
+                            def_node,
+                            "TypeError",
+                            &format!("superclass mismatch for class {name}"),
+                        );
+                        return Err(format!("superclass mismatch for class {name}"));
                     }
                     compiler.classes[cid.0 as usize].parent = Some(want);
                 }
@@ -2655,12 +2660,13 @@ fn register_class(
                     // class being opened): real Ruby evaluates the
                     // superclass expression before the new class exists.
                     Some(s) => {
-                        let cid = resolve_superclass(compiler, s, &name, cref, box_id)
-                            .ok_or_else(|| {
+                        let cid = resolve_superclass(compiler, s, &name, cref, box_id).ok_or_else(
+                            || {
                                 format!(
                                     "unknown superclass `{s}` (must be defined earlier in the file)"
                                 )
-                            })?;
+                            },
+                        )?;
                         // Subclassable builtins:
                         //  - `Struct`/`Data`: subclasses are ordinary
                         //    ivar-carrying objects (generated struct).
@@ -3587,7 +3593,10 @@ fn resolve_const_alias(
         // `::Socket::Constants` keeps its leading `::`, while a plain `::Real`
         // arrives with the explicit scope `Object` (see
         // `constant_path_scope_and_name`). Both say the same thing.
-        let (target, from) = match written.strip_prefix("::").or(written.strip_prefix("Object::")) {
+        let (target, from) = match written
+            .strip_prefix("::")
+            .or(written.strip_prefix("Object::"))
+        {
             Some(anchored) => (anchored.to_string(), &[][..]),
             None => (written, cref),
         };
@@ -3642,7 +3651,11 @@ fn collect_const_aliases(
 ) {
     for &id in stmts {
         match &hir[id] {
-            HirNode::ConstWrite { scope: at, name, value } => {
+            HirNode::ConstWrite {
+                scope: at,
+                name,
+                value,
+            } => {
                 let mut path = scope.to_vec();
                 if let Some(at) = at {
                     path.push(at.clone());
