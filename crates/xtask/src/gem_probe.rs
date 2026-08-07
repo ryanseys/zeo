@@ -165,6 +165,12 @@ enum Outcome {
     /// zeo reached the gem's source and could not lower it. The payload is the
     /// compiler's own first line -- the actionable half of the verdict.
     LoweringGap(String),
+    /// The gem's source is not Ruby any release still parses. Its own outcome,
+    /// never a lowering gap: zeo parses with prism, CRuby's own parser, so a
+    /// parse error here is one `ruby -c` gives too -- 1.8-era `when x: y`,
+    /// `class Foo::Bar` with an undefined `Foo`, a stray `\r`. Nothing to fix,
+    /// and counting these as gaps overstated the ledger's backlog.
+    InvalidRuby(String),
     /// Ships C sources. zeo cannot build these at all; see docs/EXTENSIONS.md.
     NativeExtension,
     /// A `require` reached outside the gem and its fetched dependencies.
@@ -197,6 +203,7 @@ impl Outcome {
         match self {
             Outcome::Ok => "ok",
             Outcome::LoweringGap(_) => "lowering-gap",
+            Outcome::InvalidRuby(_) => "invalid-ruby",
             Outcome::NativeExtension => "native-extension",
             Outcome::MissingDependency(_) => "missing-dependency",
             Outcome::NoLibDir => "no-lib-dir",
@@ -212,6 +219,7 @@ impl Outcome {
     fn detail(&self) -> &str {
         match self {
             Outcome::LoweringGap(d)
+            | Outcome::InvalidRuby(d)
             | Outcome::MissingDependency(d)
             | Outcome::FetchFailed(d)
             | Outcome::CompilerPanic(d)
@@ -236,6 +244,7 @@ impl Outcome {
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
             "rustc-error" => Outcome::RustcError(detail.to_string()),
             "run-failed" => Outcome::RunFailed(detail.to_string()),
+            "invalid-ruby" => Outcome::InvalidRuby(detail.to_string()),
             _ => Outcome::LoweringGap(detail.to_string()),
         }
     }
@@ -933,6 +942,12 @@ fn classify(err: &str, root: &Path) -> Outcome {
     }
     if msg.contains("native (C) extension") {
         return Outcome::NativeExtension;
+    }
+    // zeo parses with prism, which IS CRuby's parser, so its parse errors are
+    // the ones `ruby -c` gives. Those gems do not load under any current ruby
+    // either -- see `Outcome::InvalidRuby`.
+    if msg.starts_with("parse error: ") {
+        return Outcome::InvalidRuby(truncate(&msg));
     }
     Outcome::LoweringGap(truncate(&msg))
 }
@@ -2052,6 +2067,20 @@ mod tests {
         );
         assert!(matches!(
             classify("define_method's second argument must be a block", root),
+            Outcome::LoweringGap(_)
+        ));
+        // A parse error is not a gap: prism IS ruby's parser, so these gems do
+        // not load under any current ruby either.
+        assert!(matches!(
+            classify(
+                "parse error: expected a delimiter after the predicates of a `when` clause",
+                root
+            ),
+            Outcome::InvalidRuby(_)
+        ));
+        // ... but a message that merely MENTIONS parsing still is one.
+        assert!(matches!(
+            classify("a pattern can't bind a variable inside a `|` alternation", root),
             Outcome::LoweringGap(_)
         ));
     }
