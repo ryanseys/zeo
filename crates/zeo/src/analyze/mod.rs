@@ -85,6 +85,18 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // registration walk below.
     let mut shell_kinds = HashMap::new();
     collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
+    // A DEFERRED require's body is not in `statements` -- it is walked later,
+    // out of this loop (see `feature_units` below) -- so scanning only the main
+    // list made every class a deferred unit defines invisible to forward
+    // resolution. Two units that reference each other then cannot both be
+    // walked: activemodel's `type/integer.rb` opens `class Integer < Value`
+    // with `type/value.rb` still unwalked, `resolve_or_create_lexical` found no
+    // `ActiveModel::Type::Value` to shell, and the unit was declined -- taking
+    // most of the Rails corpus with it. Each unit body is its own top-level
+    // scope in box 0, exactly as `process_top_stmt` walks it.
+    for unit in &compiler.hir.feature_units {
+        collect_shell_kinds(&compiler.hir, &unit.body, &[], 0, &mut shell_kinds);
+    }
     compiler.shell_kinds = shell_kinds;
     compiler.assigned_const_names = collect_assigned_const_names(&compiler.hir);
     let mut aliases = HashMap::new();
@@ -643,9 +655,13 @@ fn process_top_stmt_inner(
                 {
                     tracing::debug!(
                         guard = cond_kind(compiler, cond),
-                        "top-level conditional def: undecidable guard over a class REOPENING -- pushing the guard into the class body"
+                        defs = rewritten.len(),
+                        "top-level conditional def: undecidable guard over class REOPENINGS -- pushing the guard into each class body"
                     );
-                    return process_top_stmt(compiler, rewritten, false, main_statements, pre_exec);
+                    for def in rewritten {
+                        process_top_stmt(compiler, def, false, main_statements, pre_exec)?;
+                    }
+                    return Ok(());
                 }
                 tracing::debug!(
                     guard = cond_kind(compiler, cond),
@@ -1140,63 +1156,85 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
 /// name that might be one -- any name the program `ConstWrite`s, or a
 /// qualified read whose scope resolves without a nested class match --
 /// degrades to `None` (undecidable) rather than a confident `false`.
-/// If an undecidable-guard top-level `if` is exactly a conditional REOPENING of
-/// an already-registered class -- `class Existing ... end if cond` (one branch a
-/// lone `ClassDef` naming a known class, the other empty) -- rewrite it by
-/// pushing the guard INTO the class body: `class Existing; if cond; <body>; end;
-/// end`. The ordinary class-body walk already handles that shape (a conditional
-/// `def` becomes a runtime `define_method`, still registered for reflection via
+/// If an undecidable-guard top-level `if` holds nothing but conditional
+/// REOPENINGS of already-registered classes -- `class Existing ... end if cond`,
+/// or an `unless` wrapping a run of them (one branch all `ClassDef`s naming
+/// known classes, the other empty) -- rewrite each by pushing the guard INTO
+/// the class body: `class Existing; if cond; <body>; end; end`. The ordinary
+/// class-body walk already handles that shape (a conditional `def` becomes a
+/// runtime `define_method`, still registered for reflection via
 /// `register_conditional_defs` -- the fileutils platform-`def` path), so no new
-/// codegen is needed. Returns the rewritten `ClassDef`, or `None` when the
-/// pattern doesn't match -- a NEW class, multiple statements, or a non-`ClassDef`
-/// branch stay a clean compile error.
+/// codegen is needed. Returns the rewritten `ClassDef`s in source order, or
+/// `None` when the pattern doesn't match -- a NEW class, a non-empty other
+/// branch, or a non-`ClassDef` statement stay a clean compile error.
 ///
 /// Valid ONLY for a reopening: for a NEW class the transform would define it
 /// unconditionally (`class X; if cond; ...` always creates `X`), changing
-/// semantics. pp.rb's `class Set ... end if set_pp` monkeypatch is the case.
+/// semantics. pp.rb's `class Set ... end if set_pp` monkeypatch is the
+/// one-statement case; activesupport's `unless methods_are_duplicable`, which
+/// reopens `Method` and `UnboundMethod` together behind a `begin/rescue` probe
+/// no compile-time analysis can settle, is why the run is not capped at one.
 fn try_conditional_reopen(
     compiler: &mut Compiler,
     cond: NodeId,
     then_body: &[NodeId],
     else_body: &[NodeId],
-) -> Option<NodeId> {
-    // Exactly one branch is a lone statement; the other is empty (a modifier
-    // `class ... end if/unless cond`, which is all this idiom ever is).
-    let (def_stmt, on_then) = match (then_body, else_body) {
-        ([only], []) => (*only, true),
-        ([], [only]) => (*only, false),
+) -> Option<Vec<NodeId>> {
+    // One branch carries every statement; the other is empty. A guard with
+    // BOTH branches populated is a real either/or, not a reopening.
+    let (defs, on_then) = match (then_body, else_body) {
+        (defs, []) if !defs.is_empty() => (defs, true),
+        ([], defs) if !defs.is_empty() => (defs, false),
         _ => return None,
     };
-    // Clone the ClassDef's parts so the `&compiler.hir` borrow ends before the
-    // `resolve_class` read and the `hir.push` writes below.
-    let (name, superclass, body, is_module) = match &compiler.hir[def_stmt] {
-        HirNode::ClassDef {
+    // Clone each ClassDef's parts so the `&compiler.hir` borrow ends before the
+    // `resolve_class` read and the `hir.push` writes below. Every statement
+    // must qualify: a partial rewrite would drop the rest of the branch.
+    let mut parts = Vec::with_capacity(defs.len());
+    for &def_stmt in defs {
+        let HirNode::ClassDef {
             name,
             superclass,
             body,
             is_module,
-        } => (name.clone(), superclass.clone(), body.clone(), *is_module),
-        _ => return None,
-    };
-    // Must REOPEN an already-registered class (top-level cref/box). A new class
-    // can't be defined conditionally -- codegen has no runtime create form here.
-    compiler.resolve_class(&name, &[], 0)?;
-    let (then_body, else_body) = if on_then {
-        (body, Vec::new())
-    } else {
-        (Vec::new(), body)
-    };
-    let guarded = compiler.hir.push(HirNode::If {
-        cond,
-        then_body,
-        else_body,
-    });
-    Some(compiler.hir.push(HirNode::ClassDef {
-        name,
-        superclass,
-        body: vec![guarded],
-        is_module,
-    }))
+        } = &compiler.hir[def_stmt]
+        else {
+            return None;
+        };
+        parts.push((name.clone(), superclass.clone(), body.clone(), *is_module));
+    }
+    // Each must REOPEN an already-registered class (top-level cref/box). A new
+    // class can't be defined conditionally -- codegen has no runtime create
+    // form here.
+    if !parts
+        .iter()
+        .all(|(name, ..)| compiler.resolve_class(name, &[], 0).is_some())
+    {
+        return None;
+    }
+    Some(
+        parts
+            .into_iter()
+            .map(|(name, superclass, body, is_module)| {
+                let (then_body, else_body) = if on_then {
+                    (body, Vec::new())
+                } else {
+                    (Vec::new(), body)
+                };
+                let guarded = compiler.hir.push(HirNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                });
+                compiler.hir.push(HirNode::ClassDef {
+                    name,
+                    superclass,
+                    body: vec![guarded],
+                    is_module,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// A short, human-readable label for a guard expression -- what shape of
@@ -1343,9 +1381,29 @@ fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
             }
             _ => None,
         },
+        // `if !defined?(X)` -- the reload guard `unless defined?(X)` written the
+        // other way round, and the spelling most gems use. `guard_fold` folds
+        // `!` too, but only over ITS answer for the operand, which is the
+        // deliberately weaker `const_name_fold`; the arms above decide strictly
+        // more, so negation has to be available on this side as well.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            ..
+        } if name == "!" && args.is_empty() && kwargs.is_empty() && block.is_none() => {
+            static_top_cond(compiler, *recv).map(|b| !b)
+        }
         HirNode::And(l, r) => match static_top_cond(compiler, *l) {
             Some(false) => Some(false),
             Some(true) => static_top_cond(compiler, *r),
+            None => None,
+        },
+        HirNode::Or(l, r) => match static_top_cond(compiler, *l) {
+            Some(true) => Some(true),
+            Some(false) => static_top_cond(compiler, *r),
             None => None,
         },
         _ => None,
