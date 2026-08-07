@@ -239,6 +239,9 @@ pub(super) fn lower_main_file(
     // Span provenance: the main file's name AS GIVEN (matching `__FILE__`),
     // `"-e"` for a pathless source string.
     let main_file = hir.add_file(main_name, source);
+    if input_path.is_some() {
+        hir.main_file = Some(main_file);
+    }
     let prev_file = hir.lowering_file.replace(main_file);
     let lowered = loader
         .lower_file_statements(

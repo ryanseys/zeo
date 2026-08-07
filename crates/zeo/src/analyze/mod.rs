@@ -630,7 +630,11 @@ fn process_top_stmt_inner(
             return Ok(());
         }
         let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
-        let taken = match static_top_cond(compiler, cond) {
+        // Everything this guard -- and only this guard -- decides, for the arms
+        // that must tell a constant the guarded branch itself would define from
+        // one the rest of the program defines.
+        let guarded: Vec<NodeId> = then_body.iter().chain(&else_body).copied().collect();
+        let taken = match static_top_cond(compiler, cond, &guarded) {
             Some(true) => {
                 tracing::debug!(
                     guard = cond_kind(compiler, cond),
@@ -1291,11 +1295,18 @@ fn seed_ext_const_owners(compiler: &mut Compiler) {
 /// Compile-time truth of `Recv.const_defined?(:NAME)` for a resolvable class
 /// receiver and a literal symbol/string name: `Some(true)` when the constant is
 /// known-defined (a nested class/module, or a value constant in the receiver's
-/// own const table -- user-written or `seed_ext_const_owners`'d). Returns `None`
-/// (undecidable) when absent, so a guard over a genuinely-missing constant fails
-/// loudly rather than silently taking the wrong branch -- surfacing a constant
-/// zeo still needs to seed rather than mis-compiling.
-fn static_const_defined(compiler: &Compiler, recv: NodeId, args: &[ArrayElem]) -> Option<bool> {
+/// own const table -- user-written or `seed_ext_const_owners`'d), `Some(false)`
+/// when the guarded branch is the program's ONLY definition of that name (see
+/// `const_defined_outside`). Otherwise `None` (undecidable), so a guard over a
+/// genuinely-missing constant fails loudly rather than silently taking the
+/// wrong branch -- surfacing a constant zeo still needs to seed rather than
+/// mis-compiling.
+fn static_const_defined(
+    compiler: &Compiler,
+    recv: NodeId,
+    args: &[ArrayElem],
+    guarded: &[NodeId],
+) -> Option<bool> {
     let HirNode::ClassRef(recv_name) = &compiler.hir[recv] else {
         return None;
     };
@@ -1314,12 +1325,61 @@ fn static_const_defined(compiler: &Compiler, recv: NodeId, args: &[ArrayElem]) -
         _ => return None,
     };
     let nested = format!("{}::{cname}", compiler.fq_name(target));
-    let defined = compiler.resolve_class(&nested, &[], 0).is_some()
-        || compiler.class(target).const_owners.contains_key(&cname);
-    defined.then_some(true)
+    if compiler.resolve_class(&nested, &[], 0).is_some()
+        || compiler.class(target).const_owners.contains_key(&cname)
+        // `inherit` is true by default, and every ancestry ends at Object, so a
+        // TOP-LEVEL constant answers too -- `Object.const_defined?("Decimal")`
+        // is the whole point of the idiom, and `M.const_defined?(:String)` is
+        // true for a bare module as well.
+        || compiler.resolve_class(&cname, &[], 0).is_some()
+    {
+        return Some(true);
+    }
+    (!const_defined_outside(compiler, guarded, &cname)).then_some(false)
 }
 
-fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
+/// Whether anything OUTSIDE `guarded` -- the branch bodies the guard under
+/// test decides -- defines the constant `leaf`.
+///
+/// `defined?` asks a question about a MOMENT: has this name been bound yet? For
+/// a name whose only definition site in the whole program is the branch this
+/// very guard controls, the answer at the guard is no -- that branch has not
+/// run. Both readings then fall out right. activefacts' `unless
+/// Object.const_defined?("Money"); class Money < Decimal` TAKES its branch and
+/// defines Money, exactly as ruby does on a first load. pg's `if
+/// defined?(PG::CancelConnection); class PG::CancelConnection` skips its
+/// branch, which is also what the compiled program wants: that branch REOPENS a
+/// class the C extension would have supplied, and zeo has no C extension to
+/// supply it, so there is nothing there to reopen.
+///
+/// Matching is by LEAF name over the whole arena, ignoring lexical scope: an
+/// unrelated `Foo::Money` elsewhere costs only a `None` (the pre-existing
+/// "undecidable" answer), whereas missing a real definition would silently drop
+/// one of the two branches.
+fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) -> bool {
+    let mut inside: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut stack = guarded.to_vec();
+    while let Some(id) = stack.pop() {
+        if inside.insert(id) {
+            compiler.hir[id].for_each_child(&mut |child| stack.push(child));
+        }
+    }
+    let suffix = format!("::{leaf}");
+    compiler.hir.iter_with_ids().any(|(id, node)| {
+        !inside.contains(&id)
+            && match node {
+                HirNode::ClassDef { name, .. } => name == leaf || name.ends_with(&suffix),
+                HirNode::ConstWrite { name, .. } => name == leaf,
+                _ => false,
+            }
+    })
+}
+
+/// Compile-time truth of a top-level `if`'s condition. `guarded` is every
+/// statement the two branches hold -- what this guard, and only this guard,
+/// decides -- so an arm can tell a constant the rest of the program defines
+/// from one only the guarded branch would (see `const_defined_outside`).
+fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Option<bool> {
     // A build-time target-constant guard folds the same way here (deciding what
     // a top-level conditional REGISTERS) as it does at emission. Top-level, so
     // an empty cref -- see `crate::guard_fold` and `codegen::constfold::static_cond`.
@@ -1339,7 +1399,7 @@ fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
             block,
             ..
         } if name == "const_defined?" && kwargs.is_empty() && block.is_none() => {
-            static_const_defined(compiler, *recv, args)
+            static_const_defined(compiler, *recv, args, guarded)
         }
         HirNode::Defined(inner) => match &compiler.hir[*inner] {
             HirNode::ClassRef(name) => {
@@ -1369,10 +1429,15 @@ fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
                             || mro::directly_defines_const(compiler, sid, name)
                         {
                             Some(true)
-                        } else {
+                        } else if const_defined_outside(compiler, guarded, name) {
                             // Could name a VALUE constant on `scope` assigned
                             // elsewhere/at runtime -- not decidable here.
                             None
+                        } else {
+                            // Nothing but the guarded branch itself defines it,
+                            // so it is not defined YET -- see
+                            // `const_defined_outside`.
+                            Some(false)
                         }
                     }
                     None if const_ever_written(compiler, scope) => None,
@@ -1394,20 +1459,111 @@ fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
             block,
             ..
         } if name == "!" && args.is_empty() && kwargs.is_empty() && block.is_none() => {
-            static_top_cond(compiler, *recv).map(|b| !b)
+            static_top_cond(compiler, *recv, guarded).map(|b| !b)
         }
-        HirNode::And(l, r) => match static_top_cond(compiler, *l) {
+        // `if __FILE__ == $0` -- the self-test block every second script ends
+        // with. In a file some other file REQUIRED, this is false no matter what
+        // `$0` holds: the entry point is, by definition, a different file. Left
+        // undecided in the entry file itself, where the answer depends on how
+        // `$0` is modeled rather than on where the code sits.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            ..
+        } if name == "==" && kwargs.is_empty() && block.is_none() => {
+            let [ArrayElem::Single(arg)] = args.as_slice() else {
+                return None;
+            };
+            not_the_entry_file(compiler, *recv, *arg)
+                .or_else(|| not_the_entry_file(compiler, *arg, *recv))
+                .or_else(|| literal_class_name_is(compiler, *recv, *arg))
+                .or_else(|| literal_class_name_is(compiler, *arg, *recv))
+        }
+        HirNode::And(l, r) => match static_top_cond(compiler, *l, guarded) {
             Some(false) => Some(false),
-            Some(true) => static_top_cond(compiler, *r),
+            Some(true) => static_top_cond(compiler, *r, guarded),
             None => None,
         },
-        HirNode::Or(l, r) => match static_top_cond(compiler, *l) {
+        HirNode::Or(l, r) => match static_top_cond(compiler, *l, guarded) {
             Some(true) => Some(true),
-            Some(false) => static_top_cond(compiler, *r),
+            Some(false) => static_top_cond(compiler, *r, guarded),
             None => None,
         },
         _ => None,
     }
+}
+
+/// `Some(false)` when `file` is a `__FILE__` literal (lowering resolves
+/// `__FILE__` to the path as written -- see `lower`'s source-file arm) naming a
+/// file OTHER than the entry file, and `prog` reads `$0`/`$PROGRAM_NAME`. Any
+/// other pair is `None`: this only ever answers "these cannot be equal".
+fn not_the_entry_file(compiler: &Compiler, file: NodeId, prog: NodeId) -> Option<bool> {
+    let HirNode::GlobalRead(g) = &compiler.hir[prog] else {
+        return None;
+    };
+    if g != "$0" && g != "$PROGRAM_NAME" {
+        return None;
+    }
+    let HirNode::StringLit(parts) = &compiler.hir[file] else {
+        return None;
+    };
+    let [StrPart::Lit(path)] = parts.as_slice() else {
+        return None;
+    };
+    (Some(path.as_str()) != compiler.hir.main_file_name()).then_some(false)
+}
+
+/// `Some(_)` for `<literal>.class.name == "Name"` -- msgpack's
+/// `if 1.class.name == "Integer"`, which picks between an `Integer` and a
+/// `Fixnum` reopening and so must be decided for either branch to register. A
+/// literal's class is fixed at compile time, and so is its name.
+fn literal_class_name_is(compiler: &Compiler, call: NodeId, expected: NodeId) -> Option<bool> {
+    let HirNode::StringLit(parts) = &compiler.hir[expected] else {
+        return None;
+    };
+    let [StrPart::Lit(want)] = parts.as_slice() else {
+        return None;
+    };
+    let HirNode::Call {
+        receiver: Some(inner),
+        name,
+        args,
+        ..
+    } = &compiler.hir[call]
+    else {
+        return None;
+    };
+    if name != "name" || !args.is_empty() {
+        return None;
+    }
+    let HirNode::Call {
+        receiver: Some(value),
+        name,
+        args,
+        ..
+    } = &compiler.hir[*inner]
+    else {
+        return None;
+    };
+    if name != "class" || !args.is_empty() {
+        return None;
+    }
+    let class = match &compiler.hir[*value] {
+        HirNode::IntegerLit(_) => "Integer",
+        HirNode::FloatLit(_) => "Float",
+        HirNode::StringLit(_) => "String",
+        HirNode::SymbolLit(_) => "Symbol",
+        HirNode::ArrayLit(_) => "Array",
+        HirNode::HashLit(_) => "Hash",
+        HirNode::NilLit => "NilClass",
+        HirNode::BoolLit(true) => "TrueClass",
+        HirNode::BoolLit(false) => "FalseClass",
+        _ => return None,
+    };
+    Some(class == want)
 }
 
 /// Whether ANY `ConstWrite` in the program targets `name` -- scope ignored,

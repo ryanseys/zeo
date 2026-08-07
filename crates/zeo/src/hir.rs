@@ -200,6 +200,12 @@ pub struct Hir {
     pub data_section: Option<DataSection>,
     /// Registered source files (`Span::file` indexes here).
     pub files: Vec<SourceFile>,
+    /// The ENTRY file -- the one named on the command line. Every other entry
+    /// in `files` was pulled in by a `require`, and `require` merges every
+    /// file's statements into one arena, so this is the only thing left that
+    /// tells the two apart once lowering has finished. `None` for a pathless
+    /// source string. Read by `analyze`'s `__FILE__ == $0` fold.
+    pub main_file: Option<FileId>,
     /// The file whose source is currently being lowered -- the drivers (the
     /// compiler's `parse_and_lower_with` and its loader) set/restore this
     /// around each file's statements; `None` (source strings with no file
@@ -355,6 +361,16 @@ impl Hir {
         self.nodes.iter()
     }
 
+    /// The same scan, with each node's id -- for a whole-program search that
+    /// must also ask WHERE the hit is, e.g. "does any definition of this
+    /// constant lie OUTSIDE the branch this guard controls".
+    pub fn iter_with_ids(&self) -> impl Iterator<Item = (NodeId, &HirNode)> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (NodeId(i as u32), n))
+    }
+
     /// Lowers `body` as one more level of cref nesting -- see `cref_names`.
     pub fn in_class_body<T>(&mut self, name: &str, body: impl FnOnce(&mut Self) -> T) -> T {
         self.cref_names.push(name.to_string());
@@ -477,6 +493,13 @@ impl Hir {
             line_starts,
         });
         FileId((self.files.len() - 1) as u32)
+    }
+
+    /// The entry file's name AS GIVEN on the command line -- the same string
+    /// `__FILE__` answers with inside it (see `main_file`).
+    pub fn main_file_name(&self) -> Option<&str> {
+        let id = self.main_file?;
+        Some(self.files[id.0 as usize].name.as_str())
     }
 
     /// Enters/leaves the span frame for one prism node -- called only by the

@@ -141,6 +141,11 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
 
     let arch = ruby_arch();
     let os = ruby_os();
+    // The same string the compiled program's `RUBY_PLATFORM` will hold (the
+    // runtime derives its own copy from ITS build target -- see
+    // `zeo-rt/build.rs`), so `guard_fold` can decide `if RUBY_PLATFORM ==
+    // 'java'` and friends the way the program itself would answer.
+    println!("cargo:rustc-env=ZEO_RUBY_PLATFORM={arch}-{os}");
     let (vendor, host_os, dlext, soext, ldshared) = match target_os().as_str() {
         "macos" | "ios" | "tvos" | "watchos" => (
             "apple",

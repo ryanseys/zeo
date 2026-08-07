@@ -221,6 +221,10 @@ fn static_string(
             // same way the runtime seeds it (see `bootstrap`'s `ENGINE`:
             // zeo reports MRI's identity, so a gem takes its CRuby path).
             "RUBY_ENGINE" => Some("ruby".to_string()),
+            // `if RUBY_PLATFORM == 'java'` guards a JRuby-only branch. Baked
+            // from the build target (`build.rs`), the same way the runtime
+            // seeds the program's own copy -- so the two always agree.
+            "RUBY_PLATFORM" => Some(env!("ZEO_RUBY_PLATFORM").to_string()),
             _ if name.contains("::") => const_string(compiler, cref, box_id, name),
             _ => const_init(compiler, cref, box_id, None, name)
                 .and_then(|(_, v)| string_lit(compiler, v)),
@@ -528,6 +532,26 @@ fn call_fold(
         // condition that folds on its own negates; anything else stays `None`.
         "!" if args.is_empty() => Some(!static_bool(compiler, cref, box_id, receiver?)?),
         "freeze" if args.is_empty() => static_bool(compiler, cref, box_id, receiver?),
+        // `if RUBY_VERSION.start_with?('1.9')` -- the same build-time question
+        // the comparison operators above answer, asked by prefix. Ruby takes any
+        // number of candidates and is true if ANY matches; a Regexp candidate
+        // (also legal) reduces to no string, so the whole probe stays `None`.
+        "start_with?" | "end_with?" => {
+            let s = static_string(compiler, cref, box_id, receiver?)?;
+            let mut hit = false;
+            for arg in args {
+                let ArrayElem::Single(a) = arg else {
+                    return None;
+                };
+                let candidate = static_string(compiler, cref, box_id, *a)?;
+                hit |= if name == "start_with?" {
+                    s.starts_with(&candidate)
+                } else {
+                    s.ends_with(&candidate)
+                };
+            }
+            Some(hit)
+        }
         "respond_to?" => respond_to_fold(compiler, cref, box_id, receiver, args),
         "const_defined?" => const_defined_fold(compiler, cref, box_id, receiver, args),
         "method_defined?" | "public_method_defined?" => {
