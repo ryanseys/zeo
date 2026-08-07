@@ -460,29 +460,23 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         ivars.retain(|iv| !hidden.contains(iv));
     }
 
-    // A reopened BUILTIN class has no generated struct, so
-    // there is nowhere for an `@ivar` to live -- a clean rejection here
-    // (which also catches ivars arriving via an `include`d module) beats a
-    // confusing `rustc` failure on the generated free functions. Real Ruby
-    // allows generic ivars on (unfrozen) builtin instances; documented
-    // divergence, zeo limitation.
+    // A reopened BUILTIN class has no generated struct, so an `@ivar` in one
+    // of its methods cannot become a struct field -- but it does not need to.
+    // `emit_builtin_method_fn` already marks every such body's self dynamic
+    // (its receiver is the free function's `__self: RubyValue`), which routes
+    // the access through `ivar_get_dyn`/`ivar_set_dyn`. Those pick the tier
+    // from the receiver: `RObj`'s name-keyed map for an Object-payload builtin,
+    // `civars` for a class object, and `value_ivars`' identity-keyed side table
+    // for a bare heap value. `Object` -- where top-level `def`s live -- has
+    // always taken this path; the other builtins differ only in never having
+    // been allowed to.
     //
-    // `Object` is NOT rejected alongside them, though it is value-backed the
-    // same way: the runtime `main` object its `__bm_Object` copies dispatch
-    // on keys its ivars BY NAME (`dispatch::Object`'s map) rather than
-    // needing struct fields, so `@x` in a top-level `def` has somewhere real
-    // to live. `emit_builtin_method_fn` marks those bodies' self dynamic,
-    // which routes the access through `ivar_get_dyn`/`ivar_set_dyn` onto
-    // that map. The `ci.ivars` recorded below is harmlessly unread for
-    // Object: it exists to drive generated STRUCT fields, and `emit_class`
-    // skips `ClassId(0)` entirely.
-    if compiler.class(class_id).is_builtin && !ivars.is_empty() {
-        return Err(format!(
-            "instance variable `@{}` in a method of the reopened built-in class `{}` isn't supported (zeo limitation: built-in values have no ivar storage)",
-            ivars[0],
-            compiler.class(class_id).name
-        ));
-    }
+    // The `ci.ivars` recorded below stays unread for all of them: it exists to
+    // drive generated STRUCT fields, and `has_struct` excludes every builtin.
+    //
+    // Cost, where a user object would have had a struct field: an `RwLock` hash
+    // lookup plus a linear scan of that value's slots, and `value_ivars`'
+    // `OWNERS` pins the receiver for the life of the process.
     let ci = &mut compiler.classes[class_id.0 as usize];
     ci.methods = materialized;
     ci.ivars = ivars;

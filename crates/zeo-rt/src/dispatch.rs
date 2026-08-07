@@ -480,7 +480,14 @@ pub fn is_main_object(o: &RObj) -> bool {
 /// identity-keyed `value_ivars` store and may well have one.
 pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
     match recv {
-        RubyValue::Object(o) => o.ivar_get_named(name).unwrap_or(RubyValue::Nil),
+        // The `or_else` serves the runtime's hand-written objects, which
+        // declare no ivars and so decline the write in `ivar_set_dyn` -- see
+        // `value_ivars::key`'s `Object` arm. A generated class never reaches
+        // it: its named path is total over declared and invented ivars alike.
+        RubyValue::Object(o) => o
+            .ivar_get_named(name)
+            .or_else(|| crate::value_ivars::get(recv, name))
+            .unwrap_or(RubyValue::Nil),
         // A CLASS object's own ivars live in their own table (see
         // `civars`' docs for why they can't share `cvars`'). Reached when a
         // class-method body's `self` is dynamic rather than the static class
@@ -534,7 +541,13 @@ pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyVa
     match recv {
         RubyValue::Object(o) => {
             crate::builtins::check_frozen(recv)?;
-            o.ivar_set_named(name, v.clone());
+            // A hand-written runtime object declares no ivars and answers
+            // `false`. Dropping the write there would make `class StringScanner;
+            // def tag=(v); @tag = v; end; end` silently read back nil, so it
+            // goes to the identity-keyed store instead.
+            if !o.ivar_set_named(name, v.clone()) {
+                crate::value_ivars::set(recv, name, v.clone());
+            }
             Ok(v)
         }
         // See `ivar_get_dyn`'s Class arm. The frozen-class guard lives
@@ -1822,7 +1835,10 @@ pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
 pub fn instance_variable_get(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = ivar_name_arg(name_arg)?;
     Ok(match recv {
-        RubyValue::Object(o) => o.ivar_get_named(&name).unwrap_or(RubyValue::Nil),
+        RubyValue::Object(o) => o
+            .ivar_get_named(&name)
+            .or_else(|| crate::value_ivars::get(recv, &name))
+            .unwrap_or(RubyValue::Nil),
         RubyValue::Class(cid) => crate::civars::class_ivar_get(cid.0, &name),
         _ => crate::value_ivars::get(recv, &name).unwrap_or(RubyValue::Nil),
     })
@@ -1842,7 +1858,9 @@ pub fn instance_variable_set(
     match recv {
         RubyValue::Object(o) => {
             crate::builtins::check_frozen(recv)?;
-            o.ivar_set_named(&name, v.clone());
+            if !o.ivar_set_named(&name, v.clone()) {
+                crate::value_ivars::set(recv, &name, v.clone());
+            }
         }
         RubyValue::Class(cid) => crate::civars::class_ivar_set(cid.0, &name, v.clone())?,
         // A frozen builtin (immediates always; a frozen Str/Array/Hash)
@@ -1866,7 +1884,10 @@ pub fn remove_instance_variable(
     match recv {
         RubyValue::Object(o) => {
             crate::builtins::check_frozen(recv)?;
-            match o.ivar_remove_named(&name) {
+            match o
+                .ivar_remove_named(&name)
+                .or_else(|| crate::value_ivars::remove(recv, &name))
+            {
                 Some(v) => Ok(v),
                 None => Err(name_error!("instance variable @{name} not defined")),
             }
@@ -1899,10 +1920,17 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
     let names: Vec<RubyValue> = match recv {
         // `ivar_pairs` already yields `@`-prefixed names (it backs the
         // default `Object#inspect`); `class_ivar_names` yields bare ones.
+        // `value_ivars` contributes only for a hand-written runtime object,
+        // whose `ivar_pairs` is empty -- see `ivar_set_dyn`'s Object arm.
         RubyValue::Object(o) => o
             .ivar_pairs()
             .into_iter()
             .map(|(n, _)| RubyValue::Symbol(Symbol::intern(&n)))
+            .chain(
+                crate::value_ivars::names(recv)
+                    .into_iter()
+                    .map(|n| RubyValue::Symbol(Symbol::intern(&format!("@{n}")))),
+            )
             .collect(),
         RubyValue::Class(cid) => crate::civars::class_ivar_names(cid.0)
             .into_iter()

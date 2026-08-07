@@ -56,13 +56,23 @@ fn any() -> bool {
 /// The identity key for a value that can carry these ivars, or `None` for one
 /// that cannot.
 ///
-/// `Object` and `Class` are absent deliberately -- they have their own stores
-/// and every caller here checks them first. So is the permanently-frozen tier
-/// (immediates, and `Range`, which zeo reports frozen exactly as Ruby does):
-/// those raise `FrozenError` before reaching this, which is the right answer
-/// rather than a missing feature.
+/// `Class` is absent deliberately -- it has its own store (`civars`) and every
+/// caller here checks it first. So is the permanently-frozen tier (immediates,
+/// and `Range`, which zeo reports frozen exactly as Ruby does): those raise
+/// `FrozenError` before reaching this, which is the right answer rather than a
+/// missing feature.
+///
+/// `Object` answers only for the DECLINE path. Every caller consults the
+/// `RObj`'s own store first, and a generated class always takes the write
+/// (typed field, else `__overflow`). The runtime's hand-written objects --
+/// `StringScanner`, FFI's `VariadicInvoker`, `TCPSocket` -- declare no ivars
+/// and answer `false`, and reopening one in Ruby to keep an `@x` is ordinary
+/// enough that dropping the write is not an option. They land here instead.
 fn key(v: &RubyValue) -> Option<usize> {
     let addr = match v {
+        // A fat `*const dyn RubyObject`; the data half is the identity, which
+        // is the same cast `container_identity` takes.
+        RubyValue::Object(o) => Arc::as_ptr(o).cast::<()>(),
         RubyValue::Str(s) => Arc::as_ptr(s).cast::<()>(),
         RubyValue::Array(a) => Arc::as_ptr(a).cast::<()>(),
         RubyValue::Hash(h) => Arc::as_ptr(h).cast::<()>(),

@@ -3902,24 +3902,29 @@ mod builtin_reopen_tests {
         );
     }
 
+    /// Only a receiver a call site can type `Int` or `Float` has an operator
+    /// fast path ahead of the reopened-builtin dispatch arm, so only those
+    /// classes -- and the rest of their MRO -- refuse the definition.
     #[test]
-    fn operator_definitions_on_builtins_are_rejected() {
+    fn operator_definitions_are_rejected_on_the_numeric_mro_only() {
         assert!(
             analyze_err("class Integer\n  def +(other)\n    0\n  end\nend\n")
                 .contains("defining operator `+`")
         );
         assert!(
-            analyze_err("class String\n  def ==(other)\n    true\n  end\nend\n")
-                .contains("defining operator `==`")
+            analyze_err("module Comparable\n  def <(other)\n    true\n  end\nend\n")
+                .contains("defining operator `<`")
         );
+        analyze_src("class String\n  def %(other)\n    self\n  end\nend\n");
+        analyze_src("class Set\n  def <<(other)\n    self\n  end\nend\n");
     }
 
+    /// A reopened builtin has no generated struct, but `@x` in one of its
+    /// methods does not need one: the body's self is dynamic and
+    /// `ivar_get_dyn`/`ivar_set_dyn` pick the storage tier at run time.
     #[test]
-    fn ivars_in_a_builtin_reopen_are_rejected() {
-        assert!(
-            analyze_err("class String\n  def remember\n    @seen = 1\n  end\nend\n")
-                .contains("no ivar storage")
-        );
+    fn ivars_in_a_builtin_reopen_are_accepted() {
+        analyze_src("class String\n  def remember\n    @seen = 1\n  end\nend\n");
     }
 
     #[test]
