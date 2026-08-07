@@ -1486,6 +1486,14 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 __registry.register_alias(zeo_rt::ClassId(#id), #new, #old);
             });
         }
+        // The same rows for an alias written inside `class << self` whose
+        // source is a builtin CLASS method -- `alias [] new`. They land in the
+        // singleton table, which is the one a class-OBJECT receiver consults.
+        for (new, old) in &compiler.class(ClassId(id)).class_aliases {
+            registrations.push(quote! {
+                __registry.register_class_alias(zeo_rt::ClassId(#id), #new, #old);
+            });
+        }
         // Every `def self.x` also registers for DYNAMIC dispatch, so a class
         // held in a variable can be sent to (`handler = H1; handler.run(...)`
         // -- the receiver isn't a literal constant, so codegen can't emit a
@@ -2022,9 +2030,15 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 __registry.register_alias(zeo_rt::ClassId(#alias_target_id), #new, #old);
             }
         });
+        let class_alias_rows = class.class_aliases.iter().map(|(new, old)| {
+            quote! {
+                __registry.register_class_alias(zeo_rt::ClassId(#alias_target_id), #new, #old);
+            }
+        });
         builtin_registrations.push(quote! {
             #register
             #(#alias_rows)*
+            #(#class_alias_rows)*
         });
     }
 

@@ -216,14 +216,22 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         });
         let Some(sid) = source else {
             if is_class_method {
-                // No user class-method scope in the chain: the source would be
-                // a builtin singleton method. zeo's builtin-alias fallback
-                // targets the INSTANCE table, so it can't model this; a clean
-                // compile error (NameError-equivalent) beats a wrong-table
-                // registration. Not exercised on the bundler path.
-                return Err(format!(
-                    "`alias {new_name} {old_name}` inside `class << self`: no class method `{old_name}` to alias (zeo limitation -- aliasing a builtin singleton method isn't supported)"
-                ));
+                // No user class-method scope in the chain: the source is a
+                // BUILTIN singleton method -- `Class#new` for the pervasive
+                // `class << self; alias [] new`, the `Klass[...]` constructor
+                // shorthand. Recorded as a name indirection in the SINGLETON
+                // table, the exact treatment the instance side gets below;
+                // `register_class_alias` installs it and
+                // `validate_class_aliases` raises `NameError` at program start
+                // if the source resolves nowhere.
+                let terminal = compiler
+                    .class_alias_target(class_id, &old_name)
+                    .unwrap_or(&old_name)
+                    .to_string();
+                compiler.classes[class_id.0 as usize]
+                    .class_aliases
+                    .push((new_name, terminal));
+                continue;
             }
             // No user `Scope` anywhere in the chain: the source is a BUILTIN
             // (Kernel's `raise`, Object's `dup`, ...) -- or a typo. There is

@@ -170,6 +170,15 @@ pub struct ClassInfo {
     /// resolves to nothing raises `NameError` at program start, real Ruby's
     /// timing (a class body executes at runtime). See `mro::resolve_aliases`.
     pub builtin_aliases: Vec<(String, String)>,
+    /// [`ClassInfo::builtin_aliases`]'s singleton-side twin: an alias written
+    /// inside `class << self` whose source is a builtin CLASS method. `class
+    /// << self; alias [] new` -- the `Klass[...]` constructor shorthand rack,
+    /// rack-test, pry, coderay, sprockets, warden and omniauth all write -- has
+    /// `Class#new` as its source, which lives in the static builtin
+    /// class-method table and has no `Scope` to clone. Same terminal rule, and
+    /// codegen emits `register_class_alias` rather than `register_alias`, so
+    /// the row lands in the table a class-OBJECT receiver consults.
+    pub class_aliases: Vec<(String, String)>,
     /// `(name, visibility)` from a `private`/`public`/`protected :m` that
     /// re-declares an INHERITED method's visibility (no local `def` to retag).
     /// Applied by codegen after materialization stamps each method with its
@@ -697,6 +706,7 @@ impl Compiler {
                 redef_scopes: Vec::new(),
                 pending_module_functions: Vec::new(),
                 builtin_aliases: Vec::new(),
+                class_aliases: Vec::new(),
                 visibility_overrides: Vec::new(),
                 class_visibility_overrides: Vec::new(),
                 is_module: false,
@@ -1235,6 +1245,7 @@ impl Compiler {
             redef_scopes: Vec::new(),
             pending_module_functions: Vec::new(),
             builtin_aliases: Vec::new(),
+            class_aliases: Vec::new(),
             visibility_overrides: Vec::new(),
             class_visibility_overrides: Vec::new(),
             is_module,
@@ -1542,6 +1553,19 @@ impl Compiler {
         self.class(class).ancestors.iter().find_map(|&anc| {
             self.class(anc)
                 .builtin_aliases
+                .iter()
+                .find(|(new, _)| new == name)
+                .map(|(_, old)| old.as_str())
+        })
+    }
+
+    /// [`Compiler::builtin_alias_target`]'s singleton-side twin, over
+    /// `ClassInfo::class_aliases` -- `Some("new")` for `[]` after
+    /// `class << self; alias [] new`.
+    pub fn class_alias_target(&self, class: ClassId, name: &str) -> Option<&str> {
+        self.class(class).ancestors.iter().find_map(|&anc| {
+            self.class(anc)
+                .class_aliases
                 .iter()
                 .find(|(new, _)| new == name)
                 .map(|(_, old)| old.as_str())

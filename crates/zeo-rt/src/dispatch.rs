@@ -823,6 +823,20 @@ struct ClassEntry {
     /// class-level `@x` storage correct through this path -- each copy
     /// carries its own class id (see `civars`' docs).
     class_methods: FMap<Symbol, ValueMethodFn>,
+    /// [`ClassEntry::aliases`]'s singleton-side twin: `new -> old` name
+    /// indirections for an alias written inside `class << self` whose source is
+    /// a builtin class method rather than a user `def self.x`.
+    ///
+    /// `class << self; alias [] new; end` is the whole reason -- the
+    /// `Klass[...]` constructor shorthand, which rack, rack-test, pry, coderay,
+    /// sprockets, warden and omniauth all write. Its source is `Class#new`, a
+    /// row in the static builtin class-method table with no `Scope` to clone,
+    /// so it records as a rewrite exactly as the instance side does.
+    ///
+    /// Separate from `aliases` because the two tables are consulted with
+    /// different receivers: `aliases` answers for INSTANCES of this class,
+    /// this one for the class OBJECT itself.
+    class_aliases: FMap<Symbol, Symbol>,
     /// Per-POSITION singleton-chain super targets, keyed `(module id,
     /// name)`: one emitted copy of every `extend`ed module's method (winner
     /// AND shadowed -- the flattened `class_methods` above keeps only
@@ -1004,6 +1018,7 @@ impl ClassRegistry {
                 undefined_methods: FSet::default(),
                 aliases: FMap::default(),
                 class_methods: FMap::default(),
+                class_aliases: FMap::default(),
                 singleton_super_targets: FMap::default(),
                 own_methods: FSet::default(),
                 own_class_methods: FSet::default(),
@@ -1381,6 +1396,16 @@ impl ClassRegistry {
         self.entries
             .get(&id.0)
             .is_some_and(|e| e.undefined_methods.contains(&name))
+    }
+
+    /// [`Registry::register_alias`]'s singleton-side twin -- see
+    /// `ClassEntry::class_aliases`.
+    pub fn register_class_alias(&mut self, id: ClassId, new: &str, old: &str) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before aliasing class methods on it")
+            .class_aliases
+            .insert(Symbol::intern(new), Symbol::intern(old));
     }
 
     /// Registers one `def self.x` for dynamic dispatch -- see
@@ -1981,6 +2006,17 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
         // A `private_class_method` one is invisible to the default
         // `respond_to?`, the same rule the instance walk below applies.
         return include_all || !class_method_is_private(*cid, name);
+    }
+    // A class-method ALIAS is a name indirection rather than a table row, so
+    // ask the whole question again under the source name. Re-entering HERE and
+    // not inside `class_receiver_responds` is what makes `alias [] new` answer:
+    // `Class#new` is not a class method of the aliasing class at all, it is an
+    // instance method of `Class`, which only the walk below finds. Rows are
+    // terminal, so the re-entry cannot loop.
+    if let RubyValue::Class(cid) = recv
+        && let Some(old) = class_alias_target(*cid, name)
+    {
+        return responds_to_value(recv, old, include_all);
     }
     responds_to(recv.class_id(), name, include_all)
 }
@@ -4151,6 +4187,22 @@ pub(crate) fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
     None
 }
 
+/// [`alias_target`]'s singleton-side twin: the class method `name` on `id`
+/// rewrites to, from the closest ancestor that declares the row. Consulted only
+/// once every real class-method probe has missed, so a genuine `def self.[]`
+/// always beats an `alias [] new`. See `ClassEntry::class_aliases`.
+pub(crate) fn class_alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
+    let r = REGISTRY.get()?;
+    for &anc in ancestors_of_value(id) {
+        if let Some(e) = r.entries.get(&anc.0)
+            && let Some(&old) = e.class_aliases.get(&name)
+        {
+            return Some(old);
+        }
+    }
+    None
+}
+
 /// Parse-special Kernel names with NO runtime dispatch row: statically-
 /// resolved call sites compile them directly, so an alias of one is valid
 /// even though no table can prove it. `validate_aliases` skips them.
@@ -4551,6 +4603,15 @@ fn send_value_in_reason(
                 return with_c_frame(c_frame_label(anc, name, '#'), || f(recv, args, block));
             }
         }
+    }
+    // A CLASS-method alias row (`class << self; alias [] new`): the same
+    // rewrite for a class-object receiver, whose `class_id()` is `Class` and so
+    // would never find the row on the class itself. First, because a class
+    // receiver's own singleton table is what `[]` should mean here.
+    if let RubyValue::Class(cid) = recv
+        && let Some(old) = class_alias_target(*cid, name)
+    {
+        return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
     // A builtin-alias row (`alias_method :dup!, :dup`): rewrite the name and
     // re-dispatch. Probed only after every real method missed -- a real
