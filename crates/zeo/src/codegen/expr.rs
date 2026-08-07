@@ -1576,12 +1576,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
         | HirNode::MethodRedefine { .. }
-        | HirNode::ConstantVisibility { .. } => {
-            let loc = crate::codegen::source_location(cx.compiler, id);
-            crate::codegen::unsupported(format!(
-                "a definition-level construct used as a VALUE isn't supported yet (zeo limitation): {loc:?}"
-            ))
-        }
+        | HirNode::ConstantVisibility { .. } => crate::codegen::unsupported_at(
+            cx.compiler,
+            id,
+            "a definition-level construct used as a VALUE isn't supported yet \
+                 (zeo limitation)",
+        ),
     }
 }
 

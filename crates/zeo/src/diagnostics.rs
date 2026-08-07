@@ -174,6 +174,66 @@ impl Diagnostic for AnalyzeDiagnostic {
     }
 }
 
+/// A codegen rejection with the Ruby it could not emit.
+///
+/// Its own type rather than a reuse of `AnalyzeDiagnostic` for the reason that
+/// one is separate from `LowerDiagnostic`: the three stages refuse different
+/// things and the reader is owed the difference. Codegen refuses a node in a
+/// POSITION -- a definition where a value belongs -- so the label names the
+/// position rather than the construct.
+#[derive(Debug)]
+pub struct CodegenDiagnostic {
+    message: String,
+    /// Boxed for the same reason `LowerDiagnostic`'s is -- see there.
+    src: Option<Box<NamedSource<String>>>,
+    /// `(byte offset, length)` into `src`.
+    span: Option<(usize, usize)>,
+}
+
+impl CodegenDiagnostic {
+    fn new(message: String, span: Option<Span>, files: &[SourceFile]) -> CodegenDiagnostic {
+        let located = span.and_then(|s: Span| {
+            let f = files.get(s.file.0 as usize)?;
+            Some((
+                Box::new(NamedSource::new(&f.name, f.source.clone())),
+                (s.start as usize, (s.end - s.start) as usize),
+            ))
+        });
+        let (src, span) = match located {
+            Some((src, span)) => (Some(src), Some(span)),
+            None => (None, None),
+        };
+        CodegenDiagnostic { message, src, span }
+    }
+}
+
+impl fmt::Display for CodegenDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CodegenDiagnostic {}
+
+impl Diagnostic for CodegenDiagnostic {
+    fn code(&self) -> Option<Box<dyn fmt::Display + '_>> {
+        Some(Box::new("zeo::codegen"))
+    }
+
+    fn source_code(&self) -> Option<&dyn SourceCode> {
+        self.src.as_ref().map(|s| &**s as &dyn SourceCode)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        let (start, len) = self.span?;
+        Some(Box::new(std::iter::once(LabeledSpan::new(
+            Some("cannot be emitted here".to_string()),
+            start,
+            len,
+        ))))
+    }
+}
+
 /// One of Ruby's own PARSE-time warnings, carried from the compiler to the
 /// compiled program. CRuby prints these before the program runs; a zeo binary
 /// prints them at startup, which is the same position relative to any program
@@ -203,9 +263,9 @@ pub enum CompileError {
     #[diagnostic(transparent)]
     Analyze(AnalyzeDiagnostic),
 
-    #[error("{message}")]
-    #[diagnostic(code(zeo::codegen))]
-    Codegen { message: String },
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Codegen(CodegenDiagnostic),
 
     #[error("{message}")]
     #[diagnostic(code(zeo::report))]
@@ -234,10 +294,25 @@ impl CompileError {
         CompileError::Analyze(AnalyzeDiagnostic::new(err, files))
     }
 
+    /// An unlocated codegen rejection.
     pub fn codegen(message: impl Into<String>) -> CompileError {
-        CompileError::Codegen {
+        CompileError::Codegen(CodegenDiagnostic {
             message: message.into(),
-        }
+            src: None,
+            span: None,
+        })
+    }
+
+    /// A codegen rejection that names the Ruby it could not emit. `span` is the
+    /// node's own, resolved against the same file table the other two stages
+    /// use -- so a codegen gap renders the same excerpt header, and the gem
+    /// probe reads a location out of it exactly as it does for the others.
+    pub fn codegen_located(
+        message: impl Into<String>,
+        span: Option<Span>,
+        files: &[SourceFile],
+    ) -> CompileError {
+        CompileError::Codegen(CodegenDiagnostic::new(message.into(), span, files))
     }
 }
 

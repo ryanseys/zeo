@@ -724,7 +724,8 @@ fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
 }
 
 thread_local! {
-    static UNSUPPORTED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static UNSUPPORTED: std::cell::RefCell<Option<(String, Option<crate::hir::Span>)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Records a construct codegen can't emit, keeping the FIRST message so the
@@ -735,8 +736,14 @@ thread_local! {
 /// harness, which makes an unsupported construct impossible to check in as an
 /// XFAIL repro. Genuine compiler-invariant violations still panic.
 pub(crate) fn record_unsupported(message: impl Into<String>) {
+    record_unsupported_at(message, None);
+}
+
+/// [`record_unsupported`] carrying the span of the node that could not be
+/// emitted, so the diagnostic renders the same excerpt the other two stages do.
+pub(crate) fn record_unsupported_at(message: impl Into<String>, span: Option<crate::hir::Span>) {
     UNSUPPORTED.with_borrow_mut(|slot| {
-        slot.get_or_insert_with(|| message.into());
+        slot.get_or_insert_with(|| (message.into(), span));
     });
 }
 
@@ -748,7 +755,19 @@ pub(crate) fn unsupported(message: impl Into<String>) -> TokenStream {
     quote! { zeo_rt::RubyValue::Nil }
 }
 
-fn take_unsupported() -> Option<String> {
+/// [`unsupported`] that names where. Prefer it: the message then carries no
+/// path of its own, which keeps the committed gem ledger free of one machine's
+/// directory layout while still pointing at the line.
+pub(crate) fn unsupported_at(
+    compiler: &Compiler,
+    node: crate::hir::NodeId,
+    message: impl Into<String>,
+) -> TokenStream {
+    record_unsupported_at(message, compiler.hir.span(node));
+    quote! { zeo_rt::RubyValue::Nil }
+}
+
+fn take_unsupported() -> Option<(String, Option<crate::hir::Span>)> {
     UNSUPPORTED.with_borrow_mut(|slot| slot.take())
 }
 
@@ -998,8 +1017,12 @@ fn coverage_install_tokens(compiler: &Compiler) -> Option<TokenStream> {
 fn codegen_to_tokens(analyzed: &Analyzed) -> Result<TokenStream, crate::diagnostics::CompileError> {
     take_unsupported();
     let tokens = codegen(analyzed);
-    if let Some(message) = take_unsupported() {
-        return Err(crate::diagnostics::CompileError::codegen(message));
+    if let Some((message, span)) = take_unsupported() {
+        return Err(crate::diagnostics::CompileError::codegen_located(
+            message,
+            span,
+            &analyzed.compiler.hir.files,
+        ));
     }
     Ok(tokens)
 }
