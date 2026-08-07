@@ -1170,12 +1170,20 @@ pub(crate) fn qualified_const_mints_runtime_class(hir: &Hir, name: &str) -> bool
     })
 }
 
-/// Whether an already-lowered `class`/`module` DEFINES this name, making it a
-/// compile-time class even if some later statement also assigns the constant.
+/// Whether an already-lowered `class`/`module` DEFINES this name HERE, making
+/// it a compile-time class even if some later statement also assigns the
+/// constant.
+///
+/// "Here" is the whole point: the question is asked of a name as one site
+/// spells it, and an arena-wide scan for a `ClassDef` of that name answers for
+/// every OTHER site too. citrus writes `module Citrus; class Error <
+/// StandardError`, toml-rb writes `module TomlRB; Error =
+/// Class.new(StandardError); class ValueOverwriteError < Error` -- and with
+/// both compiled in, the scan said toml-rb's `Error` names a compile-time
+/// class, which put its subclass on the static path where nothing defines
+/// `TomlRB::Error` at all.
 pub(crate) fn const_is_class_def(hir: &Hir, name: &str) -> bool {
-    hir.nodes()
-        .iter()
-        .any(|node| matches!(node, HirNode::ClassDef { name: n, .. } if n == name))
+    hir.class_defined_in_scope(name)
 }
 
 /// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in

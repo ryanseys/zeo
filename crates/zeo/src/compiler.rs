@@ -463,6 +463,15 @@ pub struct Compiler {
     /// `None` for `NAME = ...` at any depth, recording only the explicit
     /// `Foo::NAME = ...` prefix -- so the nesting has to come from the walk.
     pub top_level_const_aliases: HashMap<String, crate::hir::NodeId>,
+    /// Every `NAME = <value>` write in the program, keyed by `(box, fully
+    /// qualified name)` -- the same question the table above answers, asked
+    /// from ANY scope rather than only the top level. It exists because a
+    /// constant that names a module is how ruby spells a module alias
+    /// (oauth2's `OAuth2::FilteredAttributes = OAuth2::AUTH_SANITIZER::
+    /// FilteredAttributes`), and an `include` of that name has to reach the
+    /// real module. Read through `analyze`'s `resolve_const_alias`, which
+    /// searches innermost scope outward.
+    pub const_aliases: HashMap<(u32, String), crate::hir::NodeId>,
     /// Every method name a RUNTIME site could change out from under a folded
     /// call. Two kinds, because both land in the overlay that only DYNAMIC
     /// dispatch consults:
@@ -750,6 +759,7 @@ impl Compiler {
             shell_kinds: HashMap::new(),
             assigned_const_names: std::collections::HashSet::new(),
             top_level_const_aliases: HashMap::new(),
+            const_aliases: HashMap::new(),
             runtime_patches: std::collections::HashSet::new(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,

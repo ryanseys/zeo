@@ -102,6 +102,12 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     let mut aliases = HashMap::new();
     collect_top_level_const_aliases(&compiler.hir, &statements, &mut aliases);
     compiler.top_level_const_aliases = aliases;
+    let mut scoped_aliases = HashMap::new();
+    collect_const_aliases(&compiler.hir, &statements, &[], 0, &mut scoped_aliases);
+    for unit in &compiler.hir.feature_units {
+        collect_const_aliases(&compiler.hir, &unit.body, &[], 0, &mut scoped_aliases);
+    }
+    compiler.const_aliases = scoped_aliases;
     (compiler.runtime_patches, compiler.runtime_patches_any_name) =
         collect_runtime_patches(&compiler.hir);
 
@@ -2360,6 +2366,9 @@ fn register_class(
                 let want = compiler
                     .resolve_class(s, cref, box_id)
                     .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
+                    // A superclass named through a constant ALIAS
+                    // (`Base = Some::Other::Class`) is that class.
+                    .or_else(|| resolve_const_alias(compiler, s, cref, box_id))
                     .ok_or_else(|| {
                         format!("unknown superclass `{s}` (must be defined earlier in the file)")
                     })?;
@@ -2396,6 +2405,9 @@ fn register_class(
                 let want = compiler
                     .resolve_class(s, cref, box_id)
                     .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
+                    // A superclass named through a constant ALIAS
+                    // (`Base = Some::Other::Class`) is that class.
+                    .or_else(|| resolve_const_alias(compiler, s, cref, box_id))
                     .ok_or_else(|| {
                         format!("unknown superclass `{s}` (must be defined earlier in the file)")
                     })?;
@@ -2441,6 +2453,9 @@ fn register_class(
                             // Error` before `class Error`): create the base as a
                             // forward shell, resolving the bare name lexically.
                             .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
+                            // A superclass named through a constant ALIAS
+                            // (`Base = Some::Other::Class`) is that class.
+                            .or_else(|| resolve_const_alias(compiler, s, cref, box_id))
                             .ok_or_else(|| {
                                 format!(
                                     "unknown superclass `{s}` (must be defined earlier in the file)"
@@ -3183,12 +3198,161 @@ fn resolve_module_target(
         // require) is created as a forward shell; its methods are added when the
         // real definition reopens the shell (seen at `mro::materialize`).
         .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id));
+    let resolved = resolved.or_else(|| resolve_const_alias(compiler, name, cref, box_id));
     match resolved {
         Some(cid) => Ok(Some(cid)),
         None if !compiler.assigns_const_path(name) => Ok(None),
+        // A second NAME for a module (`Constants = ::Socket::Constants`) that
+        // resolves to nothing zeo compiled: spelled directly, that same include
+        // defers to the runtime constant read above, and reaching the module
+        // through an alias must not change the answer. The hard error below is
+        // for a constant holding a module MINTED at run time (`M =
+        // Module.new`), which no static MRO can ever reach.
+        None if is_const_path_alias(compiler, name, cref, box_id) => Ok(None),
         None => Err(format!(
             "unknown module `{name}` (must be defined earlier in the file)"
         )),
+    }
+}
+
+/// Whether `name` is a constant ALIAS naming another constant path -- true even
+/// when that path names nothing zeo compiled. See `resolve_const_alias`.
+fn is_const_path_alias(compiler: &Compiler, name: &str, cref: &[ClassId], box_id: u32) -> bool {
+    let Some(&value) = lexical_const_alias(compiler, name, cref, box_id) else {
+        return false;
+    };
+    matches!(
+        &compiler.hir[value],
+        HirNode::ClassRef(_) | HirNode::QualifiedConstRead(..)
+    )
+}
+
+/// A constant that ALIASES a class or module (oauth2's `FilteredAttributes =
+/// OAuth2::AUTH_SANITIZER::FilteredAttributes`), resolved to what it names.
+///
+/// Ruby has no separate alias form -- naming a module twice IS assigning its
+/// value to a second constant -- and the second name then works everywhere the
+/// first does: `include`, a superclass clause, `.new`. Statically it is just a
+/// second name for the same `ClassId`, which is exactly what a compiled MRO can
+/// carry. The assignment itself still emits, so reading the alias back still
+/// answers the module object.
+///
+/// The alias is looked up the way ruby looks up the name that reads it:
+/// innermost enclosing scope first, then outward, then the top level -- a write
+/// in some unrelated namespace is never what this name means (the rule
+/// `const_alias_target`'s docs were bought with 30 gems). A chain of aliases
+/// follows through, capped so a cycle (`A = B; B = A`) terminates. A value that
+/// is anything but a constant path answers `None`: `M = Module.new` mints a
+/// module at run time, which no static MRO can reach, and that stays the loud
+/// error `resolve_module_target` documents.
+fn resolve_const_alias(
+    compiler: &mut Compiler,
+    name: &str,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Option<ClassId> {
+    let mut name = name.to_string();
+    for _ in 0..8 {
+        let value = *lexical_const_alias(compiler, &name, cref, box_id)?;
+        // `::Socket::Constants` lowers with the explicit scope `Object` (see
+        // `constant_path_scope_and_name`), which is how the source anchored it:
+        // resolve the rest at the top level, not against this cref.
+        let written = match &compiler.hir[value] {
+            HirNode::ClassRef(target) => target.clone(),
+            HirNode::QualifiedConstRead(scope, target) => format!("{scope}::{target}"),
+            _ => return None,
+        };
+        // Anchored spellings resolve at the TOP level, not against this cref:
+        // `::Socket::Constants` keeps its leading `::`, while a plain `::Real`
+        // arrives with the explicit scope `Object` (see
+        // `constant_path_scope_and_name`). Both say the same thing.
+        let (target, from) = match written.strip_prefix("::").or(written.strip_prefix("Object::")) {
+            Some(anchored) => (anchored.to_string(), &[][..]),
+            None => (written, cref),
+        };
+        // The same two-step every other resolution site takes: a name defined
+        // later in the flattened require graph is a forward shell, not a miss.
+        let resolved = compiler
+            .resolve_class(&target, from, box_id)
+            .or_else(|| resolve_or_create_lexical(compiler, &target, from, box_id));
+        if let Some(cid) = resolved {
+            return Some(cid);
+        }
+        name = target;
+    }
+    None
+}
+
+/// The `NAME = <value>` write that `name` reads from `cref`, searched
+/// innermost-scope-outward. `Scope::NAME` (already qualified) and `::NAME`
+/// (anchored at the top) ask exactly one question each.
+fn lexical_const_alias<'a>(
+    compiler: &'a Compiler,
+    name: &str,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Option<&'a NodeId> {
+    let path = crate::constpath::ConstPath::parse(name);
+    if !path.is_bare() {
+        return compiler
+            .const_aliases
+            .get(&(box_id, path.unanchored().to_string()));
+    }
+    (0..=cref.len()).rev().find_map(|depth| {
+        let key = match depth {
+            0 => path.base().to_string(),
+            d => format!("{}::{}", compiler.fq_name(cref[d - 1]), path.base()),
+        };
+        compiler.const_aliases.get(&(box_id, key))
+    })
+}
+
+/// Read-only scan populating [`Compiler::const_aliases`]: every `NAME = <...>`
+/// write in the program, recorded under the fully-qualified name it binds, so
+/// the lookup above can ask about a scope rather than a bare leaf. Descends the
+/// same wrappers `collect_shell_kinds` does, and for the same reason -- a write
+/// inside a conditional still binds the name.
+fn collect_const_aliases(
+    hir: &Hir,
+    stmts: &[NodeId],
+    scope: &[String],
+    box_id: u32,
+    out: &mut HashMap<(u32, String), NodeId>,
+) {
+    for &id in stmts {
+        match &hir[id] {
+            HirNode::ConstWrite { scope: at, name, value } => {
+                let mut path = scope.to_vec();
+                if let Some(at) = at {
+                    path.push(at.clone());
+                }
+                path.push(name.clone());
+                // First write wins, matching `collect_top_level_const_aliases`:
+                // a later reassignment does not change what the name meant to
+                // the definitions that already read it.
+                out.entry((box_id, path.join("::"))).or_insert(*value);
+            }
+            HirNode::ClassDef { name, body, .. } => {
+                let mut inner = scope.to_vec();
+                inner.push(name.clone());
+                collect_const_aliases(hir, body, &inner, box_id, out);
+            }
+            HirNode::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_const_aliases(hir, then_body, scope, box_id, out);
+                collect_const_aliases(hir, else_body, scope, box_id, out);
+            }
+            HirNode::BoxScope { box_id: bx, body } => {
+                collect_const_aliases(hir, body, &[], *bx, out);
+            }
+            HirNode::Seq(body) | HirNode::PreExec(body) | HirNode::Eval(body) => {
+                collect_const_aliases(hir, body, scope, box_id, out);
+            }
+            _ => {}
+        }
     }
 }
 

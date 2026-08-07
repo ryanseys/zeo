@@ -307,6 +307,14 @@ pub struct Hir {
     /// [`cvar_is_toplevel`](Self::cvar_is_toplevel) and
     /// [`enclosing_class`](Self::enclosing_class).
     cref_names: Vec<String>,
+    /// Every `class`/`module` definition lowered so far, under the FULLY
+    /// QUALIFIED name its site spells (`class Error` inside `module Citrus`
+    /// records `Citrus::Error`). A `ClassDef` node keeps only the name as
+    /// WRITTEN, so an arena scan for one cannot tell citrus's `Citrus::Error`
+    /// from a `TomlRB::Error` that is really a `Class.new` value -- and
+    /// answering that wrong sends a subclass down the wrong path. See
+    /// [`class_defined_in_scope`](Self::class_defined_in_scope).
+    class_def_paths: std::collections::HashSet<String>,
 }
 
 /// One compiled-in load-path file -- see `Hir::feature_units`. Its statements
@@ -384,6 +392,35 @@ impl Hir {
     /// (a class method) from `def other.foo` (a per-object singleton).
     pub fn enclosing_class(&self) -> Option<&str> {
         self.cref_names.last().map(String::as_str)
+    }
+
+    /// Records one `class`/`module` definition in `class_def_paths`. Call it
+    /// with the definition's OWN cref in place -- i.e. after its body has
+    /// lowered and `in_class_body` has popped again.
+    pub(crate) fn record_class_def(&mut self, name: &str) {
+        let path = match name.strip_prefix("::") {
+            Some(absolute) => absolute.to_string(),
+            None if self.cref_names.is_empty() => name.to_string(),
+            None => format!("{}::{name}", self.cref_names.join("::")),
+        };
+        self.class_def_paths.insert(path);
+    }
+
+    /// Whether an already-lowered `class`/`module` definition binds `name` AS
+    /// SEEN FROM the cref being lowered: ruby's lexical search, innermost
+    /// scope first, then the top level. `::Name` asks at the top level only.
+    pub(crate) fn class_defined_in_scope(&self, name: &str) -> bool {
+        if let Some(absolute) = name.strip_prefix("::") {
+            return self.class_def_paths.contains(absolute);
+        }
+        (0..=self.cref_names.len()).rev().any(|depth| {
+            let candidate = if depth == 0 {
+                name.to_string()
+            } else {
+                format!("{}::{name}", self.cref_names[..depth].join("::"))
+            };
+            self.class_def_paths.contains(&candidate)
+        })
     }
 
     /// Whether a `@@x` lowered right here resolves to the TOP-LEVEL cref, in

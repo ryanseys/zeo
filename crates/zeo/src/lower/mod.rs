@@ -1152,6 +1152,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             superclass.as_deref(),
             Some(&name),
         )?;
+        hir.record_class_def(&name);
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass,
@@ -1168,6 +1169,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(module) = node.as_module_node() {
         let name = constant_path_name(&module.constant_path())?;
         let body = lower_class_body(result, hir, module.body(), None, Some(&name))?;
+        hir.record_class_def(&name);
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass: None,
