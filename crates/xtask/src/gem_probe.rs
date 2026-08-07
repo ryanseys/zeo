@@ -5,14 +5,26 @@
 //! by its LAYOUT: "pure Ruby, so zeo would compile it". It never runs the
 //! compiler, so a gem using a construct zeo cannot lower still reports as
 //! resolvable. concurrent-ruby is the standing example. `gem-probe` runs the
-//! front end for real, so `compiles` means compiles.
+//! front end for real.
 //!
-//! Four stages, and only the first touches the network:
+//! What it runs, and how far, is the `stage` column -- see [`Stage`]. The
+//! default rung is `emits-rs`: zeo produced Rust. That is deliberately the
+//! weakest useful claim and it used to be spelled `compiles`, which read as a
+//! much stronger one. No rustc runs, no binary exists, and the gem's own code
+//! may not have been compiled at all -- zeo can decline a unit and defer it to
+//! a runtime `LoadError`, which only `--run` can see. `--build` and `--run`
+//! climb the rungs above, both off by default.
+//!
+//! Four steps, and only the first touches the network:
 //!
 //!   resolve  name [version]     -> an exact version
 //!   fetch    the .gem           -> vendor/gems/<name>/   (cached, gitignored)
-//!   probe    require "<entry>"  -> an Outcome
-//!   record   the Outcome        -> conformance/gem-probe-*.tsv     (committed)
+//!   probe    require "<entry>"  -> a Stage and an Outcome
+//!   record   the verdict        -> conformance/gem-probe-*.tsv     (committed)
+//!
+//! The emitted Rust is kept, gzipped, under `vendor/.probe-rs/`, so a later
+//! sweep can climb to `builds-bin` for the whole corpus without paying for
+//! codegen twice.
 //!
 //! Probing an unpacked tree needs no network and is deterministic, so a ledger
 //! row reproduces from its recorded version alone.
@@ -44,7 +56,7 @@
 //! already uses, so a probe exercises the same loader path bundled gems do.
 
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -56,11 +68,58 @@ const REGISTRY: &str = "https://rubygems.org";
 /// finish cannot hold a sweep open.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// What a probe concluded. The first two are about zeo; the rest say the
-/// question could not be put.
+/// How far up the pipeline a verdict got.
+///
+/// The rungs are ordered and each is a strictly harder claim about the gem
+/// than the one below: unpacking says the archive had a `lib/`, `emits-rs`
+/// says zeo's front end produced Rust, `builds-bin` says rustc accepted that
+/// Rust, `runs` says the binary executed. They are a separate column rather
+/// than more outcome tags so that adding a rung costs one value instead of a
+/// schema change, and so a failure can say WHERE it stopped -- a `timeout` in
+/// codegen and a `timeout` in rustc are not the same row.
+///
+/// `emits-rs` is the default and the only rung a sweep reaches on its own.
+/// It is deliberately the weakest useful claim: it does NOT mean a binary
+/// exists, and it does not mean the gem's own code was compiled -- zeo may
+/// have declined a unit and deferred it to a runtime `LoadError`, which only
+/// `runs` can see.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Stage {
+    Fetch,
+    Unpack,
+    EmitsRs,
+    BuildsBin,
+    Runs,
+}
+
+impl Stage {
+    fn tag(self) -> &'static str {
+        match self {
+            Stage::Fetch => "fetch",
+            Stage::Unpack => "unpack",
+            Stage::EmitsRs => "emits-rs",
+            Stage::BuildsBin => "builds-bin",
+            Stage::Runs => "runs",
+        }
+    }
+
+    fn from_tag(tag: &str) -> Option<Stage> {
+        match tag {
+            "fetch" => Some(Stage::Fetch),
+            "unpack" => Some(Stage::Unpack),
+            "emits-rs" => Some(Stage::EmitsRs),
+            "builds-bin" => Some(Stage::BuildsBin),
+            "runs" => Some(Stage::Runs),
+            _ => None,
+        }
+    }
+}
+
+/// What a probe concluded at its [`Stage`]. `Ok` means that rung was reached;
+/// every other variant says why the climb stopped there.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Outcome {
-    Compiles,
+    Ok,
     /// zeo reached the gem's source and could not lower it. The payload is the
     /// compiler's own first line -- the actionable half of the verdict.
     LoweringGap(String),
@@ -82,12 +141,19 @@ enum Outcome {
     /// that zeo never made.
     Timeout,
     FetchFailed(String),
+    /// rustc rejected the Rust zeo emitted. zeo's to fix, and a sharper bug
+    /// than a lowering gap: the front end believed it had produced a program.
+    RustcError(String),
+    /// The binary was built and did not exit 0. The common shape is a runtime
+    /// `LoadError` from a unit zeo declined at compile time, which every rung
+    /// below this one reports as success.
+    RunFailed(String),
 }
 
 impl Outcome {
     fn tag(&self) -> &'static str {
         match self {
-            Outcome::Compiles => "compiles",
+            Outcome::Ok => "ok",
             Outcome::LoweringGap(_) => "lowering-gap",
             Outcome::NativeExtension => "native-extension",
             Outcome::MissingDependency(_) => "missing-dependency",
@@ -96,6 +162,8 @@ impl Outcome {
             Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::Timeout => "timeout",
             Outcome::FetchFailed(_) => "fetch-failed",
+            Outcome::RustcError(_) => "rustc-error",
+            Outcome::RunFailed(_) => "run-failed",
         }
     }
 
@@ -104,14 +172,19 @@ impl Outcome {
             Outcome::LoweringGap(d)
             | Outcome::MissingDependency(d)
             | Outcome::FetchFailed(d)
-            | Outcome::CompilerPanic(d) => d,
+            | Outcome::CompilerPanic(d)
+            | Outcome::RustcError(d)
+            | Outcome::RunFailed(d) => d,
             _ => "",
         }
     }
 
     fn from_ledger(tag: &str, detail: &str) -> Outcome {
         match tag {
-            "compiles" => Outcome::Compiles,
+            // `compiles` is the pre-`stage` spelling of this rung's success.
+            // It read as "this gem compiles", which was never what the probe
+            // measured -- no rustc ran and no binary existed.
+            "ok" | "compiles" => Outcome::Ok,
             "native-extension" => Outcome::NativeExtension,
             "no-lib-dir" => Outcome::NoLibDir,
             "no-entry-point" => Outcome::NoEntryPoint,
@@ -119,7 +192,21 @@ impl Outcome {
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
+            "rustc-error" => Outcome::RustcError(detail.to_string()),
+            "run-failed" => Outcome::RunFailed(detail.to_string()),
             _ => Outcome::LoweringGap(detail.to_string()),
+        }
+    }
+
+    /// The rung a legacy row's outcome must have been decided at, for a
+    /// ledger written before the `stage` column existed.
+    fn implied_stage(&self) -> Stage {
+        match self {
+            Outcome::FetchFailed(_) => Stage::Fetch,
+            Outcome::NoLibDir | Outcome::NoEntryPoint => Stage::Unpack,
+            Outcome::RustcError(_) => Stage::BuildsBin,
+            Outcome::RunFailed(_) => Stage::Runs,
+            _ => Stage::EmitsRs,
         }
     }
 }
@@ -127,7 +214,20 @@ impl Outcome {
 #[derive(Clone, Debug)]
 struct Row {
     version: String,
+    /// The rung this verdict is about -- see [`Stage`]. Held rather than
+    /// derived because `Ok` is reachable at three different rungs and the
+    /// outcome alone cannot say which one a sweep asked for.
+    stage: Stage,
     outcome: Outcome,
+    /// Bytes of Rust zeo emitted. Deterministic for a given gem and compiler,
+    /// so it belongs in the committed ledger: it diffs when codegen changes
+    /// and is silent otherwise. Absent when the front end never got there.
+    rust_bytes: Option<u64>,
+    /// Bytes of the linked binary, when `--build` ran. Deterministic for a
+    /// given toolchain; a rustc upgrade moves every row at once, which is
+    /// rare and worth seeing. The binary itself is deleted once measured --
+    /// one per gem across the corpus is tens of gigabytes.
+    binary_bytes: Option<u64>,
     /// The Ruby the verdict points at, `<repo-relative path>:<line>`, when zeo
     /// named one.
     ///
@@ -145,6 +245,33 @@ struct Row {
     /// job was distinguishing a stale row from a real gap. Absent for
     /// `--no-deps` runs, which never ask the registry anything.
     digest: Option<String>,
+}
+
+impl Row {
+    /// A gem that never reached the compiler, so has no metrics to record.
+    fn stopped(version: &str, stage: Stage, outcome: Outcome, digest: Option<String>) -> Row {
+        Row {
+            version: version.to_string(),
+            stage,
+            outcome,
+            rust_bytes: None,
+            binary_bytes: None,
+            site: None,
+            digest,
+        }
+    }
+
+    fn from_verdict(version: String, digest: Option<String>, v: &Verdict) -> Row {
+        Row {
+            version,
+            stage: v.stage,
+            outcome: v.outcome.clone(),
+            rust_bytes: v.rust_bytes,
+            binary_bytes: v.binary_bytes,
+            site: v.site.clone(),
+            digest,
+        }
+    }
 }
 
 // ---------------------------------------------------------------- registry
@@ -477,16 +604,16 @@ fn isolate(root: &Path, name: &str, deps: &[String]) -> Result<PathBuf, String> 
 /// The verdict is unchanged by the move: `--dump=rust` is the CLI spelling of
 /// `compile_to_rust_with`, and `message_of` already accepted either the plain
 /// `CompileError` text or the CLI's boxed rendering.
-fn probe(
-    root: &Path,
-    zeo: &Path,
-    name: &str,
-    dir: &Path,
-    deps: &[String],
-    timeout: Duration,
-) -> (Outcome, Option<String>) {
+fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) -> Verdict {
+    let Ready {
+        name,
+        version,
+        dir,
+        deps,
+        ..
+    } = gem;
     if !dir.join("lib").is_dir() {
-        return (Outcome::NoLibDir, None);
+        return Verdict::stopped(Stage::Unpack, Outcome::NoLibDir);
     }
     // A DECLARED extension is not decisive either, which is why nothing checks
     // for one before this point any more. Many gems ship an optional C
@@ -498,15 +625,16 @@ fn probe(
     // `classify` reads that.
     let view = match isolate(root, name, deps) {
         Ok(v) => v,
-        Err(e) => return (Outcome::FetchFailed(e), None),
+        Err(e) => return Verdict::stopped(Stage::Fetch, Outcome::FetchFailed(e)),
     };
     let Some(feature) = entry_point(dir, name) else {
-        return (Outcome::NoEntryPoint, None);
+        return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
     };
+    let program = format!("require {feature:?}\n");
 
     let mut cmd = std::process::Command::new(zeo);
     cmd.arg("-e")
-        .arg(format!("require {feature:?}\n"))
+        .arg(&program)
         // The repo's own gems/ come too: a probed gem may require a stdlib
         // feature, and answering that from zeo's bundled copy is what a real
         // compile would do. `-e` has no input path, so zeo adds no package dir
@@ -516,17 +644,141 @@ fn probe(
         .arg("--gems")
         .arg(root.join("gems"))
         .arg("--dump=rust");
-    match crate::exec::run_with_timeout(cmd, None, timeout) {
-        Err(e) => (Outcome::FetchFailed(format!("running zeo: {e}")), None),
-        Ok(ex) if ex.timed_out => (Outcome::Timeout, None),
+    let started = std::time::Instant::now();
+    let emitted = crate::exec::run_with_timeout(cmd, None, timeout);
+    let codegen_ms = started.elapsed().as_millis();
+
+    let rust = match emitted {
+        Err(e) => {
+            return Verdict::stopped(
+                Stage::Fetch,
+                Outcome::FetchFailed(format!("running zeo: {e}")),
+            );
+        }
+        Ok(ex) if ex.timed_out => {
+            return Verdict::stopped(Stage::EmitsRs, Outcome::Timeout).timed(codegen_ms);
+        }
         // A successful compile still writes to stderr -- every builtin
         // substitution warns there -- so the exit status is the verdict and
         // stderr is only read once it is non-zero.
-        Ok(ex) if ex.success() => (Outcome::Compiles, None),
+        Ok(ex) if ex.success() => ex.stdout,
         Ok(ex) => {
             let text = String::from_utf8_lossy(&ex.stderr);
-            (classify_stderr(&ex.stderr, root), site_of(&text, root))
+            let mut v = Verdict::stopped(Stage::EmitsRs, classify_stderr(&ex.stderr, root));
+            v.site = site_of(&text, root);
+            return v.timed(codegen_ms);
         }
+    };
+
+    let mut verdict = Verdict::stopped(Stage::EmitsRs, Outcome::Ok).timed(codegen_ms);
+    verdict.rust_bytes = Some(rust.len() as u64);
+    // The Rust is kept so a later sweep can climb the next rung without paying
+    // for codegen again -- emit once for the whole corpus, then build. gzip
+    // because the uncompressed corpus does not fit: the generated source is
+    // large and repetitive, and a disk that cannot hold the store is a store
+    // nobody keeps.
+    if let Err(e) = store_rust(root, name, version, &rust) {
+        eprintln!("gem-probe: {name}: keeping the generated Rust: {e}");
+    }
+    if !tiers.build {
+        return verdict;
+    }
+
+    // The binary tier re-runs zeo with `-o` rather than handing the stored
+    // Rust to rustc: the flags that pick the runtime profile and linkage live
+    // in zeo, and reproducing them here would be a second source of truth for
+    // how a zeo program is built.
+    let out = std::env::temp_dir().join(format!("zeo-gem-probe-{name}-{version}"));
+    let mut cmd = std::process::Command::new(zeo);
+    cmd.arg("-e")
+        .arg(&program)
+        .arg("--gems")
+        .arg(&view)
+        .arg("--gems")
+        .arg(root.join("gems"))
+        .arg("-o")
+        .arg(&out);
+    let started = std::time::Instant::now();
+    let built = crate::exec::run_with_timeout(cmd, None, timeout);
+    verdict.build_ms = Some(started.elapsed().as_millis());
+    match built {
+        Err(e) => {
+            verdict.stage = Stage::BuildsBin;
+            verdict.outcome = Outcome::RustcError(format!("running zeo -o: {e}"));
+            return verdict;
+        }
+        Ok(ex) if ex.timed_out => {
+            verdict.stage = Stage::BuildsBin;
+            verdict.outcome = Outcome::Timeout;
+            return verdict;
+        }
+        Ok(ex) if !ex.success() => {
+            verdict.stage = Stage::BuildsBin;
+            verdict.outcome = Outcome::RustcError(truncate(&classify_build(&ex.stderr, root)));
+            return verdict;
+        }
+        Ok(_) => {}
+    }
+    verdict.stage = Stage::BuildsBin;
+    verdict.binary_bytes = std::fs::metadata(&out).ok().map(|m| m.len());
+
+    if tiers.run {
+        let started = std::time::Instant::now();
+        let ran = run_sandboxed(&out, timeout);
+        verdict.run_ms = Some(started.elapsed().as_millis());
+        verdict.stage = Stage::Runs;
+        verdict.outcome = match ran {
+            Err(e) => Outcome::RunFailed(e),
+            Ok(ex) if ex.timed_out => Outcome::Timeout,
+            Ok(ex) if ex.success() => Outcome::Ok,
+            Ok(ex) => Outcome::RunFailed(truncate(&first_error_line(&ex.stderr))),
+        };
+    }
+    // Measured, then removed. One binary per gem is 20-30 MB and the corpus
+    // would be tens of gigabytes; `rust_bytes`/`binary_bytes` are what a later
+    // reader wants, and the stored Rust is what a later BUILD wants.
+    let _ = std::fs::remove_file(&out);
+    verdict
+}
+
+/// Which rungs a sweep is allowed to climb. Both are off unless asked for:
+/// `emits-rs` is the only rung that runs no code and builds no artifact.
+#[derive(Clone, Copy, Default)]
+struct Tiers {
+    build: bool,
+    run: bool,
+}
+
+/// One gem's result, at whatever rung it reached.
+#[derive(Clone, Debug)]
+struct Verdict {
+    stage: Stage,
+    outcome: Outcome,
+    rust_bytes: Option<u64>,
+    binary_bytes: Option<u64>,
+    site: Option<String>,
+    codegen_ms: Option<u128>,
+    build_ms: Option<u128>,
+    run_ms: Option<u128>,
+}
+
+impl Verdict {
+    fn stopped(stage: Stage, outcome: Outcome) -> Verdict {
+        Verdict {
+            stage,
+            outcome,
+            rust_bytes: None,
+            binary_bytes: None,
+            site: None,
+            codegen_ms: None,
+            build_ms: None,
+            run_ms: None,
+        }
+    }
+
+    fn timed(mut self, codegen_ms: u128) -> Verdict {
+        self.codegen_ms = Some(codegen_ms);
+        self
     }
 }
 
@@ -608,20 +860,26 @@ fn message_of(err: &str) -> String {
     msg
 }
 
-fn classify(err: &str, root: &Path) -> Outcome {
-    let msg = message_of(err);
-    // This text is committed. A diagnostic can carry an absolute path anywhere
-    // in it -- inside a `Some((..))` span, not only as a leading prefix -- so
-    // the repository root is rewritten away wholesale rather than peeled.
+/// Strips this machine's layout out of a message bound for the ledger.
+///
+/// A diagnostic can carry an absolute path anywhere in it -- inside a
+/// `Some((..))` span, not only as a leading prefix -- so the repository root is
+/// rewritten away wholesale rather than peeled, and any surviving home-rooted
+/// token goes with it.
+fn scrub_paths(msg: &str, root: &Path) -> String {
     let msg = msg.replace(&format!("{}/", root.display()), "");
-    let msg = if msg.contains("/Users/") || msg.contains("/home/") {
+    if msg.contains("/Users/") || msg.contains("/home/") {
         msg.split_whitespace()
             .filter(|w| !w.contains("/Users/") && !w.contains("/home/"))
             .collect::<Vec<_>>()
             .join(" ")
     } else {
         msg
-    };
+    }
+}
+
+fn classify(err: &str, root: &Path) -> Outcome {
+    let msg = scrub_paths(&message_of(err), root);
     let msg = if msg.is_empty() {
         "compile failed".to_string()
     } else {
@@ -635,6 +893,143 @@ fn classify(err: &str, root: &Path) -> Outcome {
         return Outcome::NativeExtension;
     }
     Outcome::LoweringGap(truncate(&msg))
+}
+
+/// rustc's first complaint about the Rust zeo emitted.
+///
+/// Its diagnostics lead with `error[E0308]: ...` and then quote the source, so
+/// the first `error` line is the claim and everything after it is context.
+fn classify_build(stderr: &[u8], root: &Path) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("error"))
+        .or_else(|| text.lines().map(str::trim).find(|l| !l.is_empty()))
+        .unwrap_or("the build failed without saying why");
+    scrub_paths(first, root)
+}
+
+/// A run's first stderr line -- for a `LoadError` that is the whole message.
+fn first_error_line(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("exited non-zero with no stderr")
+        .to_string()
+}
+
+/// Whether `--run` may proceed, and if not, why.
+///
+/// Split out from `main` so the fence can be tested: this is the one code path
+/// in the probe that executes code from rubygems, and its guard failing open
+/// is not something a reader should have to take on trust. Every check is a
+/// refusal, never a warning -- there is no "run anyway" branch to slip into.
+fn run_is_permitted(
+    named: usize,
+    bulk: &[(&str, bool)],
+    allow_run: bool,
+    sandboxed_platform: bool,
+) -> Result<(), String> {
+    if let Some((flag, _)) = bulk.iter().find(|(_, on)| *on) {
+        return Err(format!(
+            "--run takes named gems only, and {flag} selects in bulk.\n  \
+             Running a gem executes code from rubygems; name the ones you have read."
+        ));
+    }
+    if named == 0 {
+        return Err("--run needs a gem name".into());
+    }
+    if !allow_run {
+        return Err(
+            "--run executes code from rubygems in this gem and its dependencies.\n  \
+                    Refusing without --allow-running-untrusted-gem-code."
+                .into(),
+        );
+    }
+    if !sandboxed_platform {
+        return Err(
+            "--run confines the binary with sandbox-exec, which is macOS-only.\n  \
+             Refusing to run unconfined."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// An interactive `y` and nothing else.
+///
+/// A non-tty stdin answers no rather than reading a line: a pipe cannot make
+/// this decision, and treating EOF as consent is how a confirmation prompt
+/// becomes decoration in a script.
+fn confirmed(question: &str) -> bool {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        eprintln!("gem-probe: stdin is not a terminal, so {question:?} cannot be answered");
+        return false;
+    }
+    eprint!("{question} [y/N] ");
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer).is_ok() && answer.trim().eq_ignore_ascii_case("y")
+}
+
+/// Where the emitted Rust is kept, so climbing to `builds-bin` later does not
+/// pay for codegen again. Under `vendor/`, which is gitignored.
+fn rust_store(root: &Path) -> PathBuf {
+    root.join("vendor/.probe-rs")
+}
+
+/// Keeps one gem's generated Rust, gzipped.
+///
+/// Compressed because the uncompressed corpus does not fit: generated Rust is
+/// large and extremely repetitive, and a store that fills the disk is a store
+/// that gets deleted before it is ever used. `.rs.gz` is read back by the
+/// build tier and by hand with `gunzip -c`.
+fn store_rust(root: &Path, name: &str, version: &str, rust: &[u8]) -> Result<(), String> {
+    let dir = rust_store(root);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = std::fs::File::create(dir.join(format!("{name}-{version}.rs.gz")))
+        .map_err(|e| e.to_string())?;
+    let mut gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    gz.write_all(rust).map_err(|e| e.to_string())?;
+    gz.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Runs a probed gem's binary with the OS holding the leash.
+///
+/// This is the only rung that executes code from rubygems, so confinement is
+/// not left to the flag logic that guards it: the binary gets no network and
+/// can write nowhere but a scratch directory. `sandbox-exec` is deprecated and
+/// still the only thing on macOS that does this without a helper.
+#[cfg(target_os = "macos")]
+fn run_sandboxed(bin: &Path, timeout: Duration) -> Result<crate::exec::Execution, String> {
+    let scratch = std::env::temp_dir().join("zeo-gem-probe-run");
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let profile = format!(
+        "(version 1)\
+         (deny default)\
+         (allow process-exec process-fork)\
+         (allow file-read*)\
+         (allow sysctl-read mach-lookup signal)\
+         (deny network*)\
+         (allow file-write* (subpath {:?}))\
+         (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") \
+         (literal \"/dev/stderr\"))",
+        scratch.to_string_lossy()
+    );
+    let mut cmd = std::process::Command::new("sandbox-exec");
+    cmd.arg("-p").arg(profile).arg(bin).current_dir(&scratch);
+    crate::exec::run_with_timeout(cmd, None, timeout)
+}
+
+/// No sandbox, no run. The gate refuses before reaching here, and this keeps
+/// that true if a future edit lets it through.
+#[cfg(not(target_os = "macos"))]
+fn run_sandboxed(_bin: &Path, _timeout: Duration) -> Result<crate::exec::Execution, String> {
+    Err("no sandbox on this platform; --run is macOS-only".into())
 }
 
 /// The diagnostic reaches the ledger whole.
@@ -688,17 +1083,45 @@ fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
             .filter(|l| !l.starts_with("gem\tversion\t"))
         {
             let mut f = line.split('\t');
-            let (Some(name), Some(version), Some(tag)) = (f.next(), f.next(), f.next()) else {
+            let (Some(name), Some(version), Some(third)) = (f.next(), f.next(), f.next()) else {
                 continue;
             };
-            // Four columns is the pre-`site` shape, and every committed row
-            // was written that way -- read it as a row that simply never
-            // recorded one, rather than invalidating the whole ledger.
-            let row = Row {
-                version: version.to_string(),
-                outcome: Outcome::from_ledger(tag, &tsv_unfield(f.next().unwrap_or(""))),
-                site: f.next().filter(|s| !s.is_empty()).map(str::to_string),
-                digest: f.next().filter(|s| !s.is_empty()).map(str::to_string),
+            // Column 3 tells the two shapes apart without a version stamp: it
+            // is a stage tag in the current format and an outcome tag in every
+            // older one, and the two vocabularies do not overlap. Four columns
+            // is the pre-`site` shape and six the pre-`stage` shape; both are
+            // read as rows that simply never recorded the later fields, rather
+            // than invalidating the whole ledger.
+            let num = |s: Option<&str>| s.filter(|v| !v.is_empty()).and_then(|v| v.parse().ok());
+            let text = |s: Option<&str>| s.filter(|v| !v.is_empty()).map(str::to_string);
+            let row = match Stage::from_tag(third) {
+                Some(stage) => {
+                    let tag = f.next().unwrap_or("");
+                    let rust_bytes = num(f.next());
+                    let binary_bytes = num(f.next());
+                    let outcome = Outcome::from_ledger(tag, &tsv_unfield(f.next().unwrap_or("")));
+                    Row {
+                        version: version.to_string(),
+                        stage,
+                        outcome,
+                        rust_bytes,
+                        binary_bytes,
+                        site: text(f.next()),
+                        digest: text(f.next()),
+                    }
+                }
+                None => {
+                    let outcome = Outcome::from_ledger(third, &tsv_unfield(f.next().unwrap_or("")));
+                    Row {
+                        version: version.to_string(),
+                        stage: outcome.implied_stage(),
+                        outcome,
+                        rust_bytes: None,
+                        binary_bytes: None,
+                        site: text(f.next()),
+                        digest: text(f.next()),
+                    }
+                }
             };
             if out.insert(name.to_string(), row).is_some() {
                 return Err(format!(
@@ -743,10 +1166,53 @@ fn tsv_unfield(s: &str) -> String {
     }
 }
 
+/// How long each rung took, in a file nobody commits.
+///
+/// Wall-clock timing is not reproducible, and the ledger is committed and read
+/// as a diff: putting it there would rewrite ~2000 values on every sweep and
+/// make a real change impossible to see. It is appended to rather than
+/// rewritten so a scoped re-probe adds to the history instead of erasing the
+/// rows it did not measure.
+fn timings_path(root: &Path) -> PathBuf {
+    root.join("conformance/gem-probe-timings.tsv")
+}
+
+fn write_timings(
+    root: &Path,
+    rows: &BTreeMap<String, Row>,
+    timings: &BTreeMap<String, Verdict>,
+) -> Result<(), String> {
+    if timings.is_empty() {
+        return Ok(());
+    }
+    let path = timings_path(root);
+    let mut out = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => String::from(
+            "gem\tversion\tstage\tcodegen_ms\tbuild_ms\trun_ms\trust_bytes\tbinary_bytes\n",
+        ),
+    };
+    let ms = |v: Option<u128>| v.map(|n| n.to_string()).unwrap_or_default();
+    let by = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_default();
+    for (name, v) in timings {
+        let version = rows.get(name).map(|r| r.version.as_str()).unwrap_or("-");
+        out.push_str(&format!(
+            "{name}\t{version}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            v.stage.tag(),
+            ms(v.codegen_ms),
+            ms(v.build_ms),
+            ms(v.run_ms),
+            by(v.rust_bytes),
+            by(v.binary_bytes),
+        ));
+    }
+    std::fs::write(&path, out).map_err(|e| e.to_string())
+}
+
 fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
     let [compiles_path, fails_path] = ledger_paths(root);
-    let compiles = || rows.iter().filter(|(_, r)| r.outcome == Outcome::Compiles);
-    let fails = || rows.iter().filter(|(_, r)| r.outcome != Outcome::Compiles);
+    let compiles = || rows.iter().filter(|(_, r)| r.outcome == Outcome::Ok);
+    let fails = || rows.iter().filter(|(_, r)| r.outcome != Outcome::Ok);
 
     // A real header row, and every row the same width. The prose that used to
     // sit here in `#` comments now lives only in `gem-probe.md`: a TSV viewer
@@ -754,12 +1220,19 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     // as malformed and GitHub refused to render the file at all. Trailing
     // empty fields are written rather than dropped for the same reason.
     let render = |selected: &mut dyn Iterator<Item = (&String, &Row)>| {
-        let mut tsv = String::from("gem\tversion\toutcome\tdetail\twhere\tsha256\n");
+        let mut tsv = String::from(
+            "gem\tversion\tstage\toutcome\trust_bytes\tbinary_bytes\tdetail\twhere\tsha256\n",
+        );
         for (name, r) in selected {
+            let num = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_default();
+            let (rust_bytes, binary_bytes) = (num(r.rust_bytes), num(r.binary_bytes));
             let fields = [
                 name.as_str(),
                 r.version.as_str(),
+                r.stage.tag(),
                 r.outcome.tag(),
+                rust_bytes.as_str(),
+                binary_bytes.as_str(),
                 r.outcome.detail(),
                 r.site.as_deref().unwrap_or(""),
                 r.digest.as_deref().unwrap_or(""),
@@ -774,40 +1247,51 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     std::fs::write(&compiles_path, render(&mut compiles())).map_err(|e| e.to_string())?;
     std::fs::write(&fails_path, render(&mut fails())).map_err(|e| e.to_string())?;
 
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<(&str, &str), usize> = BTreeMap::new();
     for r in rows.values() {
-        *counts.entry(r.outcome.tag()).or_default() += 1;
+        *counts.entry((r.stage.tag(), r.outcome.tag())).or_default() += 1;
     }
     let mut md = String::from("# Gem probe results\n\nGenerated by `cargo xtask gem-probe`.\n\n");
     md.push_str(
-        "The two `gem-probe-*.tsv` files beside this one hold one row per gem, and a gem \
+        "**`emits-rs` means zeo produced Rust, and nothing more.** No rustc ran, no binary \
+         exists, and the gem's own code may not have been compiled at all -- zeo can decline \
+         a unit and defer it to a runtime `LoadError`, which only the `runs` stage sees. \
+         The `builds-bin` and `runs` stages are opt-in (`--build`, `--run`) and a sweep does \
+         not reach them.\n\n\
+         The two `gem-probe-*.tsv` files beside this one hold one row per gem, and a gem \
          is in exactly one of them. `gem-probe-compiles.tsv` may not regress: \
-         `gem-probe --check` gates it. In `gem-probe-fails.tsv` the outcome says why, and \
-         only `lowering-gap` and `compiler-panic` are zeo's to fix -- the rest are facts \
+         `gem-probe --check` gates both the outcome and the stage. In \
+         `gem-probe-fails.tsv` the outcome says why, and only `lowering-gap`, \
+         `compiler-panic` and `rustc-error` are zeo's to fix -- the rest are facts \
          about the gem or the harness. The `where` column points at the Ruby line the \
          compiler rejected, relative to the repository root, and `sha256` pins the `.gem` \
-         the row was measured against.\n\n",
+         the row was measured against. `rust_bytes`/`binary_bytes` are reproducible and so \
+         are committed; wall-clock timings are not, and go to the gitignored \
+         `gem-probe-timings.tsv` instead.\n\n",
     );
     md.push_str(&format!("{} gems probed.\n\n", rows.len()));
-    md.push_str("| Outcome | Gems |\n|---|---|\n");
-    for (tag, n) in &counts {
-        md.push_str(&format!("| {tag} | {n} |\n"));
+    md.push_str("| Stage | Outcome | Gems |\n|---|---|---|\n");
+    for ((stage, tag), n) in &counts {
+        md.push_str(&format!("| {stage} | {tag} | {n} |\n"));
     }
     let mut table = |title: &str, selected: &mut dyn Iterator<Item = (&String, &Row)>| {
         md.push_str(&format!(
-            "\n## {title}\n\n| Gem | Version | Outcome | Detail |\n|---|---|---|---|\n"
+            "\n## {title}\n\n| Gem | Version | Stage | Outcome | Rust bytes | Detail |\
+             \n|---|---|---|---|---|---|\n"
         ));
         for (name, r) in selected {
             md.push_str(&format!(
-                "| {name} | {} | {} | {} |\n",
+                "| {name} | {} | {} | {} | {} | {} |\n",
                 r.version,
+                r.stage.tag(),
                 r.outcome.tag(),
+                r.rust_bytes.map(|n| n.to_string()).unwrap_or_default(),
                 r.outcome.detail().replace('|', "\\|")
             ));
         }
     };
-    table("Compiles", &mut compiles());
-    table("Does not compile", &mut fails());
+    table("Reached its stage", &mut compiles());
+    table("Did not", &mut fails());
     std::fs::write(root.join("conformance/gem-probe.md"), md).map_err(|e| e.to_string())
 }
 
@@ -951,15 +1435,17 @@ struct Ready {
 /// directory would corrupt it.
 ///
 /// `Err` is a row that already knows its verdict and needs no compile.
-fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result<Ready, Row> {
+fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result<Ready, Box<Row>> {
     let version = want
         .map(String::from)
         .map_or_else(|| latest_version(name), Ok)
-        .map_err(|e| Row {
-            version: want.unwrap_or("-").to_string(),
-            outcome: Outcome::FetchFailed(e),
-            site: None,
-            digest: None,
+        .map_err(|e| {
+            Box::new(Row::stopped(
+                want.unwrap_or("-"),
+                Stage::Fetch,
+                Outcome::FetchFailed(e),
+                None,
+            ))
         })?;
 
     // One request answers both questions. `--no-deps` skips it, so those rows
@@ -988,20 +1474,23 @@ fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result
             deps,
             digest,
         }),
-        Err(e) => Err(Row {
-            version,
-            outcome: Outcome::FetchFailed(e),
-            site: None,
+        Err(e) => Err(Box::new(Row::stopped(
+            &version,
+            Stage::Fetch,
+            Outcome::FetchFailed(e),
             digest,
-        }),
+        ))),
     }
 }
 
 fn report(name: &str, row: &Row) {
     let detail = row.outcome.detail();
+    // The stage rides on every line, including the successes. A sweep's
+    // scrolling output is where "compiles" got read as more than it was.
     println!(
-        "  {name} {}: {}{}",
+        "  {name} {}: {} {}{}",
         row.version,
+        row.stage.tag(),
         row.outcome.tag(),
         if detail.is_empty() {
             String::new()
@@ -1022,6 +1511,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut positional: Vec<String> = Vec::new();
     let mut jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut timeout = DEFAULT_TIMEOUT;
+    let (mut build, mut run, mut allow_run) = (false, false, false);
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -1041,6 +1531,9 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 }
             },
             "--failing" => failing = true,
+            "--build" => build = true,
+            "--run" => run = true,
+            "--allow-running-untrusted-gem-code" => allow_run = true,
             "--jobs" => match it.next().and_then(|v| v.parse().ok()) {
                 Some(n) if n >= 1 => jobs = n,
                 _ => {
@@ -1093,6 +1586,43 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         }
     }
 
+    // `--run` executes code downloaded from rubygems. Nothing about a sweep
+    // should be able to reach it by accident, so it is fenced four ways before
+    // any network call happens: a second explicit flag, named gems only, a
+    // platform that can confine the process, and a prompt. Bulk selectors are
+    // refused outright rather than confirmed -- a `y` covering 194k gems is not
+    // a decision anyone can make, and that is exactly the typo worth stopping.
+    if run {
+        build = true;
+        let bulk = [
+            ("--corpus", corpus),
+            ("--all", all),
+            ("--index", index),
+            ("--failing", failing),
+            ("--matching", matching.is_some()),
+            ("--matching-name", matching_name.is_some()),
+            ("--popular", popular.is_some()),
+        ];
+        if let Err(why) = run_is_permitted(names.len(), &bulk, allow_run, cfg!(target_os = "macos"))
+        {
+            eprintln!("gem-probe: {why}");
+            return ExitCode::FAILURE;
+        }
+        println!("gem-probe: --run will BUILD and EXECUTE:");
+        for (name, want) in &names {
+            println!("  {name} {}", want.as_deref().unwrap_or("(latest)"));
+        }
+        println!(
+            "  sandboxed: no network, no writes outside a scratch directory.\n\
+             Their dependencies are compiled in and run too."
+        );
+        if !confirmed("proceed?") {
+            eprintln!("gem-probe: not confirmed; nothing was run");
+            return ExitCode::FAILURE;
+        }
+    }
+    let tiers = Tiers { build, run };
+
     let before = match read_ledger(root) {
         Ok(rows) => rows,
         Err(e) => {
@@ -1131,7 +1661,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         names.extend(
             before
                 .iter()
-                .filter(|(_, r)| r.outcome != Outcome::Compiles)
+                .filter(|(_, r)| r.outcome != Outcome::Ok)
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
         );
     }
@@ -1227,8 +1757,9 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     // `rows` is a `BTreeMap` that `write_ledger` emits whole, so the file stays
     // byte-identical to what a sequential run would have produced.
     let (work_tx, work_rx) = std::sync::mpsc::channel::<Ready>();
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<(String, Row)>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(String, Row, Option<Verdict>)>();
     let work_rx = std::sync::Mutex::new(work_rx);
+    let mut timings: BTreeMap<String, Verdict> = BTreeMap::new();
 
     std::thread::scope(|scope| {
         let done_for_prep = done_tx.clone();
@@ -1242,7 +1773,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     }
                     // Nothing to compile -- straight to the recorder.
                     Err(row) => {
-                        if done_for_prep.send((name.clone(), row)).is_err() {
+                        if done_for_prep.send((name.clone(), *row, None)).is_err() {
                             break;
                         }
                     }
@@ -1261,15 +1792,9 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     let Ok(ready) = work_rx.lock().unwrap().recv() else {
                         break;
                     };
-                    let outcome = probe(root, zeo, &ready.name, &ready.dir, &ready.deps, timeout);
-                    let (outcome, site) = outcome;
-                    let row = Row {
-                        version: ready.version,
-                        outcome,
-                        site,
-                        digest: ready.digest,
-                    };
-                    if done.send((ready.name, row)).is_err() {
+                    let verdict = probe(root, zeo, &ready, timeout, tiers);
+                    let row = Row::from_verdict(ready.version, ready.digest, &verdict);
+                    if done.send((ready.name, row, Some(verdict))).is_err() {
                         break;
                     }
                 }
@@ -1280,52 +1805,83 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         drop(done_tx);
 
         let mut seen = 0usize;
-        while let Ok((name, row)) = done_rx.recv() {
+        while let Ok((name, row, verdict)) = done_rx.recv() {
             seen += 1;
             print!("[{seen}/{total}]");
             report(&name, &row);
+            if let Some(v) = verdict {
+                timings.insert(name.clone(), v);
+            }
             rows.insert(name, row);
             if let Err(e) = write_ledger(root, &rows) {
                 eprintln!("gem-probe: writing the ledger: {e}");
             }
         }
     });
+    if let Err(e) = write_timings(root, &rows, &timings) {
+        eprintln!("gem-probe: writing the timings: {e}");
+    }
 
     if let Err(e) = write_ledger(root, &rows) {
         eprintln!("gem-probe: writing the ledger: {e}");
         return ExitCode::FAILURE;
     }
 
-    let compiles = rows
-        .values()
-        .filter(|r| r.outcome == Outcome::Compiles)
-        .count();
+    let reached = |stage: Stage| {
+        rows.values()
+            .filter(|r| r.outcome == Outcome::Ok && r.stage >= stage)
+            .count()
+    };
     let [compiles_path, fails_path] = ledger_paths(root);
+    // Named by the rung, not by "compile": the whole point of the stage column
+    // is that this number is about emitting Rust and nothing further.
     println!(
-        "gem-probe: {compiles}/{} probed gems compile\n  {}\n  {}",
+        "gem-probe: {}/{} probed gems emit Rust\n  {}\n  {}",
+        reached(Stage::EmitsRs),
         rows.len(),
         compiles_path.display(),
         fails_path.display()
     );
+    if tiers.build {
+        println!(
+            "           {} of those build a binary",
+            reached(Stage::BuildsBin)
+        );
+    }
+    if tiers.run {
+        println!("           {} of those run", reached(Stage::Runs));
+    }
 
-    // A gem that compiled and no longer does is a regression, whatever the new
-    // outcome is. Only `--check` fails on it, so an exploratory probe of a
-    // fresh gem never breaks a build.
+    // A gem that reached a rung and no longer does is a regression, whatever
+    // the new outcome is -- and so is one that reached a LOWER rung than
+    // before, which the outcome alone cannot see. Only `--check` fails on it,
+    // so an exploratory probe of a fresh gem never breaks a build.
     if check {
-        let lost: Vec<&String> = before
+        let lost: Vec<(&String, String)> = before
             .iter()
-            .filter(|(n, r)| {
-                r.outcome == Outcome::Compiles
-                    && rows
-                        .get(*n)
-                        .is_some_and(|new| new.outcome != Outcome::Compiles)
+            .filter_map(|(n, old)| {
+                let new = rows.get(n)?;
+                let was_ok = old.outcome == Outcome::Ok;
+                let regressed = (was_ok && new.outcome != Outcome::Ok)
+                    || (was_ok && new.outcome == Outcome::Ok && new.stage < old.stage);
+                regressed.then(|| {
+                    (
+                        n,
+                        format!(
+                            "{} {} -> {} {}",
+                            old.stage.tag(),
+                            old.outcome.tag(),
+                            new.stage.tag(),
+                            new.outcome.tag()
+                        ),
+                    )
+                })
             })
-            .map(|(n, _)| n)
             .collect();
         if !lost.is_empty() {
-            eprintln!("gem-probe: {} gem(s) stopped compiling:", lost.len());
-            for n in lost {
-                eprintln!("  {n}: {}", rows[n].outcome.tag());
+            eprintln!("gem-probe: {} gem(s) regressed:", lost.len());
+            for (n, what) in lost {
+                eprintln!("  {n}: {what}");
             }
             return ExitCode::FAILURE;
         }
@@ -1529,6 +2085,75 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The pre-`stage` shape: six columns, and `compiles` where the stage tag
+    /// now sits. Column 3 is what tells the two apart, so the reader must not
+    /// mistake an outcome tag for a stage -- and `compiles` in particular has
+    /// to land on `emits-rs`, since that is the only rung it ever measured.
+    #[test]
+    fn a_six_column_row_reads_as_the_stage_it_measured() {
+        let root = scratch("legacy-stage");
+        let [compiles, fails] = ledger_paths(&root);
+        std::fs::create_dir_all(fails.parent().unwrap()).unwrap();
+        std::fs::write(
+            &compiles,
+            "gem\tversion\toutcome\tdetail\twhere\tsha256\n\
+             alpha\t1.0.0\tcompiles\t\t\tdeadbeef\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &fails,
+            "gem\tversion\toutcome\tdetail\twhere\tsha256\n\
+             beta\t2.0.0\tno-lib-dir\t\t\t\n\
+             gamma\t3.0.0\tfetch-failed\tsha256 mismatch\t\t\n",
+        )
+        .unwrap();
+
+        let back = read_ledger(&root).unwrap();
+        assert_eq!(back["alpha"].outcome, Outcome::Ok);
+        assert_eq!(back["alpha"].stage, Stage::EmitsRs);
+        assert_eq!(back["alpha"].digest.as_deref(), Some("deadbeef"));
+        // A legacy row measured no bytes; recording 0 would claim it did.
+        assert_eq!(back["alpha"].rust_bytes, None);
+        assert_eq!(back["beta"].stage, Stage::Unpack);
+        assert_eq!(back["gamma"].stage, Stage::Fetch);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The ladder is ordered, and `--check` leans on that to tell a promotion
+    /// from a regression.
+    #[test]
+    fn the_stages_are_ordered_by_how_much_they_claim() {
+        assert!(Stage::Fetch < Stage::Unpack);
+        assert!(Stage::Unpack < Stage::EmitsRs);
+        assert!(Stage::EmitsRs < Stage::BuildsBin);
+        assert!(Stage::BuildsBin < Stage::Runs);
+    }
+
+    /// The fence around executing code from rubygems. Each clause is a
+    /// separate refusal, so a mistake in one cannot be covered by another.
+    #[test]
+    fn running_gem_code_is_refused_unless_every_condition_holds() {
+        let none: [(&str, bool); 1] = [("--corpus", false)];
+        let bulk: [(&str, bool); 2] = [("--corpus", false), ("--failing", true)];
+
+        // A bulk selector is refused outright -- not confirmed, not warned.
+        let why = run_is_permitted(1, &bulk, true, true).unwrap_err();
+        assert!(why.contains("--failing selects in bulk"), "{why}");
+        // ... even with every other condition satisfied.
+        assert!(run_is_permitted(9, &bulk, true, true).is_err());
+
+        assert!(
+            run_is_permitted(0, &none, true, true).is_err(),
+            "no gem named"
+        );
+        let why = run_is_permitted(1, &none, false, true).unwrap_err();
+        assert!(why.contains("--allow-running-untrusted-gem-code"), "{why}");
+        let why = run_is_permitted(1, &none, true, false).unwrap_err();
+        assert!(why.contains("Refusing to run unconfined"), "{why}");
+
+        assert!(run_is_permitted(1, &none, true, true).is_ok());
+    }
+
     /// A stall carries no diagnosis, so it must not borrow one: `timeout` has
     /// to survive a ledger round trip as itself rather than decaying into the
     /// `LoweringGap` catch-all `from_ledger` uses for unknown tags.
@@ -1609,7 +2234,10 @@ mod tests {
             "alpha".to_string(),
             Row {
                 version: "1.0.0".into(),
-                outcome: Outcome::Compiles,
+                stage: (Outcome::Ok).implied_stage(),
+                outcome: Outcome::Ok,
+                rust_bytes: None,
+                binary_bytes: None,
                 site: None,
                 digest: None,
             },
@@ -1618,7 +2246,10 @@ mod tests {
             "beta".to_string(),
             Row {
                 version: "2.1.0".into(),
+                stage: (Outcome::LoweringGap("some gap".into())).implied_stage(),
                 outcome: Outcome::LoweringGap("some gap".into()),
+                rust_bytes: None,
+                binary_bytes: None,
                 site: Some("vendor/gems/beta/lib/beta.rb:12".into()),
                 digest: Some("d0d0cafe".into()),
             },
@@ -1627,7 +2258,10 @@ mod tests {
             "gamma".to_string(),
             Row {
                 version: "3.0.0".into(),
+                stage: (Outcome::NativeExtension).implied_stage(),
                 outcome: Outcome::NativeExtension,
+                rust_bytes: None,
+                binary_bytes: None,
                 site: None,
                 digest: None,
             },
@@ -1636,7 +2270,7 @@ mod tests {
 
         let back = read_ledger(&root).unwrap();
         assert_eq!(back.len(), 3);
-        assert_eq!(back["alpha"].outcome, Outcome::Compiles);
+        assert_eq!(back["alpha"].outcome, Outcome::Ok);
         assert_eq!(back["beta"].version, "2.1.0");
         assert_eq!(
             back["beta"].outcome,
@@ -1665,7 +2299,10 @@ mod tests {
             "quoted".to_string(),
             Row {
                 version: "1.0.0".into(),
+                stage: (Outcome::LoweringGap(detail.into())).implied_stage(),
                 outcome: Outcome::LoweringGap(detail.into()),
+                rust_bytes: None,
+                binary_bytes: None,
                 site: None,
                 digest: None,
             },
@@ -1674,9 +2311,9 @@ mod tests {
 
         let text = std::fs::read_to_string(&ledger_paths(&root)[1]).unwrap();
         let row = text.lines().nth(1).unwrap();
-        assert_eq!(row.split('\t').count(), 6, "every row keeps six fields");
+        assert_eq!(row.split('\t').count(), 9, "every row keeps nine fields");
         assert!(
-            row.split('\t').nth(3).unwrap().starts_with('"'),
+            row.split('\t').nth(6).unwrap().starts_with('"'),
             "the detail is quoted: {row}"
         );
         assert_eq!(
@@ -1697,7 +2334,10 @@ mod tests {
                 n.to_string(),
                 Row {
                     version: "1.0.0".into(),
-                    outcome: Outcome::Compiles,
+                    stage: (Outcome::Ok).implied_stage(),
+                    outcome: Outcome::Ok,
+                    rust_bytes: None,
+                    binary_bytes: None,
                     site: None,
                     digest: None,
                 },
@@ -1728,19 +2368,14 @@ mod tests {
         let root = scratch("ledger-split");
         let mut rows = BTreeMap::new();
         for (name, outcome) in [
-            ("alpha", Outcome::Compiles),
+            ("alpha", Outcome::Ok),
             ("beta", Outcome::LoweringGap("a gap".into())),
-            ("gamma", Outcome::Compiles),
+            ("gamma", Outcome::Ok),
             ("delta", Outcome::NativeExtension),
         ] {
             rows.insert(
                 name.to_string(),
-                Row {
-                    version: "1.0.0".into(),
-                    outcome,
-                    site: None,
-                    digest: None,
-                },
+                Row::stopped("1.0.0", outcome.implied_stage(), outcome, None),
             );
         }
         write_ledger(&root, &rows).unwrap();
@@ -1763,22 +2398,22 @@ mod tests {
             "beta".to_string(),
             Row {
                 version: "1.0.0".into(),
+                stage: (Outcome::LoweringGap("a gap".into())).implied_stage(),
                 outcome: Outcome::LoweringGap("a gap".into()),
+                rust_bytes: None,
+                binary_bytes: None,
                 site: None,
                 digest: None,
             },
         );
         write_ledger(&root, &rows).unwrap();
-        rows.get_mut("beta").unwrap().outcome = Outcome::Compiles;
+        rows.get_mut("beta").unwrap().outcome = Outcome::Ok;
         write_ledger(&root, &rows).unwrap();
 
         let [compiles, fails] = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
         assert_eq!(gem_names(&compiles), ["beta"]);
         assert!(gem_names(&fails).is_empty());
-        assert_eq!(
-            read_ledger(&root).unwrap()["beta"].outcome,
-            Outcome::Compiles
-        );
+        assert_eq!(read_ledger(&root).unwrap()["beta"].outcome, Outcome::Ok);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1986,7 +2621,10 @@ mod tests {
                 name.to_string(),
                 Row {
                     version: "1.0.0".into(),
-                    outcome: Outcome::Compiles,
+                    stage: (Outcome::Ok).implied_stage(),
+                    outcome: Outcome::Ok,
+                    rust_bytes: None,
+                    binary_bytes: None,
                     site: None,
                     digest: None,
                 },
@@ -2010,7 +2648,10 @@ mod tests {
             "done".to_string(),
             Row {
                 version: "1.0.0".into(),
-                outcome: Outcome::Compiles,
+                stage: (Outcome::Ok).implied_stage(),
+                outcome: Outcome::Ok,
+                rust_bytes: None,
+                binary_bytes: None,
                 site: None,
                 digest: None,
             },

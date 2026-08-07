@@ -1,15 +1,19 @@
-//! Child-process execution with a wall-clock timeout and stderr capture,
-//! dependency-free: a reader thread drains stderr (so a chatty child never
-//! deadlocks on a full pipe) while the parent polls `try_wait`. stdout is
-//! discarded -- the callers (`stdlib-status`, `gem-probe`) judge compiles by
-//! exit status + stderr, and `--dump=rust` writes the Rust they don't want to
-//! stdout.
+//! Child-process execution with a wall-clock timeout and output capture,
+//! dependency-free: a reader thread drains each pipe (so a chatty child never
+//! deadlocks on a full one) while the parent polls `try_wait`.
+//!
+//! Both pipes are drained by their own thread. Capturing stdout as well as
+//! stderr is what lets `gem-probe` measure and keep `--dump=rust` output, and
+//! draining it is not optional once it is a pipe: the Rust for a large gem is
+//! megabytes, far past the pipe buffer, so a child writing it would block
+//! forever against a parent that never read.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub struct Execution {
+    pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     /// `None` when the child was killed on timeout.
     pub status: Option<std::process::ExitStatus>,
@@ -32,7 +36,7 @@ pub fn run_with_timeout(
     } else {
         Stdio::null()
     });
-    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let start = Instant::now();
     let mut child = cmd
@@ -46,6 +50,7 @@ pub fn run_with_timeout(
             let _ = stdin.write_all(&bytes);
         })
     });
+    let stdout_reader = drain(child.stdout.take().unwrap());
     let stderr_reader = drain(child.stderr.take().unwrap());
 
     let mut timed_out = false;
@@ -66,6 +71,7 @@ pub fn run_with_timeout(
         let _ = w.join();
     }
     Ok(Execution {
+        stdout: stdout_reader.join().unwrap_or_default(),
         stderr: stderr_reader.join().unwrap_or_default(),
         status,
         timed_out,

@@ -11,6 +11,12 @@ zeo-gems.json
 # upstream data that changes daily; `--refresh-index` takes a newer copy.
 conformance/rubygems-names.txt
 
+# Per-gem wall-clock timings from `xtask gem-probe`. Deliberately NOT
+# committed: timing is not reproducible, so it would rewrite every row on
+# every sweep and bury the ledger's real diff. The byte counts, which ARE
+# reproducible, live in the committed ledger instead.
+conformance/gem-probe-timings.tsv
+
 # Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs
