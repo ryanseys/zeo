@@ -354,8 +354,69 @@ fn instance_class(
             args,
             ..
         } if name == "new" && args.is_empty() => cref.last().copied(),
+        // A LITERAL is an instance of its own class, and it is how the
+        // capability probes are actually written: `''.respond_to?(:bytesize)`,
+        // `[].respond_to?(:sum)`. Same fact as `String.new.respond_to?`, spelled
+        // the way anyone would spell it.
+        HirNode::StringLit(_) => Some(zeo_abi::STRING_CLASS),
+        HirNode::SymbolLit(_) => Some(zeo_abi::SYMBOL_CLASS),
+        HirNode::IntegerLit(_) => Some(zeo_abi::INTEGER_CLASS),
+        HirNode::FloatLit(_) => Some(zeo_abi::FLOAT_CLASS),
+        HirNode::ArrayLit(_) => Some(zeo_abi::ARRAY_CLASS),
+        HirNode::HashLit(_) => Some(zeo_abi::HASH_CLASS),
+        // The three standard streams are IO instances, and highline probes one
+        // (`unless STDIN.respond_to? :getbyte`). They are constants rather than
+        // classes, so nothing else here would reach them.
+        HirNode::ClassRef(n) if matches!(n.trim_start_matches("::"), "STDIN" | "STDOUT" | "STDERR") => {
+            Some(zeo_abi::IO_CLASS)
+        }
         _ => None,
     }
+}
+
+/// Whether a BUILTIN class or one of its ancestors declares instance method
+/// `name` natively. `builtin_surface` answers per class, without inheritance,
+/// so the chain is walked here -- `''.respond_to?(:each_char)` has to see
+/// `String`'s own row, `''.respond_to?(:tap)` `Kernel`'s.
+///
+/// Walks the DECLARED `parent`/`includes` edges rather than `ClassInfo::
+/// ancestors`, which `mro::materialize` fills in only after this whole walk has
+/// finished -- reading it here would silently see an empty chain and report
+/// every inherited method missing.
+///
+/// `Some(false)` only when EVERY class on the chain has a projected surface: a
+/// class not yet migrated to the macro has no list to be absent from, and
+/// "missing" would then be a fact about zeo's build rather than about Ruby.
+/// When they all do, the absence is real -- `"".respond_to?(:parameterize)` is
+/// how test-prof asks whether ActiveSupport has been loaded, and the honest
+/// answer is no.
+fn builtin_provides_instance_method(
+    compiler: &Compiler,
+    class: ClassId,
+    name: &str,
+) -> Option<bool> {
+    let mut seen = Vec::new();
+    let mut queue = vec![class];
+    let mut all_projected = true;
+    while let Some(c) = queue.pop() {
+        if seen.contains(&c) {
+            continue;
+        }
+        seen.push(c);
+        match crate::builtin_surface::surface_for(c) {
+            Some(s) if s.instance_methods.contains(&name) => return Some(true),
+            Some(_) => {}
+            // `Object` has no projected surface and needs none: it is where
+            // COMPILED top-level `def`s land, and `method_in_chain` -- which
+            // the caller already asked -- is the table that holds them.
+            None if c == zeo_abi::OBJECT_CLASS => {}
+            None => all_projected = false,
+        }
+        let info = compiler.class(c);
+        queue.extend(info.includes.iter().copied());
+        queue.extend(info.parent);
+    }
+    all_projected.then_some(false)
 }
 
 /// Compile-time truth of `recv.respond_to?(:m)`. Answered against the compiled
@@ -375,10 +436,15 @@ fn respond_to_fold(
     let receiver = receiver?;
     let m = probe_name(compiler, args)?;
     if let Some(cls) = instance_class(compiler, cref, box_id, receiver) {
-        return Some(match compiler.method_in_chain(cls, &m) {
-            Some((_, sid)) => compiler.scope(sid).visibility == Visibility::Public,
-            None => false,
-        });
+        if let Some((_, sid)) = compiler.method_in_chain(cls, &m) {
+            return Some(compiler.scope(sid).visibility == Visibility::Public);
+        }
+        // A builtin's NATIVE rows are not in `method_in_chain` -- that table
+        // holds compiled Ruby methods. Ask the projected surface instead.
+        if compiler.class(cls).is_builtin {
+            return builtin_provides_instance_method(compiler, cls, &m);
+        }
+        return Some(false);
     }
     // A class receiver: a bare `Process` (`ClassRef`) or a top-anchored
     // `::Process` (which reads as `QualifiedConstRead("Object", "Process")` --
@@ -456,8 +522,14 @@ fn call_fold(
             };
             cmp_fold(compiler, cref, box_id, name, l, *r)
         }
+        // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
+        // condition that folds on its own negates; anything else stays `None`.
+        "!" if args.is_empty() => {
+            Some(!static_bool(compiler, cref, box_id, receiver?)?)
+        }
         "freeze" if args.is_empty() => static_bool(compiler, cref, box_id, receiver?),
         "respond_to?" => respond_to_fold(compiler, cref, box_id, receiver, args),
+        "const_defined?" => const_defined_fold(compiler, cref, box_id, receiver, args),
         "method_defined?" | "public_method_defined?" => {
             method_defined_fold(compiler, cref, box_id, receiver, args)
         }
@@ -487,7 +559,44 @@ fn defined_const_fold(
         HirNode::QualifiedConstRead(scope, name) => format!("{scope}::{name}"),
         _ => return None,
     };
-    if compiler.resolve_class(&joined, cref, box_id).is_some() {
+    const_name_fold(compiler, cref, box_id, &joined)
+}
+
+/// `Module#const_defined?(:X)` -- `defined?(X)`'s reflective twin, and the shape
+/// guard-compat's `unless Object.const_defined?('Guard')` is written in. The
+/// name arrives as a literal argument rather than as a constant read, so it
+/// shares [`defined_const_fold`]'s decision but not its node matching.
+///
+/// A receiver narrows the scope: `Object.const_defined?` asks at the root, a
+/// bare call asks in the enclosing lexical scope. Any other receiver stays
+/// `None` -- resolving `Foo.const_defined?` needs Foo's own namespace, which is
+/// a different question from the one this answers.
+fn const_defined_fold(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    receiver: Option<NodeId>,
+    args: &[ArrayElem],
+) -> Option<bool> {
+    let name = probe_name(compiler, args)?;
+    let scope: &[ClassId] = match receiver {
+        None => cref,
+        Some(r) => match &compiler.hir[r] {
+            HirNode::ClassRef(n) if n == "Object" || n == "::Object" => &[],
+            _ => return None,
+        },
+    };
+    const_name_fold(compiler, scope, box_id, &name)
+}
+
+/// The shared decision behind `defined?(X)` and `const_defined?(:X)`.
+fn const_name_fold(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    joined: &str,
+) -> Option<bool> {
+    if compiler.resolve_class(joined, cref, box_id).is_some() {
         return Some(true);
     }
     let path = crate::constpath::ConstPath::parse(&joined);
