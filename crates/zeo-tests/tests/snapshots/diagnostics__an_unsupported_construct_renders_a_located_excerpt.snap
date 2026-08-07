@@ -1,14 +1,14 @@
 ---
-source: crates/zeo/tests/diagnostics.rs
+source: crates/zeo-tests/tests/diagnostics.rs
 expression: render(err)
 ---
 zeo::lower::unsupported
 
-  × a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (zeo limitation, UTF-8-only)
-   ╭─[-e:2:3]
+  × a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (zeo limitation) -- write an explicit `=~`/`match?` against a real receiver instead
+   ╭─[-e:2:12]
  1 │ x = 1
- 2 │ p(/foo/e)
-   ·   ───┬──
-   ·      ╰── not lowered yet
+ 2 │ puts(1) if /foo/
+   ·            ──┬──
+   ·              ╰── not lowered yet
    ╰────
   help: valid Ruby that zeo does not compile yet (NotImplementedError territory, not a SyntaxError)

@@ -1,5 +1,5 @@
 ---
-source: crates/zeo/tests/diagnostics.rs
+source: crates/zeo-tests/tests/diagnostics.rs
 expression: render(err)
 ---
 zeo::lower::syntax

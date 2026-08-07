@@ -19,8 +19,8 @@ fn render(err: zeo::CompileError) -> String {
 /// gap, not your syntax" framing in code + help.
 #[test]
 fn an_unsupported_construct_renders_a_located_excerpt() {
-    let err = zeo::compile_to_rust_with("x = 1\np(/foo/e)\n", &Default::default())
-        .expect_err("the e-flag regexp is rejected");
+    let err = zeo::compile_to_rust_with("x = 1\nputs(1) if /foo/\n", &Default::default())
+        .expect_err("a bare condition regexp is rejected");
     insta::assert_snapshot!(render(err));
 }
 

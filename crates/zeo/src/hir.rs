@@ -690,10 +690,9 @@ impl Hir {
     /// destructuring-param slot that is built without it. See
     /// [`is_internal_local`], which is what keeps them out of
     /// `local_variables`.
-    pub const INTERNAL_LOCAL_PREFIXES: &'static [&'static str] =
-        &[
-            "__recv", "__idx", "__asgn", "__mval", "__destr", "__cscope", "__resc",
-        ];
+    pub const INTERNAL_LOCAL_PREFIXES: &'static [&'static str] = &[
+        "__recv", "__idx", "__asgn", "__mval", "__destr", "__cscope", "__resc",
+    ];
 
     pub fn gensym(&self, prefix: &str) -> String {
         debug_assert!(
@@ -2984,15 +2983,15 @@ mod span_tests {
     /// the innermost offending construct, not the whole statement.
     #[test]
     fn a_lowering_error_pinpoints_the_offending_construct() {
-        let src = "y = 1\nputs [1, /bad/e]\n";
+        let src = "y = 1\nputs(1) if /bad/\n";
         let mut hir = Hir::default();
         let file = hir.add_file("app.rb", src);
         hir.lowering_file = Some(file);
         let err = crate::lower::parse_and_lower_into(&mut hir, src)
-            .expect_err("the e-flag regexp is rejected");
+            .expect_err("a bare condition regexp is rejected");
         let span = err.span.expect("located");
         assert_eq!(span.file, file);
-        assert_eq!(&src[span.start as usize..span.end as usize], "/bad/e");
+        assert_eq!(&src[span.start as usize..span.end as usize], "/bad/");
     }
 
     /// `SYNTH` round-trips as "no span" without an `Option` in the table.
