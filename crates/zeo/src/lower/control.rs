@@ -117,11 +117,19 @@ pub(crate) fn lower_begin(
                 splats.push(lower_node(result, hir, &n)?);
             }
         }
-        let binding = match r.reference() {
-            None => None,
-            Some(n) => Some(local_target_name(&n)?),
+        let (binding, copy_out) = match r.reference() {
+            None => (None, None),
+            Some(n) => {
+                let (name, copy) = rescue_binding_target(hir, &n)?;
+                (Some(name), copy)
+            }
         };
-        let rescue_body = lower_body(result, hir, r.statements().map(|s| s.as_node()))?;
+        let mut rescue_body = lower_body(result, hir, r.statements().map(|s| s.as_node()))?;
+        // `rescue => @e` binds the hidden local, then copies it into the real
+        // target before anything else in the clause runs.
+        if let Some(copy) = copy_out {
+            rescue_body.insert(0, copy);
+        }
         rescues.push(RescueClause {
             classes,
             splats,
@@ -199,9 +207,52 @@ pub(crate) fn lower_single_optional_argument(
 /// real Ruby's own grammar for this one position (unlike a general
 /// multi-assignment target, which additionally allows ivars/cvars/globals/
 /// constants/`obj.attr`/`arr[i]`/nested groups -- see `lower_multi_target`).
-fn local_target_name(node: &Node<'_>) -> PResult<String> {
-    let target = node
-        .as_local_variable_target_node()
-        .ok_or("`rescue => name` only supports a plain local variable binding (zeo limitation)")?;
-    Ok(String::from_utf8_lossy(target.name().as_slice()).into_owned())
+/// Where a `rescue => target` puts the exception. Ruby takes any assignable
+/// target here, not just a local: activesupport writes `rescue => @setup_exception`
+/// and rspec-rails `rescue *exceptions => @rescued_exception`.
+///
+/// A plain local is the binding itself. Anything else binds a HIDDEN local and
+/// gets a copy statement, which the caller runs as the clause's first
+/// statement -- so the rescue machinery keeps its one shape (a local name) and
+/// the target sees the exception before any of the clause's own code.
+///
+/// Returns `(the local the machinery binds, the copy-out statement)`.
+fn rescue_binding_target(hir: &mut Hir, node: &Node<'_>) -> PResult<(String, Option<NodeId>)> {
+    if let Some(t) = node.as_local_variable_target_node() {
+        return Ok((
+            String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+            None,
+        ));
+    }
+    let tmp = hir.gensym("__resc");
+    let value = hir.push(HirNode::LocalRead(tmp.clone()));
+    let strip_at = |raw: &[u8]| {
+        String::from_utf8_lossy(raw)
+            .trim_start_matches('@')
+            .to_string()
+    };
+    let write = if let Some(t) = node.as_instance_variable_target_node() {
+        hir.push(HirNode::IvarWrite(strip_at(t.name().as_slice()), value))
+    } else if let Some(t) = node.as_class_variable_target_node() {
+        crate::lower::cvar_write(hir, strip_at(t.name().as_slice()), value)
+    } else if let Some(t) = node.as_global_variable_target_node() {
+        hir.push(HirNode::GlobalWrite(
+            String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+            value,
+        ))
+    } else if let Some(t) = node.as_constant_target_node() {
+        hir.push(HirNode::ConstWrite {
+            scope: None,
+            name: String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+            value,
+        })
+    } else {
+        return Err(
+            "`rescue => target` supports a local, `@ivar`, `@@cvar`, `$global` or a constant \
+             (zeo limitation)"
+                .to_string()
+                .into(),
+        );
+    };
+    Ok((tmp, Some(write)))
 }

@@ -1,4 +1,4 @@
-use crate::support::{compile_project, run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn eval_can_write_an_ivar_on_self() {
@@ -1827,18 +1827,27 @@ fn singleton_methods_on_objects_constants_and_modules() {
 /// exactly these bodies, so it takes that instead of rejecting -- see
 /// `reopening_a_runtime_class_falls_back_rather_than_failing_to_compile`.
 #[test]
-fn a_local_write_in_a_runtime_class_body_is_a_clean_rejection_not_a_panic() {
-    // A local assignment in a runtime-built class body would see the enclosing
-    // scope's locals rather than its own, so it stays a clean compile error
-    // (`include`/`alias`/a nested class are now REWRITTEN to runtime self-sends
-    // -- see `transform_runtime_class_body` -- rather than rejected).
-    let src = "y = 99\nclass Foo < Struct.new(:a)\n  y = 1\nend\n";
-    let err = compile_project(&[("main.rb", src)], "main.rb", &[])
-        .expect_err("expected a compile-time rejection");
-    assert!(
-        err.contains("local variable assignment in the body of `class Foo`"),
-        "got: {err}"
+fn a_local_write_in_a_runtime_class_body_gets_its_own_scope() {
+    // A runtime-built class body EMITS as a block, which shares the enclosing
+    // local scope -- but ruby gives a class body its own. The body's names are
+    // renamed per body (`rename::isolate_runtime_class_locals`), so neither
+    // direction leaks: the outer `y` keeps its value, and the body's `y` is
+    // invisible outside. This used to be a clean compile-time rejection.
+    let result = run_ruby(
+        r#"
+        y = 99
+        class Foo < Struct.new(:a)
+          y = 1
+          define_method(:from_body) { y }
+        end
+        p y
+        p Foo.new(0).from_body
+        p defined?(y)
+        p binding.local_variables
+        "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "99\n1\n\"local-variable\"\n[:y]\n");
 }
 
 #[test]

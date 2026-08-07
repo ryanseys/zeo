@@ -1,0 +1,17 @@
+true
+:OUTER_UNTOUCHED
+[:abstract, AbstractAdapter]
+"local-variable"
+[:blk, :callback, :m, :o, :o2, :o3, :parent, :w]
+false
+[true, true]
+["boom", ArgumentError]
+[false, "t"]
+[true, "t"]
+"to a global"
+"to a cvar"
+"X"
+42
+[:from_proc, [:tag]]
+:from_literal
+:captured

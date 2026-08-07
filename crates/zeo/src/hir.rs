@@ -691,7 +691,9 @@ impl Hir {
     /// [`is_internal_local`], which is what keeps them out of
     /// `local_variables`.
     pub const INTERNAL_LOCAL_PREFIXES: &'static [&'static str] =
-        &["__recv", "__idx", "__asgn", "__mval", "__destr", "__cscope"];
+        &[
+            "__recv", "__idx", "__asgn", "__mval", "__destr", "__cscope", "__resc",
+        ];
 
     pub fn gensym(&self, prefix: &str) -> String {
         debug_assert!(

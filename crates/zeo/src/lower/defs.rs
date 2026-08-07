@@ -1594,19 +1594,21 @@ fn lower_runtime_class_body(
     name: &str,
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
-    // A runtime class body runs as an ordinary BLOCK, which opens no cref.
-    let body = lower_class_body(result, hir, body, None, None)?;
-    if body
-        .iter()
-        .any(|&n| matches!(hir[n], HirNode::LocalWrite(..)))
-    {
-        return Err(format!(
-            "local variable assignment in the body of `class {name}` is not supported \
-             when {name} is built at runtime (the body would see the enclosing scope's \
-             locals instead of its own)"
-        )
-        .into());
-    }
+    // A runtime class body EMITS as an ordinary block, but it IS a class body
+    // in ruby, so it opens a cref. That is what makes `@@v` legal here rather
+    // than "class variable access from toplevel" -- and it puts the body's
+    // cvars on the same storage the `def`s in it resolve against, which a
+    // reflective `class_variable_set` on the built class would NOT have done
+    // (two tables, and `Adapter.stopping?` and
+    // `Adapter.class_variable_get(:@@stopping)` then disagreed).
+    let body = lower_class_body(result, hir, body, None, Some(name))?;
+    // ... and a block SHARES the enclosing local scope, where a class body has
+    // its own. Renaming what the body assigns restores that: sidekiq's adapter
+    // binds a `callback` lambda in the body and reads it from two nested
+    // blocks, which would otherwise have collided with (or been shadowed by) an
+    // enclosing `callback`. See `rename::isolate_runtime_class_locals`.
+    let seq = hir.nodes().len();
+    crate::rename::isolate_runtime_class_locals(hir, &body, seq);
     // The body runs as a BLOCK with the new class as `self`, so a statement
     // that only the static class path can emit (`include`, a visibility
     // directive, `alias`, a nested class) would reach codegen's "top-level-only

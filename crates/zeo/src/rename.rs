@@ -56,10 +56,31 @@ use std::collections::HashSet;
 /// `__f<file_id>_<name>`. Two passes over the same walker: collect the
 /// file's assigned-name set, then rename every reference to it.
 pub fn isolate_file_locals(hir: &mut Hir, roots: &[NodeId], file_id: usize) {
+    isolate_locals(hir, roots, format!("__f{file_id}_"));
+}
+
+/// The same isolation for a class body that must run as a BLOCK -- `class
+/// SidekiqAdapter < parent`, whose superclass is a local, so the class is built
+/// by `Class.new(parent) { ... }`.
+///
+/// Ruby gives a class body its own local scope; a block shares its enclosing
+/// one. Renaming every name the body assigns restores the difference in both
+/// directions, and by the same argument the file splice rests on: prism scopes
+/// the class body separately, so a bare name the body never assigns already
+/// lowered as a CALL there, not as a read of the outer local. Nothing outside
+/// can see what the body binds, and nothing the body reads was ever the outer
+/// binding.
+///
+/// `seq` only has to be unique per body; the node arena's length at the time is.
+pub fn isolate_runtime_class_locals(hir: &mut Hir, roots: &[NodeId], seq: usize) {
+    isolate_locals(hir, roots, format!("__rc{seq}_"));
+}
+
+fn isolate_locals(hir: &mut Hir, roots: &[NodeId], prefix: String) {
     let mut w = Walker {
         collecting: true,
         names: HashSet::new(),
-        file_id,
+        prefix,
     };
     for &r in roots {
         w.visit(hir, r);
@@ -80,12 +101,13 @@ struct Walker {
     /// `Block`/`Lambda` arm).
     collecting: bool,
     names: HashSet<String>,
-    file_id: usize,
+    /// What every renamed name is prefixed with -- one per isolated scope.
+    prefix: String,
 }
 
 impl Walker {
     fn mangled(&self, name: &str) -> String {
-        format!("__f{}_{}", self.file_id, name)
+        format!("{}{}", self.prefix, name)
     }
 
     /// A site that BINDS a local name (assignment target, rescue binding,
@@ -318,14 +340,32 @@ impl Walker {
                 body: _,
                 is_module: _,
             }
+            // ... but `define_method(:x) { ... }` lowers to a `DefMethod` with
+            // `is_def: false`, and its body was written as a BLOCK. Ruby lets
+            // that block capture the enclosing scope -- that is the whole point
+            // of the form, and prism classifies a captured name inside it as a
+            // read, not a call -- so the module doc's "fresh scope, nothing to
+            // rename" reasoning covers only a real `def`.
             | HirNode::DefMethod {
+                is_def: true,
                 name: _,
                 params: _,
                 body: _,
                 is_class_method: _,
                 visibility: _,
-                is_def: _,
             } => {}
+            HirNode::DefMethod {
+                is_def: false,
+                params,
+                body,
+                ..
+            } => {
+                let params = params.clone();
+                let body = body.clone();
+                let suspended = self.suspend_params(&params);
+                self.visit_all(hir, &body);
+                self.names.extend(suspended);
+            }
             HirNode::While {
                 cond,
                 body,

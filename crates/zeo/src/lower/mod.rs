@@ -1677,8 +1677,15 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // inline `ClassDef`. A computed name, a computed receiver, or a
         // capturing block that this desugar can't model falls through to the
         // generic (unsupported) `Call`.
+        // `&callable` is NOT a literal block: `define_singleton_method(:now,
+        // &block)` hands over a Proc the caller already holds, which this
+        // compile-time desugar has no body to install. The runtime row takes
+        // it (`Kernel#define_singleton_method` accepts a block ARGUMENT and a
+        // Method/Proc positional alike), so fall through rather than refuse --
+        // ddtrace, mcp and datasource all write it that way.
         if name == "define_singleton_method"
             && let (Some(args), Some(block_node)) = (call.arguments(), call.block())
+            && block_node.as_block_node().is_some()
         {
             let arg_list: Vec<_> = args.arguments().iter().collect();
             if let (1, Some(sym)) = (
