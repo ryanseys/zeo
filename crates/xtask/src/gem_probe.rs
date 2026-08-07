@@ -681,11 +681,12 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     let render = |selected: &mut dyn Iterator<Item = (&String, &Row)>| {
         let mut tsv = String::from("gem\tversion\toutcome\tdetail\twhere\tsha256\n");
         for (name, r) in selected {
+            let detail = r.outcome.detail();
             let fields = [
                 name.as_str(),
-                &r.version,
+                r.version.as_str(),
                 r.outcome.tag(),
-                &r.outcome.detail(),
+                detail.as_str(),
                 r.site.as_deref().unwrap_or(""),
                 r.digest.as_deref().unwrap_or(""),
             ];
