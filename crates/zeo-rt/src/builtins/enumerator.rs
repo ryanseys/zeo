@@ -1035,6 +1035,16 @@ ruby_class! {
     Enumerator = zeo_abi::ENUMERATOR_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
 
+    // `Enumerator.new([size]) { |y| ... }`. `Class#new` intercepts this for
+    // `Enumerator` itself (`builtins::rclass`), so the row exists for the
+    // SUBCLASS path: `value_subclass::construct_root_payload` builds a payload
+    // by calling the root's own `new` out of this table, which is what lets
+    // `class NdjsonToMessageEnumerator < Enumerator` seat one through `super()`.
+    def self."new"(_recv, size?, &block) {
+        let args: Vec<RubyValue> = size.into_iter().cloned().collect();
+        enumerator_new(&args, block)
+    }
+
     // `Enumerator.produce([initial]) { |prev| ... }` -- an endless generator
     // (#2483). With `initial`, that value is yielded first; then each block
     // result is yielded, forever (bounded by the consumer, e.g. `take`/`first`).

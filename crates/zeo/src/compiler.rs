@@ -1442,6 +1442,7 @@ impl Compiler {
                     | zeo_abi::STRINGIO_CLASS
                     | zeo_abi::FILE_CLASS
                     | zeo_abi::SET_CLASS
+                    | zeo_abi::ENUMERATOR_CLASS
             )
         })
     }

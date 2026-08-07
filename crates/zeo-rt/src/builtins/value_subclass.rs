@@ -159,6 +159,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::STRINGIO_CLASS
             | zeo_abi::FILE_CLASS
             | zeo_abi::SET_CLASS
+            | zeo_abi::ENUMERATOR_CLASS
     )
 }
 
@@ -253,6 +254,11 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // with its own `initialize` seats the real payload through `super`,
         // which is the only way to get a File in the first place.
         zeo_abi::FILE_CLASS => RubyValue::Nil,
+        // An Enumerator has no empty form either: `Enumerator.new` without a
+        // block is an ArgumentError, because the block IS the sequence. Same
+        // `File` shape -- a subclass's own `initialize` seats the real payload
+        // through `super() { |y| ... }`, which is the only way to get one.
+        zeo_abi::ENUMERATOR_CLASS => RubyValue::Nil,
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         _ => RubyValue::Nil,
     }

@@ -4,3 +4,5 @@
 [true, "data", Managed]
 false
 [[1, 2, 3], "tags(3)", Tags, true]
+[Ndjson, ["A", "B"], true, "A"]
+[EventStream, [:records, :stats], [1, 2], [10, 20]]

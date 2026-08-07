@@ -2233,6 +2233,15 @@ fn register_class(
                                 | zeo_abi::STRINGIO_CLASS
                                 | zeo_abi::FILE_CLASS
                                 | zeo_abi::SET_CLASS
+                                // `Enumerator`: the payload is the
+                                // `RubyValue::Enumerator` handle. Like `File`
+                                // it has no empty form -- the block IS the
+                                // sequence -- so a subclass seats one through
+                                // `super() { |y| ... }`. cucumber-messages'
+                                // `NdjsonToMessageEnumerator` does exactly
+                                // that; the aws-sdk `EventStream` classes just
+                                // add a method to the inherited behaviour.
+                                | zeo_abi::ENUMERATOR_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

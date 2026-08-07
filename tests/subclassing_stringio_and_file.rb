@@ -40,3 +40,28 @@ end
 t = Tags.new([1, 2, 2])
 t << 3
 p [t.to_a.sort, t.label, t.class, t.is_a?(Set)]
+
+# `Enumerator`: the payload is the enumerator handle, and like `File` there is
+# no empty form -- the block IS the sequence -- so a subclass with its own
+# `initialize` seats one through `super() { |y| ... }`. cucumber-messages'
+# `NdjsonToMessageEnumerator` is that shape; the eighteen aws-sdk `EventStream`
+# classes are the other one, adding a method to the inherited behaviour.
+class Ndjson < Enumerator
+  def initialize(lines)
+    super() do |y|
+      lines.each { |l| y.yield(l.upcase) }
+    end
+  end
+end
+
+n = Ndjson.new(["a", "b"])
+p [n.class, n.to_a, n.is_a?(Enumerator), n.next]
+
+class EventStream < Enumerator
+  def event_types = [:records, :stats]
+end
+
+s = EventStream.new { |y| y.yield 1; y.yield 2 }
+# `map` builds a NEW Array, so it demotes; `to_a` does too. The receiver keeps
+# its own class either way.
+p [s.class, s.event_types, s.to_a, s.map { |x| x * 10 }]
