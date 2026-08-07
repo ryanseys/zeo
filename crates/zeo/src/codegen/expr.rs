@@ -2393,6 +2393,24 @@ pub(super) fn private_const_guard(
     })
 }
 
+/// The constant name as the tail of a Rust identifier -- the per-site cache
+/// slot's.
+///
+/// A constant read can arrive with a PATH for a name (`Dry::Types::Result::
+/// Failure`, from a namespaced runtime class), and `::` is not an identifier
+/// character: `format_ident!` PANICS on one rather than returning an error, so
+/// a compile that should have produced a program produced a backtrace instead.
+///
+/// Two names that sanitize alike would collide -- as duplicate `static`s, which
+/// rustc reports by name and line. That is a strictly better failure than a
+/// panic, which reports nothing about the ruby that caused it.
+fn const_slot(name: &str) -> String {
+    name.to_uppercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
 pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
     // An explicit `Scope::NAME` whose scope class isn't registered is a
     // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),
@@ -2512,7 +2530,7 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // the hook instead of the baked raise (CRuby's protocol); every other
     // site keeps the raise, whose as-written wording the default hook could
     // not reproduce.
-    let site = quote::format_ident!("__CONST_{}_{}", owner, name.to_uppercase());
+    let site = quote::format_ident!("__CONST_{}_{}", owner, const_slot(name));
     let miss_owner = crate::compiler::ClassId(owner);
     let miss = if cx
         .compiler
@@ -2780,5 +2798,36 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
             quote! { zeo_rt::ffi::int_to_enum(__ffi_ret as i64, #table) }
         }
         Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every constant a read can name has to come out of `const_slot` as a
+    /// legal Rust identifier tail -- `format_ident!` panics on anything else,
+    /// and a panicking compiler says nothing about the ruby that caused it.
+    #[test]
+    fn a_const_slot_is_always_an_identifier() {
+        for name in [
+            "VERSION",
+            "Dry::Types::Result::Failure",
+            "::Rooted",
+            "With Space",
+            "Ω",
+        ] {
+            let slot = const_slot(name);
+            assert!(
+                !slot.is_empty()
+                    && slot
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "{name:?} -> {slot:?}"
+            );
+            // Proves it: this is the call that used to panic.
+            let _ = quote::format_ident!("__CONST_1_{}", slot);
+        }
+        assert_eq!(const_slot("Dry::Types"), "DRY__TYPES");
     }
 }
