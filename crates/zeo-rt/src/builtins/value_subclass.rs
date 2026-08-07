@@ -251,6 +251,13 @@ pub fn root_class_method_target(class_id: ClassId, name: &str) -> Option<ClassId
     if root == class_id {
         return None;
     }
+    // NEVER `new`: construction belongs to `Class#new` and `constructor_of`,
+    // which is also what decides a class has NO allocator. `Process::Waiter`
+    // is a Thread subclass whose `new` CRuby undefs, and answering it here
+    // would build one instead of raising.
+    if name == "new" {
+        return None;
+    }
     // A private row (`Time._load`) stays unreachable, exactly as an inherited
     // private class method is in CRuby.
     if crate::builtins::builtin_class_method_is_private(root, name) {
