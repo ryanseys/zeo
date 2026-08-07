@@ -1307,6 +1307,21 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
                 );
             }
+        } else if compiler.is_date_subclass(ClassId(idx as u32)) {
+            // A user `class DateTimeWithOffset < DateTime`: no generated
+            // struct -- its instances are the native `RDate`, which the root's
+            // own rows already tag with the receiver class.
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                zeo_rt::register_recv_honouring_subclass(
+                    &mut __registry,
+                    zeo_rt::ClassId(#id),
+                    #fq_name,
+                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                );
+            }
         } else if compiler.is_weakmap_subclass(ClassId(idx as u32)) {
             // A user `class WeakSet < ObjectSpace::WeakMap`: no generated
             // struct -- its instances ARE the native `WeakMap`, built by the

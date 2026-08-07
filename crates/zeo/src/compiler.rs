@@ -1390,6 +1390,8 @@ impl Compiler {
             && !self.is_module_subclass(cid)
             // A WeakMap subclass's instances are the native `WeakMap` RObj.
             && !self.is_weakmap_subclass(cid)
+            // A Date subclass's instances are the native `RDate`.
+            && !self.is_date_subclass(cid)
     }
 
     /// Walks the recorded `parent` (superclass) links from `cid` toward the
@@ -1484,6 +1486,22 @@ impl Compiler {
     /// the subclass simply IS the native type -- no payload wrapper, no
     /// re-tagging. activesupport's `DescendantsTracker::WeakSet` is the case,
     /// and it gates eleven Rails gems.
+    /// Whether `cid` is a user subclass of `Date`/`DateTime`.
+    ///
+    /// A FOURTH native shape: `Date`'s class-method rows already allocate
+    /// through the receiver (`RDate::new(jdn, class_of(recv))`), and an
+    /// `RDate` carries its class id directly -- so the subclass needs no
+    /// payload wrapper and no re-tagging, only to be passed along. tzinfo's
+    /// `DateTimeWithOffset` is the case, and activesupport reaches the ledger
+    /// through it.
+    pub fn is_date_subclass(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap {
+            return false;
+        }
+        self.superclass_chain(cid).any(|a| a == zeo_abi::DATE_CLASS)
+    }
+
     pub fn is_weakmap_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap {
@@ -1532,6 +1550,7 @@ impl Compiler {
             // free functions exactly as the other two shapes' do.
             || self.is_module_subclass(cid)
             || self.is_weakmap_subclass(cid)
+            || self.is_date_subclass(cid)
     }
 
     /// Whether `cid` is a user subclass of an IMMEDIATE builtin -- `Integer`/

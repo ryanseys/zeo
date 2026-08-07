@@ -19,7 +19,7 @@ use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use zeo_abi::{DATE_CLASS, DATETIME_CLASS};
+use zeo_abi::DATE_CLASS;
 use zeo_macros::ruby_class;
 
 pub struct RDate {
@@ -367,9 +367,15 @@ fn civil_args(args: &[RubyValue]) -> Result<(i64, i64, i64), Signal> {
 }
 
 /// The class a `Date` class method should build (`Date` or a `DateTime`).
+/// The class a `Date`-family constructor allocates through: the RECEIVER's own
+/// id, which is CRuby's rule (`rb_class_new_instance`-style, `klass` threaded
+/// into the allocation) and the whole reason a `class DateTimeWithOffset <
+/// DateTime` works -- `DateTimeWithOffset.jd(n)` has to answer a
+/// `DateTimeWithOffset`, not a `Date`. Naming only `Date`/`DateTime` here
+/// silently demoted every subclass to `Date`.
 fn class_of(recv: &RubyValue) -> ClassId {
     match recv {
-        RubyValue::Class(DATETIME_CLASS) => DATETIME_CLASS,
+        RubyValue::Class(cid) => *cid,
         _ => DATE_CLASS,
     }
 }

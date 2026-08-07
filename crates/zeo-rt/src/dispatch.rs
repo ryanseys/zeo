@@ -4545,6 +4545,17 @@ fn send_value_in_reason(
                     *cid, root, &n, args, block,
                 );
             }
+            // ...and the RECEIVER-HONOURING roots, where the row allocates
+            // through the receiver itself (`Date`'s do). The receiver passes
+            // through unchanged and the result needs no re-tagging -- the row
+            // already did it. See `value_subclass::recv_honouring_root`.
+            if let Some(root) = crate::builtins::value_subclass::recv_honouring_root(*cid)
+                && let Some(lookup) = crate::builtins::class_method_table(root)
+                && let Some(f) = lookup(&n)
+                && !crate::builtins::builtin_class_method_is_private(root, &n)
+            {
+                return with_c_frame(c_frame_label(root, name, '.'), || f(recv, args, block));
+            }
         }
         // Class methods on a MINTED native struct/data class (`Point.members`,
         // `Point[1, 2]`): these hang off `STRUCT_CLASS`/`DATA_CLASS` but are NOT

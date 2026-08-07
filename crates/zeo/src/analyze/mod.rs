@@ -2269,6 +2269,12 @@ fn register_class(
                                 // already builds `WeakMap::new(class)` from
                                 // the receiver. activesupport's `WeakSet`.
                                 | zeo_abi::WEAKMAP_CLASS
+                                // `Date`/`DateTime`: the rows already
+                                // allocate through the receiver, so the
+                                // subclass is the native `RDate` tagged with
+                                // its own id. tzinfo's `DateTimeWithOffset`.
+                                | zeo_abi::DATE_CLASS
+                                | zeo_abi::DATETIME_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

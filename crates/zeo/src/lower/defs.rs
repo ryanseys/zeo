@@ -95,6 +95,7 @@ fn desugar_singleton_items(
         Alias(String, String),
         SingletonSelf,
         SelfSend,
+        Mixin(&'static str, String),
         Guarded(Vec<NodeId>, Vec<crate::hir::RescueClause>),
         Skip,
     }
@@ -149,6 +150,20 @@ fn desugar_singleton_items(
             HirNode::AliasMethod {
                 new_name, old_name, ..
             } => Item::Alias(new_name.clone(), old_name.clone()),
+            // `include M` / `prepend M` inside `class << obj` mixes M into the
+            // OBJECT's singleton class -- which is CRuby's own definition of
+            // `obj.extend(M)` (`rb_include_module(rb_singleton_class(obj), M)`),
+            // so the runtime `recv.singleton_class.include(M)` this becomes is
+            // the primitive rather than a paraphrase of it. rdoc's
+            // `class << self; prepend Git` inside a method body, spreadsheet's
+            // `include Compatibility` and treetop's all take this route.
+            HirNode::Include(m) => Item::Mixin("include", m.clone()),
+            HirNode::Prepend(m) => Item::Mixin("prepend", m.clone()),
+            // `extend M` here reaches one level further out -- the singleton's
+            // OWN singleton -- exactly as the `class << self` path's
+            // `Item::ExtendSingleton` does. tins spells its `thread_local`
+            // macro this way.
+            HirNode::Extend(m) => Item::Mixin("extend", m.clone()),
             // `class << obj; self; end` -- the idiom that RETURNS the object's
             // singleton class (`self` inside the singleton body IS that class,
             // e.g. bundler's `def gem_class; class << Gem; self; end; end`).
@@ -236,6 +251,28 @@ fn desugar_singleton_items(
                     cond,
                     then_body,
                     else_body,
+                }));
+            }
+            Item::Mixin(verb, module_name) => {
+                let recv = lower_node(result, hir, recv_node)?;
+                let singleton = hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "singleton_class".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                });
+                let module_ref = hir.push(HirNode::ClassRef(module_name));
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: verb.to_string(),
+                    args: vec![ArrayElem::Single(module_ref)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
                 }));
             }
             Item::Alias(new_name, old_name) => {

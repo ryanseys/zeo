@@ -12,3 +12,9 @@ nil
 [Bare, true]
 [WeakSet, true, ObjectSpace::WeakMap]
 [["one", "two"], 2, true]
+[DateTimeWithOffset, true, true, 2023, 2, 24]
+"+09:00"
+[MyDate, MyDate, MyDate]
+[DateTimeWithOffset, DateTime]
+"2001-02-03"
+[Date, DateTime, "2001-02-03"]

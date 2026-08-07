@@ -113,3 +113,39 @@ two = "two"
 ws << one
 ws << two
 p [ws.to_a.map(&:itself).sort, ws.size, ws[one]]
+
+# `Date`/`DateTime` are the fourth native shape, and the mirror image of a
+# payload root: the rows already allocate through the RECEIVER
+# (`RDate::new(jdn, class_of(recv))`, exactly as the equivalent CRuby function
+# threads `klass`), and an `RDate` carries its class id directly -- so there is
+# nothing to wrap and nothing to re-tag. tzinfo's `DateTimeWithOffset` is the
+# case, and activesupport reaches the ledger through it.
+require "date"
+
+class DateTimeWithOffset < DateTime
+  attr_accessor :timezone_offset
+
+  def set_timezone_offset(o)
+    @timezone_offset = o
+    self
+  end
+end
+
+dt = DateTimeWithOffset.jd(2460000)
+p [dt.class, dt.is_a?(DateTime), dt.is_a?(Date), dt.year, dt.month, dt.day]
+
+# `RDate` carries no ivar storage of its own, so `@timezone_offset` lands in
+# the identity-keyed side table and reads back from it.
+p dt.set_timezone_offset("+09:00").timezone_offset
+
+# Every inherited constructor tags with the receiver, `new` included --
+# `Date.new` IS `Date.civil`, a class-method constructor.
+class MyDate < Date
+end
+
+p [MyDate.civil(2001, 2, 3).class, MyDate.parse("2001-02-03").class, MyDate.today.class]
+p [DateTimeWithOffset.new(2024, 5, 6).class, DateTimeWithOffset.superclass]
+p MyDate.civil(2001, 2, 3).to_s
+
+# The roots themselves are untouched.
+p [Date.today.class, DateTime.jd(2460000).class, Date.civil(2001, 2, 3).to_s]

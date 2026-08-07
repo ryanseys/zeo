@@ -400,10 +400,42 @@ fn entry_point(dir: &Path, name: &str) -> Option<String> {
     }
     // A gem with exactly one top-level file has named its entry point.
     tops.sort();
-    match tops.len() {
-        1 => Some(tops.remove(0)),
-        _ => None,
+    if tops.len() == 1 {
+        return Some(tops.remove(0));
     }
+    // ONE DIRECTORY DEEPER, for the gems that nest their entry: concurrent-ruby
+    // ships `lib/concurrent-ruby/concurrent-ruby.rb`, json_pure ships
+    // `lib/json/pure.rb`. Both are still name matches, just against a path
+    // rather than a top-level stem -- so this stays a resolution rule and not a
+    // guess, which is the distinction the doc above exists to protect.
+    //
+    // Either half can carry the name: `json/pure` squashes to the gem name as a
+    // PATH, while `concurrent-ruby/concurrent-ruby` carries it in the STEM.
+    let mut nested: Vec<String> = Vec::new();
+    for sub in std::fs::read_dir(&lib).ok()?.filter_map(Result::ok) {
+        let subdir = sub.path();
+        if !subdir.is_dir() {
+            continue;
+        }
+        let Some(sub_name) = subdir.file_name().map(|s| s.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        for f in std::fs::read_dir(&subdir).ok()?.filter_map(Result::ok) {
+            let p = f.path();
+            if !p.is_file() || p.extension().is_none_or(|x| x != "rb") {
+                continue;
+            }
+            let Some(stem) = p.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+                continue;
+            };
+            if squash(&stem) == target {
+                return Some(format!("{sub_name}/{stem}"));
+            }
+            nested.push(format!("{sub_name}/{stem}"));
+        }
+    }
+    nested.sort();
+    nested.into_iter().find(|path| squash(path) == target)
 }
 
 /// A package directory holding ONLY this gem and its declared dependencies.

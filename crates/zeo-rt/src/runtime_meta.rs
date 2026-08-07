@@ -2022,6 +2022,26 @@ fn mix_in(
     let RubyValue::Class(cid) = recv else {
         return Err(type_error!("can't {verb} into {}", immediate_kind(recv)));
     };
+    // `obj.singleton_class.include(M)` IS `obj.extend(M)` -- CRuby DEFINES the
+    // latter as the former (`rb_include_module(rb_singleton_class(obj), M)`),
+    // so the primitive and the wrapper are one operation. zeo implements a
+    // singleton as a copied method table (`extend_object_default`) rather than
+    // spliced ancestry, so splicing this id would write somewhere the owner's
+    // dispatch never reads: the mixin would vanish silently.
+    //
+    // rdoc's `class << self; prepend Git`, spreadsheet's
+    // `class << self; include Compatibility` and treetop's are all this shape.
+    //
+    // `prepend` and `include` land in the same table here, which is only
+    // observable against the object's OWN `def obj.x` -- CRuby would let a
+    // prepended module win over that, and this does not. Written down rather
+    // than papered over; no gem in the corpus depends on the difference.
+    if let Some(owner) = singleton_owner_value(*cid) {
+        for module_val in modules {
+            runtime_extend(&owner, module_val)?;
+        }
+        return Ok(recv.clone());
+    }
     if crate::dispatch::class_frozen(*cid) {
         return Err(crate::dispatch::frozen_class_error(*cid));
     }

@@ -303,6 +303,67 @@ pub fn call_root_class_method(
     }
 }
 
+/// A builtin root whose class-method rows ALREADY allocate through the
+/// receiver class, so a subclass inherits them by simply being passed along.
+///
+/// `Date` is the shape: `RDate::new(jdn, class_of(recv))` threads the receiver
+/// exactly as the equivalent CRuby function threads `klass`, and an `RDate`
+/// carries its class id directly -- so there is no payload to wrap and nothing
+/// to re-tag afterwards. That makes it the OPPOSITE of a payload root, where
+/// the row cannot express the tag and the wrapper has to add it.
+///
+/// `None` for anything else, including `Date` and `DateTime` themselves: their
+/// own rows are found the ordinary way.
+pub fn recv_honouring_root(class_id: ClassId) -> Option<ClassId> {
+    if class_id == zeo_abi::DATE_CLASS || class_id == zeo_abi::DATETIME_CLASS {
+        return None;
+    }
+    ancestors_of_value(class_id)
+        .iter()
+        .any(|&a| a == zeo_abi::DATE_CLASS)
+        .then_some(zeo_abi::DATE_CLASS)
+}
+
+/// Register a user subclass of a receiver-honouring root -- today
+/// `class DateTimeWithOffset < DateTime`. The root's own `new` row builds the
+/// instance and tags it with the receiver class, so there is nothing else to
+/// install; the subclass's `def`s arrive as `RubyValue`-self deltas.
+pub fn register_recv_honouring_subclass(
+    registry: &mut ClassRegistry,
+    id: ClassId,
+    name: &str,
+    ancestors: Vec<ClassId>,
+) {
+    registry.register(
+        id,
+        name,
+        false,
+        ancestors,
+        Some(recv_honouring_construct as ConstructorFn),
+    );
+}
+
+/// The `ConstructorFn` for a receiver-honouring subclass: the root's own `new`
+/// row, called with the SUBCLASS as receiver so its `class_of(recv)` tags the
+/// result correctly.
+///
+/// No `initialize` runs afterwards, and that is CRuby's shape rather than an
+/// omission: `Date.new` IS `Date.civil`, a class-method constructor that
+/// allocates directly and never routes through `initialize`, so a subclass
+/// defining one does not get it called here either.
+fn recv_honouring_construct(
+    class_id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let root = recv_honouring_root(class_id)
+        .expect("register_recv_honouring_subclass proved the root is in the ancestry");
+    let table = crate::builtins::class_method_table(root)
+        .expect("a receiver-honouring root has a class-method table");
+    let ctor = table("new").expect("a receiver-honouring root has a `new` constructor");
+    ctor(&RubyValue::Class(class_id), args, block)
+}
+
 /// An empty payload of `root`'s kind -- the pre-`initialize` default for the
 /// user-`initialize` path (a `super` then re-seats it). Each payload root has a
 /// real empty form; nothing else is a payload root.

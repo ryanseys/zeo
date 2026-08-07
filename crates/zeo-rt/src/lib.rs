@@ -77,7 +77,9 @@ pub use builtins::kernel::{
 };
 pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
 pub use builtins::rstruct::register_compiled_struct;
-pub use builtins::value_subclass::{register_value_subclass, value_super};
+pub use builtins::value_subclass::{
+    register_recv_honouring_subclass, register_value_subclass, value_super,
+};
 pub use builtins::warning::emit_parse_warnings;
 pub use builtins::weak::register_weakmap_subclass;
 pub use builtins::weak::run_finalizers;
