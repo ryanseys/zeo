@@ -6,3 +6,9 @@ false
 [[1, 2, 3], "tags(3)", Tags, true]
 [Ndjson, ["A", "B"], true, "A"]
 [EventStream, [:records, :stats], [1, 2], [10, 20]]
+[DOSTime, 2024, 5, 6, 22694, true]
+[DOSTime, DOSTime, DOSTime]
+[true, false]
+false
+[Widen, Array]
+[Stamped, 2000, 1, 2, "s"]

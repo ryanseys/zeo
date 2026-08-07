@@ -65,3 +65,41 @@ s = EventStream.new { |y| y.yield 1; y.yield 2 }
 # `map` builds a NEW Array, so it demotes; `to_a` does too. The receiver keeps
 # its own class either way.
 p [s.class, s.event_types, s.to_a, s.map { |x| x * 10 }]
+
+# CLASS methods inherited from the payload root. Nothing copies a builtin's
+# class-method table rows onto a subclass entry the way materialization copies
+# a user `def self.x`, so without the root probe these are invisible --
+# rubyzip's `DOSTime.from_time` calls the inherited `local` directly.
+class DOSTime < Time
+  def self.from_time(t)
+    local(t.year, t.month, t.day, t.hour, t.min, t.sec)
+  end
+
+  def to_binary_dos_date = day + (month << 5) + ((year - 1980) << 9)
+end
+
+d = DOSTime.utc(2024, 5, 6, 7, 8, 9)
+# CRuby allocates through the RECEIVER class, so every one of these is a
+# DOSTime, not a Time.
+p [d.class, d.year, d.month, d.day, d.to_binary_dos_date, d.utc?]
+p [DOSTime.now.class, DOSTime.at(0).class, DOSTime.from_time(Time.utc(1999, 3, 4)).class]
+p [DOSTime.respond_to?(:local), DOSTime.respond_to?(:nope)]
+# `_load` is a PRIVATE class method of Time, so it stays unreachable here --
+# exactly as an inherited private class method is in CRuby.
+p DOSTime.respond_to?(:_load)
+# The conversions are the exception: CRuby answers with the BASE class even
+# when the receiver is a subclass.
+class Widen < Array; end
+p [Widen[1, 2].class, Widen.try_convert([1]).class]
+
+class Stamped < Time
+  def initialize(*args)
+    super
+    @tag = "s"
+  end
+
+  attr_reader :tag
+end
+
+s = Stamped.new(2000, 1, 2)
+p [s.class, s.year, s.month, s.day, s.tag]

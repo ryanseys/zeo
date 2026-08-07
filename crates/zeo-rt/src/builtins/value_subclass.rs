@@ -160,6 +160,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::FILE_CLASS
             | zeo_abi::SET_CLASS
             | zeo_abi::ENUMERATOR_CLASS
+            | zeo_abi::TIME_CLASS
     )
 }
 
@@ -234,6 +235,64 @@ pub fn register_value_subclass(
     );
 }
 
+/// The CLASS methods a value subclass inherits from its payload root:
+/// `DOSTime.local(...)`, `IOBuffer.open(...)`, `Tags[1, 2]`. Nothing copies a
+/// builtin's class-method TABLE rows onto a subclass's registry entry the way
+/// materialization copies a user `def self.x`, so without this the root's
+/// constructors are simply invisible -- and rubyzip's `DOSTime.from_time`
+/// calls the inherited `local` directly.
+///
+/// Only the ROOT's own table, never the whole ancestry: every class has
+/// `Object`/`Kernel` above it, and letting those tables answer here would give
+/// each of them class methods CRuby's singleton chain never reaches.
+pub fn root_class_method_target(class_id: ClassId, name: &str) -> Option<ClassId> {
+    let root = value_root_of(class_id)?;
+    if root == class_id {
+        return None;
+    }
+    // A private row (`Time._load`) stays unreachable, exactly as an inherited
+    // private class method is in CRuby.
+    if crate::builtins::builtin_class_method_is_private(root, name) {
+        return None;
+    }
+    crate::builtins::class_method_table(root)
+        .and_then(|lookup| lookup(name))
+        .map(|_| root)
+}
+
+/// CRuby's conversion class methods answer with the BASE class even when the
+/// receiver is a subclass (`Sub.try_convert("x").class` is `String`), unlike
+/// every constructor beside them. The instance-side twin of this list is
+/// [`DEMOTING_CONVERSIONS`].
+const DEMOTING_CLASS_METHODS: &[&str] = &["try_convert"];
+
+/// Run a class method inherited from the payload root, re-tagging a freshly
+/// built root value as the SUBCLASS -- CRuby allocates through the receiver
+/// class, so `DOSTime.local(...)` is a `DOSTime`. A result that is not a bare
+/// root value passes through untouched: `Managed.read(path)` answers a String
+/// because `File.read` does.
+pub fn call_root_class_method(
+    class_id: ClassId,
+    root: ClassId,
+    name: &str,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let table = crate::builtins::class_method_table(root)
+        .expect("root_class_method_target proved the table exists");
+    let f = table(name).expect("root_class_method_target proved the row exists");
+    let result = f(&RubyValue::Class(root), args, block)?;
+    if DEMOTING_CLASS_METHODS.contains(&name) {
+        return Ok(result);
+    }
+    match result.class_id() == root {
+        true => Ok(RubyValue::Object(ValueSubclass::alloc(
+            class_id, root, result,
+        ))),
+        false => Ok(result),
+    }
+}
+
 /// An empty payload of `root`'s kind -- the pre-`initialize` default for the
 /// user-`initialize` path (a `super` then re-seats it). Each payload root has a
 /// real empty form; nothing else is a payload root.
@@ -259,6 +318,9 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // `File` shape -- a subclass's own `initialize` seats the real payload
         // through `super() { |y| ... }`, which is the only way to get one.
         zeo_abi::ENUMERATOR_CLASS => RubyValue::Nil,
+        // `Time.new` with no arguments IS the empty form -- it answers `now`,
+        // exactly as CRuby's does.
+        zeo_abi::TIME_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         _ => RubyValue::Nil,
     }

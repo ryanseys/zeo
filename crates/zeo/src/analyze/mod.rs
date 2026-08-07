@@ -2242,6 +2242,11 @@ fn register_class(
                                 // that; the aws-sdk `EventStream` classes just
                                 // add a method to the inherited behaviour.
                                 | zeo_abi::ENUMERATOR_CLASS
+                                // `Time`: the payload is the time value, and
+                                // `Time.new` with no arguments is a real empty
+                                // form (`now`). rubyzip's `DOSTime < Time`
+                                // reaches the ledger through four gems.
+                                | zeo_abi::TIME_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

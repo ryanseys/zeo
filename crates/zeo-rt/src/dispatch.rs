@@ -2018,6 +2018,14 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     {
         return responds_to_value(recv, old, include_all);
     }
+    // ...and the payload root's own class methods, which a value subclass
+    // inherits but no registry entry records. Same reason this sits out here
+    // and not in `class_receiver_responds`: the row lives on the ROOT.
+    if let RubyValue::Class(cid) = recv
+        && crate::builtins::value_subclass::root_class_method_target(*cid, &name.name()).is_some()
+    {
+        return true;
+    }
     responds_to(recv.class_id(), name, include_all)
 }
 
@@ -4519,6 +4527,24 @@ fn send_value_in_reason(
             && let Some(f) = lookup(name.name_str())
         {
             return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
+        }
+        // The same table on a VALUE SUBCLASS's payload ROOT -- `DOSTime.local`,
+        // `IOBuffer.open`. Nothing copies a builtin's class-method rows onto a
+        // subclass entry the way materialization copies a user `def self.x`, so
+        // this probe is the only place they can be found. It has to sit HERE
+        // rather than in the miss tail: `B.open` must reach `StringIO.open`
+        // before the MRO walk below finds `Kernel#open`, which is exactly
+        // ruby's order (`#<Class:B>` is nearer than `Kernel`). The result comes
+        // back re-tagged as the subclass, because CRuby allocates through the
+        // receiver class. See `value_subclass::root_class_method_target`.
+        {
+            let n = name.name();
+            if let Some(root) = crate::builtins::value_subclass::root_class_method_target(*cid, &n)
+            {
+                return crate::builtins::value_subclass::call_root_class_method(
+                    *cid, root, &n, args, block,
+                );
+            }
         }
         // Class methods on a MINTED native struct/data class (`Point.members`,
         // `Point[1, 2]`): these hang off `STRUCT_CLASS`/`DATA_CLASS` but are NOT
