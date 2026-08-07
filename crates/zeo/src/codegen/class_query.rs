@@ -57,6 +57,16 @@ pub(super) enum ClassQuery {
     /// `protected` target? Unrelated emits a `NoMethodError` where related
     /// emits the call.
     ProtectedRelated(ClassId),
+    /// Is the receiver a class whose `self` is a bare `RubyValue` rather than a
+    /// generated struct -- a reopened builtin, or `Object` itself? It picks a
+    /// whole branch of implicit-self emission.
+    ///
+    /// A sharing group holds only classes with a generated struct, so today
+    /// every member answers NO and this can never split one. It is recorded
+    /// anyway: that is a property of `analyze::share::groups`, not of this
+    /// emission, and the point of the trace is not to depend on invariants
+    /// asserted somewhere else.
+    ValueBacked,
 }
 
 /// What a [`ClassQuery`] answered.
@@ -106,6 +116,7 @@ impl ClassQuery {
                     || compiler.class(cid).ancestors.contains(owner)
                     || compiler.class(*owner).ancestors.contains(&cid),
             ),
+            ClassQuery::ValueBacked => Answer::Yes(compiler.value_backed(cid)),
         }
     }
 }

@@ -1,13 +1,23 @@
 //! Emit one body for a `def` that many classes inherited, instead of one per
 //! class.
 //!
-//! `analyze::share` finds the candidate groups; this decides which of them
-//! actually share, and emits the shared bodies. The decision is made by
-//! EMITTING, not by a checklist: every member's body is emitted in the shared
-//! form and the group shares only when the results are token-identical. A rule
-//! this file forgot therefore costs a missed sharing opportunity, never a wrong
-//! program -- and `ZEO_VERIFY_SHARE=1` turns the same comparison into a hard
-//! error so a regression in the property is loud rather than silent.
+//! `analyze::share` finds the candidate groups -- one `def`, and every class
+//! whose method entry points at it. This decides which of them can be served by
+//! a single emitted function.
+//!
+//! The decision used to be made BY EMITTING: every member's body was rendered
+//! in the shared form and the group shared only when the token strings all
+//! matched. That is correct, and it is also exactly the `O(classes x methods)`
+//! cost sharing exists to remove -- active_model carries 3,624 definitions
+//! behind 22,623 entries, so 19,000 of those renders were thrown away.
+//!
+//! Now ONE member is emitted, with the emitter recording every question it asks
+//! about its receiver class (`codegen::class_query`), and the rest are settled
+//! by REPLAYING those questions. A class that answers them all the same way
+//! would have rendered the same tokens; one that does not gets its own body.
+//! `ZEO_VERIFY_SHARE=1` still emits everything and compares, and now asserts the
+//! property that makes the replay sound: a member whose render differs must
+//! have a recorded question that explains it.
 //!
 //! The shared form is the one `emit_builtin_method_fn` has always used for a
 //! reopened builtin and for every top-level `def`: a free function over
@@ -22,6 +32,7 @@
 //! `Arc<Self>`, so `RubyValue::Object(Self::new_handle(self))` is an unsize
 //! coercion with no reference-count traffic at all.
 
+use super::class_query::Trace;
 use crate::compiler::{ClassId, Compiler, ScopeId};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -35,24 +46,36 @@ use std::collections::HashMap;
 const SIZE_GATE: usize = 500;
 
 pub(crate) struct SharedBodies {
-    /// Every member scope of a sharing group, mapped to the group's function.
-    by_scope: HashMap<ScopeId, Ident>,
+    /// Which shared function serves a given class's copy of a definition.
+    ///
+    /// Keyed by BOTH, not by the definition alone: a group whose members
+    /// disagree splits into more than one emitted body, and each class must
+    /// reach the one its own answers produced.
+    by_class_def: HashMap<(ClassId, ScopeId), Ident>,
     /// The `__sh` container, absent when nothing shares.
     container: Option<TokenStream>,
 }
 
+/// One emitted body, and the classes it serves.
+struct Bucket {
+    trace: Trace,
+    classes: Vec<ClassId>,
+    body: TokenStream,
+    ident: Ident,
+}
+
 impl SharedBodies {
-    /// The shared function serving `sid`, if its group shares.
-    pub(crate) fn call(&self, sid: ScopeId) -> Option<&Ident> {
-        self.by_scope.get(&sid)
+    /// The shared function serving `cid`'s copy of `sid`, if it has one.
+    pub(crate) fn call(&self, cid: ClassId, sid: ScopeId) -> Option<&Ident> {
+        self.by_class_def.get(&(cid, sid))
     }
 
     pub(crate) fn container(&self) -> Option<&TokenStream> {
         self.container.as_ref()
     }
 
-    /// `ZEO_SHARE=0` restores per-class materialization byte for byte -- a
-    /// one-line field diagnosis for anything this file is blamed for.
+    /// `ZEO_SHARE=0` restores per-class materialization -- a one-line field
+    /// diagnosis for anything this file is blamed for.
     fn disabled() -> bool {
         static D: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *D.get_or_init(|| std::env::var("ZEO_SHARE").is_ok_and(|v| v == "0"))
@@ -61,127 +84,53 @@ impl SharedBodies {
     pub(crate) fn plan(compiler: &Compiler) -> Self {
         if Self::disabled() {
             return SharedBodies {
-                by_scope: HashMap::new(),
+                by_class_def: HashMap::new(),
                 container: None,
             };
         }
         let verify = crate::analyze::share::verify_enabled();
-        let mut by_scope = HashMap::new();
+        let mut by_class_def = HashMap::new();
         let mut fns: Vec<TokenStream> = Vec::new();
-        let (mut agreed, mut differed) = (0usize, 0usize);
-        let (mut rejected, mut too_small, mut copies) = (0usize, 0usize, 0usize);
-        let (mut queries, mut untraced) = (0usize, 0usize);
-        let mut report = String::new();
+        let mut stats = Stats::default();
 
-        let candidates = crate::analyze::share::groups(compiler);
-        let candidate_copies: usize = candidates.iter().map(|g| g.members.len() - 1).sum();
-        for group in candidates {
+        for group in crate::analyze::share::groups(compiler) {
+            stats.candidate_copies += group.members.len() - 1;
             if !shareable(compiler, &group) {
-                rejected += 1;
+                stats.rejected += 1;
                 continue;
             }
-            let fn_ident = format_ident!("__sh{}", fns.len());
-            let mut rendered: Vec<(ClassId, String)> = Vec::with_capacity(group.members.len());
-            let mut bodies = Vec::with_capacity(group.members.len());
-            // The FIRST member's emission is traced: every question it asks
-            // about its receiver class, with the answer it got. The rest are
-            // still emitted and compared here -- see `plan`'s docs for why the
-            // trace is being measured before it is trusted.
-            let trace = std::cell::RefCell::new(super::class_query::Trace::default());
-            for (i, &(cid, sid)) in group.members.iter().enumerate() {
-                let recording = (i == 0).then_some(&trace);
-                let body = super::emit_value_self_method_fn(
-                    compiler, cid, sid, &fn_ident, true, recording,
-                );
-                rendered.push((cid, body.to_string()));
-                bodies.push(body);
+            let buckets = bucket_members(compiler, &group);
+            stats.queries += buckets.iter().map(|b| b.trace.len()).sum::<usize>();
+            stats.emissions += buckets.len();
+            if buckets.len() > 1 {
+                stats.split += 1;
             }
-            // The property the trace has to have before it can replace the
-            // comparison: agreeing on every recorded question must MEAN the
-            // emissions match. A class that agrees and yet renders differently
-            // is a per-class read the emitter makes without asking through
-            // `Ctx::ask`, which is the one way this mechanism can be wrong.
             if verify {
-                let trace = trace.borrow();
-                queries += trace.len();
-                for (cid, r) in &rendered[1..] {
-                    if trace.agrees_for(compiler, *cid) && r != &rendered[0].1 {
-                        untraced += 1;
-                        if report.len() < 8000 {
-                            report += &format!(
-                                "{}#{} renders differently on {} but every recorded question \
-                                 agrees -- an unrecorded per-class read\n",
-                                compiler.fq_name(group.defining_class),
-                                group.name,
-                                compiler.fq_name(*cid),
-                            );
-                        }
-                    }
+                verify_buckets(compiler, &group, &buckets, &mut stats);
+            }
+            for bucket in buckets {
+                // A bucket of one has nothing to share: the class would emit
+                // this body into its own `impl` anyway, and `emit_class` does
+                // that for any class not mapped here.
+                if bucket.classes.len() < 2 {
+                    stats.alone += 1;
+                    continue;
                 }
-            }
-            let (base_cid, base) = &rendered[0];
-            if let Some((other_cid, other)) = rendered[1..].iter().find(|(_, r)| r != base) {
-                differed += 1;
-                if verify && report.len() < 8000 {
-                    // Which recorded question explains it, when one does. That
-                    // is the healthy case: the trace saw the divergence coming.
-                    let why = trace
-                        .borrow()
-                        .first_disagreement(compiler, *other_cid)
-                        .map_or_else(
-                            || "  no recorded question explains it".to_string(),
-                            |(q, mine, theirs)| format!("  {q:?}: {mine:?} vs {theirs:?}"),
-                        );
-                    report += &format!(
-                        "{}#{} differs between {} and {}\n{}\n  {}\n  {}\n",
-                        compiler.fq_name(group.defining_class),
-                        group.name,
-                        compiler.fq_name(*base_cid),
-                        compiler.fq_name(*other_cid),
-                        why,
-                        first_divergence(base, other),
-                        first_divergence(other, base),
-                    );
+                if bucket.body.to_string().len() < SIZE_GATE {
+                    stats.too_small += 1;
+                    continue;
                 }
-                continue;
+                stats.agreed += 1;
+                stats.copies += bucket.classes.len() - 1;
+                for cid in bucket.classes {
+                    by_class_def.insert((cid, group.def), bucket.ident.clone());
+                }
+                fns.push(bucket.body);
             }
-            if base.len() < SIZE_GATE {
-                too_small += 1;
-                continue;
-            }
-            agreed += 1;
-            copies += group.members.len() - 1;
-            for &(_, sid) in &group.members {
-                by_scope.insert(sid, fn_ident.clone());
-            }
-            fns.push(bodies.swap_remove(0));
         }
 
         if verify {
-            eprintln!(
-                "zeo-verify-share: {agreed} of {} groups share ({copies} of \
-                 {candidate_copies} duplicate bodies removed); rejected {rejected}, \
-                 under the size gate {too_small}, disagreed {differed}; \
-                 {queries} recorded question(s), {untraced} unrecorded per-class read(s)",
-                agreed + rejected + too_small + differed,
-            );
-            if !report.is_empty() {
-                eprintln!("{report}");
-            }
-            // A group whose members render differently is HEALTHY -- `class A <
-            // Base; include M` and `class B; include M` genuinely place `@x` at
-            // different slots, and the group correctly declines to share. What
-            // is not healthy is that happening with no recorded question to
-            // explain it, because that is a per-class read the emitter makes
-            // without going through `Ctx::ask`, and it is the one way sharing
-            // can produce a wrong program.
-            if untraced > 0 {
-                crate::codegen::record_unsupported(format!(
-                    "ZEO_VERIFY_SHARE found {untraced} group(s) whose emissions differ with \
-                     no recorded question to explain it -- a per-class read that does not go \
-                     through `Ctx::ask`:\n{report}"
-                ));
-            }
+            stats.report();
         }
         let container = (!fns.is_empty()).then(|| {
             quote! {
@@ -190,16 +139,161 @@ impl SharedBodies {
             }
         });
         SharedBodies {
-            by_scope,
+            by_class_def,
             container,
         }
     }
 }
 
-/// The rules that hold before anything is emitted. Everything else is decided
-/// by comparing the emissions themselves.
+/// Emit as few bodies as the group's members actually need.
+///
+/// The first member is emitted with its questions recorded; each member after
+/// it joins the first bucket whose trace it agrees with, and only mints a new
+/// one (with a new emission) when it agrees with none. For the overwhelming
+/// majority of groups that is one emission for the whole group, however many
+/// classes it holds.
+fn bucket_members(compiler: &Compiler, group: &crate::analyze::share::Group) -> Vec<Bucket> {
+    let mut buckets: Vec<Bucket> = Vec::new();
+    for &cid in &group.members {
+        if let Some(bucket) = buckets
+            .iter_mut()
+            .find(|b| b.trace.agrees_for(compiler, cid))
+        {
+            bucket.classes.push(cid);
+            continue;
+        }
+        // Named after the definition it serves rather than a running counter,
+        // so a body's name does not shift when an unrelated group stops
+        // sharing.
+        let ident = format_ident!("__sh{}_{}", group.def.0, buckets.len());
+        let trace = std::cell::RefCell::new(Trace::default());
+        let body =
+            super::emit_value_self_method_fn(compiler, cid, group.def, &ident, true, Some(&trace));
+        buckets.push(Bucket {
+            trace: trace.into_inner(),
+            classes: vec![cid],
+            body,
+            ident,
+        });
+    }
+    buckets
+}
+
+/// `ZEO_VERIFY_SHARE=1`: emit every member the old way and hold the buckets to
+/// what the comparison says.
+///
+/// Two directions, and only one of them is a bug. A member that renders
+/// DIFFERENTLY from its bucket's body is a per-class read the emitter makes
+/// without going through `Ctx::ask` -- the trace could not see it, so the
+/// replay put the class in a bucket whose body is wrong for it. A member that
+/// renders the SAME as another bucket's body is only a missed opportunity: the
+/// trace recorded a question that turned out not to matter here.
+fn verify_buckets(
+    compiler: &Compiler,
+    group: &crate::analyze::share::Group,
+    buckets: &[Bucket],
+    stats: &mut Stats,
+) {
+    let name = &compiler.scope(group.def).name;
+    let owner = compiler.fq_name(compiler.scope(group.def).defining_class);
+    for bucket in buckets {
+        let expected = bucket.body.to_string();
+        for &cid in &bucket.classes {
+            let actual = super::emit_value_self_method_fn(
+                compiler,
+                cid,
+                group.def,
+                &bucket.ident,
+                true,
+                None,
+            )
+            .to_string();
+            if actual == expected {
+                continue;
+            }
+            stats.untraced += 1;
+            if stats.report_text.len() < 8000 {
+                stats.report_text += &format!(
+                    "{owner}#{name} on {} renders differently from the body its bucket \
+                     emitted, but every recorded question agreed -- a per-class read that \
+                     does not go through `Ctx::ask`\n  {}\n  {}\n",
+                    compiler.fq_name(cid),
+                    first_divergence(&expected, &actual),
+                    first_divergence(&actual, &expected),
+                );
+            }
+        }
+    }
+    // Why each split happened, so a bucket count above 1 is explainable rather
+    // than mysterious.
+    if buckets.len() > 1 && stats.report_text.len() < 8000 {
+        for bucket in &buckets[1..] {
+            if let Some((q, mine, theirs)) = buckets[0]
+                .trace
+                .first_disagreement(compiler, bucket.classes[0])
+            {
+                stats.report_text += &format!(
+                    "{owner}#{name} splits on {}: {q:?} answered {mine:?} vs {theirs:?}\n",
+                    compiler.fq_name(bucket.classes[0]),
+                );
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct Stats {
+    candidate_copies: usize,
+    rejected: usize,
+    /// Buckets holding a single class -- a split left it on its own, so there
+    /// is nothing for it to share with.
+    alone: usize,
+    too_small: usize,
+    agreed: usize,
+    copies: usize,
+    queries: usize,
+    emissions: usize,
+    split: usize,
+    untraced: usize,
+    report_text: String,
+}
+
+impl Stats {
+    fn report(&self) {
+        eprintln!(
+            "zeo-verify-share: {} bodies serve {} classes ({} of {} duplicate bodies \
+             removed); rejected {}, under the size gate {}, left alone by a split {}, \
+             groups split {}; {} emissions, {} recorded question(s), \
+             {} unrecorded per-class read(s)",
+            self.agreed,
+            self.agreed + self.copies,
+            self.copies,
+            self.candidate_copies,
+            self.rejected,
+            self.too_small,
+            self.alone,
+            self.split,
+            self.emissions,
+            self.queries,
+            self.untraced,
+        );
+        if !self.report_text.is_empty() {
+            eprintln!("{}", self.report_text);
+        }
+        if self.untraced > 0 {
+            crate::codegen::record_unsupported(format!(
+                "ZEO_VERIFY_SHARE found {} class(es) served a body that does not match what \
+                 they would have emitted, with no recorded question to explain it -- a \
+                 per-class read that does not go through `Ctx::ask`:\n{}",
+                self.untraced, self.report_text
+            ));
+        }
+    }
+}
+
+/// The rules that hold before anything is emitted.
 fn shareable(compiler: &Compiler, group: &crate::analyze::share::Group) -> bool {
-    let scope = compiler.scope(group.members[0].1);
+    let scope = compiler.scope(group.def);
     // A pristine built-in exception body is served by `zeo-rt`'s own
     // `register_exceptions`, so codegen emits no copy of it to share.
     if scope.native_default {
@@ -208,17 +302,10 @@ fn shareable(compiler: &Compiler, group: &crate::analyze::share::Group) -> bool 
     // An `undef_method` zeo could not decide at compile time means the name may
     // not resolve here at runtime, so the class keeps its own emitted copy for
     // the dynamic path to tombstone.
-    if group
+    !group
         .members
         .iter()
-        .any(|&(cid, _)| compiler.may_be_undefined_at_runtime(cid, &group.name))
-    {
-        return false;
-    }
-    // An ivar-touching body needs no rule of its own: it emits its slot INDEX,
-    // so a group whose members disagree about where a name lives disagrees on
-    // the tokens and never shares.
-    true
+        .any(|&cid| compiler.may_be_undefined_at_runtime(cid, &scope.name))
 }
 
 /// A short window of `a` around the first token where it parts from `b`.

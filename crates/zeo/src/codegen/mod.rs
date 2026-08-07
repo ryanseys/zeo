@@ -3673,7 +3673,7 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
         // A shared body already carries this method's frame and `check_ints`,
         // so the forwarding line adds neither. Consuming `self` rather than
         // cloning it makes `new_handle` a pure unsize coercion.
-        if let Some(shared_fn) = shared.call(sid) {
+        if let Some(shared_fn) = shared.call(cid, sid) {
             let fwd = params::emit_forward_args(&scope.params, needs_block);
             return quote! {
                 def #method_ident(self: std::sync::Arc<Self> #sig_params) {

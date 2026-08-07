@@ -1363,7 +1363,7 @@ pub fn emit_call(
             // dispatches dynamically on `__self` through `send_value`, whose
             // value-methods-then-curated-tables order resolves it exactly
             // like an explicit `self.length` would.
-            if cx.compiler.value_backed(cid) {
+            if cx.ask(super::class_query::ClassQuery::ValueBacked).yes() {
                 let slf = &cx.self_ident;
                 if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
                     let scope = cx.compiler.scope(sid);
