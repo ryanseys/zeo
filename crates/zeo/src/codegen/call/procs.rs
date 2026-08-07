@@ -160,7 +160,7 @@ fn emit_proc_or_lambda_value_with(
     force_self: bool,
 ) -> TokenStream {
     let block_caps =
-        crate::codegen::captures::block_captures(cx.compiler, params, body, cx.current_class);
+        crate::codegen::captures::block_captures(cx.compiler, params, body, cx.self_class());
 
     let mut genuine: Vec<&String> = block_caps
         .locals
@@ -250,7 +250,7 @@ fn emit_proc_or_lambda_value_with(
         cx.compiler,
         body,
         params,
-        cx.current_class,
+        cx.self_class(),
     );
     // A `binding` inside this block exposes the block's OWN names too, so they
     // need the same cell promotion a nested block's capture would give them --

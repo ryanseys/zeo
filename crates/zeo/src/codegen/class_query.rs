@@ -135,6 +135,40 @@ fn takes_value_super(
     })
 }
 
+/// The class a body's `self` is an instance of, together with where to record
+/// what gets asked about it.
+///
+/// `captures` walks a body far from any `Ctx`, but the question it asks there --
+/// does this class define `puts`, or is a bare `puts` the Kernel free function?
+/// -- is a per-class question like any other, and it changes the shape of the
+/// emitted closure. Carrying the class and the trace as one value is what stops
+/// a caller from passing the first and forgetting the second.
+#[derive(Clone, Copy, Default)]
+pub(super) struct SelfClass<'a> {
+    pub(super) cid: Option<ClassId>,
+    trace: Option<&'a std::cell::RefCell<Trace>>,
+}
+
+impl<'a> SelfClass<'a> {
+    pub(super) fn new(
+        cid: Option<ClassId>,
+        trace: Option<&'a std::cell::RefCell<Trace>>,
+    ) -> SelfClass<'a> {
+        SelfClass { cid, trace }
+    }
+
+    /// [`super::Ctx::ask`] for code that has no `Ctx`. `None` when there is no
+    /// receiver class, which is also when nothing can vary with one.
+    pub(super) fn ask(&self, compiler: &Compiler, query: ClassQuery) -> Option<Answer> {
+        let cid = self.cid?;
+        let answer = query.answer(compiler, cid);
+        if let Some(trace) = self.trace {
+            trace.borrow_mut().record(query, answer);
+        }
+        Some(answer)
+    }
+}
+
 /// The questions one emission asked, in order, with the answers it got.
 ///
 /// Order is not load-bearing -- replay checks every pair -- but keeping it lets

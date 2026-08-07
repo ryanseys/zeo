@@ -291,7 +291,7 @@ fn emit_counted_block_splice(
     // this, the nested block would fresh-declare the name and read
     // `nil`.
     let mut nested_captured: std::collections::HashSet<String> =
-        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
             .locals;
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
@@ -460,7 +460,7 @@ fn emit_array_iter_splice(
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
     let mut nested_captured: std::collections::HashSet<String> =
-        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
             .locals;
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
@@ -646,7 +646,7 @@ fn emit_hash_each_splice(cx: &Ctx, block_id: NodeId, label_stem: &str) -> TokenS
     let outer = super::loops::fresh_label(cx, label_stem);
     let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
     let mut nested_captured: std::collections::HashSet<String> =
-        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.self_class())
             .locals;
     let splice_binding = inline_block_binding_names(cx, params, &mut nested_captured);
     let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
@@ -1752,7 +1752,7 @@ pub fn emit_call(
             );
         };
         let block_caps =
-            super::captures::block_captures(cx.compiler, params, body, cx.current_class);
+            super::captures::block_captures(cx.compiler, params, body, cx.self_class());
         // `block_captures` reports every referenced non-param
         // name, INCLUDING the block's own locals (`msg =
         // Ractor.receive` -- found the hard way). An outer-scope

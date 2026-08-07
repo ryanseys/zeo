@@ -461,6 +461,13 @@ impl<'a> Ctx<'a> {
     fn ask_opt(&self, query: class_query::ClassQuery) -> Option<class_query::Answer> {
         self.current_class.is_some().then(|| self.ask(query))
     }
+
+    /// The receiver class and this emission's trace as one value, for the
+    /// capture walks -- which run far from a `Ctx` but still ask per-class
+    /// questions. See [`class_query::SelfClass`].
+    fn self_class(&self) -> class_query::SelfClass<'a> {
+        class_query::SelfClass::new(self.current_class, self.trace)
+    }
 }
 
 /// Wrap a method body that needs a `Signal::Return` catch. `home_push`/
@@ -2192,7 +2199,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         compiler,
         &analyzed.main_statements,
         &crate::hir::Params::default(),
-        None,
+        class_query::SelfClass::default(),
     );
     let main_binding = captures::binding_scope_names(
         compiler,
@@ -2666,8 +2673,12 @@ pub(crate) fn emit_class_body_site(
     // the top level does (`yesno = CompletingHash.new; %w[- no].each { |el|
     // yesno[el] = false }`, optparse's own accept-table setup). Left empty,
     // every such name was re-declared nil INSIDE the closure.
-    let mut captures =
-        captures::collect_escaping_captures(compiler, stmts, &crate::hir::Params::default(), None);
+    let mut captures = captures::collect_escaping_captures(
+        compiler,
+        stmts,
+        &crate::hir::Params::default(),
+        class_query::SelfClass::default(),
+    );
     let binding_names = captures::binding_scope_names(
         compiler,
         stmts,
@@ -3034,8 +3045,12 @@ fn emit_class_method_fn(
     let method_ident = ident::class_method_ident(&scope.name);
     let sig_params = params::emit_signature_params_free(params, needs_block);
     let label_counter = Cell::new(0u32);
-    let mut no_captures =
-        captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
+    let mut no_captures = captures::collect_escaping_captures(
+        compiler,
+        &scope.body,
+        &scope.params,
+        class_query::SelfClass::default(),
+    );
     let binding_names = captures::binding_scope_names(
         compiler,
         &scope.body,
@@ -3356,8 +3371,12 @@ fn emit_value_self_method_fn(
     let needs_block = scope.needs_block_param();
     let sig_params = params::emit_signature_params(&scope.params, needs_block);
     let label_counter = Cell::new(0u32);
-    let mut method_captures =
-        captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+    let mut method_captures = captures::collect_escaping_captures(
+        compiler,
+        &scope.body,
+        &scope.params,
+        class_query::SelfClass::new(Some(cid), trace),
+    );
     let binding_names = captures::binding_scope_names(
         compiler,
         &scope.body,
@@ -3454,8 +3473,12 @@ pub(crate) fn emit_instance_method_body(
     let scope = compiler.scope(sid);
     let needs_block = scope.needs_block_param();
     let method_label_counter = Cell::new(0u32);
-    let mut method_captures =
-        captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+    let mut method_captures = captures::collect_escaping_captures(
+        compiler,
+        &scope.body,
+        &scope.params,
+        class_query::SelfClass::new(Some(cid), None),
+    );
     let binding_names = captures::binding_scope_names(
         compiler,
         &scope.body,
