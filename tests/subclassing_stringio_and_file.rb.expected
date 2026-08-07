@@ -17,3 +17,7 @@ true
 [Thread, Thread]
 [[1, 2], Enumerator]
 [Bag, Hash]
+[Span, 30, 10, 40, "(10..40)"]
+[Span, "(15..45)"]
+[true, true, 31]
+[1, 2]

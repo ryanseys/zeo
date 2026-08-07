@@ -1414,12 +1414,13 @@ fn unset_constant_raises_a_name_error() {
 
 #[test]
 fn subclassing_an_unsupported_built_in_type_is_a_clean_error() {
-    // D3 opened subclassing for Array/String/Hash (payload), Numeric (plain
-    // object), and the immediates (registry-only). `Range` stays rejected --
-    // it has no runtime constructor -- so this remains a clean compile error.
+    // The payload-root list has grown well past Array/String/Hash -- Range
+    // among them now. `Regexp` is the one deliberately left out for its own
+    // sake rather than for want of machinery: subclassing it is vanishingly
+    // rare, so it stays a clean compile error instead of an untested path.
     let err = zeo::compile_to_rust(
         r#"
-        class MyRange < Range
+        class MyPattern < Regexp
         end
         "#,
     )

@@ -1421,8 +1421,8 @@ impl Compiler {
     /// the first `Array`/`String`/`Hash` in `cid`'s linearized ancestry,
     /// or `None` for anything that isn't such a subclass. `class Stack < Array`
     /// -> `Some(ARRAY_CLASS)`. The builtin itself (`is_builtin`) is excluded --
-    /// only a user subclass has a `ValueSubclass` payload. `Range`/`Regexp` are
-    /// deliberately NOT roots (no runtime constructor / negligible use); a
+    /// only a user subclass has a `ValueSubclass` payload. `Regexp` is
+    /// deliberately NOT a root (subclassing it is negligible in practice); a
     /// subclass of one stays an analyze rejection.
     pub fn value_payload_root(&self, cid: ClassId) -> Option<ClassId> {
         let ci = self.class(cid);
@@ -1445,6 +1445,7 @@ impl Compiler {
                     | zeo_abi::ENUMERATOR_CLASS
                     | zeo_abi::TIME_CLASS
                     | zeo_abi::THREAD_CLASS
+                    | zeo_abi::RANGE_CLASS
             )
         })
     }

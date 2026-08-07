@@ -10,10 +10,12 @@
 //! `def`s register as `define_method` deltas (dynamic self), exactly like an
 //! exception subclass.
 //!
-//! Range/Regexp are NOT payload roots here: `Range` has no runtime constructor
-//! at all, and `Regexp` subclassing is vanishingly rare -- both stay a clean
-//! analyze rejection (documented), so this covers the collection roots that
-//! matter (`Array`/`String`/`Hash`).
+//! The root list has grown well past the collection roots it started with --
+//! `StringScanner`, `StringIO`, `File`, `Set`, `Enumerator`, `Time`, `Thread`,
+//! `Range` -- because nothing about the bridge is Array/String/Hash-specific:
+//! the payload is just a `RubyValue`. `Regexp` stays out only because
+//! subclassing it is vanishingly rare, and `Class`/`Module` because a class id
+//! has no per-value dispatch to hang a payload on.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -162,6 +164,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::ENUMERATOR_CLASS
             | zeo_abi::TIME_CLASS
             | zeo_abi::THREAD_CLASS
+            | zeo_abi::RANGE_CLASS
     )
 }
 
@@ -332,6 +335,9 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // is the `File` shape again. The gems subclass Thread precisely to wrap
         // `initialize`, which seats the real thread through `super`.
         zeo_abi::THREAD_CLASS => RubyValue::Nil,
+        // `Range.new` demands both endpoints, so there is no empty form here
+        // either -- the `File` shape again.
+        zeo_abi::RANGE_CLASS => RubyValue::Nil,
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         _ => RubyValue::Nil,
     }

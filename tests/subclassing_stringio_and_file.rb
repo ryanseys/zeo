@@ -135,3 +135,18 @@ p [Seq.produce(1) { |x| x + 1 }.first(2), Seq.produce(1) { |x| x + 1 }.class]
 
 class Bag < Hash; end
 p [Bag[[[1, 2]]].class, Bag.try_convert({}).class]
+
+# `Range`: chronic's `Span < Range`. Its class-method table had no `new` row
+# until one was added for exactly this path -- the prerequisite `Enumerator`
+# needed too. `Range.new` demands both endpoints, so no empty payload form.
+class Span < Range
+  def width = (self.end - self.begin).to_i
+  def +(seconds) = Span.new(self.begin + seconds, self.end + seconds)
+  def to_s = "(" + self.begin.to_s + ".." + self.end.to_s + ")"
+end
+
+sp = Span.new(10, 40)
+p [sp.class, sp.width, sp.begin, sp.end, sp.to_s]
+p [(sp + 5).class, (sp + 5).to_s]
+p [sp.is_a?(Range), sp.include?(20), sp.to_a.size]
+p Span.new(1, 3, true).to_a

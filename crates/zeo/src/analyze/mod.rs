@@ -2252,6 +2252,11 @@ fn register_class(
                                 // the real one through `super`, which is
                                 // exactly why these gems subclass it.
                                 | zeo_abi::THREAD_CLASS
+                                // `Range`: chronic's `Span < Range`. Its
+                                // class-method table had no `new` row until
+                                // one was added for exactly this path -- the
+                                // same prerequisite `Enumerator` needed.
+                                | zeo_abi::RANGE_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

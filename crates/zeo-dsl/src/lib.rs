@@ -515,21 +515,22 @@ fn parse_def(
     // `cfunc`: CRuby declares this one `argc = -1`, so it reports -1 whatever
     // the parameter list says. Per-def, and always immediately before the
     // parameters it qualifies.
-    let cfunc = if peek_ident(input, "cfunc") {
-        input.parse::<Ident>()?;
-        true
-    } else {
-        false
-    };
-
-    // `allocs`: allocates through the receiver class -- see `MethodDef::allocs`.
-    // Sits beside `cfunc` because both qualify the def that follows.
-    let allocs = if peek_ident(input, "allocs") {
-        input.parse::<Ident>()?;
-        true
-    } else {
-        false
-    };
+    // ...and `allocs`: allocates through the receiver class (see
+    // `MethodDef::allocs`). Both qualify the def that follows, and either
+    // order reads fine, so neither is positional -- writing them the other way
+    // round must not become a parse error at the def, far from any explanation.
+    let (mut cfunc, mut allocs) = (false, false);
+    loop {
+        if !cfunc && peek_ident(input, "cfunc") {
+            input.parse::<Ident>()?;
+            cfunc = true;
+        } else if !allocs && peek_ident(input, "allocs") {
+            input.parse::<Ident>()?;
+            allocs = true;
+        } else {
+            break;
+        }
+    }
 
     let buf;
     parenthesized!(buf in input);

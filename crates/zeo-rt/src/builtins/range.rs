@@ -280,6 +280,23 @@ ruby_class! {
     Range = zeo_abi::RANGE_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
 
+    // `Range.new(begin, end, exclude_end = false)` -- the literal `a..b` under
+    // another name, so the endpoints normalize the same way and must be
+    // comparable (`Range.new(1, "a")` is the ArgumentError a literal could
+    // never reach). `Class#new` intercepts this for `Range` itself
+    // (`builtins::rclass`); the row exists for the SUBCLASS path, where
+    // `value_subclass::construct_root_payload` builds a payload by calling the
+    // root's own `new` out of this table -- chronic's `Span < Range`.
+    def self."new" allocs cfunc (_recv, *args, &_block) {
+        crate::builtins::check_arity(args.len(), 2, Some(3))?;
+        let excl = args.get(2).is_some_and(|v| v.truthy());
+        crate::range_checked(
+            crate::range_endpoint(args[0].clone()),
+            crate::range_endpoint(args[1].clone()),
+            excl,
+        )
+    }
+
     // Materializing an UNBOUNDED range would spin forever growing a vector
     // until the process died, so CRuby guards `Range#to_a` specifically
     // (`range_to_a`, range.c:1023) and delegates to Enumerable otherwise.
