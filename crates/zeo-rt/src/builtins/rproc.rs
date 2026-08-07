@@ -22,9 +22,19 @@ ruby_class! {
     // `Proc.new { ... }` / `Proc.new(&b)` -- the block IS the proc, so return
     // it. Without a block, CRuby (3.0+) raises ArgumentError rather than
     // capturing the enclosing method's block.
-    def self."new"(_recv, *_args, &block) {
+    // A SUBCLASS receiver (`class P < Proc; end; P.new { }`) re-tags the block
+    // as its own class rather than answering a plain Proc -- CRuby allocates
+    // through the receiver here too. The value stays a `RubyValue::Proc`, so
+    // nothing about calling it changes; see `ProcData::class_id`.
+    def self."new" allocs (recv, *_args, &block) {
         match block {
-            Some(p @ RubyValue::Proc(_)) => Ok(p),
+            Some(RubyValue::Proc(p)) => {
+                let target = match recv {
+                    RubyValue::Class(cid) => *cid,
+                    _ => zeo_abi::PROC_CLASS,
+                };
+                Ok(RubyValue::Proc(p.as_class(target)))
+            }
             _ => Err(arg_error!("tried to create Proc object without a block")),
         }
     }

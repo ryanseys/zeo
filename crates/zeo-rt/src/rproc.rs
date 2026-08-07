@@ -97,6 +97,13 @@ pub struct ProcData {
     /// beyond the word: codegen already has the span (it threads the same one
     /// into `#binding`), and the file is a literal in the generated source.
     location: Option<(&'static str, u32)>,
+    /// The class this proc IS an instance of -- `Proc` for every one a program
+    /// writes, and a user subclass only for `class P < Proc` (declarative's
+    /// `Variables::Proc`). Kept HERE rather than in a wrapper object so a
+    /// subclass instance is still a `RubyValue::Proc`: every call-site fast
+    /// path, `&blk` conversion and `to_proc` keeps working on it unchanged,
+    /// which a `ValueSubclass` payload would have broken.
+    class_id: crate::ClassId,
     /// The Symbol this proc was DERIVED from (`:upcase.to_proc`, `&:name`) --
     /// what makes `#inspect` render `#<Proc:0x...(&:upcase) (lambda)>`
     /// instead of a source location. `None` for every other construction.
@@ -144,6 +151,7 @@ impl RProc {
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
     ) -> RProc {
         RProc(Arc::new(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
             arity: -1,
@@ -166,6 +174,7 @@ impl RProc {
         is_lambda: bool,
     ) -> RProc {
         RProc(Arc::new(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
             arity,
@@ -210,6 +219,7 @@ impl RProc {
         is_lambda: bool,
     ) -> RProc {
         RProc(Arc::new(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
             f: Arc::new(f),
             self_val,
             arity,
@@ -436,6 +446,7 @@ impl RProc {
             return self.clone();
         }
         RProc(Arc::new(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
             f: Arc::clone(&self.0.f),
             self_val: self.0.self_val.clone(),
             arity: self.0.arity,
@@ -449,8 +460,38 @@ impl RProc {
         }))
     }
 
+    /// The class this proc is an instance of -- `Proc` unless a
+    /// `class P < Proc` minted it. See [`ProcData::class_id`].
+    pub fn class_id(&self) -> crate::ClassId {
+        self.0.class_id
+    }
+
+    /// The same proc as an instance of `class_id`, sharing the one closure
+    /// allocation. What a `class P < Proc` constructor applies to the block it
+    /// was given, so `P.new { }` answers a `P` that is still a
+    /// `RubyValue::Proc`.
+    pub fn as_class(&self, class_id: crate::ClassId) -> RProc {
+        if self.0.class_id == class_id {
+            return self.clone();
+        }
+        RProc(Arc::new(ProcData {
+            class_id,
+            f: Arc::clone(&self.0.f),
+            self_val: self.0.self_val.clone(),
+            arity: self.0.arity,
+            is_lambda: self.0.is_lambda,
+            params: self.0.params.clone(),
+            home: self.0.home.clone(),
+            binding: self.0.binding.clone(),
+            location: self.0.location,
+            origin: self.0.origin,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+
     pub fn dup_data(&self, frozen: bool) -> RProc {
         RProc(Arc::new(ProcData {
+            class_id: zeo_abi::PROC_CLASS,
             f: Arc::clone(&self.0.f),
             self_val: self.0.self_val.clone(),
             arity: self.0.arity,

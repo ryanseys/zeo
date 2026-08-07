@@ -8,7 +8,7 @@ use crate::builtins::{arg_error, type_error};
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
     ARRAY_CLASS, CLASS_CLASS, ClassId, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
-    INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS,
+    INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, QUEUE_CLASS,
     RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, SIZED_QUEUE_CLASS, STRING_CLASS, SYMBOL_CLASS,
     TRUE_CLASS,
 };
@@ -634,7 +634,9 @@ impl RubyValue {
             RubyValue::Hash(_) => HASH_CLASS,
             RubyValue::Range(..) => RANGE_CLASS,
             RubyValue::Object(o) => o.class_id(),
-            RubyValue::Proc(_) => PROC_CLASS,
+            // A `class P < Proc` instance is still a `RubyValue::Proc`; the
+            // class it answers rides in the proc itself.
+            RubyValue::Proc(p) => p.class_id(),
             RubyValue::Regexp(_) => REGEXP_CLASS,
             RubyValue::MatchData(_) => MATCH_DATA_CLASS,
             RubyValue::Fiber(_) => FIBER_CLASS,

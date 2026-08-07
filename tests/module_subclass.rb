@@ -149,3 +149,29 @@ p MyDate.civil(2001, 2, 3).to_s
 
 # The roots themselves are untouched.
 p [Date.today.class, DateTime.jd(2460000).class, Date.civil(2001, 2, 3).to_s]
+
+# `Proc` is the fifth native shape, and deliberately NOT a payload wrapper:
+# every call-site fast path, `&blk` conversion and `to_proc` matches on
+# `RubyValue::Proc`, so boxing one inside an object would break all of them.
+# The class rides in the proc itself instead. declarative's
+# `Declarative::Variables::Proc` is the case -- an empty subclass used purely
+# as a tag (`v.is_a?(Variables::Proc)`) on something that is still called.
+class Tagged < ::Proc
+end
+
+t = Tagged.new { |x| x * 2 }
+p [t.class, t.is_a?(Proc), t.is_a?(Tagged), Tagged.superclass]
+p [t.call(21), t.(21), t[21], t.arity, t.lambda?]
+
+# It is a real Proc everywhere a Proc is expected -- including as a block, which
+# is where a wrapper object would have failed.
+p [1, 2, 3].map(&t)
+
+def takes_block(&b)
+  b.class
+end
+
+p takes_block(&t)
+
+# ...and the base class is untouched.
+p [Proc.new { 1 }.class, t.curry.class]

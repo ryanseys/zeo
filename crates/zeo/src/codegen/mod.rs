@@ -1307,10 +1307,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
                 );
             }
-        } else if compiler.is_date_subclass(ClassId(idx as u32)) {
-            // A user `class DateTimeWithOffset < DateTime`: no generated
-            // struct -- its instances are the native `RDate`, which the root's
-            // own rows already tag with the receiver class.
+        } else if compiler.is_date_subclass(ClassId(idx as u32))
+            || compiler.is_proc_subclass(ClassId(idx as u32))
+        {
+            // A user `class DateTimeWithOffset < DateTime` or `class P < Proc`:
+            // no generated struct -- the root's own rows already tag what they
+            // build with the receiver class, so the subclass just has to be
+            // passed along.
             let id = idx as u32;
             let fq_name = compiler.fq_name(ClassId(id));
             let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);

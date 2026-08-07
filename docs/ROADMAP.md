@@ -209,6 +209,80 @@ harness builds `-O0`. To reproduce: re-add the `each_byte` block and run
 `cargo nextest run -E 'test(pp_pretty_print)'`. `StringIO#each_byte` is still
 missing because of this.
 
+## Gem corpus
+
+**1052 of 1273 probed gems compile** (`cargo xtask gem-probe`, ledger in
+`conformance/gem-probe-{compiles,fails}.tsv` + `gem-probe.md`). The probe runs
+the compiler front end over a real gem in an isolated view of itself and its
+declared dependencies, pinned by the `.gem`'s sha256.
+
+Read this section as MEASURED, not surveyed: every row below is a diagnostic
+the probe actually produced, and the counts move whenever a fix lands. What is
+**not** here — anything about gems outside the corpus, or about whether a gem
+that compiles also RUNS correctly — is simply unmeasured. Compiling is the only
+claim.
+
+### What remains, by bucket
+
+| Bucket | Rows | Nature |
+|---|---|---|
+| `lowering-gap` | 136 | Real compiler work; the sub-buckets below |
+| `native-extension` | 27 | Genuinely needs C |
+| `no-entry-point` | 26 | Application gems with no library entry point |
+| `missing-dependency` | 21 | A gem the corpus does not carry |
+| `no-lib-dir` | 7 | Upstream facts |
+| `fetch-failed` | 5 | The sha256 pin disagreeing with rubygems today |
+
+The largest `lowering-gap` sub-buckets, each a single diagnostic:
+
+| Diagnostic | Rows |
+|---|---|
+| class/module definition inside an undecidable top-level `if` | 31 |
+| `class`/`module` in a position the analyze walk doesn't register | 14 |
+| subclassing a built-in type still on the list | 12 |
+| unknown superclass / class / module (a file the require graph never reached) | 18 |
+| the FFI declaration family (literal symbol, `ffi_lib`, scalar type) | 14 |
+
+### Subclassing a builtin: five shapes, not one
+
+Most of the subclassing work resolved into a question about WHERE a subclass
+instance's class id can live, and the answer differs per root. The five are
+worth knowing before adding a sixth:
+
+1. **Payload root** — the instance is a `ValueSubclass` wrapping a `RubyValue`
+   of the root's kind. `Array`/`String`/`Hash`/`Set`/`StringScanner`/
+   `StringIO`/`File`/`Enumerator`/`Time`/`Thread`/`Range`. The row cannot
+   express the tag, so the wrapper adds it — and which class methods allocate
+   through the receiver is recorded per row by the DSL's `allocs` marker,
+   because that is where CRuby keeps the same knowledge.
+2. **Receiver-honouring root** — the row already allocates through the receiver
+   and the value already carries a class id, so there is nothing to wrap.
+   `Date`/`DateTime` (an `RDate`) and `Proc` (the class rides in `ProcData`,
+   which is what keeps every call-site fast path and `&blk` conversion working).
+3. **The native type itself** — the root's constructor already takes the
+   receiver class. `ObjectSpace::WeakMap`.
+4. **Class-valued instance** — `class X < Module`, whose instances are real
+   runtime module ids tagged with an owner class, so `include`, `Module#===`,
+   `ancestors` and constant lookup keep working.
+5. **Registry-entry only** — the immediates, where the definition is legal and
+   there are no instances.
+
+`Regexp` is left out deliberately (subclassing it is vanishingly rare, so the
+path would go untested rather than unbuilt); `Socket`/`OpenSSL::SSL::SSLSocket`
+are gated on those extensions' maturity.
+
+### Known harness debt
+
+- `write_stub_gemspec` used to overwrite the REAL gemspec inside
+  `vendor/gems/<name>/`, and the version stamp then kept those gems from ever
+  being re-fetched. The stub goes in the view now, and a cached stub is treated
+  as stale so the cache heals itself — but that re-fetch is what surfaces the
+  `fetch-failed` rows above, and they need triage: a sha256 mismatch means
+  either upstream re-released or the pin was recorded against a different
+  artifact, and only one of those is benign.
+- A gem's classification is only as good as the last sweep. A contiguous
+  ALPHABETICAL band of one diagnostic means a truncated sweep, not a cluster.
+
 ## Library
 
 ### Vendor test-unit 3.7.8

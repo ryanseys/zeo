@@ -256,25 +256,6 @@ fn unpack_gem(bytes: &[u8], dest: &Path) -> Result<(), String> {
         .map_err(|e| format!("unpacking: {e}"))
 }
 
-/// Whether the gem's own gemspec declares C extensions -- the authoritative
-/// signal, and the one that separates "must compile C" from "ships an optional
-/// accelerator". concurrent-ruby has an `ext/` directory but declares nothing,
-/// because its C half is the separate concurrent-ruby-ext gem.
-fn declares_extensions(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.filter_map(Result::ok).any(|e| {
-        let p = e.path();
-        p.extension().is_some_and(|x| x == "gemspec")
-            && std::fs::read_to_string(&p).is_ok_and(|t| {
-                t.lines()
-                    .map(str::trim)
-                    .any(|l| l.contains(".extensions") && l.contains('=') && !l.contains("[]"))
-            })
-    })
-}
-
 fn write_stub_gemspec(dir: &Path, name: &str, version: &str) -> Result<(), String> {
     std::fs::write(
         dir.join(format!("{name}.gemspec")),
@@ -286,6 +267,29 @@ fn write_stub_gemspec(dir: &Path, name: &str, version: &str) -> Result<(), Strin
         ),
     )
     .map_err(|e| e.to_string())
+}
+
+/// Whether the CACHED gemspec is one of our own stubs rather than what
+/// rubygems shipped.
+///
+/// The stub belongs in the view, and does go there now -- but an earlier
+/// version wrote it over the cache, and the version stamp then kept those
+/// gems from ever being re-fetched. A stub in the cache has lost the gem's
+/// real `require_paths` (concurrent-ruby's is `lib/concurrent-ruby`, not
+/// `lib`) and its `extensions`, so treating it as stale is what heals the
+/// damage without anyone having to know which gems were affected.
+fn cached_gemspec_is_a_stub(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|e| {
+        let p = e.path();
+        p.extension().is_some_and(|x| x == "gemspec")
+            && std::fs::read_to_string(&p).is_ok_and(|t| {
+                // The stub is exactly four lines and names nothing else.
+                t.lines().count() == 5 && t.contains("s.require_paths") && !t.contains("s.summary")
+            })
+    })
 }
 
 /// The version `vendor/gems/<gem>/` was unpacked at, for stubbing its gemspec
@@ -305,7 +309,7 @@ fn unpacked_version(dir: &Path) -> String {
 /// name. What is stylistic is WHERE it goes, and it goes here rather than over
 /// the real file in `vendor/gems/`: overwriting made the cache no longer a copy
 /// of what rubygems shipped, so a ledger row could not be reproduced from it,
-/// `declares_extensions` could never be re-run, and changing the stub's format
+/// the real gemspec could never be re-read, and changing the stub's format
 /// meant re-downloading every gem.
 fn link_gem_into_view(view: &Path, src: &Path, gem: &str) -> Result<(), String> {
     let dest = view.join(gem);
@@ -336,7 +340,9 @@ fn fetch(
     expect_sha: Option<&str>,
 ) -> Result<PathBuf, String> {
     let dir = vendor_dir(root).join(name);
-    if std::fs::read_to_string(stamp_path(&dir)).is_ok_and(|s| s.trim() == version) {
+    if std::fs::read_to_string(stamp_path(&dir)).is_ok_and(|s| s.trim() == version)
+        && !cached_gemspec_is_a_stub(&dir)
+    {
         return Ok(dir);
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -353,9 +359,6 @@ fn fetch(
         }
     }
     unpack_gem(&bytes, &dir)?;
-    if declares_extensions(&dir) {
-        std::fs::write(dir.join(".zeo-probe-native"), "1").map_err(|e| e.to_string())?;
-    }
     std::fs::write(stamp_path(&dir), version).map_err(|e| e.to_string())?;
     Ok(dir)
 }
@@ -482,16 +485,17 @@ fn probe(
     deps: &[String],
     timeout: Duration,
 ) -> (Outcome, Option<String>) {
-    if dir.join(".zeo-probe-native").exists() {
-        return (Outcome::NativeExtension, None);
-    }
     if !dir.join("lib").is_dir() {
         return (Outcome::NoLibDir, None);
     }
-    // An `ext/` directory is NOT decisive. Many gems ship an optional C
-    // accelerator beside a pure-Ruby implementation -- concurrent-ruby is the
-    // common case -- and compile fine without it. Try, then classify what
-    // actually failed.
+    // A DECLARED extension is not decisive either, which is why nothing checks
+    // for one before this point any more. Many gems ship an optional C
+    // accelerator beside a pure-Ruby implementation and compile fine without
+    // it -- erb, json, prism, bigdecimal, rbs and eight more were all reported
+    // `native-extension` on the strength of the gemspec line alone, having
+    // never been compiled. Try, then classify what actually failed: zeo says
+    // `native (C) extension` itself when a require genuinely needs one, and
+    // `classify` reads that.
     let view = match isolate(root, name, deps) {
         Ok(v) => v,
         Err(e) => return (Outcome::FetchFailed(e), None),
@@ -1334,7 +1338,18 @@ mod tests {
         let dir = vendor_dir(root).join(name);
         std::fs::create_dir_all(dir.join("lib")).unwrap();
         std::fs::write(dir.join("lib").join(format!("{name}.rb")), body).unwrap();
-        write_stub_gemspec(&dir, name, version).unwrap();
+        // What rubygems shipped, NOT our stub: a stub in the cache is the
+        // broken state `cached_gemspec_is_a_stub` exists to re-fetch out of,
+        // so writing one here would make every cached-gem test miss.
+        std::fs::write(
+            dir.join(format!("{name}.gemspec")),
+            format!(
+                "Gem::Specification.new do |s|\n  s.name = {name:?}.freeze\n  \
+                 s.version = {version:?}.freeze\n  s.summary = \"a test gem\".freeze\n  \
+                 s.require_paths = [\"lib\".freeze]\nend\n"
+            ),
+        )
+        .unwrap();
         std::fs::write(stamp_path(&dir), version).unwrap();
         dir
     }
@@ -1838,26 +1853,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A stub gemspec in the CACHE means the gem was fetched before the stub
+    /// moved into the view, so its real `require_paths`/`extensions` are gone
+    /// and the entry must be re-fetched rather than trusted.
     #[test]
-    fn only_a_declared_extension_counts_as_native() {
-        let root = scratch("ext");
-        let with = root.join("with");
-        let without = root.join("without");
-        std::fs::create_dir_all(&with).unwrap();
-        std::fs::create_dir_all(&without).unwrap();
+    fn a_stub_gemspec_in_the_cache_is_stale() {
+        let root = scratch("stale-stub");
+        let stubbed = root.join("stubbed");
+        let real = root.join("real");
+        std::fs::create_dir_all(&stubbed).unwrap();
+        std::fs::create_dir_all(&real).unwrap();
+        write_stub_gemspec(&stubbed, "a", "1.0.0").unwrap();
         std::fs::write(
-            with.join("a.gemspec"),
-            "Gem::Specification.new do |s|\n  s.extensions = [\"ext/a/extconf.rb\"]\nend\n",
+            real.join("b.gemspec"),
+            "Gem::Specification.new do |s|\n  s.name = \"b\".freeze\n  \
+             s.summary = \"real\".freeze\n  s.require_paths = [\"lib/b\".freeze]\nend\n",
         )
         .unwrap();
-        // concurrent-ruby's shape: an empty declaration is not a native gem.
-        std::fs::write(
-            without.join("b.gemspec"),
-            "Gem::Specification.new do |s|\n  s.extensions = []\n  s.name = \"b\"\nend\n",
-        )
-        .unwrap();
-        assert!(declares_extensions(&with));
-        assert!(!declares_extensions(&without));
+        assert!(cached_gemspec_is_a_stub(&stubbed));
+        assert!(!cached_gemspec_is_a_stub(&real));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1865,7 +1879,7 @@ mod tests {
     ///
     /// Overwriting the real gemspec is what made a committed row
     /// irreproducible: the tree a verdict was measured against was no longer
-    /// the gem. It also meant `declares_extensions` could only ever run once,
+    /// the gem. It also meant the real gemspec could only ever be read once,
     /// and that changing the stub's format required re-downloading everything.
     #[test]
     fn the_view_stubs_the_gemspec_and_the_cache_keeps_the_real_one() {

@@ -2493,12 +2493,22 @@ fn dispatch(
         };
         if !user_defined {
             return match infer_any_class(cx, recv_id) {
-                // Two builtins can't be constant-folded here. `Queue` may be a
+                // Three builtins can't be constant-folded here. `Queue` may be a
                 // subclass (`SizedQueue`, which types as `Queue` but carries its
                 // own class id). `MatchData` is nilable: `str.match(re)` types as
                 // MatchData but returns `nil` on no match, so `.class` must be
                 // read at runtime (`"x".match(/z/).class == NilClass`).
-                Some(cid) if cid != zeo_abi::QUEUE_CLASS && cid != zeo_abi::MATCH_DATA_CLASS => {
+                // `Proc` joins them ONLY in a program that defines a
+                // `class P < Proc`: such an instance is still a
+                // `RubyValue::Proc` and types as `Proc`, but carries its own
+                // class id -- so folding would answer `Proc` for it. A program
+                // with no such subclass keeps the fold, which is nearly all of
+                // them.
+                Some(cid)
+                    if cid != zeo_abi::QUEUE_CLASS
+                        && cid != zeo_abi::MATCH_DATA_CLASS
+                        && !(cid == zeo_abi::PROC_CLASS && cx.compiler.has_proc_subclass()) =>
+                {
                     let id = cid.0;
                     quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
                 }

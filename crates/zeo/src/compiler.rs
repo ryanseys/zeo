@@ -1392,6 +1392,8 @@ impl Compiler {
             && !self.is_weakmap_subclass(cid)
             // A Date subclass's instances are the native `RDate`.
             && !self.is_date_subclass(cid)
+            // A Proc subclass's instances are still `RubyValue::Proc`.
+            && !self.is_proc_subclass(cid)
     }
 
     /// Walks the recorded `parent` (superclass) links from `cid` toward the
@@ -1494,6 +1496,28 @@ impl Compiler {
     /// payload wrapper and no re-tagging, only to be passed along. tzinfo's
     /// `DateTimeWithOffset` is the case, and activesupport reaches the ledger
     /// through it.
+    /// Whether `cid` is a user `class P < Proc`.
+    ///
+    /// The FIFTH native shape, and it is deliberately not a payload wrapper:
+    /// every call-site fast path, `&blk` conversion and `to_proc` matches on
+    /// `RubyValue::Proc`, so boxing one inside an object would break all of
+    /// them. The class rides in `ProcData` instead, leaving the value shape
+    /// untouched. declarative's `Variables::Proc` is the case.
+    pub fn is_proc_subclass(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap {
+            return false;
+        }
+        self.superclass_chain(cid).any(|a| a == PROC_CLASS)
+    }
+
+    /// Whether the program defines ANY `class P < Proc`. A `RubyValue::Proc`
+    /// then no longer implies the class `Proc`, so `.class` cannot be folded
+    /// for a Proc-typed receiver -- see `codegen::call`'s `.class` arm.
+    pub fn has_proc_subclass(&self) -> bool {
+        (0..self.classes.len() as u32).any(|i| self.is_proc_subclass(ClassId(i)))
+    }
+
     pub fn is_date_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap {
@@ -1551,6 +1575,7 @@ impl Compiler {
             || self.is_module_subclass(cid)
             || self.is_weakmap_subclass(cid)
             || self.is_date_subclass(cid)
+            || self.is_proc_subclass(cid)
     }
 
     /// Whether `cid` is a user subclass of an IMMEDIATE builtin -- `Integer`/

@@ -2275,6 +2275,11 @@ fn register_class(
                                 // its own id. tzinfo's `DateTimeWithOffset`.
                                 | zeo_abi::DATE_CLASS
                                 | zeo_abi::DATETIME_CLASS
+                                // `Proc`: the class rides IN the proc, so a
+                                // subclass instance is still a
+                                // `RubyValue::Proc` and every call-site fast
+                                // path keeps working on it.
+                                | crate::compiler::PROC_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

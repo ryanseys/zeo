@@ -315,13 +315,15 @@ pub fn call_root_class_method(
 /// `None` for anything else, including `Date` and `DateTime` themselves: their
 /// own rows are found the ordinary way.
 pub fn recv_honouring_root(class_id: ClassId) -> Option<ClassId> {
-    if class_id == zeo_abi::DATE_CLASS || class_id == zeo_abi::DATETIME_CLASS {
-        return None;
+    for root in [zeo_abi::DATE_CLASS, zeo_abi::PROC_CLASS] {
+        if class_id != root
+            && class_id != zeo_abi::DATETIME_CLASS
+            && ancestors_of_value(class_id).iter().any(|&a| a == root)
+        {
+            return Some(root);
+        }
     }
-    ancestors_of_value(class_id)
-        .iter()
-        .any(|&a| a == zeo_abi::DATE_CLASS)
-        .then_some(zeo_abi::DATE_CLASS)
+    None
 }
 
 /// Register a user subclass of a receiver-honouring root -- today

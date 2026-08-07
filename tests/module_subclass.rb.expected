@@ -18,3 +18,8 @@ nil
 [DateTimeWithOffset, DateTime]
 "2001-02-03"
 [Date, DateTime, "2001-02-03"]
+[Tagged, true, true, Proc]
+[42, 42, 42, 1, false]
+[2, 4, 6]
+Tagged
+[Proc, Proc]
