@@ -89,6 +89,17 @@ pub fn collect_escaping_captures(
     for &n in body {
         super::hoisting::collect_locals(compiler, n, &mut outer_names);
     }
+    // A parameter DEFAULT can assign a local, and ruby scopes it to the whole
+    // method: `def fetch(name, default = (no_default = true))` -- memoizable's
+    // shape -- makes `no_default` a method local that the body's blocks read.
+    // Defaults are not part of `body`, so without this the name never counted
+    // as one of the method's own: a block capturing it fresh-declared its own
+    // and read `nil`, and a NESTED one hit `procs.rs`'s escaping-block refusal.
+    // `hoisting::emit_hoisted_body_with_roots` already walks these for the same
+    // reason.
+    for id in params.default_ids() {
+        super::hoisting::collect_locals(compiler, id, &mut outer_names);
+    }
     let mut outer: HashSet<String> = outer_names.into_iter().collect();
     outer.extend(own_param_names(params));
     Captures {
