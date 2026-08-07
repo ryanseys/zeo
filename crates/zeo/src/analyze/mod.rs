@@ -2031,6 +2031,23 @@ fn register_class(
         // `A::B` / `::A::B` -- defined INSIDE a named scope, which must
         // already exist.
         Some(prefix) => {
+            // A container NOTHING in the program defines: the same fact the
+            // superclass arm above defers on, one clause further into the same
+            // definition. `class ActiveRecord::Associations::CollectionProxy`
+            // with activerecord absent is CRuby's `NameError` at this very
+            // line, not a compile failure -- and this arm could not say so,
+            // because the defer above fires only when a `< Super` was written.
+            // 68 gems, mostly Rails extensions naming a host they don't depend
+            // on. A container the program DOES assign still errors loudly,
+            // matching the superclass policy.
+            if let Some(def_node) = def_node
+                && compiler.resolve_class(prefix, cref, box_id).is_none()
+                && resolve_or_create_lexical(compiler, prefix, cref, box_id).is_none()
+                && !compiler.assigns_const_path(prefix)
+            {
+                defer_unresolved_directive(compiler, def_node, prefix);
+                return Ok(());
+            }
             let parent = compiler
                 .resolve_class(prefix, cref, box_id)
                 // A container defined LATER in the flattened statement list than
@@ -4165,10 +4182,34 @@ mod namespacing_tests {
         assert_eq!(a.compiler.class(item).own_methods.len(), 3);
     }
 
+    /// A container NOTHING in the program defines is not a compile error:
+    /// ruby evaluates `Nowhere` when the definition runs and raises
+    /// `NameError` there. The definition is rewritten to that bare constant
+    /// read -- see `defer_unresolved_directive` -- and registers no class.
     #[test]
-    fn qualified_definition_with_unknown_prefix_is_an_error() {
+    fn qualified_definition_with_unknown_prefix_defers_to_a_runtime_name_error() {
+        let a = analyze_src("class Nowhere::Item\nend\n");
         assert!(
-            analyze_err("class Nowhere::Item\nend\n").contains("unknown class/module `Nowhere`")
+            a.compiler.classes.iter().all(|c| c.name != "Item"),
+            "no class is registered for a definition that never runs"
+        );
+        assert!(
+            a.main_statements.iter().any(|&s| matches!(
+                &a.compiler.hir[s],
+                crate::hir::HirNode::ClassRef(n) if n == "Nowhere"
+            )),
+            "the definition became a read of the missing constant"
+        );
+    }
+
+    /// A container the program DOES assign stays loud: the constant would read
+    /// back fine at runtime, so deferring would hide a real gap rather than
+    /// reproduce ruby's error.
+    #[test]
+    fn qualified_definition_under_an_assigned_container_is_still_an_error() {
+        assert!(
+            analyze_err("Nowhere = Object.new\nclass Nowhere::Item\nend\n")
+                .contains("unknown class/module `Nowhere`")
         );
     }
 
