@@ -101,6 +101,15 @@ struct OverlayEntry {
     /// for a descendant that undef'd the name. Mirrors the frozen registry's
     /// `ClassEntry::undefined_methods`.
     undefs: FSet<Symbol>,
+    /// [`OverlayEntry::undefs`]'s class-method twin: names retired by an
+    /// `undef` written inside `class << self`.
+    ///
+    /// A singleton class's instance methods ARE its owner's class methods, so
+    /// `Sub.singleton_class.undef_method(:x)` has to land in the OWNER's
+    /// class-method space. Tombstoning it under the singleton's own id instead
+    /// left `Sub.x` answering as if nothing had happened -- nothing on the
+    /// class-method path ever looks at a singleton id.
+    class_undefs: FSet<Symbol>,
     /// The address the anonymous `#<Class:0x...>` rendering reports -- a real
     /// leaked allocation, so it is unique, stable, and 16 hex digits wide like
     /// every other object's. Not `ancestors.as_ptr()`: `include`/`prepend`
@@ -142,6 +151,7 @@ impl Default for OverlayEntry {
             extended_class_methods: FSet::default(),
             constructor: None,
             undefs: FSet::default(),
+            class_undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
             uninitialized: false,
             refinement_of: None,
@@ -1137,6 +1147,12 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
+    // `class << self; undef x; end` reaches here with the SINGLETON's id. Its
+    // instance methods are the owner's class methods, so the retirement belongs
+    // in the owner's class-method space -- see `OverlayEntry::class_undefs`.
+    if let Some(owner) = singleton_class_owner(id) {
+        return runtime_undef_class_method(owner, args);
+    }
     let mut undefined = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
@@ -1161,6 +1177,50 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
         fire_def_hook(DefTarget::Class(id), DefEvent::Undefined, name)?;
     }
     Ok(RubyValue::Class(id))
+}
+
+/// [`runtime_undef_method`] for a CLASS method, reached through the owner's
+/// singleton class. Retires the name for `owner` and every subclass, exactly as
+/// the instance-method form does.
+fn runtime_undef_class_method(owner: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let mut undefined = Vec::with_capacity(args.len());
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        if crate::dispatch::class_method_owner(owner, name).is_none()
+            && overlay_class_method(owner, name).is_none()
+        {
+            return Err(name_error!(
+                "undefined method '{}' for class '{}'",
+                name.name(),
+                crate::dispatch::class_name(owner).unwrap_or_else(|| "?".to_string())
+            ));
+        }
+        {
+            let mut w = maps().classes.write().unwrap();
+            let e = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
+            e.class_undefs.insert(name);
+            e.class_methods.remove(&name);
+        }
+        undefined.push(name);
+    }
+    patch_class(owner);
+    mark_live();
+    for name in undefined {
+        fire_def_hook(DefTarget::Class(owner), DefEvent::Undefined, name)?;
+    }
+    Ok(RubyValue::Class(owner))
+}
+
+/// Whether an `undef` inside `class << self` retired `name` as a CLASS method
+/// of `id` -- the gate every class-method resolution owes
+/// [`OverlayEntry::class_undefs`].
+pub(crate) fn class_method_undefined(id: ClassId, name: Symbol) -> bool {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.class_undefs.contains(&name))
 }
 
 /// `Module#remove_method` -- drops this class's OWN definition, leaving an
@@ -3368,6 +3428,24 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
             }
         }
         if let Some(m) = registry_lookup_cloned(anc, name) {
+            return Some(m);
+        }
+        // ...then what this ancestor DEFINES, which is a different question for
+        // a module. A module's bodies are never in the flat table above:
+        // materialization copies them onto each compile-time includer, and a
+        // class that included or prepended the module at RUNTIME has no copy.
+        // They survive in two places, and `super`'s own walk probes both --
+        // `own_impls` for a class's super-reachable bridge, and a VALUE METHOD
+        // on the module's own id, which is where `emit_user_module_bridges`
+        // puts every module instance method.
+        //
+        // Missing the second is what made a prepended module correctly first in
+        // `ancestors` and yet invisible to dispatch: the walk reached its
+        // position, found three empty tables, and carried on to the class.
+        if let Some(m) = crate::dispatch::registry_own_impl_cloned(anc, name) {
+            return Some(m);
+        }
+        if let Some(m) = crate::dispatch::registry_value_method_impl(anc, name) {
             return Some(m);
         }
     }

@@ -258,7 +258,7 @@ fn desugar_singleton_items(
             Item::Const | Item::Passthrough => out.push(id),
             Item::Nested(name, superclass, body, is_module) => {
                 out.push(runtime_nested_class(
-                    hir, name, superclass, body, is_module,
+                    hir, name, superclass, body, is_module, false,
                 )?);
             }
             Item::Cond(cond, then_body, else_body) => {
@@ -1647,6 +1647,14 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
         Directive,
+        /// Keep the node, and follow it with the visibility send its `def`
+        /// absorbed at lowering time. The `bool` is `is_class_method`: a
+        /// `def self.x` is marked on the SINGLETON, like every other
+        /// class-method directive.
+        KeepAndScope(String, Visibility, bool),
+        /// A bare `NAME = value`, re-pointed at the class this body is
+        /// building.
+        Const(String, NodeId),
         Keep,
     }
     let mut out = Vec::with_capacity(body.len());
@@ -1668,11 +1676,44 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                 else_body,
             } => Rewrite::Cond(*cond, then_body.clone(), else_body.clone()),
             node if node.is_class_body_directive() => Rewrite::Directive,
+            // A bare `NAME = value` resolves its OWNER from the enclosing
+            // cref at compile time, and a runtime class body is emitted as a
+            // block, whose cref is whatever encloses it -- `Object` at the top
+            // level. So `class Sub < expr; OPEN = 1; end` wrote `Object::OPEN`
+            // and `Sub::OPEN` was a NameError. Re-point it at the class the
+            // body is building, which is the block's `self`.
+            //
+            // An explicit `Foo::BAR = v` passes through: it names its own
+            // owner and never meant this one.
+            HirNode::ConstWrite {
+                scope: None,
+                name,
+                value,
+            } => Rewrite::Const(name.clone(), *value),
+            // `private :m` naming a method the SAME body defines is retagged
+            // onto the `def` at lowering time, so no `MethodVisibility` node
+            // survives for the directive rewrite to find. On the static path
+            // that is enough -- the visibility rides the `Scope` into the
+            // emitted dispatch row. Here the `def` becomes a RUNTIME
+            // definition, which carries no visibility of its own, so the mark
+            // has to be re-spoken as the send the class body serves.
+            //
+            // Only the same-body case needs this. `private :inherited_name`
+            // leaves a real `MethodVisibility` and rewrites like any other
+            // directive.
+            HirNode::DefMethod {
+                name,
+                visibility,
+                is_class_method,
+                ..
+            } if *visibility != Visibility::Public => {
+                Rewrite::KeepAndScope(name.clone(), *visibility, *is_class_method)
+            }
             _ => Rewrite::Keep,
         };
         let node = match rewrite {
             Rewrite::Nested(name, superclass, inner, is_module) => {
-                runtime_nested_class(hir, name, superclass, inner, is_module)?
+                runtime_nested_class(hir, name, superclass, inner, is_module, true)?
             }
             Rewrite::Cond(cond, then_body, else_body) => {
                 let then_body = transform_runtime_class_body(hir, then_body)?;
@@ -1691,6 +1732,28 @@ fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec
                 "a class-body directive has no runtime spelling -- add it to \
                  `runtime_directive_spelling` alongside `is_class_body_directive`",
             )?,
+            // The `def` runs first, then the mark -- ruby's own order, and the
+            // only one that works: `private :m` names a method that has to
+            // already exist.
+            Rewrite::KeepAndScope(name, visibility, is_class_method) => {
+                out.push(id);
+                let vis = visibility_name(visibility);
+                if is_class_method {
+                    // `private`/`public`/`protected` are private methods of
+                    // Module, so the singleton form goes through `send` -- the
+                    // same spelling `runtime_directive_spelling` uses for a
+                    // `ClassMethodVisibility` naming an inherited method.
+                    let args = vec![sym_lit(hir, vis.to_string()), sym_lit(hir, name)];
+                    runtime_singleton_send(hir, "send", args)
+                } else {
+                    let args = vec![sym_lit(hir, name)];
+                    runtime_self_send(hir, vis, args)
+                }
+            }
+            Rewrite::Const(name, value) => {
+                let scope = hir.push(HirNode::SelfRef);
+                hir.push(HirNode::DynConstWrite { scope, name, value })
+            }
             Rewrite::Keep => id,
         };
         out.push(node);
@@ -1891,6 +1954,7 @@ fn runtime_nested_class(
     superclass: Option<String>,
     body: Vec<NodeId>,
     is_module: bool,
+    on_self: bool,
 ) -> PResult<NodeId> {
     let inner = transform_runtime_class_body(hir, body)?;
     let block = hir.push(HirNode::Block {
@@ -1914,6 +1978,19 @@ fn runtime_nested_class(
         safe: false,
     });
     let path = crate::constpath::ConstPath::parse(&name);
+    // An unscoped nested name belongs to whichever class this body is building
+    // -- `class Sub < expr; class Inner; end; end` defines `Sub::Inner`. Only
+    // the runtime-class-body caller can say so: inside a `class << obj` body
+    // the same nesting still defines the constant LEXICALLY, on the enclosing
+    // module, because a singleton opens no cref of its own.
+    if on_self && path.scope().is_none() {
+        let scope = hir.push(HirNode::SelfRef);
+        return Ok(hir.push(HirNode::DynConstWrite {
+            scope,
+            name: path.base().to_string(),
+            value: new_call,
+        }));
+    }
     Ok(hir.push(HirNode::ConstWrite {
         scope: path.scope().map(str::to_string),
         name: path.base().to_string(),

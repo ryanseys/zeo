@@ -2174,6 +2174,12 @@ pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> O
 /// `Array.method(:try_convert).owner` too.
 fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
     let n = name.name();
+    // An `undef` written inside `class << self` retires the name here and for
+    // every subclass, so the walk must stop rather than reach an ancestor's
+    // still-live `def self.x`. Same rule the instance side applies for `undef`.
+    if crate::runtime_meta::is_live() && crate::runtime_meta::class_method_undefined(cid, name) {
+        return None;
+    }
     ancestors_of_value(cid)
         .iter()
         .skip(skip)
@@ -3314,6 +3320,23 @@ pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<Val
 /// method.
 pub(crate) fn registry_lookup_cloned(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     REGISTRY.get()?.lookup(id, name).cloned()
+}
+
+/// [`registry_lookup_cloned`]'s own-implementation twin: what `id` itself
+/// DEFINES, rather than what it answers.
+///
+/// A compile-time MODULE's `methods` table is emptied once materialization has
+/// copied its bodies onto every includer, so the flat lookup above finds
+/// nothing there. That is fine for a compile-time includer, which got a copy --
+/// and wrong for a class that includes or prepends the module at RUNTIME, which
+/// did not. Such a class's walk reached the module's position, found an empty
+/// table, and carried on to the class itself: a prepended module correctly
+/// listed FIRST in `ancestors` yet never reached by dispatch.
+///
+/// `own_impls` is where those bodies survive -- it is the set `super` already
+/// walks for exactly this reason.
+pub(crate) fn registry_own_impl_cloned(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    REGISTRY.get()?.super_target(id, name).cloned()
 }
 
 /// A module/class's OWN value-method (the `ValueMethodFn` shape builtin modules
@@ -4501,6 +4524,13 @@ fn send_value_in_reason(
     // methods, and a `RubyValue::Class`'s own chain runs over Class/Module --
     // it would never reach File's or Math's rows.
     if let RubyValue::Class(cid) = recv {
+        // Retired by an `undef` inside `class << self` -- checked before any
+        // table, so an ancestor's still-live `def self.x` cannot answer past
+        // it. See `OverlayEntry::class_undefs`.
+        if crate::runtime_meta::is_live() && crate::runtime_meta::class_method_undefined(*cid, name)
+        {
+            return Err(raise_method_missing(recv, &name.to_string(), args, reason));
+        }
         // A class/singleton method DEFINED AT RUNTIME
         // (`define_singleton_method` on a class, a runtime `def self.x`) wins
         // over both the frozen `def self.x` and the builtin `Class#new`/`#name`,
@@ -4522,6 +4552,35 @@ fn send_value_in_reason(
         // feature-gated ext) still gets the direct builtin probe below.
         if let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
             return with_c_frame(label, || f(recv, args, block));
+        }
+        // A class born at RUNTIME (`Class.new(Base)`, `class Sub < expr`) was
+        // never seen by `mro::materialize_class_methods`, so nothing flattened
+        // its ancestors' `def self.x` onto it -- and the probe above is FLAT,
+        // with no walk of its own. Without this, `Class.new(Base).made` is a
+        // NoMethodError however ordinary `made` is, and `class << self; undef
+        // inherited; end` cannot even find a target to undefine.
+        //
+        // The instance side has had this insurance all along (`lookup_mro`);
+        // this is its class-method twin. Gated on the overlay being live and on
+        // the receiver having no frozen entry, so a compile-time class -- whose
+        // rows ARE flattened -- pays nothing: the walk would only rediscover
+        // what the flat probe just answered.
+        //
+        // Placed before the builtin `Class`/`Module` table below because that
+        // is ruby's order: an ancestor's singleton sits nearer than `Class`.
+        //
+        // One known divergence stays: the ancestor's compiled body carries the
+        // ANCESTOR's class id, so a class-level `@x` read through an inherited
+        // class method reaches the ancestor's storage where ruby gives the
+        // receiver its own. Materialization avoids that by emitting a copy per
+        // subclass, which a runtime class has no compile-time site for.
+        if crate::runtime_meta::is_live()
+            && REGISTRY
+                .get()
+                .is_some_and(|r| !r.entries.contains_key(&cid.0))
+            && let Some(f) = class_method_fn(*cid, name)
+        {
+            return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid)
             && let Some(f) = lookup(name.name_str())
