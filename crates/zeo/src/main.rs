@@ -54,8 +54,17 @@ struct Args {
     /// `--log-level <off|error|warn|info|debug|trace>`: install a `tracing`
     /// subscriber for the compiler at this level (overrides `ZEO_LOG`/`RUST_LOG`).
     log_level: Option<String>,
-    /// ARGV for the immediately-run `-e` program: positionals and everything
-    /// after `--`, exactly ruby's `[--] [args...]` shape.
+    /// `--run`: compile the input FILE and execute it straight away, the way
+    /// `-e` already does for inline code.
+    ///
+    /// Running is strictly OPT-IN and stays that way. zeo compiles code that
+    /// has not necessarily been read yet, so naming a file must never be
+    /// enough to execute it -- nothing implies this flag, and a bare
+    /// `zeo foo.rb` still only compiles.
+    run: bool,
+    /// ARGV for an immediately-run program (`-e`, or a file with `--run`):
+    /// positionals and everything after `--`, exactly ruby's
+    /// `[--] [args...]` shape.
     program_args: Vec<String>,
 }
 
@@ -121,6 +130,10 @@ usage: zeo [options] [--] (<input.rb> | -e <code>) [args...]
 modes:
   <input.rb>            compile the file to a native binary (default output:
                         the input path with its extension stripped)
+  <input.rb> --run      compile the file and run it immediately, forwarding
+                        stdout/stderr and the exit status; trailing [args...]
+                        become the program's ARGV. Running is opt-in and
+                        nothing implies it -- a bare <input.rb> only compiles
   -e <code>             compile and run an inline program immediately,
                         forwarding stdout/stderr and the exit status
                         (repeatable; snippets are joined with newlines);
@@ -188,6 +201,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut gem_paths: Vec<PathBuf> = Vec::new();
     let mut gemfile: Option<PathBuf> = None;
     let mut log_level = None;
+    let mut run = false;
     let mut program_args: Vec<String> = Vec::new();
 
     // RUBYOPT first, so the command line wins wherever both touch the same
@@ -226,7 +240,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             } else if input.is_none() {
                 input = Some(PathBuf::from(arg));
             } else {
-                return Err(format!("unexpected argument `{arg}`"));
+                // ARGV for a `--run` file; rejected below if nothing runs.
+                program_args.push(arg);
             }
             continue;
         }
@@ -249,6 +264,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             match name {
                 "help" => return Ok(Parsed::Help),
                 "version" => return Ok(Parsed::Version),
+                "run" => run = true,
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
                 "gem-path" => gem_paths.push(PathBuf::from(value("--gem-path")?)),
                 "bundle-gemfile" => {
@@ -342,7 +358,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
         } else {
-            return Err(format!("unexpected argument `{arg}`"));
+            // Everything after the script name is the program's ARGV, ruby's
+            // shape -- kept for `--run` and rejected below if nothing runs.
+            program_args.push(arg);
+            collecting_argv = true;
         }
     }
 
@@ -352,8 +371,13 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         (None, Some(path)) => Source::File(path),
         (None, None) => return Ok(Parsed::NoInput),
     };
-    // Trailing args are ARGV, which only the immediately-run `-e` mode has.
-    if !program_args.is_empty() && !(matches!(source, Source::Eval(_)) && output.is_none()) {
+    // `--run` runs instead of producing an artifact, so `-o` contradicts it.
+    if run && output.is_some() {
+        return Err("--run executes the program instead of writing a binary; drop -o".to_string());
+    }
+    // Trailing args are ARGV, which only an immediately-run program has.
+    let runs_now = (matches!(source, Source::Eval(_)) || run) && output.is_none();
+    if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
     // Bare `--report` derives its path from the output artifact, which the
@@ -400,6 +424,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     Ok(Parsed::Run(Box::new(Args {
         source,
         output,
+        run,
         dump_rust,
         load_roots: {
             let mut roots = load_roots;
@@ -607,7 +632,7 @@ fn run() -> Result<(), MainError> {
     // this to `Release` via `ZEO_RUNTIME_PROFILE` for a ~12x faster
     // per-program link. With `-o`, `-e` produces an artifact like the file
     // mode below instead of running.
-    if is_eval && args.output.is_none() {
+    if (is_eval || args.run) && args.output.is_none() {
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime, linkage)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
@@ -735,6 +760,32 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("expected an error for {args:?}"),
         }
+    }
+
+    #[test]
+    fn running_a_file_is_opt_in() {
+        // zeo compiles code that has not necessarily been read yet, so naming
+        // a file must never be enough to execute it.
+        assert!(!ok(&["t.rb"]).run);
+        assert!(ok(&["t.rb", "--run"]).run);
+        assert!(ok(&["--run", "t.rb"]).run);
+    }
+
+    #[test]
+    fn a_run_file_takes_argv_but_a_compiled_one_does_not() {
+        let a = ok(&["t.rb", "--run", "alpha", "beta"]);
+        assert_eq!(a.program_args, vec!["alpha", "beta"]);
+        assert_eq!(
+            ok(&["--run", "t.rb", "--", "-W0"]).program_args,
+            vec!["-W0"]
+        );
+        // Without `--run` nothing runs, so there is no ARGV to take.
+        assert!(err(&["t.rb", "alpha"]).contains("unexpected argument `alpha`"));
+    }
+
+    #[test]
+    fn run_and_an_output_path_contradict() {
+        assert!(err(&["t.rb", "--run", "-o", "app"]).contains("drop -o"));
     }
 
     #[test]
