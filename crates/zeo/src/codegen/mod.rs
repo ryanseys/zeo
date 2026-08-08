@@ -1313,7 +1313,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // registrations -- keeps the hoisted splice at the head of
     // `run_main`'s fallible closure (where `?` propagates as a Signal), so
     // no recorded statement can ever be silently dropped.
-    let inline_markers = inline_class_markers(compiler, &analyzed.main_statements);
+    // Units count as top level too. A class written inside one is written
+    // THERE, so it has to be emitted there -- walking only `main_statements`
+    // left every unit's classes unmarked, so they were hoisted to the head of
+    // `run_main` instead, away from the file-level locals they read.
+    // activesupport's `duplicable.rb` is the case: `unless
+    // methods_are_duplicable; class Method; ... end` hoisted into `main` while
+    // `methods_are_duplicable` stayed a local of `__unit_2`.
+    let mut top_level_statements = analyzed.main_statements.clone();
+    for (_, _, stmts) in &analyzed.feature_units {
+        top_level_statements.extend(stmts.iter().copied());
+    }
+    let inline_markers = inline_class_markers(compiler, &top_level_statements);
     // Every hoisted body is lifted to its own `fn` -- see
     // `emit_class_body_site_lifted`. The counter names them; the items land
     // beside `__unit_N` at the top level, the calls where the body used to be.
@@ -2329,7 +2340,45 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     let mut unit_rows = Vec::new();
     for (i, (feature, absolute, stmts)) in analyzed.feature_units.iter().enumerate() {
         let ident = proc_macro2::Ident::new(&format!("__unit_{i}"), proc_macro2::Span::call_site());
-        let body = hoisting::emit_hoisted_body_after_decls(&cx, stmts, quote! {}, true);
+        // A unit is its own top-level scope, so it needs its own captures and
+        // binding names -- derived from ITS statements, exactly as `main`'s are
+        // derived above.
+        //
+        // Emitting a unit under MAIN's `cx` made every `binding` built inside
+        // one list main's captured cells, which a free `fn __unit_N` cannot
+        // see. activemodel is the case: a top-level `rescue LoadError => e`
+        // spliced in from `xml_mini/nokogiri.rb` becomes one `__f9_e` cell in
+        // main, and seven units emitted `("__f9_e", Arc::clone(&__f9_e))` for
+        // it -- `cannot find value __f9_e in this scope`, once per unit.
+        //
+        // `wants_toplevel_binding` is deliberately NOT passed on: that flag
+        // deoptimizes the frame `TOPLEVEL_BINDING` names, which is main's, not
+        // a unit's. A unit that calls `binding` itself still deoptimizes,
+        // because `binding_scope_names` finds that call in its own statements.
+        let mut unit_captures = captures::collect_escaping_captures(
+            compiler,
+            stmts,
+            &crate::hir::Params::default(),
+            class_query::SelfClass::default(),
+        );
+        let unit_binding = captures::binding_scope_names(
+            compiler,
+            stmts,
+            &crate::hir::Params::default(),
+            &mut unit_captures,
+            false,
+        );
+        let unit_cx = Ctx {
+            local_types: binding_scope_local_types(
+                unit_binding.as_ref(),
+                &unit_captures.locals,
+                &analyzed.main_local_types,
+            ),
+            captured_locals: std::borrow::Cow::Owned(unit_captures.locals.clone()),
+            binding_names: unit_binding,
+            ..cx.clone()
+        };
+        let body = hoisting::emit_hoisted_body_after_decls(&unit_cx, stmts, quote! {}, true);
         unit_fns.push(quote! {
             fn #ident() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
                 #body
@@ -2883,12 +2932,31 @@ pub(crate) fn emit_class_body_site_lifted(
         }
         None => quote! {},
     };
+    let inline_form =
+        quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check };
     let Some(n) = lift else {
-        return (
-            quote! {},
-            quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check },
-        );
+        return (quote! {}, inline_form);
     };
+    // A free `fn` closes over nothing, so a body that READS a local it does not
+    // declare cannot be lifted -- it has to stay in its enclosing block.
+    //
+    // The shape is a guarded reopen whose guard was folded into the body:
+    // activesupport's `duplicable.rb` writes `methods_are_duplicable = ...`
+    // and then `unless methods_are_duplicable; class Method; ...; end; end`,
+    // so the emitted body opens with a read of the FILE's local. Hoisted
+    // sites were lifted unconditionally on the reasoning that they run at the
+    // head of `run_main`, ahead of every top-level statement, and so have no
+    // enclosing local to read. That is true of the main program and false
+    // inside a `__unit_N`, where the site's own file-level locals are already
+    // in scope -- rustc answered with `cannot find value
+    // __f121_methods_are_duplicable in this scope`.
+    //
+    // Deciding it on the EMITTED tokens rather than re-deriving the body's
+    // free names keeps the test and the thing tested identical: whatever the
+    // body ended up reading is what gets checked.
+    if !lift_is_closed(&body) {
+        return (quote! {}, inline_form);
+    }
     let ident = format_ident!("__class_body_{}", n);
     (
         // `inline(never)`: a `fn` with one call site is exactly what LLVM
@@ -2901,6 +2969,54 @@ pub(crate) fn emit_class_body_site_lifted(
         },
         quote! { #const_location #const_added #inherited_hook #ident()?; #alias_check },
     )
+}
+
+/// Whether `body` reads no local that it does not itself declare -- the
+/// precondition for lifting it into a free `fn`, which closes over nothing.
+///
+/// Only zeo's own frame-mangled locals (`__f<frame>_<name>`, see
+/// `hoisting::local_ident`) can be enclosing-scope reads; every other ident in
+/// a generated body is a path, a type, or a `zeo_rt` item. So the test is
+/// exactly: is every `__f*` ident used here also bound here?
+///
+/// A `let` binding is the only way one enters scope in generated code, and
+/// `let mut x` / `let x` both put the name immediately after the keyword --
+/// `mut` is skipped rather than treated as the binding.
+fn lift_is_closed(body: &TokenStream) -> bool {
+    fn walk(ts: &TokenStream, declared: &mut HashSet<String>, used: &mut Vec<String>) {
+        let mut after_let = false;
+        for tt in ts.clone() {
+            match tt {
+                proc_macro2::TokenTree::Ident(id) => {
+                    let name = id.to_string();
+                    if name == "let" {
+                        after_let = true;
+                        continue;
+                    }
+                    if after_let {
+                        // `let mut x` -- the binding is the ident after `mut`.
+                        if name != "mut" {
+                            declared.insert(name);
+                            after_let = false;
+                        }
+                        continue;
+                    }
+                    if name.starts_with("__f") {
+                        used.push(name);
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => {
+                    after_let = false;
+                    walk(&g.stream(), declared, used);
+                }
+                _ => after_let = false,
+            }
+        }
+    }
+    let mut declared = HashSet::new();
+    let mut used = Vec::new();
+    walk(body, &mut declared, &mut used);
+    used.iter().all(|n| declared.contains(n))
 }
 
 /// The `const_added` a `class Foo` / `module M` fires for its OWN name, on the
