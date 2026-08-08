@@ -4553,6 +4553,23 @@ fn send_value_in_reason(
         if let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
             return with_c_frame(label, || f(recv, args, block));
         }
+        // A MINTED struct/data class's OWN singleton methods (`Point.members`,
+        // `Point[1, 2]`, and `Point.new` itself). CRuby defines these directly
+        // on the new class's singleton -- `Struct.new(:a).method(:new).owner`
+        // is `#<Class:#<Class:0x...>>`, not `#<Class:Struct>` -- precisely so
+        // they shadow `Struct.new`'s member-list constructor.
+        //
+        // They must therefore be probed BEFORE the ancestor walk below. A
+        // minted class has no registry entry, so that walk takes it, reaches
+        // `Struct`, and answers `k.new(1, 2, 3)` with `Struct.new` -- "1 is not
+        // a symbol nor a string". They are also not reached by the MRO walk
+        // further down, which runs over the class VALUE's own ancestry
+        // (Class/Module), not the struct's.
+        if crate::builtins::rstruct::is_struct_class(*cid)
+            && let Some(f) = crate::builtins::rstruct::class_lookup(name.name_str())
+        {
+            return f(recv, args, block);
+        }
         // A class born at RUNTIME (`Class.new(Base)`, `class Sub < expr`) was
         // never seen by `mro::materialize_class_methods`, so nothing flattened
         // its ancestors' `def self.x` onto it -- and the probe above is FLAT,
@@ -4615,16 +4632,6 @@ fn send_value_in_reason(
             {
                 return with_c_frame(c_frame_label(root, name, '.'), || f(recv, args, block));
             }
-        }
-        // Class methods on a MINTED native struct/data class (`Point.members`,
-        // `Point[1, 2]`): these hang off `STRUCT_CLASS`/`DATA_CLASS` but are NOT
-        // reached by the MRO walk below (which runs over the class VALUE's own
-        // ancestry -- Class/Module -- not the struct's). Gated on the receiver
-        // actually being a struct class, so no other class is affected.
-        if crate::builtins::rstruct::is_struct_class(*cid)
-            && let Some(f) = crate::builtins::rstruct::class_lookup(name.name_str())
-        {
-            return f(recv, args, block);
         }
         // An ANCESTOR's runtime class method -- what a `Base.extend Store` or a
         // `define_singleton_method` on a superclass installs. A subclass's
