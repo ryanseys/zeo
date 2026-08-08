@@ -196,6 +196,41 @@ fn transliterate(name: &str) -> Option<String> {
     Some(out)
 }
 
+/// A class/module name as a Rust ident FRAGMENT -- the part a mangling arm
+/// interpolates after its own prefix.
+///
+/// Every class name zeo SYNTHESIZES is deliberately unspellable as a Ruby
+/// constant, so the holder claims no constant of its own: a refinement holder
+/// is `#refinement:String` (the very name CRuby prints for
+/// `M.refinements.first`), an anonymous `using` module is `#using:<offset>`,
+/// and a `class << self` surrogate is `#<Class:self>`. None of `#`, `:`, `<`,
+/// `>` is a Rust XID character, so interpolating one raw makes `Ident::new`
+/// PANIC -- which reached users as an internal-error backtrace instead of a
+/// diagnostic (`"__c405_#refinement:String" is not a valid Ident`).
+///
+/// The names must not change: they are Ruby-visible through the reflection
+/// methods. So the IDENT is sanitized here instead, at the one place a name
+/// becomes one.
+///
+/// `transliterate` answers `None` for a name that already is an identifier, so
+/// every ordinary class keeps its exact spelling and generated code for a
+/// program with no synthesized name stays byte-identical.
+///
+/// The mapping is INJECTIVE, which is why it does not fold `::` to `_` the way
+/// the callers used to. `Hello::World` and `Hello_World` are both ordinary
+/// Ruby names, and `.replace("::", "_")` sends them to the SAME fragment --
+/// two different classes with one generated ident. Today every caller happens
+/// to prefix a unique `ClassId` or class index, so the collision could not
+/// surface; relying on that is a trap for the next caller. Escaping `::` as
+/// `_u003A__u003A_` costs readability only for the rare qualified builtin name
+/// (`Enumerator::Yielder`) and cannot collide with anything.
+pub(super) fn ident_fragment(name: &str) -> String {
+    match transliterate(name) {
+        Some(safe) => safe,
+        None => name.to_string(),
+    }
+}
+
 /// The Rust identifier for a CLASS method (`def self.x`), as distinct from
 /// an instance method of the same Ruby name.
 ///
@@ -281,7 +316,7 @@ pub(super) fn class_ident(
     let ci = compiler.class(cid);
     if ci.lexical_parent.is_some() {
         return proc_macro2::Ident::new(
-            &format!("__c{}_{}", cid.0, ci.name),
+            &format!("__c{}_{}", cid.0, ident_fragment(&ci.name)),
             proc_macro2::Span::call_site(),
         );
     }
@@ -328,7 +363,7 @@ pub(super) fn class_ident(
     // nested classes already took the `__c<id>_` arm above).
     if ci.box_id != 0 {
         return proc_macro2::Ident::new(
-            &format!("__b{}_{}", ci.box_id, ci.name),
+            &format!("__b{}_{}", ci.box_id, ident_fragment(&ci.name)),
             proc_macro2::Span::call_site(),
         );
     }
@@ -349,6 +384,55 @@ mod tests {
     fn a_plain_name_is_itself() {
         assert_eq!(safe_ident("foo").to_string(), "foo");
         assert_eq!(safe_ident("some_method").to_string(), "some_method");
+    }
+
+    #[test]
+    fn an_ordinary_class_name_passes_through_the_fragment_unchanged() {
+        // The mangling arms interpolate this, so anything that already is an
+        // identifier has to survive byte-for-byte -- generated code for a
+        // program with no synthesized name must not churn.
+        for name in ["Widget", "HTTPClient", "Foo_Bar", "_leading", "A1"] {
+            assert_eq!(ident_fragment(name), name);
+        }
+    }
+
+    #[test]
+    fn a_synthesized_class_name_becomes_a_legal_ident() {
+        // Every name zeo mints is deliberately unspellable as a Ruby constant.
+        // `Ident::new` PANICS rather than erroring, so these reached users as
+        // an internal-error backtrace: four corpus gems died on the first one.
+        for name in [
+            "#refinement:String",
+            "#refinement:.Hash",
+            "#using:1240",
+            "#<Class:self>",
+        ] {
+            let frag = ident_fragment(name);
+            // Prefixed by its caller (`__c12_`), so it need only be a legal
+            // ident CONTINUATION.
+            assert!(
+                frag.chars()
+                    .all(|c| c == '_' || unicode_ident::is_xid_continue(c)),
+                "{name} -> {frag} is still not a legal ident fragment"
+            );
+        }
+    }
+
+    #[test]
+    fn two_different_class_names_never_share_a_fragment() {
+        // `.replace("::", "_")` -- what the callers did before they were routed
+        // through `ident_fragment` -- sent BOTH of these to `Hello_World`.
+        // Both are ordinary Ruby names, so that was one generated ident for two
+        // classes. Only a unique `ClassId`/index prefix hid it.
+        assert_ne!(
+            ident_fragment("Hello::World"),
+            ident_fragment("Hello_World")
+        );
+        assert_ne!(ident_fragment("A::B::C"), ident_fragment("A_B_C"));
+        assert_ne!(
+            ident_fragment("#refinement:Foo.Bar"),
+            ident_fragment("#refinement:Foo::Bar")
+        );
     }
 
     #[test]

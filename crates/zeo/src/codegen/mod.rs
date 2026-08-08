@@ -1743,7 +1743,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             }
         }
         for (m, sids) in by_module {
-            let flat = ci.name.replace("::", "_");
+            let flat = ident::ident_fragment(&ci.name);
             let container = format_ident!("__sst_{}_{}_{}", idx, m.0, flat);
             // Emitted in THIS class's context, not the module's: the copy's
             // `super` has to resume the singleton chain here, and its class
@@ -2001,7 +2001,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         if bridged.is_empty() {
             continue;
         }
-        let flat = class.name.replace("::", "_");
+        let flat = ident::ident_fragment(&class.name);
         let container = format_ident!("__own_{}_{}", idx, flat);
         let fns = bridged
             .iter()
