@@ -1990,6 +1990,18 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     if has_notimplement_row(recv, name) {
         return false;
     }
+    // Retired by an `undef` through the singleton class, checked before any
+    // table -- the same order `send_value_in` uses, and for the same reason:
+    // the instance walk over `Class`/`Module` at the bottom would otherwise
+    // find the very definition the undef shadows. `Guarded.singleton_class.
+    // undef_method :extend_object` has to make `Guarded.respond_to?
+    // (:extend_object, true)` false, not just make the call raise.
+    if let RubyValue::Class(cid) = recv
+        && crate::runtime_meta::is_live()
+        && crate::runtime_meta::class_method_undefined(*cid, name)
+    {
+        return false;
+    }
     if crate::runtime_meta::is_live()
         && crate::runtime_meta::object_has_singleton_method(recv, name)
     {

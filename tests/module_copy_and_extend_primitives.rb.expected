@@ -9,4 +9,13 @@ true
 true
 true
 false
+false
+NameError
+false
+"undefined method 'extend_object' for module Guarded"
+false
+NoMethodError
+:own
+"String"
+true
 "marked"

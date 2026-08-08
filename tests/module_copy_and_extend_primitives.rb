@@ -49,6 +49,33 @@ end
 
 p Guarded.singleton_class.method_defined?(:extend_object)
 
+# `undef` through a singleton class retires a name the singleton INHERITS, not
+# only one the owner defined: `#<Class:Guarded>`'s ancestors run through
+# `Module`, and `rb_undef` resolves with `rb_method_entry`, which walks the
+# whole chain. zeo checked the owner's class-METHOD space alone, so the line
+# above raised NameError for a method `private_method_defined?` reported on the
+# very same receiver.
+#
+# The tombstone then has to be visible everywhere, because ruby writes it into
+# the singleton's own method table where it shadows `Module`'s definition. Each
+# of these found that definition again behind the undef:
+p Guarded.singleton_class.private_method_defined?(:extend_object)
+p (Guarded.singleton_class.instance_method(:extend_object) rescue $!.class)
+p Guarded.respond_to?(:extend_object, true)
+p (Guarded.send(:extend_object, Object.new) rescue $!.message)
+
+# A PUBLIC inherited name goes the same way, and the owner's own class methods
+# and every other module are left alone.
+class Klass
+  def self.own = :own
+end
+Klass.singleton_class.send(:undef_method, :name)
+p Klass.singleton_class.method_defined?(:name)
+p (Klass.name rescue $!.class)
+p Klass.own
+p String.name
+p Module.private_method_defined?(:extend_object)
+
 # `extend_object` really is what `Object#extend` runs.
 module Marker
   def marked = "marked"

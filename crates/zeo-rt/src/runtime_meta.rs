@@ -1151,7 +1151,7 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
     // instance methods are the owner's class methods, so the retirement belongs
     // in the owner's class-method space -- see `OverlayEntry::class_undefs`.
     if let Some(owner) = singleton_class_owner(id) {
-        return runtime_undef_class_method(owner, args);
+        return runtime_undef_class_method(owner, id, args);
     }
     let mut undefined = Vec::with_capacity(args.len());
     for arg in args {
@@ -1182,12 +1182,27 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
 /// [`runtime_undef_method`] for a CLASS method, reached through the owner's
 /// singleton class. Retires the name for `owner` and every subclass, exactly as
 /// the instance-method form does.
-fn runtime_undef_class_method(owner: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+///
+/// `singleton` is the id the call came in on, and it decides what EXISTS here.
+/// A singleton class inherits `Module`'s instance methods -- `#<Class:M>`'s
+/// ancestors are `[#<Class:M>, Module, Object, Kernel, BasicObject]` -- and
+/// ruby's `undef` retires an inherited method as readily as an own one
+/// (`rb_undef` resolves the name with `rb_method_entry`, which walks the whole
+/// chain). Checking only the owner's CLASS-method space missed that half: the
+/// singleton gem's `undef_method :extend_object`, written inside an `extended`
+/// hook, raised NameError for a method `private_method_defined?` reported on
+/// the very same receiver.
+fn runtime_undef_class_method(
+    owner: ClassId,
+    singleton: ClassId,
+    args: &[RubyValue],
+) -> Result<RubyValue, Signal> {
     let mut undefined = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
         if crate::dispatch::class_method_owner(owner, name).is_none()
             && overlay_class_method(owner, name).is_none()
+            && crate::dispatch::instance_method_visibility(singleton, name).is_none()
         {
             return Err(name_error!(
                 "undefined method '{}' for class '{}'",
@@ -1200,10 +1215,23 @@ fn runtime_undef_class_method(owner: ClassId, args: &[RubyValue]) -> Result<Ruby
             let e = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
             e.class_undefs.insert(name);
             e.class_methods.remove(&name);
+            // And a tombstone on the SINGLETON class itself, which is where
+            // ruby puts it -- `rb_undef` writes the undef entry into the
+            // singleton's own method table, so it shadows the rest of that
+            // chain (`Module`, `Class`, `Object`, `Kernel`). `class_undefs`
+            // above gates class-method DISPATCH, which is the owner's space;
+            // this one is what every ancestor-walking reader already
+            // consults, so `method_defined?`, `private_method_defined?`,
+            // `instance_method` and `respond_to?` all agree with dispatch
+            // instead of finding `Module`'s definition again behind it.
+            let s = w.entry(singleton.0).or_insert_with(OverlayEntry::delta);
+            s.undefs.insert(name);
+            s.methods.remove(&name);
         }
         undefined.push(name);
     }
     patch_class(owner);
+    patch_class(singleton);
     mark_live();
     for name in undefined {
         fire_def_hook(DefTarget::Class(owner), DefEvent::Undefined, name)?;
