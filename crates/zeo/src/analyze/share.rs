@@ -25,13 +25,26 @@ pub struct Group {
     pub members: Vec<ClassId>,
 }
 
-/// Every definition reached by two or more classes that each have a generated
-/// struct to emit an instance method into.
+/// Every definition reached by two or more classes that each emit an instance
+/// method body for it.
+///
+/// That is NOT the same as "has a generated struct". A reopened builtin emits
+/// its methods as free functions in a `pub mod __bm_<Name>`, and it reaches
+/// them through the very same `emit_value_self_method_fn` a shared body uses --
+/// so its bodies are already in shareable shape, and two builtins carrying one
+/// definition emit byte-identical text. Excluding them cost activemodel 10MB:
+/// activesupport mixes `index_with` into 29 `Enumerable` includers, nearly all
+/// of them builtins, and it was emitted 29 times.
+///
+/// A group may now hold both kinds. What separates them is a real per-class
+/// difference -- a struct-backed receiver indexes an ivar by SLOT where a
+/// structless one goes by name -- and `codegen::class_query` asks it as
+/// `HasStruct`, so such a group splits into two bodies on its own.
 pub fn groups(compiler: &Compiler) -> Vec<Group> {
     let mut by_def: HashMap<ScopeId, Vec<ClassId>> = HashMap::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
         let cid = ClassId(idx as u32);
-        if !compiler.has_generated_struct(cid) {
+        if !emits_instance_bodies(compiler, cid) {
             continue;
         }
         for entry in &class.methods {
@@ -49,6 +62,25 @@ pub fn groups(compiler: &Compiler) -> Vec<Group> {
     // Deterministic order: the emission must not depend on hash iteration.
     out.sort_by_key(|g| (g.def.0, g.members[0].0));
     out
+}
+
+/// Whether `cid` emits an instance-method body per entry, which is the only
+/// thing a shared body can stand in for.
+///
+/// Two shapes do. A class with a generated struct emits `impl` methods
+/// (`emit_class`); a reopened builtin -- and `Object`, which carries every
+/// top-level `def` -- emits free functions into `pub mod __bm_<Name>`
+/// (`emit_builtin_reopen`). Nothing else does: a module's instance methods are
+/// materialized onto its includers and emitted THERE, and an exception-backed
+/// class emits only the deltas that are not a pristine native body.
+///
+/// Kept beside `groups` and deliberately mirroring codegen's own two filters --
+/// if a third emitter appears, this is where it has to be added, and the cost of
+/// forgetting is a missed sharing opportunity rather than a wrong program.
+fn emits_instance_bodies(compiler: &Compiler, cid: ClassId) -> bool {
+    compiler.has_generated_struct(cid)
+        || compiler.class(cid).is_builtin
+        || cid == crate::compiler::OBJECT_CLASS
 }
 
 /// Whether `ZEO_VERIFY_SHARE` is set: every group's member bodies are emitted

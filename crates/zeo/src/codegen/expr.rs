@@ -2648,6 +2648,7 @@ pub(super) fn emit_const_write_stmt(
     // a span-less write (a synthetic one) simply records nothing.
     match at.and_then(|n| super::source_location(cx.compiler, n)) {
         Some((file, line)) => {
+            let file = super::pooled_file(&file);
             quote! { zeo_rt::const_set_at(#owner, #name, #value, #file, #line); }
         }
         None => quote! { zeo_rt::const_set(#owner, #name, #value); },

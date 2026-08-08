@@ -440,6 +440,7 @@ fn emit_proc_or_lambda_value_with(
             // The stack probe rides in the guard's initializer as in
             // `scope_frame_guard`: a lambda recursing through a captured
             // local never re-enters a method prologue.
+            let file = crate::codegen::pooled_file(&file);
             quote! {
                 let __frame = {
                     zeo_rt::stack_check()?;
@@ -505,6 +506,7 @@ fn emit_proc_or_lambda_value_with(
     // the binding above: this is two static values, not a captured scope, so a
     // program that never asks pays a word.
     let with_location = proc_loc.as_ref().map(|(file, line)| {
+        let file = crate::codegen::pooled_file(file);
         quote! { .with_location(#file, #line) }
     });
     // Three shapes:

@@ -468,6 +468,20 @@ impl<'a> Ctx<'a> {
     fn self_class(&self) -> class_query::SelfClass<'a> {
         class_query::SelfClass::new(self.current_class, self.trace)
     }
+
+    /// [`Ctx::ask`] from BEFORE a `Ctx` exists -- `codegen::share` has to settle
+    /// how a body is emitted (`self_slots`) to build the one it asks with, and
+    /// that decision is itself a per-class question the trace must carry.
+    fn ask_class(
+        compiler: &Compiler,
+        cid: ClassId,
+        trace: Option<&std::cell::RefCell<class_query::Trace>>,
+        query: class_query::ClassQuery,
+    ) -> class_query::Answer {
+        class_query::SelfClass::new(Some(cid), trace)
+            .ask(compiler, query)
+            .expect("a receiver class was supplied")
+    }
 }
 
 /// Wrap a method body that needs a `Signal::Return` catch. `home_push`/
@@ -597,6 +611,7 @@ pub(crate) fn scope_frame_guard(
     // every compiled method checks its depth against the execution context's
     // floor, making runaway recursion a rescuable SystemStackError instead
     // of a native stack-overflow abort.
+    let file = pooled_file(&file);
     quote! {
         let __frame = {
             zeo_rt::stack_check()?;
@@ -684,7 +699,10 @@ fn push_method_meta_row(
     let at = scope
         .def_node
         .and_then(|n| source_location(compiler, n))
-        .map(|(file, line)| quote! { .at(#file, #line) });
+        .map(|(file, line)| {
+            let file = pooled_file(&file);
+            quote! { .at(#file, #line) }
+        });
     let alias = scope
         .alias_of
         .as_ref()
@@ -824,6 +842,10 @@ struct PoolBuilder {
     syms: Vec<String>,
     lit_ix: HashMap<String, usize>,
     lits: Vec<String>,
+    /// Source-file paths named by frame guards (`static __FILES: [&str; n]`),
+    /// deduped -- see [`pooled_file`] for why this one matters most.
+    file_ix: HashMap<String, usize>,
+    files: Vec<String>,
     /// Per-signature `Proc#parameters` tables (`static __PP_N: [ProcParamMeta;
     /// k]`), deduped by rendered signature -- constructing a proc then borrows
     /// one table instead of allocating a `Vec` + interning names per call.
@@ -891,6 +913,32 @@ pub(crate) fn pooled_frozen_str(text: &str) -> TokenStream {
     });
     let i = proc_macro2::Literal::usize_unsuffixed(i);
     quote! { crate::__LITS.s(#i) }
+}
+
+/// `crate::__FILES[i]` -- the pooled source-file PATH a frame guard names.
+///
+/// Every `FrameGuard::push` carried its file as an inline literal, and a
+/// program has orders of magnitude more frames than files: activemodel emitted
+/// 40,660 path occurrences drawn from 614 distinct paths, 3.5MB of text for
+/// 55KB of content, with the same 96-character path repeated three times inside
+/// one 30-line span. Symbols and frozen strings have been pooled for exactly
+/// this reason; frames were the one emitter left inlining.
+///
+/// It also stops the compiling machine's absolute paths from being stamped into
+/// the binary tens of thousands of times over. They appear once each now, which
+/// is what a backtrace needs and no more.
+pub(crate) fn pooled_file(path: &str) -> TokenStream {
+    let i = POOLS.with_borrow_mut(|p| {
+        if let Some(&i) = p.file_ix.get(path) {
+            return i;
+        }
+        let i = p.files.len();
+        p.files.push(path.to_string());
+        p.file_ix.insert(path.to_string(), i);
+        i
+    });
+    let i = proc_macro2::Literal::usize_unsuffixed(i);
+    quote! { crate::__FILES[#i] }
 }
 
 /// A fresh `crate::__CS_N` inline cache for one dynamic call site.
@@ -1251,7 +1299,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             (class.is_builtin || idx == 0)
                 && (!class.methods.is_empty() || !class.class_methods.is_empty())
         })
-        .map(|(idx, _)| emit_builtin_reopen(compiler, ClassId(idx as u32)))
+        .map(|(idx, _)| emit_builtin_reopen(compiler, &shared, ClassId(idx as u32)))
         // Eager -- see `classes` above.
         .collect::<Vec<_>>();
 
@@ -2299,7 +2347,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // the main script; statement emission stamps the line as it goes).
     let main_frame = match compiler.hir.files.first() {
         Some(f) => {
-            let file = &f.name;
+            let file = pooled_file(&f.name);
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, "<main>", 0, 0); }
         }
         None => quote! {},
@@ -2593,6 +2641,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let texts = &pools.lits;
         quote! { static __LITS: zeo_rt::LitPool = zeo_rt::LitPool::new(&[#(#texts),*]); }
     });
+    // A plain `[&str; n]`, not a pool type: a frame guard wants the `&'static
+    // str` itself, so there is nothing to intern or memoize on the way out.
+    let files = (!pools.files.is_empty()).then(|| {
+        let paths = &pools.files;
+        let n = pools.files.len();
+        quote! { static __FILES: [&str; #n] = [#(#paths),*]; }
+    });
     // ONE array, not one static per site: a `static` item each cost rustc
     // 155% on uri and 26% more emitted lines, for storage that is identical
     // either way.
@@ -2628,7 +2683,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
     });
     quote! {
-        #program #syms #lits #(#call_sites)* #(#pps)*
+        #program #syms #lits #files #(#call_sites)* #(#pps)*
         static __META_ROWS: &[zeo_rt::MetaRow] = &[#(#metas),*];
         #vm_rows #cm_rows #vis_rows
     }
@@ -2768,6 +2823,7 @@ pub(crate) fn emit_class_body_site(
             let label = format!("<{kind}:{}>", compiler.leaf_name(cid));
             // The body's `end` line, `TracePoint`'s `:end` lineno.
             let end_line = site.def_node.map_or(0, |n| source_end_line(compiler, n));
+            let file = pooled_file(&file);
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
         }
         None => quote! {},
@@ -3222,13 +3278,25 @@ fn emit_user_module_bridges(compiler: &Compiler) -> Vec<TokenStream> {
     containers
 }
 
-fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
+fn emit_builtin_reopen(
+    compiler: &Compiler,
+    shared: &share::SharedBodies,
+    cid: ClassId,
+) -> TokenStream {
     let ci = compiler.class(cid);
     let mod_ident = ident::class_ident(compiler, cid);
-    let instance_fns = ci
-        .methods
-        .iter()
-        .map(|e| emit_builtin_method_fn(compiler, cid, e.def));
+    let instance_fns = ci.methods.iter().map(|e| {
+        // A body this class shares with other structless receivers lives once
+        // in `__sh`; the container keeps a forwarder under the real name so
+        // every path that names `__bm_Foo::bar` -- dispatch rows, sibling
+        // implicit-self calls, `module_function` registrations -- is unchanged.
+        // The receiver is a `RubyValue` on both sides, so the forwarder is a
+        // straight hand-off with nothing to box or unbox.
+        match shared.call(cid, e.def) {
+            Some(shared_fn) => emit_builtin_forwarder(compiler, e.def, shared_fn),
+            None => emit_builtin_method_fn(compiler, cid, e.def),
+        }
+    });
     // Instance and class methods share this one container but not their
     // idents (`x` vs `__cm_x`), so a reopen defining both -- `module Kernel;
     // def URI(u); end; module_function :URI; end`, which is what
@@ -3243,6 +3311,35 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
     quote! {
         #[allow(non_snake_case)]
         pub mod #mod_ident { #[allow(unused_imports)] use super::*; #(#instance_fns)* #(#class_fns)* }
+    }
+}
+
+/// A structless class's stand-in for a body that now lives once in `__sh`.
+///
+/// The container's function keeps the method's real name and signature, so
+/// every path that already names `__bm_Foo::bar` keeps working; the body is one
+/// hand-off. Both sides take `__self: zeo_rt::RubyValue`, which is the whole
+/// reason this is free -- there is no receiver to box, unbox or coerce, unlike
+/// the struct-backed forwarder in `emit_class` which has to consume its
+/// `Arc<Self>`.
+///
+/// No frame guard, no `check_ints`: the shared body pushes its own, and pushing
+/// a second here would put a duplicate entry in every backtrace.
+fn emit_builtin_forwarder(
+    compiler: &Compiler,
+    sid: crate::compiler::ScopeId,
+    shared_fn: &proc_macro2::Ident,
+) -> TokenStream {
+    let scope = compiler.scope(sid);
+    let method_ident = safe_ident(&scope.name);
+    let needs_block = scope.needs_block_param();
+    let sig_params = params::emit_signature_params(&scope.params, needs_block);
+    let fwd = params::emit_forward_args(&scope.params, needs_block);
+    quote! {
+        #[allow(unused_variables)]
+        pub fn #method_ident(__self: zeo_rt::RubyValue #sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+            __sh::#shared_fn(__self #fwd)
+        }
     }
 }
 
@@ -3348,7 +3445,7 @@ fn emit_builtin_method_fn(
     let method_ident = safe_ident(&compiler.scope(sid).name);
     // A reopened builtin has no generated struct, so its ivars are name-keyed
     // with nowhere for a slot index to point.
-    emit_value_self_method_fn(compiler, cid, sid, &method_ident, false, None)
+    emit_value_self_method_fn(compiler, cid, sid, &method_ident, false, false, None)
 }
 
 /// `emit_builtin_method_fn` with the function's own name supplied, since a
@@ -3359,12 +3456,24 @@ fn emit_builtin_method_fn(
 /// `trace`, when present, collects every question this emission asks about
 /// `cid` -- see [`class_query`]. `share` records one member's body and then
 /// replays the trace against the rest instead of emitting them at all.
+///
+/// `self_slots` and `shared` are two DIFFERENT questions, and reading one off
+/// the other was a bug. `self_slots` asks whether the receiver has an ivar
+/// layout to index into; `shared` asks whether this body serves more than one
+/// class, which is what suppresses the per-site inline cache (a `CallSite`
+/// index differs between two emissions, so a body carrying one can never match
+/// its group). They agree for a struct-backed shared body, which is why tying
+/// them held until reopened builtins started sharing -- there `self_slots` is
+/// false and `shared` is true, and `ZEO_VERIFY_SHARE` caught the mismatch as
+/// `Object#DelegateClass` emitting `send_value_cached` in one member and
+/// `send_value_explicit_in` in another.
 fn emit_value_self_method_fn(
     compiler: &Compiler,
     cid: ClassId,
     sid: crate::compiler::ScopeId,
     method_ident: &proc_macro2::Ident,
     self_slots: bool,
+    shared: bool,
     trace: Option<&std::cell::RefCell<class_query::Trace>>,
 ) -> TokenStream {
     let scope = compiler.scope(sid);
@@ -3418,7 +3527,7 @@ fn emit_value_self_method_fn(
         // ivars are name-keyed with storage in `dispatch::Object`.
         self_is_dynamic: true,
         self_slots,
-        shared_body: self_slots,
+        shared_body: shared,
         trace,
         runtime_super_params: None,
         block_depth: 0,
@@ -3629,7 +3738,7 @@ fn emit_redef_containers(compiler: &Compiler) -> Vec<TokenStream> {
         let container = redef_container_ident(cid);
         let fns = class.redef_scopes.iter().map(|&sid| {
             let ident = redef_ident(sid, &compiler.scope(sid).name);
-            emit_value_self_method_fn(compiler, cid, sid, &ident, false, None)
+            emit_value_self_method_fn(compiler, cid, sid, &ident, false, false, None)
         });
         containers.push(quote! {
             #[allow(non_snake_case)]

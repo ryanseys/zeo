@@ -60,13 +60,15 @@ pub(super) enum ClassQuery {
     /// Is the receiver a class whose `self` is a bare `RubyValue` rather than a
     /// generated struct -- a reopened builtin, or `Object` itself? It picks a
     /// whole branch of implicit-self emission.
-    ///
-    /// A sharing group holds only classes with a generated struct, so today
-    /// every member answers NO and this can never split one. It is recorded
-    /// anyway: that is a property of `analyze::share::groups`, not of this
-    /// emission, and the point of the trace is not to depend on invariants
-    /// asserted somewhere else.
     ValueBacked,
+    /// Does the receiver have a generated struct, and therefore a known ivar
+    /// LAYOUT its shared body can index into?
+    ///
+    /// This is what `self_slots` means, and it is a property of the class, so a
+    /// group holding both a user class and a reopened builtin splits on it
+    /// rather than having to be kept apart by the grouping. A structless
+    /// receiver reaches its ivars by name; a struct-backed one by slot.
+    HasStruct,
 }
 
 /// What a [`ClassQuery`] answered.
@@ -117,6 +119,7 @@ impl ClassQuery {
                     || compiler.class(*owner).ancestors.contains(&cid),
             ),
             ClassQuery::ValueBacked => Answer::Yes(compiler.value_backed(cid)),
+            ClassQuery::HasStruct => Answer::Yes(compiler.has_generated_struct(cid)),
         }
     }
 }

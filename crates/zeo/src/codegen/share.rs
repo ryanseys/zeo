@@ -167,8 +167,27 @@ fn bucket_members(compiler: &Compiler, group: &crate::analyze::share::Group) -> 
         // sharing.
         let ident = format_ident!("__sh{}_{}", group.def.0, buckets.len());
         let trace = std::cell::RefCell::new(Trace::default());
-        let body =
-            super::emit_value_self_method_fn(compiler, cid, group.def, &ident, true, Some(&trace));
+        // `self_slots` is not the caller's choice, it is the RECEIVER's: only a
+        // class with a generated struct has an ivar layout to index into. Asked
+        // through the trace so a group holding both a user class and a reopened
+        // builtin splits on it rather than emitting one body that is wrong for
+        // half its members.
+        let self_slots = super::Ctx::ask_class(
+            compiler,
+            cid,
+            Some(&trace),
+            super::class_query::ClassQuery::HasStruct,
+        )
+        .yes();
+        let body = super::emit_value_self_method_fn(
+            compiler,
+            cid,
+            group.def,
+            &ident,
+            self_slots,
+            true,
+            Some(&trace),
+        );
         buckets.push(Bucket {
             trace: trace.into_inner(),
             classes: vec![cid],
@@ -199,11 +218,16 @@ fn verify_buckets(
     for bucket in buckets {
         let expected = bucket.body.to_string();
         for &cid in &bucket.classes {
+            // Re-emitted exactly as bucketing would have: `self_slots` off the
+            // receiver, `shared` on. Hardcoding either would compare against a
+            // body no member was ever going to get.
+            let self_slots = compiler.has_generated_struct(cid);
             let actual = super::emit_value_self_method_fn(
                 compiler,
                 cid,
                 group.def,
                 &bucket.ident,
+                self_slots,
                 true,
                 None,
             )

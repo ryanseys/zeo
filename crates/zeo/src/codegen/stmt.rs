@@ -72,11 +72,12 @@ fn stamp_line(
                 .files
                 .first()
                 .is_none_or(|f0| f0.name != file);
+        let pooled = crate::codegen::pooled_file(&file);
         if entering_spliced_file {
-            cov.extend(quote! { zeo_rt::cov_file_loaded(#file); });
+            cov.extend(quote! { zeo_rt::cov_file_loaded(#pooled); });
         }
         crate::codegen::coverage_record_stmt(&file, line);
-        cov.extend(quote! { zeo_rt::cov_line(#file, #line); });
+        cov.extend(quote! { zeo_rt::cov_line(#pooled, #line); });
     }
     *prev_line = Some((file, line));
     if is_tail {
