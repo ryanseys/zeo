@@ -327,9 +327,37 @@ impl Row {
 
 // ---------------------------------------------------------------- registry
 
+/// The registry client, with the timeouts that keep a stalled socket from
+/// stopping the whole run.
+///
+/// `ureq::get` on its own has no deadline, and a probe of the full corpus makes
+/// thousands of requests -- so "rare" is a certainty. One did: a `.gem` download
+/// from rubygems' CDN went quiet mid-body, the worker sat in `read` forever, and
+/// with the other 11 workers parked waiting for it the run stopped dead at
+/// 2275/3850 with no output and no CPU. There is a `--timeout` for the COMPILE
+/// step; the fetch had none.
+///
+/// `timeout_global` is the one that matters, because it bounds the whole call
+/// including the body read. The others are tighter bounds on the phases that
+/// should be fast, so a dead host is noticed in seconds rather than a minute.
+/// A gem that trips these is a `fetch-failed` row like any other -- the run
+/// carries on, and the row says what happened.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(120)))
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .build()
+            .into()
+    })
+}
+
 fn get(url: &str) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
-    ureq::get(url)
+    agent()
+        .get(url)
         .call()
         .map_err(|e| format!("{e}"))?
         .into_body()
