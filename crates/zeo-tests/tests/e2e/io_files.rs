@@ -495,39 +495,10 @@ fn a_global_alias_shares_storage_in_both_directions() {
 }
 
 #[test]
-fn class_shift_self_containing_an_unsupported_statement_is_a_clean_lowering_error() {
-    // `def`s, constants, mixins, `undef`, visibility, ivars and ordinary calls
-    // are all handled in `class << self`; a NESTED `class << self` (the
-    // singleton's own singleton) is not -- a clean rejection, not silently
-    // ignored.
-    let err = zeo::compile_to_rust(
-        r#"
-        class Foo
-          class << self
-            class << self
-              def x; 1; end
-            end
-          end
-        end
-        "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("a nested `class << self` isn't supported yet"),
-        "{err}"
-    );
-    // It has to name the construct it stopped on. Reporting only that SOME
-    // statement was unsupported sent every reader back to the file to guess
-    // which -- the corpus ledger recorded 568 rows of this one pointing at the
-    // enclosing `class`, and triaging them meant re-parsing every file.
-    assert!(err.contains("found `class << self"), "{err}");
-}
-
-#[test]
 fn a_singleton_body_rejection_names_and_locates_the_statement_it_rejected() {
-    // All three singleton rejections quote the offending statement. Only the
-    // `class << obj` one ever did; the other two described what they DO handle
-    // and left the reader to work out which line stopped them.
+    // Both remaining singleton rejections quote the offending statement. Only
+    // the `class << obj` one ever did; the other described what it DOES handle
+    // and left the reader to work out which line stopped it.
     let unsupported = |src: &str| zeo::compile_to_rust(src).unwrap_err();
 
     // `class << obj`, the per-object form -- a separate mapper with its own
@@ -547,7 +518,10 @@ fn a_singleton_body_rejection_names_and_locates_the_statement_it_rejected() {
     // Only the FIRST line is quoted. The caret already shows the construct in
     // full, and the message is also one field of one TSV row in the corpus
     // ledger, where an embedded newline is unreadable.
-    assert!(!err.contains('\n'), "the quote must stay on one line: {err}");
+    assert!(
+        !err.contains('\n'),
+        "the quote must stay on one line: {err}"
+    );
 }
 
 #[test]

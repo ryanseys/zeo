@@ -27,6 +27,15 @@ use proc_macro2::TokenStream;
 /// subclass re-scope a method it inherited (`private :inherited_method`)
 /// without redefining it, and reading the definition would report the
 /// ancestor's visibility and wave the call through.
+/// The two receivers ruby runs no visibility check against: a literal `self`
+/// (private is reachable through one since 2.7), and a receiver zeo
+/// SYNTHESIZED for a call ruby writes with no receiver at all -- see
+/// [`Hir::is_implicit_self_receiver`](crate::hir::Hir::is_implicit_self_receiver).
+fn runs_no_check(cx: &Ctx, recv_id: NodeId) -> bool {
+    matches!(cx.compiler.hir[recv_id], HirNode::SelfRef)
+        || cx.compiler.hir.is_implicit_self_receiver(recv_id)
+}
+
 pub(super) fn enforce_visibility(
     cx: &Ctx,
     recv_id: NodeId,
@@ -36,7 +45,7 @@ pub(super) fn enforce_visibility(
     match entry.visibility {
         Visibility::Public => {}
         Visibility::Private => {
-            if !matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
+            if !runs_no_check(cx, recv_id) {
                 return Some(emit_visibility_error(cx, recv_id, "private", method_name));
             }
         }
@@ -106,7 +115,7 @@ impl Caller {
 /// (`Ctx::self_is_dynamic`: `instance_eval`/`instance_exec` re-homed blocks
 /// and `Class.new`-body method bodies).
 pub(super) fn caller_class(cx: &Ctx, recv_id: NodeId, bypass: bool) -> Caller {
-    if bypass || matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
+    if bypass || runs_no_check(cx, recv_id) {
         return Caller::Static(u32::MAX);
     }
     if cx.self_is_dynamic {
@@ -131,7 +140,7 @@ pub(super) fn enforce_class_method_visibility(
     if !cx.compiler.class_method_is_private(target, method_name) {
         return None;
     }
-    if matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
+    if runs_no_check(cx, recv_id) {
         return None;
     }
     let info = cx.compiler.class(target);

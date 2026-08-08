@@ -66,7 +66,10 @@ pub(crate) fn desugar_singleton_class_defs(
     let recv_node = singleton.expression();
     // `class << obj` opens no cref of its own -- CRuby walks past a
     // singleton cref, so the body still resolves against the enclosing one.
-    let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
+    // It DOES end any `class << self` run: a `class << self` in here names
+    // obj's singleton, not the enclosing class's surrogate.
+    let inner =
+        hir.end_singleton_body(|hir| lower_class_body(result, hir, singleton.body(), None, None))?;
     desugar_singleton_items(result, hir, &recv_node, inner)
 }
 
@@ -518,44 +521,6 @@ fn retarget_self_to_singleton(hir: &mut Hir, id: NodeId) {
     }
 }
 
-/// Whether a `class << self` body opens ANOTHER singleton class -- directly,
-/// or inside a conditional the mapping keeps. That inner body belongs to the
-/// singleton's OWN singleton, one level beyond the enclosing-class retagging
-/// this mapping performs: flattened onto the enclosing class it would define
-/// `Foo.x` where ruby defines `Foo.singleton_class.x`. Rejected rather than
-/// quietly moved to the wrong owner.
-/// Answers the offending inner `class << self`'s own span, not just that there
-/// is one: the rejection has to point at THAT line. Reporting only a boolean
-/// left the caret on the enclosing `class`/`module`, which for lita -- 565
-/// corpus rows behind one file -- meant the message named neither the
-/// construct's position nor its text.
-fn opens_a_nested_singleton(hir: &Hir, body: Option<&Node<'_>>) -> Option<crate::hir::Span> {
-    let node = body?;
-    if node.as_singleton_class_node().is_some() {
-        return Some(crate::lower::span_of(hir, node));
-    }
-    if let Some(s) = node.as_statements_node() {
-        return s
-            .body()
-            .iter()
-            .find_map(|n| opens_a_nested_singleton(hir, Some(&n)));
-    }
-    if let Some(i) = node.as_if_node() {
-        return opens_a_nested_singleton(hir, i.statements().map(|s| s.as_node()).as_ref())
-            .or_else(|| opens_a_nested_singleton(hir, i.subsequent().as_ref()));
-    }
-    if let Some(u) = node.as_unless_node() {
-        return opens_a_nested_singleton(hir, u.statements().map(|s| s.as_node()).as_ref())
-            .or_else(|| {
-                opens_a_nested_singleton(hir, u.else_clause().map(|e| e.as_node()).as_ref())
-            });
-    }
-    if let Some(e) = node.as_else_node() {
-        return opens_a_nested_singleton(hir, e.statements().map(|s| s.as_node()).as_ref());
-    }
-    None
-}
-
 /// The names of an all-literal-symbol argument list (`:a, :b`), or `None` when
 /// any argument is computed -- a directive zeo can only serve at run time.
 fn literal_symbol_args(hir: &Hir, args: &[ArrayElem]) -> Option<Vec<String>> {
@@ -577,7 +542,7 @@ fn literal_symbol_args(hir: &Hir, args: &[ArrayElem]) -> Option<Vec<String>> {
 /// is the class object, so this is the very class `class << self` opens.
 fn own_singleton_class(hir: &mut Hir) -> NodeId {
     let me = hir.push(HirNode::SelfRef);
-    hir.push(HirNode::Call {
+    let recv = hir.push(HirNode::Call {
         receiver: Some(me),
         name: "singleton_class".to_string(),
         args: vec![],
@@ -585,7 +550,14 @@ fn own_singleton_class(hir: &mut Hir) -> NodeId {
         block: None,
         block_arg: None,
         safe: false,
-    })
+    });
+    // Ruby writes these calls with NO receiver at all -- this one exists only
+    // because zeo rebinds the statement rather than re-homing `self`. Record
+    // it so the visibility checks keep treating the call as the FCALL it is;
+    // otherwise a `private` singleton method called by its own body's DSL
+    // (lita's `define_deprecated_class_method`) raises NoMethodError.
+    hir.mark_implicit_self_receiver(recv);
+    recv
 }
 
 fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) -> PResult<()> {
@@ -2555,7 +2527,7 @@ fn lower_class_body_statement(
     //     (`ClassMethodPrepend`/`ClassMethodUndef`/`ClassMethodVisibility`);
     //   - any other call, and `extend M` -> rebound onto
     //     `self.singleton_class`, the receiver real Ruby runs them against.
-    // A nested `class << self` stays a clean rejection.
+    // A nested `class << self` re-enters this same arm one level deeper.
     if let Some(singleton) = node.as_singleton_class_node() {
         // `class << HTTP` written INSIDE `class HTTP` IS `class << self` --
         // net/http spells its class-method aliases that way, and routing it
@@ -2571,18 +2543,39 @@ fn lower_class_body_statement(
             out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);
             return Ok(());
         }
-        if let Some(inner) = opens_a_nested_singleton(hir, singleton.body().as_ref()) {
-            return Err(singleton_rejection(hir, Some(inner), |found| {
-                format!(
-                    "a nested `class << self` isn't supported yet (zeo limitation){found} -- its \
-                     body belongs to the singleton's own singleton, which zeo has no \
-                     compile-time class for"
-                )
-            }));
-        }
-        let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
+        // A `class << self` among the statements of ANOTHER `class << self`
+        // body opens the surrogate's own singleton -- the same construct one
+        // level deeper, so it takes the same route one level deeper. Its
+        // mapped items become the body of a reopen of the surrogate, where
+        // they mean on `Foo.singleton_class` exactly what they would mean on
+        // `Foo` written directly in its class body: a `def` retagged as a
+        // class method of the surrogate IS an instance method of
+        // `Foo.singleton_class.singleton_class`, which is where ruby puts it.
+        // lita's `class << self; class << self; def define_deprecated_class_method`
+        // is the shape, and the `define_deprecated_class_method :add_user_to_group`
+        // calls beside it -- rebound onto `self.singleton_class`, i.e. the
+        // surrogate -- then find it.
+        let nested = hir.is_in_singleton_body();
+        let inner = hir
+            .in_singleton_body(|hir| lower_class_body(result, hir, singleton.body(), None, None))?;
         let mut mapped = Vec::new();
         map_class_self_items(hir, &inner, &mut mapped)?;
+        if nested {
+            // The reopen carries the nested `class << self`'s own location: a
+            // class body takes its backtrace frame from its definition node,
+            // and a span-less one is emitted with no frame at all.
+            let span = crate::lower::span_of(hir, node);
+            hir.push_span(span);
+            let def = hir.push(HirNode::ClassDef {
+                name: SINGLETON_SURROGATE.to_string(),
+                superclass: None,
+                body: mapped,
+                is_module: true,
+            });
+            hir.pop_span();
+            out.push(def);
+            return Ok(());
+        }
         // A constant assigned here belongs to the SINGLETON class, not the
         // enclosing module (`M.const_defined?(:SC)` is false where
         // `M.singleton_class.const_defined?(:SC)` is true). The constants
@@ -2593,19 +2586,37 @@ fn lower_class_body_statement(
         // `zeo_rt::register_singleton_surrogate`). The `def`s beside them
         // are tagged: their lexical home is the singleton, so a bare `SC`
         // resolves against the surrogate and `Module.nesting` reports it.
-        let (consts, rest): (Vec<NodeId>, Vec<NodeId>) = mapped
-            .into_iter()
-            .partition(|&n| matches!(hir[n], HirNode::ConstWrite { .. }));
-        if !consts.is_empty() {
-            out.push(hir.push(HirNode::ClassDef {
+        // One reopen per constant, spliced in AT ITS POSITION rather than
+        // collected into one body at the front: the constant's VALUE is an
+        // expression that the statements before it can decide (`$n = 5; V =
+        // $n`), so hoisting it evaluated it too early and answered the value
+        // from before the body ran. Same rule, and the same reason, as the
+        // `SingletonBody` arm above.
+        let mut had_const = false;
+        let mut rest = Vec::with_capacity(mapped.len());
+        let mut ordered = Vec::with_capacity(mapped.len());
+        for n in mapped {
+            if !matches!(hir[n], HirNode::ConstWrite { .. }) {
+                rest.push(n);
+                ordered.push(n);
+                continue;
+            }
+            had_const = true;
+            let span = hir.span(n).unwrap_or(crate::hir::Span::SYNTH);
+            hir.push_span(span);
+            let def = hir.push(HirNode::ClassDef {
                 name: SINGLETON_SURROGATE.to_string(),
                 superclass: None,
-                body: consts,
+                body: vec![n],
                 is_module: true,
-            }));
+            });
+            hir.pop_span();
+            ordered.push(def);
+        }
+        if had_const {
             tag_singleton_body_defs(hir, &rest);
         }
-        out.extend(rest);
+        out.extend(ordered);
         return Ok(());
     }
 

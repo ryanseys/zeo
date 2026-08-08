@@ -322,6 +322,14 @@ pub struct Hir {
     /// [`cvar_is_toplevel`](Self::cvar_is_toplevel) and
     /// [`enclosing_class`](Self::enclosing_class).
     cref_names: Vec<String>,
+    /// Whether the statement being lowered is a direct statement of a `class <<
+    /// self` body. A `class << self` among them opens the SURROGATE's own
+    /// singleton, one level beyond the enclosing-class retagging -- see
+    /// [`in_singleton_body`](Self::in_singleton_body).
+    in_singleton_body: bool,
+    /// Receivers zeo SYNTHESIZED for calls ruby writes with no receiver at all
+    /// -- see [`is_implicit_self_receiver`](Self::is_implicit_self_receiver).
+    implicit_self_receivers: std::collections::HashSet<NodeId>,
     /// Every `class`/`module` definition lowered so far, under the FULLY
     /// QUALIFIED name its site spells (`class Error` inside `module Citrus`
     /// records `Citrus::Error`). A `ClassDef` node keeps only the name as
@@ -421,9 +429,56 @@ impl Hir {
     /// Lowers `body` as one more level of cref nesting -- see `cref_names`.
     pub fn in_class_body<T>(&mut self, name: &str, body: impl FnOnce(&mut Self) -> T) -> T {
         self.cref_names.push(name.to_string());
-        let out = body(self);
+        // An ordinary `class`/`module` written inside a `class << self` body
+        // ends the singleton run: ITS `class << self` opens its own singleton,
+        // not the surrogate's -- see `in_singleton_body`.
+        let out = self.end_singleton_body(body);
         self.cref_names.pop();
         out
+    }
+
+    /// Lowers `body` as the statements of a `class << self`, so a `class <<
+    /// self` among them can tell that it is the SURROGATE's singleton rather
+    /// than an ordinary class's -- see `lower::defs`'s singleton arm.
+    pub(crate) fn in_singleton_body<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = std::mem::replace(&mut self.in_singleton_body, true);
+        let out = body(self);
+        self.in_singleton_body = saved;
+        out
+    }
+
+    /// Records that `recv` is a receiver zeo synthesized for a call ruby runs
+    /// with an implicit one.
+    pub(crate) fn mark_implicit_self_receiver(&mut self, recv: NodeId) {
+        self.implicit_self_receivers.insert(recv);
+    }
+
+    /// Whether `recv` is a receiver zeo synthesized for a call whose ruby form
+    /// is RECEIVERLESS -- the `self.singleton_class` a `class << self` body's
+    /// statement is rebound onto. Ruby runs no visibility check on a call with
+    /// no receiver, so neither may the rebound form: lita's
+    /// `define_deprecated_class_method` is `private` on the singleton's own
+    /// singleton and is called from the singleton body beside it.
+    ///
+    /// A receiver the SOURCE wrote is never in here, so a hand-written
+    /// `Foo.singleton_class.some_private_method` still raises, as ruby does.
+    pub(crate) fn is_implicit_self_receiver(&self, recv: NodeId) -> bool {
+        self.implicit_self_receivers.contains(&recv)
+    }
+
+    /// Lowers `body` outside any `class << self` run -- see `in_class_body`
+    /// and `desugar_singleton_class_defs`, the two constructs that end one.
+    pub(crate) fn end_singleton_body<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = std::mem::replace(&mut self.in_singleton_body, false);
+        let out = body(self);
+        self.in_singleton_body = saved;
+        out
+    }
+
+    /// Whether the statement being lowered is a direct statement of a `class <<
+    /// self` body.
+    pub(crate) fn is_in_singleton_body(&self) -> bool {
+        self.in_singleton_body
     }
 
     /// The innermost enclosing `class`/`module`'s name as written, or `None` at
