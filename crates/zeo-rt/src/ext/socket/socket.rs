@@ -448,8 +448,17 @@ fn unpack_sockaddr_in(bytes: &[u8]) -> Result<std::net::SocketAddr, Signal> {
 /// `bootstrap::install_core_constants` when the `socket` feature is built.
 pub fn seed_socket() {
     let cid = zeo_abi::SOCKET_CLASS.0;
+    // Every name lands in BOTH tables, which is what `sock_define_const`
+    // (ext/socket/constants.c) does -- `rb_define_const` on `mSockConst` and
+    // again on `rb_cSocket`. Neither is derived from the other at run time:
+    // `Socket::Constants` is included nowhere (`Socket.include?
+    // (Socket::Constants)` is false), so a lookup through `Socket` never
+    // reaches it.
+    let consts = zeo_abi::SOCKET_CONSTANTS_MODULE.0;
     for &name in zeo_abi::SOCKET_CONSTANT_NAMES {
-        crate::constants::const_set(cid, name, RubyValue::Int(socket_const_value(name)));
+        let value = socket_const_value(name);
+        crate::constants::const_set(cid, name, RubyValue::Int(value));
+        crate::constants::const_set(consts, name, RubyValue::Int(value));
     }
 }
 

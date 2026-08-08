@@ -12,3 +12,12 @@ NoMethodError
 TCPServer
 NameError
 "uninitialized constant Bogus123Xyz"
+Module
+"Socket::Constants"
+false
+[Socket::Constants]
+true
+true
+true
+true
+true

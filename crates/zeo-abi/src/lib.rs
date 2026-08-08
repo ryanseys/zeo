@@ -506,6 +506,16 @@ pub const RUBY_BOX_LOADER_MODULE: ClassId = ClassId(174);
 /// offset 0. sassc declares its tagged value that way.
 pub const FFI_UNION_CLASS: ClassId = ClassId(175);
 
+/// `Socket::Constants` -- the address-family / socket-type / protocol names,
+/// as a namespace of their own. CRuby's `sock_define_const` defines each name
+/// TWICE, once here and once on `Socket` itself, so the two tables hold the
+/// same values and neither is derived from the other. It is NOT included
+/// anywhere -- `Socket.include?(Socket::Constants)` is false, and
+/// `Socket::Constants.ancestors` is just itself -- so this row carries no
+/// edges either. celluloid-io's `Constants = ::Socket::Constants` is the shape
+/// that wanted it.
+pub const SOCKET_CONSTANTS_MODULE: ClassId = ClassId(176);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -2215,6 +2225,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(FFI_STRUCT_CLASS),
         includes: &[],
         feature: Some("ffi"),
+    },
+    BuiltinClass {
+        id: SOCKET_CONSTANTS_MODULE,
+        name: "Socket::Constants",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("socket"),
     },
 ];
 

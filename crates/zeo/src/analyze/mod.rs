@@ -774,7 +774,11 @@ fn process_top_stmt_inner(
 /// empty: `module String` raises `String is not a module\n:: previous
 /// definition of String was here` (oracle-verified). Ruby only drops the line
 /// when the location is nil outright, which a defined constant never is.
-fn previous_definition_of(compiler: &Compiler, cid: crate::compiler::ClassId, name: &str) -> String {
+fn previous_definition_of(
+    compiler: &Compiler,
+    cid: crate::compiler::ClassId,
+    name: &str,
+) -> String {
     let (file, line) = compiler
         .class_body_sites
         .iter()
@@ -1470,12 +1474,18 @@ fn cond_kind(compiler: &Compiler, id: NodeId) -> String {
 /// the platform guards gems write (`unless Socket.const_defined? :AF_INET6`).
 fn seed_ext_const_owners(compiler: &mut Compiler) {
     if compiler.hir.activated_features.contains("socket") {
-        let cid = crate::compiler::ClassId(zeo_abi::SOCKET_CLASS.0);
-        for &name in zeo_abi::SOCKET_CONSTANT_NAMES {
-            compiler.classes[cid.0 as usize]
-                .const_owners
-                .entry(name.to_string())
-                .or_insert(cid);
+        // Both tables, the way `sock_define_const` writes both -- see
+        // `ext::socket::socket::seed_socket`, the runtime half.
+        for owner in [
+            crate::compiler::ClassId(zeo_abi::SOCKET_CLASS.0),
+            crate::compiler::ClassId(zeo_abi::SOCKET_CONSTANTS_MODULE.0),
+        ] {
+            for &name in zeo_abi::SOCKET_CONSTANT_NAMES {
+                compiler.classes[owner.0 as usize]
+                    .const_owners
+                    .entry(name.to_string())
+                    .or_insert(owner);
+            }
         }
     }
 }
