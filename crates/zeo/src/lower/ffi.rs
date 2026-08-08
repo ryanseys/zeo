@@ -109,10 +109,11 @@ pub(crate) fn lower_ffi_directive(
             Ok(true)
         }
         b"ffi_lib" => {
-            // `ffi_lib "m"` / `ffi_lib FFI::Library::LIBC`. The most-recently
-            // declared library links every subsequent `attach_function`.
-            if let Some(first) = args.first() {
-                *ffi_lib = Some(ffi_lib_name(first)?);
+            // `ffi_lib "m"` / `ffi_lib FFI::Library::LIBC` / a candidate list.
+            // The most-recently declared library links every subsequent
+            // `attach_function`.
+            if !args.is_empty() {
+                *ffi_lib = Some(ffi_lib_name(&args)?);
             }
             Ok(true)
         }
@@ -451,22 +452,56 @@ end
     ))
 }
 
-/// The library name for `#[link(name = ..)]` from a `ffi_lib` argument. A string
-/// literal is taken verbatim; `FFI::Library::LIBC` maps to the platform C
-/// library (`c`, which resolves to libSystem on macOS). A `.so`/`.dylib` suffix
-/// and a `lib` prefix are stripped -- rustc wants the bare link name.
-fn ffi_lib_name(node: &Node<'_>) -> PResult<String> {
-    if let Some(s) = node.as_string_node() {
-        let raw = String::from_utf8_lossy(s.unescaped()).into_owned();
-        return Ok(strip_lib_name(&raw));
-    }
-    match const_path_string(node).as_deref() {
-        Some("FFI::Library::LIBC") => Ok("c".to_string()),
-        _ => Err(
-            "ffi_lib expects a string library name or FFI::Library::LIBC"
+/// The library name for `#[link(name = ..)]` from a `ffi_lib` ARGUMENT LIST.
+///
+/// `ffi_lib` takes CANDIDATES -- several arguments, or one array of them -- and
+/// ruby loads the first that dlopens. zeo has to name one library at compile
+/// time, so it takes the first candidate it can decide. That is the bare name
+/// gems write first (`ffi_lib ["sodium", "libsodium.so.18", "libsodium.so.23"]`
+/// -- rbnacl), the later entries being versioned sonames of the same library.
+///
+/// A candidate it cannot decide is SKIPPED rather than refused: libusb leads
+/// with two locals holding bundled paths and then names the system library.
+/// Only a list where nothing at all is decidable is an error -- and if the
+/// chosen name has no library to link against, the build says so, loudly.
+fn ffi_lib_name(args: &[Node<'_>]) -> PResult<String> {
+    args.iter()
+        .find_map(|a| match a.as_array_node() {
+            Some(arr) => arr.elements().iter().find_map(|e| ffi_lib_candidate(&e)),
+            None => ffi_lib_candidate(a),
+        })
+        .ok_or_else(|| {
+            "ffi_lib expects a library name zeo can decide at compile time: a string, a symbol, \
+             or `FFI::Library::LIBC` -- alone, or as one alternative of an array"
                 .to_string()
-                .into(),
-        ),
+                .into()
+        })
+}
+
+/// One `ffi_lib` candidate's link name, or `None` when it is only decidable at
+/// run time (a local, a method call, an interpolated path).
+fn ffi_lib_candidate(node: &Node<'_>) -> Option<String> {
+    if let Some(s) = node.as_string_node() {
+        return Some(strip_lib_name(&String::from_utf8_lossy(s.unescaped())));
+    }
+    // `ffi_lib :kernel32, :user32` -- windows gems name their DLLs as symbols.
+    if let Some(s) = node.as_symbol_node() {
+        return Some(strip_lib_name(&String::from_utf8_lossy(s.unescaped())));
+    }
+    // NOT special-cased: `ffi_lib FFI.library_name("vips", 42)` (ruby-vips, 24
+    // corpus rows). `library_name` is not an `ffi` API -- ruby-vips reopens
+    // `module FFI` and defines it -- so folding it by name would hard-code one
+    // gem's helper into the compiler and miscompile the next gem to pick the
+    // same name. It needs general compile-time folding of a same-file
+    // `def self.x`, which is its own piece of work.
+    //
+    // `FFI::Library::LIBC` names the platform C library (`c`, which resolves to
+    // libSystem on macOS). `FFI::Platform::LIBC` is the same constant by its
+    // other path, and either may be written `::`-anchored.
+    let path = const_path_string(node)?;
+    match path.trim_start_matches("::") {
+        "FFI::Library::LIBC" | "FFI::Platform::LIBC" => Some("c".to_string()),
+        _ => None,
     }
 }
 
