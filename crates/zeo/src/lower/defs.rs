@@ -448,6 +448,75 @@ fn mentions_self(hir: &Hir, id: NodeId) -> bool {
     false
 }
 
+/// Whether anything under `id` sends to an IMPLICIT self -- a receiverless
+/// call. Those are the mentions that need `self` REBOUND rather than merely
+/// evaluated, which for a call nested inside a block zeo cannot do.
+///
+/// Stops where `mentions_self` stops, and for the same reason.
+fn has_implicit_self_send(hir: &Hir, id: NodeId) -> bool {
+    let mut stack = vec![id];
+    while let Some(n) = stack.pop() {
+        match &hir[n] {
+            HirNode::Call { receiver: None, .. } => return true,
+            HirNode::DefMethod { .. }
+            | HirNode::Lambda {
+                method_body: true, ..
+            } => continue,
+            _ => {}
+        }
+        hir[n].for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
+
+/// Rewrites every `self` these statements EVALUATE into `self.singleton_class`
+/// -- the object `self` actually denotes inside `class << self`.
+///
+/// This is the whole fix for a statement that consults `self` only by naming
+/// it: `Mongoid.deprecate(self, :from_hash)` needs the singleton class as an
+/// ARGUMENT, not as a receiver, so there is nothing to retarget and no
+/// compile-time singleton class required -- 99 corpus rows behind that one
+/// line. `self.default_params = {}` is the same shape through an attribute
+/// assignment, which lowers to a `Seq` around a temporary and so never
+/// matched the plain `self`-receiver arm.
+///
+/// Stops at a definition boundary for the reason `mentions_self` does: a
+/// `self` inside a `def` is that method's future RECEIVER, not the singleton
+/// class (oracle: `class << self; def who = self; end` makes `Foo.who` answer
+/// `Foo`, not `#<Class:Foo>`).
+fn retarget_self_to_singleton(hir: &mut Hir, id: NodeId) {
+    let mut stack = vec![id];
+    let mut sites = Vec::new();
+    while let Some(n) = stack.pop() {
+        match &hir[n] {
+            HirNode::SelfRef => {
+                sites.push(n);
+                continue;
+            }
+            HirNode::DefMethod { .. }
+            | HirNode::Lambda {
+                method_body: true, ..
+            } => continue,
+            _ => {}
+        }
+        hir[n].for_each_child(&mut |child| stack.push(child));
+    }
+    // In place, so every parent's `NodeId` still points at the right node: the
+    // `self` BECOMES the `singleton_class` call, over a fresh receiver.
+    for site in sites {
+        let me = hir.push(HirNode::SelfRef);
+        hir[site] = HirNode::Call {
+            receiver: Some(me),
+            name: "singleton_class".to_string(),
+            args: vec![],
+            kwargs: vec![],
+            block: None,
+            block_arg: None,
+            safe: false,
+        };
+    }
+}
+
 /// Whether a `class << self` body opens ANOTHER singleton class -- directly,
 /// or inside a conditional the mapping keeps. That inner body belongs to the
 /// singleton's OWN singleton, one level beyond the enclosing-class retagging
@@ -533,6 +602,9 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
         SingletonIvarRead(String),
         SingletonSelf,
         SelfSend,
+        /// Runs unchanged once every `self` it names is rewritten to
+        /// `self.singleton_class` -- see `retarget_self_to_singleton`.
+        RetargetSelf,
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
         Guarded(
             Vec<NodeId>,
@@ -687,6 +759,14 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // around a temporary. A statement that DOES reach for `self`
             // would silently retarget the enclosing class, so it is rejected.
             _ if !mentions_self(hir, id) => Item::Passthrough,
+            // It consults `self`, but only by NAMING it -- there is no
+            // receiverless send anywhere under it, so nothing needs a receiver
+            // rebound and no compile-time singleton class is required. The
+            // `self` just has to evaluate to the right object, and
+            // `self.singleton_class` in the enclosing class body IS that
+            // object. `Mongoid.deprecate(self, :from_hash)` is 99 corpus rows
+            // of exactly this.
+            _ if !has_implicit_self_send(hir, id) => Item::RetargetSelf,
             _ => Item::Reject,
         };
         match item {
@@ -781,6 +861,10 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                 if let HirNode::Call { receiver, .. } = &mut hir[id] {
                     *receiver = Some(singleton);
                 }
+                out.push(id);
+            }
+            Item::RetargetSelf => {
+                retarget_self_to_singleton(hir, id);
                 out.push(id);
             }
             Item::Cond(cond, then_body, else_body) => match eval_static_class_self_guard(hir, cond)
