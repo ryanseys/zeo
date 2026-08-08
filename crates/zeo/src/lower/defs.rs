@@ -1619,10 +1619,123 @@ fn lower_runtime_class_body(
     // spelling -- a self-send the runtime class receiver serves -- so the class
     // builds at runtime. See `transform_runtime_class_body`.
     let body = transform_runtime_class_body(hir, body)?;
+    rescope_body_constants(hir, name, &body);
     Ok(hir.push(HirNode::Block {
         params: Params::default(),
         body,
     }))
+}
+
+/// Re-points a READ of a constant this body defines at the class the body is
+/// building -- the other half of `transform_runtime_class_body`'s `Const`
+/// rewrite.
+///
+/// A bare constant lowers to a `ClassRef` that codegen resolves against the
+/// LEXICALLY-enclosing class, and a runtime class body is a block whose
+/// enclosing class is whatever surrounds it -- `Object` at the top level. The
+/// write moved to the built class, so `Kw::KW` answers from outside while
+/// `def read = KW` still looked on Object and raised `uninitialized constant`.
+/// Before the write moved, both agreed on Object: wrong, but consistent.
+///
+/// The two positions need different scopes, because they run under different
+/// `self`:
+///
+///   IN THE BODY, `self` IS the class, so `SelfRef` is exact -- and it is the
+///   only correct answer, since the constant holding the class is not assigned
+///   until the whole `Name = Class.new(...) { body }` expression finishes.
+///
+///   IN A `def`, `self` is the receiver, so the class is named through the
+///   constant that holds it. That constant IS bound by the time any such
+///   method can run.
+///
+/// Only the `class` KEYWORD spellings reach here (`class Name < <expr>` and a
+/// reopen), and both open a real cref, which is what makes this ruby's answer
+/// rather than a guess. `Class.new do NAME = v end` is a plain block: its cref
+/// is the enclosing one, so ruby writes `Object::NAME` there and no rewrite is
+/// owed.
+fn rescope_body_constants(hir: &mut Hir, cref: &str, body: &[NodeId]) {
+    // What the body defines, as `transform_runtime_class_body` left it: a
+    // `NAME = value` and a nested `class Inner` both become a `DynConstWrite`
+    // against the body's `self`. A hand-written `self::NAME = v` is the same
+    // statement said out loud, and belongs in the set for the same reason.
+    fn owns(hir: &Hir, id: NodeId) -> Option<String> {
+        match &hir[id] {
+            HirNode::DynConstWrite { scope, name, .. }
+                if matches!(hir[*scope], HirNode::SelfRef) =>
+            {
+                Some(name.clone())
+            }
+            _ => None,
+        }
+    }
+    // `for_each_child` rather than a hand-rolled walk: it is the exhaustive
+    // one, and a missed variant here is a silently unresolved constant.
+    fn walk(hir: &Hir, id: NodeId, in_def: bool, out: &mut Vec<(NodeId, bool)>) {
+        out.push((id, in_def));
+        let in_def = in_def || matches!(hir[id], HirNode::DefMethod { .. });
+        let mut kids = Vec::new();
+        hir[id].for_each_child(&mut |c| kids.push(c));
+        for c in kids {
+            walk(hir, c, in_def, out);
+        }
+    }
+
+    let mut reachable = Vec::new();
+    for &id in body {
+        walk(hir, id, false, &mut reachable);
+    }
+    let defined: std::collections::HashSet<String> = reachable
+        .iter()
+        .filter_map(|&(id, _)| owns(hir, id))
+        .collect();
+    if defined.is_empty() {
+        return;
+    }
+    for (id, in_def) in reachable {
+        // A bare constant is a `ClassRef`, but `Inner.new(...)` keeps its own
+        // `New` node with the class as a plain string -- a nested `class Inner`
+        // is read that way far more often than as a bare value, so both spell
+        // the same rewrite.
+        let name = match &hir[id] {
+            HirNode::ClassRef(n) | HirNode::New { class_name: n, .. } => n.clone(),
+            _ => continue,
+        };
+        if !defined.contains(&name) {
+            continue;
+        }
+        let scope = if in_def {
+            hir.push(HirNode::ClassRef(cref.to_string()))
+        } else {
+            hir.push(HirNode::SelfRef)
+        };
+        let read = HirNode::DynConstRead {
+            scope,
+            name,
+            lenient: false,
+        };
+        // Taken out of the arena rather than cloned: a `New`'s arguments move
+        // straight into the `Call` that replaces it, and `KwArg` is not `Clone`.
+        hir[id] = match std::mem::replace(&mut hir[id], HirNode::NilLit) {
+            HirNode::New {
+                args,
+                kwargs,
+                block,
+                ..
+            } => {
+                let receiver = hir.push(read);
+                HirNode::Call {
+                    receiver: Some(receiver),
+                    name: "new".to_string(),
+                    args: args.into_iter().map(ArrayElem::Single).collect(),
+                    kwargs,
+                    block,
+                    block_arg: None,
+                    safe: false,
+                }
+            }
+            _ => read,
+        };
+    }
 }
 
 /// Rewrites the static-only nodes a lowered class body can hold into the

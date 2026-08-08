@@ -36,6 +36,20 @@
 #   re-pointed at the block's `self`, which is the class being built; a nested
 #   `class Inner` needs the same, and gets it in `runtime_nested_class`.
 #
+#   The READ needs re-pointing too, and this file only checked `Sub::OPEN` from
+#   OUTSIDE at first. A bare constant lowers to a name codegen resolves against
+#   the lexically-enclosing class, so once the write moved to the built class
+#   the two looked in different places: `def reads_open = OPEN` raised
+#   `uninitialized constant`. `rescope_body_constants` moves it, and the two
+#   positions need different scopes -- in the body `self` IS the class, while
+#   in a `def` the class has to be named through the constant holding it,
+#   because that constant is not assigned until the whole body has run.
+#
+# Only the `class` KEYWORD spelling opens a cref. `Class.new do NAME = v end`
+# is a plain block whose cref is the enclosing one, so ruby writes the constant
+# on `Object` there -- checked at the bottom, since re-pointing it would be
+# just as wrong in the other direction.
+#
 # The three compiler panics that led here (danger, gitlab-labkit,
 # activeadmin_settings_cached) are fixed and separate: those reached codegen
 # through directives the rewrite table had no row for at all.
@@ -69,6 +83,10 @@ class Sub < parent_of(true)
   def wide = :wide
   def self.internal = :internal
   def self.own_retired = :own_retired
+  def reads_open = OPEN
+  def self.reads_open = OPEN
+  def builds_inner = Inner.new.a
+  SEEN_IN_BODY = OPEN
 
   prepend Front
   private :wide
@@ -90,3 +108,17 @@ p Sub.respond_to?(:own_retired)
 p Sub::OPEN
 p Sub::Inner.new.a
 p Sub.retired
+p Sub.new.reads_open
+p Sub.reads_open
+p Sub.new.builds_inner
+p Sub::SEEN_IN_BODY
+p Object.const_defined?(:OPEN, false)
+
+# --- `Class.new do ... end` opens NO cref -------------------------------------
+Blocky = Class.new do
+  BLOCK_LEVEL = :block_level
+  def reads_it = BLOCK_LEVEL
+end
+p Blocky.new.reads_it
+p Object.const_defined?(:BLOCK_LEVEL, false)
+p Blocky.const_defined?(:BLOCK_LEVEL, false)
