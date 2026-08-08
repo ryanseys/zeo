@@ -133,11 +133,23 @@ pub fn materialize(
         "mro: aliases and module functions"
     );
 
+    // Which `@ivar` names each class's OWN method bodies touch, walked once per
+    // DEFINITION rather than once per (class, ancestor, method).
+    //
+    // `materialize_methods` needs, for every class, the union over its whole
+    // ancestry -- and it used to get there by re-walking each ancestor's bodies
+    // from scratch for every descendant. That is O(classes x visible methods x
+    // HIR nodes), the last superlinear term the entry/definition split left
+    // behind, and on a Rails-sized graph it is millions of node visits with a
+    // `String` compare at each one. The union is a concatenation, so computing
+    // the pieces once and composing them gives the identical answer: see
+    // `own_ivars`.
+    let own_ivars = own_ivars(compiler);
     for (done, &cid) in all_ids.iter().enumerate() {
         let at = compiler.class_def_span(cid);
         let class_started = std::time::Instant::now();
         if !compiler.class(cid).is_module {
-            at_class(materialize_methods(compiler, cid), at)?;
+            at_class(materialize_methods(compiler, cid, &own_ivars), at)?;
         }
         let instance_ms = class_started.elapsed().as_millis();
         at_class(materialize_class_methods(compiler, cid), at)?;
@@ -444,7 +456,41 @@ fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Resul
 /// trick needed (unlike zeo's C "common initial sequence" struct-prefix
 /// hack) -- `self.#ivar` inside it is trivially valid Rust, since the body
 /// is freshly re-typechecked against `class_id`'s own concrete struct.
-fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+/// The `@ivar` names each class's own method bodies touch, in first-encounter
+/// order, indexed by class id.
+///
+/// One walk per definition. The order matters as much as the contents: a
+/// class's slot list is the concatenation of its ancestors' lists furthest-first
+/// with duplicates dropped, and dropping the LATER duplicate is what keeps
+/// `ivars(C) == ivars(parent(C)) ++ C's own new names` -- the property
+/// `analyze::share` leans on so one body can index a slot by a constant across
+/// a whole hierarchy. Collecting per class in the same order the old nested
+/// walk did, then concatenating, reproduces that sequence exactly.
+fn own_ivars(compiler: &Compiler) -> Vec<Vec<String>> {
+    compiler
+        .classes
+        .iter()
+        .map(|class| {
+            let mut names = Vec::new();
+            for &sid in &class.own_methods {
+                let scope = compiler.scope(sid);
+                for &n in &scope.body {
+                    super::collect_ivars(&compiler.hir, n, &mut names);
+                }
+                for id in scope.params.default_ids() {
+                    super::collect_ivars(&compiler.hir, id, &mut names);
+                }
+            }
+            names
+        })
+        .collect()
+}
+
+fn materialize_methods(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    own_ivars: &[Vec<String>],
+) -> Result<(), String> {
     let ancestors = compiler.class(class_id).ancestors.clone();
     let mut seen: HashSet<crate::compiler::NameId> = HashSet::new();
     let mut materialized: Vec<MethodEntry> = Vec::new();
@@ -544,20 +590,14 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // every descendant. Slot ORDER is otherwise unobservable: `instance_
     // variables` and `inspect` report FIRST-ASSIGNMENT order, which
     // `IvarCell`'s per-slot stamp carries independently of the layout.
-    let mut ivars = Vec::new();
+    let mut ivars: Vec<String> = Vec::new();
     for &anc_id in ancestors.iter().rev() {
         if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
             continue;
         }
-        for &sid in &compiler.class(anc_id).own_methods.clone() {
-            let scope = compiler.scope(sid);
-            let body = scope.body.clone();
-            let default_ids = scope.params.default_ids();
-            for &n in &body {
-                super::collect_ivars(&compiler.hir, n, &mut ivars);
-            }
-            for id in default_ids {
-                super::collect_ivars(&compiler.hir, id, &mut ivars);
+        for name in &own_ivars[anc_id.0 as usize] {
+            if !ivars.iter().any(|n| n == name) {
+                ivars.push(name.clone());
             }
         }
     }
