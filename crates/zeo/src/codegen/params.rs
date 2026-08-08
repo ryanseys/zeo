@@ -54,6 +54,29 @@ pub fn emit_signature_params_free(params: &Params, needs_block: bool) -> TokenSt
     quote! { #(#items),* }
 }
 
+/// Whether rendered Rust mentions `name` as a whole identifier.
+///
+/// Not `split_whitespace`: `proc_macro2` renders a delimited group with no
+/// space inside it, so `__n.saturating_sub(__min)` yields the word `(__min)`
+/// and a whole-word compare silently misses the reference -- which emitted
+/// `let __extra = __n.saturating_sub(__min);` with no `__min` to read.
+fn mentions_ident(text: &str, name: &str) -> bool {
+    let boundary = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    text.match_indices(name).any(|(i, _)| {
+        boundary(text[..i].chars().next_back()) && boundary(text[i + name.len()..].chars().next())
+    })
+}
+
+/// `__opt_bound` for a trampoline, emitted only where the argument list it
+/// feeds actually reads it -- a method with no optional and no rest parameter
+/// never does, and there are thousands of those.
+fn opt_bound_let(consumers: &TokenStream, min_lit: usize, nopt: usize) -> TokenStream {
+    if !mentions_ident(&consumers.to_string(), "__opt_bound") {
+        return quote! {};
+    }
+    quote! { let __opt_bound = (args.len() - #min_lit).min(#nopt); }
+}
+
 fn signature_param_items(params: &Params, needs_block: bool) -> Vec<TokenStream> {
     signature_param_pairs(params, needs_block)
         .into_iter()
@@ -1016,6 +1039,11 @@ pub fn emit_dynamic_trampoline(
         format_ident!("_blk")
     };
     let block_arg = needs_block.then(|| quote! { blk, });
+    // The argument list is built first so `opt_bound_let` can see whether it
+    // reads `__opt_bound` -- a method with no optional and no rest parameter
+    // never does.
+    let call_args = quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg };
+    let opt_bound = opt_bound_let(&call_args, min_lit, nopt);
 
     quote! {
         |recv: &zeo_rt::RObj, args: &[zeo_rt::RubyValue], #blk_ident: Option<zeo_rt::RubyValue>| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
@@ -1023,10 +1051,10 @@ pub fn emit_dynamic_trampoline(
                 .expect("class_id guarantees this downcast");
             #kw_preamble
             #arity_check
-            let __opt_bound = (args.len() - #min_lit).min(#nopt);
+            #opt_bound
             #class_ident::#method_ident(
                 this,
-                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
+                #call_args
             )
         }
     }
@@ -1104,6 +1132,11 @@ pub fn emit_value_trampoline(
         format_ident!("_blk")
     };
     let block_arg = needs_block.then(|| quote! { blk, });
+    // The argument list is built first so `opt_bound_let` can see whether it
+    // reads `__opt_bound` -- a method with no optional and no rest parameter
+    // never does.
+    let call_args = quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg };
+    let opt_bound = opt_bound_let(&call_args, min_lit, nopt);
     let (recv_ident, recv_arg) = match recv_mode {
         RecvMode::Pass => (format_ident!("recv"), Some(quote! { recv.clone(), })),
         RecvMode::Drop => (format_ident!("_recv"), None),
@@ -1113,11 +1146,10 @@ pub fn emit_value_trampoline(
         |#recv_ident: &zeo_rt::RubyValue, args: &[zeo_rt::RubyValue], #blk_ident: Option<zeo_rt::RubyValue>| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #kw_preamble
             #arity_check
-            #[allow(unused_variables)]
-            let __opt_bound = (args.len() - #min_lit).min(#nopt);
+            #opt_bound
             #fn_path(
                 #recv_arg
-                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
+                #call_args
             )
         }
     }
@@ -1160,17 +1192,21 @@ pub fn emit_exc_trampoline(
         format_ident!("_blk")
     };
     let block_arg = needs_block.then(|| quote! { blk, });
+    // The argument list is built first so `opt_bound_let` can see whether it
+    // reads `__opt_bound` -- a method with no optional and no rest parameter
+    // never does.
+    let call_args = quote! { #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg };
+    let opt_bound = opt_bound_let(&call_args, min_lit, nopt);
 
     quote! {
         |recv: &zeo_rt::RObj, args: &[zeo_rt::RubyValue], #blk_ident: Option<zeo_rt::RubyValue>| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             let __self = zeo_rt::RubyValue::Object(recv.clone());
             #kw_preamble
             #arity_check
-            #[allow(unused_variables)]
-            let __opt_bound = (args.len() - #min_lit).min(#nopt);
+            #opt_bound
             #fn_path(
                 __self,
-                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
+                #call_args
             )
         }
     }
@@ -1568,24 +1604,7 @@ pub fn emit_proc_param_bindings(
         }
     });
 
-    // `__opt_bound`/`__rest_count` are computed even when there's no
-    // rest/optional param at all -- harmless dead-ish locals the compiler
-    // won't warn about here since they're always at least read by the
-    // arity math below (and, when genuinely unused because neither optional
-    // nor rest is declared, `#[allow(unused_variables)]` covers it).
-    quote! {
-        #positional_and_kw_source
-        #auto_splat
-        #[allow(unused_variables)]
-        let __n = __positional.len();
-        #[allow(unused_variables)]
-        let __min = #nreq + #npost;
-        #[allow(unused_variables)]
-        let __extra = __n.saturating_sub(__min);
-        #[allow(unused_variables)]
-        let __opt_bound = __extra.min(#nopt);
-        #[allow(unused_variables)]
-        let __rest_count = if #has_rest { __extra.saturating_sub(__opt_bound) } else { 0 };
+    let bindings = quote! {
         #(#required_lets)*
         #(#optional_lets)*
         #(#rest_let)*
@@ -1595,6 +1614,55 @@ pub fn emit_proc_param_bindings(
         #destructures
         #(#block_local_lets)*
         #(#block_let)*
+    };
+    // The arity math, emitted only where something reads it.
+    //
+    // All five used to be emitted unconditionally, under
+    // `#[allow(unused_variables)]` -- five `let`s and their attributes, about
+    // 250 bytes of Rust in EVERY method body. Most methods declare no optional
+    // and no rest parameter, so most of it was dead: 13,012 sites across
+    // activemodel's generated Rust, and it multiplies through every shared and
+    // module body.
+    //
+    // Which are live is decided by looking at the emitted bindings rather than
+    // by re-deriving it from `nopt`/`has_rest`/`npost`: the consumers are
+    // spread over six builders above, and a rule restated here would drift
+    // from them silently -- into a `cannot find value __extra`, or back into
+    // dead code nobody notices. Walked in reverse declaration order so a name
+    // one `let` needs is still seen: `__rest_count` reads `__opt_bound` and
+    // `__extra`, `__extra` reads `__min` and `__n`.
+    let arity_math = {
+        let mut used = bindings.to_string();
+        let mut lets: Vec<TokenStream> = Vec::new();
+        for (name, decl) in [
+            (
+                "__rest_count",
+                quote! { let __rest_count = if #has_rest { __extra.saturating_sub(__opt_bound) } else { 0 }; },
+            ),
+            (
+                "__opt_bound",
+                quote! { let __opt_bound = __extra.min(#nopt); },
+            ),
+            (
+                "__extra",
+                quote! { let __extra = __n.saturating_sub(__min); },
+            ),
+            ("__min", quote! { let __min = #nreq + #npost; }),
+            ("__n", quote! { let __n = __positional.len(); }),
+        ] {
+            if mentions_ident(&used, name) {
+                used.push_str(&decl.to_string());
+                lets.push(decl);
+            }
+        }
+        lets.reverse();
+        quote! { #(#lets)* }
+    };
+    quote! {
+        #positional_and_kw_source
+        #auto_splat
+        #arity_math
+        #bindings
     }
 }
 
