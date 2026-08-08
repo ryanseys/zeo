@@ -5,4 +5,11 @@ A
 String
 D
 true
+"D is not a module\na_definition_ruby_raises_on_is_rescuable.rb:33: previous definition of D was here"
+String
+"M is not a class\na_definition_ruby_raises_on_is_rescuable.rb:54: previous definition of M was here"
+Module
+"Inner is not a module\na_definition_ruby_raises_on_is_rescuable.rb:64: previous definition of Inner was here"
+"Reopened is not a module\na_definition_ruby_raises_on_is_rescuable.rb:74: previous definition of Reopened was here"
+"String is not a module\n:: previous definition of String was here"
 :after

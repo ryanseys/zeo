@@ -761,6 +761,30 @@ fn process_top_stmt_inner(
 ///
 /// A definition with no node behind it (a synthesized/bootstrap registration)
 /// records nothing: there is no site to rewrite, and nothing wraps it.
+/// CRuby's SECOND line for a kind mismatch: `\n<file>:<line>: previous
+/// definition of <name> was here`.
+///
+/// `unmatched_redefinition` (vm_insnhelper.c) reads
+/// `rb_const_source_location_at`, so the position is the one stamped when the
+/// CONSTANT was created -- the first declaring site, the same rule
+/// `codegen::emit_declaration_const_location` follows, which is why a reopen
+/// leaves the first declaration's line standing.
+///
+/// A constant with NO recorded location is still reported, with both fields
+/// empty: `module String` raises `String is not a module\n:: previous
+/// definition of String was here` (oracle-verified). Ruby only drops the line
+/// when the location is nil outright, which a defined constant never is.
+fn previous_definition_of(compiler: &Compiler, cid: crate::compiler::ClassId, name: &str) -> String {
+    let (file, line) = compiler
+        .class_body_sites
+        .iter()
+        .find(|s| s.class == cid)
+        .and_then(|s| s.def_node)
+        .and_then(|n| crate::codegen::source_location(compiler, n))
+        .map_or((String::new(), String::new()), |(f, l)| (f, l.to_string()));
+    format!("\n{file}:{line}: previous definition of {name} was here")
+}
+
 fn ruby_raises(compiler: &mut Compiler, def_node: Option<NodeId>, class: &'static str, msg: &str) {
     if let Some(node) = def_node {
         compiler.pending_ruby_raise = Some((node, class, msg.to_string()));
@@ -2561,19 +2585,22 @@ fn register_class(
         // (`TypeError: superclass mismatch for class Foo`).
         Some(cid) => {
             if compiler.class(cid).is_module != is_module {
+                // CRuby names the LEAF (`unmatched_redefinition` takes
+                // `rb_id2str(id)`, the id off the cpath), so `module
+                // Outer::Inner` reports `Inner is not a module`.
+                let leaf = compiler.leaf_name(cid).to_string();
+                let kind = if is_module { "module" } else { "class" };
+                let previously = previous_definition_of(compiler, cid, &leaf);
                 ruby_raises(
                     compiler,
                     def_node,
                     "TypeError",
-                    &format!(
-                        "{name} is not a {}",
-                        if is_module { "module" } else { "class" }
-                    ),
+                    &format!("{leaf} is not a {kind}{previously}"),
                 );
-                return Err(format!(
-                    "{name} is not a {}",
-                    if is_module { "module" } else { "class" }
-                ));
+                // The COMPILE error keeps the first line only: the
+                // diagnostic already points a span at the definition that
+                // conflicts, and the second line is a runtime message.
+                return Err(format!("{leaf} is not a {kind}"));
             }
             // A user `module OpenSSL; ...; end` reopening a feature-gated
             // builtin slot MATERIALIZES the constant: clear the gate so the

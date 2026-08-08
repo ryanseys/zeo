@@ -5,6 +5,15 @@
 # Unrescued, zeo refuses the compile instead of emitting a program that aborts:
 # same problem, named earlier. That split is the whole point of this file -- the
 # rescued half is what a compile-time-only rejection would have made impossible.
+#
+# The KIND mismatch at the bottom is the same rule with a two-line message, and
+# both lines were wrong. `unmatched_redefinition` (vm_insnhelper.c) names the
+# LEAF -- `rb_id2str(id)`, the id off the cpath -- so `module Outer::Inner`
+# reports `Inner`, where zeo reported the qualified `Outer::Inner`. Then it
+# appends the previous definition's position, read from
+# `rb_const_source_location_at`: the point the CONSTANT was created, which is
+# the first declaring site, so a reopen leaves the first line standing. zeo
+# omitted that line entirely.
 
 class A; end
 class B < A; end
@@ -33,4 +42,49 @@ p D.superclass
 # was, and the program keeps running.
 p D.new.class
 p B.new.is_a?(A)
+
+# --- the KIND mismatch, both directions -------------------------------------
+begin
+  module D; end
+rescue TypeError => e
+  p e.message
+end
+p D.superclass
+
+module M; end
+begin
+  class M; end
+rescue TypeError => e
+  p e.message
+end
+p M.class
+
+# The name reported is the LEAF, and the position is the first declaring site.
+module Outer
+  class Inner; end
+end
+begin
+  module Outer::Inner
+  end
+rescue TypeError => e
+  p e.message
+end
+
+# A REOPEN does not restamp the position: the line below is the one above.
+class Reopened; end
+class Reopened; end
+begin
+  module Reopened; end
+rescue TypeError => e
+  p e.message
+end
+
+# A builtin's constant carries no recorded position, and ruby prints the line
+# anyway -- with both fields empty.
+begin
+  module String; end
+rescue TypeError => e
+  p e.message
+end
+
 p :after
