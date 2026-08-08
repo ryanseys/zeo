@@ -102,6 +102,12 @@ fn desugar_singleton_items(
         Passthrough,
         Mixin(&'static str, String),
         Guarded(Vec<NodeId>, Vec<crate::hir::RescueClause>),
+        /// Runs unchanged once every `self` it names becomes
+        /// `recv.singleton_class`.
+        RetargetSelf,
+        /// Runs as the body of a `recv.singleton_class.class_eval`, which is
+        /// where ruby runs it -- see the `SingletonBody` arm.
+        SingletonBody,
         Skip,
     }
     let mut out = Vec::with_capacity(ids.len());
@@ -216,19 +222,24 @@ fn desugar_singleton_items(
             // module's `def`s bind `self` at CALL time, not here, which is why
             // `mentions_self` stops at a definition boundary.
             _ if !mentions_self(hir, id) => Item::Passthrough,
-            // `self` in this body is the object's singleton class, so a
-            // statement the mapping has no rule for cannot simply be run in
-            // the enclosing scope -- and which statement it was is the first
-            // thing anyone reading the rejection needs.
-            _ => {
-                return Err(singleton_rejection(hir, hir.span(id), |found| {
-                    format!(
-                        "`class << obj` (a per-instance singleton class) supports only instance \
-                         `def`s, constants, nested classes, aliases, `undef`, and conditionals \
-                         here{found} (zeo limitation)"
-                    )
-                }));
-            }
+            // It consults `self`, but only by NAMING it -- no receiverless send
+            // anywhere under it, so nothing needs a receiver rebound. The
+            // `self` just has to EVALUATE to the object's singleton class, and
+            // `recv.singleton_class` is that object. google_drive's
+            // `class << obj; return self; end` is 39 corpus rows of exactly
+            // this, and it keeps them off the runtime path below.
+            _ if !has_implicit_self_send(hir, id) => Item::RetargetSelf,
+            // It sends to an implicit `self` somewhere zeo cannot rewrite a
+            // receiver -- inside a block, whose body runs with the singleton as
+            // `self`. Run the statement where ruby runs it: as the body of a
+            // `recv.singleton_class.class_eval`, whose `self` IS that class.
+            //
+            // The `class << self` form gets a compile-time class for this (see
+            // `map_class_self_items`'s `SingletonBody`); a PER-OBJECT singleton
+            // has none, so the escape is the runtime one. `class_eval` is the
+            // primitive rather than a paraphrase: it is what ruby's own
+            // `Module#class_eval` does with the receiver as `self`.
+            _ => Item::SingletonBody,
         };
         match item {
             Item::Def(mname, params, body) => {
@@ -323,19 +334,43 @@ fn desugar_singleton_items(
             }
             Item::SelfSend => {
                 let recv = lower_node(result, hir, recv_node)?;
-                let singleton = hir.push(HirNode::Call {
-                    receiver: Some(recv),
-                    name: "singleton_class".to_string(),
-                    args: vec![],
-                    kwargs: vec![],
-                    block: None,
-                    block_arg: None,
-                    safe: false,
-                });
+                let singleton = hir.push(singleton_class_of(recv));
                 if let HirNode::Call { receiver, .. } = &mut hir[id] {
                     *receiver = Some(singleton);
                 }
                 out.push(id);
+            }
+            Item::RetargetSelf => {
+                // In place, so every parent's `NodeId` still points at the
+                // right node -- the `self` BECOMES the `singleton_class` call.
+                // The receiver is re-lowered per site, the same rule (and the
+                // same side-effecting-receiver caveat) as every other arm here.
+                for site in evaluated_self_sites(hir, id) {
+                    let recv = lower_node(result, hir, recv_node)?;
+                    hir[site] = singleton_class_of(recv);
+                }
+                out.push(id);
+            }
+            Item::SingletonBody => {
+                let recv = lower_node(result, hir, recv_node)?;
+                let singleton = hir.push(singleton_class_of(recv));
+                let block = hir.push(HirNode::Block {
+                    params: Params::default(),
+                    body: vec![id],
+                });
+                // The block runs under the RECEIVER's `self`. Lowering marks
+                // the ones the SOURCE writes (see `Hir::rehomed_blocks`); a
+                // synthesized one has to say so itself.
+                hir.rehomed_blocks.insert(block);
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: "class_eval".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: Some(block),
+                    block_arg: None,
+                    safe: false,
+                }));
             }
             Item::Guarded(body, rescues) => {
                 let body = desugar_singleton_items(result, hir, recv_node, body)?;
@@ -390,52 +425,6 @@ fn desugar_singleton_items(
 /// shape: `connection` is the module's business, and the assignment itself is
 /// self-free. A block that is NOT a method body does capture the enclosing
 /// `self`, and is still walked.
-/// The source text `span` covers, as ` -- found \`<text>\``, or empty when the
-/// span has no readable provenance.
-///
-/// A rejection about a singleton body is useless without it. The mapping
-/// accepts a fixed set of statements, so the whole value of the message is
-/// WHICH one it met -- and to a reader looking at Ruby, the source text says
-/// that better than a node name would.
-/// Only the statement's FIRST line, with `...` when there is more. The caret
-/// already shows the construct in full, and this same message becomes one
-/// field of one TSV row in the corpus ledger -- where a multi-line quote is
-/// unreadable and drowns the sentence that follows it.
-fn quoted_source(hir: &Hir, span: Option<crate::hir::Span>) -> String {
-    span.and_then(|s| {
-        let f = hir.files.get(s.file.0 as usize)?;
-        let text = f.source.get(s.start as usize..s.end as usize)?.trim();
-        let first = text.lines().next().unwrap_or_default().trim_end();
-        let (head, elided) = match first.char_indices().nth(72) {
-            Some((i, _)) => (&first[..i], true),
-            None => (first, text.lines().count() > 1),
-        };
-        let ellipsis = if elided { " ..." } else { "" };
-        Some(format!(" -- found `{head}{ellipsis}`"))
-    })
-    .unwrap_or_default()
-}
-
-/// A singleton-body rejection that names the statement AND points at it.
-///
-/// Both singleton rejections used to raise a bare message, leaving
-/// `LowerError::span` `None` for `lower_node`'s wrapper to fill on the way out
-/// (see `lower_error`'s module docs). But `lower_class_body_statement` pushes
-/// no span frame of its own, so the innermost live frame was the ENCLOSING
-/// `class`/`module` -- and the caret covered the whole body. Every one of the
-/// 1,350 `class << self` rows in the corpus pointed at `module Excon` rather
-/// than the line that stopped it, so the bucket could only be triaged by
-/// re-parsing all 383 files.
-fn singleton_rejection(
-    hir: &Hir,
-    span: Option<crate::hir::Span>,
-    msg: impl FnOnce(&str) -> String,
-) -> crate::lower_error::LowerError {
-    let quoted = quoted_source(hir, span);
-    crate::lower_error::LowerError::unsupported(msg(&quoted))
-        .with_span_if_missing(span.unwrap_or(crate::hir::Span::SYNTH))
-}
-
 fn mentions_self(hir: &Hir, id: NodeId) -> bool {
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
@@ -489,6 +478,18 @@ fn has_implicit_self_send(hir: &Hir, id: NodeId) -> bool {
 /// class (oracle: `class << self; def who = self; end` makes `Foo.who` answer
 /// `Foo`, not `#<Class:Foo>`).
 fn retarget_self_to_singleton(hir: &mut Hir, id: NodeId) {
+    // In place, so every parent's `NodeId` still points at the right node: the
+    // `self` BECOMES the `singleton_class` call, over a fresh receiver.
+    for site in evaluated_self_sites(hir, id) {
+        let me = hir.push(HirNode::SelfRef);
+        hir[site] = singleton_class_of(me);
+    }
+}
+
+/// Every `self` under `id` that is EVALUATED here -- the sites
+/// [`retarget_self_to_singleton`] and its `class << obj` counterpart rewrite.
+/// Stops at a definition boundary for the reason `mentions_self` does.
+fn evaluated_self_sites(hir: &Hir, id: NodeId) -> Vec<NodeId> {
     let mut stack = vec![id];
     let mut sites = Vec::new();
     while let Some(n) = stack.pop() {
@@ -505,19 +506,19 @@ fn retarget_self_to_singleton(hir: &mut Hir, id: NodeId) {
         }
         hir[n].for_each_child(&mut |child| stack.push(child));
     }
-    // In place, so every parent's `NodeId` still points at the right node: the
-    // `self` BECOMES the `singleton_class` call, over a fresh receiver.
-    for site in sites {
-        let me = hir.push(HirNode::SelfRef);
-        hir[site] = HirNode::Call {
-            receiver: Some(me),
-            name: "singleton_class".to_string(),
-            args: vec![],
-            kwargs: vec![],
-            block: None,
-            block_arg: None,
-            safe: false,
-        };
+    sites
+}
+
+/// `<recv>.singleton_class`, the node every singleton rebinding is built from.
+fn singleton_class_of(recv: NodeId) -> HirNode {
+    HirNode::Call {
+        receiver: Some(recv),
+        name: "singleton_class".to_string(),
+        args: vec![],
+        kwargs: vec![],
+        block: None,
+        block_arg: None,
+        safe: false,
     }
 }
 

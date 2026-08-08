@@ -495,36 +495,6 @@ fn a_global_alias_shares_storage_in_both_directions() {
 }
 
 #[test]
-fn a_singleton_body_rejection_names_and_locates_the_statement_it_rejected() {
-    // Both remaining singleton rejections quote the offending statement. Only
-    // the `class << obj` one ever did; the other described what it DOES handle
-    // and left the reader to work out which line stopped it.
-    let unsupported = |src: &str| zeo::compile_to_rust(src).unwrap_err();
-
-    // `class << obj`, the per-object form -- a separate mapper with its own
-    // accepted-statement list, so it needs its own coverage.
-    let err = unsupported(
-        r#"
-        obj = Object.new
-        class << obj
-          [:a, :b].each do |name|
-            define_method(name) { name }
-          end
-        end
-        "#,
-    );
-    assert!(err.contains("found `[:a, :b].each do |name| ..."), "{err}");
-
-    // Only the FIRST line is quoted. The caret already shows the construct in
-    // full, and the message is also one field of one TSV row in the corpus
-    // ledger, where an embedded newline is unreadable.
-    assert!(
-        !err.contains('\n'),
-        "the quote must stay on one line: {err}"
-    );
-}
-
-#[test]
 fn freeze_returns_self_keeping_the_static_collection_type() {
     // Exercises `types.rs`'s `.freeze`-returns-self inference: `names[0]`/
     // `names.length` must still take the static Array fast path (a Poly
