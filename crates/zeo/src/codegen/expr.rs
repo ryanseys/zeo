@@ -2122,7 +2122,7 @@ pub(super) fn box_tail_local_write(cx: &Ctx, name: &str, value: TokenStream) -> 
 fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
     // A bare `@@x` written outside any class/module body is legal (if
     // unusual) Ruby; its storage lives on `Object` -- the same top-level
-    // owner a bare constant resolves to (see `const_owner_id`, and the
+    // owner a bare constant resolves to (see `const_owner_id_opt`, and the
     // matching `Object`-seeding in `analyze::mro::resolve_cvars`).
     let defining = cx.defining_class.unwrap_or_else(|| {
         if cx.box_id != 0 {
@@ -2342,18 +2342,34 @@ pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 /// docs) as an ordinary RUNTIME outcome, not a zeo-compile-time panic --
 /// an unset constant is legitimately-valid-but-erroring Ruby, not a
 /// programming mistake in the compiler itself.
-pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
-    const_owner_id_opt(cx, scope, name).unwrap_or_else(|| {
-        // Reached only when the caller guarantees a resolvable scope (the sole
-        // caller passes an already-registered class's own fq name). An eager
-        // or dead-branch reference must use `const_owner_id_opt` and raise a
-        // runtime `NameError` instead -- see `emit_const_read`/
-        // `emit_const_write_stmt`.
-        panic!(
-            "internal error: unknown class/module `{}` in const_owner_id",
-            scope.unwrap_or(name)
-        )
-    })
+/// The owner id for a constant of a class the caller ALREADY resolved.
+///
+/// Infallible by construction, because it never re-derives the class: a
+/// `ClassId` in hand is the answer, so there is nothing to look up and nothing
+/// to get wrong. The name-taking [`const_owner_id_opt`] is for callers that
+/// genuinely start from a name.
+///
+/// This exists because the alternative was tried and was BOTH a panic and a
+/// miscompile. `try_const_reflection` held a resolved `ClassId`, rendered it
+/// with `Compiler::fq_name` -- which yields an UNANCHORED `Foo::Bar` -- and
+/// re-resolved that string against the emit site's cref chain. `resolve_class`
+/// walks innermost-outward, so a nested constant that shadows the namespace
+/// head captures the walk: appraisal2 has `class Appraisal` inside `module
+/// Appraisal`, and from inside that module the head segment `Appraisal` found
+/// the CLASS, which has no `Hooks`. That raised
+/// `unknown class/module in const_owner_id`.
+///
+/// The panic was the lucky half. When the shadowing class also answers the
+/// name, the round trip resolves to the WRONG owner and silently reads the
+/// wrong constant -- see `tests/const_get_on_a_shadowed_namespace_head.rb`.
+pub(super) fn const_owner_of(cx: &Ctx, owner_class: crate::compiler::ClassId, name: &str) -> u32 {
+    cx.compiler
+        .class(owner_class)
+        .const_owners
+        .get(name)
+        .copied()
+        .unwrap_or(owner_class)
+        .0
 }
 
 /// The class a BARE constant belongs to at this emit site's top level: the
@@ -2370,7 +2386,12 @@ fn box_top_owner(cx: &Ctx) -> u32 {
         .0
 }
 
-/// Fallible companion to [`const_owner_id`]: returns `None` when an explicit
+/// The owner id for a constant named by a SCOPE STRING, resolved against this
+/// emit site's cref chain. A caller that already holds the class wants
+/// [`const_owner_of`] instead -- resolving is what can go wrong, so a caller
+/// that need not resolve must not.
+///
+/// Returns `None` when an explicit
 /// `Scope::NAME` names a scope class that isn't registered (e.g. a reference to
 /// `OpenSSL::Digest` when `require "openssl"` didn't materialize the module).
 /// Callers that lower EVERY branch eagerly (a `defined?` guard, a dead `if`
@@ -2388,18 +2409,10 @@ pub(super) fn const_owner_id_opt(cx: &Ctx, scope: Option<&str>, name: &str) -> O
             .defining_class
             .unwrap_or_else(|| crate::compiler::ClassId(box_top_owner(cx))),
     };
-    Some(
-        cx.compiler
-            .class(owner_class)
-            .const_owners
-            .get(name)
-            .copied()
-            .unwrap_or(owner_class)
-            .0,
-    )
+    Some(const_owner_of(cx, owner_class, name))
 }
 
-/// A constant READ -- `scope: None` for a bare `NAME` (see `const_owner_id`'s
+/// A constant READ -- `scope: None` for a bare `NAME` (see `const_owner_id_opt`'s
 /// docs for the lexical-then-top-level resolution rule), `scope:
 /// Some(class_name)` for an explicit `Foo::NAME`. An unset constant raises a
 /// real `NameError` (unlike an ivar/cvar/global's "never assigned" -> `nil`

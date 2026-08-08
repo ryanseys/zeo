@@ -2311,7 +2311,7 @@ pub enum HirNode {
     /// class/module (same rule `constant_name`'s other callers enforce); the
     /// owner search starts there (walking ITS ancestors, the same scheme as
     /// `ClassVarRead`'s ownership resolution -- see
-    /// `codegen::expr::const_owner_id`), unlike a bare constant (lowered as
+    /// `codegen::expr::const_owner_id_opt`), unlike a bare constant (lowered as
     /// an ordinary `ClassRef`, which falls back to the LEXICALLY-enclosing
     /// class when used as a plain value -- see `codegen::expr`'s `ClassRef`
     /// docs). Unlike an ivar/cvar/global's "never assigned" -> `nil`

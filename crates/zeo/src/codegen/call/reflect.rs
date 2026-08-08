@@ -137,17 +137,14 @@ pub(super) fn try_const_reflection(
         let id = c.0;
         return Some(quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) });
     }
-    let owner =
-        crate::codegen::expr::const_owner_id(cx, Some(&cx.compiler.fq_name(target)), &cname);
-    let qualified = if target == crate::compiler::OBJECT_CLASS {
-        cname.clone()
-    } else {
-        format!("{}::{cname}", cx.compiler.fq_name(target))
-    };
+    // Straight from the resolved `ClassId`. Rendering it with `fq_name` and
+    // re-resolving that string against this emit site's cref chain looks
+    // equivalent and is not: `fq_name` drops the top-level anchor, and a
+    // nested constant shadowing the namespace head then captures the walk.
+    let owner = crate::codegen::expr::const_owner_of(cx, target, &cname);
     // A miss dispatches `const_missing` on the receiver (CRuby's protocol);
     // Module's default hook raises the same receiver-qualified NameError
     // this site used to bake, `#name`/`#receiver` included.
-    let _ = qualified;
     let receiver_id = target.0;
     Some(quote! {
         match zeo_rt::const_get(#owner, #cname) {

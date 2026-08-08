@@ -254,7 +254,7 @@ pub struct ClassInfo {
     pub cvar_owners: HashMap<String, ClassId>,
     /// Bare-constant storage ownership, resolved once at analyze time --
     /// same scheme as `cvar_owners` (nearest ancestor, including self, that
-    /// ever claimed the name first), used by `codegen::expr::const_owner_id`.
+    /// ever claimed the name first), used by `codegen::expr::const_owner_id_opt`.
     /// Only bare (`scope: None`) constant writes register ownership this way
     /// -- an explicit `Foo::NAME` write always targets `Foo` directly,
     /// regardless of lexical position (see `HirNode::ConstWrite`'s docs).
