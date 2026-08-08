@@ -167,6 +167,26 @@ fn emit_proc_or_lambda_value_with(
         .iter()
         .filter(|n| cx.captured_locals.contains(*n))
         .collect();
+    // A bare `super` here forwards the enclosing method's parameters, and the
+    // forwarding list is synthesized at emit time -- `block_caps` walked the
+    // HIR and saw no read of them, so none would be cloned and the `move`
+    // closure would consume them outright.
+    //
+    // Which of the enclosing names are parameters is not knowable from here
+    // (`Ctx` carries the method's NAME, not its `Params`), so every captured
+    // enclosing name the block does not shadow is cloned. An `Arc::clone` is
+    // cheap and the generated crate allows `unused_variables`, so the cost of
+    // being generous is nil next to a program that does not compile.
+    let own_here = crate::codegen::captures::own_param_names(params);
+    if block_caps.zsuper_forwards {
+        let mut extra: Vec<&String> = cx
+            .captured_locals
+            .iter()
+            .filter(|n| !own_here.contains(*n) && !genuine.contains(n))
+            .collect();
+        extra.sort();
+        genuine.extend(extra);
+    }
     genuine.sort();
     let mut own_only: std::collections::HashSet<String> = block_caps
         .locals

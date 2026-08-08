@@ -37,6 +37,17 @@ pub struct Captures {
     /// resolving to a method on the enclosing class (`walk`'s `self_class`
     /// -- an implicit-self dispatch).
     pub self_captured: bool,
+    /// Whether an escaping block contains a BARE `super`, which forwards the
+    /// enclosing method's parameters as currently bound.
+    ///
+    /// Those parameters are read by the generated code but appear NOWHERE in
+    /// the block's HIR -- the forwarding argument list is synthesized at emit
+    /// time (`call::super_calls`) -- so the ordinary local-read walk cannot
+    /// see them and they were captured by no one. The block's `move` closure
+    /// then consumed the enclosing parameter outright, and any later use in
+    /// the method was a borrow-after-move: 14 rustc errors on
+    /// `require "active_model"`, over `name`, `options` and `url_safe`.
+    pub zsuper_forwards: bool,
 }
 
 /// Every name a `Params` list itself binds -- the exclusion set for "is this
@@ -102,14 +113,22 @@ pub fn collect_escaping_captures(
     }
     let mut outer: HashSet<String> = outer_names.into_iter().collect();
     outer.extend(own_param_names(params));
+    let mut locals: HashSet<String> = raw
+        .locals
+        .into_iter()
+        .filter(|n| outer.contains(n))
+        .collect();
+    // A bare `super` in an escaping block reads every parameter of THIS scope,
+    // so they all have to be cell-promoted -- otherwise the closure moves the
+    // plain binding and the rest of the method cannot use it.
+    if raw.zsuper_forwards {
+        locals.extend(own_param_names(params));
+    }
     Captures {
-        locals: raw
-            .locals
-            .into_iter()
-            .filter(|n| outer.contains(n))
-            .collect(),
+        locals,
         assigned: raw.assigned,
         self_captured: raw.self_captured,
+        zsuper_forwards: raw.zsuper_forwards,
     }
 }
 
@@ -1218,7 +1237,7 @@ fn walk(
         HirNode::SuperCall {
             args,
             kwargs,
-            zsuper: _,
+            zsuper,
             block,
             block_arg,
         } => {
@@ -1229,6 +1248,14 @@ fn walk(
             // a self reference the closure never binds.
             if in_escaping {
                 caps.self_captured = true;
+                // A BARE `super` also forwards the enclosing method's
+                // parameters, and those reads exist only in the emitted
+                // forwarding list -- there is no HIR node here to walk. Record
+                // the fact so the caller can capture them; see
+                // `Captures::zsuper_forwards`.
+                if *zsuper {
+                    caps.zsuper_forwards = true;
+                }
             }
             for a in args {
                 walk(compiler, a.node_id(), in_escaping, param_exclusions, caps, self_class);
