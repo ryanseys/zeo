@@ -37,6 +37,7 @@ use crate::types::TyKind;
 use ident::safe_ident;
 use proc_macro2::TokenStream;
 use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use syn::Lifetime;
 
@@ -1313,6 +1314,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // `run_main`'s fallible closure (where `?` propagates as a Signal), so
     // no recorded statement can ever be silently dropped.
     let inline_markers = inline_class_markers(compiler, &analyzed.main_statements);
+    // Every hoisted body is lifted to its own `fn` -- see
+    // `emit_class_body_site_lifted`. The counter names them; the items land
+    // beside `__unit_N` at the top level, the calls where the body used to be.
+    let class_body_fns: RefCell<Vec<TokenStream>> = RefCell::new(Vec::new());
     let hoisted_sites_for = |cid: ClassId| {
         let inline_markers = &inline_markers;
         compiler
@@ -1326,7 +1331,20 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // Hoisted, not inline: these run at the head of `run_main`,
             // ahead of every top-level statement, so no enclosing local
             // exists for them to read.
-            .map(|s| emit_class_body_site(compiler, s, &HashSet::new()))
+            .map(|s| {
+                let mut fns = class_body_fns.borrow_mut();
+                let (item, call) = emit_class_body_site_lifted(
+                    compiler,
+                    s,
+                    &HashSet::new(),
+                    Some(fns.len() as u32),
+                );
+                fns.push(item);
+                call
+            })
+            // Eager, like `classes` above -- a lazy iterator would hold the
+            // `class_body_fns` borrow across the caller's own work.
+            .collect::<Vec<_>>()
     };
     let mut user_class_bodies: Vec<TokenStream> = Vec::new();
     let mut builtin_class_bodies: Vec<TokenStream> = Vec::new();
@@ -2469,6 +2487,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         })
         .collect();
 
+    // Every hoisted class body has been lifted by now.
+    let class_body_fns = class_body_fns.into_inner();
+
     let program = quote! {
         // Lints that mirror RUBY-source properties, not codegen defects: an
         // unused Ruby assignment (or a hoisted local never read), code after
@@ -2505,6 +2526,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#own_bridge_containers)*
         #(#sst_containers)*
         #(#unit_fns)*
+        #(#class_body_fns)*
 
         fn main() {
             // This thread is the only Ruby thread until the program spawns
@@ -2701,6 +2723,36 @@ pub(crate) fn emit_class_body_site(
     site: &crate::compiler::ClassBodySite,
     enclosing_captured: &HashSet<String>,
 ) -> TokenStream {
+    let (item, call) = emit_class_body_site_lifted(compiler, site, enclosing_captured, None);
+    debug_assert!(item.is_empty(), "no lift was asked for");
+    call
+}
+
+/// The same body, as its OWN compiled unit: `(fn item, call site)`.
+///
+/// A class body is a separate scope in Ruby, not a region of the enclosing
+/// one. CRuby says so structurally -- `NODE_CLASS` compiles to
+/// `NEW_CHILD_ISEQ(..., ISEQ_TYPE_CLASS)` (compile.c), a child iseq with its
+/// own local table, which is why `x = 1; class Foo; p defined?(x); end` prints
+/// nil. Only the superclass expression is compiled into the *enclosing* iseq,
+/// where it can read `x`.
+///
+/// zeo already obeys the scope rule -- the body hoists its own locals and the
+/// `{ }` below keeps them from leaking -- so the block is closed over nothing
+/// and moving it into a free `fn` is the same program. What that buys is a
+/// `fn main` that is not the whole class-definition phase of the program in
+/// one function body: at Rails scale the hoisted bodies are megabytes of it,
+/// and rustc's per-function work grows faster than linearly.
+///
+/// The lift is checked by rustc, not by us: a free `fn` captures nothing, so
+/// a body that did reach for an enclosing local fails to compile instead of
+/// quietly reading the wrong one.
+pub(crate) fn emit_class_body_site_lifted(
+    compiler: &Compiler,
+    site: &crate::compiler::ClassBodySite,
+    enclosing_captured: &HashSet<String>,
+    lift: Option<u32>,
+) -> (TokenStream, TokenStream) {
     let cid = site.class;
     // `alias_method`'s source is checked as THIS body runs -- CRuby's timing,
     // and the only one that sees a source the body itself defines (bundler's
@@ -2720,7 +2772,10 @@ pub(crate) fn emit_class_body_site(
     let inherited_hook = emit_inherited_hook(compiler, site);
     let stmts = &site.stmts;
     if stmts.is_empty() {
-        return quote! { #alias_check #const_location #const_added #inherited_hook };
+        return (
+            quote! {},
+            quote! { #alias_check #const_location #const_added #inherited_hook },
+        );
     }
     let label_counter = Cell::new(0u32);
     // A class body is an ordinary Ruby scope with ordinary locals, and an
@@ -2828,7 +2883,24 @@ pub(crate) fn emit_class_body_site(
         }
         None => quote! {},
     };
-    quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
+    let Some(n) = lift else {
+        return (
+            quote! {},
+            quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check },
+        );
+    };
+    let ident = format_ident!("__class_body_{}", n);
+    (
+        // `inline(never)`: a `fn` with one call site is exactly what LLVM
+        // inlines by default, which would put the body straight back into
+        // `main` and undo the split. These run once, at class-definition
+        // time, so nothing is lost by keeping them out of line.
+        quote! {
+            #[inline(never)]
+            fn #ident() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> { #frame #body }
+        },
+        quote! { #const_location #const_added #inherited_hook #ident()?; #alias_check },
+    )
 }
 
 /// The `const_added` a `class Foo` / `module M` fires for its OWN name, on the
