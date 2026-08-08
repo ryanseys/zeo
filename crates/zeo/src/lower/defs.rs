@@ -12,6 +12,7 @@ use super::ffi::{
     as_ffi_layout, is_extend_ffi_library, lower_ffi_directive, synthesize_ffi_struct,
 };
 use super::{PResult, lower_node, parse_and_lower_into};
+use crate::compiler::SINGLETON_SURROGATE;
 use crate::hir::{ArrayElem, Hir, HirNode, KeywordParam, NodeId, Params, StrPart, Visibility};
 use ruby_prism::{Node, ParseResult};
 
@@ -605,6 +606,9 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
         /// Runs unchanged once every `self` it names is rewritten to
         /// `self.singleton_class` -- see `retarget_self_to_singleton`.
         RetargetSelf,
+        /// Runs as a statement of the SINGLETON's own class body, which is
+        /// where ruby runs it -- see the `SingletonBody` arm.
+        SingletonBody,
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
         Guarded(
             Vec<NodeId>,
@@ -612,7 +616,6 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             Option<Vec<NodeId>>,
             Option<Vec<NodeId>>,
         ),
-        Reject,
     }
     for &id in ids {
         let item = match &hir[id] {
@@ -767,7 +770,10 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
             // object. `Mongoid.deprecate(self, :from_hash)` is 99 corpus rows
             // of exactly this.
             _ if !has_implicit_self_send(hir, id) => Item::RetargetSelf,
-            _ => Item::Reject,
+            // It sends to an implicit `self` somewhere zeo cannot rewrite a
+            // receiver -- inside a block, whose body runs with the singleton
+            // as `self`. Run the statement where ruby runs it instead.
+            _ => Item::SingletonBody,
         };
         match item {
             Item::Method => {
@@ -867,6 +873,43 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                 retarget_self_to_singleton(hir, id);
                 out.push(id);
             }
+            // The statement becomes the body of a REOPEN of the singleton's
+            // own class, spliced in AT ITS POSITION.
+            //
+            // This is CRuby's structure rather than a workaround for it:
+            // `NODE_SCLASS` compiles to `NEW_CHILD_ISEQ(..., ISEQ_TYPE_CLASS)`,
+            // a child iseq whose `self` is the singleton class object, so a
+            // block created inside sees that `self` for free. A zeo class body
+            // already runs with `self` bound to its own class, and
+            // `zeo_rt::register_singleton_surrogate` already makes this
+            // particular class BE `Foo.singleton_class` at run time -- so
+            // `define_method` inside it installs an instance method of the
+            // singleton, i.e. a class method of `Foo`, which is exactly what
+            // ruby does.
+            //
+            // In place, one reopen per statement, rather than collected into
+            // one body at the front: a singleton body's statements run in
+            // SOURCE order, and `singleton_method_added` fires for a
+            // `define_method`'d name exactly as for a `def` -- so the
+            // interleaving is observable, not cosmetic. Oracle-pinned in
+            // `tests/gaps/a_singleton_body_statement_that_defines_methods_at_runtime.rb`.
+            Item::SingletonBody => {
+                // Carry the statement's own span onto the reopen: a class body
+                // takes its backtrace frame from its definition node's
+                // location, so a span-less one is emitted with NO frame at all
+                // and the singleton's frame goes missing from every backtrace
+                // raised inside it.
+                let span = hir.span(id).unwrap_or(crate::hir::Span::SYNTH);
+                hir.push_span(span);
+                let def = hir.push(HirNode::ClassDef {
+                    name: SINGLETON_SURROGATE.to_string(),
+                    superclass: None,
+                    body: vec![id],
+                    is_module: true,
+                });
+                hir.pop_span();
+                out.push(def);
+            }
             Item::Cond(cond, then_body, else_body) => match eval_static_class_self_guard(hir, cond)
             {
                 // A statically-decidable version/`defined?` guard: register ONLY
@@ -891,17 +934,6 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                     }));
                 }
             },
-            Item::Reject => {
-                return Err(singleton_rejection(hir, hir.span(id), |found| {
-                    format!(
-                        "unsupported statement in `class << self`{found} (zeo limitation): it \
-                         consults `self`, which is the singleton class here, and zeo has no \
-                         compile-time class to retarget it to. `def`s, constants, \
-                         `include`/`extend`/`prepend`, `undef`, visibility directives, ivars, \
-                         conditionals, `attr_*`/`alias` and ordinary calls are all handled"
-                    )
-                }));
-            }
         }
     }
     Ok(())
@@ -2566,7 +2598,7 @@ fn lower_class_body_statement(
             .partition(|&n| matches!(hir[n], HirNode::ConstWrite { .. }));
         if !consts.is_empty() {
             out.push(hir.push(HirNode::ClassDef {
-                name: "#<Class:self>".to_string(),
+                name: SINGLETON_SURROGATE.to_string(),
                 superclass: None,
                 body: consts,
                 is_module: true,

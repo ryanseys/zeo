@@ -530,25 +530,6 @@ fn a_singleton_body_rejection_names_and_locates_the_statement_it_rejected() {
     // and left the reader to work out which line stopped them.
     let unsupported = |src: &str| zeo::compile_to_rust(src).unwrap_err();
 
-    // `class << self`: a receiver-bearing call whose BLOCK reaches for `self`.
-    // This is the corpus's single biggest lowering gap, 1,350 rows.
-    let err = unsupported(
-        r#"
-        module Excon
-          class << self
-            def defaults = {}
-            %w(get post).each do |name|
-              define_method(name) { name }
-            end
-          end
-        end
-        "#,
-    );
-    assert!(
-        err.contains("found `%w(get post).each do |name| ..."),
-        "{err}"
-    );
-
     // `class << obj`, the per-object form -- a separate mapper with its own
     // accepted-statement list, so it needs its own coverage.
     let err = unsupported(

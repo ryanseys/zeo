@@ -2,10 +2,12 @@
 [:a, :b, "x", "y"]
 true
 true
-NoMethodError
-:s
 [[:sma, :singleton_method_added], [:sma, :viaeach], [:sma, :plain]]
 [:m1, :m2]
 [:m1, :m2]
 true
 true
+["helped:one", "helped:two"]
+["alpha", "beta"]
+true
+false

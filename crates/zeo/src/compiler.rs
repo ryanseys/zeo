@@ -29,6 +29,18 @@ pub use zeo_abi::{
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ScopeId(pub u32);
 
+/// The reserved name a `class << self` body's own class registers under.
+///
+/// It is the singleton class of the enclosing class, as a real compile-time
+/// class: `zeo_rt::register_singleton_surrogate` makes `Foo.singleton_class`
+/// answer this class at run time, and constants, `def`s and residual runtime
+/// statements from the singleton body all belong to it.
+///
+/// No Ruby constant can collide with it -- a constant must start with an
+/// uppercase letter -- which is what makes it safe to mint under a name the
+/// program can also write.
+pub const SINGLETON_SURROGATE: &str = "#<Class:self>";
+
 pub struct ClassInfo {
     pub name: String,
     /// Which `Ruby::Box` this class/module is DEFINED in -- `0` is the main
@@ -1156,7 +1168,7 @@ impl Compiler {
     /// name (see `lower::defs`). Display name and reflection identity come
     /// from `fq_name`'s `#<Class:M>` special case.
     pub fn is_singleton_surrogate(&self, cid: ClassId) -> bool {
-        self.class(cid).name == "#<Class:self>"
+        self.class(cid).name == SINGLETON_SURROGATE
     }
 
     /// The `(target, holder)` pairs a call site at `node` must consult
@@ -1354,7 +1366,7 @@ impl Compiler {
         // A singleton-class surrogate (a constant-bearing `class << self`
         // body -- see `lower::defs`) displays as CRuby's `#<Class:M>`, not a
         // `M::...` path: it is not reachable as a constant at all.
-        if self.class(cid).name == "#<Class:self>"
+        if self.class(cid).name == SINGLETON_SURROGATE
             && let Some(p) = self.class(cid).lexical_parent
         {
             return format!("#<Class:{}>", self.fq_name(p));

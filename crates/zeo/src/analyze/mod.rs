@@ -3872,10 +3872,10 @@ fn register_method(
     let lexical_home = def_node
         .filter(|n| compiler.hir.singleton_body_defs.contains(n))
         .and_then(|_| {
-            compiler
-                .classes
-                .iter()
-                .position(|c| c.lexical_parent == Some(defining_class) && c.name == "#<Class:self>")
+            compiler.classes.iter().position(|c| {
+                c.lexical_parent == Some(defining_class)
+                    && c.name == crate::compiler::SINGLETON_SURROGATE
+            })
         })
         .map(|i| ClassId(i as u32));
     Ok(compiler.push_scope(Scope {
