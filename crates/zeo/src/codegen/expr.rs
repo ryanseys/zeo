@@ -1470,12 +1470,25 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             is_def,
             ..
         } => {
-            // A `def` in value position installs on: the block's DYNAMIC self
-            // when inside one (`Class.new { def g; end }`), otherwise the
-            // ENCLOSING class -- Object at top level, so `p(def foo; end)`
-            // defines foo as a private method of Object and returns :foo,
-            // matching CRuby (a plain object doesn't respond to define_method).
-            let self_val = if cx.self_is_dynamic {
+            // Ruby resolves these two against DIFFERENT things, and conflating
+            // them put `def self.x` on the wrong object.
+            //
+            // A plain `def` installs on the CREF's default definee -- the
+            // enclosing class, Object at the top level, so `p(def foo; end)`
+            // makes `foo` a private method of Object and returns `:foo`. A
+            // block's cref is dynamic, and `define_in_default_definee` derives
+            // it from the block's self (a Class/Module gets an instance
+            // method, anything else a singleton one -- `instance_exec { def m;
+            // end }`).
+            //
+            // `def self.x` and a literal `define_method` are ordinary SENDS TO
+            // SELF, and self is not the definee outside a class body. Inside
+            // `def foo`, ruby's `def self.bar` lands on the INSTANCE, and
+            // `define_method` raises NoMethodError because an instance is no
+            // Module; naming the enclosing class here answered both wrongly.
+            // `boxed_implicit_self` is that "self here" rule and is total, so
+            // it is not re-derived.
+            let definee = if cx.self_is_dynamic {
                 super::call::boxed_implicit_self(cx)
                     .expect("a dynamic-self `def` in expression position must have a boxed self")
             } else {
@@ -1486,6 +1499,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                     .0;
                 quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
             };
+            let receiver =
+                super::call::boxed_implicit_self(cx).expect("boxed_implicit_self is total");
             // The body becomes a method-body lambda: its `yield`/
             // `block_given?`/`&block` reach the block the installed method is
             // called with, threaded through `ProcData`'s call-site block slot
@@ -1530,7 +1545,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 let dsm = super::pooled_sym("define_singleton_method");
                 quote! {
                     zeo_rt::send_value(
-                        &#self_val,
+                        &#receiver,
                         #dsm,
                         &[zeo_rt::RubyValue::Symbol(#name_sym), #proc],
                         None,
@@ -1542,7 +1557,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // any other (`instance_exec { def m; end }`).
                 quote! {
                     zeo_rt::define_in_default_definee(
-                        &#self_val,
+                        &#definee,
                         #name_sym,
                         #proc,
                     )?
@@ -1554,7 +1569,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 let dm = super::pooled_sym("define_method");
                 quote! {
                     zeo_rt::send_value(
-                        &#self_val,
+                        &#receiver,
                         #dm,
                         &[zeo_rt::RubyValue::Symbol(#name_sym), #proc],
                         None,

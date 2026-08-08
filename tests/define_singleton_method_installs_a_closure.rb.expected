@@ -1,0 +1,10 @@
+1
+1
+2
+3
+4
+:a
+:b
+RuntimeError: implicit argument passing of super from method defined by define_method() is not supported. Specify all arguments explicitly.
+"Base.describe(2)"
+"block in <class:Traced>"

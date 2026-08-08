@@ -1720,9 +1720,18 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         body,
                         is_class_method: true,
                         visibility: Visibility::Public,
-                        // A class-method desugar; installs via
-                        // define_singleton_method regardless of is_def.
-                        is_def: true,
+                        // A `define_singleton_method` CALL, not a `def` -- the
+                        // same value its `define_method` sibling above carries,
+                        // and three separate behaviours read it. The body is a
+                        // CLOSURE, so the capture walk must descend into it
+                        // (`captures`'s `DefMethod` arm skips a real `def`,
+                        // which is a scope of its own); a bare `super` in it
+                        // raises ruby's "implicit argument passing of super
+                        // from method defined by define_method()" instead of
+                        // running (`scope_is_define_method`); and its frame is
+                        // labelled after where the BLOCK was written --
+                        // `block in <class:E>`, not `E.trace`.
+                        is_def: false,
                     });
                     return Ok(match target {
                         None => def,
