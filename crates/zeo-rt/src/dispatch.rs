@@ -4591,10 +4591,20 @@ fn send_value_in_reason(
         // class method reaches the ancestor's storage where ruby gives the
         // receiver its own. Materialization avoids that by emitting a copy per
         // subclass, which a runtime class has no compile-time site for.
+        //
+        // ...and never for a name the receiver's OWN constructor serves.
+        // `new`/`allocate` are `Class`'s methods parameterized by the receiver,
+        // not an ancestor's singleton method, but a builtin root publishes its
+        // own `new` row -- so the walk read `Class.new(String).new("hi")` as
+        // `String.new` and handed back a plain String, which then reported
+        // `String` for `.class` and failed `is_a?(Tagged)`. `runtime_class_new`
+        // had already chosen the right constructor for the minted class; this
+        // just stops the walk from answering ahead of it.
         if crate::runtime_meta::is_live()
             && REGISTRY
                 .get()
                 .is_some_and(|r| !r.entries.contains_key(&cid.0))
+            && !(matches!(name.name_str(), "new" | "allocate") && constructor_of(*cid).is_some())
             && let Some(f) = class_method_fn(*cid, name)
         {
             return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
