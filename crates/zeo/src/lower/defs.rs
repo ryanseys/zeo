@@ -212,28 +212,18 @@ fn desugar_singleton_items(
             // module's `def`s bind `self` at CALL time, not here, which is why
             // `mentions_self` stops at a definition boundary.
             _ if !mentions_self(hir, id) => Item::Passthrough,
-            other => {
-                // Name the construct. `self` in this body is the object's
-                // singleton class, so a statement the mapping has no rule for
-                // cannot simply be run in the enclosing scope -- and which
-                // statement it was is the first thing anyone reading the
-                // rejection needs.
-                let _ = other;
-                // Quote the statement. The mapping accepts a fixed set of
-                // items, so the useful half of this rejection is WHICH one it
-                // met -- and the source text says that better than a node name
-                // would, to a reader who is looking at Ruby.
-                let quoted = hir
-                    .span(id)
-                    .and_then(|s| {
-                        let f = hir.files.get(s.file.0 as usize)?;
-                        let text = f.source.get(s.start as usize..s.end as usize)?;
-                        Some(format!(" -- found `{}`", text.trim()))
-                    })
-                    .unwrap_or_default();
-                return Err(format!(
-                    "`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, aliases, `undef`, and conditionals here{quoted} (zeo limitation)"
-                ).into());
+            // `self` in this body is the object's singleton class, so a
+            // statement the mapping has no rule for cannot simply be run in
+            // the enclosing scope -- and which statement it was is the first
+            // thing anyone reading the rejection needs.
+            _ => {
+                return Err(singleton_rejection(hir, hir.span(id), |found| {
+                    format!(
+                        "`class << obj` (a per-instance singleton class) supports only instance \
+                         `def`s, constants, nested classes, aliases, `undef`, and conditionals \
+                         here{found} (zeo limitation)"
+                    )
+                }));
             }
         };
         match item {
@@ -396,6 +386,52 @@ fn desugar_singleton_items(
 /// shape: `connection` is the module's business, and the assignment itself is
 /// self-free. A block that is NOT a method body does capture the enclosing
 /// `self`, and is still walked.
+/// The source text `span` covers, as ` -- found \`<text>\``, or empty when the
+/// span has no readable provenance.
+///
+/// A rejection about a singleton body is useless without it. The mapping
+/// accepts a fixed set of statements, so the whole value of the message is
+/// WHICH one it met -- and to a reader looking at Ruby, the source text says
+/// that better than a node name would.
+/// Only the statement's FIRST line, with `...` when there is more. The caret
+/// already shows the construct in full, and this same message becomes one
+/// field of one TSV row in the corpus ledger -- where a multi-line quote is
+/// unreadable and drowns the sentence that follows it.
+fn quoted_source(hir: &Hir, span: Option<crate::hir::Span>) -> String {
+    span.and_then(|s| {
+        let f = hir.files.get(s.file.0 as usize)?;
+        let text = f.source.get(s.start as usize..s.end as usize)?.trim();
+        let first = text.lines().next().unwrap_or_default().trim_end();
+        let (head, elided) = match first.char_indices().nth(72) {
+            Some((i, _)) => (&first[..i], true),
+            None => (first, text.lines().count() > 1),
+        };
+        let ellipsis = if elided { " ..." } else { "" };
+        Some(format!(" -- found `{head}{ellipsis}`"))
+    })
+    .unwrap_or_default()
+}
+
+/// A singleton-body rejection that names the statement AND points at it.
+///
+/// Both singleton rejections used to raise a bare message, leaving
+/// `LowerError::span` `None` for `lower_node`'s wrapper to fill on the way out
+/// (see `lower_error`'s module docs). But `lower_class_body_statement` pushes
+/// no span frame of its own, so the innermost live frame was the ENCLOSING
+/// `class`/`module` -- and the caret covered the whole body. Every one of the
+/// 1,350 `class << self` rows in the corpus pointed at `module Excon` rather
+/// than the line that stopped it, so the bucket could only be triaged by
+/// re-parsing all 383 files.
+fn singleton_rejection(
+    hir: &Hir,
+    span: Option<crate::hir::Span>,
+    msg: impl FnOnce(&str) -> String,
+) -> crate::lower_error::LowerError {
+    let quoted = quoted_source(hir, span);
+    crate::lower_error::LowerError::unsupported(msg(&quoted))
+        .with_span_if_missing(span.unwrap_or(crate::hir::Span::SYNTH))
+}
+
 fn mentions_self(hir: &Hir, id: NodeId) -> bool {
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
@@ -418,26 +454,36 @@ fn mentions_self(hir: &Hir, id: NodeId) -> bool {
 /// this mapping performs: flattened onto the enclosing class it would define
 /// `Foo.x` where ruby defines `Foo.singleton_class.x`. Rejected rather than
 /// quietly moved to the wrong owner.
-fn opens_a_nested_singleton(body: Option<&Node<'_>>) -> bool {
-    let Some(node) = body else { return false };
+/// Answers the offending inner `class << self`'s own span, not just that there
+/// is one: the rejection has to point at THAT line. Reporting only a boolean
+/// left the caret on the enclosing `class`/`module`, which for lita -- 565
+/// corpus rows behind one file -- meant the message named neither the
+/// construct's position nor its text.
+fn opens_a_nested_singleton(hir: &Hir, body: Option<&Node<'_>>) -> Option<crate::hir::Span> {
+    let node = body?;
     if node.as_singleton_class_node().is_some() {
-        return true;
+        return Some(crate::lower::span_of(hir, node));
     }
     if let Some(s) = node.as_statements_node() {
-        return s.body().iter().any(|n| opens_a_nested_singleton(Some(&n)));
+        return s
+            .body()
+            .iter()
+            .find_map(|n| opens_a_nested_singleton(hir, Some(&n)));
     }
     if let Some(i) = node.as_if_node() {
-        return opens_a_nested_singleton(i.statements().map(|s| s.as_node()).as_ref())
-            || opens_a_nested_singleton(i.subsequent().as_ref());
+        return opens_a_nested_singleton(hir, i.statements().map(|s| s.as_node()).as_ref())
+            .or_else(|| opens_a_nested_singleton(hir, i.subsequent().as_ref()));
     }
     if let Some(u) = node.as_unless_node() {
-        return opens_a_nested_singleton(u.statements().map(|s| s.as_node()).as_ref())
-            || opens_a_nested_singleton(u.else_clause().map(|e| e.as_node()).as_ref());
+        return opens_a_nested_singleton(hir, u.statements().map(|s| s.as_node()).as_ref())
+            .or_else(|| {
+                opens_a_nested_singleton(hir, u.else_clause().map(|e| e.as_node()).as_ref())
+            });
     }
     if let Some(e) = node.as_else_node() {
-        return opens_a_nested_singleton(e.statements().map(|s| s.as_node()).as_ref());
+        return opens_a_nested_singleton(hir, e.statements().map(|s| s.as_node()).as_ref());
     }
-    false
+    None
 }
 
 /// The names of an all-literal-symbol argument list (`:a, :b`), or `None` when
@@ -762,15 +808,15 @@ fn map_class_self_items(hir: &mut Hir, ids: &[NodeId], out: &mut Vec<NodeId>) ->
                 }
             },
             Item::Reject => {
-                return Err(
-                    "unsupported statement in `class << self` (zeo limitation): it consults \
-                     `self`, which is the singleton class here, and zeo has no compile-time \
-                     class to retarget it to. `def`s, constants, `include`/`extend`/`prepend`, \
-                     `undef`, visibility directives, ivars, conditionals, `attr_*`/`alias` and \
-                     ordinary calls are all handled"
-                        .to_string()
-                        .into(),
-                );
+                return Err(singleton_rejection(hir, hir.span(id), |found| {
+                    format!(
+                        "unsupported statement in `class << self`{found} (zeo limitation): it \
+                         consults `self`, which is the singleton class here, and zeo has no \
+                         compile-time class to retarget it to. `def`s, constants, \
+                         `include`/`extend`/`prepend`, `undef`, visibility directives, ivars, \
+                         conditionals, `attr_*`/`alias` and ordinary calls are all handled"
+                    )
+                }));
             }
         }
     }
@@ -2409,14 +2455,14 @@ fn lower_class_body_statement(
             out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);
             return Ok(());
         }
-        if opens_a_nested_singleton(singleton.body().as_ref()) {
-            return Err(
-                "a nested `class << self` isn't supported yet (zeo limitation) -- its \
-                        body belongs to the singleton's own singleton, which zeo has no \
-                        compile-time class for"
-                    .to_string()
-                    .into(),
-            );
+        if let Some(inner) = opens_a_nested_singleton(hir, singleton.body().as_ref()) {
+            return Err(singleton_rejection(hir, Some(inner), |found| {
+                format!(
+                    "a nested `class << self` isn't supported yet (zeo limitation){found} -- its \
+                     body belongs to the singleton's own singleton, which zeo has no \
+                     compile-time class for"
+                )
+            }));
         }
         let inner = lower_class_body(result, hir, singleton.body(), None, None)?;
         let mut mapped = Vec::new();
