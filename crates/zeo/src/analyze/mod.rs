@@ -2372,11 +2372,19 @@ fn resolve_or_create_container(
 /// as a forward shell. A later real definition reopens the shell -- adding its
 /// methods (seen at `mro::materialize` time) and establishing its superclass
 /// through `register_class`'s reopen arm.
+///
+/// `off_limits` is one fully-qualified name this search may neither answer with
+/// nor create -- the path a definition currently being registered binds. Ruby
+/// evaluates a superclass expression BEFORE the class exists, so `class Logger
+/// < Logger` cannot mean itself; without this the search minted a shell of the
+/// name and answered with it, which is both a wrong answer and a class the
+/// program then sees even when the definition is deferred.
 fn resolve_or_create_lexical(
     compiler: &mut Compiler,
     name: &str,
     cref: &[ClassId],
     box_id: u32,
+    off_limits: Option<&str>,
 ) -> Option<ClassId> {
     // Lexical scopes to try, innermost first: each `cref` entry, then the
     // innermost class's LEXICAL-PARENT chain -- the enclosing namespaces a
@@ -2411,6 +2419,9 @@ fn resolve_or_create_lexical(
         .collect();
     candidates.push(name.to_string());
     for cand in candidates {
+        if off_limits == Some(cand.as_str()) {
+            continue;
+        }
         // Already registered under this scope (the lexical-parent walk found it)
         // -> use it; else a forward shell if the program defines it elsewhere.
         if let Some(cid) = compiler.resolve_class(&cand, &[], box_id) {
@@ -2450,14 +2461,25 @@ fn register_class(
     // instance can reach, which is the objection `resolve_module_target`
     // records against deferring a superclass; a name the program DOES assign
     // still errors loudly there, for the reason given in the same place.
-    if let (Some(s), Some(def_node)) = (&superclass, def_node) {
-        let known = compiler.resolve_class(s, cref, box_id).is_some()
-            || resolve_or_create_lexical(compiler, s, cref, box_id).is_some()
-            || compiler.assigns_const_path(s);
-        if !known {
-            defer_unresolved_directive(compiler, def_node, s);
-            return Ok(());
-        }
+    //
+    // Resolved ONCE, here, and carried to the three sites below that need it.
+    // Asking twice is not free: `resolve_superclass` MINTS forward shells as
+    // it searches, so a probe that asks separately leaves one behind -- and a
+    // probe that asks WITHOUT the `defining` exclusion answers with the shell
+    // of the very class being defined. That is what made
+    // `class Logger < Logger` inside `module ApiNotify::ActiveRecord` a hard
+    // error: the probe said known, the resolution said unknown, and neither
+    // deferred (api_notify's `require "logger"` is commented out, so ruby
+    // raises `NameError` at that line too).
+    let resolved_superclass = superclass
+        .as_ref()
+        .and_then(|s| resolve_superclass(compiler, s, &name, cref, box_id));
+    if let (Some(s), Some(def_node)) = (&superclass, def_node)
+        && resolved_superclass.is_none()
+        && !compiler.assigns_const_path(s)
+    {
+        defer_unresolved_directive(compiler, def_node, s);
+        return Ok(());
     }
     let path = crate::constpath::ConstPath::parse(&name);
     let (lexical_parent, leaf, qualified_def) = match path.scope() {
@@ -2475,7 +2497,7 @@ fn register_class(
             // matching the superclass policy.
             if let Some(def_node) = def_node
                 && compiler.resolve_class(prefix, cref, box_id).is_none()
-                && resolve_or_create_lexical(compiler, prefix, cref, box_id).is_none()
+                && resolve_or_create_lexical(compiler, prefix, cref, box_id, None).is_none()
                 && !compiler.assigns_const_path(prefix)
             {
                 defer_unresolved_directive(compiler, def_node, prefix);
@@ -2489,7 +2511,7 @@ fn register_class(
                 // enclosing lexical scope (`class CLI::Common` inside
                 // `module Bundler` -> `Bundler::CLI`), is resolved or created as
                 // a shell -- see `resolve_or_create_lexical`.
-                .or_else(|| resolve_or_create_lexical(compiler, prefix, cref, box_id))
+                .or_else(|| resolve_or_create_lexical(compiler, prefix, cref, box_id, None))
                 .ok_or_else(|| {
                     format!(
                         "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
@@ -2576,15 +2598,9 @@ fn register_class(
             // Object`); CRuby accepts a matching clause and raises `superclass
             // mismatch` on a wrong one. Mirrors the user-class reopen guard.
             if let Some(s) = &superclass {
-                let want = compiler
-                    .resolve_class(s, cref, box_id)
-                    .or_else(|| resolve_or_create_lexical(compiler, s, cref, box_id))
-                    // A superclass named through a constant ALIAS
-                    // (`Base = Some::Other::Class`) is that class.
-                    .or_else(|| resolve_const_alias(compiler, s, cref, box_id))
-                    .ok_or_else(|| {
-                        format!("unknown superclass `{s}` (must be defined earlier in the file)")
-                    })?;
+                let want = resolved_superclass.ok_or_else(|| {
+                    format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                })?;
                 if compiler.class(cid).parent != Some(want) {
                     ruby_raises(
                         compiler,
@@ -2637,10 +2653,9 @@ fn register_class(
                 // FIRST real definition, of a name some other file forward-
                 // referenced into a shell, and ruby resolves the superclass
                 // before binding the name. See `resolve_superclass`.
-                let want =
-                    resolve_superclass(compiler, s, &name, cref, box_id).ok_or_else(|| {
-                        format!("unknown superclass `{s}` (must be defined earlier in the file)")
-                    })?;
+                let want = resolved_superclass.ok_or_else(|| {
+                    format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                })?;
                 if compiler.class(cid).parent != Some(want) {
                     // A class opened BARE first (`class Sub`, often just to
                     // hold a nested class) defaulted its parent to Object
@@ -2710,13 +2725,11 @@ fn register_class(
                     // class being opened): real Ruby evaluates the
                     // superclass expression before the new class exists.
                     Some(s) => {
-                        let cid = resolve_superclass(compiler, s, &name, cref, box_id).ok_or_else(
-                            || {
-                                format!(
-                                    "unknown superclass `{s}` (must be defined earlier in the file)"
-                                )
-                            },
-                        )?;
+                        let cid = resolved_superclass.ok_or_else(|| {
+                            format!(
+                                "unknown superclass `{s}` (must be defined earlier in the file)"
+                            )
+                        })?;
                         // Subclassable builtins:
                         //  - `Struct`/`Data`: subclasses are ordinary
                         //    ivar-carrying objects (generated struct).
@@ -3568,7 +3581,7 @@ fn resolve_module_target(
         // A module defined LATER in the flattened list (hoisted deferred
         // require) is created as a forward shell; its methods are added when the
         // real definition reopens the shell (seen at `mro::materialize`).
-        .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id));
+        .or_else(|| resolve_or_create_lexical(compiler, name, cref, box_id, None));
     let resolved = resolved.or_else(|| resolve_const_alias(compiler, name, cref, box_id));
     match resolved {
         Some(cid) => Ok(Some(cid)),
@@ -3619,7 +3632,13 @@ fn resolve_superclass(
             // deferred require whose subclass precedes its base, e.g. `class
             // MismatchedChecksumError < Error` before `class Error`): create
             // the base as a forward shell, resolving the bare name lexically.
-            .or_else(|| resolve_or_create_lexical(compiler, superclass, scopes, box_id))
+            // `defining` is off limits there for the same reason the loop
+            // below skips past it -- and it must never be CREATED either, or
+            // the class exists even when the caller goes on to defer the
+            // whole definition.
+            .or_else(|| {
+                resolve_or_create_lexical(compiler, superclass, scopes, box_id, Some(&defining))
+            })
             // A superclass named through a constant ALIAS (`Base =
             // Some::Other::Class`) is that class.
             .or_else(|| resolve_const_alias(compiler, superclass, scopes, box_id));
@@ -3694,7 +3713,7 @@ fn resolve_const_alias(
         // later in the flattened require graph is a forward shell, not a miss.
         let resolved = compiler
             .resolve_class(&target, from, box_id)
-            .or_else(|| resolve_or_create_lexical(compiler, &target, from, box_id));
+            .or_else(|| resolve_or_create_lexical(compiler, &target, from, box_id, None));
         if let Some(cid) = resolved {
             return Some(cid);
         }

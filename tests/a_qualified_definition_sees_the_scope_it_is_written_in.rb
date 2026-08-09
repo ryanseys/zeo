@@ -49,3 +49,17 @@ class Store::Loose
   def reach = TOP
 end
 p Store::Loose.new.reach
+
+# A superclass that names the class being DEFINED and resolves nowhere else is
+# ruby's NameError at the definition, not a compile failure -- api_notify has
+# its `require "logger"` commented out and ruby raises there too. The class
+# must not come into being either: the search that looks for the name may not
+# mint a shell of it on the way past.
+module ApiNotify
+  module ActiveRecord
+    class Logger < Logger
+      def tag = "x"
+    end
+  end
+end
+p ApiNotify::ActiveRecord::Logger.superclass
