@@ -20,6 +20,20 @@ use zeo_macros::ruby_class;
 /// opens, `dir_initialize` for Dir) -- it is part of the observable message,
 /// so callers pass the one their operation corresponds to.
 pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
+    let (class, desc) = errno_class_and_desc(e);
+    raise_error(class, format!("{desc} @ {syscall} - {path}"))
+}
+
+/// The same mapping with CRuby's OTHER message shape: the bare strerror, no
+/// `@ syscall - path` suffix. That is what a failing `close(2)` reports --
+/// `Errno::EBADF, "Bad file descriptor"` -- because the operation names no
+/// path to blame.
+pub fn raise_bare_errno(e: &std::io::Error) -> Signal {
+    let (class, desc) = errno_class_and_desc(e);
+    raise_error(class, desc)
+}
+
+fn errno_class_and_desc(e: &std::io::Error) -> (&'static str, String) {
     // `raw_os_error` is the whole answer wherever the OS gave one, and
     // `zeo_abi::ERRNO_CLASSES` names a class for every errno this platform
     // defines. The `ErrorKind` arms below only have to cover an error Rust
@@ -30,13 +44,12 @@ pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
         std::io::ErrorKind::AlreadyExists => Some(libc::EEXIST),
         _ => None,
     });
-    let (class, desc) = match errno.and_then(zeo_abi::errno_class) {
+    match errno.and_then(zeo_abi::errno_class) {
         Some((_, row)) => (row.name, crate::builtins::exception::strerror(row.errno)),
         // An errno with no dedicated class: SystemCallError is its own
         // parent and CRuby's own fallback for unmapped codes.
         None => ("SystemCallError", "Unknown error".to_string()),
-    };
-    raise_error(class, format!("{desc} @ {syscall} - {path}"))
+    }
 }
 
 /// Run `File`'s class-method row `name` on behalf of `FileTest`, which mixes in
@@ -619,6 +632,36 @@ fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
     Ok(o)
 }
 
+/// The open flags a `File.open`/`IO.sysopen` MODE argument names, in each of
+/// the four shapes ruby takes it in -- a mode string, an `O_*` bitmask, a
+/// `mode:` keyword in a trailing Hash, or absent (`"r"`) -- plus the PERM bits
+/// a newly created file is given.
+///
+/// Shared so the two entry points cannot drift: `IO.sysopen` used to open
+/// read-only whatever it was asked for, and both dropped `perm`, so
+/// `File.open(path, "w", 0o600)` left a 0644 file behind.
+pub(crate) fn open_options_for(
+    mode: Option<&RubyValue>,
+    perm: Option<&RubyValue>,
+) -> Result<std::fs::OpenOptions, Signal> {
+    let mut o = match mode {
+        None | Some(RubyValue::Nil) => open_options("r")?,
+        Some(RubyValue::Int(flags)) => open_options_int(*flags),
+        Some(RubyValue::Hash(_)) => {
+            open_options(kwarg_str(mode, "mode").as_deref().unwrap_or("r"))?
+        }
+        Some(v) => open_options(&path_arg(v, "open")?)?,
+    };
+    // Only an Integer is a permission: the third argument is also where an
+    // options Hash lands (`File.open(path, "w", external_encoding: ...)`).
+    // umask still applies, exactly as it does to open(2).
+    if let Some(RubyValue::Int(bits)) = perm {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(*bits as u32);
+    }
+    Ok(o)
+}
+
 /// `File::Constants` -- the open/lock/fnmatch flags, in their own module
 /// because CRuby includes them into `IO` as well as `File`. Its own inline
 /// `mod`: one `ruby_class!`/`ruby_module!` per module scope, since each emits
@@ -689,17 +732,7 @@ ruby_class! {
             return out;
         }
         let path = path_arg(path, "open")?;
-        // The mode is a String (`"w"`), an Integer O_* bitmask
-        // (`File::WRONLY | File::CREAT`), a `mode:` keyword in a trailing Hash,
-        // or absent (`"r"`).
-        let opts = match mode {
-            None => open_options("r")?,
-            Some(RubyValue::Int(flags)) => open_options_int(*flags),
-            Some(RubyValue::Hash(_)) => {
-                open_options(kwarg_str(mode, "mode").as_deref().unwrap_or("r"))?
-            }
-            Some(v) => open_options(&path_arg(v, "open")?)?,
-        };
+        let opts = open_options_for(mode, perm)?;
         // Gvl-released: open(2) itself can block (a FIFO with no peer).
         let f = crate::gvl::without_gvl(|| opts.open(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;

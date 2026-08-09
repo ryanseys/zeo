@@ -1,0 +1,11 @@
+"600"
+"640"
+"written"
+"HEllo"
+"HEllo!"
+[Errno::ENOENT, "No such file or directory @ rb_sysopen - DIR/nope.txt"]
+"content"
+[false, false]
+[Errno::EBADF, "Bad file descriptor"]
+"content"
+ran to the end

@@ -35,14 +35,33 @@ pub enum IoBackend {
 }
 
 impl IoBackend {
-    /// Drop the underlying descriptor (a no-op for the std streams), leaving a
+    /// Close the underlying descriptor (a no-op for the std streams), leaving a
     /// closed handle -- what `#close`/`#close_read`/`#close_write` need.
-    fn close_file(&mut self) {
+    ///
+    /// The descriptor leaves through `close(2)` rather than through dropping
+    /// the `File`, because the same fd may be under a SECOND IO (`IO.new(
+    /// f.fileno)`, which autocloses too). Ruby's second close simply fails
+    /// EBADF; Rust's `File` drop ABORTS the process on a failed close
+    /// ("IO Safety violation: owned file descriptor already closed"), which
+    /// killed the program at exit after it had run to completion. The result
+    /// is handed back so `#close` can raise where ruby raises and teardown can
+    /// stay quiet, which is the difference ruby itself draws.
+    fn close_file(&mut self) -> std::io::Result<()> {
+        use std::os::fd::IntoRawFd;
         match self {
             IoBackend::File(slot) | IoBackend::Pipe(slot) => {
-                slot.take();
+                let Some(f) = slot.take() else {
+                    return Ok(());
+                };
+                // SAFETY: the fd was owned by the `File` just taken apart, and
+                // `into_raw_fd` gives up that ownership -- so this is the one
+                // and only close of it from here.
+                match unsafe { libc::close(f.into_raw_fd()) } {
+                    0 => Ok(()),
+                    _ => Err(std::io::Error::last_os_error()),
+                }
             }
-            IoBackend::Std(_) => {}
+            IoBackend::Std(_) => Ok(()),
         }
     }
 
@@ -64,8 +83,14 @@ impl IoBackend {
 
 impl Drop for RIo {
     fn drop(&mut self) {
-        if !self.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
-            self.backend.lock().release_file();
+        let mut backend = self.backend.lock();
+        if self.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
+            // Ruby closes at teardown and says nothing about a descriptor a
+            // second IO already closed -- see `close_file`, which is also why
+            // the `File` must not be left to drop itself.
+            let _ = backend.close_file();
+        } else {
+            backend.release_file();
         }
     }
 }
@@ -1378,12 +1403,20 @@ fn close_io(recv: &RubyValue) -> Result<RubyValue, Signal> {
         if let IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) = &mut *backend {
             unread(io, f);
         }
-        if io.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
-            backend.close_file();
+        // A close(2) that fails is ruby's to report: closing a descriptor a
+        // second IO over the same fd already closed raises `Errno::EBADF,
+        // "Bad file descriptor"` -- the bare strerror, with none of the
+        // `@ syscall - path` suffix an open failure carries.
+        let closed = if io.autoclose.load(std::sync::atomic::Ordering::Relaxed) {
+            backend.close_file()
         } else {
             backend.release_file();
-        }
+            Ok(())
+        };
         drop(backend);
+        if let Err(e) = closed {
+            return Err(crate::builtins::file::raise_bare_errno(&e));
+        }
         let pid = io.child_pid.swap(0, std::sync::atomic::Ordering::Relaxed);
         if pid != 0
             && let Ok(Some((reaped, raw))) =
@@ -2177,7 +2210,10 @@ ruby_class! {
                     return Ok(RubyValue::Nil);
                 }
             }
-            b.close_file();
+            // The same close(2) `#close` performs, so it reports the same way.
+            let closed = b.close_file();
+            drop(b);
+            closed.map_err(|e| crate::builtins::file::raise_bare_errno(&e))?;
         }
         Ok(RubyValue::Nil)
     }
@@ -2202,7 +2238,10 @@ ruby_class! {
                     return Ok(RubyValue::Nil);
                 }
             }
-            b.close_file();
+            // The same close(2) `#close` performs, so it reports the same way.
+            let closed = b.close_file();
+            drop(b);
+            closed.map_err(|e| crate::builtins::file::raise_bare_errno(&e))?;
         }
         Ok(RubyValue::Nil)
     }
@@ -2652,13 +2691,19 @@ ruby_class! {
         Ok(RubyValue::Int(n as i64))
     }
 
-    // `IO.sysopen(path, mode = "r")` -- open and answer the raw fd Integer (the
-    // caller owns closing it).
+    // `IO.sysopen(path, mode = "r", perm = 0o666)` -- open and answer the raw fd
+    // Integer (the caller owns closing it). Same flag rules as `File.open`,
+    // through the same helper: this row used to open READ-ONLY whatever it was
+    // asked for, so an `IO.new(fd, "w")` over the result raised EBADF on the
+    // first write.
     def self."sysopen" cfunc (_recv, _path, _mode?, _perm?, &_blk) {
         use std::os::fd::IntoRawFd;
         let path = crate::builtins::file::path_arg(&__args[0], "sysopen")?;
-        let f = std::fs::File::open(&path)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "sysopen", &path))?;
+        let opts = crate::builtins::file::open_options_for(__args.get(1), __args.get(2))?;
+        // Gvl-released for the reason `File.open` releases it: open(2) blocks
+        // on a FIFO with no peer.
+        let f = crate::gvl::without_gvl(|| opts.open(&path))
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Int(f.into_raw_fd() as i64))
     }
 
