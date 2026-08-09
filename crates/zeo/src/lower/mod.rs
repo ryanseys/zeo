@@ -1246,7 +1246,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 Ok(ArrayElem::Single(hir.push(HirNode::SymbolLit(name))))
             })
             .collect::<PResult<Vec<_>>>()?;
-        return Ok(hir.push(HirNode::Call {
+        let send = hir.push(HirNode::Call {
             receiver: None,
             name: "undef_method".to_string(),
             args,
@@ -1254,7 +1254,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             block: None,
             block_arg: None,
             safe: false,
-        }));
+        });
+        // `Module#undef_method` answers the module; the `undef` KEYWORD answers
+        // nil. The send is the mechanism, not the value -- so the value is
+        // written back to the keyword's own.
+        let nil = hir.push(HirNode::NilLit);
+        return Ok(hir.push(HirNode::Seq(vec![send, nil])));
     }
 
     if let Some(def) = node.as_def_node() {
@@ -2617,7 +2622,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         let old_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(
             &alias.old_name(),
         )?));
-        return Ok(hir.push(HirNode::Call {
+        let send = hir.push(HirNode::Call {
             receiver: None,
             name: "alias_method".to_string(),
             args: vec![ArrayElem::Single(new_sym), ArrayElem::Single(old_sym)],
@@ -2625,7 +2630,11 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             block: None,
             block_arg: None,
             safe: false,
-        }));
+        });
+        // `Module#alias_method` answers the new name; the `alias` KEYWORD
+        // answers nil -- see the `undef` arm above, same split.
+        let nil = hir.push(HirNode::NilLit);
+        return Ok(hir.push(HirNode::Seq(vec![send, nil])));
     }
 
     Err(format!(

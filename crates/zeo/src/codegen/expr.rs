@@ -1654,8 +1654,17 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::Refine { .. } if cx.compiler.refinement_marker_registered(id) => {
             quote! { zeo_rt::RubyValue::Nil }
         }
+        // A `class`/`module` written where a value is read -- `__skip__ =
+        // module M ... end` (elasticgraph), `class Keys ... end` as the last
+        // statement of its enclosing body (jaeger-client), and the surrogate a
+        // `class << self` body mints when that body ends a method (logging's
+        // `def kill; class << self; undef :close; end; end`). Ruby's value is
+        // the body's last statement, which the site already computes and the
+        // statement form discards.
+        HirNode::ClassDef { .. } => {
+            crate::codegen::emit_class_def_marker(cx, id, crate::codegen::BodyValue::Keep)
+        }
         HirNode::Program(_)
-        | HirNode::ClassDef { .. }
         | HirNode::Refine { .. }
         | HirNode::Undef(_)
         | HirNode::ClassMethodUndef(_)
@@ -1664,12 +1673,50 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::ClassMethodVisibility { .. }
         | HirNode::ModuleFunction(_)
         | HirNode::MethodRedefine { .. }
-        | HirNode::ConstantVisibility { .. } => crate::codegen::unsupported_at(
-            cx.compiler,
-            id,
-            "a definition-level construct used as a VALUE isn't supported yet \
-                 (zeo limitation)",
-        ),
+        | HirNode::ConstantVisibility { .. } => {
+            // Name the construct: each of these has its OWN Ruby value (`undef`
+            // and `alias` answer nil, `private :a` answers `:a`,
+            // `private_constant` answers the module), so the next one to be
+            // wired needs to be told apart from its siblings in the ledger.
+            let kind = definition_kind(&cx.compiler.hir[id]);
+            crate::codegen::unsupported_at(
+                cx.compiler,
+                id,
+                format!(
+                    "a definition-level construct used as a VALUE isn't supported yet \
+                     (zeo limitation): {kind}"
+                ),
+            )
+        }
+    }
+}
+
+/// The Ruby spelling of a definition-level node, for the rejection above and
+/// for the one `codegen::consumed_tail_value` raises over the same nodes.
+pub(super) fn definition_kind(node: &HirNode) -> &'static str {
+    match node {
+        HirNode::Program(_) => "a program body",
+        HirNode::ClassDef {
+            is_module: true, ..
+        } => "a module definition",
+        HirNode::ClassDef { .. } => "a class definition",
+        HirNode::DefMethod { .. } => "a method definition",
+        HirNode::Refine { .. } => "refine",
+        HirNode::Undef(_) => "undef",
+        HirNode::ClassMethodUndef(_) => "undef on a singleton class",
+        HirNode::AliasMethod { .. } => "alias",
+        HirNode::MethodVisibility { .. } => "a visibility directive",
+        HirNode::ClassMethodVisibility { .. } => "a class-method visibility directive",
+        HirNode::ModuleFunction(_) => "module_function",
+        HirNode::MethodRedefine { .. } => "a method redefinition",
+        HirNode::ConstantVisibility { .. } => "a constant visibility directive",
+        HirNode::Include(_) => "include",
+        HirNode::Extend(_) => "extend",
+        HirNode::Prepend(_) | HirNode::ClassMethodPrepend(_) => "prepend",
+        HirNode::Using(_) => "using",
+        HirNode::Call { name, .. } if name.starts_with("attr_") => "an attribute reader/writer",
+        HirNode::Call { .. } => "a call the walk consumed",
+        _ => "a construct with no value form",
     }
 }
 

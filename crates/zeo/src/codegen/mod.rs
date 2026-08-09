@@ -1349,6 +1349,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     s,
                     &HashSet::new(),
                     Some(fns.len() as u32),
+                    BodyValue::Discard,
                 );
                 fns.push(item);
                 call
@@ -2760,19 +2761,106 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     }
 }
 
+/// Where a class body's value comes from when its last SOURCE statement is one
+/// analyze consumed, so the emitted statements no longer end where ruby's value
+/// does.
+enum TailValue {
+    /// The emitted body's own tail is already the answer.
+    Own,
+    /// A consumed construct whose ruby value is known.
+    Known(TokenStream),
+    /// A consumed construct with no value form yet -- carries the node to blame
+    /// and its ruby spelling.
+    Unknown(crate::hir::NodeId, &'static str),
+}
+
+/// [`TailValue`] for one site.
+///
+/// A `def` is the case that matters and the only one wired: ruby answers the
+/// method's name, and `class C; def a; end; end` has no surviving statement at
+/// all. Every other consumed construct has its own value (`include M` answers
+/// the class, `attr_accessor :x` the accessor names) and comes back `Unknown`.
+fn consumed_tail_value(compiler: &Compiler, site: &crate::compiler::ClassBodySite) -> TailValue {
+    let Some(def_node) = site.def_node else {
+        return TailValue::Own;
+    };
+    let crate::hir::HirNode::ClassDef { body, .. } = &compiler.hir[def_node] else {
+        return TailValue::Own;
+    };
+    let Some(&last) = body.last() else {
+        return TailValue::Own;
+    };
+    if site.stmts.last() == Some(&last) {
+        return TailValue::Own;
+    }
+    match &compiler.hir[last] {
+        crate::hir::HirNode::DefMethod { name, .. } => {
+            let sym = pooled_sym(name);
+            TailValue::Known(quote! { zeo_rt::RubyValue::Symbol(#sym) })
+        }
+        node => TailValue::Unknown(last, crate::codegen::expr::definition_kind(node)),
+    }
+}
+
+/// Whether the emitted site EVALUATES to the class body's last value.
+///
+/// A `class`/`module` is an expression in Ruby -- `x = class C; 7; end` binds
+/// 7, and an empty body yields nil. Almost every site runs for effect, so the
+/// value is dropped; only a definition written where a value is read keeps it.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum BodyValue {
+    Discard,
+    /// A statement in TAIL position: the value is the enclosing scope's, so it
+    /// is kept where it can be computed. A body ending in a construct analyze
+    /// consumed and [`consumed_tail_value`] cannot name falls back to nil --
+    /// the long-standing narrow divergence, now down to those constructs
+    /// alone. Not an error, because `class Foo; alias bar baz; end` as a
+    /// file's last statement is ordinary and its value is never read.
+    KeepOrNil,
+    /// An EXPRESSION: something definitely reads this value, so a body whose
+    /// value zeo cannot compute is a compile error rather than a wrong answer.
+    Keep,
+}
+
+/// A `HirNode::ClassDef` marker, emitted at the position it was written --
+/// the one lookup both the statement form (`stmt::emit_statement`) and the
+/// value form (`expr::emit_expr`) share.
+///
 /// Every statement written directly in a class/module body -- cvar/const/ivar
 /// writes AND general code (a method call, an `each` loop, a runtime
-/// `define_method`) -- run once at class-definition time, in file order, with
-/// `self` = the class object (`class_self: Some(cid)`). Emitted inside
-/// `run_main`'s fallible closure (see the call site), so a fallible statement
-/// propagates its `Signal` through `?` like any method-body statement.
-/// Runs right after this class/module's own dispatch-table registration.
-pub(crate) fn emit_class_body_site(
-    compiler: &Compiler,
-    site: &crate::compiler::ClassBodySite,
-    enclosing_captured: &HashSet<String>,
-) -> TokenStream {
-    let (item, call) = emit_class_body_site_lifted(compiler, site, enclosing_captured, None);
+/// `define_method`) -- runs once at class-definition time, in file order, with
+/// `self` = the class object.
+///
+/// A marker with NO registered site is a `class`/`module` the analyze walk
+/// never reached (inside a top-level `begin`, or an undecided body-level
+/// `if`). That is a separate, catalogued gap: it stays loud rather than
+/// silently skipping the definition.
+fn emit_class_def_marker(cx: &Ctx, stmt: crate::hir::NodeId, value: BodyValue) -> TokenStream {
+    let site = cx
+        .compiler
+        .class_body_sites
+        .iter()
+        .find(|s| s.def_node == Some(stmt));
+    let Some(site) = site else {
+        // Name the definition: this fires deep in a require graph, and the
+        // identity is what makes the next blocker legible. The LOCATION rides
+        // in the diagnostic's span rather than the text, so the message stays
+        // free of a local path.
+        let nm = match &cx.compiler.hir[stmt] {
+            crate::hir::HirNode::ClassDef { name, .. } => name.as_str(),
+            _ => "?",
+        };
+        return unsupported_at(
+            cx.compiler,
+            stmt,
+            format!(
+                "`class`/`module` in a position the analyze walk doesn't register \
+                 isn't supported yet (zeo limitation): {nm}"
+            ),
+        );
+    };
+    let (item, call) =
+        emit_class_body_site_lifted(cx.compiler, site, &cx.captured_locals, None, value);
     debug_assert!(item.is_empty(), "no lift was asked for");
     call
 }
@@ -2801,6 +2889,7 @@ pub(crate) fn emit_class_body_site_lifted(
     site: &crate::compiler::ClassBodySite,
     enclosing_captured: &HashSet<String>,
     lift: Option<u32>,
+    value: BodyValue,
 ) -> (TokenStream, TokenStream) {
     let cid = site.class;
     // `alias_method`'s source is checked as THIS body runs -- CRuby's timing,
@@ -2820,11 +2909,32 @@ pub(crate) fn emit_class_body_site_lifted(
     let const_location = emit_declaration_const_location(compiler, site);
     let inherited_hook = emit_inherited_hook(compiler, site);
     let stmts = &site.stmts;
+    // A body whose last SOURCE statement analyze consumed -- the emitted
+    // statements no longer end where ruby's value comes from. Computed before
+    // the empty-body return, which is exactly the `class C; def a; end; end`
+    // case: no statement survives, and the value is still `:a`.
+    //
+    // `own` is what the block itself evaluates to, which differs between the
+    // two returns below (nothing ran, versus the body's own tail).
+    let tail_value = |own: TokenStream| match (value, consumed_tail_value(compiler, site)) {
+        (BodyValue::Discard, _) | (_, TailValue::Own) => own,
+        (_, TailValue::Known(v)) => v,
+        (BodyValue::KeepOrNil, TailValue::Unknown(..)) => quote! { zeo_rt::RubyValue::Nil },
+        (BodyValue::Keep, TailValue::Unknown(at, kind)) => unsupported_at(
+            compiler,
+            at,
+            format!("a class body read for its VALUE cannot end in {kind} yet (zeo limitation)"),
+        ),
+    };
     if stmts.is_empty() {
-        return (
-            quote! {},
-            quote! { #alias_check #const_location #const_added #inherited_hook },
-        );
+        let head = quote! { #alias_check #const_location #const_added #inherited_hook };
+        return match value {
+            BodyValue::Discard => (quote! {}, head),
+            _ => {
+                let tail = tail_value(quote! { zeo_rt::RubyValue::Nil });
+                (quote! {}, quote! { { #head #tail } })
+            }
+        };
     }
     let label_counter = Cell::new(0u32);
     // A class body is an ordinary Ruby scope with ordinary locals, and an
@@ -2932,11 +3042,35 @@ pub(crate) fn emit_class_body_site_lifted(
         }
         None => quote! {},
     };
-    let inline_form =
-        quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check };
+    // `#alias_check` runs AFTER the body in both forms -- the value is bound
+    // first so the ordering the statement form has survives into the value
+    // one, where the body's result has to outlive the check.
+    let inline_form = match value {
+        BodyValue::Discard => {
+            quote! { #const_location #const_added #inherited_hook { #frame #body }?; #alias_check }
+        }
+        // `tail_value` overrides the emitted body's own tail when analyze took
+        // the last source statement, so what the block evaluates to is the
+        // statement BEFORE it.
+        _ => {
+            let tail = tail_value(quote! { __body_value });
+            quote! {
+                {
+                    #const_location #const_added #inherited_hook
+                    let __body_value = { #frame #body }?;
+                    #alias_check
+                    #tail
+                }
+            }
+        }
+    };
     let Some(n) = lift else {
         return (quote! {}, inline_form);
     };
+    debug_assert!(
+        value == BodyValue::Discard,
+        "only a hoisted site is lifted, and a hoisted site is never read for its value"
+    );
     // A free `fn` closes over nothing, so a body that READS a local it does not
     // declare cannot be lifted -- it has to stay in its enclosing block.
     //

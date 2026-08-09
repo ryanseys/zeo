@@ -172,44 +172,23 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
         // here, in document order (real Ruby executes a class body where
         // it appears, re-running each reopen) -- see
         // `Compiler::class_body_sites`. Dispatch-table registration stays
-        // hoisted in `fn main()`; only the body's execution moves. In tail
-        // position the expression value is `nil` (real Ruby returns the
-        // body's last value -- a documented narrow divergence).
-        // A marker with NO registered site is a `class`/`module` the
-        // analyze walk never reached (e.g. inside a top-level `begin`) --
-        // the same catalogued gap `emit_expr` names "a top-level-only node
-        // in expression position"; keep it loud rather
-        // than silently skipping the definition.
-        let site_body = cx
-            .compiler
-            .class_body_sites
-            .iter()
-            .find(|s| s.def_node == Some(stmt))
-            .map(|s| crate::codegen::emit_class_body_site(cx.compiler, s, &cx.captured_locals))
-            .unwrap_or_else(|| {
-                // Name the definition: this fires deep in a require graph (a
-                // `class`/`module` inside a `begin` or an undecided body-level
-                // `if`), and the identity is what makes the next blocker
-                // legible. The LOCATION rides in the diagnostic's span rather
-                // than the text, so the message stays free of a local path.
-                let nm = match &cx.compiler.hir[stmt] {
-                    HirNode::ClassDef { name, .. } => name.as_str(),
-                    _ => "?",
-                };
-                crate::codegen::unsupported_at(
-                    cx.compiler,
-                    stmt,
-                    format!(
-                        "`class`/`module` in a position the analyze walk doesn't register \
-                         isn't supported yet (zeo limitation): {nm}"
-                    ),
-                )
-            });
+        // hoisted in `fn main()`; only the body's execution moves.
+        //
+        // In tail position the definition IS the enclosing scope's value, and
+        // ruby's is the body's own last value -- so the site keeps it there
+        // and drops it everywhere else.
         return if is_tail {
-            let nil = tail_nil(wrap_ok);
-            quote! { #site_body #nil }
+            let value = crate::codegen::emit_class_def_marker(
+                cx,
+                stmt,
+                crate::codegen::BodyValue::KeepOrNil,
+            );
+            match wrap_ok {
+                true => quote! { Ok(#value) },
+                false => value,
+            }
         } else {
-            quote! { #site_body }
+            crate::codegen::emit_class_def_marker(cx, stmt, crate::codegen::BodyValue::Discard)
         };
     }
     if matches!(&cx.compiler.hir[stmt], HirNode::Refine { .. })

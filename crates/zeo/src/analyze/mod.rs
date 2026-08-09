@@ -995,16 +995,23 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
             .chain(else_body)
             .copied()
             .collect(),
-        HirNode::Call {
-            receiver: _,
-            name: _,
-            args: _,
-            kwargs: _,
-            block,
-            block_arg: _,
-            safe: _,
-        } => block.iter().copied().collect(),
-        _ => return,
+        // A definition is an EXPRESSION in ruby, so it also reaches here as a
+        // value: `__skip__ = module M ... end` (elasticgraph, dodging a type
+        // checker), `M = (class Inner; 7; end)`, an argument. It defines the
+        // class right where it is written, exactly as the statement form does,
+        // so the only difference is that something reads the body's value.
+        //
+        // The three stops are the nodes that register their OWN bodies:
+        // `register_class` recurses into a `ClassDef`, a `DefMethod` body is a
+        // separate function that waits to be called (and ruby rejects a
+        // `class` written in one), and a `Lambda` likewise runs later, maybe
+        // never -- a definition there stays the clean error it is today.
+        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } | HirNode::Lambda { .. } => return,
+        other => {
+            let mut children = Vec::new();
+            other.for_each_child(&mut |c| children.push(c));
+            children
+        }
     };
     // Each child is itself a candidate and may nest further -- the
     // `File.open { begin ... rescue; module M; end; end }` shape.
@@ -3247,6 +3254,10 @@ fn register_class(
             // this it fell into the `_ => {}` arm below and was SILENTLY
             // DROPPED, so the reader saw a bare nil with no diagnostic.
             HirNode::IvarWrite(..) | HirNode::ClassVarWrite(..) | HirNode::ConstWrite { .. } => {
+                // The written VALUE may itself be a definition -- `M = (class
+                // Inner; 7; end)` defines `Inner` and binds its body's value --
+                // so the same registration the fall-through does applies here.
+                register_nested_class_defs(compiler, stmt, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);
