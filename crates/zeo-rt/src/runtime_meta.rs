@@ -180,6 +180,12 @@ struct OverlayMaps {
     /// `RObj` to bind: the body stays an `RProc` and runs with the value itself
     /// as `self`. See `value_identity`.
     value_singletons: RwLock<FMap<usize, FMap<Symbol, RProc>>>,
+    /// Names `obj.singleton_class.undef_method(:name)` retired for ONE object,
+    /// keyed by the same identity the two tables above use. A tombstone, not an
+    /// absence: the class still defines the name, and the point of the undef is
+    /// that this object no longer answers it. `OverlayEntry::undefs` is the
+    /// per-CLASS twin; there is no per-object `OverlayEntry` to put this in.
+    singleton_undefs: RwLock<FMap<usize, FSet<Symbol>>>,
     /// A strong reference to every value that has ever received a singleton
     /// method, keyed by the same identity the tables above use.
     ///
@@ -237,6 +243,7 @@ fn maps() -> &'static OverlayMaps {
         classes: RwLock::new(FMap::default()),
         singletons: RwLock::new(FMap::default()),
         value_singletons: RwLock::new(FMap::default()),
+        singleton_undefs: RwLock::new(FMap::default()),
         extended: RwLock::new(FMap::default()),
         pinned: RwLock::new(FMap::default()),
         singleton_classes: RwLock::new(FMap::default()),
@@ -1153,6 +1160,18 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
     if let Some(owner) = singleton_class_owner(id) {
         return runtime_undef_class_method(owner, id, args);
     }
+    // The same redirect for an ORDINARY object's singleton class, which
+    // `singleton_class_owner` cannot answer for (it names a class). Its
+    // instance methods are that one object's singleton methods, so the
+    // retirement is that one object's too -- and it has to be recorded, not
+    // just applied: the class still defines the name, and the tombstone is the
+    // only thing that says this object no longer answers it.
+    let owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
+    if let Some(owner) = owner
+        && !matches!(owner, RubyValue::Class(_))
+    {
+        return runtime_undef_singleton_method(&owner, id, args);
+    }
     let mut undefined = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
@@ -1177,6 +1196,73 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
         fire_def_hook(DefTarget::Class(id), DefEvent::Undefined, name)?;
     }
     Ok(RubyValue::Class(id))
+}
+
+/// [`runtime_undef_method`] for ONE OBJECT, reached through that object's
+/// singleton class (`g.singleton_class.undef_method(:close)`, and the
+/// `class << g; undef :close; end` that spells the same thing).
+///
+/// Writes the tombstone `singleton_undefs` holds and takes any singleton method
+/// of that name with it. `singleton` is the id the call came in on, and it
+/// decides what EXISTS: undefining a name the object cannot answer at all is
+/// ruby's NameError, and it names the singleton class the caller reached
+/// through.
+fn runtime_undef_singleton_method(
+    owner: &RubyValue,
+    singleton: ClassId,
+    args: &[RubyValue],
+) -> Result<RubyValue, Signal> {
+    let Some(key) = pin_identity(owner) else {
+        return Err(type_error!("can't define singleton"));
+    };
+    let mut undefined = Vec::with_capacity(args.len());
+    for arg in args {
+        let name = coerce_method_name(Some(arg))?;
+        if !crate::dispatch::responds_to_value(owner, name, true) {
+            return Err(name_error!(
+                "undefined method '{}' for class '{}'",
+                name.name(),
+                crate::dispatch::class_name(singleton).unwrap_or_else(|| "?".to_string())
+            ));
+        }
+        {
+            let mut w = maps().singletons.write().unwrap();
+            if let Some(t) = w.get_mut(&key) {
+                t.remove(&name);
+            }
+        }
+        {
+            let mut w = maps().value_singletons.write().unwrap();
+            if let Some(t) = w.get_mut(&key) {
+                t.remove(&name);
+            }
+        }
+        maps()
+            .singleton_undefs
+            .write()
+            .unwrap()
+            .entry(key)
+            .or_default()
+            .insert(name);
+        undefined.push(name);
+    }
+    mark_singletons();
+    mark_live();
+    for name in undefined {
+        fire_def_hook(DefTarget::Singleton(owner), DefEvent::Undefined, name)?;
+    }
+    Ok(RubyValue::Class(singleton))
+}
+
+/// Whether `recv` retired `name` for itself -- see `singleton_undefs`. Always
+/// behind `is_live()`, like every other identity-keyed probe: an ordinary
+/// program never takes the hash lookup.
+pub fn object_method_undefined(recv: &RubyValue, name: Symbol) -> bool {
+    let u = maps().singleton_undefs.read().unwrap();
+    if u.is_empty() {
+        return false;
+    }
+    value_identity(recv).is_some_and(|k| u.get(&k).is_some_and(|t| t.contains(&name)))
 }
 
 /// [`runtime_undef_method`] for a CLASS method, reached through the owner's

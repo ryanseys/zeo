@@ -2301,13 +2301,25 @@ fn collect_top_level_const_aliases(hir: &Hir, stmts: &[NodeId], out: &mut HashMa
     }
 }
 
-/// The runtime definition verbs -- the calls that install a method body the
-/// overlay holds and only DYNAMIC dispatch consults. Each names ONE method,
-/// in its first argument. A literal-name `define_method`/
+/// The runtime definition verbs -- the calls that install (or RETIRE) a method
+/// body the overlay holds and only DYNAMIC dispatch consults. Each names ONE
+/// method, in its first argument. A literal-name `define_method`/
 /// `define_singleton_method` inside a class body never reaches here: lowering
 /// already desugared it into a `DefMethod`, so what survives as a `Call` is
 /// exactly the runtime half.
-const REDEF_VERBS: &[&str] = &["define_method", "define_singleton_method", "alias_method"];
+///
+/// `undef_method`/`remove_method` are here for the RECEIVER-BEARING spelling
+/// only. `ClassInfo::runtime_undefs` covers the receiverless one written in a
+/// class body, where the class it retires from is known; `g.singleton_class.
+/// undef_method(:close)` retires the name for ONE object and names no class a
+/// scan could resolve, so the name goes program-wide instead.
+const REDEF_VERBS: &[&str] = &[
+    "define_method",
+    "define_singleton_method",
+    "alias_method",
+    "undef_method",
+    "remove_method",
+];
 
 /// The runtime VISIBILITY verbs. Visibility is a runtime property in ruby --
 /// `private :name` re-marks a method that already exists -- and these take a

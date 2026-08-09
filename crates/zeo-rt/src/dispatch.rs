@@ -2002,6 +2002,13 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     {
         return false;
     }
+    // The per-object twin of the class-method undef just above: `g.singleton_
+    // class.undef_method(:close)` has to make `g.respond_to?(:close)` false
+    // while `Foo.new.respond_to?(:close)` stays true, and the class walk below
+    // would find the very definition the tombstone shadows.
+    if crate::runtime_meta::is_live() && crate::runtime_meta::object_method_undefined(recv, name) {
+        return false;
+    }
     if crate::runtime_meta::is_live()
         && crate::runtime_meta::object_has_singleton_method(recv, name)
     {
@@ -5040,6 +5047,16 @@ fn send_in_reason(
         && let Some(m) = crate::runtime_meta::resolve_dynamic(recv, id, name)
     {
         return m.call(recv, args, block);
+    }
+    // A name THIS object retired through its own singleton class. The class
+    // still defines it, so every walk below would answer -- the tombstone is
+    // what stops them, and `method_missing` gets its turn exactly as it does
+    // for a name nothing ever defined.
+    if crate::runtime_meta::is_live() {
+        let boxed = RubyValue::Object(recv.clone());
+        if crate::runtime_meta::object_method_undefined(&boxed, name) {
+            return method_missing_or_raise(recv, id, name, args, block, MissingReason::NoEntry);
+        }
     }
     // ENV's methods are probed by IDENTITY, not by class: `ENV.class` is
     // `Object` (real Ruby -- it is a lone singleton with Hash-shaped methods,
