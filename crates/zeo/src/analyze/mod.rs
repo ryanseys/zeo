@@ -2353,6 +2353,12 @@ fn resolve_or_create_container(
     let ci = &mut compiler.classes[cid.0 as usize];
     ci.lexical_parent = lexical_parent;
     ci.qualified_def = qualified;
+    // A shell is built from a fully-qualified path with no enclosing scope, so
+    // a qualified one is written at the top level and its cref is just itself.
+    ci.cref_parent = match qualified {
+        true => None,
+        false => lexical_parent,
+    };
     ci.box_id = box_id;
     Some(cid)
 }
@@ -2922,6 +2928,13 @@ fn register_class(
             ci.explicit_superclass = superclass.is_some();
             ci.lexical_parent = lexical_parent;
             ci.qualified_def = qualified_def;
+            // The scope this definition is WRITTEN in, which is the naming
+            // parent for a nested form and the enclosing scope for a
+            // qualified one -- see `ClassInfo::cref_parent`.
+            ci.cref_parent = match qualified_def {
+                true => cref.last().copied(),
+                false => lexical_parent,
+            };
             ci.box_id = box_id;
             if let Some(root) = overlay_root {
                 // The overlay carries the box's patches; instances keep
@@ -4925,9 +4938,10 @@ mod namespacing_tests {
         );
     }
 
-    /// The two definition forms differ in CREF only: textual nesting sees
-    /// the enclosing scope, the qualified form does not (oracle-verified
-    /// NameError in real Ruby).
+    /// The two definition forms differ in CREF only: textual nesting sees the
+    /// enclosing scope, the qualified form skips the PREFIX IT SPELLS
+    /// (oracle-verified NameError in real Ruby). It still sees whatever scope
+    /// it is written inside -- see the sibling test.
     #[test]
     fn qualified_definition_form_cuts_the_cref_chain() {
         let a = analyze_src("module Store\n  class Inner\n  end\nend\nclass Store::Cart\nend\n");
@@ -4948,6 +4962,28 @@ mod namespacing_tests {
             a.compiler.fq_name(cart),
             "Store::Cart",
             "naming still qualifies"
+        );
+    }
+
+    /// A qualified definition written INSIDE a scope keeps that scope: ruby
+    /// skips the prefix the path spelled, not the nesting it sits in. Cutting
+    /// the chain outright made every constant such a body reads resolve
+    /// against the top level -- `class Error < Error` inside
+    /// `module HTTPX; class Connection::HTTP2` among them.
+    #[test]
+    fn a_qualified_definition_still_sees_the_scope_it_is_written_in() {
+        let a = analyze_src("module Store\n  class Bin\n  end\n  class Bin::Slot\n  end\nend\n");
+        let store = class_named(&a, "Store");
+        let slot = a
+            .compiler
+            .resolve_class("Store::Bin::Slot", &[], 0)
+            .unwrap();
+
+        assert!(a.compiler.class(slot).qualified_def);
+        assert_eq!(
+            a.compiler.cref_of(Some(slot)),
+            vec![store, slot],
+            "`Store` is kept, `Store::Bin` is skipped"
         );
     }
 

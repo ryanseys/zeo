@@ -58,14 +58,24 @@ pub struct ClassInfo {
     pub lexical_parent: Option<ClassId>,
     /// `true` when this class/module was defined via the QUALIFIED form
     /// (`class Store::Item ... end`) rather than textual nesting -- real
-    /// Ruby gives that form a cref of just `[Item]` (its body does NOT see
-    /// `Store`'s constants lexically; oracle-verified NameError), so
-    /// `cref_of` cuts the chain here while `fq_name`/resolution keep the
-    /// `lexical_parent` link. One documented approximation: the flag is
-    /// per-CLASS, not per-body-occurrence, so a nested-form class REOPENED
-    /// via the qualified form (or vice versa) keeps its original cref for
-    /// all bodies.
+    /// Ruby gives that form a cref that SKIPS the path's own prefix (its body
+    /// does NOT see `Store`'s constants lexically; oracle-verified NameError),
+    /// so `cref_of` follows `cref_parent` rather than `lexical_parent` here,
+    /// while `fq_name`/resolution keep the `lexical_parent` link. One
+    /// documented approximation: the flag is per-CLASS, not
+    /// per-body-occurrence, so a nested-form class REOPENED via the qualified
+    /// form (or vice versa) keeps its original cref for all bodies.
     pub qualified_def: bool,
+    /// The scope this definition was WRITTEN in -- what `cref_of` walks.
+    ///
+    /// Equal to `lexical_parent` for a textually nested definition, and the
+    /// two only part for a qualified one: `module HTTPX; class Connection::
+    /// HTTP2` NAMES its class under `HTTPX::Connection` and RESOLVES names in
+    /// its body against `[HTTP2, HTTPX]` -- ruby skips the prefix the path
+    /// spelled, but keeps every scope the definition is written inside.
+    /// Cutting the chain outright instead was a silent wrong answer for every
+    /// constant such a body reads, `< Error` among them.
+    pub cref_parent: Option<ClassId>,
     /// `true` for classes from the built-in exceptions
     /// (`parse::BUILTIN_EXCEPTIONS_RB`) -- together with `is_builtin`, the
     /// "defined before any user program runs" set that stays visible inside
@@ -875,6 +885,7 @@ impl Compiler {
                 name: "Object".to_string(),
                 box_id: 0,
                 lexical_parent: None,
+                cref_parent: None,
                 qualified_def: false,
                 is_bootstrap: false,
                 parent: None,
@@ -976,6 +987,7 @@ impl Compiler {
             let ci = &mut compiler.classes[b.id.0 as usize];
             ci.name = path.base().to_string();
             ci.lexical_parent = by_abi_name.get(parent).copied();
+            ci.cref_parent = ci.lexical_parent;
         }
         // Object's own slot in the chain (it isn't a BUILTINS row):
         // `Object < BasicObject`, `include Kernel` -- so EVERY chain ends
@@ -1323,9 +1335,9 @@ impl Compiler {
 
     /// The lexical cref chain enclosing (and including) `defining`,
     /// OUTERMOST FIRST -- exactly the `cref` argument `resolve_class`
-    /// takes. Walks `lexical_parent` links, stopping above a
-    /// `qualified_def` class (the `class Store::Item` form's body does not
-    /// see `Store` lexically -- see `ClassInfo::qualified_def`).
+    /// takes. Walks `cref_parent` links, which are `lexical_parent` except
+    /// where a qualified definition parts the two (see
+    /// `ClassInfo::cref_parent`).
     pub fn cref_of(&self, defining: Option<ClassId>) -> Vec<ClassId> {
         if let (Some(cache), Some(cid)) = (&self.frozen_crefs, defining)
             && let Some(chain) = cache.get(cid.0 as usize)
@@ -1342,12 +1354,7 @@ impl Compiler {
             if chain.len() > MAX_NESTING {
                 break;
             }
-            let ci = self.class(cid);
-            cur = if ci.qualified_def {
-                None
-            } else {
-                ci.lexical_parent
-            };
+            cur = self.class(cid).cref_parent;
         }
         chain.reverse();
         chain
@@ -1436,6 +1443,7 @@ impl Compiler {
             name,
             box_id: 0,
             lexical_parent: None,
+            cref_parent: None,
             qualified_def: false,
             is_bootstrap: false,
             parent,
