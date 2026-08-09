@@ -109,10 +109,19 @@ options:
                           left to measure, not just what has been
   --no-deps               don't resolve or fetch the gem's dependencies
   --limit <n>             stop after n gems
-  --jobs <n>              gems in flight at once (default: cpu count)
+  --jobs <n>              gems in flight at once (default: 4 -- each one is a
+                          whole compile, and memory is the limit, not cores)
   --timeout <seconds>     kill a gem that outruns it (default: 600)
   -h, --help              this message
 ";
+
+/// Gems in flight at once. A FIXED small number, not the cpu count: the limit
+/// here is memory, not cores. Each job is a whole `zeo` compile, and a
+/// rails-scale require graph takes gigabytes in the front end alone -- twelve
+/// of those at once exhausted a 16GB machine's memory and swap and panicked
+/// the kernel with a watchdog timeout. Raise it with `--jobs` on a machine
+/// with the headroom to spare.
+const DEFAULT_JOBS: usize = 4;
 
 /// Long enough that a rails-scale require graph finishes -- those take minutes
 /// in the front end alone -- and short enough that a gem which will never
@@ -1818,7 +1827,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut failing = false;
     let (mut unprobed, mut seed_index) = (false, false);
     let mut positional: Vec<String> = Vec::new();
-    let mut jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut jobs = DEFAULT_JOBS;
     let mut timeout = DEFAULT_TIMEOUT;
     let (mut build, mut run, mut allow_run) = (false, false, false);
 
