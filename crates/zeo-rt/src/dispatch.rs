@@ -4277,31 +4277,41 @@ pub fn send_value(
     send_value_in(0, recv, name, args, block)
 }
 
-/// A `def` in expression position (inside a block) installs on the block's
-/// runtime "default definee": for a Class/Module `self` (a `class_eval` /
-/// `Class.new` body) an ordinary instance method; for any other `self` (an
-/// `instance_exec` on a plain object) a SINGLETON method on that object. Which
-/// one only the runtime `self` decides, so codegen routes an instance `def`
-/// here rather than committing to `define_method`.
+/// A `def` in expression position (inside a block) installs on the "default
+/// definee", which in ruby belongs to the FRAME and is NOT `self`. An ordinary
+/// block changes it not at all, so it stays the CREF's -- `cref`, which
+/// codegen knows outright. Two callers replace it, and only the runtime knows
+/// they are on the stack:
+///
+/// * `instance_eval`/`instance_exec` -- the receiver's singleton class. That
+///   is how `SingleForwardable` installs its delegators: it builds a
+///   `proc { def name(...) ... end }` and `instance_eval`s it.
+/// * `class_eval`/`class_exec`/`Class.new`/`Module.new` -- the module itself,
+///   which is why `Class.new { def built; end }` gives the ANONYMOUS class an
+///   instance method though the block was written at the top level.
+///
+/// Deriving the definee from `self` instead answers all three of those
+/// correctly and every other block wrongly: `[1].each { def m; end }` and a
+/// `def` inside a `def` both came out as singleton methods of whatever object
+/// happened to be self, so `Object` never gained them.
 pub fn define_in_default_definee(
-    recv: &RubyValue,
+    cref: &RubyValue,
+    slf: &RubyValue,
     name: Symbol,
     body: RubyValue,
     private: bool,
 ) -> Result<RubyValue, Signal> {
-    // A Class/Module self takes an INSTANCE method -- unless the `def` is
-    // running inside an `instance_eval`/`instance_exec`, whose definee is the
-    // singleton class. That is how `SingleForwardable` installs its
-    // delegators: it builds a `proc { def name(...) ... end }` and
-    // `instance_eval`s it against the module.
-    let installer =
-        if matches!(recv, RubyValue::Class(_)) && !crate::runtime_meta::singleton_definee(recv) {
-            "define_method"
-        } else {
-            "define_singleton_method"
-        };
+    // `(definee, installer, the cref's own -- the only one the caller's
+    // top-level verdict is about)`.
+    let (definee, installer, from_cref) = if crate::runtime_meta::singleton_definee(slf) {
+        (slf.clone(), "define_singleton_method", false)
+    } else if let Some(cid) = crate::runtime_meta::module_definee(slf) {
+        (RubyValue::Class(cid), "define_method", false)
+    } else {
+        (cref.clone(), "define_method", true)
+    };
     let out = send_value(
-        recv,
+        &definee,
         Symbol::intern(installer),
         &[RubyValue::Symbol(name), body],
         None,
@@ -4311,8 +4321,11 @@ pub fn define_in_default_definee(
     // bare one, and only the caller reads its `:m`. `define_method` installs
     // public, so the mark is a second step. The caller decides: it is a
     // question about where the `def` was WRITTEN, which is compile-time
-    // knowledge, and `instance_eval` can put this same call on any object.
-    if private && let RubyValue::Class(id) = recv {
+    // knowledge, and an `*_eval` can put this same call on any object.
+    if private
+        && from_cref
+        && let RubyValue::Class(id) = &definee
+    {
         crate::runtime_meta::runtime_set_visibility(
             *id,
             &[RubyValue::Symbol(name)],

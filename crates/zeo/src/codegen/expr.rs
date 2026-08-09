@@ -1488,16 +1488,24 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // Module; naming the enclosing class here answered both wrongly.
             // `boxed_implicit_self` is that "self here" rule and is total, so
             // it is not re-derived.
+            // The CREF's own definee, which is where a plain `def` lands
+            // unless an `*_eval` replaced it -- a question about where the
+            // `def` was WRITTEN, so it is answered here rather than read off
+            // a runtime self.
+            // `defining_class`, not `class_self`: the cref is where the `def`
+            // was WRITTEN. The two differ for an inherited class method (whose
+            // copies share one cref) and for a `class << self` body, whose
+            // cref is the SINGLETON -- `lexical_home`, which `defining_class`
+            // already carries.
+            let cref_definee = {
+                let cid = cx.defining_class.unwrap_or(crate::compiler::OBJECT_CLASS).0;
+                quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
+            };
             let definee = if cx.self_is_dynamic {
                 super::call::boxed_implicit_self(cx)
                     .expect("a dynamic-self `def` in expression position must have a boxed self")
             } else {
-                let cid = cx
-                    .class_self
-                    .or(cx.current_class)
-                    .unwrap_or(crate::compiler::OBJECT_CLASS)
-                    .0;
-                quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
+                cref_definee.clone()
             };
             let receiver =
                 super::call::boxed_implicit_self(cx).expect("boxed_implicit_self is total");
@@ -1552,19 +1560,20 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                     )?
                 }
             } else if *is_def {
-                // A real `def` installs on the runtime default definee: an
-                // instance method on a Class/Module self, a singleton method on
-                // any other (`instance_exec { def m; end }`).
+                // A real `def` installs on the default definee: the CREF's,
+                // unless an `*_eval`/`Class.new` on the stack replaced it --
+                // which only the runtime can say, so both candidates go.
                 //
                 // Written at the TOP LEVEL it is a PRIVATE instance method of
                 // `Object`, exactly as a bare top-level `def` is (which analyze
                 // registers that way before ever reaching expression position).
-                // Only a STATIC self can be the top level -- a dynamic one is a
-                // block's or a method's, and `def` in either is public.
-                let top_level =
-                    !cx.self_is_dynamic && cx.class_self.is_none() && cx.current_class.is_none();
+                // The visibility belongs to the FRAME, and a block inherits its
+                // frame's -- so a `def` in a top-level block is private too,
+                // while one inside any method body is public.
+                let top_level = cx.defining_class.is_none() && cx.current_method.is_none();
                 quote! {
                     zeo_rt::define_in_default_definee(
+                        &#cref_definee,
                         &#definee,
                         #name_sym,
                         #proc,

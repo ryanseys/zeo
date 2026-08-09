@@ -929,9 +929,10 @@ pub(crate) fn define_value_class(
 
     let class_val = RubyValue::Class(class_id);
     // A class-body block (`Struct.new(:x) do def dist; ...; end end`) runs with
-    // `self` bound to the new class, so its `def`s register on it.
+    // `self` AND the default definee bound to the new class, so its `def`s
+    // register on it rather than on the cref the block was written in.
     if let Some(RubyValue::Proc(p)) = &block {
-        p.call_with_self(&class_val, &[])?;
+        crate::runtime_meta::with_body_frame(class_id, || p.call_with_self(&class_val, &[]))?;
     }
     Ok(class_val)
 }

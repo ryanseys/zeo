@@ -1,0 +1,17 @@
+true
+"block"
+true
+"nested"
+[:blocky, :build, :made]
+[]
+[:from_block]
+[:go]
+"built"
+[:built]
+[:evaled, :execed]
+false
+"mine"
+[:only_mine]
+false
+[:nested_only, :only_mine]
+[:after_nesting, :evaled, :execed]

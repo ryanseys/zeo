@@ -819,6 +819,20 @@ pub(crate) fn with_singleton_definee<T>(
     out
 }
 
+/// The class an enclosing `class_eval`/`class_exec`/`Class.new`/`Module.new`
+/// block made the default definee -- [`singleton_definee`]'s module twin, and
+/// what makes a `def` in such a block land on the new class rather than on
+/// the cref where the block was written.
+///
+/// `slf` has to still BE that class: a `def` reached through some other
+/// object's method, from inside the block, follows the ordinary rule.
+pub(crate) fn module_definee(slf: &RubyValue) -> Option<ClassId> {
+    let RubyValue::Class(cid) = slf else {
+        return None;
+    };
+    BODY_FRAMES.with(|s| s.borrow().last().map(|f| f.class).filter(|c| c == cid))
+}
+
 /// Whether a `def` running with `recv` as its self installs on the singleton
 /// class -- true exactly inside an `instance_eval`/`instance_exec` of `recv`.
 pub(crate) fn singleton_definee(recv: &RubyValue) -> bool {
