@@ -12,10 +12,10 @@
 //!
 //! The root list has grown well past the collection roots it started with --
 //! `StringScanner`, `StringIO`, `File`, `Set`, `Enumerator`, `Time`, `Thread`,
-//! `Range` -- because nothing about the bridge is Array/String/Hash-specific:
-//! the payload is just a `RubyValue`. `Regexp` stays out only because
-//! subclassing it is vanishingly rare, and `Class`/`Module` because a class id
-//! has no per-value dispatch to hang a payload on.
+//! `Range`, `Dir`, `Pathname`, `Mutex`, `Monitor` -- because nothing
+//! about the bridge is Array/String/Hash-specific: the payload is just a
+//! `RubyValue`. `Class`/`Module` stay out because a class id has no per-value
+//! dispatch to hang a payload on.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -159,12 +159,16 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | HASH_CLASS
             | zeo_abi::STRING_SCANNER_CLASS
             | zeo_abi::STRINGIO_CLASS
+            | zeo_abi::PATHNAME_CLASS
             | zeo_abi::FILE_CLASS
             | zeo_abi::SET_CLASS
             | zeo_abi::ENUMERATOR_CLASS
             | zeo_abi::TIME_CLASS
             | zeo_abi::THREAD_CLASS
             | zeo_abi::QUEUE_CLASS
+            | zeo_abi::SIZED_QUEUE_CLASS
+            | zeo_abi::MUTEX_CLASS
+            | zeo_abi::MONITOR_CLASS
             | zeo_abi::TCPSOCKET_CLASS
             | zeo_abi::UDP_SOCKET_CLASS
             | zeo_abi::UNIX_SOCKET_CLASS
@@ -177,6 +181,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::OPENSSL_DIGEST_CLASS
             | zeo_abi::FIBER_CLASS
             | zeo_abi::RANGE_CLASS
+            | zeo_abi::DIR_CLASS
     )
 }
 
@@ -388,7 +393,11 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // constructor, since the native object isn't a `RubyValue` variant.
         // Built through the root's own constructor: the native object is not
         // a `RubyValue` variant, so there is nothing to spell directly.
-        zeo_abi::STRING_SCANNER_CLASS | zeo_abi::STRINGIO_CLASS => {
+        // `Pathname` joins these two: its constructor takes one string, and
+        // the empty path is a real Pathname (`Pathname.new("")` is legal, and
+        // answers `""` from `to_s`). A subclass with its own `initialize`
+        // re-seats it through `super`, which replaces the stored path in place.
+        zeo_abi::STRING_SCANNER_CLASS | zeo_abi::STRINGIO_CLASS | zeo_abi::PATHNAME_CLASS => {
             let empty = RubyValue::Str(string_new(String::new()));
             construct_root_payload(root, &[empty], None).unwrap_or(RubyValue::Nil)
         }
@@ -411,7 +420,23 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // `Queue.new` takes no arguments, so an empty queue IS the empty form.
         // A subclass that writes its own `initialize` still calls `super()`
         // and gets this same queue back.
-        zeo_abi::QUEUE_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
+        // `Queue.new`, `Mutex.new` and `Monitor.new` all take no arguments, so
+        // the empty form is a real one -- and a subclass that writes its own
+        // `initialize` still calls `super()` and gets the same object back.
+        // These three are what a gem subclasses to bolt a lock onto its own
+        // state (`class Registry < Monitor`), so the payload is the point.
+        zeo_abi::QUEUE_CLASS | zeo_abi::MUTEX_CLASS | zeo_abi::MONITOR_CLASS => {
+            construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil)
+        }
+        // `SizedQueue.new` needs a maximum, and no maximum is the right one to
+        // invent -- so this is the `File` shape: the subclass's own
+        // `initialize` seats the real queue through `super(max)`, and a
+        // subclass that never calls `super` fails loudly instead of quietly
+        // holding a queue sized by the compiler.
+        zeo_abi::SIZED_QUEUE_CLASS => RubyValue::Nil,
+        // A `Dir` needs a directory that exists, and inventing one would mean
+        // opening a path the program never named -- the `File` shape again.
+        zeo_abi::DIR_CLASS => RubyValue::Nil,
         // The IO family, `OpenSSL::SSL::SSLSocket` and `OpenSSL::Cipher`: no
         // descriptor, peer or algorithm can be conjured, so every one of these
         // is the `File` shape -- the subclass's own `initialize` seats the real
@@ -444,10 +469,17 @@ fn construct_root_payload(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let table = crate::builtins::class_method_table(root)
-        .expect("value payload root has a class-method table");
-    let ctor = table("new").expect("value payload root has a `new` constructor");
-    ctor(&RubyValue::Class(root), args, block)
+    // A `new` CLASS-METHOD row first, which most roots have. A root whose
+    // `new` is a `ConstructorFn` instead has no such row on purpose:
+    // `Pathname.new` is inherited from `Class` in CRuby, so listing it would
+    // put it in `Pathname.singleton_methods(false)` where ruby has nothing.
+    // Both spellings build the same value, so either serves here.
+    if let Some(ctor) = crate::builtins::class_method_table(root).and_then(|t| t("new")) {
+        return ctor(&RubyValue::Class(root), args, block);
+    }
+    let ctor = crate::dispatch::constructor_of(root)
+        .expect("a value payload root has a `new` row or a constructor");
+    ctor(root, args, block)
 }
 
 /// The `ConstructorFn` behind every value-builtin subclass. With a user

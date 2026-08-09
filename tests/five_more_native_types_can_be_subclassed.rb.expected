@@ -1,0 +1,14 @@
+["/tmp/x", "x"]
+true
+["logs:/var/log", :logs, "Tagged"]
+["/var/log/app.log", true, ["var", "log"]]
+["log", "/var/log/app.log", "/var/log"]
+true
+true
+[1, 2, [:a, :b]]
+[true, false]
+["db", false]
+true
+[:inside, "Guard"]
+[2, 2, 2, 1, "Bounded"]
+["tmp", "Listing", true]

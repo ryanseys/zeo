@@ -2716,8 +2716,8 @@ fn register_class(
                         //    (immediates): the DEFINITION is allowed but has no
                         //    instances -- registry-entry-only, `.new` raises
                         //    NoMethodError (`is_immediate_subclass`).
-                        // Still rejected: `Range` (no runtime constructor) and
-                        // `Class`/`Module` (no per-value dispatch).
+                        // Still rejected: `Class`/`Module` (no per-value
+                        // dispatch to hang a payload on).
                         use crate::compiler::{
                             ARRAY_CLASS, BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS,
                             FFI_STRUCT_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, NIL_CLASS,
@@ -2773,6 +2773,13 @@ fn register_class(
                                 // `ManagedFile < File` are the whole aws-sdk-*
                                 // family's blocker between them.
                                 | zeo_abi::STRINGIO_CLASS
+                                // `Pathname`: the payload is the path value.
+                                // `Pathname.new("")` is a real empty form, so
+                                // a subclass without its own `initialize`
+                                // seeds straight from the root -- and one WITH
+                                // an `initialize` re-seats through `super`,
+                                // which replaces the stored path in place.
+                                | zeo_abi::PATHNAME_CLASS
                                 | zeo_abi::FILE_CLASS
                                 | zeo_abi::SET_CLASS
                                 // `Enumerator`: the payload is the
@@ -2794,6 +2801,21 @@ fn register_class(
                                 // the real one through `super`, which is
                                 // exactly why these gems subclass it.
                                 | zeo_abi::THREAD_CLASS
+                                // `Mutex`/`Monitor`: the payload is the lock,
+                                // and both constructors take no arguments, so
+                                // the empty form is real. A gem subclasses
+                                // these to bolt a lock onto state of its own,
+                                // which is exactly the payload shape.
+                                | zeo_abi::MUTEX_CLASS
+                                | zeo_abi::MONITOR_CLASS
+                                // `Dir`: the `File` shape -- a directory that
+                                // exists is needed, so a subclass opens the
+                                // real one through `super(path)`.
+                                | zeo_abi::DIR_CLASS
+                                // `SizedQueue`: the `File` shape -- a maximum
+                                // cannot be invented, so a subclass seats the
+                                // real queue through `super(max)`.
+                                | zeo_abi::SIZED_QUEUE_CLASS
                                 // `Queue`: the payload is the
                                 // `RubyValue::Queue` handle, and `Queue.new`
                                 // takes no arguments, so the empty form is a

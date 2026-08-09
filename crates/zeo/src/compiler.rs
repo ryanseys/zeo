@@ -1664,12 +1664,16 @@ impl Compiler {
                     | HASH_CLASS
                     | zeo_abi::STRING_SCANNER_CLASS
                     | zeo_abi::STRINGIO_CLASS
+                    | zeo_abi::PATHNAME_CLASS
                     | zeo_abi::FILE_CLASS
                     | zeo_abi::SET_CLASS
                     | zeo_abi::ENUMERATOR_CLASS
                     | zeo_abi::TIME_CLASS
                     | zeo_abi::THREAD_CLASS
                     | zeo_abi::QUEUE_CLASS
+                    | zeo_abi::SIZED_QUEUE_CLASS
+                    | zeo_abi::MUTEX_CLASS
+                    | zeo_abi::MONITOR_CLASS
                     // The IO family. Several roots sit on one chain, and the
                     // walk above picks the NEAREST -- so `class TCP <
                     // TCPSocket` seeds its payload from `TCPSocket.new`, not
@@ -1686,6 +1690,7 @@ impl Compiler {
                     | zeo_abi::OPENSSL_DIGEST_CLASS
                     | zeo_abi::FIBER_CLASS
                     | zeo_abi::RANGE_CLASS
+                    | zeo_abi::DIR_CLASS
             )
         })
     }

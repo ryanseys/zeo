@@ -88,10 +88,45 @@ fn recv_path(recv: &RubyValue) -> String {
     }
 }
 
-fn as_pathname(v: &RubyValue) -> Option<&RPathname> {
+/// The `RPathname` behind a value -- through a SUBCLASS's payload as well as
+/// directly, so `Pathname.new("/usr") == MyPath.new("/usr")` holds the way it
+/// does in ruby. A `class MyPath < Pathname` instance is a `ValueSubclass`
+/// husk whose payload is the real Pathname, and a bare downcast sees only the
+/// husk.
+fn as_pathname(v: &RubyValue) -> Option<PathnameRef<'_>> {
     match v {
-        RubyValue::Object(o) => o.as_any().downcast_ref::<RPathname>(),
+        RubyValue::Object(o) => match o.as_any().downcast_ref::<RPathname>() {
+            Some(p) => Some(PathnameRef::Direct(p)),
+            None => match o.builtin_payload() {
+                Some(RubyValue::Object(inner))
+                    if inner.as_any().downcast_ref::<RPathname>().is_some() =>
+                {
+                    Some(PathnameRef::Payload(inner))
+                }
+                _ => None,
+            },
+        },
         _ => None,
+    }
+}
+
+/// Either borrow of an `RPathname`: one held directly by the value, or one
+/// owned by a subclass husk's payload (which must be kept alive to borrow).
+enum PathnameRef<'a> {
+    Direct(&'a RPathname),
+    Payload(RObj),
+}
+
+impl std::ops::Deref for PathnameRef<'_> {
+    type Target = RPathname;
+    fn deref(&self) -> &RPathname {
+        match self {
+            PathnameRef::Direct(p) => p,
+            PathnameRef::Payload(o) => o
+                .as_any()
+                .downcast_ref::<RPathname>()
+                .expect("checked on construction"),
+        }
     }
 }
 
