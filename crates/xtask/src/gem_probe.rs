@@ -189,6 +189,12 @@ enum Outcome {
     /// that zeo never made.
     Timeout,
     FetchFailed(String),
+    /// The gem's source is on disk, but building its isolated load-path view
+    /// failed. NOT a `fetch-failed`: nothing was downloaded, the registry was
+    /// never asked, and re-running the fetch cannot help. Its own outcome so a
+    /// sweep's fetch column keeps meaning "the registry or the network", which
+    /// is what anyone reading it goes on to check.
+    ViewFailed(String),
     /// rustc rejected the Rust zeo emitted. zeo's to fix, and a sharper bug
     /// than a lowering gap: the front end believed it had produced a program.
     RustcError(String),
@@ -211,6 +217,7 @@ impl Outcome {
             Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::Timeout => "timeout",
             Outcome::FetchFailed(_) => "fetch-failed",
+            Outcome::ViewFailed(_) => "view-failed",
             Outcome::RustcError(_) => "rustc-error",
             Outcome::RunFailed(_) => "run-failed",
         }
@@ -222,6 +229,7 @@ impl Outcome {
             | Outcome::InvalidRuby(d)
             | Outcome::MissingDependency(d)
             | Outcome::FetchFailed(d)
+            | Outcome::ViewFailed(d)
             | Outcome::CompilerPanic(d)
             | Outcome::RustcError(d)
             | Outcome::RunFailed(d) => d,
@@ -241,6 +249,7 @@ impl Outcome {
             "timeout" => Outcome::Timeout,
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
+            "view-failed" => Outcome::ViewFailed(detail.to_string()),
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
             "rustc-error" => Outcome::RustcError(detail.to_string()),
             "run-failed" => Outcome::RunFailed(detail.to_string()),
@@ -254,7 +263,7 @@ impl Outcome {
     fn implied_stage(&self) -> Stage {
         match self {
             Outcome::FetchFailed(_) => Stage::Fetch,
-            Outcome::NoLibDir | Outcome::NoEntryPoint => Stage::Unpack,
+            Outcome::ViewFailed(_) | Outcome::NoLibDir | Outcome::NoEntryPoint => Stage::Unpack,
             Outcome::RustcError(_) => Stage::BuildsBin,
             Outcome::RunFailed(_) => Stage::Runs,
             _ => Stage::EmitsRs,
@@ -526,7 +535,24 @@ fn link_gem_into_view(view: &Path, src: &Path, gem: &str) -> Result<(), String> 
             continue;
         }
         let Some(base) = p.file_name() else { continue };
-        std::os::unix::fs::symlink(&p, dest.join(base)).map_err(|e| e.to_string())?;
+        let link = dest.join(base);
+        std::os::unix::fs::symlink(&p, &link).map_err(|e| {
+            // On a case-insensitive filesystem two gems whose names differ only
+            // in case share one directory, so the second one's links land on
+            // the first one's. `Cartesian` depends on `cartesian`, and macOS
+            // cannot hold both. Say that, rather than leaving `File exists` for
+            // a reader to work out.
+            match e.kind() {
+                // No absolute path in the text: this goes to a committed
+                // ledger and must not carry one machine's directory layout.
+                std::io::ErrorKind::AlreadyExists => format!(
+                    "`{gem}` is already in the view -- on a case-insensitive \
+                     filesystem it cannot be told from a dependency spelled \
+                     differently only in case"
+                ),
+                _ => e.to_string(),
+            }
+        })?;
     }
     write_stub_gemspec(&dest, gem, &unpacked_version(src))
 }
@@ -661,7 +687,16 @@ fn isolate(root: &Path, name: &str, deps: &[String]) -> Result<PathBuf, String> 
     let view = root.join("vendor/.probe").join(name);
     let _ = std::fs::remove_dir_all(&view);
     std::fs::create_dir_all(&view).map_err(|e| e.to_string())?;
+    // DEDUPLICATED. A gem may list itself among its runtime dependencies --
+    // jeweler-generated gemspecs do it routinely -- and the registry may name
+    // one twice. Linking a name a second time re-symlinks entries that already
+    // exist, which fails with EEXIST and lost the gem a verdict entirely: 257
+    // corpus rows, `Authorizr` and its self-dependency among them.
+    let mut linked = std::collections::HashSet::new();
     for gem in std::iter::once(&name.to_string()).chain(deps) {
+        if !linked.insert(gem.as_str()) {
+            continue;
+        }
         let src = vendor_dir(root).join(gem);
         if src.is_dir() {
             link_gem_into_view(&view, &src, gem)?;
@@ -704,7 +739,7 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
     // `classify` reads that.
     let view = match isolate(root, name, deps) {
         Ok(v) => v,
-        Err(e) => return Verdict::stopped(Stage::Fetch, Outcome::FetchFailed(e)),
+        Err(e) => return Verdict::stopped(Stage::Unpack, Outcome::ViewFailed(e)),
     };
     let Some(feature) = entry_point(dir, name) else {
         return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
@@ -964,12 +999,20 @@ fn classify(err: &str, root: &Path) -> Outcome {
     } else {
         msg
     };
+    // NATIVE EXTENSION FIRST. zeo says so INSIDE a `cannot load such file`
+    // message ("cannot load such file -- nokogiri: this gem has a native (C)
+    // extension ..."), so testing the load-failure prefix first swallowed
+    // every one of them into `missing-dependency` and left this arm dead. The
+    // two are different verdicts: a missing dependency is a gem the sweep
+    // failed to put on the load path, and re-running with it there changes the
+    // answer; a native extension is a gem zeo cannot compile at all until an
+    // ext exists or the gem is reached through FFI.
+    if msg.contains("native (C) extension") {
+        return Outcome::NativeExtension;
+    }
     if let Some(rest) = msg.split("cannot load such file -- ").nth(1) {
         let feature = rest.split_whitespace().next().unwrap_or(rest);
         return Outcome::MissingDependency(feature.trim_matches(['`', ':', '.']).to_string());
-    }
-    if msg.contains("native (C) extension") {
-        return Outcome::NativeExtension;
     }
     // zeo parses with prism, which IS CRuby's parser, so its parse errors are
     // the ones `ruby -c` gives. Those gems do not load under any current ruby
@@ -2093,6 +2136,19 @@ mod tests {
             ),
             Outcome::NativeExtension
         );
+        // zeo's OTHER native-extension message is worded as a load failure,
+        // and it is the one the loader actually emits. Testing only the
+        // gem-store wording above is why the arm sat dead: the load-failure
+        // prefix matched first and every one of these was filed as a missing
+        // dependency on itself.
+        assert_eq!(
+            classify(
+                "cannot load such file -- nokogiri: this gem has a native (C) extension \
+                 zeo does not provide a built-in for. See docs/EXTENSIONS.md",
+                root
+            ),
+            Outcome::NativeExtension
+        );
         assert!(matches!(
             classify("define_method's second argument must be a block", root),
             Outcome::LoweringGap(_)
@@ -2114,6 +2170,41 @@ mod tests {
             ),
             Outcome::LoweringGap(_)
         ));
+    }
+
+    /// A gem may name ITSELF among its runtime dependencies -- jeweler-
+    /// generated gemspecs do it routinely, and `Authorizr` is one. Linking a
+    /// name twice re-symlinks entries that already exist, which fails with
+    /// EEXIST and cost the gem a verdict entirely: 257 corpus rows, all of
+    /// them filed as `fetch-failed` though nothing was ever fetched.
+    #[test]
+    fn a_self_dependency_does_not_break_the_view() {
+        let root = scratch("self-dep");
+        let src = root.join("vendor/gems/Selfish");
+        std::fs::create_dir_all(src.join("lib")).unwrap();
+        std::fs::write(src.join("lib/selfish.rb"), "").unwrap();
+        std::fs::write(src.join("Selfish.gemspec"), "").unwrap();
+
+        let deps = vec!["Selfish".to_string(), "Selfish".to_string()];
+        let view = isolate(&root, "Selfish", &deps).expect("a self-dependency is not an error");
+        assert!(view.join("Selfish/lib").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A view that cannot be built is NOT a fetch failure: the source is
+    /// already on disk, the registry was never asked, and re-running the fetch
+    /// cannot change the answer.
+    #[test]
+    fn a_view_failure_is_not_a_fetch_failure() {
+        assert_eq!(Outcome::ViewFailed("boom".into()).tag(), "view-failed");
+        assert_eq!(
+            Outcome::ViewFailed("boom".into()).implied_stage(),
+            Stage::Unpack
+        );
+        assert_eq!(
+            Outcome::from_ledger("view-failed", "boom"),
+            Outcome::ViewFailed("boom".into())
+        );
     }
 
     /// A panic reaches stderr with its message on the line AFTER `panicked at`,
