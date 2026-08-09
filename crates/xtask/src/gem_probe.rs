@@ -78,8 +78,10 @@ selection (at least one, they add up):
   --popular <n>           the n most-downloaded gems in the index
   --index                 every gem in the index
   --all                   re-probe every gem already in the ledger
-  --failing               re-probe every ledger row that isn't `ok` (the
-                          frontier is excluded -- it is not a failure)
+  --failing               re-probe every ledger row that isn't `ok`, except
+                          the frontier and the rows no compiler change can
+                          move (no-lib-dir, no-entry-point); --refresh
+                          includes those too
   --unprobed              probe ledger rows that have no verdict yet
   --matching <text>       re-probe rows whose outcome detail contains <text>
                           -- how a landed fix is measured
@@ -992,6 +994,18 @@ fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
         ));
     }
     classify(&text, root)
+}
+
+/// Whether a verdict is one no change to zeo can move, so `--failing` leaves
+/// it alone.
+///
+/// `no-lib-dir` and `no-entry-point` are facts about what the gem's archive
+/// contains: the compiler never ran, and running a newer one changes nothing.
+/// Everything else CAN move -- `invalid-ruby` looks terminal (prism is ruby's
+/// own parser, so those gems load under no ruby either) but a re-probe still
+/// has to reach it to record WHICH pass refused.
+fn terminal_for_a_compiler_change(outcome: &Outcome) -> bool {
+    matches!(outcome, Outcome::NoLibDir | Outcome::NoEntryPoint)
 }
 
 /// Which front-end pass rejected the gem, read off the diagnostic CODE zeo
@@ -1966,7 +1980,17 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 // `unprobed` is not a failure -- it is the frontier, and
                 // sweeping it here would turn "re-check what a fix moved" into
                 // a run over every gem rubygems has ever published.
-                .filter(|(_, r)| r.outcome != Outcome::Ok && r.outcome != Outcome::Unprobed)
+                //
+                // A row the COMPILER cannot change is skipped too, unless
+                // `--refresh` asks for it: `no-lib-dir` and `no-entry-point`
+                // are facts about what the archive contains, and re-probing
+                // them spends a registry request each to learn what the row
+                // already says. They are 10,780 of the 16,238 non-`ok` rows.
+                .filter(|(_, r)| {
+                    r.outcome != Outcome::Ok
+                        && r.outcome != Outcome::Unprobed
+                        && (refresh || !terminal_for_a_compiler_change(&r.outcome))
+                })
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
         );
     }
@@ -2435,6 +2459,30 @@ mod tests {
             ),
             Outcome::LoweringGap(_)
         ));
+    }
+
+    /// `--failing` is "re-check what a fix moved", so it must not spend a
+    /// registry request per gem on rows a compiler change cannot reach. Those
+    /// are the archive facts and nothing else -- a gap, a panic, a missing
+    /// dependency and a parse rejection all still have to be measured.
+    #[test]
+    fn only_the_archive_facts_are_terminal() {
+        assert!(terminal_for_a_compiler_change(&Outcome::NoLibDir));
+        assert!(terminal_for_a_compiler_change(&Outcome::NoEntryPoint));
+        for movable in [
+            Outcome::LoweringGap("a gap".into()),
+            Outcome::MissingDependency("x".into()),
+            Outcome::InvalidRuby("parse error".into()),
+            Outcome::CompilerPanic("boom".into()),
+            Outcome::NativeExtension,
+            Outcome::Timeout,
+            Outcome::FetchFailed("404".into()),
+        ] {
+            assert!(
+                !terminal_for_a_compiler_change(&movable),
+                "{movable:?} must still be re-probed"
+            );
+        }
     }
 
     /// zeo names the pass that rejected on the first line of every diagnostic,
