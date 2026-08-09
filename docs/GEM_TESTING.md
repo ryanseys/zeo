@@ -169,7 +169,7 @@ One file, one row per gem:
 
 | File | Holds |
 |---|---|
-| [`../conformance/gem-probe.tsv`](../conformance/gem-probe.tsv) | every probed gem and its verdict |
+| [`../conformance/gem-probe.tsv`](../conformance/gem-probe.tsv) | every gem the registry names — its verdict, or `unprobed` |
 | [`../conformance/gem-probe-ignored.tsv`](../conformance/gem-probe-ignored.tsv) | gems the sweep declines to probe, and why |
 | [`../conformance/gem-probe.md`](../conformance/gem-probe.md) | the counts, regenerated with the ledger |
 
@@ -195,6 +195,35 @@ own. A fix also showed up as a deletion in one file and an insertion in
 another, rather than as one changed row. `gem-probe` still READS the old pair
 if it finds them, so an older branch parses, and still refuses to run when a
 gem appears in two of them.
+
+### The frontier
+
+The ledger holds a row for every gem the registry names, not only the ones that
+have been probed. A gem waiting for its first verdict reads:
+
+```
+MARQ         queued   unprobed
+```
+
+It carries a name and nothing else — no version, no digest — so it churns only
+when rubygems gains a gem, and a diff shows exactly what the registry added.
+`queued` is ordered below every real rung, so no `stage >= ...` test counts it
+as progress.
+
+This is what makes "how much of rubygems have we measured" a question the
+committed file answers, rather than one that needs the gitignored index cache
+beside it.
+
+```console
+$ cargo xtask gem-probe --refresh-index --seed-index   # record what is left
+$ cargo xtask gem-probe --unprobed --limit 500         # then work through it
+```
+
+Two rules keep the frontier from distorting everything else, and both are
+tested: **the denominators count gems with a verdict, never the frontier**, and
+`--failing` skips it — an unprobed gem is not a failure, and sweeping it there
+would turn "re-check what a fix moved" into a run over every gem rubygems has
+published.
 
 An ignored gem has no verdict, so it has no row — adding a name to
 `gem-probe-ignored.tsv` prunes it on the next write. Every reason there is a

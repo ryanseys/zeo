@@ -78,7 +78,9 @@ selection (at least one, they add up):
   --popular <n>           the n most-downloaded gems in the index
   --index                 every gem in the index
   --all                   re-probe every gem already in the ledger
-  --failing               re-probe every ledger row that isn't `ok`
+  --failing               re-probe every ledger row that isn't `ok` (the
+                          frontier is excluded -- it is not a failure)
+  --unprobed              probe ledger rows that have no verdict yet
   --matching <text>       re-probe rows whose outcome detail contains <text>
                           -- how a landed fix is measured
   --matching-name <text>  re-probe rows whose gem NAME contains <text>, for a
@@ -98,6 +100,9 @@ options:
   --check                 exit non-zero if any probed gem regressed
   --refresh               re-probe even names already in the ledger
   --refresh-index         fetch a fresh copy of the rubygems index
+  --seed-index            record every gem in the index that has no row yet,
+                          as `queued unprobed` -- makes the ledger say what is
+                          left to measure, not just what has been
   --no-deps               don't resolve or fetch the gem's dependencies
   --limit <n>             stop after n gems
   --jobs <n>              gems in flight at once (default: cpu count)
@@ -127,6 +132,10 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 /// `runs` can see.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Stage {
+    /// No rung reached: the gem is KNOWN (the registry names it) and has never
+    /// been probed. Ordered below `Fetch` so every `stage >= ...` test treats
+    /// it as the bottom.
+    Queued,
     Fetch,
     Unpack,
     EmitsRs,
@@ -137,6 +146,7 @@ enum Stage {
 impl Stage {
     fn tag(self) -> &'static str {
         match self {
+            Stage::Queued => "queued",
             Stage::Fetch => "fetch",
             Stage::Unpack => "unpack",
             Stage::EmitsRs => "emits-rs",
@@ -147,6 +157,7 @@ impl Stage {
 
     fn from_tag(tag: &str) -> Option<Stage> {
         match tag {
+            "queued" => Some(Stage::Queued),
             "fetch" => Some(Stage::Fetch),
             "unpack" => Some(Stage::Unpack),
             "emits-rs" => Some(Stage::EmitsRs),
@@ -188,6 +199,11 @@ enum Outcome {
     /// verdict, and recording it as one would put a diagnosis in the ledger
     /// that zeo never made.
     Timeout,
+    /// Named by the registry and never probed. Not a failure and not a
+    /// verdict -- it is the FRONTIER, the work still to do, and it is in the
+    /// ledger so that "how much of rubygems have we measured" is a question
+    /// the file answers rather than one that needs the index beside it.
+    Unprobed,
     FetchFailed(String),
     /// The gem's source is on disk, but building its isolated load-path view
     /// failed. NOT a `fetch-failed`: nothing was downloaded, the registry was
@@ -216,6 +232,7 @@ impl Outcome {
             Outcome::NoEntryPoint => "no-entry-point",
             Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::Timeout => "timeout",
+            Outcome::Unprobed => "unprobed",
             Outcome::FetchFailed(_) => "fetch-failed",
             Outcome::ViewFailed(_) => "view-failed",
             Outcome::RustcError(_) => "rustc-error",
@@ -248,6 +265,7 @@ impl Outcome {
             "no-entry-point" => Outcome::NoEntryPoint,
             "timeout" => Outcome::Timeout,
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
+            "unprobed" => Outcome::Unprobed,
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
             "view-failed" => Outcome::ViewFailed(detail.to_string()),
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
@@ -262,6 +280,7 @@ impl Outcome {
     /// ledger written before the `stage` column existed.
     fn implied_stage(&self) -> Stage {
         match self {
+            Outcome::Unprobed => Stage::Queued,
             Outcome::FetchFailed(_) => Stage::Fetch,
             Outcome::ViewFailed(_) | Outcome::NoLibDir | Outcome::NoEntryPoint => Stage::Unpack,
             Outcome::RustcError(_) => Stage::BuildsBin,
@@ -1463,9 +1482,21 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
          timings are not, and go to the gitignored `gem-probe-timings.tsv` instead.\n\n\
          `gem-probe-ignored.tsv` lists gems the sweep declines to probe, each with a \
          reason. Those are facts about the gem or the platform, never about zeo -- a gem \
-         zeo cannot compile belongs in the ledger, where it counts against us.\n\n",
+         zeo cannot compile belongs in the ledger, where it counts against us.\n\n\
+         A `queued unprobed` row is the FRONTIER: a gem the registry names that has never \
+         been measured. It carries a name and nothing else, so it churns only when \
+         rubygems gains a gem, and it keeps every ratio here honest -- the denominators \
+         below count gems with a verdict, never the frontier.\n\n",
     );
-    md.push_str(&format!("{} gems probed.\n\n", rows.len()));
+    let measured = rows
+        .values()
+        .filter(|r| r.outcome != Outcome::Unprobed)
+        .count();
+    md.push_str(&format!(
+        "{measured} gems probed, {} of {} names known.\n\n",
+        measured,
+        rows.len()
+    ));
     md.push_str("| Stage | Outcome | Gems |\n|---|---|---|\n");
     for ((stage, tag), n) in &counts {
         md.push_str(&format!("| {stage} | {tag} | {n} |\n"));
@@ -1704,6 +1735,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut matching: Option<String> = None;
     let mut matching_name: Option<String> = None;
     let mut failing = false;
+    let (mut unprobed, mut seed_index) = (false, false);
     let mut positional: Vec<String> = Vec::new();
     let mut jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut timeout = DEFAULT_TIMEOUT;
@@ -1721,6 +1753,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             "--check" => check = true,
             "--no-deps" => no_deps = true,
             "--index" => index = true,
+            "--unprobed" => unprobed = true,
+            "--seed-index" => seed_index = true,
             "--refresh" => refresh = true,
             "--refresh-index" => refresh_index = true,
             "--limit" => match it.next().and_then(|v| v.parse().ok()) {
@@ -1798,6 +1832,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             ("--corpus", corpus),
             ("--all", all),
             ("--index", index),
+            ("--unprobed", unprobed),
             ("--failing", failing),
             ("--matching", matching.is_some()),
             ("--matching-name", matching_name.is_some()),
@@ -1861,8 +1896,21 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         names.extend(
             before
                 .iter()
-                .filter(|(_, r)| r.outcome != Outcome::Ok)
+                // `unprobed` is not a failure -- it is the frontier, and
+                // sweeping it here would turn "re-check what a fix moved" into
+                // a run over every gem rubygems has ever published.
+                .filter(|(_, r)| r.outcome != Outcome::Ok && r.outcome != Outcome::Unprobed)
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
+        );
+    }
+    // The frontier itself, without needing the index cache beside it: the
+    // ledger already names every gem waiting for a first verdict.
+    if unprobed {
+        names.extend(
+            before
+                .iter()
+                .filter(|(_, r)| r.outcome == Outcome::Unprobed)
+                .map(|(n, _)| (n.clone(), None)),
         );
     }
     if let Some(pat) = &matching {
@@ -1889,12 +1937,64 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         names.extend(
             before
                 .iter()
+                // Every gem with a VERDICT. The frontier is `--unprobed`,
+                // which is a different and much larger job.
+                .filter(|(_, r)| r.outcome != Outcome::Unprobed)
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
         );
     }
+    // Seeding records the FRONTIER: a row per gem the registry names and the
+    // ledger has never measured, so "how much of rubygems have we probed" is a
+    // question the committed file answers rather than one that needs the
+    // gitignored index cache beside it.
+    //
+    // The row is a name and nothing else -- no version, no digest, no detail.
+    // Versions move daily and a version here would churn the file for gems
+    // nobody has looked at; a bare name is stable until the gem is probed, so
+    // a diff shows exactly what rubygems gained.
+    if seed_index {
+        match registry_names(root, refresh_index) {
+            Ok(all_names) => {
+                let mut rows = match read_ledger(root) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("gem-probe: reading the ledger: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let fresh: Vec<String> = all_names
+                    .into_iter()
+                    .filter(|n| !rows.contains_key(n))
+                    .collect();
+                let added = fresh.len();
+                for n in fresh {
+                    rows.insert(n, Row::stopped("", Stage::Queued, Outcome::Unprobed, None));
+                }
+                if let Err(e) = write_ledger(root, &rows) {
+                    eprintln!("gem-probe: writing the ledger: {e}");
+                    return ExitCode::FAILURE;
+                }
+                let waiting = rows
+                    .values()
+                    .filter(|r| r.outcome == Outcome::Unprobed)
+                    .count();
+                println!(
+                    "gem-probe: seeded {added} name(s); {waiting} of {} rows have no verdict yet",
+                    rows.len()
+                );
+                if names.is_empty() {
+                    return ExitCode::SUCCESS;
+                }
+            }
+            Err(e) => {
+                eprintln!("gem-probe: reading the registry index: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     if names.is_empty() {
         eprintln!(
-            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --failing, --matching <detail>, --matching-name <name>, --index or --all)"
+            "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --failing, --unprobed, --matching <detail>, --matching-name <name>, --index, --seed-index or --all)"
         );
         return ExitCode::FAILURE;
     }
@@ -1920,7 +2020,14 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         0
     } else {
         let n = names.len();
-        names.retain(|(name, _)| !before.contains_key(name));
+        // A row that is only the frontier does NOT count as already probed --
+        // resume must still reach it, or seeding the index would make every
+        // unprobed gem permanently invisible to a plain sweep.
+        names.retain(|(name, _)| {
+            !before
+                .get(name)
+                .is_some_and(|r| r.outcome != Outcome::Unprobed)
+        });
         n - names.len()
     };
     if let Some(n) = limit {
@@ -2048,12 +2155,23 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     };
     // Named by the rung, not by "compile": the whole point of the stage column
     // is that this number is about emitting Rust and nothing further.
+    //
+    // The denominator is gems with a VERDICT. Seeding puts the frontier in the
+    // same file, and counting those as probed would silently deflate every
+    // ratio the ledger is read for.
+    let measured = rows
+        .values()
+        .filter(|r| r.outcome != Outcome::Unprobed)
+        .count();
+    let waiting = rows.len() - measured;
     println!(
-        "gem-probe: {}/{} probed gems emit Rust\n  {}",
+        "gem-probe: {}/{measured} probed gems emit Rust\n  {}",
         reached(Stage::EmitsRs),
-        rows.len(),
         ledger_path(root).display()
     );
+    if waiting > 0 {
+        println!("           {waiting} named gem(s) still have no verdict");
+    }
     if tiers.build {
         println!(
             "           {} of those build a binary",
@@ -2250,6 +2368,34 @@ mod tests {
             ),
             Outcome::LoweringGap(_)
         ));
+    }
+
+    /// A seeded row is the frontier, not a verdict, and two things must hold
+    /// or seeding makes the sweep worse rather than better: it round-trips as
+    /// `Unprobed` at the bottom rung, and it is ordered below every rung a
+    /// real probe reaches, so no `stage >= ...` test counts it as progress.
+    #[test]
+    fn an_unprobed_row_is_the_bottom_rung_and_round_trips() {
+        let root = scratch("frontier");
+        let mut rows = BTreeMap::new();
+        rows.insert(
+            "waiting".to_string(),
+            Row::stopped("", Stage::Queued, Outcome::Unprobed, None),
+        );
+        rows.insert(
+            "measured".to_string(),
+            Row::stopped("1.0.0", Stage::EmitsRs, Outcome::Ok, None),
+        );
+        write_ledger(&root, &rows).unwrap();
+
+        let back = read_ledger(&root).unwrap();
+        assert_eq!(back["waiting"].outcome, Outcome::Unprobed);
+        assert_eq!(back["waiting"].stage, Stage::Queued);
+        assert_eq!(back["waiting"].version, "");
+        assert!(Stage::Queued < Stage::Fetch, "the frontier is the bottom");
+        assert!(back["waiting"].stage < Stage::EmitsRs);
+        assert_eq!(Outcome::Unprobed.implied_stage(), Stage::Queued);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// An ignored gem has no verdict, so it has no row: adding a name to the
