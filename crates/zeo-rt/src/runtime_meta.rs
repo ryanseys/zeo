@@ -1254,6 +1254,50 @@ fn runtime_undef_singleton_method(
     Ok(RubyValue::Class(singleton))
 }
 
+/// [`runtime_alias_method`] for ONE OBJECT, reached through that object's
+/// singleton class (`class << obj; alias shut close; end`).
+///
+/// `old` is resolved the way the OBJECT answers it -- its own singleton table
+/// first, then its class's chain -- because that is what ruby copies: an alias
+/// takes the definition the receiver would have run.
+fn runtime_alias_singleton_method(
+    owner: &RubyValue,
+    singleton: ClassId,
+    new: Symbol,
+    old: Symbol,
+) -> Result<RubyValue, Signal> {
+    let Some(key) = pin_identity(owner) else {
+        return Err(type_error!("can't define singleton"));
+    };
+    let own = maps()
+        .singletons
+        .read()
+        .unwrap()
+        .get(&key)
+        .and_then(|t| t.get(&old).cloned());
+    let Some(m) = own.or_else(|| snapshot_instance_method(owner.class_id(), old)) else {
+        return Err(name_error!(
+            "undefined method '{}' for class '{}'",
+            old.name(),
+            crate::dispatch::class_name(singleton).unwrap_or_default()
+        ));
+    };
+    maps()
+        .singletons
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .insert(new, m);
+    // An alias DEFINES the new name, so it lifts any tombstone standing over it.
+    if let Some(t) = maps().singleton_undefs.write().unwrap().get_mut(&key) {
+        t.remove(&new);
+    }
+    mark_singletons();
+    mark_live();
+    Ok(RubyValue::Symbol(new))
+}
+
 /// Whether `recv` retired `name` for itself -- see `singleton_undefs`. Always
 /// behind `is_live()`, like every other identity-keyed probe: an ordinary
 /// program never takes the hash lookup.
@@ -1416,6 +1460,18 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         patch_class(owner);
         mark_live();
         return Ok(RubyValue::Symbol(new));
+    }
+    // The same redirect for an ORDINARY object's singleton class, which
+    // `singleton_class_owner` cannot answer for (it names a class). `class <<
+    // obj; alias shut close; end` aliases a method for THAT ONE OBJECT, so the
+    // copy belongs in its singleton table -- the walk below would instead write
+    // it into an instance table the singleton id never had, where no send for
+    // that object ever looks, and `obj.shut` raised NoMethodError.
+    let value_owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
+    if let Some(owner) = value_owner
+        && !matches!(owner, RubyValue::Class(_))
+    {
+        return runtime_alias_singleton_method(&owner, id, new, old);
     }
     let snapshot = snapshot_instance_method(id, old).or_else(|| {
         // A parse-special Kernel source (`alias_method :block_given!,

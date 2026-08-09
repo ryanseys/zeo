@@ -97,6 +97,7 @@ fn desugar_singleton_items(
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
         Alias(String, String),
+        Undef(Vec<String>),
         SingletonSelf,
         SelfSend,
         Passthrough,
@@ -161,6 +162,18 @@ fn desugar_singleton_items(
             HirNode::AliasMethod {
                 new_name, old_name, ..
             } => Item::Alias(new_name.clone(), old_name.clone()),
+            // `undef :close` here retires the name for THIS ONE OBJECT --
+            // logging's `def kill; class << self; undef :close; end; end`, and
+            // the 98 corpus rows behind it. The `alias` arm's twin, and the
+            // same runtime primitive: `recv.singleton_class.undef_method(:close)`.
+            //
+            // It was left to the `Passthrough` catch-all below (an `undef`
+            // names no `self`), which emitted a definition-level node where a
+            // value belongs, so codegen refused the whole program. The refusal
+            // was the right answer while there was nowhere for the retirement
+            // to be recorded; there is a per-object tombstone now, and every
+            // lookup consults it.
+            HirNode::Undef(names) => Item::Undef(names.clone()),
             // `include M` / `prepend M` inside `class << obj` mixes M into the
             // OBJECT's singleton class -- which is CRuby's own definition of
             // `obj.extend(M)` (`rb_include_module(rb_singleton_class(obj), M)`),
@@ -192,15 +205,6 @@ fn desugar_singleton_items(
             HirNode::Call {
                 receiver: Some(r), ..
             } if matches!(hir[*r], HirNode::SelfRef) => Item::SelfSend,
-            // `undef :close` inside a singleton (logging) stays REJECTED. It
-            // would map to `recv.singleton_class.undef_method(:close)`, which
-            // compiles -- and then a statically-resolved `obj.close` call site
-            // never consults it, so the call succeeds where CRuby raises
-            // NoMethodError. The `class << self` path can do this because
-            // `ClassInfo::class_undefined` records it at COMPILE time; the
-            // per-instance path has no such record, and a silent wrong answer
-            // is worse than the rejection.
-            //
             // `remove_method :now rescue nil` (tins) -- the rescue modifier,
             // which lowers to a `Begin` with one bare clause. Guarding a
             // definition-level statement this way is ordinary in a singleton
@@ -314,6 +318,33 @@ fn desugar_singleton_items(
                     receiver: Some(singleton),
                     name: "alias_method".to_string(),
                     args: vec![ArrayElem::Single(new_sym), ArrayElem::Single(old_sym)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+            Item::Undef(names) => {
+                let recv = lower_node(result, hir, recv_node)?;
+                let singleton = hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "singleton_class".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                });
+                // `undef a, b` names them all in one statement, and
+                // `Module#undef_method` takes them all in one call.
+                let syms = names
+                    .into_iter()
+                    .map(|n| ArrayElem::Single(hir.push(HirNode::SymbolLit(n))))
+                    .collect();
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: "undef_method".to_string(),
+                    args: syms,
                     kwargs: vec![],
                     block: None,
                     block_arg: None,
