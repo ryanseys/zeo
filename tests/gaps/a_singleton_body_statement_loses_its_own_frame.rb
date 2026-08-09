@@ -1,0 +1,41 @@
+# Ruby gives a `class << self` body a backtrace frame of its own, labelled
+# `singleton class`, with the enclosing `<class:Config>` frame beneath it.
+#
+# zeo now spells that label right wherever the frame EXISTS -- see
+# a_singleton_body_frame_is_spelled_singleton_class.rb -- but a statement the
+# singleton mapping handles IN PLACE has no frame at all: it is spliced into
+# the enclosing class's body, which is the whole point of the retagging model,
+# and so it runs in that body's frame. One frame goes missing from every
+# backtrace raised through such a statement, and the innermost one is labelled
+# after the class instead of after the singleton.
+#
+# Only a RESIDUAL statement (one routed into the surrogate's own body) gets a
+# frame today. Both below are handled in place: the first reaches for `self`,
+# the second names nothing at all.
+#
+# SHAPE OF A FIX: the mapped items of a singleton body need to run under a
+# frame of their own while still being statements of the enclosing class body
+# -- a frame-only HIR node that analyze's class-body walks recurse into, since
+# the `def`s among them must stay visible to method registration.
+begin
+  class Config
+    class << self
+      attr_accessor :setting
+    end
+    class << self
+      self.setting = :configured
+    end
+  end
+rescue NoMethodError => e
+  puts e.backtrace.take(3)
+end
+
+begin
+  class Boom
+    class << self
+      [1].each { |n| raise "boom #{n}" }
+    end
+  end
+rescue RuntimeError => e
+  puts e.backtrace.take(4)
+end

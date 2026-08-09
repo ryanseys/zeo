@@ -583,14 +583,9 @@ pub(crate) fn scope_frame_guard(
     // static `DefMethod` scope always sits directly in a class/module body
     // (a nested one compiles to the runtime path, labeled in `procs`).
     let label = if scope_is_define_method(compiler, scope) {
-        let kind = if compiler.class(scope.defining_class).is_module {
-            "module"
-        } else {
-            "class"
-        };
         format!(
-            "block in <{kind}:{}>",
-            compiler.leaf_name(scope.defining_class)
+            "block in {}",
+            body_frame_label(compiler, scope.defining_class)
         )
     } else {
         format!(
@@ -653,6 +648,24 @@ fn scope_mentions_svars(compiler: &Compiler, scope: &crate::compiler::Scope) -> 
 /// what a block nested here is labeled under (`block in <this>`): a
 /// method (`Class#m` / `Class.m`), a class body (`<class:Foo>`), or
 /// `<main>`. Mirrors CRuby's lexical block-frame naming.
+/// CRuby's backtrace label for a class or module BODY frame -- `<class:Foo>`,
+/// `<module:M>`, and `singleton class` for a `class << self` body.
+///
+/// The last of those is spelled by ruby, not derived from a name: zeo homes a
+/// singleton body on a surrogate class whose reserved name (`#<Class:self>`)
+/// is unwritable and internal, and it must not reach a user's backtrace.
+fn body_frame_label(compiler: &Compiler, cid: crate::compiler::ClassId) -> String {
+    if compiler.is_singleton_surrogate(cid) {
+        return "singleton class".to_string();
+    }
+    let kind = if compiler.class(cid).is_module {
+        "module"
+    } else {
+        "class"
+    };
+    format!("<{kind}:{}>", compiler.leaf_name(cid))
+}
+
 fn enclosing_frame_label(cx: &Ctx) -> String {
     if let Some(m) = &cx.current_method {
         let def = cx
@@ -667,12 +680,7 @@ fn enclosing_frame_label(cx: &Ctx) -> String {
         return format!("{fq}#{m}");
     }
     if let Some(c) = cx.class_self.or(cx.current_class) {
-        let kind = if cx.compiler.class(c).is_module {
-            "module"
-        } else {
-            "class"
-        };
-        return format!("<{kind}:{}>", cx.compiler.leaf_name(c));
+        return body_frame_label(cx.compiler, c);
     }
     "<main>".to_string()
 }
@@ -3029,12 +3037,7 @@ pub(crate) fn emit_class_body_site_lifted(
         .or_else(|| stmts.iter().find_map(|&n| source_location(compiler, n)));
     let frame = match loc {
         Some((file, line)) => {
-            let kind = if compiler.class(cid).is_module {
-                "module"
-            } else {
-                "class"
-            };
-            let label = format!("<{kind}:{}>", compiler.leaf_name(cid));
+            let label = body_frame_label(compiler, cid);
             // The body's `end` line, `TracePoint`'s `:end` lineno.
             let end_line = site.def_node.map_or(0, |n| source_end_line(compiler, n));
             let file = pooled_file(&file);

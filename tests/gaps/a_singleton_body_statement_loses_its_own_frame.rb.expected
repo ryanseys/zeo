@@ -1,0 +1,7 @@
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:26:in 'singleton class'
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:25:in '<class:Config>'
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:21:in '<main>'
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:36:in 'block in singleton class'
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:36:in 'Array#each'
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:36:in 'singleton class'
+gaps/a_singleton_body_statement_loses_its_own_frame.rb:35:in '<class:Boom>'
