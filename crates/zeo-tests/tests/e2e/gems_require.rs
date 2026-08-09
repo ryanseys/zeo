@@ -1361,3 +1361,50 @@ fn a_declined_units_class_bodies_are_declined_with_it() {
     );
     assert_eq!(result.stdout, "compiled\n");
 }
+
+#[test]
+fn an_absent_autoload_target_is_left_to_the_constant_read() {
+    // An eager autoload splice is not a require: ruby does not touch the file
+    // until the constant is read. A LITERAL target zeo could name was spliced
+    // regardless, so a target that is simply not on the load path failed the
+    // whole compile -- actionpack's `autoload :Test, "rack/test"` took every
+    // gem that reaches action_dispatch without rack-test alongside it, 235
+    // ledger rows.
+    //
+    // The gem still compiles when the target is absent, and the constant read
+    // raises the LoadError ruby raises there. `alpha` also computes an
+    // autoload target, so its whole load path is compiled in as units -- the
+    // shape that used to raise at the DECLARATION instead.
+    let files = [
+        (
+            "packages/alpha/alpha.gemspec",
+            "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n",
+        ),
+        (
+            "packages/alpha/lib/alpha.rb",
+            "module Alpha\n  autoload :Leaf, \"alpha/lea\" + \"f\"\n  \
+             autoload :Absent, \"definitely_no_such_feature_xyz\"\nend\n",
+        ),
+        (
+            "packages/alpha/lib/alpha/leaf.rb",
+            "module Alpha\n  class Leaf\n    def hi = \"hi\"\n  end\nend\n",
+        ),
+        (
+            "main.rb",
+            "require \"alpha\"\n\
+             puts \"loaded\"\n\
+             p Alpha::Leaf.new.hi\n\
+             p Alpha.autoload?(:Absent)\n\
+             begin\n  Alpha::Absent\nrescue LoadError => e\n  \
+             puts \"LoadError: #{e.message}\"\nend\n\
+             puts \"done\"\n",
+        ),
+    ];
+    let result = run_ruby_packages(&files, "main.rb", &[], &["packages"]);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "loaded\n\"hi\"\n\"definitely_no_such_feature_xyz\"\n\
+         LoadError: cannot load such file -- definitely_no_such_feature_xyz\ndone\n"
+    );
+}

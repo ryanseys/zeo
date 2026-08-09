@@ -1,0 +1,7 @@
+1
+"definitely_no_such_feature_xyz"
+true
+true
+LoadError: cannot load such file -- definitely_no_such_feature_xyz
+LoadError: cannot load such file -- definitely_no_such_feature_xyz
+still running

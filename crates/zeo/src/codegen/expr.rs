@@ -2702,11 +2702,11 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
         quote! { zeo_rt::const_miss(zeo_rt::ClassId(#owner), #name)? }
     } else {
         quote! {
-            return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
-                format!("uninitialized constant {}", #qualified),
+            return Err(zeo_rt::const_miss_signal(
+                zeo_rt::ClassId(#owner),
                 #name,
-                zeo_rt::RubyValue::Class(zeo_rt::ClassId(#owner)),
-            ))))
+                &format!("uninitialized constant {}", #qualified),
+            ))
         }
     };
     quote! {

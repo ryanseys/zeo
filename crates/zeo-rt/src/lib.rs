@@ -148,7 +148,8 @@ pub use builtins::array::{array_pop_checked, array_push_checked, array_shift_che
 pub use builtins::enumerable::SumAcc;
 pub use builtins::process::last_child_status;
 pub use builtins::rmodule::{
-    const_defined_in, scope_const_defined, scope_const_get, scope_const_get_or_nil, scope_const_set,
+    const_defined_in, const_miss_signal, scope_const_defined, scope_const_get,
+    scope_const_get_or_nil, scope_const_set,
 };
 #[cfg(feature = "ext-coverage")]
 pub use ext::coverage::{cov_file_loaded, cov_line, coverage_install};

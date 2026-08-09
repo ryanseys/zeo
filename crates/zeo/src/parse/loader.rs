@@ -638,6 +638,17 @@ impl Loader {
                 let Ok(feature) = crate::lower::autoload_feature(call) else {
                     continue;
                 };
+                // A target that is not on the load path is left ENTIRELY to
+                // the runtime row. An autoload is weaker than a require:
+                // CRuby does not load the file at all until the constant is
+                // read, so an absent one is not an error until then -- and
+                // most never are read. actionpack's
+                // `autoload :Test, "rack/test"` is the case, and eager-
+                // splicing it failed the whole compile of every gem that
+                // reaches action_dispatch without rack-test alongside.
+                if !self.require_resolvable(&feature) {
+                    continue;
+                }
                 let spliced =
                     self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
                 combined.extend(spliced);

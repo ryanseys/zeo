@@ -262,14 +262,39 @@ fn inherit_search(v: Option<&RubyValue>) -> Search {
 }
 
 /// `(owner, constant name) -> feature path` for every `autoload` that reached
-/// the RUNTIME row -- see its docs. Only `autoload?` reads this, and a program
-/// that never makes a non-literal `autoload` call never allocates the map.
+/// the RUNTIME row -- see its docs. Read by `autoload?`, by `const_defined?`
+/// (ruby announces the constant at declaration, before anything loads) and by
+/// `const_missing` (a target that never loads owes a `LoadError` there, not a
+/// `NameError`). A program that makes no such `autoload` call never allocates
+/// the map.
 fn pending_autoloads()
 -> &'static parking_lot::Mutex<std::collections::HashMap<(u32, String), String>> {
     static MAP: std::sync::LazyLock<
         parking_lot::Mutex<std::collections::HashMap<(u32, String), String>>,
     > = std::sync::LazyLock::new(Default::default);
     &MAP
+}
+
+/// What a constant MISS raises. A name registered by an `autoload` whose
+/// feature never loaded owes a `LoadError`, because reading the constant is
+/// what triggers the load in ruby and so it is what fails; every other miss
+/// keeps the `NameError` the call site spelled, whose as-written wording
+/// nothing else can reproduce.
+///
+/// Called from the baked raise codegen emits for a miss, which is the path
+/// almost every constant read takes -- `const_missing` itself is dispatched
+/// only when a class in the chain defines the hook.
+pub fn const_miss_signal(owner: crate::ClassId, name: &str, message: &str) -> crate::Signal {
+    let pending = pending_autoloads().lock();
+    if !pending.is_empty()
+        && let Some(path) = pending.get(&(owner.0, name.to_string()))
+    {
+        return crate::builtins::kernel::missing_feature_error(path);
+    }
+    drop(pending);
+    crate::Signal::Raise(crate::dispatch::stamp_backtrace(
+        crate::dispatch::make_name_error(message.to_string(), name, RubyValue::Class(owner)),
+    ))
 }
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
@@ -415,7 +440,12 @@ ruby_class! {
     }
     def "const_defined?" cfunc (recv, name, inherit?) {
         let name = const_name_arg(name)?;
-        let found = const_lookup(recv_cid(recv), &name, inherit_search(inherit)).is_some();
+        let cid = recv_cid(recv);
+        // A pending autoload counts: ruby announces the constant when the
+        // autoload is DECLARED, long before the feature loads (and whether or
+        // not it ever can).
+        let found = const_lookup(cid, &name, inherit_search(inherit)).is_some()
+            || pending_autoloads().lock().contains_key(&(cid.0, name.clone()));
         Ok(RubyValue::Bool(found))
     }
     // Returns the removed value; NameError when the constant isn't this
@@ -974,17 +1004,14 @@ ruby_class! {
             pending_autoloads()
                 .lock()
                 .remove(&(recv_cid(recv).0, name.clone()));
-        } else if crate::features::any_units() {
-            // This program compiled a load path in precisely so a computed
-            // `autoload` could be served, and the string it built is not on
-            // it: nothing will ever define the constant. The LoadError the
-            // `require` it stands in for would raise is the honest answer, and
-            // far better than a `NameError` at first use. Without units the
-            // registration keeps its documented record-only behaviour, which
-            // is indistinguishable from CRuby's laziness until the constant is
-            // referenced.
-            return Err(crate::builtins::kernel::missing_feature_error(&path));
         }
+        // A target that is not on the load path raises NOTHING here. Ruby
+        // registers an autoload without touching the file, so a declaration
+        // naming a feature that is absent is not an error until the constant
+        // is READ -- and most never are: actionpack declares
+        // `autoload :Test, "rack/test"` in every program that loads
+        // action_dispatch. The record left above is what `const_missing`
+        // turns into that read's LoadError.
         Ok(RubyValue::Nil)
     }
     def "autoload?" cfunc (recv, sym, inherit?) {
@@ -1007,6 +1034,12 @@ ruby_class! {
     def "const_missing" (recv, name) {
         let name = const_name_arg(name)?;
         let cid = recv_cid(recv);
+        // An `autoload` whose feature never loaded: the read is what triggers
+        // the load in ruby, so it is what raises the LoadError. Answered here
+        // because every const miss funnels through this row.
+        if let Some(path) = pending_autoloads().lock().get(&(cid.0, name.clone())) {
+            return Err(crate::builtins::kernel::missing_feature_error(path));
+        }
         let qualified = match crate::dispatch::class_name(cid) {
             Some(owner) if cid.0 != 0 => format!("uninitialized constant {owner}::{name}"),
             _ => format!("uninitialized constant {name}"),
