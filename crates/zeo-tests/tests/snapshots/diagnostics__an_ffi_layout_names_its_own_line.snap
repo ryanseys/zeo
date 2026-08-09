@@ -1,0 +1,16 @@
+---
+source: crates/zeo-tests/tests/diagnostics.rs
+expression: render(err)
+---
+zeo::lower
+
+  × unsupported FFI type `:nope_type` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback`
+  │ name)
+   ╭─[-e:3:3]
+ 2 │     class Rec < FFI::Struct
+ 3 │ ╭─▶   layout :a, :int,
+ 4 │ ├─▶          :b, :nope_type
+   · ╰──── zeo stops here
+ 5 │     end
+   ╰────
+  help: zeo can't compile this yet

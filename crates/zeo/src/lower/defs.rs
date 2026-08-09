@@ -2376,34 +2376,30 @@ pub(crate) fn lower_class_body(
     // one place the cref chain deepens -- see `Hir::cvar_is_toplevel`.
     let mut lower_stmts = |hir: &mut Hir| {
         for stmt in &stmts {
-            if is_ffi {
-                if is_extend_ffi_library(stmt) {
-                    continue; // `extend FFI::Library` is the marker, no output
-                }
-                if lower_ffi_directive(result, hir, stmt, &mut ffi_lib, &mut ffi_aliases, &mut out)?
-                {
-                    continue;
-                }
-            }
-            if is_ffi_struct && let Some(fields) = as_ffi_layout(stmt, &ffi_aliases, hir, &out)? {
-                // Replace `layout ...` in place with the synthesized accessors,
-                // so any user methods after it can still override them.
-                // The inline-array proxy classes ride along with the FIRST
-                // struct that needs them -- see `claim_ffi_inline_array_classes`.
-                let classes = crate::lower::ffi::needs_inline_array_classes(&fields)
-                    && hir.claim_ffi_inline_array_classes();
-                let source = synthesize_ffi_struct(&fields, is_ffi_union, classes)?;
-                out.extend(parse_and_lower_into(hir, &source)?);
-                continue;
-            }
-            lower_class_body_statement(
+            // Located per STATEMENT, around the whole dispatch below -- an
+            // `ffi_lib` or a `layout` never reaches `lower_class_body_statement`
+            // (nor `lower_node`), so without a frame here the innermost live one
+            // is the enclosing `class`/`module` header and every rejection names
+            // that line instead of its own.
+            let span = crate::lower::span_of(hir, stmt);
+            hir.push_span(span);
+            let done = lower_one_class_body_stmt(
                 result,
                 hir,
                 stmt,
-                &mut visibility,
-                &mut module_function,
+                LowerBodyStmt {
+                    is_ffi,
+                    is_ffi_struct,
+                    is_ffi_union,
+                    ffi_lib: &mut ffi_lib,
+                    ffi_aliases: &mut ffi_aliases,
+                    visibility: &mut visibility,
+                    module_function: &mut module_function,
+                },
                 &mut out,
-            )?;
+            );
+            hir.pop_span();
+            done.map_err(|e| e.with_span_if_missing(span))?;
         }
         PResult::Ok(())
     };
@@ -2439,6 +2435,52 @@ pub(crate) fn lower_class_body(
 /// falls through to an ordinary `Call` -- a clean rejection at codegen time
 /// if `private`/`public`/`protected` themselves aren't otherwise defined,
 /// matching this function's own posture elsewhere.
+/// The per-body state `lower_one_class_body_stmt` threads through -- bundled
+/// so the dispatch keeps one argument per thing rather than eight.
+struct LowerBodyStmt<'a> {
+    is_ffi: bool,
+    is_ffi_struct: bool,
+    is_ffi_union: bool,
+    ffi_lib: &'a mut Option<String>,
+    ffi_aliases: &'a mut std::collections::HashMap<String, crate::hir::FfiType>,
+    visibility: &'a mut Visibility,
+    module_function: &'a mut bool,
+}
+
+/// The three things a class-body statement can be: an FFI directive, an FFI
+/// `layout`, or an ordinary statement. Split out of `lower_class_body`'s loop
+/// so the loop can wrap ALL of them in one span frame.
+fn lower_one_class_body_stmt(
+    result: &ParseResult,
+    hir: &mut Hir,
+    stmt: &Node<'_>,
+    st: LowerBodyStmt<'_>,
+    out: &mut Vec<NodeId>,
+) -> PResult<()> {
+    if st.is_ffi {
+        if is_extend_ffi_library(stmt) {
+            return Ok(()); // `extend FFI::Library` is the marker, no output
+        }
+        if lower_ffi_directive(result, hir, stmt, st.ffi_lib, st.ffi_aliases, out)? {
+            return Ok(());
+        }
+    }
+    if st.is_ffi_struct
+        && let Some(fields) = as_ffi_layout(stmt, st.ffi_aliases, hir, out)?
+    {
+        // Replace `layout ...` in place with the synthesized accessors, so any
+        // user methods after it can still override them. The inline-array proxy
+        // classes ride along with the FIRST struct that needs them -- see
+        // `claim_ffi_inline_array_classes`.
+        let classes = crate::lower::ffi::needs_inline_array_classes(&fields)
+            && hir.claim_ffi_inline_array_classes();
+        let source = synthesize_ffi_struct(&fields, st.is_ffi_union, classes)?;
+        out.extend(parse_and_lower_into(hir, &source)?);
+        return Ok(());
+    }
+    lower_class_body_statement(result, hir, stmt, st.visibility, st.module_function, out)
+}
+
 fn lower_class_body_statement(
     result: &ParseResult,
     hir: &mut Hir,

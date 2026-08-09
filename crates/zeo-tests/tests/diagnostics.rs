@@ -56,3 +56,30 @@ fn an_analyze_error_is_coded_with_its_stage() {
         .expect_err("reopening a class as a module fails analyze");
     insta::assert_snapshot!(render(err));
 }
+
+/// A class-body statement gets a frame of its OWN, so a rejection raised while
+/// lowering it names that line rather than the enclosing `class`/`module`
+/// header. The FFI directives are the case that made it necessary: they never
+/// reach `lower_node` (nor `lower_class_body_statement`), so every one of the
+/// ledger's `ffi_lib` rows used to point at `module Native`, and triaging them
+/// meant re-parsing the files to recover what they said.
+#[test]
+fn a_class_body_directive_names_its_own_line() {
+    let err = zeo::compile_to_rust_with(
+        "require 'ffi'\nmodule Native\n  extend FFI::Library\n  ffi_lib whatever\nend\n",
+        &Default::default(),
+    )
+    .expect_err("a computed ffi_lib name is rejected");
+    insta::assert_snapshot!(render(err));
+}
+
+/// The same for an FFI `layout`, which takes its own dispatch arm.
+#[test]
+fn an_ffi_layout_names_its_own_line() {
+    let err = zeo::compile_to_rust_with(
+        "require 'ffi'\nclass Rec < FFI::Struct\n  layout :a, :int,\n         :b, :nope_type\nend\n",
+        &Default::default(),
+    )
+    .expect_err("an undeclared field type is rejected");
+    insta::assert_snapshot!(render(err));
+}

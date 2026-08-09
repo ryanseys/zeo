@@ -83,13 +83,15 @@ impl Diagnostic for LowerDiagnostic {
         }))
     }
 
+    /// rustc's rule is that `help` shows a change the reader can MAKE and a
+    /// `note` carries everything else; miette has no `note`, so these two --
+    /// which say which KIND of problem this is rather than how to fix it --
+    /// live here for want of anywhere better. The fix, where there is one, is
+    /// already in the message: `ffi_lib` names the forms it accepts.
     fn help(&self) -> Option<Box<dyn fmt::Display + '_>> {
         Some(Box::new(match self.kind {
-            LowerErrorKind::Syntax => "this source is not valid Ruby -- `ruby -c` rejects it too",
-            LowerErrorKind::Unsupported => {
-                "valid Ruby that zeo does not compile yet (NotImplementedError territory, \
-                 not a SyntaxError)"
-            }
+            LowerErrorKind::Syntax => "a Ruby syntax error, not a zeo gap",
+            LowerErrorKind::Unsupported => "zeo can't compile this yet",
         }))
     }
 
@@ -99,9 +101,12 @@ impl Diagnostic for LowerDiagnostic {
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
         let (start, len) = self.span?;
+        // A label names what is true AT THIS SPOT and leaves the WHAT to the
+        // message above it (RFC 1644's `second mutable borrow occurs here`) --
+        // so neither of these restates its own message.
         let label = match self.kind {
-            LowerErrorKind::Syntax => "not valid Ruby",
-            LowerErrorKind::Unsupported => "not lowered yet",
+            LowerErrorKind::Syntax => "syntax error here",
+            LowerErrorKind::Unsupported => "zeo stops here",
         };
         Some(Box::new(std::iter::once(LabeledSpan::new(
             Some(label.to_string()),

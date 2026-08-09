@@ -5,4 +5,4 @@ expression: render(err)
 zeo::parse
 
   × parse error: unexpected end-of-input; expected a `)` to close the parameters
-  help: this source is not valid Ruby -- `ruby -c` rejects it too
+  help: a Ruby syntax error, not a zeo gap

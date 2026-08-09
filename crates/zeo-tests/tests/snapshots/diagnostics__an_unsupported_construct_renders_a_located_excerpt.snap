@@ -9,6 +9,6 @@ zeo::lower
  1 │ x = 1
  2 │ puts(1) if /foo/
    ·            ──┬──
-   ·              ╰── not lowered yet
+   ·              ╰── zeo stops here
    ╰────
-  help: valid Ruby that zeo does not compile yet (NotImplementedError territory, not a SyntaxError)
+  help: zeo can't compile this yet
