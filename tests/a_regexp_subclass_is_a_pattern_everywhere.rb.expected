@@ -1,0 +1,43 @@
+MyRe
+"(a+)"
+"/(a+)/"
+true
+2
+"aaa"
+true
+true
+2
+"aaa"
+true
+"aaa"
+"aaa"
+"xxZy"
+"xxAAAy"
+[["aaa"]]
+["", "a", "1", "a", "2", "a"]
+2
+4
+2
+true
+["xx", "aaa", "y"]
+"aaa"
+:matched
+/(?-mix:(a+))|(?-mix:b)/
+"(a+)"
+true
+true
+MyRe
+true
+false
+["aaa"]
+["b"]
+"aaa"
+"b"
+1
+"xxZy"
+["aa", "a", ""]
+MyRe
+true
+true
+MyRe
+"(a+)"

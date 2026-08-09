@@ -68,7 +68,7 @@ ruby_class! {
     def self."new" | "compile" cfunc (_recv, arg1, arg2?, _arg3?) {
         // A Regexp source: clone it verbatim (flags and all), ignoring any
         // extra options -- CRuby warns but reuses the original.
-        if let RubyValue::Regexp(re) = arg1 {
+        if let Some(re) = crate::regexp::as_regexp(arg1) {
             return crate::regexp_new(&re.source, re.ignore_case, re.extended, re.multiline)
                 .map(RubyValue::Regexp)
                 .map_err(|e| regexp_error!("{e}"));
@@ -101,10 +101,10 @@ ruby_class! {
         } else {
             let mut parts = Vec::with_capacity(items.len());
             for item in &items {
-                match item {
-                    RubyValue::Regexp(re) => parts.push(regexp_to_s_string(re)),
-                    other => {
-                        let s = crate::builtins::convert::to_rstr(other)?;
+                match crate::regexp::as_regexp(item) {
+                    Some(re) => parts.push(regexp_to_s_string(&re)),
+                    None => {
+                        let s = crate::builtins::convert::to_rstr(item)?;
                         parts.push(escape_regexp_source(&s.lock().to_utf8_lossy()))
                     }
                 }
@@ -129,9 +129,9 @@ ruby_class! {
     // (lookaround and nested quantifiers stay linear); oracle-verified. A
     // CLASS method only: CRuby has no `Regexp#linear_time?`.
     def self."linear_time?" cfunc (_recv, arg1, _arg2?) {
-        let source = match arg1 {
-            RubyValue::Regexp(re) => re.source.clone(),
-            other => crate::builtins::convert::to_rstr(other)?
+        let source = match crate::regexp::as_regexp(arg1) {
+            Some(re) => re.source.clone(),
+            None => crate::builtins::convert::to_rstr(arg1)?
                 .lock()
                 .to_utf8_lossy()
                 .into_owned(),

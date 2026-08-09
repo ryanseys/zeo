@@ -2897,6 +2897,13 @@ fn register_class(
                                 // `RubyValue::Proc` and every call-site fast
                                 // path keeps working on it.
                                 | crate::compiler::PROC_CLASS
+                                // `Regexp`: a value-backed payload root, like
+                                // String and Array. Ruby has no `to_regexp`
+                                // conversion protocol, so unlike those two the
+                                // husk cannot be unwrapped by the conversion
+                                // path -- every site that takes a pattern
+                                // reads it through `regexp::as_regexp`.
+                                | crate::compiler::REGEXP_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(

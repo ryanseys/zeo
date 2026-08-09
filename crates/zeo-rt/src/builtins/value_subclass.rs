@@ -182,6 +182,7 @@ pub fn is_payload_root(id: ClassId) -> bool {
             | zeo_abi::FIBER_CLASS
             | zeo_abi::RANGE_CLASS
             | zeo_abi::DIR_CLASS
+            | zeo_abi::REGEXP_CLASS
     )
 }
 
@@ -457,6 +458,14 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // either -- the `File` shape again.
         zeo_abi::RANGE_CLASS => RubyValue::Nil,
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
+        // `Regexp.new("")` is a real regexp -- `//`, which matches everywhere --
+        // so the empty form exists and a subclass that never calls `super`
+        // still holds a usable pattern. verbal_expressions builds its source
+        // in `initialize` and seats it with `super(src, flags)`.
+        zeo_abi::REGEXP_CLASS => {
+            let empty = RubyValue::Str(string_new(String::new()));
+            construct_root_payload(root, &[empty], None).unwrap_or(RubyValue::Nil)
+        }
         _ => RubyValue::Nil,
     }
 }

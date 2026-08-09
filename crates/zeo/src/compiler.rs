@@ -1691,6 +1691,7 @@ impl Compiler {
                     | zeo_abi::FIBER_CLASS
                     | zeo_abi::RANGE_CLASS
                     | zeo_abi::DIR_CLASS
+                    | REGEXP_CLASS
             )
         })
     }

@@ -899,6 +899,8 @@ fn str_bang_via(
 /// match (`from_end` picks which). Char-index based so multibyte input keeps
 /// its boundaries.
 fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyValue; 3], Signal> {
+    let husk = crate::regexp::husk_payload(sep);
+    let sep = husk.as_ref().unwrap_or(sep);
     let span = match sep {
         RubyValue::Str(needle) => {
             let needle = needle.lock().to_utf8_lossy().into_owned();
@@ -1048,6 +1050,8 @@ fn slice_bang_impl(
     index: &RubyValue,
     len: Option<&RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    let husk = crate::regexp::husk_payload(index);
+    let index = husk.as_ref().unwrap_or(index);
     let handle = recv_str!(recv);
     let mut chars: Vec<char> = handle.lock().char_vec();
     let n = chars.len() as i64;
@@ -1129,6 +1133,8 @@ fn index_set_impl(
     second: &RubyValue,
     third: Option<&RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    let husk = crate::regexp::husk_payload(index);
+    let index = husk.as_ref().unwrap_or(index);
     let handle = recv_str!(recv);
     if handle.is_frozen() {
         return Err(crate::dispatch::raise_error_details(
@@ -1490,6 +1496,8 @@ ruby_class! {
     // `byteindex`/`byterindex(str[, offset])` -- the BYTE offset of the first
     // (respectively last) occurrence of a String needle, or nil.
     def "byteindex" cfunc (recv, arg1, arg2?) {
+        let husk = crate::regexp::husk_payload(arg1);
+        let arg1 = husk.as_ref().unwrap_or(arg1);
         let hay = rstr.lock().bytes().to_vec();
         // `byteindex(regexp[, offset])` -- the BYTE offset of the first match.
         if let RubyValue::Regexp(re) = arg1 {
@@ -1514,6 +1522,8 @@ ruby_class! {
         })
     }
     def "byterindex" cfunc (recv, arg1, arg2?) {
+        let husk = crate::regexp::husk_payload(arg1);
+        let arg1 = husk.as_ref().unwrap_or(arg1);
         let hay = rstr.lock().bytes().to_vec();
         // Omitted position searches the whole string (from the end); an
         // explicit one bounds the match start (negative counts from the end).
@@ -1965,6 +1975,8 @@ ruby_class! {
     // (`> 0`, tail kept whole), keeps trailing empties (`< 0`), or drops
     // them (`0`/omitted).
     def "split"(recv, arg1?, arg2?, &block) {
+        let husk = arg1.and_then(crate::regexp::husk_payload);
+        let arg1 = husk.as_ref().or(arg1);
         guard_valid(recv)?;
         let (text, enc) = {
             let s = rstr;
@@ -2317,6 +2329,8 @@ ruby_class! {
         Ok(recv.clone())
     }
     def "index" cfunc (recv, arg1, arg2?) {
+        let husk = crate::regexp::husk_payload(arg1);
+        let arg1 = husk.as_ref().unwrap_or(arg1);
         // `index(substr_or_regexp[, start])` -- the optional start is a CHAR
         // offset (from the end when negative) to begin searching at.
         let text = rstr.lock().to_utf8_lossy().into_owned();
@@ -2359,6 +2373,8 @@ ruby_class! {
     // start is at or before `pos` (end-relative when negative; the whole
     // string when omitted), or nil.
     def "rindex" cfunc (recv, arg1, arg2?) {
+        let husk = crate::regexp::husk_payload(arg1);
+        let arg1 = husk.as_ref().unwrap_or(arg1);
         let text = rstr.lock().to_utf8_lossy().into_owned();
         let clen = text.chars().count() as i64;
         let before = match arg2 {
@@ -2392,6 +2408,8 @@ ruby_class! {
     // char-indexed and encoding-preserving (a substring of a BINARY string
     // stays BINARY; a UTF-8 multibyte char is one index).
     def "[]" | "slice" cfunc (recv, index, len?) {
+        let husk = crate::regexp::husk_payload(index);
+        let index = husk.as_ref().unwrap_or(index);
         // Regexp indexing: `s[/re/]` is the whole match; `s[/re/, n]`/`s[/re/,
         // :name]` is that capture group (nil when the pattern doesn't match).
         if let RubyValue::Regexp(re) = index {
@@ -2488,6 +2506,8 @@ ruby_class! {
     def "start_with?"(recv, *args, &_block) {
         let text = rstr.lock().to_utf8_lossy().into_owned();
         for a in args {
+            let husk = crate::regexp::husk_payload(a);
+            let a = husk.as_ref().unwrap_or(a);
             match a {
                 // A Regexp prefix matches only when it matches anchored at the
                 // start; CRuby sets `$~` to the match (nil on no start-match).
@@ -2863,6 +2883,8 @@ ruby_class! {
         )?))
     }
     def "=~" (recv, other) {
+        let husk = crate::regexp::husk_payload(other);
+        let other = husk.as_ref().unwrap_or(other);
         match other {
             RubyValue::Regexp(re) => {
                 Ok(crate::regexp_match_index(re, &rstr.lock().to_utf8_lossy()))
@@ -2906,6 +2928,8 @@ ruby_class! {
         }))
     }
     def "scan" (recv, arg, &block) {
+        let husk = crate::regexp::husk_payload(arg);
+        let arg = husk.as_ref().unwrap_or(arg);
         guard_valid(recv)?;
         let (text, enc) = {
             let s = rstr;
@@ -3095,6 +3119,9 @@ fn byte_at_char(text: &str, char_idx: usize) -> usize {
 /// Wraps a `Regexp` or `String` pattern argument as a compiled Regexp --
 /// `match`/`match?`'s shared coercion (a String pattern compiles literally).
 fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
+    if let Some(re) = crate::regexp::as_regexp(v) {
+        return Ok(re);
+    }
     match v {
         RubyValue::Regexp(re) => Ok(re.clone()),
         RubyValue::Str(pat) => crate::regexp_new(&pat.lock().to_utf8_lossy(), false, false, false)
@@ -3358,6 +3385,11 @@ fn sub_gsub(
     // method-name suffix).
     let pattern_arg = match &args[0] {
         re @ RubyValue::Regexp(_) => re.clone(),
+        // A `class MyRe < Regexp` husk IS the pattern; `to_str` would not find
+        // it, since ruby has no Regexp conversion protocol.
+        husk if crate::regexp::husk_payload(husk).is_some() => {
+            crate::regexp::husk_payload(husk).expect("just probed")
+        }
         other => match convert::check_to_str(other)? {
             Some(s) => s,
             None => {

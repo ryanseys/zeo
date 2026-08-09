@@ -443,6 +443,14 @@ impl Writer {
                     self.write(&val)?;
                 }
             }
+            // A Regexp subclass carries its source and flags exactly as a bare
+            // one does -- the `C` wrapper above already named the class, so
+            // the body is the plain `/` form with no `I`-wrapper of its own.
+            RubyValue::Regexp(re) => {
+                self.out.push(b'/');
+                self.write_bytes(re.source.as_bytes());
+                self.out.push(regexp_options(re));
+            }
             other => {
                 return Err(type_error!(
                     "can't dump {} subclass payload",
@@ -790,6 +798,17 @@ impl Reader<'_> {
             b'"' => RubyValue::Str(string_from_bytes(self.read_bytes()?, ASCII_8BIT)),
             b'[' => RubyValue::Array(array_new(Vec::new())),
             b'{' => RubyValue::Hash(hash_new(Vec::new())),
+            // The Regexp body is complete right here (source + flags), unlike
+            // the three collection bodies, which are filled in below.
+            b'/' => {
+                let src = self.read_bytes()?;
+                let opts = self.byte()?;
+                let source = String::from_utf8_lossy(&src).into_owned();
+                let re =
+                    crate::regexp::regexp_new(&source, opts & 1 != 0, opts & 2 != 0, opts & 4 != 0)
+                        .map_err(|e| arg_error!("{e}"))?;
+                RubyValue::Regexp(re)
+            }
             other => return Err(arg_error!("bad subclass body (0x{other:x})")),
         };
         let obj = crate::builtins::value_subclass::marshal_alloc(cid, payload.clone())

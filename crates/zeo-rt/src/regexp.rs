@@ -41,6 +41,50 @@ pub struct RegexpData {
 
 pub type RRegexp = Arc<RegexpData>;
 
+/// The pattern behind a value -- through a SUBCLASS's payload as well as
+/// directly.
+///
+/// `class VerEx < Regexp` builds a `ValueSubclass` husk whose payload is the
+/// real `RubyValue::Regexp`, and a bare `RubyValue::Regexp(re)` match sees only
+/// the husk. CRuby needs no such step: a Regexp subclass IS an RRegexp to every
+/// C entry point.
+///
+/// String and Array subclasses reach the same places through the CONVERSION
+/// protocol (`to_str`/`to_ary`, which `builtins::convert` unwraps for the
+/// caller). Ruby has no `to_regexp`, so this is the only door -- which is why
+/// every site that takes a pattern reads it here rather than matching.
+pub fn as_regexp(v: &RubyValue) -> Option<RRegexp> {
+    match v {
+        RubyValue::Regexp(re) => Some(re.clone()),
+        _ => match husk_payload(v) {
+            Some(RubyValue::Regexp(re)) => Some(re),
+            _ => None,
+        },
+    }
+}
+
+/// The `RubyValue::Regexp` a subclass husk stands in for, or `None` when `v` is
+/// not one -- [`as_regexp`] for a site that keeps matching on the VALUE.
+///
+/// Written as a prelude so the site's own arms are untouched:
+///
+/// ```ignore
+/// let husk = regexp::husk_payload(arg);
+/// let arg = husk.as_ref().unwrap_or(arg);
+/// ```
+///
+/// Every argument that is not an `Object` costs one discriminant test, so a
+/// String pattern pays nothing for this.
+pub fn husk_payload(v: &RubyValue) -> Option<RubyValue> {
+    match v {
+        RubyValue::Object(o) => match o.builtin_payload() {
+            payload @ Some(RubyValue::Regexp(_)) => payload,
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl RegexpData {
     /// `Regexp#frozen?` -- see the `frozen` field.
     pub fn is_frozen(&self) -> bool {
@@ -1230,6 +1274,8 @@ pub fn scanner_match(
     anchored: bool,
 ) -> Result<Option<ScannerMatch>, crate::Signal> {
     let tail = &subject[at..];
+    let husk = husk_payload(pattern);
+    let pattern = husk.as_ref().unwrap_or(pattern);
     let (spans, names) = match pattern {
         crate::RubyValue::Regexp(re) => {
             let caps = match re.engine.captures_first(tail) {
