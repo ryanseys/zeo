@@ -73,9 +73,13 @@ impl std::error::Error for LowerDiagnostic {}
 
 impl Diagnostic for LowerDiagnostic {
     fn code(&self) -> Option<Box<dyn fmt::Display + '_>> {
+        // One code per PASS, named for the pass: `zeo::parse`, `zeo::lower`,
+        // `zeo::analyze`, `zeo::codegen`. The code is how a caller learns
+        // WHICH pass refused without parsing the message -- `xtask gem-probe`
+        // records the rung from it, so the four are kept the same shape.
         Some(Box::new(match self.kind {
-            LowerErrorKind::Syntax => "zeo::lower::syntax",
-            LowerErrorKind::Unsupported => "zeo::lower::unsupported",
+            LowerErrorKind::Syntax => "zeo::parse",
+            LowerErrorKind::Unsupported => "zeo::lower",
         }))
     }
 

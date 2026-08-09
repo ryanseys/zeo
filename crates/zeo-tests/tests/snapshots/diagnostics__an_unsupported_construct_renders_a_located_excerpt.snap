@@ -2,7 +2,7 @@
 source: crates/zeo-tests/tests/diagnostics.rs
 expression: render(err)
 ---
-zeo::lower::unsupported
+zeo::lower
 
   × a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (zeo limitation) -- write an explicit `=~`/`match?` against a real receiver instead
    ╭─[-e:2:12]

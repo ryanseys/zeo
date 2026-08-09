@@ -178,14 +178,32 @@ RUNG the row is about; `outcome` is what happened there. Neither claims
 anything alone:
 
 ```
-excon      1.2.5   emits-rs   ok             -- Rust was emitted
-Authorizr  0.2.1   emits-rs   lowering-gap   -- it was not, and this is why
+excon      1.2.5   codegen   ok             -- Rust was emitted
+Authorizr  0.2.1   codegen   lowering-gap   -- it was not, and this is why
 ```
 
-`emits-rs ok` means Zeo produced Rust and nothing more: no rustc ran, no binary
+The ladder is:
+
+```
+queued → fetch → unpack → parse → lower → analyze → codegen → build → run
+```
+
+The four middle rungs are Zeo's own front-end passes, and a rejection is
+recorded at the pass that **made** it — Zeo prints that as the diagnostic's
+code (`zeo::parse`, `zeo::lower`, `zeo::analyze`, `zeo::codegen`), so a
+front-end failure says which pass refused instead of landing in one bucket. A
+lowering gap is a construct the front end will not translate; an analyze
+rejection is a definition it will not register; a codegen rejection is a
+position it will not emit into. Those are different kinds of work.
+
+They are rungs rather than columns because the ladder **terminates**: the pass
+a row names implies success at every pass before it, and that no pass after it
+was attempted. A column per pass would restate that.
+
+`codegen ok` means Zeo produced Rust and nothing more: no rustc ran, no binary
 exists, and the gem's own code may not have been compiled at all — Zeo can
-decline a unit and defer it to a runtime `LoadError`, which only the `runs`
-stage sees. `builds-bin` and `runs` are opt-in (`--build`, `--run`).
+decline a unit and defer it to a runtime `LoadError`, which only the `run`
+stage sees. `build` and `run` are opt-in (`--build`, `--run`).
 
 This was two files, split on whether the outcome was `ok`. They carried the
 same columns and one parser served both, so the split was a filter frozen into

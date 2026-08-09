@@ -8,22 +8,21 @@
 //! front end for real.
 //!
 //! What it runs, and how far, is the `stage` column -- see [`Stage`]. The
-//! default rung is `emits-rs`: zeo produced Rust. That is deliberately the
-//! weakest useful claim and it used to be spelled `compiles`, which read as a
-//! much stronger one. No rustc runs, no binary exists, and the gem's own code
-//! may not have been compiled at all -- zeo can decline a unit and defer it to
-//! a runtime `LoadError`, which only `--run` can see. `--build` and `--run`
-//! climb the rungs above, both off by default.
+//! default rung is `codegen`: zeo produced Rust. That is deliberately the
+//! weakest useful claim. No rustc runs, no binary exists, and the gem's own
+//! code may not have been compiled at all -- zeo can decline a unit and defer
+//! it to a runtime `LoadError`, which only `--run` can see. `--build` and
+//! `--run` climb the rungs above, both off by default.
 //!
 //! Four steps, and only the first touches the network:
 //!
 //!   resolve  name [version]     -> an exact version
 //!   fetch    the .gem           -> vendor/gems/<name>/   (cached, gitignored)
 //!   probe    require "<entry>"  -> a Stage and an Outcome
-//!   record   the verdict        -> conformance/gem-probe-*.tsv     (committed)
+//!   record   the verdict        -> conformance/gem-probe.tsv       (committed)
 //!
 //! The emitted Rust is kept, gzipped, under `vendor/.probe-rs/`, so a later
-//! sweep can climb to `builds-bin` for the whole corpus without paying for
+//! sweep can climb to `build` for the whole corpus without paying for
 //! codegen twice.
 //!
 //! Probing an unpacked tree needs no network and is deterministic, so a ledger
@@ -70,7 +69,8 @@ const HELP: &str = "\
 usage: cargo xtask gem-probe [<name> [version]] [selection] [options]
 
 Compiles real rubygems with zeo and records how far each one got in
-conformance/gem-probe-{compiles,fails}.tsv (plus gem-probe.md).
+conformance/gem-probe.tsv (plus gem-probe.md). Two columns carry the verdict
+and are read together: `stage` is the rung, `outcome` is what happened there.
 
 selection (at least one, they add up):
   <name> [version]        one gem; the newest version unless one is given
@@ -86,9 +86,11 @@ selection (at least one, they add up):
   --matching-name <text>  re-probe rows whose gem NAME contains <text>, for a
                           stale band no detail substring can select
 
-stages (the ladder is fetch -> unpack -> emits-rs -> builds-bin -> runs):
-  (default)               stop at emits-rs: generate Rust, keep the .rs, build
-                          nothing
+stages (fetch -> unpack -> parse -> lower -> analyze -> codegen -> build ->
+run; the four middle rungs are zeo's own front-end passes, and a rejection is
+recorded at the pass that made it):
+  (default)               stop after codegen: generate Rust, keep the .rs,
+                          build nothing
   --build                 also compile the generated Rust to a binary
   --run                   also EXECUTE it. This runs code downloaded from
                           rubygems, so it needs --allow-running-untrusted-gem-
@@ -118,18 +120,22 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 /// How far up the pipeline a verdict got.
 ///
 /// The rungs are ordered and each is a strictly harder claim about the gem
-/// than the one below: unpacking says the archive had a `lib/`, `emits-rs`
-/// says zeo's front end produced Rust, `builds-bin` says rustc accepted that
-/// Rust, `runs` says the binary executed. They are a separate column rather
-/// than more outcome tags so that adding a rung costs one value instead of a
-/// schema change, and so a failure can say WHERE it stopped -- a `timeout` in
-/// codegen and a `timeout` in rustc are not the same row.
+/// than the one below: unpacking says the archive had a `lib/`, the four
+/// front-end rungs say how far zeo's own passes got, `build` says rustc
+/// accepted the Rust, `run` says the binary executed. They are a separate
+/// column rather than more outcome tags so that adding a rung costs one value
+/// instead of a schema change, and so a failure can say WHERE it stopped -- a
+/// `timeout` in codegen and a `timeout` in rustc are not the same row.
 ///
-/// `emits-rs` is the default and the only rung a sweep reaches on its own.
-/// It is deliberately the weakest useful claim: it does NOT mean a binary
-/// exists, and it does not mean the gem's own code was compiled -- zeo may
-/// have declined a unit and deferred it to a runtime `LoadError`, which only
-/// `runs` can see.
+/// The column is meaningless alone and is always read beside `outcome`:
+/// `codegen ok` and `codegen lowering-gap` are the same rung with opposite
+/// results.
+///
+/// `codegen` is the default and the last rung a sweep reaches on its own.
+/// Reaching it is deliberately the weakest useful claim: it does NOT mean a
+/// binary exists, and it does not mean the gem's own code was compiled -- zeo
+/// may have declined a unit and deferred it to a runtime `LoadError`, which
+/// only `run` can see.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Stage {
     /// No rung reached: the gem is KNOWN (the registry names it) and has never
@@ -138,7 +144,20 @@ enum Stage {
     Queued,
     Fetch,
     Unpack,
-    EmitsRs,
+    /// The four FRONT-END rungs, in the order zeo runs them. A rejection names
+    /// the pass that made it, which zeo already prints as the diagnostic's
+    /// code (`zeo::analyze`, `zeo::codegen`, ...) and the probe used to throw
+    /// away -- so every front-end failure landed in one undifferentiated
+    /// bucket though the compiler had said which pass it was.
+    ///
+    /// They are rungs rather than columns because the ladder TERMINATES: the
+    /// first rejection stops the compile, so the pass a row names implies
+    /// `ok` at every pass before it and "never attempted" at every pass after.
+    /// A column per pass would restate that.
+    Parse,
+    Lower,
+    Analyze,
+    Codegen,
     BuildsBin,
     Runs,
 }
@@ -149,9 +168,12 @@ impl Stage {
             Stage::Queued => "queued",
             Stage::Fetch => "fetch",
             Stage::Unpack => "unpack",
-            Stage::EmitsRs => "emits-rs",
-            Stage::BuildsBin => "builds-bin",
-            Stage::Runs => "runs",
+            Stage::Parse => "parse",
+            Stage::Lower => "lower",
+            Stage::Analyze => "analyze",
+            Stage::Codegen => "codegen",
+            Stage::BuildsBin => "build",
+            Stage::Runs => "run",
         }
     }
 
@@ -160,9 +182,15 @@ impl Stage {
             "queued" => Some(Stage::Queued),
             "fetch" => Some(Stage::Fetch),
             "unpack" => Some(Stage::Unpack),
-            "emits-rs" => Some(Stage::EmitsRs),
-            "builds-bin" => Some(Stage::BuildsBin),
-            "runs" => Some(Stage::Runs),
+            "parse" => Some(Stage::Parse),
+            "lower" => Some(Stage::Lower),
+            "analyze" => Some(Stage::Analyze),
+            // `emits-rs` was the single front-end rung these four replace, and
+            // it is what every committed row said before the split. It names
+            // the rung a SUCCESS reaches, which is the last of them.
+            "codegen" | "emits-rs" => Some(Stage::Codegen),
+            "build" | "builds-bin" => Some(Stage::BuildsBin),
+            "run" | "runs" => Some(Stage::Runs),
             _ => None,
         }
     }
@@ -285,7 +313,10 @@ impl Outcome {
             Outcome::ViewFailed(_) | Outcome::NoLibDir | Outcome::NoEntryPoint => Stage::Unpack,
             Outcome::RustcError(_) => Stage::BuildsBin,
             Outcome::RunFailed(_) => Stage::Runs,
-            _ => Stage::EmitsRs,
+            // A legacy row said only `emits-rs`, which is the rung a SUCCESS
+            // reaches; a failing legacy row cannot say which pass rejected it
+            // until it is re-probed.
+            _ => Stage::Codegen,
         }
     }
 }
@@ -789,7 +820,9 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
             );
         }
         Ok(ex) if ex.timed_out => {
-            return Verdict::stopped(Stage::EmitsRs, Outcome::Timeout).timed(codegen_ms);
+            // A stall names no pass -- it never got to say one -- so it is
+            // recorded at the first front-end rung rather than a guessed one.
+            return Verdict::stopped(Stage::Parse, Outcome::Timeout).timed(codegen_ms);
         }
         // A successful compile still writes to stderr -- every builtin
         // substitution warns there -- so the exit status is the verdict and
@@ -797,13 +830,13 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
         Ok(ex) if ex.success() => ex.stdout,
         Ok(ex) => {
             let text = String::from_utf8_lossy(&ex.stderr);
-            let mut v = Verdict::stopped(Stage::EmitsRs, classify_stderr(&ex.stderr, root));
+            let mut v = Verdict::stopped(front_end_stage(&text), classify_stderr(&ex.stderr, root));
             v.site = site_of(&text, root);
             return v.timed(codegen_ms);
         }
     };
 
-    let mut verdict = Verdict::stopped(Stage::EmitsRs, Outcome::Ok).timed(codegen_ms);
+    let mut verdict = Verdict::stopped(Stage::Codegen, Outcome::Ok).timed(codegen_ms);
     verdict.rust_bytes = Some(rust.len() as u64);
     // The Rust is kept so a later sweep can climb the next rung without paying
     // for codegen again -- emit once for the whole corpus, then build. gzip
@@ -875,7 +908,7 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
 }
 
 /// Which rungs a sweep is allowed to climb. Both are off unless asked for:
-/// `emits-rs` is the only rung that runs no code and builds no artifact.
+/// the front end is all that runs no code and builds no artifact.
 #[derive(Clone, Copy, Default)]
 struct Tiers {
     build: bool,
@@ -959,6 +992,34 @@ fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
         ));
     }
     classify(&text, root)
+}
+
+/// Which front-end pass rejected the gem, read off the diagnostic CODE zeo
+/// already prints on the first line of a rejection.
+///
+/// The compiler names its own pass -- `zeo::parse`, `zeo::lower`,
+/// `zeo::analyze`, `zeo::codegen` -- and the probe used to skip that line, so every front-end
+/// failure landed in one bucket though the answer was sitting in the output.
+/// The passes fail differently and are fixed differently: a lowering gap is a
+/// construct the front end will not translate, an analyze rejection is a
+/// definition it will not register, a codegen rejection is a position it will
+/// not emit into.
+///
+/// A message with no code is a compile that died without a diagnostic (a
+/// panic, a kill). `Codegen` -- the last rung -- is the honest answer there:
+/// it got as far as anything can without saying otherwise, and the OUTCOME
+/// column is what records that it died.
+fn front_end_stage(stderr: &str) -> Stage {
+    for line in stderr.lines().map(str::trim) {
+        match line {
+            "zeo::parse" => return Stage::Parse,
+            "zeo::lower" => return Stage::Lower,
+            "zeo::analyze" => return Stage::Analyze,
+            "zeo::codegen" => return Stage::Codegen,
+            _ => {}
+        }
+    }
+    Stage::Codegen
 }
 
 /// The compiler's message, as one line and free of local paths.
@@ -1122,7 +1183,7 @@ fn confirmed(question: &str) -> bool {
     std::io::stdin().read_line(&mut answer).is_ok() && answer.trim().eq_ignore_ascii_case("y")
 }
 
-/// Where the emitted Rust is kept, so climbing to `builds-bin` later does not
+/// Where the emitted Rust is kept, so climbing to `build` later does not
 /// pay for codegen again. Under `vendor/`, which is gitignored.
 fn rust_store(root: &Path) -> PathBuf {
     root.join("vendor/.probe-rs")
@@ -1233,10 +1294,9 @@ fn read_ignored(root: &Path) -> BTreeMap<String, String> {
 /// nine columns and one parser and one writer served both, so the split was a
 /// filter frozen into the filesystem -- and it cost more than it gave:
 ///
-///   - the `stage` column read as a claim. A failing row saying `emits-rs`
-///     looks like it emitted Rust, because a reader in a file called `fails`
-///     infers pass/fail from the FILE and reads the stage on its own. Beside
-///     `outcome` it is unambiguous: `emits-rs ok` against `emits-rs
+///   - the `stage` column read as a claim, because a reader in a file called
+///     `fails` infers pass/fail from the FILE and reads the stage on its own.
+///     Beside `outcome` it is unambiguous: `codegen ok` against `codegen
 ///     lowering-gap` is the rung, then what happened at it;
 ///   - a fix showed up as a deletion in one file and an insertion in another,
 ///     so a review could not see the two halves as one moved row;
@@ -1466,12 +1526,19 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     md.push_str(
         "`gem-probe.tsv` beside this file holds ONE row per gem. Two columns carry the \
          verdict and they must be read together: `stage` is the RUNG the row is about, and \
-         `outcome` is what happened there. `emits-rs ok` and `emits-rs lowering-gap` are the \
+         `outcome` is what happened there. `codegen ok` and `codegen lowering-gap` are the \
          same rung with opposite results -- the stage alone claims nothing.\n\n\
-         **`emits-rs ok` means zeo produced Rust, and nothing more.** No rustc ran, no \
+         The ladder is `queued -> fetch -> unpack -> parse -> lower -> analyze -> codegen \
+         -> build -> run`. The four middle rungs are zeo's own front-end passes, and a \
+         rejection is recorded at the pass that MADE it -- zeo prints that as the \
+         diagnostic's code, so a front-end failure says which pass refused rather than \
+         landing in one bucket. They are rungs rather than columns because the ladder \
+         terminates: the pass a row names implies success at every pass before it, and \
+         that no pass after it was attempted.\n\n\
+         **`codegen ok` means zeo produced Rust, and nothing more.** No rustc ran, no \
          binary exists, and the gem's own code may not have been compiled at all -- zeo can \
-         decline a unit and defer it to a runtime `LoadError`, which only the `runs` stage \
-         sees. `builds-bin` and `runs` are opt-in (`--build`, `--run`) and a sweep does not \
+         decline a unit and defer it to a runtime `LoadError`, which only the `run` stage \
+         sees. `build` and `run` are opt-in (`--build`, `--run`) and a sweep does not \
          reach them.\n\n\
          No `ok` row may regress: `gem-probe --check` gates both the outcome and the stage. \
          Of the failures only `lowering-gap`, `compiler-panic` and `rustc-error` are zeo's \
@@ -2166,7 +2233,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let waiting = rows.len() - measured;
     println!(
         "gem-probe: {}/{measured} probed gems emit Rust\n  {}",
-        reached(Stage::EmitsRs),
+        reached(Stage::Codegen),
         ledger_path(root).display()
     );
     if waiting > 0 {
@@ -2370,6 +2437,27 @@ mod tests {
         ));
     }
 
+    /// zeo names the pass that rejected on the first line of every diagnostic,
+    /// and the probe used to skip that line -- so every front-end failure
+    /// landed in one bucket though the compiler had already said which pass it
+    /// was. These are the four codes it emits, verbatim.
+    #[test]
+    fn the_front_end_rung_comes_from_the_compilers_own_code() {
+        let boxed = |code: &str| {
+            format!("{code}\n\n  \u{d7} something it refused\n   \u{256d}\u{2500}[-e:1:1]\n")
+        };
+        assert_eq!(front_end_stage(&boxed("zeo::parse")), Stage::Parse);
+        assert_eq!(front_end_stage(&boxed("zeo::lower")), Stage::Lower);
+        assert_eq!(front_end_stage(&boxed("zeo::analyze")), Stage::Analyze);
+        assert_eq!(front_end_stage(&boxed("zeo::codegen")), Stage::Codegen);
+        // No code at all: a compile that died without a diagnostic. The last
+        // rung is the honest answer -- the OUTCOME is what records the death.
+        assert_eq!(
+            front_end_stage("thread 'main' panicked at src/lib.rs:1:1:\nboom\n"),
+            Stage::Codegen
+        );
+    }
+
     /// A seeded row is the frontier, not a verdict, and two things must hold
     /// or seeding makes the sweep worse rather than better: it round-trips as
     /// `Unprobed` at the bottom rung, and it is ordered below every rung a
@@ -2384,7 +2472,7 @@ mod tests {
         );
         rows.insert(
             "measured".to_string(),
-            Row::stopped("1.0.0", Stage::EmitsRs, Outcome::Ok, None),
+            Row::stopped("1.0.0", Stage::Codegen, Outcome::Ok, None),
         );
         write_ledger(&root, &rows).unwrap();
 
@@ -2393,7 +2481,7 @@ mod tests {
         assert_eq!(back["waiting"].stage, Stage::Queued);
         assert_eq!(back["waiting"].version, "");
         assert!(Stage::Queued < Stage::Fetch, "the frontier is the bottom");
-        assert!(back["waiting"].stage < Stage::EmitsRs);
+        assert!(back["waiting"].stage < Stage::Codegen);
         assert_eq!(Outcome::Unprobed.implied_stage(), Stage::Queued);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2417,7 +2505,7 @@ mod tests {
         for name in ["Cartesian", "keeper"] {
             rows.insert(
                 name.to_string(),
-                Row::stopped("1.0.0", Stage::EmitsRs, Outcome::Ok, None),
+                Row::stopped("1.0.0", Stage::Codegen, Outcome::Ok, None),
             );
         }
         write_ledger(&root, &rows).unwrap();
@@ -2562,7 +2650,7 @@ mod tests {
 
         let back = read_ledger(&root).unwrap();
         assert_eq!(back["alpha"].outcome, Outcome::Ok);
-        assert_eq!(back["alpha"].stage, Stage::EmitsRs);
+        assert_eq!(back["alpha"].stage, Stage::Codegen);
         assert_eq!(back["alpha"].digest.as_deref(), Some("deadbeef"));
         // A legacy row measured no bytes; recording 0 would claim it did.
         assert_eq!(back["alpha"].rust_bytes, None);
@@ -2576,8 +2664,14 @@ mod tests {
     #[test]
     fn the_stages_are_ordered_by_how_much_they_claim() {
         assert!(Stage::Fetch < Stage::Unpack);
-        assert!(Stage::Unpack < Stage::EmitsRs);
-        assert!(Stage::EmitsRs < Stage::BuildsBin);
+        assert!(Stage::Unpack < Stage::Codegen);
+        // The front end in the order zeo runs it, so a gem that used to stop
+        // at `analyze` and now stops at `codegen` reads as the progress it is.
+        assert!(Stage::Unpack < Stage::Parse);
+        assert!(Stage::Parse < Stage::Lower);
+        assert!(Stage::Lower < Stage::Analyze);
+        assert!(Stage::Analyze < Stage::Codegen);
+        assert!(Stage::Codegen < Stage::BuildsBin);
         assert!(Stage::BuildsBin < Stage::Runs);
     }
 

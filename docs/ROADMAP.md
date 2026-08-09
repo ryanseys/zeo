@@ -218,23 +218,28 @@ declared dependencies, pinned by the `.gem`'s sha256.
 
 ### What that number does and does not say
 
-The ledger's `stage` column names how far up the pipeline a row got, and a
-sweep only ever reaches the third rung:
+The ledger's `stage` column names how far up the pipeline a row got, and it is
+always read beside `outcome` — `codegen ok` and `codegen lowering-gap` are the
+same rung with opposite results. A sweep climbs no further than `codegen`:
 
 | Stage | Claim | Default |
 |---|---|---|
+| `queued` | the registry names it; nothing has been measured | — |
 | `fetch` / `unpack` | the archive resolved and had a `lib/` | — |
-| `emits-rs` | **zeo's front end produced Rust** | yes |
-| `builds-bin` | rustc accepted that Rust and linked a binary | `--build` |
-| `runs` | the binary executed and exited 0 | `--run` |
+| `parse` / `lower` / `analyze` / `codegen` | **how far zeo's front-end passes got** | yes |
+| `build` | rustc accepted that Rust and linked a binary | `--build` |
+| `run` | the binary executed and exited 0 | `--run` |
 
-`emits-rs` is deliberately the weakest useful claim. **No rustc runs, no binary
-exists, and the gem's own code may not have been compiled at all** — zeo can
-decline a unit and defer it to a runtime `LoadError`, so a gem can reach
-`emits-rs` and `builds-bin` and still fail to load itself. A sampled build of
-four such rows found two that did exactly that. Only `runs` distinguishes them.
-This rung was called `compiles` until the stage column existed, which read as a
-far stronger claim than it ever measured.
+The four front-end rungs are zeo's own passes, and a rejection is recorded at
+the pass that made it — zeo prints that as the diagnostic's code (`zeo::parse`,
+`zeo::lower`, `zeo::analyze`, `zeo::codegen`), so a front-end failure says which
+pass refused rather than landing in one bucket.
+
+Reaching `codegen` is deliberately the weakest useful claim. **No rustc runs, no
+binary exists, and the gem's own code may not have been compiled at all** — zeo
+can decline a unit and defer it to a runtime `LoadError`, so a gem can reach
+`codegen` and `build` and still fail to load itself. A sampled build of four
+such rows found two that did exactly that. Only `run` distinguishes them.
 
 `--run` executes code downloaded from rubygems, so it is fenced four ways:
 named gems only (every bulk selector is refused outright), a second
