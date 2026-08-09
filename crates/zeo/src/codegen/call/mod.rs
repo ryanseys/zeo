@@ -1423,10 +1423,22 @@ pub fn emit_call(
             // There, fall through to the dynamic dispatch below: the sibling
             // method is then resolved against the receiver actually passed,
             // which is the whole point of rebinding.
+            //
+            // ...and the same two runtime-overlay questions the EXPLICIT-
+            // receiver Path 1 asks (see the `recv_class.filter` further down).
+            // A receiverless call is a send to `self` like any other, and
+            // `self` may carry a per-object singleton method that shadows the
+            // class's: `f.define_singleton_method(:close) { }` was honoured by
+            // `f.close` and by `self.close`, and not by the bare `close`
+            // written in the method next door.
             if let Some((_, sid)) = cx
                 .compiler
                 .method_in_chain(cid, name)
                 .filter(|_| !cx.self_is_dynamic)
+                .filter(|_| {
+                    !cx.compiler.may_be_undefined_at_runtime(cid, name)
+                        && !cx.compiler.may_be_patched_at_runtime(name)
+                })
             {
                 let scope = cx.compiler.scope(sid);
                 let slf = &cx.self_ident;
