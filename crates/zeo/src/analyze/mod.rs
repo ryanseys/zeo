@@ -1588,16 +1588,70 @@ fn static_const_defined_in(
 /// "undecidable" answer), whereas missing a real definition would silently drop
 /// one of the two branches.
 fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) -> bool {
-    let mut inside: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
-    let mut stack = guarded.to_vec();
-    while let Some(id) = stack.pop() {
-        if inside.insert(id) {
-            compiler.hir[id].for_each_child(&mut |child| stack.push(child));
-        }
-    }
+    let inside = nodes_under(compiler, guarded);
     compiler.hir.iter_with_ids().any(|(id, node)| {
         !inside.contains(&id) && matches!(node, HirNode::ConstWrite { name, .. } if name == leaf)
     })
+}
+
+/// [`const_defined_outside`] for a SCOPED name -- `defined?(HTTP::VERSION)`.
+///
+/// The unscoped form matches by leaf name over the whole arena, which for
+/// `VERSION`/`Error`/`Config` matches somewhere in every program and so always
+/// answered "undecidable". Here the scope is already resolved, so the question
+/// can be asked properly: is there a write that lands in THIS class?
+///
+/// Two shapes can, and only two. An explicitly scoped `Scope::NAME = v`, and a
+/// `const_set` naming the leaf (whose receiver may be computed, so any of them
+/// is enough to decline). A bare `NAME = v` inside the scope's own body is not
+/// one of them: the caller already asked `directly_defines_const`, and a body
+/// the walk has not reached yet has not run -- the same moment rule the class
+/// arm applies.
+fn const_written_into(
+    compiler: &Compiler,
+    guarded: &[NodeId],
+    target: ClassId,
+    leaf: &str,
+) -> bool {
+    let inside = nodes_under(compiler, guarded);
+    compiler.hir.iter_with_ids().any(|(id, node)| {
+        if inside.contains(&id) {
+            return false;
+        }
+        match node {
+            HirNode::ConstWrite {
+                scope: Some(scope),
+                name,
+                ..
+            } => name == leaf && compiler.resolve_class(scope, &[], 0) == Some(target),
+            HirNode::Call { name, args, .. } if name == "const_set" => {
+                args.iter().any(|a| match a {
+                    ArrayElem::Single(v) => match &compiler.hir[*v] {
+                        HirNode::SymbolLit(s) => s == leaf,
+                        HirNode::StringLit(parts) => {
+                            matches!(parts.as_slice(), [StrPart::Lit(s)] if s == leaf)
+                        }
+                        // A computed name could be anything, including this one.
+                        _ => true,
+                    },
+                    _ => true,
+                })
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Every node reachable from `roots`, roots included.
+fn nodes_under(compiler: &Compiler, roots: &[NodeId]) -> std::collections::HashSet<NodeId> {
+    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut stack = roots.to_vec();
+    while let Some(id) = stack.pop() {
+        if seen.insert(id) {
+            compiler.hir[id].for_each_child(&mut |child| stack.push(child));
+        }
+    }
+    seen
 }
 
 /// Compile-time truth of a top-level `if`'s condition. `guarded` is every
@@ -1692,7 +1746,7 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
                             || mro::directly_defines_const(compiler, sid, name)
                         {
                             Some(true)
-                        } else if const_defined_outside(compiler, guarded, name) {
+                        } else if const_written_into(compiler, guarded, sid, name) {
                             // Could name a VALUE constant on `scope` assigned
                             // elsewhere/at runtime -- not decidable here.
                             None

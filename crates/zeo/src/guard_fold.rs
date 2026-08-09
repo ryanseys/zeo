@@ -212,7 +212,35 @@ fn const_init(
             }
         }
     }
-    None
+    // The top level, where every bare lookup ends. A `CONST = ...` written
+    // outside any class is a statement of a `Program` rather than of a class
+    // body, so it is not in the tables walked above. Only a name written ONCE
+    // answers: two writes (log4r's `HAVE_REXML = true` / `= false`, one per
+    // branch of a rescue) have no single initializer to read.
+    if scope.is_some() {
+        return None;
+    }
+    let mut found = None;
+    for node in compiler.hir.iter() {
+        let HirNode::Program(stmts) = node else {
+            continue;
+        };
+        for &s in stmts {
+            if let HirNode::ConstWrite {
+                name: n,
+                value,
+                scope: None,
+            } = &compiler.hir[s]
+                && n == name
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((crate::compiler::OBJECT_CLASS, *value));
+            }
+        }
+    }
+    found
 }
 
 /// The literal string of `scope::name` when it's a `NAME = "..."` written in
@@ -819,6 +847,82 @@ fn const_name_fold(
     Some(false)
 }
 
+/// The value of a `begin; require "x"; <value>; rescue LoadError; <value>; end`
+/// as a boolean, or `None` when the shape is anything else.
+///
+/// Every statement but the last must be a require -- either one the loader
+/// resolved (already a `BoolLit`) or one it could not (still a call, and the
+/// one that raises). Anything else in there could raise for its own reasons,
+/// or have effects the fold would silently reorder, so the shape is checked
+/// rather than assumed.
+fn rescued_require_fold(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    body: &[NodeId],
+    rescues: &[crate::hir::RescueClause],
+) -> Option<bool> {
+    let (&value, leading) = body.split_last()?;
+    let mut raises = false;
+    for &stmt in leading {
+        match &compiler.hir[stmt] {
+            HirNode::BoolLit(_) => {}
+            HirNode::Call { name, args, .. } if name == "require" => {
+                let [ArrayElem::Single(arg)] = args.as_slice() else {
+                    return None;
+                };
+                let feature = string_lit(compiler, *arg)?;
+                if !compiler.hir.unresolvable_requires.contains(&feature) {
+                    return None;
+                }
+                raises = true;
+            }
+            _ => return None,
+        }
+    }
+    if !raises {
+        return static_bool(compiler, cref, box_id, value)
+            .or_else(|| literal_truth(compiler, value));
+    }
+    // The raise happened, so the answer is the first clause that catches
+    // `LoadError`. A splatted class list is a runtime question -- decline.
+    let clause = rescues.iter().find(|r| {
+        r.splats.is_empty()
+            && (r.classes.is_empty()
+                || r.classes
+                    .iter()
+                    .any(|c| c == "LoadError" || c == "::LoadError" || c == "StandardError"))
+    })?;
+    if rescues.iter().any(|r| !r.splats.is_empty()) {
+        return None;
+    }
+    // An empty rescue body is `nil`, which is exactly what the idiom leans on.
+    match clause.body.last() {
+        Some(&v) => static_bool(compiler, cref, box_id, v).or_else(|| literal_truth(compiler, v)),
+        None => Some(false),
+    }
+}
+
+/// Ruby truthiness of a LITERAL -- everything but `false` and `nil` is true.
+///
+/// Deliberately not part of `static_bool`: a literal written directly as a
+/// condition has its own if-expression-aware codegen path, and folding it there
+/// drops the leading statements of the branch. Here the literal is a stored
+/// VALUE one step removed from the condition, so reading it is just reading it.
+fn literal_truth(compiler: &Compiler, node: NodeId) -> Option<bool> {
+    match &compiler.hir[node] {
+        HirNode::BoolLit(b) => Some(*b),
+        HirNode::NilLit => Some(false),
+        HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
+        | HirNode::StringLit(_)
+        | HirNode::SymbolLit(_)
+        | HirNode::ArrayLit(_)
+        | HirNode::HashLit(_) => Some(true),
+        _ => None,
+    }
+}
+
 /// Compile-time truth of a guard expression, or `None` when it isn't one of the
 /// decidable target-constant forms (leave the condition to run normally).
 fn static_bool(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId) -> Option<bool> {
@@ -847,6 +951,18 @@ fn static_bool(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId)
             let (owner, value) = const_init(compiler, cref, box_id, Some(scope), name)?;
             static_bool(compiler, &compiler.cref_of(Some(owner)), box_id, value)
         }
+        // `CONST = begin; require "x"; true; rescue LoadError; end` -- the
+        // have-I-got-this-library idiom, and its value is decided at compile
+        // time even though the constant reads like a runtime one. A `require`
+        // the loader RESOLVED is already a `BoolLit` by now; one it could not
+        // is still a call, and that call raises `LoadError`. hexapdf gates a
+        // whole file on `HARFBUZZ_AVAILABLE` this way.
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body: None,
+            ensure_body: None,
+        } => rescued_require_fold(compiler, cref, box_id, body, rescues),
         HirNode::Call {
             receiver,
             name,
