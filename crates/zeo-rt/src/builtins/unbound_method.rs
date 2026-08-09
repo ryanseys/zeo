@@ -123,35 +123,43 @@ fn recv_unbound(recv: &RubyValue) -> &RUnboundMethod {
         .expect("class_id guarantees this downcast")
 }
 
-/// The shared `bind` check: `obj` must be an instance of the unbound method's
-/// owning class (or a descendant).
+/// The shared `bind` check: `obj` must be an instance of the class that OWNS
+/// the method -- not of the class it was fetched from, which may be a subclass
+/// of the owner (`B.instance_method(:x)` where `x` is A's binds an `A`).
+///
+/// A MODULE owner imposes no check at all, since ruby 3.0: a module has no
+/// instances of its own, so an unbound method taken from one binds to any
+/// object.
 ///
 /// A SINGLETON unbind is owned by `#<Class:C>`, whose instances are `C` and
 /// `C`'s subclasses -- so the argument has to be a class in that ancestry,
 /// not an instance of it. CRuby words that refusal differently, because it
 /// reaches the same test through a singleton `methclass`.
 fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal> {
-    let ok = match um.kind {
-        // `is_a_value`, not `is_a`: reaching a class method through
-        // `Foo.singleton_class.instance_method(:a)` gives an INSTANCE-kind
-        // unbound method whose class is that singleton, and `Foo` instantiates
-        // it without being an instance of any ordinary class in its ancestry.
-        MethodKind::Instance => crate::dispatch::is_a_value(obj, um.class_id),
-        MethodKind::Singleton => {
-            matches!(obj, RubyValue::Class(cid) if crate::dispatch::is_a(*cid, um.class_id))
-        }
-    };
+    let owner = um.owner().unwrap_or(um.class_id);
+    let ok = crate::dispatch::class_is_module(owner).unwrap_or(false)
+        || match um.kind {
+            // `is_a_value`, not `is_a`: reaching a class method through
+            // `Foo.singleton_class.instance_method(:a)` gives an INSTANCE-kind
+            // unbound method whose class is that singleton, and `Foo`
+            // instantiates it without being an instance of any ordinary class
+            // in its ancestry.
+            MethodKind::Instance => crate::dispatch::is_a_value(obj, owner),
+            MethodKind::Singleton => {
+                matches!(obj, RubyValue::Class(cid) if crate::dispatch::is_a(*cid, um.class_id))
+            }
+        };
     if !ok {
         // CRuby picks the wording from the OWNER, not the lookup kind: any
         // singleton `methclass` gets the "different object" message.
         let singleton = um.kind == MethodKind::Singleton
             || (crate::runtime_meta::is_live()
-                && crate::runtime_meta::singleton_owner_value(um.class_id).is_some());
+                && crate::runtime_meta::singleton_owner_value(owner).is_some());
         return Err(match singleton {
             true => type_error!("singleton method called for a different object"),
             false => type_error!(
                 "bind argument must be an instance of {}",
-                crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string())
+                crate::dispatch::class_name(owner).unwrap_or_else(|| "Object".to_string())
             ),
         });
     }
