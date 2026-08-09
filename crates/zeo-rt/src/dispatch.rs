@@ -3282,41 +3282,85 @@ pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
-/// `recv.send(name, ...)` / `#public_send` where the compiler could not prove
-/// WHICH `send` the receiver's chain resolves to.
+/// The Kernel entry a [`reflect_dispatch_in`] site was written as.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reflect {
+    Send,
+    PublicSend,
+    RespondTo,
+    Method,
+}
+
+impl Reflect {
+    /// The name as WRITTEN, which is both what the MRO is asked about and
+    /// what an ordinary call dispatches when the answer is "shadowed".
+    fn symbol(self) -> Symbol {
+        match self {
+            Reflect::Send => crate::symbol::wk::send(),
+            Reflect::PublicSend => crate::symbol::wk::public_send(),
+            Reflect::RespondTo => crate::symbol::wk::respond_to(),
+            Reflect::Method => crate::symbol::wk::method(),
+        }
+    }
+}
+
+/// `recv.send(name, …)` / `#respond_to?` / `#method` where the compiler could
+/// not prove WHICH of them the receiver's chain resolves to.
 ///
-/// CRuby has no `send` intrinsic: `send` is an ordinary method on `Kernel`,
-/// so a class defining its own -- `BasicSocket#send` writing bytes,
-/// `Ractor#send` passing a message, any `def send` of your own -- simply wins
-/// the lookup because it sits earlier in the MRO. Only when the lookup lands
-/// on Kernel's does the first argument get reinterpreted as a method name.
-/// This asks that question once, then does whichever of the two the answer
+/// CRuby has no intrinsic for any of the three: each is an ordinary method on
+/// `Kernel`, so a class defining its own -- `BasicSocket#send` writing bytes,
+/// `Ractor#send` passing a message, any `def respond_to?` of your own --
+/// simply wins the lookup because it sits earlier in the MRO. Only when the
+/// lookup lands on Kernel's does the first argument get reinterpreted as a
+/// method name. This asks that question once, then does whichever the answer
 /// calls for.
 ///
-/// `send_name` is the name as WRITTEN (`:send` or `:public_send`), which is
-/// both what the MRO is asked about and what an ordinary call dispatches.
-pub fn send_dispatch_in(
+/// `candidates` are the refinements active at the site, empty where there are
+/// none. All three entries honour a refinement in real Ruby, and a receiver
+/// whose class is only known at run time is exactly where the compiler cannot
+/// fold that away.
+pub fn reflect_dispatch_in(
     box_id: u32,
     recv: &RubyValue,
-    send_name: Symbol,
+    entry: Reflect,
     args: &[RubyValue],
     block: Option<RubyValue>,
+    candidates: &[(ClassId, ClassId)],
 ) -> Result<RubyValue, Signal> {
+    let written = entry.symbol();
     let shadowed = !matches!(
-        method_owner(recv.class_id(), send_name),
+        method_owner(recv.class_id(), written),
         Some(KERNEL_CLASS) | Some(BASIC_OBJECT_CLASS) | None
     );
     if shadowed {
-        return send_value_in(box_id, recv, send_name, args, block);
+        return send_value_in(box_id, recv, written, args, block);
     }
     let Some((target, rest)) = args.split_first() else {
-        return Err(crate::builtins::arg_error!("no method name given"));
+        return Err(match entry {
+            Reflect::Send | Reflect::PublicSend => {
+                crate::builtins::arg_error!("no method name given")
+            }
+            _ => crate::builtins::arg_error!("wrong number of arguments (given 0, expected 1)"),
+        });
     };
     let target = method_name_symbol(target)?;
-    if send_name == crate::symbol::wk::public_send() {
-        send_value_public_in(box_id, recv, target, rest, block)
-    } else {
-        send_value_in(box_id, recv, target, rest, block)
+    match entry {
+        Reflect::Send | Reflect::PublicSend => refined_send_dynamic(
+            box_id,
+            recv,
+            target,
+            rest,
+            block,
+            candidates,
+            entry == Reflect::PublicSend,
+        ),
+        Reflect::RespondTo => Ok(RubyValue::Bool(refined_responds_to(
+            recv,
+            target,
+            rest.first().is_some_and(|v| v.truthy()),
+            candidates,
+        )?)),
+        Reflect::Method => refined_method(recv, target, candidates),
     }
 }
 

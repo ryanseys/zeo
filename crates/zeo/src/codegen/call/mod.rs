@@ -2195,6 +2195,73 @@ fn emit_refined_reflection(
     }
 }
 
+/// Kernel's reflection entries -- `send`/`public_send`, `respond_to?` and
+/// `method` -- on a receiver whose class is NOT statically known. Two
+/// questions are open at such a site and neither is decidable here: which of
+/// the entries the receiver's chain actually resolves to (any class may
+/// define its own), and whether a refinement active at the site answers the
+/// name it was handed. One runtime entry point asks both.
+///
+/// The refinement set is read here rather than left to `emit_refined_call`,
+/// which asks the same question of a KNOWN receiver: this site has to be
+/// taken whether or not a `using` covers it, since the shadow question stands
+/// on its own.
+#[allow(clippy::too_many_arguments)]
+fn emit_reflect_dispatch(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+    recv_expr: &TokenStream,
+) -> Option<TokenStream> {
+    let no_block = block.is_none() && block_arg.is_none();
+    let entry = match name {
+        "send" if !args.is_empty() => quote! { zeo_rt::Reflect::Send },
+        "public_send" if !args.is_empty() => quote! { zeo_rt::Reflect::PublicSend },
+        "respond_to?" if (1..=2).contains(&args.len()) && no_block && kwargs.is_empty() => {
+            quote! { zeo_rt::Reflect::RespondTo }
+        }
+        "method" if args.len() == 1 && no_block && kwargs.is_empty() => {
+            quote! { zeo_rt::Reflect::Method }
+        }
+        _ => return None,
+    };
+    if resolve_send(cx, recv_id, name) != SendTarget::Unknown {
+        return None;
+    }
+    let __bx = cx.box_id;
+    let recv = box_if_object_typed(cx, recv_id, recv_expr.clone());
+    let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
+    let all_args = args
+        .iter()
+        .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)));
+    let blk = emit_block_option(cx, block, block_arg);
+    let pairs = cx
+        .compiler
+        .refinements_active_at(recv_id)
+        .into_iter()
+        .map(|(target, holder)| {
+            let (target, holder) = (target.0, holder.0);
+            quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+        });
+    Some(wrap_dynamic_result(
+        !no_block,
+        quote! {
+            zeo_rt::reflect_dispatch_in(
+                #__bx,
+                &#recv,
+                #entry,
+                &[#(#all_args,)* #(#kw_hash,)*],
+                #blk,
+                &[#(#pairs),*],
+            )
+        },
+    ))
+}
+
 /// The actual dispatch decision (see the module's "Two dispatch paths"
 /// docs), given an already-computed `recv_expr` for the receiver's runtime
 /// value -- factored out of `emit_call` so `&.`'s nil-guard can wrap this
@@ -2228,6 +2295,15 @@ fn dispatch(
     // target class the refinement deliberately never touched.
     if let Some(tokens) =
         emit_refined_call(cx, recv_id, name, args, kwargs, block, block_arg, recv_expr)
+    {
+        return tokens;
+    }
+
+    // A reflection entry on a receiver whose class only the runtime knows.
+    // Ahead of every fold below, which would answer for Kernel's without
+    // first asking whether Kernel's is the one this chain resolves to.
+    if let Some(tokens) =
+        emit_reflect_dispatch(cx, recv_id, name, args, kwargs, block, block_arg, recv_expr)
     {
         return tokens;
     }
@@ -2550,7 +2626,14 @@ fn dispatch(
     // there's no compile-time constant-fold here (a name could still resolve
     // differently at runtime for a `define_method`-extended class), so this
     // always calls into the registry.
-    if no_kwargs && name == "respond_to?" && (args.len() == 1 || args.len() == 2) {
+    if no_kwargs
+        && name == "respond_to?"
+        && (args.len() == 1 || args.len() == 2)
+        // A class carrying its OWN `respond_to?` answers with whatever it
+        // likes, so the fold belongs behind the same chain question `send`
+        // asks. The unknown-receiver half of it left above.
+        && resolve_send(cx, recv_id, name) == SendTarget::Kernel
+    {
         let sym_expr = emit_symbol_expr(cx, args[0]);
         // The optional second argument (`include_all`) opts private methods
         // back in -- absent means false, CRuby's default.
@@ -3389,33 +3472,13 @@ fn dispatch(
     // simply dropped on that fallback path, matching the same documented
     // scope-cut as a method declaring keyword params being unreachable via
     // `send` at all.
+    // An UNKNOWN receiver has already left through `emit_reflect_dispatch`
+    // above, which asks the same question of all four reflection entries.
     let send_resolves = if name == "send" || name == "public_send" {
         resolve_send(cx, recv_id, name)
     } else {
         SendTarget::Shadowed
     };
-    if send_resolves == SendTarget::Unknown && !args.is_empty() {
-        // The receiver's class isn't known, so only the runtime can say which
-        // `send` its chain resolves to -- hand it the question along with
-        // every argument, including the one Kernel's would reinterpret.
-        let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
-        let all_args = args.iter().map(|&a| {
-            let e = emit_expr(cx, a);
-            box_if_object_typed(cx, a, e)
-        });
-        let block_value = emit_block_option(cx, block, block_arg);
-        let name_sym = super::pooled_sym(name);
-        let dyn_call = quote! {
-            zeo_rt::send_dispatch_in(
-                #__bx,
-                &(#recv_expr),
-                #name_sym,
-                &[#(#all_args,)* #(#kw_hash,)*],
-                #block_value,
-            )
-        };
-        return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
-    }
     if send_resolves == SendTarget::Kernel && !args.is_empty() {
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
