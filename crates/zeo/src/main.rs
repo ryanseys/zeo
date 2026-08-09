@@ -547,11 +547,7 @@ fn run() -> Result<(), MainError> {
     // reports here as an ordinary error instead of panicking mid-compile.
     zeo::home::ensure_resolved()?;
     let (source, input_path) = match &args.source {
-        Source::File(path) => {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| format!("reading {}: {e}", path.display()))?;
-            (text, Some(path.clone()))
-        }
+        Source::File(path) => (zeo::parse::read_source(path)?, Some(path.clone())),
         Source::Eval(code) => (code.clone(), None),
     };
 

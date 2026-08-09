@@ -11,6 +11,8 @@ mod gemspec;
 mod loader;
 mod lockfile;
 
+pub use loader::read_source;
+
 use crate::diagnostics::CompileError;
 use crate::hir::{Hir, HirNode, NodeId};
 use crate::lower::{encoding_const_name, parse_and_lower_into};

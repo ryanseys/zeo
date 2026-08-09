@@ -143,6 +143,48 @@ pub(super) struct Loader {
 /// package's name, or `None` for not-on-disk.
 type ResolvedRequire = Option<(PathBuf, Option<String>)>;
 
+/// Reads a Ruby file as CRuby reads it: a stream of BYTES, not text. A byte
+/// that is not valid UTF-8 is a syntax error where Ruby reads code, and is
+/// simply skipped inside a comment -- so a file that is not valid UTF-8 goes
+/// to prism exactly as it lies on disk, and prism (the same parser CRuby
+/// itself runs) gives the verdict and the message.
+///
+/// Only a file prism accepts becomes a Rust `String`, one placeholder per
+/// invalid byte. That is lossless for the compile: prism accepting it is
+/// proof every one of those bytes sat in a comment. The placeholder is a
+/// single byte so every prism span offset still addresses the same character.
+pub fn read_source(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let bytes = match String::from_utf8(bytes) {
+        Ok(text) => return Ok(text),
+        Err(e) => e.into_bytes(),
+    };
+    if let Some(err) = ruby_prism::parse(&bytes).errors().next() {
+        return Err(format!(
+            "{}: parse error: {}",
+            path.display(),
+            err.message()
+        ));
+    }
+    let mut out = String::with_capacity(bytes.len());
+    let mut rest = &bytes[..];
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(tail) => {
+                out.push_str(tail);
+                return Ok(out);
+            }
+            Err(e) => {
+                let (good, bad) = rest.split_at(e.valid_up_to());
+                out.push_str(std::str::from_utf8(good).unwrap_or_default());
+                let skip = e.error_len().unwrap_or(bad.len());
+                out.extend(std::iter::repeat_n('?', skip));
+                rest = &bad[skip..];
+            }
+        }
+    }
+}
+
 /// Lowers the MAIN file's statements, resolving require/require_relative/
 /// load recursively -- the entry point `parse_and_lower_with` uses for the
 /// user's own source (the exception prelude and `eval` bodies keep going
@@ -1022,8 +1064,7 @@ impl Loader {
                 canonical.display()
             ).into());
         }
-        let source = std::fs::read_to_string(canonical)
-            .map_err(|e| format!("reading {}: {e}", canonical.display()))?;
+        let source = read_source(canonical)?;
         self.splice_source(hir, canonical, source, required_from, package, box_id)
     }
 
@@ -2098,4 +2139,41 @@ fn collect_parse_warnings(
 fn is_default_level(message: &str) -> bool {
     message.starts_with("key ") && message.contains(" is duplicated and overwritten on line ")
         || message.ends_with("literal' in conditional, should be ==")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_source;
+
+    fn write(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("zeo-read-source-{name}.rb"));
+        std::fs::write(&path, bytes).expect("writing the fixture");
+        path
+    }
+
+    #[test]
+    fn an_invalid_byte_in_a_comment_reads_as_a_same_width_placeholder() {
+        let path = write("comment", b"# (c) \xa9 2007\nputs 1\n");
+        let text = read_source(&path).expect("prism accepts a comment's stray byte");
+        assert_eq!(text, "# (c) ? 2007\nputs 1\n");
+    }
+
+    #[test]
+    fn an_invalid_byte_in_code_is_the_syntax_error_cruby_reports() {
+        let path = write("code", b"s = \"a\xa9b\"\n");
+        let err = read_source(&path).expect_err("CRuby rejects this file");
+        assert!(
+            err.contains("invalid multibyte character"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn a_truncated_multibyte_sequence_at_end_of_file_is_still_one_byte_per_byte() {
+        // `error_len() == None`: the bytes run out mid-sequence, so the whole
+        // remainder is invalid and each byte still owes one placeholder.
+        let path = write("truncated", b"puts 1 # \xe0\xa4");
+        let text = read_source(&path).expect("prism accepts a comment's stray bytes");
+        assert_eq!(text, "puts 1 # ??");
+    }
 }
