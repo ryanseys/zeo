@@ -1289,6 +1289,155 @@ pub(crate) fn synthesize_struct_class(
     Ok(class_def)
 }
 
+/// `Name = Module.new` -- the block body, or `None` for the bodyless form --
+/// when the module that call mints is, observably, the module
+/// `module Name ... end` would define. `None` leaves it on the runtime path.
+///
+/// The two spellings are NOT interchangeable in general, and the whole
+/// difference is the cref. `Module.new`'s block opens none: `Module.nesting`
+/// answers `[]` inside it, `X = 1` writes `Object::X`, a nested `class Inner`
+/// defines `Object::Inner`, and a `def` written there looks constants up from
+/// the ENCLOSING scope -- so `Module.new { include Wrap; def r = FROM_WRAP }`
+/// raises NameError where the keyword form answers. A `module` body opens a
+/// cref, and every one of those reads differently.
+///
+/// Every way that difference shows is a CONSTANT, so the accepted set is the
+/// bodies that name none: `def`, `attr_*`, a visibility directive, `alias`,
+/// `alias_method` and `define_method`, and nothing else. Under that
+/// restriction the two spellings define the same module method for method,
+/// which is what lets a later `include Name` be a static MRO edge instead of a
+/// runtime splice no compiled ancestry can see.
+///
+/// The bodyless `Readers = Module.new` (rspec-core writes exactly that) is the
+/// degenerate case: no body, so nothing to observe a cref with at all.
+pub(crate) fn as_synthesized_module<'pr>(value: &Node<'pr>) -> Option<Option<Node<'pr>>> {
+    let call = value.as_call_node()?;
+    if String::from_utf8_lossy(call.name().as_slice()) != "new" || call.arguments().is_some() {
+        return None;
+    }
+    let recv = call.receiver()?;
+    if constant_path_name(&recv).ok()?.trim_start_matches("::") != "Module" {
+        return None;
+    }
+    let Some(block) = call.block() else {
+        return Some(None);
+    };
+    // `Module.new(&builder)` passes a proc whose body zeo cannot see here, and
+    // `Module.new { |m| ... }` binds the module to a parameter -- neither is a
+    // body this can read.
+    let block = block.as_block_node()?;
+    if block.parameters().is_some() {
+        return None;
+    }
+    module_body_is_definitions_only(block.body()).then(|| block.body())
+}
+
+/// The statement whitelist [`as_synthesized_module`] accepts: definitions, and
+/// the directives that only name a method. A `def`'s own body is NOT checked
+/// here -- it can still read a constant, which the caller rejects after
+/// lowering, where the arena makes the question exact.
+fn module_body_is_definitions_only(body: Option<Node<'_>>) -> bool {
+    let stmts: Vec<Node<'_>> = match body {
+        None => return true,
+        Some(n) => match n.as_statements_node() {
+            Some(s) => s.body().iter().collect(),
+            None => vec![n],
+        },
+    };
+    stmts.iter().all(|stmt| {
+        if stmt.as_def_node().is_some() || stmt.as_alias_method_node().is_some() {
+            return true;
+        }
+        // `attr_reader :x` / `private` and friends are receiverless calls, not
+        // node kinds of their own. `include`/`extend`/`prepend` are deliberately
+        // absent: an ancestor joins a real module's constant lookup and joins
+        // nothing at all in a block.
+        let Some(call) = stmt.as_call_node() else {
+            return false;
+        };
+        if call.receiver().is_some() {
+            return false;
+        }
+        matches!(
+            String::from_utf8_lossy(call.name().as_slice()).as_ref(),
+            "attr_reader"
+                | "attr_writer"
+                | "attr_accessor"
+                | "private"
+                | "public"
+                | "protected"
+                | "module_function"
+                | "alias_method"
+                | "define_method"
+        )
+    })
+}
+
+/// `Name = Module.new { <definitions> }` as the `module Name ... end` it is
+/// equivalent to -- see [`as_synthesized_module`] for why the equivalence holds
+/// only for a body that names no constant.
+///
+/// The body is lowered before that last condition can be checked: whether a
+/// `def` in it reads a constant is a question about its whole subtree, and the
+/// arena answers it exactly where a prism walk would have to re-derive it. A
+/// rejected lowering leaves its nodes unreferenced, which costs only arena
+/// space -- the value is lowered again as an ordinary block, and the three
+/// whole-arena scans that exist all key on `ConstWrite`, which this body cannot
+/// contain.
+pub(crate) fn synthesize_module(
+    result: &ParseResult,
+    hir: &mut Hir,
+    name: &str,
+    body: Option<Node<'_>>,
+) -> PResult<Option<NodeId>> {
+    let lowered = lower_class_body(result, hir, body, None, Some(name))?;
+    if lowered.iter().any(|&id| names_a_constant(hir, id)) {
+        return Ok(None);
+    }
+    let def = hir.push(HirNode::ClassDef {
+        name: name.to_string(),
+        superclass: None,
+        body: lowered,
+        is_module: true,
+    });
+    // The `module` keyword answers with its body's last statement; the
+    // assignment this replaces answers with the module. They are the same
+    // statement only when the value is discarded, so name the module again.
+    let value = hir.push(HirNode::ClassRef(name.to_string()));
+    Ok(Some(hir.push(HirNode::Seq(vec![def, value]))))
+}
+
+/// Whether this subtree names a constant anywhere -- including as the receiver
+/// of `Module.nesting`, the one construct that reads the cref itself rather
+/// than a name through it.
+fn names_a_constant(hir: &Hir, id: NodeId) -> bool {
+    let names = matches!(
+        hir[id],
+        HirNode::ClassRef(_)
+            | HirNode::New { .. }
+            | HirNode::ConstWrite { .. }
+            | HirNode::DynConstRead { .. }
+            | HirNode::DynConstWrite { .. }
+            | HirNode::ClassDef { .. }
+            | HirNode::Include(_)
+            | HirNode::Extend(_)
+            | HirNode::Prepend(_)
+            | HirNode::ClassMethodPrepend(_)
+            | HirNode::ConstantVisibility { .. }
+            | HirNode::Using(_)
+            | HirNode::Refine { .. }
+    );
+    if names {
+        return true;
+    }
+    // `for_each_child` rather than a hand-rolled walk, for the reason
+    // `rescope_body_constants` gives: it is the exhaustive one, and a missed
+    // variant here is a silent divergence rather than a compile error.
+    let mut kids = Vec::new();
+    hir[id].for_each_child(&mut |c| kids.push(c));
+    kids.into_iter().any(|c| names_a_constant(hir, c))
+}
+
 /// Whether `value` is a `Data.define(...)` / `Struct.new(...)` / `Class.new(...)`
 /// call -- an expression that produces a class object at runtime.
 fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {

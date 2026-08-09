@@ -686,6 +686,15 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         if let Some(members) = defs::as_compiled_struct(&cw.value()) {
             return defs::synthesize_struct_class(hir, &name, &members);
         }
+        // `Name = Module.new { <definitions> }` compiles to the `module Name`
+        // it is equivalent to, so a later `include Name` splices a static MRO
+        // edge. The synthesis declines a body whose meaning would move with the
+        // cref, and that body falls through to the runtime path below.
+        if let Some(body) = defs::as_synthesized_module(&cw.value())
+            && let Some(id) = defs::synthesize_module(result, hir, &name, body)?
+        {
+            return Ok(id);
+        }
         // Everything else stays the RUNTIME path: the `Struct.new`/`Data.define`
         // call MINTS a class (`rstruct::struct_new`), the write binds it to the
         // constant, and `const_set` names the freshly anonymous class (Ruby's
@@ -1376,13 +1385,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `using M` -- the top-level spelling, where it activates for the
         // rest of the file. The class-body spelling is recognized by
         // `defs::lower_class_body_statement`, which reaches the same helper.
-        // The anonymous `using Module.new { }` form needs the class
-        // registration only a class-body statement position provides, so at
-        // the top level it falls through to the ordinary (raising) call.
-        if let Some(nodes) = defs::lower_using(result, hir, node, &name, &call)?
-            && let [id] = nodes[..]
-        {
-            return Ok(id);
+        // `using Module.new { refine C do ... end }` answers with a PAIR (the
+        // anonymous holder module, then the activation), and a statement is one
+        // node -- so the pair rides in a `Seq`, which the analyze walk descends
+        // to register the holder exactly as it does a `ClassDef` written in any
+        // other value position.
+        if let Some(nodes) = defs::lower_using(result, hir, node, &name, &call)? {
+            return Ok(match nodes[..] {
+                [id] => id,
+                _ => hir.push(HirNode::Seq(nodes)),
+            });
         }
 
         /// Kernel's module functions that zeo answers with a COMPILE-TIME form
