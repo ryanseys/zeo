@@ -1519,6 +1519,18 @@ fn static_const_defined(
     let [ArrayElem::Single(arg)] = args else {
         return None;
     };
+    static_const_defined_in(compiler, target, *arg, guarded)
+}
+
+/// [`static_const_defined`] once the receiver has resolved -- shared with the
+/// `Object.constants.include?(:Name)` spelling of the same question.
+fn static_const_defined_in(
+    compiler: &Compiler,
+    target: ClassId,
+    arg: NodeId,
+    guarded: &[NodeId],
+) -> Option<bool> {
+    let arg = &arg;
     let cname = match &compiler.hir[*arg] {
         HirNode::SymbolLit(s) => s.clone(),
         // A single-literal string (`const_defined?("AF_INET6")`); interpolated
@@ -1557,8 +1569,22 @@ fn static_const_defined(
 /// class the C extension would have supplied, and zeo has no C extension to
 /// supply it, so there is nothing there to reopen.
 ///
+/// Only a VALUE constant counts here. A `class`/`module` definition does not,
+/// because the caller has already asked the better question: `resolve_class`
+/// answers with exactly what the walk has registered SO FAR, and the walk
+/// visits top-level statements in the order the program runs them. A
+/// definition it has not reached is one that has not run, which is the moment
+/// `defined?` asks about -- guard-compat's `unless Object.const_defined?
+/// ('Guard'); module Guard; end` is written precisely so the module comes into
+/// being on that first pass, and answering "already defined" because a LATER
+/// file also opens `Guard` dropped the branch that creates it.
+///
+/// A `ConstWrite` has no such oracle: value constants are resolved in a later
+/// pass, so the walk cannot say whether one has run. It keeps the conservative
+/// "undecidable" answer.
+///
 /// Matching is by LEAF name over the whole arena, ignoring lexical scope: an
-/// unrelated `Foo::Money` elsewhere costs only a `None` (the pre-existing
+/// unrelated `Foo::MONEY` elsewhere costs only a `None` (the pre-existing
 /// "undecidable" answer), whereas missing a real definition would silently drop
 /// one of the two branches.
 fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) -> bool {
@@ -1569,14 +1595,8 @@ fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) ->
             compiler.hir[id].for_each_child(&mut |child| stack.push(child));
         }
     }
-    let suffix = format!("::{leaf}");
     compiler.hir.iter_with_ids().any(|(id, node)| {
-        !inside.contains(&id)
-            && match node {
-                HirNode::ClassDef { name, .. } => name == leaf || name.ends_with(&suffix),
-                HirNode::ConstWrite { name, .. } => name == leaf,
-                _ => false,
-            }
+        !inside.contains(&id) && matches!(node, HirNode::ConstWrite { name, .. } if name == leaf)
     })
 }
 
@@ -1605,6 +1625,44 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
             ..
         } if name == "const_defined?" && kwargs.is_empty() && block.is_none() => {
             static_const_defined(compiler, *recv, args, guarded)
+        }
+        // `Object.constants.include?(:Concurrent)` -- the same question as
+        // `const_defined?`, spelled through the list. glimmer's concurrent
+        // shim asks it this way. Answered only for an `Object` receiver, where
+        // "its own constants" and "the top-level constants" are the same set;
+        // for any other module the two readings part (`constants` does not
+        // inherit) and the arm declines rather than guess.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            ..
+        } if name == "include?" && kwargs.is_empty() && block.is_none() => {
+            let HirNode::Call {
+                receiver: Some(inner),
+                name: inner_name,
+                args: inner_args,
+                block: None,
+                ..
+            } = &compiler.hir[*recv]
+            else {
+                return None;
+            };
+            if inner_name != "constants" || !inner_args.is_empty() {
+                return None;
+            }
+            let HirNode::ClassRef(recv_name) = &compiler.hir[*inner] else {
+                return None;
+            };
+            if recv_name != "Object" && recv_name != "::Object" {
+                return None;
+            }
+            let [ArrayElem::Single(arg)] = args.as_slice() else {
+                return None;
+            };
+            static_const_defined_in(compiler, OBJECT_CLASS, *arg, guarded)
         }
         HirNode::Defined(inner) => match &compiler.hir[*inner] {
             HirNode::ClassRef(name) => {
