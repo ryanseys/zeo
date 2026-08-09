@@ -1707,6 +1707,26 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
                     None => Some(false),
                 }
             }
+            // `defined?($gvar)` -- nil unless something assigned it, and a
+            // global nothing in the program writes is never assigned. lockfile
+            // opens with `unless(defined?($__lockfile__) or defined?(Lockfile))`.
+            HirNode::GlobalRead(name) => {
+                let written = compiler.hir.iter().any(
+                    |n| matches!(n, HirNode::GlobalWrite(w, _) | HirNode::AliasGlobal(w, _) if w == name),
+                );
+                (!written).then_some(false)
+            }
+            // `defined?` of a LITERAL is the string "expression" -- truthy, and
+            // never nil. faraday-stack's `if defined?("Faraday::Env")` means
+            // this rather than the constant test its author had in mind, and
+            // ruby takes that branch every time.
+            HirNode::StringLit(_)
+            | HirNode::SymbolLit(_)
+            | HirNode::IntegerLit(_)
+            | HirNode::FloatLit(_)
+            | HirNode::BoolLit(_)
+            | HirNode::ArrayLit(_)
+            | HirNode::HashLit(_) => Some(true),
             _ => None,
         },
         // `if !defined?(X)` -- the reload guard `unless defined?(X)` written the

@@ -59,3 +59,22 @@ if Object.constants.include?(:Present)
   end
 end
 p Present::SEEN
+
+# A global nothing in the program assigns is not defined -- lockfile opens
+# with exactly this pair.
+unless(defined?($__lockfile__) or defined?(Lockfile))
+  class Lockfile
+    def tag = "lock"
+  end
+end
+p Lockfile.new.tag
+
+# `defined?` of a LITERAL is the string "expression", so the branch always
+# runs. faraday-stack's `if defined?("Faraday::Env")` means this, whatever
+# its author had in mind.
+if defined?("Faraday::Env")
+  module Patch
+    APPLIED = true
+  end
+end
+p Patch::APPLIED
