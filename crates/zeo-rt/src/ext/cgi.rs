@@ -296,42 +296,9 @@ ruby_class! {
     include zeo_abi::CGI_ESCAPE_MODULE;
 
     // `CGI` INCLUDES and EXTENDS `CGI::Escape` (see `zeo_abi::BUILTIN_EXTENDS`),
-    // so ruby reaches every one of these as an instance method of a module.
-    // The include side works here -- `CGI.new(...).escapeHTML` walks the
-    // ancestry -- but the extend side does not: a module's instance row takes
-    // an `RObj`, and a class-level call arrives with a `RubyValue::Class`,
-    // which is not one. So the class side keeps its own rows, over the same
-    // bodies.
-    //
-    // ONE divergence survives that: `CGI.method(:escapeHTML).owner` answers
-    // `CGI` where ruby answers `CGI::EscapeExt`. Every other observable agrees
-    // -- both ancestor chains, both `instance_methods` lists, and what each
-    // call returns. Closing it needs a class-level call to be able to run a
-    // module's instance row, which is a dispatch change, not a CGI one.
-    def self."escape" (_recv, arg) {
-        Ok(out(percent_encode(&in_bytes(arg), true)))
-    }
-    def self."unescape" cfunc (_recv, string, _encoding?) {
-        Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(string), true)).into_owned()))
-    }
-    def self."escapeURIComponent" | "escape_uri_component" (_recv, arg) {
-        Ok(out(percent_encode(&in_bytes(arg), false)))
-    }
-    def self."unescapeURIComponent" arity -1 | "unescape_uri_component" arity -1 (_recv, arg1, _arg2?) {
-        Ok(out(String::from_utf8_lossy(&percent_decode(&in_bytes(arg1), false)).into_owned()))
-    }
-    def self."escapeHTML" | "escape_html" | "h" (_recv, arg) {
-        Ok(out(html_escape(&in_bytes(arg))))
-    }
-    def self."unescapeHTML" | "unescape_html" (_recv, arg) {
-        Ok(out(html_unescape(&as_text(arg))))
-    }
-    def self."escapeElement" | "escape_element" (_recv, _string, *_elements) {
-        Ok(escape_element(__args))
-    }
-    def self."unescapeElement" | "unescape_element" (_recv, _string, *_elements) {
-        Ok(unescape_element(__args))
-    }
+    // so every escape is an instance method of a module and `CGI` itself
+    // defines none of them. `CGI.escapeHTML` runs `EscapeExt`'s row through
+    // the extend edge, which is why `.owner` names the module.
 }
 
 #[cfg(test)]

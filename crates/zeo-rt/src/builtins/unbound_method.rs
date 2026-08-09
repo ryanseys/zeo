@@ -105,9 +105,24 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
 /// singleton class -- `Foo.method(:a).owner` is `#<Class:Foo>`, not `Foo` --
 /// which is also where `def self.a` actually put it. Shared with `Method`,
 /// whose two kinds answer the same way.
-pub(crate) fn owner_value(owner: ClassId, kind: MethodKind) -> Result<RubyValue, crate::Signal> {
+///
+/// A module the class `extend`ed is the exception: its row is an ordinary
+/// INSTANCE method, seated in the singleton's ancestry rather than minted on
+/// it, so it reports itself. `module M; def self.x; end; end` is NOT that
+/// shape -- `M` owns a real class method there, and answers `#<Class:M>`.
+pub(crate) fn owner_value(
+    home: ClassId,
+    owner: ClassId,
+    name: Symbol,
+    kind: MethodKind,
+) -> Result<RubyValue, crate::Signal> {
     match kind {
         MethodKind::Instance => Ok(RubyValue::Class(owner)),
+        MethodKind::Singleton
+            if crate::dispatch::class_method_extend_source(home, name) == Some(owner) =>
+        {
+            Ok(RubyValue::Class(owner))
+        }
         MethodKind::Singleton => {
             crate::runtime_meta::runtime_singleton_class(&RubyValue::Class(owner))
         }
@@ -232,7 +247,7 @@ ruby_class! {
     // ancestry (may differ from the class the unbound method was fetched from).
     def "owner"(recv) {
         let um = recv_unbound(recv);
-        owner_value(um.owner().unwrap_or(um.home), um.kind)
+        owner_value(um.home, um.owner().unwrap_or(um.home), um.name, um.kind)
     }
     def "source_location"(recv) {
         let um = recv_unbound(recv);

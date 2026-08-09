@@ -2139,6 +2139,11 @@ fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
     if crate::builtins::class_method_table(cid).is_some_and(|lookup| lookup(n).is_some()) {
         return true;
     }
+    // A module the class EXTENDED answers too -- the same edge dispatch runs
+    // the call through.
+    if extended_class_method_fn(cid, name).is_some() {
+        return true;
+    }
     crate::builtins::rstruct::is_struct_class(cid)
         && crate::builtins::rstruct::class_lookup(n).is_some()
 }
@@ -2164,7 +2169,45 @@ pub fn class_defines_own_class_method(cid: ClassId, name: Symbol) -> bool {
 /// instance method of `Class`/`Module`. `None` when nothing up the chain
 /// defines one.
 pub fn class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
-    scan_class_method_owner(cid, 0, name)
+    scan_class_method_owner(cid, 0, name).map(|(owner, _)| owner)
+}
+
+/// The module an `extend` supplies class method `name` from, or `None` when a
+/// `def self.<name>` up the chain gets there first.
+///
+/// An extended module's row is an INSTANCE method seated in the singleton
+/// class's ancestry, not a class method minted on the singleton -- which is
+/// why reflection reports it differently at every turn: `#owner` names the
+/// module bare where an own definition names a singleton class, and
+/// `#inspect` qualifies the singleton home with it.
+pub fn class_method_extend_source(cid: ClassId, name: Symbol) -> Option<ClassId> {
+    match scan_class_method_owner(cid, 0, name) {
+        Some((owner, true)) => Some(owner),
+        _ => None,
+    }
+}
+
+/// The row a module the class `extend`ed supplies for class method `name`,
+/// with the module that owns it. Only a value-receiver row qualifies: a
+/// compiled `&RObj` body has no object to bind a Class receiver to, and the
+/// module's own `extend`-time wrapper (`runtime_meta::extended_class_method`)
+/// is the path that serves those.
+fn extended_class_method_fn(cid: ClassId, name: Symbol) -> Option<(ValueMethodFn, ClassId)> {
+    let owner = class_method_extend_source(cid, name)?;
+    let f = crate::builtins::class_table(owner)
+        .and_then(|t| t(name.name_str()))
+        .or_else(|| value_method(owner, 0, name))?;
+    Some((f, owner))
+}
+
+/// The module a class `extend`ed that supplies instance method `name`, with
+/// the LAST `extend` winning -- the order [`runtime_meta::singleton_super_chain`]
+/// seats them in, and the order their bodies were installed in.
+fn extended_class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
+    crate::runtime_meta::extended_modules(&RubyValue::Class(cid))
+        .into_iter()
+        .rev()
+        .find_map(|m| method_owner(m, name))
 }
 
 /// The compiled CLASS method `name` resolves to for `cid`, from whichever
@@ -2184,14 +2227,19 @@ pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueMethodF
 /// strictly after `after`.
 pub fn class_method_owner_after(cid: ClassId, after: ClassId, name: Symbol) -> Option<ClassId> {
     let at = ancestors_of_value(cid).iter().position(|&a| a == after)?;
-    scan_class_method_owner(cid, at + 1, name)
+    scan_class_method_owner(cid, at + 1, name).map(|(owner, _)| owner)
 }
 
-/// The shared scan. Wider than [`class_defines_own_class_method`], which
-/// deliberately ignores a builtin's own `def self.x` rows so an `extend`ed
-/// module can override them -- reflection has no such stake and must report
+/// The shared scan, answering `(owner, reached through an extend)`. Wider than
+/// [`class_defines_own_class_method`], which deliberately ignores a builtin's
+/// own `def self.x` rows so an `extend`ed module can override them --
+/// reflection has no such stake and must report
 /// `Array.method(:try_convert).owner` too.
-fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<ClassId> {
+///
+/// Each ancestor is asked for its OWN class methods first and for the modules
+/// it `extend`ed second, which is the order CRuby's singleton ancestry seats
+/// them in: `#<Class:K>`, then K's extends, then `#<Class:Object>`.
+fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<(ClassId, bool)> {
     let n = name.name();
     // An `undef` written inside `class << self` retires the name here and for
     // every subclass, so the walk must stop rather than reach an ancestor's
@@ -2203,15 +2251,25 @@ fn scan_class_method_owner(cid: ClassId, skip: usize, name: Symbol) -> Option<Cl
         .iter()
         .skip(skip)
         .copied()
-        .find(|&anc| {
-            (crate::runtime_meta::is_live()
-                && crate::runtime_meta::overlay_class_method(anc, name).is_some())
-                || REGISTRY
-                    .get()
-                    .and_then(|r| r.entries.get(&anc.0))
-                    .is_some_and(|e| e.own_class_methods.contains(&name))
-                || crate::builtins::class_method_table(anc)
-                    .is_some_and(|lookup| lookup(&n).is_some())
+        .find_map(|anc| {
+            // A RUNTIME `extend` copies the module's rows into the overlay, so
+            // the overlay hit alone cannot tell the two apart -- the set the
+            // copies were recorded in can.
+            let copied = crate::runtime_meta::is_live()
+                && crate::runtime_meta::overlay_class_method_is_extended(anc, name);
+            let own = !copied
+                && ((crate::runtime_meta::is_live()
+                    && crate::runtime_meta::overlay_class_method(anc, name).is_some())
+                    || REGISTRY
+                        .get()
+                        .and_then(|r| r.entries.get(&anc.0))
+                        .is_some_and(|e| e.own_class_methods.contains(&name))
+                    || crate::builtins::class_method_table(anc)
+                        .is_some_and(|lookup| lookup(&n).is_some()));
+            match own {
+                true => Some((anc, false)),
+                false => extended_class_method_owner(anc, name).map(|m| (m, true)),
+            }
         })
 }
 
@@ -2573,7 +2631,10 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
     if crate::runtime_meta::is_live() {
         match crate::runtime_meta::singleton_owner_value(class) {
             Some(RubyValue::Class(owner)) => {
-                return class_method_names(owner)
+                // `inherit` rides along: a singleton class's OWN instance
+                // methods are the owner's own `def self.x` rows, and neither an
+                // ancestor's nor a module the owner `extend`ed is one of them.
+                return class_method_names_in(owner, inherit)
                     .into_iter()
                     .filter(|&n| {
                         filter.matches(match class_method_is_private(owner, n) {
@@ -2807,12 +2868,9 @@ pub fn class_method_is_private(class: ClassId, name: Symbol) -> bool {
 /// The CLASS-method (`def self.x` + builtin class-method) names of `class`,
 /// deduped -- backs `SomeClass.singleton_methods` and the class-method half
 /// of `SomeClass.methods`.
-pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
-    class_method_names_in(class, true)
-}
-
-/// [`class_method_names`] with the `inherit` flag `singleton_methods(false)`
-/// passes. Narrowing has to reach all three sources: the overlay stops
+///
+/// `inherit` is the flag `singleton_methods(false)` passes. Narrowing has to
+/// reach all three sources: the overlay stops
 /// walking ancestors, the registry answers from `own_class_methods` instead
 /// of the flattened map materialization filled, and a builtin table is a
 /// class's own by construction.
@@ -4630,6 +4688,13 @@ fn send_value_in_reason(
         // feature-gated ext) still gets the direct builtin probe below.
         if let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name)) {
             return with_c_frame(label, || f(recv, args, block));
+        }
+        // A module the class EXTENDED, whose row is its own INSTANCE method:
+        // CRuby seats the module in the singleton ancestry, just past the
+        // class's own rows, and the row takes a `&RubyValue` receiver -- so
+        // the class value passes straight through as `self`.
+        if let Some((f, owner)) = extended_class_method_fn(*cid, name) {
+            return with_c_frame(c_frame_label(owner, name, '#'), || f(recv, args, block));
         }
         // A MINTED struct/data class's OWN singleton methods (`Point.members`,
         // `Point[1, 2]`, and `Point.new` itself). CRuby defines these directly

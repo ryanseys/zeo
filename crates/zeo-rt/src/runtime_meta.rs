@@ -2873,6 +2873,19 @@ pub fn call_value_body(
 /// `own_only` drops the names an `extend` copied in, which is
 /// `singleton_methods(false)`'s narrowing -- see
 /// [`OverlayEntry::extended_class_methods`].
+/// Whether the overlay's class method `name` on `id` was copied in by an
+/// `extend` rather than written on the class itself -- see
+/// [`OverlayEntry::extended_class_methods`]. What tells reflection to report
+/// the MODULE as the owner.
+pub fn overlay_class_method_is_extended(id: ClassId, name: Symbol) -> bool {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.extended_class_methods.contains(&name))
+}
+
 pub fn overlay_class_method_names(id: ClassId, own_only: bool) -> Vec<Symbol> {
     maps()
         .classes

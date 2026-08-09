@@ -1,0 +1,29 @@
+Ext
+0
+:hi
+K
+Ext
+nil
+1
+#<Class:K>
+[:own]
+[:hi, :own]
+[:own]
+#<Class:Mod>
+1
+Ext
+true
+1
+true
+true
+[#<Class:#<Object:0xADDR>>, Ext]
+CGI::EscapeExt
+CGI::Escape
+CGI::EscapeExt
+CGI::EscapeExt
+[#<Class:CGI>, CGI::EscapeExt, CGI::Escape]
+[]
+CGI::EscapeExt
+"&lt;a&gt;"
+"&lt;A&gt;"
+true

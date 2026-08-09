@@ -445,11 +445,17 @@ ruby_class! {
     // through: `Sub.new.method(:greet).unbind` is `Base`'s.
     def "unbind"(recv) {
         let m = recv_method(recv);
+        let owner = m.owner().unwrap_or(m.home);
+        // A class method an `extend` supplied unbinds to the MODULE's instance
+        // method, which is what it has been all along -- the same
+        // UnboundMethod `Ext.instance_method(:hi)` hands back.
+        let extended = m.kind == MethodKind::Singleton
+            && crate::dispatch::class_method_extend_source(m.home, m.name) == Some(owner);
         Ok(RubyValue::Object(Arc::new(RUnboundMethod {
-            class_id: m.chain(),
+            class_id: if extended { owner } else { m.chain() },
             name: m.name,
-            home: m.owner().unwrap_or(m.home),
-            kind: m.kind,
+            home: owner,
+            kind: if extended { MethodKind::Instance } else { m.kind },
             // Unbinding does not re-resolve: the entry stays the one this
             // Method froze, and a re-seat keeps its position.
             snapshot: m.snapshot.clone(),
@@ -461,7 +467,9 @@ ruby_class! {
     // class, not the class itself).
     def "owner"(recv) {
         let m = recv_method(recv);
-        crate::builtins::unbound_method::owner_value(m.owner().unwrap_or(m.home), m.kind)
+        crate::builtins::unbound_method::owner_value(
+            m.home, m.owner().unwrap_or(m.home), m.name, m.kind,
+        )
     }
     // `Method#original_name` -- the name the method was DEFINED under, which
     // differs from `#name` only for one reached through an alias.
@@ -578,8 +586,15 @@ ruby_class! {
         };
         let per_object = !matches!(m.recv, RubyValue::Class(_))
             && crate::runtime_meta::object_has_singleton_method(&m.recv, m.name);
+        let extended = m.kind == MethodKind::Singleton
+            && crate::dispatch::class_method_extend_source(m.home, m.name).is_some();
         let (home, separator, qualifier) = if per_object {
             (m.recv.inspect_string(), '.', None)
+        } else if extended {
+            // The row is the module's INSTANCE method, seated in the singleton
+            // class's ancestry -- so CRuby prints the singleton as the home and
+            // a `#`, then names the module: `#<Class:K>(Ext)#hi`.
+            (format!("#<Class:{}>", class_name(m.home)), '#', owner)
         } else if m.kind == MethodKind::Singleton {
             (class_name(m.home), '.', owner.filter(|&o| o != m.home))
         } else if let RubyValue::Class(cid) = m.recv {

@@ -302,6 +302,13 @@ fn singleton_descriptor(recv: &RubyValue, name: Symbol) -> Option<Descriptor> {
 /// dispatch). `None` when the compiler registered nothing -- a builtin, a
 /// `define_method`, or a name that simply isn't there.
 pub fn lookup(class: ClassId, kind: MethodKind, name: Symbol) -> Option<Arc<MethodMeta>> {
+    // A class method an `extend` supplied is really the module's INSTANCE
+    // method, and that is the only key its row was ever registered under.
+    if kind == MethodKind::Singleton
+        && let Some(module) = crate::dispatch::class_method_extend_source(class, name)
+    {
+        return lookup(module, MethodKind::Instance, name);
+    }
     let map = META.read();
     crate::dispatch::ancestors_of_value(class)
         .iter()
