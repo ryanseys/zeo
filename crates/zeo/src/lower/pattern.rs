@@ -220,7 +220,13 @@ fn flatten_alternation(
 
 fn pattern_may_bind(p: &Pattern) -> bool {
     let mut found = false;
-    p.for_each_bound_name(&mut |_| found = true);
+    // A name beginning with `_` is exempt, ruby's own carve-out: `in [301 |
+    // 302, :post] | [303, _]` is Syntax OK, and so is `in [1, _v] | [9, 9]`
+    // -- the local is simply nil when the branch that named it is not the one
+    // that matched. Treating those as bindings rejected `net/imap`,
+    // `sass-embedded` and every openai-shaped client, while the diagnostic
+    // claimed to be matching real Ruby.
+    p.for_each_bound_name(&mut |n| found |= !n.starts_with('_'));
     found
 }
 
