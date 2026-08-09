@@ -165,20 +165,45 @@ ledger; that is what makes the result a record rather than a note.
 
 ## Reading the ledger
 
-The ledger is two files, one per verdict:
+One file, one row per gem:
 
 | File | Holds |
 |---|---|
-| [`../conformance/gem-probe-compiles.tsv`](../conformance/gem-probe-compiles.tsv) | the gems Zeo compiles |
-| [`../conformance/gem-probe-fails.tsv`](../conformance/gem-probe-fails.tsv) | the gems it does not, and why |
+| [`../conformance/gem-probe.tsv`](../conformance/gem-probe.tsv) | every probed gem and its verdict |
+| [`../conformance/gem-probe-ignored.tsv`](../conformance/gem-probe-ignored.tsv) | gems the sweep declines to probe, and why |
+| [`../conformance/gem-probe.md`](../conformance/gem-probe.md) | the counts, regenerated with the ledger |
 
-Both carry the same four columns, so a gem keeps its shape when a fix moves it
-across. A gem is in one file or the other, never both — `gem-probe` refuses to
-run if it finds one twice, because the two copies disagree about the verdict
-and there is no safe way to pick. `gem-probe.md` renders both.
+**Two columns carry the verdict, and they are read together.** `stage` is the
+RUNG the row is about; `outcome` is what happened there. Neither claims
+anything alone:
 
-All three are committed, so no absolute path may appear in them — diagnostics
-are scrubbed before they are written.
+```
+excon      1.2.5   emits-rs   ok             -- Rust was emitted
+Authorizr  0.2.1   emits-rs   lowering-gap   -- it was not, and this is why
+```
+
+`emits-rs ok` means Zeo produced Rust and nothing more: no rustc ran, no binary
+exists, and the gem's own code may not have been compiled at all — Zeo can
+decline a unit and defer it to a runtime `LoadError`, which only the `runs`
+stage sees. `builds-bin` and `runs` are opt-in (`--build`, `--run`).
+
+This was two files, split on whether the outcome was `ok`. They carried the
+same columns and one parser served both, so the split was a filter frozen into
+the filesystem — and it made `stage` read as a claim, because a reader in a
+file called `fails` infers pass/fail from the file and reads the stage on its
+own. A fix also showed up as a deletion in one file and an insertion in
+another, rather than as one changed row. `gem-probe` still READS the old pair
+if it finds them, so an older branch parses, and still refuses to run when a
+gem appears in two of them.
+
+An ignored gem has no verdict, so it has no row — adding a name to
+`gem-probe-ignored.tsv` prunes it on the next write. Every reason there is a
+fact about the gem or the platform, never about Zeo: a gem Zeo cannot compile
+belongs in the ledger, where it counts against us. `Cartesian` is the case that
+named the file — obsolete, renamed to `cartesian`, and depending on the gem
+that replaced it, which no case-insensitive filesystem can hold beside it.
+
+Everything committed here is scrubbed of absolute paths before it is written.
 
 The registry name index is cached at `conformance/rubygems-names.txt` and is
 gitignored: ~3MB of upstream data that changes daily, and the repository
@@ -195,16 +220,15 @@ better signal for "will my Gemfile work", since a dependency that fails 400
 times still fails.
 
 ```console
-# the split, both ways
-$ for f in conformance/gem-probe-*.tsv; do
-    echo "$f: $(grep -vc '^#' $f) total, $(grep -vc '^#\|^aws' $f) excluding aws-*"
-  done
+# both ways
+$ awk -F'\t' 'NR>1 && $4=="ok"' conformance/gem-probe.tsv | wc -l
+$ awk -F'\t' 'NR>1 && $4=="ok" && $1 !~ /^aws/' conformance/gem-probe.tsv | wc -l
 ```
 
 The useful view is the clustering, not the total. Gaps concentrate into a few
 constructs, and one fix moves every gem behind it:
 
 ```console
-$ awk -F'\t' '$3=="lowering-gap" {print $4}' conformance/gem-probe-fails.tsv \
+$ awk -F'\t' '$4=="lowering-gap" {print $7}' conformance/gem-probe.tsv \
     | sed 's/(.*//' | sort | uniq -c | sort -rn
 ```

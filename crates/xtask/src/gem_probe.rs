@@ -1178,27 +1178,77 @@ fn truncate(s: &str) -> String {
 
 // ----------------------------------------------------------------- ledger
 
-/// The ledger is two files, one per verdict: a gem that compiles and a gem
-/// that does not are read for different reasons, and interleaving them makes
-/// each list something you have to filter for rather than open.
+/// Gems the sweep declines to probe at all, each with the reason, read from
+/// `conformance/gem-probe-ignored.tsv`.
 ///
-/// Both carry the same four columns, so one parser and one writer serve both
-/// and a row keeps its meaning when a fix moves it between the files.
-fn ledger_paths(root: &Path) -> [PathBuf; 2] {
+/// An ignored gem is not a verdict -- it is a statement that no verdict is
+/// worth measuring, so it carries a reason and never reaches the ledger. The
+/// case that named this: `Cartesian` is obsolete, renamed to `cartesian`, and
+/// depends on the gem that replaced it. On a case-insensitive filesystem the
+/// two cannot both sit in one load-path view, so the probe can only ever
+/// report a `view-failed` that says nothing about zeo.
+///
+/// Deliberately NOT a way to hide a failure: anything here is a fact about the
+/// gem or the platform, never about the compiler. A row whose reason is "zeo
+/// cannot compile it" belongs in the ledger, where it counts against us.
+fn read_ignored(root: &Path) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(text) = std::fs::read_to_string(root.join("conformance/gem-probe-ignored.tsv")) else {
+        return out;
+    };
+    for line in text
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("gem\t"))
+    {
+        let mut f = line.split('\t');
+        if let (Some(gem), Some(reason)) = (f.next(), f.next()) {
+            out.insert(gem.to_string(), reason.to_string());
+        }
+    }
+    out
+}
+
+/// The ledger is ONE file: one row per gem, whatever the verdict.
+///
+/// It was two, split on whether the outcome was `ok`. Both carried the same
+/// nine columns and one parser and one writer served both, so the split was a
+/// filter frozen into the filesystem -- and it cost more than it gave:
+///
+///   - the `stage` column read as a claim. A failing row saying `emits-rs`
+///     looks like it emitted Rust, because a reader in a file called `fails`
+///     infers pass/fail from the FILE and reads the stage on its own. Beside
+///     `outcome` it is unambiguous: `emits-rs ok` against `emits-rs
+///     lowering-gap` is the rung, then what happened at it;
+///   - a fix showed up as a deletion in one file and an insertion in another,
+///     so a review could not see the two halves as one moved row;
+///   - a gem could appear in both, which is a corruption `read_ledger` still
+///     has to refuse.
+///
+/// `gem-probe.md` beside it carries the counts, since `wc -l` no longer
+/// answers "how many compile".
+fn ledger_path(root: &Path) -> PathBuf {
+    root.join("conformance/gem-probe.tsv")
+}
+
+/// Every path a row may be read FROM: the merged file, plus the two it
+/// replaced so an older checkout, a branch, or a half-finished migration still
+/// parses. Only [`ledger_path`] is ever written.
+fn ledger_read_paths(root: &Path) -> [PathBuf; 3] {
     [
+        ledger_path(root),
         root.join("conformance/gem-probe-compiles.tsv"),
         root.join("conformance/gem-probe-fails.tsv"),
     ]
 }
 
-/// Reads both files into one map.
+/// Reads every ledger file into one map.
 ///
-/// A gem in both files is a corruption -- a hand-edit, or a merge that kept
-/// two sides of a moved row -- and the two copies disagree about the verdict.
+/// A gem in two of them is a corruption -- a hand-edit, or a merge that kept
+/// both sides of a moved row -- and the copies disagree about the verdict.
 /// There is no safe way to pick one, so this refuses rather than guesses.
 fn read_ledger(root: &Path) -> Result<BTreeMap<String, Row>, String> {
     let mut out: BTreeMap<String, Row> = BTreeMap::new();
-    for path in ledger_paths(root) {
+    for path in ledger_read_paths(root) {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -1338,7 +1388,16 @@ fn write_timings(
 }
 
 fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
-    let [compiles_path, fails_path] = ledger_paths(root);
+    // An ignored gem has no verdict, so it has no row -- adding a name to
+    // `gem-probe-ignored.tsv` prunes it here on the next run rather than
+    // needing the ledger hand-edited.
+    let ignored = read_ignored(root);
+    let rows: BTreeMap<String, Row> = rows
+        .iter()
+        .filter(|(name, _)| !ignored.contains_key(*name))
+        .map(|(n, r)| (n.clone(), r.clone()))
+        .collect();
+    let rows = &rows;
     let compiles = || rows.iter().filter(|(_, r)| r.outcome == Outcome::Ok);
     let fails = || rows.iter().filter(|(_, r)| r.outcome != Outcome::Ok);
 
@@ -1372,8 +1431,13 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
         tsv
     };
 
-    std::fs::write(&compiles_path, render(&mut compiles())).map_err(|e| e.to_string())?;
-    std::fs::write(&fails_path, render(&mut fails())).map_err(|e| e.to_string())?;
+    std::fs::write(ledger_path(root), render(&mut rows.iter())).map_err(|e| e.to_string())?;
+    // The two files this replaced go, rather than being left to rot beside it
+    // holding a copy of every row -- `read_ledger` would then refuse the next
+    // run for exactly the duplication this removed.
+    for old in ["gem-probe-compiles.tsv", "gem-probe-fails.tsv"] {
+        let _ = std::fs::remove_file(root.join("conformance").join(old));
+    }
 
     let mut counts: BTreeMap<(&str, &str), usize> = BTreeMap::new();
     for r in rows.values() {
@@ -1381,21 +1445,25 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     }
     let mut md = String::from("# Gem probe results\n\nGenerated by `cargo xtask gem-probe`.\n\n");
     md.push_str(
-        "**`emits-rs` means zeo produced Rust, and nothing more.** No rustc ran, no binary \
-         exists, and the gem's own code may not have been compiled at all -- zeo can decline \
-         a unit and defer it to a runtime `LoadError`, which only the `runs` stage sees. \
-         The `builds-bin` and `runs` stages are opt-in (`--build`, `--run`) and a sweep does \
-         not reach them.\n\n\
-         The two `gem-probe-*.tsv` files beside this one hold one row per gem, and a gem \
-         is in exactly one of them. `gem-probe-compiles.tsv` may not regress: \
-         `gem-probe --check` gates both the outcome and the stage. In \
-         `gem-probe-fails.tsv` the outcome says why, and only `lowering-gap`, \
-         `compiler-panic` and `rustc-error` are zeo's to fix -- the rest are facts \
-         about the gem or the harness. The `where` column points at the Ruby line the \
-         compiler rejected, relative to the repository root, and `sha256` pins the `.gem` \
-         the row was measured against. `rust_bytes`/`binary_bytes` are reproducible and so \
-         are committed; wall-clock timings are not, and go to the gitignored \
-         `gem-probe-timings.tsv` instead.\n\n",
+        "`gem-probe.tsv` beside this file holds ONE row per gem. Two columns carry the \
+         verdict and they must be read together: `stage` is the RUNG the row is about, and \
+         `outcome` is what happened there. `emits-rs ok` and `emits-rs lowering-gap` are the \
+         same rung with opposite results -- the stage alone claims nothing.\n\n\
+         **`emits-rs ok` means zeo produced Rust, and nothing more.** No rustc ran, no \
+         binary exists, and the gem's own code may not have been compiled at all -- zeo can \
+         decline a unit and defer it to a runtime `LoadError`, which only the `runs` stage \
+         sees. `builds-bin` and `runs` are opt-in (`--build`, `--run`) and a sweep does not \
+         reach them.\n\n\
+         No `ok` row may regress: `gem-probe --check` gates both the outcome and the stage. \
+         Of the failures only `lowering-gap`, `compiler-panic` and `rustc-error` are zeo's \
+         to fix -- the rest are facts about the gem or the harness. The `where` column \
+         points at the Ruby line the compiler rejected, relative to the repository root, \
+         and `sha256` pins the `.gem` the row was measured against. \
+         `rust_bytes`/`binary_bytes` are reproducible and so are committed; wall-clock \
+         timings are not, and go to the gitignored `gem-probe-timings.tsv` instead.\n\n\
+         `gem-probe-ignored.tsv` lists gems the sweep declines to probe, each with a \
+         reason. Those are facts about the gem or the platform, never about zeo -- a gem \
+         zeo cannot compile belongs in the ledger, where it counts against us.\n\n",
     );
     md.push_str(&format!("{} gems probed.\n\n", rows.len()));
     md.push_str("| Stage | Outcome | Gems |\n|---|---|---|\n");
@@ -1831,6 +1899,20 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // Ignored gems drop out of EVERY selection, including a name given
+    // explicitly -- the reason is the answer to why it was asked for. Printed
+    // rather than silently dropped, so a sweep never shrinks without saying so.
+    let ignored = read_ignored(root);
+    if !ignored.is_empty() {
+        let before_len = names.len();
+        names.retain(|(name, _)| !ignored.contains_key(name));
+        if names.len() != before_len {
+            for (gem, reason) in &ignored {
+                println!("gem-probe: ignoring {gem} -- {reason}");
+            }
+        }
+    }
+
     // Resume. A sweep of the registry is hours of work, so re-running must
     // continue rather than start over. `--all` is the explicit re-probe, and
     // `--refresh` forces it for any selection.
@@ -1964,15 +2046,13 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             .filter(|r| r.outcome == Outcome::Ok && r.stage >= stage)
             .count()
     };
-    let [compiles_path, fails_path] = ledger_paths(root);
     // Named by the rung, not by "compile": the whole point of the stage column
     // is that this number is about emitting Rust and nothing further.
     println!(
-        "gem-probe: {}/{} probed gems emit Rust\n  {}\n  {}",
+        "gem-probe: {}/{} probed gems emit Rust\n  {}",
         reached(Stage::EmitsRs),
         rows.len(),
-        compiles_path.display(),
-        fails_path.display()
+        ledger_path(root).display()
     );
     if tiers.build {
         println!(
@@ -2172,6 +2252,34 @@ mod tests {
         ));
     }
 
+    /// An ignored gem has no verdict, so it has no row: adding a name to the
+    /// ignore file prunes it from the ledger on the next write rather than
+    /// needing a hand-edit.
+    #[test]
+    fn an_ignored_gem_is_read_with_its_reason_and_kept_out_of_the_ledger() {
+        let root = scratch("ignored");
+        std::fs::write(
+            root.join("conformance/gem-probe-ignored.tsv"),
+            "gem\treason\nCartesian\tobsolete: renamed to `cartesian`\n",
+        )
+        .unwrap();
+        let ignored = read_ignored(&root);
+        assert_eq!(ignored.len(), 1);
+        assert!(ignored["Cartesian"].starts_with("obsolete:"));
+
+        let mut rows = BTreeMap::new();
+        for name in ["Cartesian", "keeper"] {
+            rows.insert(
+                name.to_string(),
+                Row::stopped("1.0.0", Stage::EmitsRs, Outcome::Ok, None),
+            );
+        }
+        write_ledger(&root, &rows).unwrap();
+        let tsv = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        assert_eq!(gem_names(&tsv), ["keeper"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A gem may name ITSELF among its runtime dependencies -- jeweler-
     /// generated gemspecs do it routinely, and `Authorizr` is one. Linking a
     /// name twice re-symlinks entries that already exist, which fails with
@@ -2269,7 +2377,7 @@ mod tests {
     #[test]
     fn a_four_column_row_still_reads() {
         let root = scratch("legacy-ledger");
-        let [_, fails] = ledger_paths(&root);
+        let fails = root.join("conformance/gem-probe-fails.tsv");
         std::fs::create_dir_all(fails.parent().unwrap()).unwrap();
         std::fs::write(&fails, "# header\nalpha\t1.0.0\tlowering-gap\tsome gap\n").unwrap();
 
@@ -2289,7 +2397,8 @@ mod tests {
     #[test]
     fn a_six_column_row_reads_as_the_stage_it_measured() {
         let root = scratch("legacy-stage");
-        let [compiles, fails] = ledger_paths(&root);
+        let compiles = root.join("conformance/gem-probe-compiles.tsv");
+        let fails = root.join("conformance/gem-probe-fails.tsv");
         std::fs::create_dir_all(fails.parent().unwrap()).unwrap();
         std::fs::write(
             &compiles,
@@ -2506,7 +2615,7 @@ mod tests {
         );
         write_ledger(&root, &rows).unwrap();
 
-        let text = std::fs::read_to_string(&ledger_paths(&root)[1]).unwrap();
+        let text = std::fs::read_to_string(ledger_path(&root)).unwrap();
         let row = text.lines().nth(1).unwrap();
         assert_eq!(row.split('\t').count(), 9, "every row keeps nine fields");
         assert!(
@@ -2541,13 +2650,21 @@ mod tests {
             );
         }
         write_ledger(&root, &rows).unwrap();
-        let first = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
+        let first = std::fs::read_to_string(ledger_path(&root)).unwrap();
         write_ledger(&root, &rows).unwrap();
-        let second = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
+        let second = std::fs::read_to_string(ledger_path(&root)).unwrap();
         assert_eq!(first, second);
         // BTreeMap ordering means the file is sorted, not insertion-ordered.
-        assert_eq!(gem_names(&first[0]), ["alpha", "mu", "zeta"]);
+        assert_eq!(gem_names(&first), ["alpha", "mu", "zeta"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The `outcome` column of the row naming `gem`.
+    fn outcomes<'a>(tsv: &'a str, gem: &str) -> &'a str {
+        tsv.lines()
+            .find(|l| l.starts_with(&format!("{gem}\t")))
+            .and_then(|l| l.split('\t').nth(3))
+            .unwrap_or("<missing>")
     }
 
     fn gem_names(tsv: &str) -> Vec<&str> {
@@ -2577,18 +2694,24 @@ mod tests {
         }
         write_ledger(&root, &rows).unwrap();
 
-        let [compiles, fails] = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
-        assert_eq!(gem_names(&compiles), ["alpha", "gamma"]);
-        assert_eq!(gem_names(&fails), ["beta", "delta"]);
-        // Reading them back reassembles the one map the prober works from.
+        let tsv = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        // One file, every gem, sorted -- the verdict is the `outcome` column
+        // rather than which file the row landed in.
+        assert_eq!(gem_names(&tsv), ["alpha", "beta", "delta", "gamma"]);
+        assert_eq!(outcomes(&tsv, "alpha"), "ok");
+        assert_eq!(outcomes(&tsv, "gamma"), "ok");
+        assert_eq!(outcomes(&tsv, "beta"), "lowering-gap");
+        assert_eq!(outcomes(&tsv, "delta"), "native-extension");
         assert_eq!(read_ledger(&root).unwrap().len(), 4);
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A fix moves a gem across the files. The stale row must not survive in
-    /// the file the gem left, or resume would read back the old verdict.
+    /// A fix rewrites the gem's row in place. It used to move the gem between
+    /// two files, and the stale copy surviving in the file it left would have
+    /// let resume read back the old verdict -- one file removes the hazard
+    /// rather than guarding it.
     #[test]
-    fn a_gem_that_starts_compiling_leaves_the_failing_ledger() {
+    fn a_gem_that_starts_compiling_keeps_one_row() {
         let root = scratch("ledger-move");
         let mut rows = BTreeMap::new();
         rows.insert(
@@ -2607,19 +2730,22 @@ mod tests {
         rows.get_mut("beta").unwrap().outcome = Outcome::Ok;
         write_ledger(&root, &rows).unwrap();
 
-        let [compiles, fails] = ledger_paths(&root).map(|p| std::fs::read_to_string(p).unwrap());
-        assert_eq!(gem_names(&compiles), ["beta"]);
-        assert!(gem_names(&fails).is_empty());
+        let tsv = std::fs::read_to_string(ledger_path(&root)).unwrap();
+        assert_eq!(gem_names(&tsv), ["beta"], "one row, not two");
+        assert_eq!(outcomes(&tsv, "beta"), "ok");
         assert_eq!(read_ledger(&root).unwrap()["beta"].outcome, Outcome::Ok);
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Two files can disagree in a way one file never could. Guessing which
-    /// copy is current would silently publish a wrong verdict.
+    /// The two files this ledger replaced can still be present -- an older
+    /// checkout, a branch, a half-finished migration -- and they can disagree
+    /// in a way one file never could. Guessing which copy is current would
+    /// silently publish a wrong verdict.
     #[test]
-    fn a_gem_recorded_in_both_ledgers_is_refused() {
+    fn a_gem_recorded_in_two_ledgers_is_refused() {
         let root = scratch("ledger-dup");
-        let [compiles, fails] = ledger_paths(&root);
+        let compiles = root.join("conformance/gem-probe-compiles.tsv");
+        let fails = root.join("conformance/gem-probe-fails.tsv");
         std::fs::create_dir_all(compiles.parent().unwrap()).unwrap();
         std::fs::write(&compiles, "beta\t1.0.0\tcompiles\n").unwrap();
         std::fs::write(&fails, "beta\t1.0.0\tlowering-gap\ta gap\n").unwrap();
