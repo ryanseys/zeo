@@ -559,6 +559,36 @@ pub fn register_weakmap_subclass(
     );
 }
 
+/// Register a user `class Ref < WeakRef`, the same shape one root over:
+/// [`weakref_construct`] builds `WeakRef::new(class, referent)` from the
+/// receiver too.
+///
+/// The two delegation rows are installed on the SUBCLASS as well, not left to
+/// the ancestry: the send-miss fallback looks `method_missing` up FLAT on the
+/// receiver's own class (`method_missing_or_raise`), so a subclass without
+/// its own row raised `NoMethodError` for every name it was supposed to
+/// forward -- which is the whole point of a WeakRef.
+pub fn register_weakref_subclass(
+    registry: &mut crate::dispatch::ClassRegistry,
+    id: ClassId,
+    name: &str,
+    ancestors: Vec<ClassId>,
+) {
+    registry.register(
+        id,
+        name,
+        false,
+        ancestors,
+        Some(weakref_construct as crate::dispatch::ConstructorFn),
+    );
+    registry.define_method_own(id, Symbol::intern("method_missing"), wr_method_missing);
+    registry.define_method_own(
+        id,
+        Symbol::intern("respond_to_missing?"),
+        wr_respond_to_missing,
+    );
+}
+
 /// `ObjectSpace::WeakMap.new` -- the registered constructor.
 fn weakmap_construct(
     class: ClassId,

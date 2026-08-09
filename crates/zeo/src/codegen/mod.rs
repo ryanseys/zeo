@@ -1467,6 +1467,21 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
                 );
             }
+        } else if compiler.is_weakref_subclass(ClassId(idx as u32)) {
+            // A user `class Ref < WeakRef`: the same shape one root over --
+            // its instances ARE the native delegator, and the delegation rows
+            // reach it through the ancestry.
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                zeo_rt::register_weakref_subclass(
+                    &mut __registry,
+                    zeo_rt::ClassId(#id),
+                    #fq_name,
+                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                );
+            }
         } else if compiler.is_module_subclass(ClassId(idx as u32)) {
             // A user `class X < Module`: no generated struct -- its instances
             // are real runtime MODULE ids tagged as belonging to X, so

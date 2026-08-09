@@ -3053,6 +3053,10 @@ fn register_class(
                                 // already builds `WeakMap::new(class)` from
                                 // the receiver. activesupport's `WeakSet`.
                                 | zeo_abi::WEAKMAP_CLASS
+                                // `WeakRef`: the same shape one root over --
+                                // its constructor takes the receiver class
+                                // too, and the delegation rows are inherited.
+                                | zeo_abi::WEAKREF_CLASS
                                 // `Date`/`DateTime`: the rows already
                                 // allocate through the receiver, so the
                                 // subclass is the native `RDate` tagged with

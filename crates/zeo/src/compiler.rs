@@ -1603,8 +1603,10 @@ impl Compiler {
             // struct codegen never emits -- the exact failure the comment
             // below describes, hit while wiring this shape up.
             && !self.is_module_subclass(cid)
-            // A WeakMap subclass's instances are the native `WeakMap` RObj.
+            // A WeakMap subclass's instances are the native `WeakMap` RObj,
+            // and a WeakRef subclass's the native `WeakRef`.
             && !self.is_weakmap_subclass(cid)
+            && !self.is_weakref_subclass(cid)
             // A Date subclass's instances are the native `RDate`.
             && !self.is_date_subclass(cid)
             // A Proc subclass's instances are still `RubyValue::Proc`.
@@ -1775,6 +1777,21 @@ impl Compiler {
             .any(|a| a == zeo_abi::WEAKMAP_CLASS)
     }
 
+    /// Whether `cid` is a user subclass of `WeakRef`.
+    ///
+    /// The WeakMap shape one root over: `weakref_construct` builds
+    /// `WeakRef::new(class, referent)` from the receiver, so the subclass IS
+    /// the native delegator. Its delegation rows are the root's own and reach
+    /// it through the ancestry.
+    pub fn is_weakref_subclass(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap {
+            return false;
+        }
+        self.superclass_chain(cid)
+            .any(|a| a == zeo_abi::WEAKREF_CLASS)
+    }
+
     /// Whether `cid` is a user `class X < Module` -- a MODULE FACTORY, whose
     /// instances are real runtime module ids tagged as belonging to `X`.
     ///
@@ -1826,6 +1843,7 @@ impl Compiler {
             // free functions exactly as the other two shapes' do.
             || self.is_module_subclass(cid)
             || self.is_weakmap_subclass(cid)
+            || self.is_weakref_subclass(cid)
             || self.is_date_subclass(cid)
             || self.is_proc_subclass(cid)
     }
