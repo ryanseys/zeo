@@ -170,6 +170,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         let mut stmts = Vec::new();
         let mut unit_pre_exec = Vec::new();
         let mut failed = None;
+        let sites_before = compiler.class_body_sites.len();
         for stmt in unit.body {
             if let Err(e) = process_top_stmt(compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
             {
@@ -188,13 +189,16 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
             // names them, which it can only do by requiring the feature it
             // just refused.
             //
-            // Logged, because the swallowed reason is the whole diagnosis: a
-            // unit that declines mid-body leaves its enclosing `class`/`module`
-            // site holding a nested definition nothing registered, and what
-            // codegen reports THEN is "in a position the analyze walk doesn't
-            // register" -- pointing at the leftover, never at the refusal that
-            // caused it.
+            // Its definition SITES do not stay, though. A site is hoisted by
+            // CLASS, not by statement stream (`hoisted_sites_for`), so a
+            // leftover made codegen emit the body of a `class`/`module` whose
+            // nested definition the very same failure had already stopped from
+            // registering -- and the error then named that leftover instead of
+            // the refusal, deep in a require graph, with no way back to the
+            // cause. Dropping them is also what the declined unit MEANS: its
+            // statements never run, so its class bodies never run either.
             Some(e) => {
+                compiler.class_body_sites.truncate(sites_before);
                 tracing::warn!(
                     feature = unit.feature,
                     reason = e.message,

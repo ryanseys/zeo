@@ -1320,3 +1320,44 @@ fn fileutils_core_commands_run_from_the_vendored_gem() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "1.8.0\ntrue\ntrue\nhi\ntrue\nfalse\n");
 }
+
+#[test]
+fn a_declined_units_class_bodies_are_declined_with_it() {
+    // A gem that computes an autoload target has its whole load path compiled
+    // in as units, and a unit that hits a gap is DECLINED: requiring it raises
+    // LoadError naming the gap. Its class-body SITES have to go with it.
+    //
+    // They are hoisted by CLASS, not by statement stream, so a leftover site
+    // made codegen emit the body of the `module Alpha` this unit opened -- and
+    // that body holds the nested `class Leaf` the very same failure had
+    // already stopped from registering. The compile then died naming `Leaf`,
+    // "in a position the analyze walk doesn't register", pointing at the
+    // leftover instead of the refusal that caused it and burying the real
+    // reason deep in a require graph.
+    let files = [
+        (
+            "packages/alpha/alpha.gemspec",
+            "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n",
+        ),
+        (
+            "packages/alpha/lib/alpha.rb",
+            // Computed target: the pre-pass cannot name it, so the load path
+            // is compiled in as units and `alpha/leaf` becomes one.
+            "module Alpha\n  autoload :Leaf, \"alpha/lea\" + \"f\"\nend\n",
+        ),
+        (
+            "packages/alpha/lib/alpha/leaf.rb",
+            // Any gap inside the nested class does; subclassing a built-in
+            // with no generated struct is simply the shortest one to write.
+            "module Alpha\n  class Leaf < Binding\n    def hi = \"hi\"\n  end\nend\n",
+        ),
+        ("main.rb", "require \"alpha\"\nputs \"compiled\"\n"),
+    ];
+    let result = run_ruby_packages(&files, "main.rb", &[], &["packages"]);
+    assert!(
+        result.status.success(),
+        "the decline must stay a decline, not a compile failure; stderr: {}",
+        result.stderr
+    );
+    assert_eq!(result.stdout, "compiled\n");
+}
