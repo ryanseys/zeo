@@ -4178,6 +4178,7 @@ pub fn define_in_default_definee(
     recv: &RubyValue,
     name: Symbol,
     body: RubyValue,
+    private: bool,
 ) -> Result<RubyValue, Signal> {
     // A Class/Module self takes an INSTANCE method -- unless the `def` is
     // running inside an `instance_eval`/`instance_exec`, whose definee is the
@@ -4190,12 +4191,26 @@ pub fn define_in_default_definee(
         } else {
             "define_singleton_method"
         };
-    send_value(
+    let out = send_value(
         recv,
         Symbol::intern(installer),
         &[RubyValue::Symbol(name), body],
         None,
-    )
+    )?;
+    // A `def` written at the TOP LEVEL is a PRIVATE instance method of Object,
+    // however it is spelled -- `p(def m; end)` is the same definition as a
+    // bare one, and only the caller reads its `:m`. `define_method` installs
+    // public, so the mark is a second step. The caller decides: it is a
+    // question about where the `def` was WRITTEN, which is compile-time
+    // knowledge, and `instance_eval` can put this same call on any object.
+    if private && let RubyValue::Class(id) = recv {
+        crate::runtime_meta::runtime_set_visibility(
+            *id,
+            &[RubyValue::Symbol(name)],
+            MethodVisibility::Private,
+        )?;
+    }
+    Ok(out)
 }
 
 /// `recv.class` for the codegen `.class` fast path on a dynamically-typed

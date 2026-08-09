@@ -1555,11 +1555,20 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // A real `def` installs on the runtime default definee: an
                 // instance method on a Class/Module self, a singleton method on
                 // any other (`instance_exec { def m; end }`).
+                //
+                // Written at the TOP LEVEL it is a PRIVATE instance method of
+                // `Object`, exactly as a bare top-level `def` is (which analyze
+                // registers that way before ever reaching expression position).
+                // Only a STATIC self can be the top level -- a dynamic one is a
+                // block's or a method's, and `def` in either is public.
+                let top_level =
+                    !cx.self_is_dynamic && cx.class_self.is_none() && cx.current_class.is_none();
                 quote! {
                     zeo_rt::define_in_default_definee(
                         &#definee,
                         #name_sym,
                         #proc,
+                        #top_level,
                     )?
                 }
             } else {
