@@ -516,6 +516,26 @@ pub const FFI_UNION_CLASS: ClassId = ClassId(175);
 /// that wanted it.
 pub const SOCKET_CONSTANTS_MODULE: ClassId = ClassId(176);
 
+/// `CGI::Escape` and `CGI::EscapeExt` -- where CRuby's `cgi/escape` actually
+/// puts the escape helpers. `CGI.escapeHTML` is not a class method of `CGI`:
+/// it is an instance method of one of these two, reached because `CGI` both
+/// INCLUDES and EXTENDS `Escape`, and `Escape` PREPENDS `ExscapeExt`. All
+/// four edges are observable and none is derivable from the others:
+///
+///   CGI.ancestors                  [CGI, EscapeExt, Escape, Object, ...]
+///   CGI.singleton_class.ancestors  [#<Class:CGI>, EscapeExt, Escape, ...]
+///   CGI::Escape.ancestors          [EscapeExt, Escape]
+///   CGI.method(:escapeHTML).owner  CGI::EscapeExt
+///   CGI.method(:escapeElement).owner  CGI::Escape
+///
+/// The two modules overlap on eight names and differ on the rest: only
+/// `Escape` has the `*Element` family, only `EscapeExt` has `h` and the
+/// `escape_html`/`unescape_html` snake spellings. erubi asks
+/// `defined?(::CGI::Escape)` and net-http-persistent asks
+/// `defined?(CGI::EscapeExt)`, so both names have to be real.
+pub const CGI_ESCAPE_MODULE: ClassId = ClassId(177);
+pub const CGI_ESCAPE_EXT_MODULE: ClassId = ClassId(178);
+
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
 /// methods are there whatever the program does.
@@ -1180,7 +1200,10 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "CGI",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
-        includes: &[],
+        // And it EXTENDS the same module -- see `BUILTIN_EXTENDS`. The include
+        // is what makes `CGI.new(...).escapeHTML` work; the extend is what
+        // makes `CGI.escapeHTML` work. CRuby does both.
+        includes: &[CGI_ESCAPE_MODULE],
         feature: Some("cgi/escape"),
     },
     BuiltinClass {
@@ -2234,7 +2257,37 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: Some("socket"),
     },
+    BuiltinClass {
+        id: CGI_ESCAPE_MODULE,
+        name: "CGI::Escape",
+        is_module: true,
+        superclass: None,
+        // It PREPENDS `CGI::EscapeExt` -- see `BUILTIN_PREPENDS`.
+        includes: &[],
+        feature: Some("cgi/escape"),
+    },
+    BuiltinClass {
+        id: CGI_ESCAPE_EXT_MODULE,
+        name: "CGI::EscapeExt",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("cgi/escape"),
+    },
 ];
+
+/// Builtins whose SINGLETON class mixes a module in -- CRuby's `extend`, which
+/// no [`BuiltinClass`] field can express (`includes` is the instance side, and
+/// the two are independent: `CGI` does both with the same module).
+/// `(class, modules)`, in source order, exactly as `includes` is.
+pub const BUILTIN_EXTENDS: &[(ClassId, &[ClassId])] = &[(CGI_MODULE, &[CGI_ESCAPE_MODULE])];
+
+/// Builtins that PREPEND a module -- ahead of their own methods, so the module
+/// wins a name they both define. `CGI::Escape` prepends `CGI::EscapeExt`, which
+/// is why `CGI.method(:escapeHTML).owner` is `EscapeExt` while
+/// `CGI.method(:escapeElement).owner` is `Escape`.
+pub const BUILTIN_PREPENDS: &[(ClassId, &[ClassId])] =
+    &[(CGI_ESCAPE_MODULE, &[CGI_ESCAPE_EXT_MODULE])];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
 /// top level: `::Queue = Thread::Queue`, `::Mutex = Thread::Mutex`, etc. The

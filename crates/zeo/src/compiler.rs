@@ -973,6 +973,15 @@ impl Compiler {
             ci.includes = b.includes.to_vec();
             ci.feature_gate = b.feature;
         }
+        // The two edge kinds no `BuiltinClass` field carries, and both are
+        // independent of `includes`: `CGI` extends the same module it
+        // includes, and `CGI::Escape` prepends one. See their ABI tables.
+        for &(id, modules) in zeo_abi::BUILTIN_EXTENDS {
+            compiler.classes[id.0 as usize].extends = modules.to_vec();
+        }
+        for &(id, modules) in zeo_abi::BUILTIN_PREPENDS {
+            compiler.classes[id.0 as usize].prepends = modules.to_vec();
+        }
         // A nested builtin name (`"Digest::SHA256"`, `"Enumerator::Lazy"`) is
         // stored as its LEAF under a lexical parent, so a constant path
         // (`Digest::SHA256`) descends into it like any user-nested class.

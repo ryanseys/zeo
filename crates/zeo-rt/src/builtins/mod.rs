@@ -329,6 +329,18 @@ pub(crate) fn fallback_ancestors(id: ClassId) -> &'static [ClassId] {
             if out.contains(&id) {
                 return;
             }
+            // A prepended module sits AHEAD of the class's own methods, so it
+            // is linearized before the class rather than after it.
+            for &(owner, modules) in zeo_abi::BUILTIN_PREPENDS {
+                if owner == id {
+                    for &m in modules.iter().rev() {
+                        linearize(m, out);
+                    }
+                }
+            }
+            if out.contains(&id) {
+                return;
+            }
             out.push(id);
             let (includes, parent) = edges(id);
             for &inc in includes.iter().rev() {

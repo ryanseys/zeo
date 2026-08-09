@@ -1,0 +1,7 @@
+CGI::EscapeExt
+CGI::Escape
+CGI::EscapeExt
+CGI::EscapeExt
+[#<Class:CGI>, CGI::EscapeExt, CGI::Escape]
+CGI::EscapeExt
+"&lt;a&gt;"
