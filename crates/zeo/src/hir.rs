@@ -330,6 +330,10 @@ pub struct Hir {
     /// Receivers zeo SYNTHESIZED for calls ruby writes with no receiver at all
     /// -- see [`is_implicit_self_receiver`](Self::is_implicit_self_receiver).
     implicit_self_receivers: std::collections::HashSet<NodeId>,
+    /// Whether the inline-array proxy classes an `FFI::Struct` array field
+    /// reads back as have already been synthesized -- see
+    /// [`claim_ffi_inline_array_classes`](Self::claim_ffi_inline_array_classes).
+    ffi_inline_array_classes: bool,
     /// Every `class`/`module` definition lowered so far, under the FULLY
     /// QUALIFIED name its site spells (`class Error` inside `module Citrus`
     /// records `Citrus::Error`). A `ClassDef` node keeps only the name as
@@ -445,6 +449,14 @@ impl Hir {
         let out = body(self);
         self.in_singleton_body = saved;
         out
+    }
+
+    /// Claims the right to emit the inline-array proxy classes: true for the
+    /// FIRST `FFI::Struct` in the program with an array field, false for every
+    /// one after it. They are one pair of classes per program, and redefining
+    /// them per struct would warn on every redefinition.
+    pub(crate) fn claim_ffi_inline_array_classes(&mut self) -> bool {
+        !std::mem::replace(&mut self.ffi_inline_array_classes, true)
     }
 
     /// Records that `recv` is a receiver zeo synthesized for a call ruby runs
@@ -1722,6 +1734,15 @@ pub enum FfiType {
     /// callback's `(arg_types, return_type)` so the closure's own CIF can be
     /// built. (As a C ABI type it is a `void *`.)
     Callback(Vec<FfiType>, Box<FfiType>),
+    /// An INLINE array field of a struct layout -- `layout :bytes, [:uint8, 4]`.
+    /// It occupies `count` elements in place (it is not a pointer), so it is
+    /// what decides every following field's offset. Reading the field yields
+    /// ruby's own proxy over the same memory rather than a copy: an
+    /// `FFI::Struct::InlineArray`, or an `FFI::StructLayout::CharArray` when
+    /// the element is 8-bit, which is the one that also answers `to_s`.
+    /// Only legal in a layout; the gem has no inline array in a function
+    /// signature either.
+    Array(Box<FfiType>, usize),
 }
 
 /// One C function a module `attach_function`'d. The synthesized wrapper
@@ -1747,6 +1768,12 @@ pub struct FfiCall {
     /// alternating `type_symbol, value` pairs marshaled at runtime via libffi.
     /// `None` for an ordinary fixed-arity call.
     pub variadic: Option<NodeId>,
+    /// `attach_function ..., blocking: true` -- the call runs with the GVL
+    /// released, so other ruby threads keep running across a long C call. Under
+    /// zeo's default parallel mode there is no GVL to release and
+    /// `zeo_rt::without_gvl` is a no-op; under `ZEO_GVL=1` it is the handoff
+    /// the option asks for.
+    pub blocking: bool,
 }
 
 /// A real enum of node kinds; growing it is additive (new variants).

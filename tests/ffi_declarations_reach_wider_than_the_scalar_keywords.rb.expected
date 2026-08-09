@@ -1,0 +1,9 @@
+5
+5
+true
+true
+[16, 4, 8]
+9
+[0, 1, 2, 3]
+[:none, :lazy, :eager, :both]
+[:eager, 8, 4]

@@ -2431,10 +2431,14 @@ fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
         // Restricted to the "Object" scope: an arbitrary `Scope::Name` must NOT
         // fall back to a same-named top-level class (`M::V` is M's own value
         // constant `V`, not the unrelated top-level module `V`).
+        //
+        // ANCHORED, not bare: `::Widget` written inside a `NS::Widget` that
+        // shadows it must answer the TOP-LEVEL one, and a bare re-resolution
+        // walks the lexical chain and answers the shadow -- silently, with no
+        // error anywhere. That is the whole meaning of the `::` prefix.
         .or_else(|| {
-            (scope == "Object")
-                .then(|| cx.resolve_class(name))
-                .flatten()
+            cx.resolve_class(&format!("::{name}"))
+                .filter(|_| scope == "Object")
         })
 }
 
@@ -2725,6 +2729,14 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
     } else {
         quote! {}
     };
+    // `blocking: true` runs the C call with the GVL released, so a long call
+    // does not stall other ruby threads. A no-op in the default parallel mode,
+    // and the real handoff under `ZEO_GVL=1`.
+    let invoke = if call.blocking {
+        quote! { zeo_rt::gvl::without_gvl(|| unsafe { #sym(#(#call_idents),*) }) }
+    } else {
+        quote! { unsafe { #sym(#(#call_idents),*) } }
+    };
     quote! {
         {
             #link
@@ -2732,7 +2744,7 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
                 fn #sym(#(#extern_params),*) -> #ret_cty;
             }
             #(#bindings)*
-            let __ffi_ret = unsafe { #sym(#(#call_idents),*) };
+            let __ffi_ret = #invoke;
             #cb_check
             #wrap
         }
@@ -2794,6 +2806,10 @@ fn ffi_kind_tokens(ty: &crate::hir::FfiType) -> TokenStream {
         // Enums are C `int`; `Int(32)` and any residual width default the same.
         Enum(_) | Int(_) => quote! { I32 },
         Uint(_) | Float(_) => quote! { I32 },
+        // An inline array is a struct-layout field only; the gem has no
+        // inline array in a function signature either, so `as_ffi_layout` is
+        // the sole producer and it never reaches a call site.
+        Array(..) => unreachable!("an inline array type is confined to a struct layout"),
     };
     quote! { zeo_rt::ffi::FfiKind::#variant }
 }
@@ -2823,6 +2839,8 @@ fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
         Enum(_) => quote! { ::std::os::raw::c_int },
         // A callback is a C function pointer -- passed as an opaque address.
         Callback(..) => quote! { *const ::std::os::raw::c_void },
+        // Confined to a struct layout -- see `FfiType::Array`.
+        Array(..) => unreachable!("an inline array type never reaches a call site"),
     }
 }
 
@@ -2874,6 +2892,8 @@ fn ffi_marshal_in(
             }
         }
         Void => quote! { compile_error!("`:void` is not a valid FFI argument type"); },
+        // Confined to a struct layout -- see `FfiType::Array`.
+        Array(..) => unreachable!("an inline array type never reaches a call site"),
     }
 }
 
@@ -2892,6 +2912,8 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
             quote! { zeo_rt::ffi::int_to_enum(__ffi_ret as i64, #table) }
         }
         Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
+        // Confined to a struct layout -- see `FfiType::Array`.
+        Array(..) => unreachable!("an inline array type never reaches a call site"),
     }
 }
 

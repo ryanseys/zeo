@@ -1,0 +1,12 @@
+:toplevel
+:nested
+[0, 3]
+Array
+Collections::Array
+Hash
+"top"
+"nested"
+:outer
+:inner
+:m_owns_it
+:top_level

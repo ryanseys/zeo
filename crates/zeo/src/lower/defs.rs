@@ -2385,10 +2385,14 @@ pub(crate) fn lower_class_body(
                     continue;
                 }
             }
-            if is_ffi_struct && let Some(fields) = as_ffi_layout(stmt, &ffi_aliases)? {
+            if is_ffi_struct && let Some(fields) = as_ffi_layout(stmt, &ffi_aliases, hir, &out)? {
                 // Replace `layout ...` in place with the synthesized accessors,
                 // so any user methods after it can still override them.
-                let source = synthesize_ffi_struct(&fields, is_ffi_union)?;
+                // The inline-array proxy classes ride along with the FIRST
+                // struct that needs them -- see `claim_ffi_inline_array_classes`.
+                let classes = crate::lower::ffi::needs_inline_array_classes(&fields)
+                    && hir.claim_ffi_inline_array_classes();
+                let source = synthesize_ffi_struct(&fields, is_ffi_union, classes)?;
                 out.extend(parse_and_lower_into(hir, &source)?);
                 continue;
             }

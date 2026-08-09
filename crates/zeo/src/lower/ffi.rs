@@ -238,10 +238,53 @@ fn parse_enum_members(args: &[Node<'_>]) -> PResult<Vec<(String, i64)>> {
 /// An explicit integer enum member value (`0`, `100`), or `None` if the node is
 /// not an integer literal (i.e. the next member symbol, or the list's end).
 fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
-    let int = node.as_integer_node()?;
-    let value = int.value();
-    let (negative, digits) = value.to_u32_digits();
-    assemble_i64(negative, digits)
+    if let Some(int) = node.as_integer_node() {
+        let value = int.value();
+        let (negative, digits) = value.to_u32_digits();
+        return assemble_i64(negative, digits);
+    }
+    // `(1 << 0)` -- flag enums are written as shifts and ors far more often
+    // than as the numbers they come to, and the value is a compile-time
+    // constant either way. gir_ffi's `enum :IRepositoryLoadFlags, [:LAZY, (1 <<
+    // 0)]` is the case. Folded here rather than left to a general constant
+    // folder because an enum member's value is needed at LOWERING time: it is
+    // what the generated marshaling tables are built from.
+    if let Some(paren) = node.as_parentheses_node()
+        && let Some(stmts) = paren.body()
+        && let Some(stmts) = stmts.as_statements_node()
+    {
+        let only: Vec<Node<'_>> = stmts.body().iter().collect();
+        if let [inner] = only.as_slice() {
+            return enum_int_literal(inner);
+        }
+        return None;
+    }
+    let call = node.as_call_node()?;
+    let recv = call.receiver()?;
+    let args: Vec<Node<'_>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    let lhs = enum_int_literal(&recv)?;
+    match (call.name().as_slice(), args.as_slice()) {
+        (b"-@", []) => lhs.checked_neg(),
+        (b"~", []) => Some(!lhs),
+        (op, [rhs]) => {
+            let rhs = enum_int_literal(rhs)?;
+            match op {
+                b"<<" => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shl(s)),
+                b">>" => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shr(s)),
+                b"|" => Some(lhs | rhs),
+                b"&" => Some(lhs & rhs),
+                b"^" => Some(lhs ^ rhs),
+                b"+" => lhs.checked_add(rhs),
+                b"-" => lhs.checked_sub(rhs),
+                b"*" => lhs.checked_mul(rhs),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Recognize an FFI `layout :name, :type, :name, :type, ...` directive inside a
@@ -250,6 +293,8 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
 pub(crate) fn as_ffi_layout(
     node: &Node<'_>,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    hir: &Hir,
+    body_so_far: &[NodeId],
 ) -> PResult<Option<Vec<(String, crate::hir::FfiType)>>> {
     let Some(call) = node.as_call_node() else {
         return Ok(None);
@@ -270,11 +315,76 @@ pub(crate) fn as_ffi_layout(
     let mut i = 0;
     while i < args.len() {
         let name = ffi_symbol_str(&args[i])?;
-        let ty = ffi_type_node(&args[i + 1], aliases)?;
+        let ty = match layout_array_type(&args[i + 1], aliases, hir, body_so_far)? {
+            Some(t) => t,
+            None => ffi_type_node(&args[i + 1], aliases)?,
+        };
         fields.push((name, ty));
         i += 2;
     }
     Ok(Some(fields))
+}
+
+/// `[:uint8, 384]` in a layout TYPE position -- an inline array of 384 bytes
+/// stored in place. `None` when the node isn't an array literal at all.
+///
+/// The element count has to be DECIDABLE: it fixes every following field's
+/// offset, so a count zeo cannot read would be a wrong struct rather than a
+/// slower one. An integer literal, or a constant this class body already
+/// assigned an integer -- sys-filesystem's `UUID_NODE_LEN = 6` two lines above
+/// its `layout(...)` is the shape, and C bindings spell array widths that way
+/// far more often than not.
+fn layout_array_type(
+    node: &Node<'_>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+    hir: &Hir,
+    body_so_far: &[NodeId],
+) -> PResult<Option<crate::hir::FfiType>> {
+    let Some(array) = node.as_array_node() else {
+        return Ok(None);
+    };
+    let elems: Vec<Node<'_>> = array.elements().iter().collect();
+    if elems.len() != 2 {
+        return Err(
+            "an inline array field is written `[element_type, count]` (zeo limitation)"
+                .to_string()
+                .into(),
+        );
+    }
+    let elem = ffi_type_node(&elems[0], aliases)?;
+    let count = enum_int_literal(&elems[1])
+        .or_else(|| body_const_int(hir, body_so_far, &elems[1]))
+        .ok_or_else(|| {
+            "an inline array field's element COUNT must be an integer literal, or a constant this \
+             class body already set to one -- it decides where every following field starts (zeo \
+             limitation)"
+                .to_string()
+        })?;
+    if count < 0 {
+        return Err("an inline array field's element count can't be negative"
+            .to_string()
+            .into());
+    }
+    Ok(Some(crate::hir::FfiType::Array(
+        Box::new(elem),
+        count as usize,
+    )))
+}
+
+/// The integer a bare constant names, read off the `ConstWrite` this class body
+/// already lowered for it. Scoped to the body on purpose: a layout's array
+/// width is written beside the layout, and reaching further would mean deciding
+/// a name against a scope chain that is still being built.
+fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<i64> {
+    let wanted = node.as_constant_read_node()?;
+    let wanted = String::from_utf8_lossy(wanted.name().as_slice()).into_owned();
+    body_so_far.iter().rev().find_map(|&id| match &hir[id] {
+        HirNode::ConstWrite { name, value, .. } if *name == wanted => match hir[*value] {
+            HirNode::IntegerLit(n) => Some(n),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 /// The `FFI::MemoryPointer` accessor pair and C layout `(size, align)` for a
@@ -307,6 +417,14 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         // writable -- CRuby's ffi raises `Cannot set :string fields`, because
         // storing one would need somewhere to keep the bytes alive.
         Str => ("get_pointer".into(), "put_pointer".into(), 8, 8),
+        // An inline array occupies `count` elements IN PLACE, and aligns to one
+        // element -- so it is the field that decides where the next one starts.
+        // The getter/putter named here are the ELEMENT's, which is what the
+        // synthesized proxy indexes with.
+        Array(elem, count) => {
+            let (get, put, esize, ealign) = ffi_field_accessor(elem)?;
+            (get, put, esize * count, ealign)
+        }
         other => return Err(format!(
             "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
         )
@@ -320,9 +438,79 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
 /// `members`. Offsets follow C alignment (each field aligned to its own size;
 /// total rounded to the max field alignment), matching `ffi 1.17.4` and the C
 /// ABI. Returned as source for `parse_and_lower_into`.
+/// The two classes an inline array field reads back as, as ruby source.
+///
+/// Emitted at ABSOLUTE scope (`module ::FFI`) from inside the struct body that
+/// first needs them, and only once per program -- redefining them per struct
+/// would print a method-redefined warning for every struct after the first.
+/// The names are observable (`s[:bytes].class`), so they are the gem's, and so
+/// is the split: `CharArray` is the 8-bit one, and the only one with `to_s`.
+///
+/// Written against `send` on the pointer rather than a per-element-type class,
+/// so one pair of classes serves every element width.
+const FFI_INLINE_ARRAY_CLASSES: &str = r#"
+module ::FFI
+  class Struct
+    class InlineArray
+      include ::Enumerable
+      def initialize(__p, __off, __n, __get, __put, __esize)
+        @__p, @__off, @__n, @__get, @__put, @__esize = __p, __off, __n, __get, __put, __esize
+      end
+      def size
+        @__n
+      end
+      def [](__i)
+        @__p.send(@__get, @__off + __i * @__esize)
+      end
+      def []=(__i, __v)
+        @__p.send(@__put, @__off + __i * @__esize, __v)
+      end
+      def each
+        __i = 0
+        while __i < @__n
+          yield self[__i]
+          __i += 1
+        end
+        self
+      end
+      def to_a
+        ::Array.new(@__n) { |__i| self[__i] }
+      end
+      def to_ptr
+        @__p
+      end
+    end
+  end
+  class StructLayout
+    class CharArray < ::FFI::Struct::InlineArray
+      def to_s
+        __out = []
+        __i = 0
+        while __i < @__n
+          __b = self[__i]
+          break if __b == 0
+          __out << (__b & 0xff)
+          __i += 1
+        end
+        __out.pack("C*")
+      end
+      alias to_str to_s
+    end
+  end
+end
+"#;
+
+/// Whether `fields` needs the inline-array proxy classes emitted with them.
+pub(crate) fn needs_inline_array_classes(fields: &[(String, crate::hir::FfiType)]) -> bool {
+    fields
+        .iter()
+        .any(|(_, t)| matches!(t, crate::hir::FfiType::Array(..)))
+}
+
 pub(crate) fn synthesize_ffi_struct(
     fields: &[(String, crate::hir::FfiType)],
     union: bool,
+    with_inline_array_classes: bool,
 ) -> PResult<String> {
     let round_up = |n: usize, a: usize| -> usize { n.div_ceil(a) * a };
     let mut offset = 0usize;
@@ -337,6 +525,11 @@ pub(crate) fn synthesize_ffi_struct(
         Enum(Vec<(String, i64)>),
         Bool,
         Str,
+        /// `(class, element count, element size)` -- the proxy the field reads
+        /// back as. `FFI::StructLayout::CharArray` for an 8-bit element (it is
+        /// the one that also answers `to_s`), `FFI::Struct::InlineArray`
+        /// otherwise, matching the gem.
+        Array(&'static str, usize, usize),
     }
     // (field, getter, putter, offset, conversion)
     let mut placed: Vec<(String, String, String, usize, Conv)> = Vec::new();
@@ -347,6 +540,15 @@ pub(crate) fn synthesize_ffi_struct(
             crate::hir::FfiType::Enum(m) => Conv::Enum(m.clone()),
             crate::hir::FfiType::Bool => Conv::Bool,
             crate::hir::FfiType::Str => Conv::Str,
+            crate::hir::FfiType::Array(elem, count) => {
+                let (_, _, esize, _) = ffi_field_accessor(elem)?;
+                let class = if esize == 1 {
+                    "FFI::StructLayout::CharArray"
+                } else {
+                    "FFI::Struct::InlineArray"
+                };
+                Conv::Array(class, *count, esize)
+            }
             _ => Conv::Plain,
         };
         placed.push((name.clone(), getter, putter, off, conv));
@@ -361,12 +563,17 @@ pub(crate) fn synthesize_ffi_struct(
     // no member keeps its number, exactly as the gem's do.
     let read_arms: String = placed
         .iter()
-        .map(|(name, getter, _, off, conv)| {
+        .map(|(name, getter, putter, off, conv)| {
             let read = format!("@__ffi_ptr.{getter}({off})");
             let read = match conv {
                 Conv::Plain => read,
                 Conv::Bool => format!("{read} != 0"),
                 Conv::Str => format!("((__p = {read}).null? ? nil : __p.read_string)"),
+                // A proxy OVER the struct's own memory, not a copy: writing
+                // through it writes the struct, which is what the gem does.
+                Conv::Array(class, count, esize) => format!(
+                    "{class}.new(@__ffi_ptr, {off}, {count}, :{getter}, :{putter}, {esize})"
+                ),
                 Conv::Enum(m) => {
                     let table = m
                         .iter()
@@ -389,10 +596,17 @@ pub(crate) fn synthesize_ffi_struct(
                     "        when :{name} then raise ArgumentError, \"Cannot set :string fields\"\n"
                 );
             }
+            // Ruby refuses a whole-array assignment too -- the proxy's own
+            // `[]=` is how an inline array is written.
+            if matches!(conv, Conv::Array(..)) {
+                return format!(
+                    "        when :{name} then raise NotImplementedError, \"cannot set array field\"\n"
+                );
+            }
             let value = match conv {
                 Conv::Plain => "__ffi_value".to_string(),
                 Conv::Bool => "(__ffi_value ? 1 : 0)".to_string(),
-                Conv::Str => unreachable!("returned above"),
+                Conv::Str | Conv::Array(..) => unreachable!("returned above"),
                 Conv::Enum(m) => {
                     let table = m
                         .iter()
@@ -415,8 +629,13 @@ pub(crate) fn synthesize_ffi_struct(
         .collect::<Vec<_>>()
         .join(", ");
 
+    let inline_array_classes = if with_inline_array_classes {
+        FFI_INLINE_ARRAY_CLASSES
+    } else {
+        ""
+    };
     Ok(format!(
-        r#"
+        r#"{inline_array_classes}
 def initialize(__ffi_ptr = nil)
   @__ffi_ptr = __ffi_ptr || FFI::MemoryPointer.new({total})
 end
@@ -523,16 +742,23 @@ fn lower_attach_function(
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<NodeId> {
     let _ = result;
-    let (ruby_name, c_symbol, types_node, ret_node) = match args.len() {
+    // `attach_function(name, func = name, args, returns, options = {})`. The
+    // options are ruby's own trailing hash, so prism hands them over as one
+    // more element of the argument list -- 3/4 arguments plus an optional one.
+    let (positional, options) = match args.last().filter(|a| is_options_hash(a)) {
+        Some(opts) => (&args[..args.len() - 1], Some(opts)),
+        None => (args, None),
+    };
+    let (ruby_name, c_symbol, types_node, ret_node) = match positional.len() {
         3 => {
-            let name = ffi_symbol_str(&args[0])?;
-            (name.clone(), name, &args[1], &args[2])
+            let name = ffi_symbol_str(&positional[0])?;
+            (name.clone(), name, &positional[1], &positional[2])
         }
         4 => (
-            ffi_symbol_str(&args[0])?,
-            ffi_symbol_str(&args[1])?,
-            &args[2],
-            &args[3],
+            ffi_symbol_str(&positional[0])?,
+            ffi_symbol_str(&positional[1])?,
+            &positional[2],
+            &positional[3],
         ),
         n => {
             return Err(format!(
@@ -543,6 +769,25 @@ fn lower_attach_function(
     };
     let (arg_types, variadic) = ffi_arg_types(types_node, aliases)?;
     let ret = ffi_type_node(ret_node, aliases)?;
+    let blocking = match options {
+        Some(opts) => attach_function_options(opts)?,
+        None => false,
+    };
+    // A `blocking: true` call releases the GVL, and the C function may not call
+    // back into ruby while it is released. ffi says the same; here it would be
+    // a callback trampolining into a Proc with no GVL held.
+    if blocking
+        && arg_types
+            .iter()
+            .any(|t| matches!(t, crate::hir::FfiType::Callback(..)))
+    {
+        return Err(
+            "attach_function `blocking: true` can't be combined with a callback argument \
+             (the callback would re-enter ruby with the GVL released)"
+                .to_string()
+                .into(),
+        );
+    }
 
     // The wrapper's params: one required positional per FIXED C argument, named
     // so a `LocalRead` in the `Ffi` body reaches it; a variadic function also
@@ -562,6 +807,7 @@ fn lower_attach_function(
         args: call_args,
         ret,
         variadic: variadic_read,
+        blocking,
     }))];
     let params = Params {
         required: param_names,
@@ -576,6 +822,66 @@ fn lower_attach_function(
         visibility: Visibility::Public,
         is_def: true,
     }))
+}
+
+/// Whether a trailing `attach_function` argument is its options hash rather
+/// than a type. Only the hash forms qualify, so a 5th POSITIONAL argument is
+/// still the arity error it was.
+fn is_options_hash(node: &Node<'_>) -> bool {
+    node.as_keyword_hash_node().is_some() || node.as_hash_node().is_some()
+}
+
+/// `attach_function`'s options hash -> whether the call releases the GVL.
+///
+/// `blocking: true` is the one option with meaning on a target zeo builds for.
+/// `convention:` decides between cdecl and stdcall, which is a 32-bit Windows
+/// distinction -- the real gem ignores it everywhere else, and so does this.
+/// `enums:` and `type_map:` change how VALUES marshal, so an unrecognized or
+/// non-literal option stays a clean rejection rather than a silent drop.
+fn attach_function_options(node: &Node<'_>) -> PResult<bool> {
+    let pairs: Vec<Node<'_>> = match node.as_keyword_hash_node() {
+        Some(k) => k.elements().iter().collect(),
+        None => node
+            .as_hash_node()
+            .map(|h| h.elements().iter().collect())
+            .unwrap_or_default(),
+    };
+    let mut blocking = false;
+    for pair in pairs {
+        let assoc = pair.as_assoc_node().ok_or_else(|| {
+            "attach_function's options must be literal `key: value` pairs".to_string()
+        })?;
+        let key = assoc
+            .key()
+            .as_symbol_node()
+            .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+            .ok_or_else(|| {
+                "attach_function's options must be literal `key: value` pairs".to_string()
+            })?;
+        match key.as_str() {
+            "blocking" => {
+                let v = assoc.value();
+                blocking = match () {
+                    _ if v.as_true_node().is_some() => true,
+                    _ if v.as_false_node().is_some() || v.as_nil_node().is_some() => false,
+                    _ => {
+                        return Err("attach_function's `blocking:` expects `true` or `false`"
+                            .to_string()
+                            .into());
+                    }
+                };
+            }
+            "convention" => {}
+            other => {
+                return Err(format!(
+                    "attach_function option `{other}:` isn't supported yet (zeo limitation) -- \
+                     `blocking:` and `convention:` are"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(blocking)
 }
 
 /// A Symbol node's name (`:abs` -> `"abs"`). FFI names/types are always literal
@@ -707,11 +1013,65 @@ fn ffi_type_of(
         "pointer" | "buffer_in" | "buffer_out" | "buffer_inout" => Pointer,
         other => match aliases.get(other) {
             Some(t) => t.clone(),
-            None => {
-                return Err(format!(
-                    "unsupported FFI type `:{other}` (expected a scalar keyword, `:pointer`, `:string`, or a declared `typedef`/`enum`/`callback` name)"
-                ).into())
+            None => match c_typedef(other) {
+                Some(t) => t,
+                None => {
+                    return Err(format!(
+                        "unsupported FFI type `:{other}` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback` name)"
+                    ).into())
+                }
             }
         },
+    })
+}
+
+/// The C typedefs the real `ffi` gem resolves natively, restricted to those
+/// whose width and signedness are the SAME on every target zeo builds for.
+///
+/// The gem's table is derived from the headers of the machine it runs on, so
+/// copying it wholesale would bake this machine's platform into the compiler --
+/// and several POSIX typedefs genuinely differ between macOS and glibc:
+/// `mode_t` (uint16 vs uint32), `dev_t` (int32 vs uint64), `nlink_t` (uint16 vs
+/// uint64), `sa_family_t` (uint8 vs uint16), `blksize_t` and `suseconds_t`
+/// (int32 vs int64), `clock_t` (unsigned vs signed). Those stay a clean
+/// rejection: resolving one here would silently shift every field after it in a
+/// struct layout, which is a wrong answer rather than a missing one.
+///
+/// What is left is safe by definition rather than by observation: the C99
+/// exact-width names are exact everywhere, the pointer-width names follow the
+/// LP64 assumption `:long` already makes, and the handful of POSIX types below
+/// agree on both targets.
+fn c_typedef(name: &str) -> Option<crate::hir::FfiType> {
+    use crate::hir::FfiType::*;
+    // `__int32_t` and `u_int32_t` are the BSD and glibc spellings of the same
+    // exact-width type; gems reach for whichever their headers showed them.
+    let bare = name
+        .strip_prefix("__")
+        .or_else(|| name.strip_prefix("u_"))
+        .unwrap_or(name);
+    Some(match bare {
+        "int8_t" | "int_least8_t" => Int(8),
+        "int16_t" | "int_least16_t" => Int(16),
+        "int32_t" | "int_least32_t" => Int(32),
+        "int64_t" | "int_least64_t" => Int(64),
+        "uint8_t" | "uint_least8_t" => Uint(8),
+        "uint16_t" | "uint_least16_t" => Uint(16),
+        "uint32_t" | "uint_least32_t" => Uint(32),
+        "uint64_t" | "uint_least64_t" => Uint(64),
+        // Pointer-width, on the LP64 assumption `:long` already makes.
+        "intptr_t" | "ptrdiff_t" | "intmax_t" => Int(64),
+        "uintptr_t" | "uintmax_t" => Uint(64),
+        // POSIX types that are the same on macOS and 64-bit glibc. `off_t` is
+        // 64-bit on both (the gem builds with large-file support); `time_t` is
+        // the 64-bit signed one on every 64-bit target.
+        "off_t" | "time_t" | "blkcnt_t" | "register_t" => Int(64),
+        "pid_t" | "key_t" => Int(32),
+        "uid_t" | "gid_t" | "id_t" | "socklen_t" | "in_addr_t" | "useconds_t" => Uint(32),
+        "in_port_t" => Uint(16),
+        "ino_t" | "rlim_t" => Uint(64),
+        "caddr_t" => Pointer,
+        // NOT here on purpose: `int_fast16_t`/`int_fast32_t`, which are 16/32
+        // bits on macOS and 64 on glibc.
+        _ => return None,
     })
 }
