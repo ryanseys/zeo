@@ -1648,10 +1648,54 @@ fn baked_constant(node: &ruby_prism::Node<'_>) -> Option<&'static str> {
     let name = node.as_constant_read_node()?;
     match name.name().as_slice() {
         b"RUBY_PLATFORM" => Some(env!("ZEO_RUBY_PLATFORM")),
+        // Mirrors `zeo_rt::bootstrap`'s `ENGINE = "ruby"`: zeo targets CRuby
+        // semantics, so an engine-gated require is statically decidable.
         b"RUBY_ENGINE" => Some("ruby"),
         b"RUBY_VERSION" | b"RUBY_ENGINE_VERSION" => Some(zeo_abi::RUBY_VERSION),
         _ => None,
     }
+}
+
+/// A build-time-known STRING subject: a baked constant, or the
+/// `RbConfig::CONFIG['host_os']` spelling of the same platform question. The
+/// platform string stands in for `host_os` -- the guards this feeds are
+/// `|`-literal substring tests (`/mswin|mingw/`), and every family name those
+/// alternations probe for appears in both spellings or neither.
+fn baked_subject(node: &ruby_prism::Node<'_>) -> Option<&'static str> {
+    if let Some(s) = baked_constant(node) {
+        return Some(s);
+    }
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"[]" {
+        return None;
+    }
+    let recv = call.receiver()?;
+    let path = recv.as_constant_path_node()?;
+    if path.name()?.as_slice() != b"CONFIG"
+        || !path
+            .parent()
+            .and_then(|p| {
+                p.as_constant_read_node()
+                    .map(|c| c.name().as_slice() == b"RbConfig")
+            })
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    let mut args = call.arguments()?.arguments().iter();
+    let (arg, None) = (args.next()?, args.next()) else {
+        return None;
+    };
+    (arg.as_string_node()?.unescaped() == b"host_os").then_some(env!("ZEO_RUBY_PLATFORM"))
+}
+
+/// Whether this build's platform is a windows one -- the answer every
+/// spelling of the oldest platform test resolves to.
+fn build_is_windows() -> bool {
+    let plat = env!("ZEO_RUBY_PLATFORM");
+    ["mswin", "mingw", "windows"]
+        .iter()
+        .any(|w| plat.contains(w))
 }
 
 /// `Some(<baked constant> matches <pattern>)` for `RUBY_PLATFORM =~ /mswin|
@@ -1670,10 +1714,17 @@ fn platform_match(node: &ruby_prism::Node<'_>) -> Option<bool> {
     let (arg, None) = (args.next()?, args.next()) else {
         return None;
     };
-    let (subject, pattern) = match baked_constant(&recv) {
+    let (subject, pattern) = match baked_subject(&recv) {
         Some(s) => (s, arg),
-        None => (baked_constant(&arg)?, recv),
+        None => (baked_subject(&arg)?, recv),
     };
+    literal_alt_match(subject, &pattern)
+}
+
+/// `Some(subject matches re)` for a regexp of `|`-separated LITERAL text --
+/// a substring test that cannot disagree with a regexp engine. Anything with
+/// syntax or flags is `None`.
+fn literal_alt_match(subject: &str, pattern: &ruby_prism::Node<'_>) -> Option<bool> {
     let re = pattern.as_regular_expression_node()?;
     if re.is_ignore_case() || re.is_extended() || re.is_multi_line() {
         return None;
@@ -1761,12 +1812,73 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             self.visit(&els.as_node());
         }
     }
+
+    // `case RUBY_ENGINE when 'jruby'` is the third spelling of the same
+    // platform gate (psych requires `psych_jars` under exactly this one), so
+    // it prunes the same way the `if` does. Arms are decided in document
+    // order, as ruby tests them: a decided-false arm's body is skipped, a
+    // decided-true arm ends the walk (later arms and the `else` never run),
+    // and any undecidable condition keeps its arm live without killing the
+    // arms after it. A subject the build doesn't bake descends exactly as
+    // before.
+    fn visit_case_node(&mut self, node: &ruby_prism::CaseNode<'pr>) {
+        let subject = node.predicate().as_ref().and_then(baked_subject);
+        let Some(subject) = subject else {
+            ruby_prism::visit_case_node(self, node);
+            return;
+        };
+        if let Some(pred) = node.predicate() {
+            self.visit(&pred);
+        }
+        for cond in node.conditions().iter() {
+            let Some(when) = cond.as_when_node() else {
+                // Not a shape this prunes; fall back to full descent of the
+                // remainder by visiting the node itself.
+                self.visit(&cond);
+                continue;
+            };
+            // `Some(false)` until a condition matches or declines to answer.
+            let mut arm = Some(false);
+            for c in when.conditions().iter() {
+                self.visit(&c);
+                match literal_when_match(subject, &c) {
+                    Some(true) => {
+                        arm = Some(true);
+                        break;
+                    }
+                    Some(false) => {}
+                    None => arm = None,
+                }
+            }
+            match arm {
+                Some(false) => continue,
+                None => {
+                    if let Some(stmts) = when.statements() {
+                        self.visit(&stmts.as_node());
+                    }
+                }
+                Some(true) => {
+                    if let Some(stmts) = when.statements() {
+                        self.visit(&stmts.as_node());
+                    }
+                    return;
+                }
+            }
+        }
+        if let Some(els) = node.else_clause() {
+            self.visit(&els.as_node());
+        }
+    }
 }
 
-/// zeo's compile-time `RUBY_ENGINE`. Mirrors `zeo_rt::bootstrap`'s
-/// `ENGINE = "ruby"`: zeo targets CRuby semantics, so an engine-gated require
-/// (`require X if RUBY_ENGINE == 'jruby'`) is statically decidable here.
-const RUBY_ENGINE: &str = "ruby";
+/// Whether one `when` condition matches the baked subject: a string literal
+/// by equality, a `|`-literal regexp by substring. Anything else is `None`.
+fn literal_when_match(subject: &str, cond: &ruby_prism::Node<'_>) -> Option<bool> {
+    if let Some(s) = cond.as_string_node() {
+        return Some(s.unescaped() == subject.as_bytes());
+    }
+    literal_alt_match(subject, cond)
+}
 
 /// Three-valued evaluation of a `require`-guard expression. `Some(true)`/
 /// `Some(false)` when a platform guard is statically decidable; `None` when it
@@ -1839,12 +1951,21 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
             })
             .unwrap_or(false)
     {
-        let plat = env!("ZEO_RUBY_PLATFORM");
-        return Some(
-            ["mswin", "mingw", "windows"]
-                .iter()
-                .any(|w| plat.contains(w)),
-        );
+        return Some(build_is_windows());
+    }
+    // `defined?(JRUBY_VERSION)` and its family: a version constant only
+    // ANOTHER interpreter defines. zeo targets CRuby, where the answer is a
+    // build-time fact -- no gem defines a foreign engine's version constant
+    // on CRuby, and thread_safe/concurrent-ruby gate whole require graphs on
+    // exactly this test.
+    if let Some(d) = node.as_defined_node()
+        && let Some(read) = d.value().as_constant_read_node()
+        && matches!(
+            read.name().as_slice(),
+            b"JRUBY_VERSION" | b"RUBINIUS_VERSION" | b"MACRUBY_VERSION" | b"MRUBY_VERSION"
+        )
+    {
+        return Some(false);
     }
     if let Some(call) = node.as_call_node() {
         let name = call.name().as_slice();
@@ -1859,25 +1980,62 @@ fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
         {
             let arg_list: Vec<_> = args.arguments().iter().collect();
             if let [only] = arg_list.as_slice() {
-                let eq = engine_string_eq(&recv, only).or_else(|| engine_string_eq(only, &recv));
+                let eq = baked_string_eq(&recv, only).or_else(|| baked_string_eq(only, &recv));
                 if let Some(eq) = eq {
                     return Some(if name == b"==" { eq } else { !eq });
                 }
             }
         }
+        if let Some(b) = platform_predicate(&call) {
+            return Some(b);
+        }
     }
     None
 }
 
-/// `Some(RUBY_ENGINE == lit)` when `a` reads the `RUBY_ENGINE` constant and `b`
-/// is a string literal; `None` otherwise. Order-sensitive -- the caller tries
-/// both operand orders so `RUBY_ENGINE == 'x'` and `'x' == RUBY_ENGINE` both
-/// resolve.
-fn engine_string_eq(a: &ruby_prism::Node<'_>, b: &ruby_prism::Node<'_>) -> Option<bool> {
-    if a.as_constant_read_node()?.name().as_slice() != b"RUBY_ENGINE" {
+/// `Some(<baked constant> == lit)` when `a` reads a build-baked constant and
+/// `b` is a string literal; `None` otherwise. Order-sensitive -- the caller
+/// tries both operand orders so `RUBY_ENGINE == 'x'` and `'x' == RUBY_ENGINE`
+/// both resolve. Baking the SUBJECT rather than one constant name is what
+/// decides `RUBY_PLATFORM == "java"` too, JRuby's other spelling.
+fn baked_string_eq(a: &ruby_prism::Node<'_>, b: &ruby_prism::Node<'_>) -> Option<bool> {
+    let subject = baked_subject(a)?;
+    Some(b.as_string_node()?.unescaped() == subject.as_bytes())
+}
+
+/// The zero-argument platform predicates whose answer is a property of the
+/// build: `Gem.win_platform?`, and the `FFI::Platform.windows?/mac?/unix?`
+/// family zeo's own ffi gem provides.
+fn platform_predicate(call: &ruby_prism::CallNode<'_>) -> Option<bool> {
+    if call.arguments().is_some() || call.block().is_some() {
         return None;
     }
-    Some(b.as_string_node()?.unescaped() == RUBY_ENGINE.as_bytes())
+    let recv = call.receiver()?;
+    let name = call.name().as_slice();
+    if let Some(c) = recv.as_constant_read_node()
+        && c.name().as_slice() == b"Gem"
+        && name == b"win_platform?"
+    {
+        return Some(build_is_windows());
+    }
+    let path = recv.as_constant_path_node()?;
+    if path.name()?.as_slice() != b"Platform"
+        || !path
+            .parent()
+            .and_then(|p| {
+                p.as_constant_read_node()
+                    .map(|c| c.name().as_slice() == b"FFI")
+            })
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    match name {
+        b"windows?" => Some(build_is_windows()),
+        b"mac?" => Some(env!("ZEO_RUBY_PLATFORM").contains("darwin")),
+        b"unix?" => Some(!build_is_windows()),
+        _ => None,
+    }
 }
 
 /// Collects every receiver-less `autoload` call in a statement tree,
@@ -2186,5 +2344,102 @@ mod tests {
         let path = write("truncated", b"puts 1 # \xe0\xa4");
         let text = read_source(&path).expect("prism accepts a comment's stray bytes");
         assert_eq!(text, "puts 1 # ??");
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    use ruby_prism::Visit;
+
+    /// The static answer for `if <src> ...`'s predicate.
+    fn guard(pred: &str) -> Option<bool> {
+        let src = format!("if {pred}\n  1\nend\n");
+        let res = ruby_prism::parse(src.as_bytes());
+        let root = res.node();
+        let prog = root.as_program_node().unwrap();
+        let first = prog.statements().body().iter().next().unwrap();
+        eval_static_guard(&first.as_if_node().unwrap().predicate())
+    }
+
+    /// The features the collector would SPLICE from `src` (load-time
+    /// requires; deferred/lazy are not the question here).
+    fn spliced(src: &str) -> Vec<String> {
+        let res = ruby_prism::parse(src.as_bytes());
+        let mut c = RequireCollector::default();
+        c.visit(&res.node());
+        c.calls
+            .iter()
+            .filter_map(|call| {
+                let args = call.arguments()?;
+                let first = args.arguments().iter().next()?;
+                Some(String::from_utf8_lossy(first.as_string_node()?.unescaped()).into_owned())
+            })
+            .collect()
+    }
+
+    /// Every spelling of "am I another engine" answers `false` at build time,
+    /// and the windows family answers whatever this build is.
+    #[test]
+    fn the_platform_guards_fold_to_build_facts() {
+        assert_eq!(guard("RUBY_ENGINE == 'jruby'"), Some(false));
+        assert_eq!(guard("RUBY_PLATFORM == 'java'"), Some(false));
+        assert_eq!(guard("'java' == RUBY_PLATFORM"), Some(false));
+        assert_eq!(guard("defined?(JRUBY_VERSION)"), Some(false));
+        assert_eq!(guard("defined?(RUBINIUS_VERSION)"), Some(false));
+        assert_eq!(guard("Gem.win_platform?"), Some(build_is_windows()));
+        assert_eq!(guard("FFI::Platform.windows?"), Some(build_is_windows()));
+        assert_eq!(guard("FFI::Platform.unix?"), Some(!build_is_windows()));
+        assert_eq!(
+            guard("RbConfig::CONFIG['host_os'] =~ /mswin|mingw/"),
+            Some(build_is_windows())
+        );
+        // Runtime state stays three-valued.
+        assert_eq!(guard("ENV['FAST']"), None);
+        assert_eq!(guard("defined?(SomeGemConstant)"), None);
+    }
+
+    /// psych's shape: the JRuby arm of a `case RUBY_ENGINE` must not splice
+    /// -- its target is another engine's native code.
+    #[test]
+    fn a_case_on_a_baked_subject_prunes_its_dead_arms() {
+        let live = spliced(
+            "case RUBY_ENGINE\n\
+             when 'jruby' then require 'psych_jars'\n\
+             when 'ruby' then require 'psych_native'\n\
+             else require 'psych_fallback'\n\
+             end\n",
+        );
+        assert_eq!(live, vec!["psych_native"]);
+
+        // No arm matches: only the `else` runs.
+        let fallback = spliced(
+            "case RUBY_PLATFORM\n\
+             when /java/ then require 'a'\n\
+             else require 'b'\n\
+             end\n",
+        );
+        assert_eq!(fallback, vec!["b"]);
+    }
+
+    /// A subject the build does not bake descends exactly as before, and an
+    /// undecidable arm keeps the arms after it live.
+    #[test]
+    fn an_undecided_case_keeps_every_arm_live() {
+        let all = spliced(
+            "case adapter\n\
+             when 'jruby' then require 'a'\n\
+             else require 'b'\n\
+             end\n",
+        );
+        assert_eq!(all, vec!["a", "b"]);
+
+        let mixed = spliced(
+            "case RUBY_ENGINE\n\
+             when computed then require 'a'\n\
+             when 'ruby' then require 'b'\n\
+             end\n",
+        );
+        assert_eq!(mixed, vec!["a", "b"]);
     }
 }
