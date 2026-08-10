@@ -17,6 +17,11 @@ tag    = "v4.0.18"
 rev    = "7e934435ff880a9a6f78b9ca5fea396a275bd5c4"
 subdir = "bundler"
 
+[gems.concurrent-ruby]
+github = "ruby-concurrency/concurrent-ruby"
+tag    = "v1.3.8"
+rev    = "0b88d5ff75f69b3740c8f0868e76f833cb2fd45d"
+
 [gems.csv]
 github = "ruby/csv"
 tag    = "v3.3.6"
@@ -52,6 +57,11 @@ github = "ruby/logger"
 tag    = "v1.7.0"
 rev    = "f474d07d9890a03e6e40430c4e2ee933c6193d7e"
 
+[gems.minitest-global_expectations]
+github = "jeremyevans/minitest-global_expectations"
+tag    = "1.0.2"
+rev    = "4c88bdf4875761236866218be5254abd4baf8456"
+
 [gems.net-ftp]
 github = "ruby/net-ftp"
 tag    = "v0.3.9"
@@ -82,6 +92,11 @@ github = "ruby/open3"
 tag    = "v0.2.1"
 rev    = "b8909222051b4103a19eba19506727faece252e7"
 
+[gems.power_assert]
+github = "ruby/power_assert"
+tag    = "v3.0.1"
+rev    = "26edf65c9932de6062606766878cf57a453af300"
+
 [gems.racc]
 github = "ruby/racc"
 tag    = "v1.8.1"
@@ -101,6 +116,11 @@ rev    = "7e934435ff880a9a6f78b9ca5fea396a275bd5c4"
 github = "ruby/tempfile"
 tag    = "v0.3.1"
 rev    = "297bdf2c8d959d4455360134152d33d2bea8bf54"
+
+[gems.test-unit]
+github = "test-unit/test-unit"
+tag    = "3.7.8"
+rev    = "34a125ca2fd83552f2e8bd8000036893372d2c43"
 
 [gems.time]
 github = "ruby/time"

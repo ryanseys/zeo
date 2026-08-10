@@ -11,7 +11,7 @@ mod assign;
 mod calls;
 pub mod consts;
 pub mod context;
-mod control;
+pub(crate) mod control;
 pub mod defs;
 pub mod eval_splice;
 pub mod features;

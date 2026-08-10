@@ -661,11 +661,39 @@ impl Loader {
             // AFTER `lower_node`, which folds each require CALL to its load
             // result: splicing first would mark the feature loaded and turn a
             // first `require "digest"` from true into false.
+            //
+            // A require in the BODY of a `begin` whose rescue names LoadError
+            // splices inside a synthesized `Begin` carrying the SAME lowered
+            // rescue clauses: a raise at the required file's own top level
+            // runs during `require` in CRuby, inside the written handler's
+            // reach. power_assert opens with exactly that -- a TracePoint
+            // probe that raises LoadError -- and test-unit degrades by
+            // rescuing it; unwrapped, the probe's raise escaped to main.
+            // (The handler lowers twice -- once here, once in the original
+            // begin -- but only one copy can ever see a given raise.)
+            let rescued_body_calls: Vec<usize> = match n.as_begin_node() {
+                Some(begin) if rescues_load_error(&begin) => {
+                    let mut body_reqs = RequireCollector::default();
+                    if let Some(stmts) = begin.statements() {
+                        use ruby_prism::Visit as _;
+                        for s in stmts.body().iter() {
+                            body_reqs.visit(&s);
+                        }
+                    }
+                    body_reqs
+                        .calls
+                        .iter()
+                        .map(|c| c.location().start_offset())
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
             let mut nested = RequireCollector::default();
             {
                 use ruby_prism::Visit as _;
                 nested.visit(&n);
             }
+            let mut rescued_spliced: Vec<crate::hir::NodeId> = Vec::new();
             for call in &nested.calls {
                 let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
                 if let Some(spliced) = self.lower_require_statement(
@@ -677,7 +705,32 @@ impl Loader {
                     file_idx,
                     current_box,
                 )? {
-                    combined.extend(spliced);
+                    match rescued_body_calls.contains(&call.location().start_offset()) {
+                        true => rescued_spliced.extend(spliced),
+                        false => combined.extend(spliced),
+                    }
+                }
+            }
+            if !rescued_spliced.is_empty() {
+                // Wrap ONLY when the spliced statements can actually raise a
+                // LoadError at load time. The common rescued require (`begin;
+                // require "json"; rescue LoadError; <fallback>`) loads
+                // cleanly, and its fallback must stay DEAD -- the cloned
+                // rescue would re-register fallback classes the dead-rescue
+                // elimination exists to keep out of `defined?`.
+                match spliced_may_raise_load_error(hir, &rescued_spliced) {
+                    true => {
+                        let begin = n.as_begin_node().expect("only a begin collects these");
+                        let rescues =
+                            crate::lower::control::lower_rescue_clauses(result, hir, &begin)?;
+                        combined.push(hir.push(crate::hir::HirNode::Begin {
+                            body: rescued_spliced,
+                            rescues,
+                            else_body: None,
+                            ensure_body: None,
+                        }));
+                    }
+                    false => combined.extend(rescued_spliced),
                 }
             }
             // Eager `autoload` (at any structural nesting): every `autoload :C,
@@ -1778,6 +1831,43 @@ struct RequireCollector<'a> {
 /// Whether one of this begin's rescue clauses catches `LoadError`. Named
 /// classes only: a BARE `rescue` catches `StandardError`, and `LoadError <
 /// ScriptError < Exception` sits outside that tree.
+/// Whether any of `stmts`' subtrees holds a `raise` naming `LoadError` (or a
+/// superclass) OUTSIDE method bodies -- a raise the require itself would run.
+/// power_assert's TracePoint probe is the shape: `begin ... rescue; raise
+/// LoadError, '...'; end` at the file's top level. Method and lambda bodies
+/// don't run at load, so they don't count.
+fn spliced_may_raise_load_error(hir: &Hir, stmts: &[crate::hir::NodeId]) -> bool {
+    use crate::hir::HirNode;
+    fn mentions(hir: &Hir, id: crate::hir::NodeId) -> bool {
+        match &hir[id] {
+            HirNode::ClassRef(n) if matches!(n.as_str(), "LoadError" | "ScriptError" | "Exception") => {
+                return true;
+            }
+            HirNode::QualifiedConstRead(_, n)
+                if matches!(n.as_str(), "LoadError" | "ScriptError" | "Exception") =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        let mut hit = false;
+        hir[id].for_each_child(&mut |c| hit = hit || mentions(hir, c));
+        hit
+    }
+    fn walk(hir: &Hir, id: crate::hir::NodeId) -> bool {
+        match &hir[id] {
+            HirNode::DefMethod { .. } | HirNode::Lambda { .. } => false,
+            HirNode::Raise(args, _) => args.first().is_some_and(|&a| mentions(hir, a)),
+            node => {
+                let mut hit = false;
+                node.for_each_child(&mut |c| hit = hit || walk(hir, c));
+                hit
+            }
+        }
+    }
+    stmts.iter().any(|&s| walk(hir, s))
+}
+
 fn rescues_load_error(node: &ruby_prism::BeginNode<'_>) -> bool {
     let mut clause = node.rescue_clause();
     while let Some(rescue) = clause {

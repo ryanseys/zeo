@@ -87,7 +87,44 @@ pub(crate) fn lower_begin(
     begin: &ruby_prism::BeginNode<'_>,
 ) -> PResult<NodeId> {
     let body = lower_body(result, hir, begin.statements().map(|s| s.as_node()))?;
+    let rescues = lower_rescue_clauses(result, hir, begin)?;
 
+    let else_body = match begin.else_clause() {
+        None => None,
+        Some(e) => Some(lower_body(
+            result,
+            hir,
+            e.statements().map(|s| s.as_node()),
+        )?),
+    };
+    let ensure_body = match begin.ensure_clause() {
+        None => None,
+        Some(e) => Some(lower_body(
+            result,
+            hir,
+            e.statements().map(|s| s.as_node()),
+        )?),
+    };
+
+    Ok(hir.push(HirNode::Begin {
+        body,
+        rescues,
+        else_body,
+        ensure_body,
+    }))
+}
+
+/// The lowered rescue clauses of a `begin`, on their own -- [`lower_begin`]'s
+/// middle third. Also used by the loader when it wraps a rescued require's
+/// SPLICED statements in a synthesized `Begin` carrying the same clauses, so
+/// a raise at the required file's own top level (power_assert's TracePoint
+/// probe) is caught by the handler the source wrote, as CRuby's `require`
+/// timing would.
+pub(crate) fn lower_rescue_clauses(
+    result: &ParseResult,
+    hir: &mut Hir,
+    begin: &ruby_prism::BeginNode<'_>,
+) -> PResult<Vec<RescueClause>> {
     let mut rescues = Vec::new();
     let mut next = begin.rescue_clause();
     while let Some(r) = next {
@@ -138,30 +175,7 @@ pub(crate) fn lower_begin(
         });
         next = r.subsequent();
     }
-
-    let else_body = match begin.else_clause() {
-        None => None,
-        Some(e) => Some(lower_body(
-            result,
-            hir,
-            e.statements().map(|s| s.as_node()),
-        )?),
-    };
-    let ensure_body = match begin.ensure_clause() {
-        None => None,
-        Some(e) => Some(lower_body(
-            result,
-            hir,
-            e.statements().map(|s| s.as_node()),
-        )?),
-    };
-
-    Ok(hir.push(HirNode::Begin {
-        body,
-        rescues,
-        else_body,
-        ensure_body,
-    }))
+    Ok(rescues)
 }
 
 /// A `return`/`break`/`next`'s optional value.
