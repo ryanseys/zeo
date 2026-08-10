@@ -116,3 +116,46 @@ if defined?("Faraday::Env")
   end
 end
 p Patch::APPLIED
+
+# The interpreter installs a handful of constants on `Object` before the first
+# line runs, and no `NAME = ...` in the program says so. Scanning for one and
+# finding nothing must not read as "not defined": `defined?(RUBY_ENGINE)` is
+# "constant", and a gem that gates its whole engine-compat branch on the probe
+# takes the branch.
+#
+# Every name the runtime seeds is listed here, so a name added to one side and
+# not the other shows up as a divergence rather than as a quiet nil.
+%w[ARGF ARGV ENV RUBY_COPYRIGHT RUBY_DESCRIPTION RUBY_ENGINE RUBY_ENGINE_VERSION
+   RUBY_PATCHLEVEL RUBY_PLATFORM RUBY_RELEASE_DATE RUBY_REVISION RUBY_VERSION
+   STDERR STDIN STDOUT].each do |name|
+  p [name, Object.const_defined?(name)]
+end
+
+p defined?(RUBY_ENGINE)
+p defined?(RUBY_VERSION)
+p defined?(RUBY_PLATFORM)
+p defined?(ENV)
+p defined?(ARGV)
+p defined?(STDOUT)
+p defined?(ARGF)
+p defined?(STDIN)
+p defined?(STDERR)
+p defined?(RUBY_PATCHLEVEL)
+p defined?(RUBY_REVISION)
+p defined?(RUBY_RELEASE_DATE)
+p defined?(RUBY_DESCRIPTION)
+p defined?(RUBY_COPYRIGHT)
+p defined?(RUBY_ENGINE_VERSION)
+p defined?(::RUBY_ENGINE)
+
+if defined?(RUBY_ENGINE)
+  module Engine
+    KNOWN = true
+  end
+end
+p Engine::KNOWN
+
+# The scope OPERATOR does not reach `Object`'s constants, so asking a real
+# namespace for one is nil -- the same rule every other qualified read follows.
+module Elsewhere; end
+p defined?(Elsewhere::RUBY_ENGINE)

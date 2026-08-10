@@ -57,6 +57,35 @@ pub const ENV_SINGLETON_CLASS: ClassId = ClassId(u32::MAX);
 /// guard must fold against the SAME string the running program reports.
 pub const RUBY_VERSION: &str = "4.0.6";
 
+/// The constants ruby seeds on `Object` before a program's first line runs.
+///
+/// Nothing in a program's own body assigns them, so a compile-time scan for
+/// `NAME = ...` finds nothing and would answer `defined?(RUBY_ENGINE)` with
+/// nil where ruby says `"constant"`. Single-sourced here because the two sides
+/// of that answer live in different crates: `zeo-rt`'s `bootstrap` sets the
+/// values, and the compiler needs only to know the names exist.
+///
+/// `tests/a_defined_guard_asks_about_this_moment.rb` reads every name on both
+/// sides, so a name added here and not seeded (or seeded and not added) shows
+/// up as a divergence from the oracle rather than as a quiet nil.
+pub const SEEDED_OBJECT_CONSTANTS: &[&str] = &[
+    "ARGF",
+    "ARGV",
+    "ENV",
+    "RUBY_COPYRIGHT",
+    "RUBY_DESCRIPTION",
+    "RUBY_ENGINE",
+    "RUBY_ENGINE_VERSION",
+    "RUBY_PATCHLEVEL",
+    "RUBY_PLATFORM",
+    "RUBY_RELEASE_DATE",
+    "RUBY_REVISION",
+    "RUBY_VERSION",
+    "STDERR",
+    "STDIN",
+    "STDOUT",
+];
+
 /// The encoding a Regexp literal's trailing flag letter FORCES -- `/n`, `/e`,
 /// `/s`, `/u`. `Source` is a plain literal, whose encoding follows its own
 /// source bytes.

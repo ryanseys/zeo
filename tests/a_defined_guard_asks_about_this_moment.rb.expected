@@ -12,3 +12,36 @@ true
 "lock"
 false
 true
+["ARGF", true]
+["ARGV", true]
+["ENV", true]
+["RUBY_COPYRIGHT", true]
+["RUBY_DESCRIPTION", true]
+["RUBY_ENGINE", true]
+["RUBY_ENGINE_VERSION", true]
+["RUBY_PATCHLEVEL", true]
+["RUBY_PLATFORM", true]
+["RUBY_RELEASE_DATE", true]
+["RUBY_REVISION", true]
+["RUBY_VERSION", true]
+["STDERR", true]
+["STDIN", true]
+["STDOUT", true]
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+"constant"
+true
+nil

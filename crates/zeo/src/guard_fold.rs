@@ -280,6 +280,44 @@ fn is_gem_version(compiler: &Compiler, cref: &[ClassId], box_id: u32, name: &str
     }
 }
 
+/// The value of a string constant ruby seeds into every program. Each is as
+/// fixed for a whole-program target as a literal written in the source.
+fn seeded_string_const(name: &str) -> Option<String> {
+    match name {
+        "RUBY_VERSION" | "RUBY_ENGINE_VERSION" => Some(zeo_abi::RUBY_VERSION.to_string()),
+        // `if RUBY_ENGINE == "truffleruby"` is the other compat gate a gem
+        // writes around a whole `class`/`def`, and it decides the same way the
+        // runtime seeds it (see `bootstrap`'s `ENGINE`: zeo reports MRI's
+        // identity, so a gem takes its CRuby path).
+        "RUBY_ENGINE" => Some("ruby".to_string()),
+        // `if RUBY_PLATFORM == 'java'` guards a JRuby-only branch. Baked from
+        // the build target (`build.rs`), the same way the runtime seeds the
+        // program's own copy -- so the two always agree.
+        "RUBY_PLATFORM" => Some(env!("ZEO_RUBY_PLATFORM").to_string()),
+        _ => None,
+    }
+}
+
+/// A constant's initializer, read as a string in the lexical scope where the
+/// constant was WRITTEN rather than where it is read. The two differ the moment
+/// an initializer names another constant, and the writing scope is the one that
+/// resolved it.
+fn through_const(
+    compiler: &Compiler,
+    box_id: u32,
+    owner: ClassId,
+    value: NodeId,
+    depth: u32,
+) -> Option<String> {
+    static_string(
+        compiler,
+        &compiler.cref_of(Some(owner)),
+        box_id,
+        value,
+        depth,
+    )
+}
+
 /// Reduce a node to a compile-time PLAIN STRING (a `String` object's value),
 /// for a lexicographic `String#<=>` comparison: a string literal,
 /// `RUBY_VERSION`/`RUBY_ENGINE_VERSION`, a `Scope::NAME = "..."` constant, or
@@ -289,27 +327,53 @@ fn static_string(
     cref: &[ClassId],
     box_id: u32,
     node: NodeId,
+    depth: u32,
 ) -> Option<String> {
+    if depth >= MAX_FOLD_DEPTH {
+        return None;
+    }
+    let depth = depth + 1;
     match &compiler.hir[node] {
         HirNode::StringLit(_) => string_lit(compiler, node),
-        HirNode::ClassRef(name) => match name.as_str() {
-            "RUBY_VERSION" | "RUBY_ENGINE_VERSION" => Some(zeo_abi::RUBY_VERSION.to_string()),
-            // `if RUBY_ENGINE == "truffleruby"` is the other compat gate a
-            // gem writes around a whole `class`/`def`, and it decides the
-            // same way the runtime seeds it (see `bootstrap`'s `ENGINE`:
-            // zeo reports MRI's identity, so a gem takes its CRuby path).
-            "RUBY_ENGINE" => Some("ruby".to_string()),
-            // `if RUBY_PLATFORM == 'java'` guards a JRuby-only branch. Baked
-            // from the build target (`build.rs`), the same way the runtime
-            // seeds the program's own copy -- so the two always agree.
-            "RUBY_PLATFORM" => Some(env!("ZEO_RUBY_PLATFORM").to_string()),
-            _ if name.contains("::") => const_string(compiler, cref, box_id, name),
-            _ => const_init(compiler, cref, box_id, None, name)
-                .and_then(|(_, v)| string_lit(compiler, v)),
+        // `X = defined?(::RUBY_ENGINE) ? ::RUBY_ENGINE : "ruby"` -- a constant
+        // whose value is picked at load time by a question this module already
+        // answers. sass writes exactly that, and its `ironruby?` reads the
+        // result.
+        HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            let taken = if static_bool(compiler, cref, box_id, *cond, depth)? {
+                then_body
+            } else {
+                else_body
+            };
+            let [only] = taken[..] else {
+                return None;
+            };
+            static_string(compiler, cref, box_id, only, depth)
+        }
+        HirNode::ClassRef(name) if name.contains("::") => {
+            const_string(compiler, cref, box_id, name)
+        }
+        // A constant the program writes itself SHADOWS the one ruby seeds, for
+        // every read whose lexical scope reaches it -- sass defines its own
+        // `Sass::Util::RUBY_VERSION` (the segments, as integers) and reads it
+        // unqualified all through the module.
+        HirNode::ClassRef(name) => match const_init(compiler, cref, box_id, None, name) {
+            Some((owner, v)) => through_const(compiler, box_id, owner, v, depth),
+            None => seeded_string_const(name),
         },
         HirNode::QualifiedConstRead(scope, name) => {
-            const_init(compiler, cref, box_id, Some(scope), name)
-                .and_then(|(_, v)| string_lit(compiler, v))
+            match const_init(compiler, cref, box_id, Some(scope), name) {
+                Some((owner, v)) => through_const(compiler, box_id, owner, v, depth),
+                // `::RUBY_VERSION` -- the top-anchored spelling, which is how a
+                // gem reaches the seeded constant from inside the namespace
+                // shadowing its name. A top-level constant lives on `Object`.
+                None if scope == "Object" => seeded_string_const(name),
+                None => None,
+            }
         }
         HirNode::Call {
             receiver: Some(r),
@@ -329,7 +393,7 @@ fn static_string(
             name,
             args,
             ..
-        } if name == "to_s" && args.is_empty() => static_string(compiler, cref, box_id, *r),
+        } if name == "to_s" && args.is_empty() => static_string(compiler, cref, box_id, *r, depth),
         _ => None,
     }
 }
@@ -380,10 +444,189 @@ fn static_integer(
             args,
             ..
         } if name == "to_i" && args.is_empty() => {
-            leading_integer(&static_string(compiler, cref, box_id, *r)?)
+            leading_integer(&static_string(compiler, cref, box_id, *r, depth)?)
+        }
+        // `Sass::Util::RUBY_VERSION[0]` -- a version kept as segments is read
+        // one segment at a time. An index past the end answers `nil` in ruby,
+        // which is not an integer, so the guard above stays undecided rather
+        // than take a shorter list's missing segment for a zero.
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            block: None,
+            block_arg: None,
+            ..
+        } if name == "[]" => {
+            let [ArrayElem::Single(i)] = args[..] else {
+                return None;
+            };
+            let list = static_integer_list(compiler, cref, box_id, *r, depth)?;
+            let index = static_integer(compiler, cref, box_id, i, depth)?;
+            let index = if index < 0 {
+                index.checked_add(list.len() as i64)?
+            } else {
+                index
+            };
+            list.get(usize::try_from(index).ok()?).copied()
         }
         _ => None,
     }
+}
+
+/// Ruby's `String#split` for a separator that is a plain string.
+///
+/// A single space is the AWK split: runs of ASCII whitespace separate, and
+/// leading whitespace starts no empty field. An empty separator splits into
+/// characters. Everything else splits on the literal. With no limit ruby drops
+/// trailing empty fields -- but not leading ones, so `".a.".split(".")` is
+/// `["", "a"]`.
+fn split_string(s: &str, sep: &str) -> Vec<String> {
+    let mut parts: Vec<String> = if sep == " " {
+        s.split_ascii_whitespace().map(str::to_string).collect()
+    } else if sep.is_empty() {
+        s.chars().map(String::from).collect()
+    } else {
+        s.split(sep).map(str::to_string).collect()
+    };
+    while parts.last().is_some_and(String::is_empty) {
+        parts.pop();
+    }
+    parts
+}
+
+/// Reduce a node to a compile-time list of STRINGS: an array literal of them,
+/// or a static string cut up by `split`.
+fn static_string_list(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+    depth: u32,
+) -> Option<Vec<String>> {
+    if depth >= MAX_FOLD_DEPTH {
+        return None;
+    }
+    let depth = depth + 1;
+    match &compiler.hir[node] {
+        HirNode::ArrayLit(elems) => elems
+            .iter()
+            .map(|e| match e {
+                ArrayElem::Single(v) => static_string(compiler, cref, box_id, *v, depth),
+                // A splat is another list, spread here. Nothing measured needs
+                // it, so the whole list declines rather than guess.
+                ArrayElem::Splat(_) => None,
+            })
+            .collect(),
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            block: None,
+            block_arg: None,
+            ..
+        } if name == "split" => {
+            let [ArrayElem::Single(sep)] = args[..] else {
+                return None;
+            };
+            let subject = static_string(compiler, cref, box_id, *r, depth)?;
+            // A Regexp separator reduces to no string, so it declines here.
+            let sep = static_string(compiler, cref, box_id, sep, depth)?;
+            Some(split_string(&subject, &sep))
+        }
+        _ => None,
+    }
+}
+
+/// Reduce a node to a compile-time list of INTEGERS. A gem that gates on the
+/// ruby version by SEGMENT keeps it as one -- sass writes
+/// `RUBY_VERSION = ::RUBY_VERSION.split(".").map {|s| s.to_i}` once and indexes
+/// it at every guard beneath, so the list is what has to fold for any of them
+/// to.
+fn static_integer_list(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+    depth: u32,
+) -> Option<Vec<i64>> {
+    if depth >= MAX_FOLD_DEPTH {
+        return None;
+    }
+    let depth = depth + 1;
+    let through = |owner: ClassId, value: NodeId| {
+        static_integer_list(
+            compiler,
+            &compiler.cref_of(Some(owner)),
+            box_id,
+            value,
+            depth,
+        )
+    };
+    match &compiler.hir[node] {
+        HirNode::ArrayLit(elems) => elems
+            .iter()
+            .map(|e| match e {
+                ArrayElem::Single(v) => static_integer(compiler, cref, box_id, *v, depth),
+                ArrayElem::Splat(_) => None,
+            })
+            .collect(),
+        HirNode::ClassRef(name) => {
+            let (scope, base) = match name.rsplit_once("::") {
+                Some((s, b)) => (Some(s), b),
+                None => (None, name.as_str()),
+            };
+            let (owner, value) = const_init(compiler, cref, box_id, scope, base)?;
+            through(owner, value)
+        }
+        HirNode::QualifiedConstRead(scope, name) => {
+            let (owner, value) = const_init(compiler, cref, box_id, Some(scope), name)?;
+            through(owner, value)
+        }
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            block,
+            block_arg,
+            ..
+        } if matches!(name.as_str(), "map" | "collect")
+            && args.is_empty()
+            && maps_each_to_i(compiler, *block, *block_arg) =>
+        {
+            Some(
+                static_string_list(compiler, cref, box_id, *r, depth)?
+                    .iter()
+                    .map(|s| leading_integer(s))
+                    .collect::<Option<Vec<_>>>()?,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Whether a `map` block reads each entry as a number -- `{ |s| s.to_i }`, or
+/// the `&:to_i` shorthand.
+fn maps_each_to_i(compiler: &Compiler, block: Option<NodeId>, block_arg: Option<NodeId>) -> bool {
+    if let Some(arg) = block_arg {
+        return matches!(&compiler.hir[arg], HirNode::SymbolLit(s) if s == "to_i");
+    }
+    let Some(block) = block else {
+        return false;
+    };
+    let HirNode::Block { params, body } = &compiler.hir[block] else {
+        return false;
+    };
+    let ([param], [stmt]) = (params.required.as_slice(), body.as_slice()) else {
+        return false;
+    };
+    matches!(
+        &compiler.hir[*stmt],
+        HirNode::Call { receiver: Some(entry), name, args, block: None, block_arg: None, .. }
+            if name == "to_i"
+                && args.is_empty()
+                && matches!(&compiler.hir[*entry], HirNode::LocalRead(n) if n == param)
+    )
 }
 
 /// `String#to_i`: optional leading whitespace, an optional sign, then digits,
@@ -422,12 +665,13 @@ fn static_gem_version(
     cref: &[ClassId],
     box_id: u32,
     node: NodeId,
+    depth: u32,
 ) -> Option<String> {
     match &compiler.hir[node] {
         HirNode::New {
             class_name, args, ..
         } if is_gem_version(compiler, cref, box_id, class_name) => match args.as_slice() {
-            [a] => static_string(compiler, cref, box_id, *a),
+            [a] => static_string(compiler, cref, box_id, *a, depth),
             _ => None,
         },
         HirNode::Call {
@@ -444,7 +688,7 @@ fn static_gem_version(
                     return None;
                 }
                 match args.as_slice() {
-                    [ArrayElem::Single(a)] => static_string(compiler, cref, box_id, *a),
+                    [ArrayElem::Single(a)] => static_string(compiler, cref, box_id, *a, depth),
                     _ => None,
                 }
             }
@@ -483,12 +727,12 @@ fn cmp_fold(
     r: NodeId,
     depth: u32,
 ) -> Option<bool> {
-    let lv = static_gem_version(compiler, cref, box_id, l);
-    let rv = static_gem_version(compiler, cref, box_id, r);
+    let lv = static_gem_version(compiler, cref, box_id, l, depth);
+    let rv = static_gem_version(compiler, cref, box_id, r, depth);
     match (&lv, &rv) {
         (Some(lv), Some(rv)) => return apply(op, cmp_versions(lv, rv)),
         (Some(lv), None) => {
-            if let Some(rs) = static_string(compiler, cref, box_id, r)
+            if let Some(rs) = static_string(compiler, cref, box_id, r, depth)
                 && correct_version(&rs)
             {
                 return apply(op, cmp_versions(lv, &rs));
@@ -501,7 +745,7 @@ fn cmp_fold(
         // that isn't a string, so they are left undecided rather than folded to
         // the answer the other direction would give.
         (None, Some(rv)) if matches!(op, "<" | "<=" | ">" | ">=") => {
-            if let Some(ls) = static_string(compiler, cref, box_id, l)
+            if let Some(ls) = static_string(compiler, cref, box_id, l, depth)
                 && correct_version(&ls)
             {
                 return apply(op, cmp_versions(&ls, rv));
@@ -510,8 +754,8 @@ fn cmp_fold(
         _ => {}
     }
     if let (Some(ls), Some(rs)) = (
-        static_string(compiler, cref, box_id, l),
-        static_string(compiler, cref, box_id, r),
+        static_string(compiler, cref, box_id, l, depth),
+        static_string(compiler, cref, box_id, r, depth),
     ) {
         return apply(op, ls.as_bytes().cmp(rs.as_bytes()));
     }
@@ -879,13 +1123,14 @@ fn include_fold(
     box_id: u32,
     receiver: NodeId,
     args: &[ArrayElem],
+    depth: u32,
 ) -> Option<bool> {
     let [ArrayElem::Single(wanted)] = args else {
         return None;
     };
     match &compiler.hir[receiver] {
         HirNode::ArrayLit(elems) => {
-            let wanted = static_string(compiler, cref, box_id, *wanted)?;
+            let wanted = static_string(compiler, cref, box_id, *wanted, depth)?;
             let mut hit = false;
             for elem in elems {
                 // A splat could hold anything, so it takes the whole list with
@@ -893,7 +1138,7 @@ fn include_fold(
                 let ArrayElem::Single(e) = elem else {
                     return None;
                 };
-                hit |= static_string(compiler, cref, box_id, *e)? == wanted;
+                hit |= static_string(compiler, cref, box_id, *e, depth)? == wanted;
             }
             Some(hit)
         }
@@ -955,7 +1200,7 @@ fn call_fold(
                 Some(p) => (recv, p),
                 None => (*arg, literal_pattern(compiler, recv)?),
             };
-            let subject = static_string(compiler, cref, box_id, subject)?;
+            let subject = static_string(compiler, cref, box_id, subject, depth)?;
             pattern.matches(&subject)
         }
         // `if RUBY_VERSION.start_with?('1.9')` -- the same build-time question
@@ -963,13 +1208,13 @@ fn call_fold(
         // number of candidates and is true if ANY matches; a Regexp candidate
         // (also legal) reduces to no string, so the whole probe stays `None`.
         "start_with?" | "end_with?" => {
-            let s = static_string(compiler, cref, box_id, receiver?)?;
+            let s = static_string(compiler, cref, box_id, receiver?, depth)?;
             let mut hit = false;
             for arg in args {
                 let ArrayElem::Single(a) = arg else {
                     return None;
                 };
-                let candidate = static_string(compiler, cref, box_id, *a)?;
+                let candidate = static_string(compiler, cref, box_id, *a, depth)?;
                 hit |= if name == "start_with?" {
                     s.starts_with(&candidate)
                 } else {
@@ -986,11 +1231,11 @@ fn call_fold(
             let [ArrayElem::Single(a)] = args else {
                 return None;
             };
-            let s = static_string(compiler, cref, box_id, receiver?)?;
-            let part = static_string(compiler, cref, box_id, *a)?;
+            let s = static_string(compiler, cref, box_id, receiver?, depth)?;
+            let part = static_string(compiler, cref, box_id, *a, depth)?;
             Some(s.contains(&part))
         }
-        "include?" => include_fold(compiler, cref, box_id, receiver?, args),
+        "include?" => include_fold(compiler, cref, box_id, receiver?, args, depth),
         "respond_to?" => respond_to_fold(compiler, cref, box_id, receiver, args),
         "const_defined?" => const_defined_fold(compiler, cref, box_id, receiver, args),
         "method_defined?" | "public_method_defined?" => {
@@ -1070,6 +1315,30 @@ fn predicate_definitions(compiler: &Compiler, owner: ClassId, name: &str) -> Vec
     out
 }
 
+/// Whether `owner` is the only class in the program that defines `name`.
+///
+/// A receiverless call dispatches on the live `self`, which may be an instance
+/// of a subclass or an includer rather than of `owner` itself. Reading only
+/// `owner`'s definition would then answer for the wrong body. With no other
+/// definition of the name anywhere, there is no other body to reach.
+///
+/// Deliberately not gated on [`Compiler::may_be_patched_at_runtime`]: that
+/// answers a different question (might this name be REWRITTEN at run time),
+/// which no predicate fold models -- one computed `define_method` anywhere sets
+/// it program-wide, and every real gem has one. The one runtime-installed shape
+/// that WOULD change the answer here is a conditional `def`, and
+/// [`predicate_fold`] declines on that directly.
+fn defines_name_alone(compiler: &Compiler, owner: ClassId, name: &str) -> bool {
+    compiler.classes.iter().enumerate().all(|(i, info)| {
+        i == owner.0 as usize
+            || !info
+                .own_methods
+                .iter()
+                .chain(&info.own_class_methods)
+                .any(|&sid| compiler.scope(sid).name == name)
+    })
+}
+
 /// Compile-time value of a zero-argument predicate on a module -- the shape a
 /// compat gate takes once a gem gives its build-time question a name:
 /// `if Sass::Util.rbx?`, `if Lutaml::Model::RuntimeCompatibility.opal?`. What
@@ -1096,7 +1365,20 @@ fn predicate_fold(
     if !args.is_empty() {
         return None;
     }
-    let owner = const_receiver_class(compiler, cref, box_id, receiver?)?;
+    let owner = match receiver {
+        Some(r) => const_receiver_class(compiler, cref, box_id, r)?,
+        // No receiver: `self`, which inside a method body is an instance of the
+        // enclosing class -- or of something below it that may have overridden
+        // the name. `defines_name_alone` is what rules that out, and sass needs
+        // it: `ruby1_8?` opens with a bare `ironruby?`.
+        None => {
+            let owner = *cref.last()?;
+            if !defines_name_alone(compiler, owner, name) {
+                return None;
+            }
+            owner
+        }
+    };
     let definitions = predicate_definitions(compiler, owner, name);
     if definitions.is_empty() {
         return None;
@@ -1104,7 +1386,11 @@ fn predicate_fold(
     let mut answer: Option<bool> = None;
     for sid in definitions {
         let scope = compiler.scope(sid);
-        if !takes_no_arguments(&scope.params) {
+        // A `def` under a guard zeo could not decide is registered but not
+        // promised (`analyze::register_conditional_defs`), so its body is not
+        // the answer -- whether it is installed at all is the same undecided
+        // question that put it there.
+        if !takes_no_arguments(&scope.params) || scope.runtime_conditional {
             return None;
         }
         // Folded where the method was WRITTEN: a bare constant in its body
@@ -1214,6 +1500,18 @@ fn defined_const_fold(
         HirNode::QualifiedConstRead(scope, name) => format!("{scope}::{name}"),
         _ => return None,
     };
+    // A constant startup installs on `Object` is defined before the program's
+    // first line, and `defined?` reaches `Object` from every lexical scope. The
+    // top-anchored spellings answer the same way; a real scope
+    // (`defined?(K::ENV)`) does not, because the scope operator excludes
+    // `Object`'s constants.
+    let top_level = joined
+        .strip_prefix("Object::")
+        .or_else(|| joined.strip_prefix("::"))
+        .unwrap_or(&joined);
+    if zeo_abi::SEEDED_OBJECT_CONSTANTS.contains(&top_level) && !top_level.contains("::") {
+        return Some(true);
+    }
     const_name_fold(compiler, cref, box_id, &joined)
 }
 
@@ -1253,6 +1551,15 @@ fn const_name_fold(
 ) -> Option<bool> {
     if compiler.resolve_class(joined, cref, box_id).is_some() {
         return Some(true);
+    }
+    // A name startup installs on `Object` is real, but whether THIS question
+    // reaches `Object` depends on the asker: `defined?` always does (and
+    // answers before this, in `defined_const_fold`), while
+    // `Module#const_defined?` reaches it from a class and not from a bare
+    // module. Undecided rather than false, which is what it would otherwise
+    // read as.
+    if zeo_abi::SEEDED_OBJECT_CONSTANTS.contains(&joined) {
+        return None;
     }
     let path = crate::constpath::ConstPath::parse(joined);
     // A definition the walk hasn't reached yet, or one written under a scope
@@ -1602,6 +1909,34 @@ mod tests {
         // A value no `i64` holds stays undecided rather than wrapping: ruby
         // would compare it exactly.
         assert_eq!(leading_integer(&"9".repeat(30)), None);
+    }
+
+    /// Every case checked against ruby 4.0.6.
+    #[test]
+    fn split_string_matches_string_split() {
+        for (subject, sep, want) in [
+            ("4.0.6", ".", vec!["4", "0", "6"]),
+            // Trailing empty fields go; a LEADING one stays.
+            ("a,b,,c,,", ",", vec!["a", "b", "", "c"]),
+            (".a.", ".", vec!["", "a"]),
+            ("", ".", vec![]),
+            ("a", ".", vec!["a"]),
+            // An empty separator splits into characters.
+            ("abc", "", vec!["a", "b", "c"]),
+            // A single space is the awk split: leading whitespace starts no
+            // empty field, and a run of it separates once.
+            ("  a  b ", " ", vec!["a", "b"]),
+            ("a\tb", " ", vec!["a", "b"]),
+            // ASCII whitespace only -- a no-break space is an ordinary
+            // character to it, which is why the field keeps both of these.
+            ("\u{a0}a\u{a0}b", " ", vec!["\u{a0}a\u{a0}b"]),
+        ] {
+            assert_eq!(
+                split_string(subject, sep),
+                want,
+                "{subject:?}.split({sep:?})"
+            );
+        }
     }
 
     #[test]

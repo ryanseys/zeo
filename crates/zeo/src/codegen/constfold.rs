@@ -124,6 +124,13 @@ pub(super) fn const_form_resolves(cx: &Ctx, id: NodeId) -> Option<bool> {
             if name == "DATA" && cx.compiler.hir.data_section.is_some() {
                 return Some(true);
             }
+            // `RUBY_ENGINE`, `ENV`, `STDOUT` -- installed on `Object` at
+            // startup for the same reason `DATA` is, and invisible to the same
+            // scan. Only the bare spelling reaches this arm; `Object::ENV`
+            // resolves its scope and asks the run time, which already answers.
+            if zeo_abi::SEEDED_OBJECT_CONSTANTS.contains(&name.as_str()) {
+                return Some(true);
+            }
             Some(
                 scopes
                     .iter()
