@@ -183,6 +183,10 @@ environment:
                         (default: debug for -e, release for -o compiles)
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for finer control than
                         --log-level, e.g. `zeo::analyze=debug,zeo::lower=trace`
+  ZEO_MEMORY_LIMIT      bytes of resident memory this compile may use before it
+                        gives up (default: half the machine's RAM, capped at
+                        8 GiB; 0 compiles unbounded, which can exhaust the
+                        machine). A breach exits 12 and names the phase.
 ";
 
 fn parse_args() -> Result<Parsed, String> {
@@ -550,6 +554,15 @@ fn run() -> Result<(), MainError> {
         Source::File(path) => (zeo::parse::read_source(path)?, Some(path.clone())),
         Source::Eval(code) => (code.clone(), None),
     };
+    // Armed before the compile, not inside it: the ceiling covers the `rustc`
+    // step too, where the generated source is still held in memory. The
+    // library entry point deliberately does NOT arm one -- an in-process
+    // caller (the test harness) owns its own process and must not have it
+    // exited out from under it.
+    zeo::memguard::arm(&match &args.source {
+        Source::File(path) => path.display().to_string(),
+        Source::Eval(_) => "-e".to_string(),
+    });
 
     let mut package_dirs = args.package_dirs.clone();
     package_dirs.extend(default_package_dirs(input_path.as_deref()));
@@ -608,6 +621,7 @@ fn run() -> Result<(), MainError> {
     }
 
     use zeo::backend::{GenOpt, Linkage, Profile, Runtime, build_binary, ensure_runtime_built};
+    zeo::memguard::set_phase(zeo::memguard::Phase::Build);
 
     // The CLI always produces a SELF-CONTAINED binary -- both the run-once `-e`
     // throwaway and the shipped `-o app` -- so it statically links the runtime.

@@ -21,6 +21,7 @@ pub mod compiler;
 pub mod diagnostics;
 pub mod gem_report;
 pub mod home;
+pub mod memguard;
 
 pub use diagnostics::CompileError;
 
@@ -144,6 +145,7 @@ fn compile_on_this_thread(
     opts: &CompileOptions,
 ) -> Result<CompileOutput, CompileError> {
     let t_start = std::time::Instant::now();
+    memguard::set_phase(memguard::Phase::ParseLower);
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
@@ -168,9 +170,11 @@ fn compile_on_this_thread(
     // than downstream where the arena is already owned by `Analyzed`.
     let needs_prism_runtime = hir.needs_prism_runtime();
     let t_analyze_start = std::time::Instant::now();
+    memguard::set_phase(memguard::Phase::Analyze);
     let analyzed = analyze::analyze(hir, root)?;
     let t_analyze = t_analyze_start.elapsed();
     let t_codegen_start = std::time::Instant::now();
+    memguard::set_phase(memguard::Phase::Codegen);
     let rust_source = if opts.pretty {
         codegen::codegen_to_string_pretty(&analyzed)?
     } else {
@@ -178,12 +182,15 @@ fn compile_on_this_thread(
     };
     if timings_enabled() {
         eprintln!(
-            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={}",
+            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={} peak_rss={}",
             t_parse_lower.as_millis(),
             t_analyze.as_millis(),
             t_codegen_start.elapsed().as_millis(),
             t_start.elapsed().as_millis(),
             rust_source.len(),
+            // `0` for a compile that finished inside the poller's first
+            // interval -- absent, not zero. `compile-bench` reads it as such.
+            memguard::peak_bytes().unwrap_or(0),
         );
     }
     Ok(CompileOutput {
