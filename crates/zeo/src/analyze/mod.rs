@@ -1389,18 +1389,13 @@ fn try_conditional_reopen(
     then_body: &[NodeId],
     else_body: &[NodeId],
 ) -> Option<Vec<NodeId>> {
-    // One branch carries every statement; the other is empty. A guard with
-    // BOTH branches populated is a real either/or, not a reopening.
-    let (defs, on_then) = match (then_body, else_body) {
-        (defs, []) if !defs.is_empty() => (defs, true),
-        ([], defs) if !defs.is_empty() => (defs, false),
-        _ => return None,
-    };
+    let mut guards = Vec::new();
+    let defs = peel_one_sided_guards(compiler, cond, then_body, else_body, &mut guards)?;
     // Clone each ClassDef's parts so the `&compiler.hir` borrow ends before the
     // `resolve_class` read and the `hir.push` writes below. Every statement
     // must qualify: a partial rewrite would drop the rest of the branch.
     let mut parts = Vec::with_capacity(defs.len());
-    for &def_stmt in defs {
+    for &def_stmt in &defs {
         let HirNode::ClassDef {
             name,
             superclass,
@@ -1425,25 +1420,67 @@ fn try_conditional_reopen(
         parts
             .into_iter()
             .map(|(name, superclass, body, is_module)| {
-                let (then_body, else_body) = if on_then {
-                    (body, Vec::new())
-                } else {
-                    (Vec::new(), body)
-                };
-                let guarded = compiler.hir.push(HirNode::If {
-                    cond,
-                    then_body,
-                    else_body,
-                });
+                // Innermost guard first, so the chain comes back out in the
+                // order it was written: `if outer; if inner; <body>; end; end`.
+                let mut body = body;
+                for &(cond, on_then) in guards.iter().rev() {
+                    let (then_body, else_body) = if on_then {
+                        (body, Vec::new())
+                    } else {
+                        (Vec::new(), body)
+                    };
+                    body = vec![compiler.hir.push(HirNode::If {
+                        cond,
+                        then_body,
+                        else_body,
+                    })];
+                }
                 compiler.hir.push(HirNode::ClassDef {
                     name,
                     superclass,
-                    body: vec![guarded],
+                    body,
                     is_module,
                 })
             })
             .collect(),
     )
+}
+
+/// Walk down a chain of ONE-SIDED `if`s to the statements at the bottom,
+/// recording each guard and which way it has to go, outermost first.
+///
+/// One-sided because a guard with BOTH branches populated is a real either/or,
+/// not a reopening. Nested because ruby lets a definition carry more than one
+/// trailing modifier: sexp_processor closes its whole `Sexp` reopen with
+/// `end unless Sexp.new.respond_to? :safe_asgn if ENV["STRICT_SEXP"]`, which is
+/// two guards around one `class`, and the pair pushes into the class body
+/// exactly as a single one does.
+fn peel_one_sided_guards(
+    compiler: &Compiler,
+    cond: NodeId,
+    then_body: &[NodeId],
+    else_body: &[NodeId],
+    guards: &mut Vec<(NodeId, bool)>,
+) -> Option<Vec<NodeId>> {
+    let (body, on_then) = match (then_body, else_body) {
+        (body, []) if !body.is_empty() => (body, true),
+        ([], body) if !body.is_empty() => (body, false),
+        _ => return None,
+    };
+    guards.push((cond, on_then));
+    // Only a LONE nested `if` descends. An `if` beside other statements is not
+    // one definition under two guards, and rewriting it would have to say which
+    // statements each guard covers.
+    if let [only] = body
+        && let HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } = &compiler.hir[*only]
+    {
+        return peel_one_sided_guards(compiler, *cond, then_body, else_body, guards);
+    }
+    Some(body.to_vec())
 }
 
 /// A short, human-readable label for a guard expression -- what shape of
@@ -3304,7 +3341,7 @@ fn register_class(
                     singleton: is_class_method,
                 };
                 compiler.class_body_sites[site_idx].defs.push(def);
-                register_body_def_method(compiler, class_id, stmt)?;
+                register_body_def_method(compiler, class_id, stmt, Conditional::No)?;
             }
             // A nested `class`/`module` definition -- registered
             // recursively under this class's own cref. The `ClassDef` node
@@ -3684,6 +3721,14 @@ pub(crate) fn add_own_method_at(
         &ci.own_methods
     };
     let replaced = list.iter().position(|&s| compiler.scope(s).name == mname);
+    // Last-`def`-wins is a fact about `def`s that RAN. A conditional one may
+    // not have, so it does not displace a body that always does -- dropping
+    // that body here would leave the name answering nothing whenever the guard
+    // is false, and the runtime overlay the conditional `def` writes already
+    // outranks the static row when the guard IS true.
+    let yields = replaced.is_some_and(|i| {
+        compiler.scope(sid).runtime_conditional && !compiler.scope(list[i]).runtime_conditional
+    });
     let ci = &mut compiler.classes[class_id.0 as usize];
     let list = if is_class_method {
         &mut ci.own_class_methods
@@ -3691,10 +3736,19 @@ pub(crate) fn add_own_method_at(
         &mut ci.own_methods
     };
     match replaced {
+        Some(_) if yields => {}
         Some(i) => list[i] = sid,
         None => list.push(sid),
     }
     ci.method_history.push((mname, is_class_method, seq, sid));
+}
+
+/// Whether a `def` runs whenever its class body does, or only when a guard zeo
+/// cannot decide says so. See [`crate::compiler::Scope::runtime_conditional`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Conditional {
+    No,
+    Yes,
 }
 
 /// Registers one class/module-body `def` as an own method: builds its `Scope`
@@ -3705,6 +3759,7 @@ fn register_body_def_method(
     compiler: &mut Compiler,
     class_id: ClassId,
     stmt: NodeId,
+    conditional: Conditional,
 ) -> Result<(), String> {
     let HirNode::DefMethod {
         name,
@@ -3768,12 +3823,20 @@ fn register_body_def_method(
         compiler,
         class_id,
         class_id,
-        name,
+        name.clone(),
         Some(stmt),
         params,
         body,
         visibility,
     )?;
+    if conditional == Conditional::Yes {
+        compiler.scopes[sid.0 as usize].runtime_conditional = true;
+        // Whether this `def` ran is a runtime fact, so every call site for the
+        // name has to ask at run time rather than bind to the body emitted
+        // here. This is the same de-optimization a runtime `define_method` or
+        // `private` gets, and for the same reason.
+        compiler.runtime_patches.insert(name);
+    }
     add_own_method(compiler, class_id, sid, is_class_method);
     Ok(())
 }
@@ -3796,7 +3859,9 @@ fn register_conditional_defs(
         // Clone child bodies before recursing: `register_body_def_method`
         // borrows `compiler` mutably.
         match &compiler.hir[s] {
-            HirNode::DefMethod { .. } => register_body_def_method(compiler, class_id, s)?,
+            HirNode::DefMethod { .. } => {
+                register_body_def_method(compiler, class_id, s, Conditional::Yes)?
+            }
             HirNode::If {
                 then_body,
                 else_body,
@@ -4235,6 +4300,9 @@ fn register_method(
         // Ordinary methods are never native defaults; the bootstrap-marking
         // pass and `mro` set this true for the pristine exception bodies.
         native_default: false,
+        // Set by `register_conditional_defs`, the one caller that registers a
+        // `def` whose branch may not run.
+        runtime_conditional: false,
         accessor,
     }))
 }

@@ -522,6 +522,17 @@ fn materialize_methods(
         }
         let own = compiler.class(anc_id).own_methods.clone();
         for sid in own {
+            // A `def` under a guard zeo cannot decide contributes nothing to
+            // this table. It does not claim the name -- so a further ancestor's
+            // definition materializes here and answers while the guard is
+            // false -- and it does not shadow one, so no row promises a body
+            // that may never have been installed. What the guard DOES install
+            // goes into the runtime overlay, which outranks this table.
+            // Deliberately not `seen`-inserted, for exactly that reason.
+            // See `Scope::runtime_conditional`.
+            if compiler.scope(sid).runtime_conditional {
+                continue;
+            }
             let name = compiler.scope(sid).name.clone();
             let name_id = compiler.names.intern(&name);
             if !seen.insert(name_id) {

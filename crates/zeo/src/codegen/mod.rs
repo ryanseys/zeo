@@ -1830,10 +1830,14 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
         // can report own methods only -- the materialized `methods` list above
         // flattens inheritance in. Sorted for stable generated source.
+        // A conditional `def` is left out here too: `instance_methods(false)`
+        // must report what the class HAS, and whether it has this one is
+        // settled at run time, by the row its `define_method` writes.
         let mut own: Vec<&str> = compiler
             .class(ClassId(id))
             .own_methods
             .iter()
+            .filter(|&&sid| !compiler.scope(sid).runtime_conditional)
             .map(|&sid| compiler.scope(sid).name.as_str())
             // A method this class only RE-SCOPED (`private :inherited_method`)
             // is its own too -- ruby plants a real entry for it, which is what
@@ -1857,6 +1861,9 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         // its `def` line, baked for `Method`/`UnboundMethod` reflection.
         for &sid in &compiler.class(ClassId(id)).own_methods {
             let scope = compiler.scope(sid);
+            if scope.runtime_conditional {
+                continue;
+            }
             push_method_meta_row(compiler, ClassId(id), scope, false);
         }
         // A re-scoped inherited method reflects on THIS class -- ruby answers

@@ -509,6 +509,22 @@ pub struct Scope {
     /// registered (`analyze`), propagated onto inherited copies by
     /// `mro::materialize_methods`. `false` for every ordinary user method.
     pub native_default: bool,
+    /// This `def` sits in an `if`/`case` branch whose guard zeo cannot decide,
+    /// so WHETHER IT RUNS is a runtime fact.
+    ///
+    /// It is registered all the same -- the name has to be visible to the
+    /// compile-time machinery (`extend`, the `instance_methods` fold, the MRO)
+    /// that would otherwise miss it entirely. What it must not do is claim a
+    /// static method-table row, because that row would answer whether or not
+    /// the branch ran. Codegen therefore emits no dispatch entry, no own row
+    /// and no reflection row for it, and the name joins
+    /// [`Compiler::runtime_patches`] so every call site asks at run time. The
+    /// `define_method` codegen emits INSIDE the guard is what installs the
+    /// body, and the runtime overlay -- which already outranks both a class's
+    /// own table and an inherited one -- is what answers for it.
+    ///
+    /// See `analyze::register_conditional_defs`.
+    pub runtime_conditional: bool,
     /// `Some` when the whole body is one ivar access and nothing else, so
     /// every caller can replace the call with the access -- see
     /// [`AccessorShape`]. Computed from the body's SHAPE, not from having

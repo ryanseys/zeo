@@ -1,0 +1,19 @@
+false
+[]
+:no_method
+:on
+true
+[:only_when_on]
+:always
+[:which]
+:guarded
+:base
+[]
+:sub
+:else_branch
+false
+[:base]
+:added
+[:added, :base]
+false
+[:base]
