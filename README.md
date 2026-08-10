@@ -326,18 +326,18 @@ below on every probe, and `cargo xtask gem-probe --check` fails when they
 disagree with the ledger — so this block cannot go stale.
 
 <!-- gem-probe-stats:begin -->
-**168,369 of 195,778 probed gems compile to Rust (86.0%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
+**168,370 of 195,778 probed gems compile to Rust (86.0%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
 
 | Verdict | Gems | Share of probed |
 |---|---|---|
-| Compile to Rust (`ok`) | 168,369 | 86.0% |
+| Compile to Rust (`ok`) | 168,370 | 86.0% |
 | Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 4,111 | 2.1% |
 | Unresolved dependency in the probe's view (`missing-dependency`) | 1,967 | 1.0% |
-| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`) | 20,470 | 10.5% |
-| Not loadable by any Ruby (`invalid-ruby`, `native-extension`) | 843 | 0.4% |
+| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`) | 20,468 | 10.5% |
+| Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`) | 844 | 0.4% |
 | No verdict reached (`timeout`, `out-of-memory`) | 18 | 0.0% |
 
-Of the 174,465 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **168,369 compile (96.5%)**.
+Of the 174,466 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **168,370 compile (96.5%)**.
 <!-- gem-probe-stats:end -->
 
 Read [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for

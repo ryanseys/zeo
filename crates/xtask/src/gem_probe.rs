@@ -84,8 +84,9 @@ selection (at least one, they add up):
   --all                   re-probe every gem already in the ledger
   --failing               re-probe every ledger row that isn't `ok`, except
                           the frontier and the rows no compiler change can
-                          move (no-lib-dir, no-entry-point); --refresh
-                          includes those too
+                          move (no-lib-dir, no-entry-point, meta-gem,
+                          ext-only, and invalid-ruby decided at parse);
+                          --refresh includes those too
   --unprobed              probe ledger rows that have no verdict yet
   --matching <text>       re-probe rows whose outcome detail contains <text>
                           -- how a landed fix is measured
@@ -225,11 +226,21 @@ enum Outcome {
     NativeExtension,
     /// A `require` reached outside the gem and its fetched dependencies.
     MissingDependency(String),
-    /// No `lib/` to put on the load path.
+    /// None of the gem's declared `require_paths` exists in the archive, and
+    /// Ruby files sit outside every one of them. The gem's own load path is
+    /// empty as packaged, so no Ruby can require what it ships either.
     NoLibDir,
-    /// A `lib/` with no file this gem's name could name. Probing would compile
-    /// an unresolvable require, which says nothing about the gem.
+    /// The declared roots hold no file at all that a `require` could name.
+    /// Probing would compile an unresolvable require, which says nothing
+    /// about the gem.
     NoEntryPoint,
+    /// The archive ships no Ruby at all -- a gemspec-only gem that exists to
+    /// name dependencies. `rails` is the canonical one. Nothing to compile,
+    /// and never a failure.
+    MetaGem,
+    /// The gem's code is its C extension: declared `extensions`, or an `ext/`
+    /// tree, with no Ruby load path beside it. See docs/EXTENSIONS.md.
+    ExtOnly,
     /// The compiler panicked. Distinct from a lowering gap on purpose: a gap
     /// is a known limit reported through the error path, a panic is a bug.
     CompilerPanic(String),
@@ -277,6 +288,8 @@ impl Outcome {
             Outcome::MissingDependency(_) => "missing-dependency",
             Outcome::NoLibDir => "no-lib-dir",
             Outcome::NoEntryPoint => "no-entry-point",
+            Outcome::MetaGem => "meta-gem",
+            Outcome::ExtOnly => "ext-only",
             Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::Timeout => "timeout",
             Outcome::OutOfMemory(_) => "out-of-memory",
@@ -312,6 +325,8 @@ impl Outcome {
             "native-extension" => Outcome::NativeExtension,
             "no-lib-dir" => Outcome::NoLibDir,
             "no-entry-point" => Outcome::NoEntryPoint,
+            "meta-gem" => Outcome::MetaGem,
+            "ext-only" => Outcome::ExtOnly,
             "timeout" => Outcome::Timeout,
             "out-of-memory" => Outcome::OutOfMemory(detail.to_string()),
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
@@ -332,7 +347,11 @@ impl Outcome {
         match self {
             Outcome::Unprobed => Stage::Queued,
             Outcome::FetchFailed(_) => Stage::Fetch,
-            Outcome::ViewFailed(_) | Outcome::NoLibDir | Outcome::NoEntryPoint => Stage::Unpack,
+            Outcome::ViewFailed(_)
+            | Outcome::NoLibDir
+            | Outcome::NoEntryPoint
+            | Outcome::MetaGem
+            | Outcome::ExtOnly => Stage::Unpack,
             Outcome::RustcError(_) => Stage::BuildsBin,
             Outcome::RunFailed(_) => Stage::Runs,
             // A legacy row said only `emits-rs`, which is the rung a SUCCESS
@@ -526,19 +545,142 @@ fn stamp_path(dir: &Path) -> PathBuf {
     dir.join(".zeo-probe-version")
 }
 
+/// Records what the `.gem`'s own `metadata.gz` said about the gem, captured at
+/// unpack time. The registry's spec is authoritative where the shipped
+/// gemspec is not even present -- 42% of unpacked gems carry none -- and
+/// where it is present it is usually dynamic Ruby a static parse refuses.
+fn spec_stamp_path(dir: &Path) -> PathBuf {
+    dir.join(".zeo-probe-spec")
+}
+
+/// What the probe keeps from `metadata.gz`: where the load path roots are,
+/// which platform the artifact is for, and whether it declares C extensions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GemMeta {
+    require_paths: Vec<String>,
+    platform: String,
+    extensions: Vec<String>,
+}
+
+impl Default for GemMeta {
+    fn default() -> GemMeta {
+        GemMeta {
+            require_paths: vec!["lib".to_string()],
+            platform: "ruby".to_string(),
+            extensions: Vec::new(),
+        }
+    }
+}
+
+/// Reads the three fields out of a `Gem::Specification#to_yaml` document.
+///
+/// Not a YAML parser. The document is machine-written by rubygems with a
+/// fixed shape -- top-level `key:` lines, list items as `- value` -- and the
+/// probe needs three keys from it. A hand parse of that shape beats a YAML
+/// dependency that would still need the `!ruby/object` tags taught to it.
+fn parse_gem_metadata_yaml(text: &str) -> GemMeta {
+    let unquote = |s: &str| {
+        let s = s.trim();
+        s.strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(s)
+            .to_string()
+    };
+    let mut meta = GemMeta {
+        require_paths: Vec::new(),
+        ..GemMeta::default()
+    };
+    let mut list: Option<&mut Vec<String>> = None;
+    for line in text.lines() {
+        // A list item belongs to the key above it; anything else ends the list.
+        if line.starts_with("- ") {
+            if let Some(items) = list.as_deref_mut() {
+                items.push(unquote(&line[2..]));
+            }
+            continue;
+        }
+        list = None;
+        if let Some(v) = line.strip_prefix("platform:") {
+            meta.platform = unquote(v);
+        } else if let Some(v) = line.strip_prefix("require_paths:") {
+            if v.trim() != "[]" {
+                list = Some(&mut meta.require_paths);
+            }
+        } else if let Some(v) = line.strip_prefix("extensions:") {
+            if v.trim() != "[]" {
+                list = Some(&mut meta.extensions);
+            }
+        }
+    }
+    if meta.require_paths.is_empty() {
+        meta.require_paths = GemMeta::default().require_paths;
+    }
+    meta
+}
+
+fn write_spec_stamp(dir: &Path, meta: &GemMeta) -> Result<(), String> {
+    let json = serde_json::json!({
+        "require_paths": meta.require_paths,
+        "platform": meta.platform,
+        "extensions": meta.extensions,
+    });
+    std::fs::write(spec_stamp_path(dir), json.to_string()).map_err(|e| e.to_string())
+}
+
+/// The captured spec for an unpacked gem. `None` for a cache written before
+/// the stamp existed -- `fetch` treats that as stale, so the answer heals on
+/// the next probe.
+fn read_spec_stamp(dir: &Path) -> Option<GemMeta> {
+    let text = std::fs::read_to_string(spec_stamp_path(dir)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let strings = |key: &str| -> Vec<String> {
+        v.get(key)
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut meta = GemMeta {
+        require_paths: strings("require_paths"),
+        platform: v
+            .get("platform")
+            .and_then(|x| x.as_str())
+            .unwrap_or("ruby")
+            .to_string(),
+        extensions: strings("extensions"),
+    };
+    if meta.require_paths.is_empty() {
+        meta.require_paths = GemMeta::default().require_paths;
+    }
+    Some(meta)
+}
+
 fn unpack_gem(bytes: &[u8], dest: &Path) -> Result<(), String> {
     // A .gem is a tar of metadata.gz, data.tar.gz and checksums.yaml.gz. The
-    // gem's own files are the middle one.
+    // gem's own files are the middle one; the first is the registry's own
+    // serialized spec, which carries the `require_paths` the shipped gemspec
+    // usually cannot give up statically.
     let mut outer = tar::Archive::new(bytes);
     let mut data = Vec::new();
+    let mut metadata = Vec::new();
     for entry in outer.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
-        let is_data = entry
-            .path()
-            .map(|p| p.as_os_str() == "data.tar.gz")
-            .unwrap_or(false);
-        if is_data {
-            entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        match entry.path().map(|p| p.as_os_str().to_owned()) {
+            Ok(p) if p == "data.tar.gz" => {
+                entry.read_to_end(&mut data).map_err(|e| e.to_string())?;
+            }
+            Ok(p) if p == "metadata.gz" => {
+                entry
+                    .read_to_end(&mut metadata)
+                    .map_err(|e| e.to_string())?;
+            }
+            _ => {}
+        }
+        if !data.is_empty() && !metadata.is_empty() {
             break;
         }
     }
@@ -548,17 +690,37 @@ fn unpack_gem(bytes: &[u8], dest: &Path) -> Result<(), String> {
     let gz = flate2::read::GzDecoder::new(&data[..]);
     tar::Archive::new(gz)
         .unpack(dest)
-        .map_err(|e| format!("unpacking: {e}"))
+        .map_err(|e| format!("unpacking: {e}"))?;
+    let meta = if metadata.is_empty() {
+        GemMeta::default()
+    } else {
+        let mut yaml = String::new();
+        flate2::read::GzDecoder::new(&metadata[..])
+            .read_to_string(&mut yaml)
+            .map_err(|e| format!("reading metadata.gz: {e}"))?;
+        parse_gem_metadata_yaml(&yaml)
+    };
+    write_spec_stamp(dest, &meta)
 }
 
-fn write_stub_gemspec(dir: &Path, name: &str, version: &str) -> Result<(), String> {
+fn write_stub_gemspec(
+    dir: &Path,
+    name: &str,
+    version: &str,
+    require_paths: &[String],
+) -> Result<(), String> {
+    let paths = require_paths
+        .iter()
+        .map(|p| format!("{p:?}.freeze"))
+        .collect::<Vec<_>>()
+        .join(", ");
     std::fs::write(
         dir.join(format!("{name}.gemspec")),
         format!(
             "Gem::Specification.new do |s|\n  \
              s.name = {name:?}.freeze\n  \
              s.version = {version:?}.freeze\n  \
-             s.require_paths = [\"lib\".freeze]\nend\n"
+             s.require_paths = [{paths}]\nend\n"
         ),
     )
     .map_err(|e| e.to_string())
@@ -615,6 +777,10 @@ fn link_gem_into_view(view: &Path, src: &Path, gem: &str) -> Result<(), String> 
             continue;
         }
         let Some(base) = p.file_name() else { continue };
+        // The probe's own stamps describe the cache, not the gem.
+        if base.to_string_lossy().starts_with(".zeo-probe-") {
+            continue;
+        }
         let link = dest.join(base);
         std::os::unix::fs::symlink(&p, &link).map_err(|e| {
             // On a case-insensitive filesystem two gems whose names differ only
@@ -634,7 +800,12 @@ fn link_gem_into_view(view: &Path, src: &Path, gem: &str) -> Result<(), String> 
             }
         })?;
     }
-    write_stub_gemspec(&dest, gem, &unpacked_version(src))
+    // The stub carries the REAL require_paths from the captured spec. The one
+    // it used to hard-code (`["lib"]`) probed every gem with a different
+    // layout against a load path that did not exist -- concurrent-ruby's
+    // `lib/concurrent-ruby` among them.
+    let meta = read_spec_stamp(src).unwrap_or_default();
+    write_stub_gemspec(&dest, gem, &unpacked_version(src), &meta.require_paths)
 }
 
 /// Unpacks `name`-`version` into `vendor/gems/<name>/`, or confirms it is
@@ -652,7 +823,10 @@ fn fetch(
     expect_sha: Option<&str>,
 ) -> Result<PathBuf, String> {
     let dir = vendor_dir(root).join(name);
+    // A cache without the spec stamp predates it, so its `require_paths` were
+    // never captured -- re-fetching is what fills them in.
     if std::fs::read_to_string(stamp_path(&dir)).is_ok_and(|s| s.trim() == version)
+        && spec_stamp_path(&dir).is_file()
         && !cached_gemspec_is_a_stub(&dir)
     {
         return Ok(dir);
@@ -687,8 +861,15 @@ fn fetch(
 /// reported `compiles` that way while measuring nothing at all.
 ///
 /// So the entry point is a file that exists, or the probe declines to answer.
-fn entry_point(dir: &Path, name: &str) -> Option<String> {
-    let lib = dir.join("lib");
+///
+/// `roots` are the gem's real load-path roots -- its declared
+/// `require_paths`, filtered to the directories that exist. Every root goes
+/// on the load path, so a feature found under any of them resolves.
+fn entry_point(roots: &[PathBuf], name: &str) -> Option<String> {
+    roots.iter().find_map(|r| entry_point_under(r, name))
+}
+
+fn entry_point_under(lib: &Path, name: &str) -> Option<String> {
     // `net-http` -> `net/http`, `ruby-progressbar` -> `ruby_progressbar`.
     for candidate in [
         name.replace('-', "/"),
@@ -703,7 +884,7 @@ fn entry_point(dir: &Path, name: &str) -> Option<String> {
     // compare with them removed.
     let squash = |s: &str| s.replace(['-', '_', '/'], "").to_lowercase();
     let target = squash(name);
-    let mut tops: Vec<String> = std::fs::read_dir(&lib)
+    let mut tops: Vec<String> = std::fs::read_dir(lib)
         .ok()?
         .filter_map(Result::ok)
         .map(|e| e.path())
@@ -727,7 +908,7 @@ fn entry_point(dir: &Path, name: &str) -> Option<String> {
     // Either half can carry the name: `json/pure` squashes to the gem name as a
     // PATH, while `concurrent-ruby/concurrent-ruby` carries it in the STEM.
     let mut nested: Vec<String> = Vec::new();
-    for sub in std::fs::read_dir(&lib).ok()?.filter_map(Result::ok) {
+    for sub in std::fs::read_dir(lib).ok()?.filter_map(Result::ok) {
         let subdir = sub.path();
         if !subdir.is_dir() {
             continue;
@@ -751,6 +932,55 @@ fn entry_point(dir: &Path, name: &str) -> Option<String> {
     }
     nested.sort();
     nested.into_iter().find(|path| squash(path) == target)
+}
+
+/// The honest verdict for a gem whose declared load path does not exist in
+/// its archive. Three different facts used to share the `no-lib-dir` tag, and
+/// only one of them ever had Ruby a compiler could reach.
+fn rootless_outcome(dir: &Path, meta: &GemMeta) -> Outcome {
+    if !meta.extensions.is_empty() || dir.join("ext").is_dir() || dir.join("extconf.rb").is_file() {
+        return Outcome::ExtOnly;
+    }
+    if !ships_ruby(dir) {
+        return Outcome::MetaGem;
+    }
+    Outcome::NoLibDir
+}
+
+/// Whether any `.rb` exists anywhere under `dir`.
+fn ships_ruby(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let p = entry.path();
+        if p.is_file() && p.extension().is_some_and(|x| x == "rb") {
+            return true;
+        }
+        if p.is_dir() && ships_ruby(&p) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Every feature a top-level file under the roots provides, sorted and
+/// deduplicated -- the program the probe falls back to when no file carries
+/// the gem's name. Top level only: requiring a gem's internal files directly
+/// is not how any user loads it, but its top-level files are exactly the
+/// features it publishes.
+fn top_level_features(roots: &[PathBuf]) -> Vec<String> {
+    let mut features: Vec<String> = roots
+        .iter()
+        .filter_map(|r| std::fs::read_dir(r).ok())
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rb"))
+        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    features.sort();
+    features.dedup();
+    features
 }
 
 /// A package directory holding ONLY this gem and its declared dependencies.
@@ -813,8 +1043,17 @@ fn probe(
         deps,
         ..
     } = gem;
-    if !dir.join("lib").is_dir() {
-        return Verdict::stopped(Stage::Unpack, Outcome::NoLibDir);
+    let meta = read_spec_stamp(dir).unwrap_or_default();
+    // The gem's real load path: its declared `require_paths`, kept to the
+    // directories the archive actually ships. RubyGems filters the same way.
+    let roots: Vec<PathBuf> = meta
+        .require_paths
+        .iter()
+        .map(|rp| dir.join(rp))
+        .filter(|p| p.is_dir())
+        .collect();
+    if roots.is_empty() {
+        return Verdict::stopped(Stage::Unpack, rootless_outcome(dir, &meta));
     }
     // A DECLARED extension is not decisive either, which is why nothing checks
     // for one before this point any more. Many gems ship an optional C
@@ -828,10 +1067,24 @@ fn probe(
         Ok(v) => v,
         Err(e) => return Verdict::stopped(Stage::Unpack, Outcome::ViewFailed(e)),
     };
-    let Some(feature) = entry_point(dir, name) else {
-        return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
+    // The name ladder first; when no file carries the gem's name, require
+    // every top-level file the roots ship instead. Both keep the rule the
+    // doc on `entry_point` protects: every feature the program names is a
+    // file that exists, so the compile measures the gem and not a guess.
+    let features = match entry_point(&roots, name) {
+        Some(feature) => vec![feature],
+        None => {
+            let all = top_level_features(&roots);
+            if all.is_empty() {
+                return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
+            }
+            all
+        }
     };
-    let program = format!("require {feature:?}\n");
+    let program = features
+        .iter()
+        .map(|f| format!("require {f:?}\n"))
+        .collect::<String>();
     // Per-gem, so concurrent workers never share one. Removed on every exit
     // path below except the one that stores it.
     let emitted_path = std::env::temp_dir().join(format!("zeo-gem-probe-{name}-{version}.rs"));
@@ -1103,13 +1356,17 @@ fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
 /// Whether a verdict is one no change to zeo can move, so `--failing` leaves
 /// it alone.
 ///
-/// `no-lib-dir` and `no-entry-point` are facts about what the gem's archive
-/// contains: the compiler never ran, and running a newer one changes nothing.
-/// Everything else CAN move -- `invalid-ruby` looks terminal (prism is ruby's
-/// own parser, so those gems load under no ruby either) but a re-probe still
-/// has to reach it to record WHICH pass refused.
-fn terminal_for_a_compiler_change(outcome: &Outcome) -> bool {
-    matches!(outcome, Outcome::NoLibDir | Outcome::NoEntryPoint)
+/// `no-lib-dir`, `no-entry-point`, `meta-gem` and `ext-only` are facts about
+/// what the gem's archive contains: the compiler never ran, and running a
+/// newer one changes nothing. An `invalid-ruby` decided at `parse` is a fact
+/// about the gem too -- prism is ruby's own parser, so those gems load under
+/// no ruby either -- but one recorded at any OTHER stage is a legacy row that
+/// never said which pass refused, and a re-probe still has to reach it.
+fn terminal_for_a_compiler_change(row: &Row) -> bool {
+    matches!(
+        row.outcome,
+        Outcome::NoLibDir | Outcome::NoEntryPoint | Outcome::MetaGem | Outcome::ExtOnly
+    ) || (matches!(row.outcome, Outcome::InvalidRuby(_)) && row.stage == Stage::Parse)
 }
 
 /// Which front-end pass rejected the gem, read off the diagnostic CODE zeo
@@ -1606,7 +1863,8 @@ struct LedgerStats {
     /// The harness never reached the compiler: `no-lib-dir`,
     /// `no-entry-point`, `fetch-failed`, `view-failed`.
     harness: usize,
-    /// No Ruby release loads these: `invalid-ruby`, `native-extension`.
+    /// Nothing a Ruby compiler can compile: `invalid-ruby`,
+    /// `native-extension`, `ext-only`, `meta-gem`.
     not_ruby: usize,
     /// zeo's to fix: `lowering-gap`, `compiler-panic`, `rustc-error`.
     compiler: usize,
@@ -1642,7 +1900,10 @@ impl LedgerStats {
                 | Outcome::NoEntryPoint
                 | Outcome::FetchFailed(_)
                 | Outcome::ViewFailed(_) => s.harness += 1,
-                Outcome::InvalidRuby(_) | Outcome::NativeExtension => s.not_ruby += 1,
+                Outcome::InvalidRuby(_)
+                | Outcome::NativeExtension
+                | Outcome::MetaGem
+                | Outcome::ExtOnly => s.not_ruby += 1,
                 Outcome::LoweringGap(_) | Outcome::CompilerPanic(_) | Outcome::RustcError(_) => {
                     s.compiler += 1
                 }
@@ -1724,7 +1985,7 @@ fn render_stats_block(s: &LedgerStats) -> String {
         percent(s.harness, s.probed),
     ));
     md.push_str(&row(
-        "Not loadable by any Ruby (`invalid-ruby`, `native-extension`)",
+        "Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`)",
         s.not_ruby,
         percent(s.not_ruby, s.probed),
     ));
@@ -2326,7 +2587,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 .filter(|(_, r)| {
                     r.outcome != Outcome::Ok
                         && r.outcome != Outcome::Unprobed
-                        && (refresh || !terminal_for_a_compiler_change(&r.outcome))
+                        && (refresh || !terminal_for_a_compiler_change(r))
                 })
                 .map(|(n, r)| (n.clone(), Some(r.version.clone()))),
         );
@@ -2699,6 +2960,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(stamp_path(&dir), version).unwrap();
+        write_spec_stamp(&dir, &GemMeta::default()).unwrap();
         dir
     }
 
@@ -2818,15 +3080,30 @@ mod tests {
 
     /// `--failing` is "re-check what a fix moved", so it must not spend a
     /// registry request per gem on rows a compiler change cannot reach. Those
-    /// are the archive facts and nothing else -- a gap, a panic, a missing
-    /// dependency and a parse rejection all still have to be measured.
+    /// are the archive facts, plus a parse rejection the parser already
+    /// placed -- a gap, a panic, a missing dependency and a LEGACY parse
+    /// rejection (no recorded pass) all still have to be measured.
     #[test]
     fn only_the_archive_facts_are_terminal() {
-        assert!(terminal_for_a_compiler_change(&Outcome::NoLibDir));
-        assert!(terminal_for_a_compiler_change(&Outcome::NoEntryPoint));
+        for archive_fact in [
+            Outcome::NoLibDir,
+            Outcome::NoEntryPoint,
+            Outcome::MetaGem,
+            Outcome::ExtOnly,
+        ] {
+            assert!(terminal_for_a_compiler_change(&row_with(
+                Stage::Unpack,
+                archive_fact
+            )));
+        }
+        assert!(terminal_for_a_compiler_change(&row_with(
+            Stage::Parse,
+            Outcome::InvalidRuby("parse error".into())
+        )));
         for movable in [
             Outcome::LoweringGap("a gap".into()),
             Outcome::MissingDependency("x".into()),
+            // A legacy row: `invalid-ruby` with no pass recorded.
             Outcome::InvalidRuby("parse error".into()),
             Outcome::CompilerPanic("boom".into()),
             Outcome::NativeExtension,
@@ -2835,7 +3112,7 @@ mod tests {
             Outcome::FetchFailed("404".into()),
         ] {
             assert!(
-                !terminal_for_a_compiler_change(&movable),
+                !terminal_for_a_compiler_change(&row_with(Stage::Codegen, movable.clone())),
                 "{movable:?} must still be re-probed"
             );
         }
@@ -3136,7 +3413,7 @@ mod tests {
         assert_eq!(memory_phase(b"something else entirely\n"), "unknown");
     }
 
-    fn lib_with(root: &Path, name: &str, files: &[&str]) -> PathBuf {
+    fn lib_with(root: &Path, name: &str, files: &[&str]) -> Vec<PathBuf> {
         let dir = vendor_dir(root).join(name);
         for f in files {
             let p = dir.join("lib").join(f);
@@ -3144,7 +3421,7 @@ mod tests {
             std::fs::write(&p, "# x\n").unwrap();
         }
         std::fs::create_dir_all(dir.join("lib")).unwrap();
-        dir
+        vec![dir.join("lib")]
     }
 
     /// An entry point must name a file that exists. Guessing and hoping is how
@@ -3456,10 +3733,26 @@ mod tests {
             }
             b.into_inner().unwrap().finish().unwrap();
         }
+        // A real serialized spec, the shape rubygems writes.
+        let mut metadata = Vec::new();
+        {
+            use std::io::Write;
+            let mut enc =
+                flate2::write::GzEncoder::new(&mut metadata, flate2::Compression::default());
+            enc.write_all(
+                b"--- !ruby/object:Gem::Specification\nname: thing\nplatform: ruby\n\
+                  require_paths:\n- lib\nextensions: []\n",
+            )
+            .unwrap();
+            enc.finish().unwrap();
+        }
         let mut outer = Vec::new();
         {
             let mut b = tar::Builder::new(&mut outer);
-            for (name, body) in [("metadata.gz", b"x".as_slice()), ("data.tar.gz", &inner)] {
+            for (name, body) in [
+                ("metadata.gz", metadata.as_slice()),
+                ("data.tar.gz", &inner),
+            ] {
                 let mut h = tar::Header::new_gnu();
                 h.set_size(body.len() as u64);
                 h.set_mode(0o644);
@@ -3482,6 +3775,92 @@ mod tests {
             "module Thing; end\n"
         );
         assert!(dest.join("README").is_file());
+        // The registry's own spec rides along: `metadata.gz` is captured at
+        // unpack time, so `require_paths` never has to be guessed again.
+        assert_eq!(read_spec_stamp(&dest), Some(GemMeta::default()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `metadata.gz` is machine-written YAML with a fixed shape; the three
+    /// fields the probe keeps come out of it without a YAML parser.
+    #[test]
+    fn the_metadata_yaml_gives_up_its_three_fields() {
+        let meta = parse_gem_metadata_yaml(
+            "--- !ruby/object:Gem::Specification\nname: concurrent-ruby\n\
+             version: !ruby/object:Gem::Version\n  version: 1.3.4\n\
+             platform: ruby\nauthors:\n- Jerry D'Antonio\n\
+             require_paths:\n- lib/concurrent-ruby\n- 'ext'\n\
+             extensions:\n- ext/foo/extconf.rb\nlicenses:\n- MIT\n",
+        );
+        assert_eq!(meta.require_paths, vec!["lib/concurrent-ruby", "ext"]);
+        assert_eq!(meta.platform, "ruby");
+        assert_eq!(meta.extensions, vec!["ext/foo/extconf.rb"]);
+
+        // Empty inline lists and absent keys fall back to rubygems' defaults.
+        let bare = parse_gem_metadata_yaml("name: tiny\nextensions: []\n");
+        assert_eq!(bare, GemMeta::default());
+    }
+
+    /// Three facts used to share the `no-lib-dir` tag. Only one of them ever
+    /// had Ruby the compiler could reach.
+    #[test]
+    fn a_rootless_gem_names_which_fact_stopped_it() {
+        let root = scratch("rootless");
+        let dir = root.join("g");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // No files at all: a metagem.
+        assert_eq!(
+            rootless_outcome(&dir, &GemMeta::default()),
+            Outcome::MetaGem
+        );
+        // Declared extensions make it ext-only, whatever else it ships.
+        let ext = GemMeta {
+            extensions: vec!["extconf.rb".into()],
+            ..GemMeta::default()
+        };
+        assert_eq!(rootless_outcome(&dir, &ext), Outcome::ExtOnly);
+        // An `ext/` tree says the same without the declaration.
+        std::fs::create_dir_all(dir.join("ext")).unwrap();
+        assert_eq!(
+            rootless_outcome(&dir, &GemMeta::default()),
+            Outcome::ExtOnly
+        );
+        std::fs::remove_dir(dir.join("ext")).unwrap();
+        // Ruby outside every declared root: the load path is empty as
+        // packaged, which is what `no-lib-dir` now means.
+        std::fs::write(dir.join("loose.rb"), "# x\n").unwrap();
+        assert_eq!(
+            rootless_outcome(&dir, &GemMeta::default()),
+            Outcome::NoLibDir
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A gem whose files match no name ladder is probed through everything
+    /// its roots publish, not declined.
+    #[test]
+    fn the_fallback_program_requires_every_top_level_file() {
+        let root = scratch("fallback");
+        let roots = lib_with(&root, "mystery", &["alpha.rb", "beta.rb", "sub/inner.rb"]);
+        assert_eq!(entry_point(&roots, "mystery"), None);
+        assert_eq!(top_level_features(&roots), vec!["alpha", "beta"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `require_paths` other than `lib` root the same ladder: the entry point
+    /// and the stub both follow the gem's declared load path.
+    #[test]
+    fn a_declared_root_other_than_lib_is_honoured() {
+        let root = scratch("roots");
+        let dir = vendor_dir(&root).join("nested");
+        let real_root = dir.join("lib/concurrent-ruby");
+        std::fs::create_dir_all(&real_root).unwrap();
+        std::fs::write(real_root.join("nested.rb"), "# x\n").unwrap();
+        assert_eq!(
+            entry_point(&[real_root], "nested").as_deref(),
+            Some("nested")
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -3502,7 +3881,7 @@ mod tests {
         let real = root.join("real");
         std::fs::create_dir_all(&stubbed).unwrap();
         std::fs::create_dir_all(&real).unwrap();
-        write_stub_gemspec(&stubbed, "a", "1.0.0").unwrap();
+        write_stub_gemspec(&stubbed, "a", "1.0.0", &["lib".to_string()]).unwrap();
         std::fs::write(
             real.join("b.gemspec"),
             "Gem::Specification.new do |s|\n  s.name = \"b\".freeze\n  \
@@ -3533,17 +3912,33 @@ mod tests {
         )
         .unwrap();
         std::fs::write(stamp_path(&src), "4.5.6").unwrap();
+        write_spec_stamp(
+            &src,
+            &GemMeta {
+                require_paths: vec!["lib".into(), "lib/thing".into()],
+                ..GemMeta::default()
+            },
+        )
+        .unwrap();
 
         let view = isolate(&root, "thing", &[]).unwrap();
         let seen = view.join("thing");
 
-        // The view: a stub, and no trace of the computed-version original.
+        // The view: a stub carrying the version AND the captured
+        // require_paths, and no trace of the computed-version original.
         let stub = std::fs::read_to_string(seen.join("thing.gemspec")).unwrap();
         assert!(stub.contains(r#"s.version = "4.5.6".freeze"#), "{stub}");
         assert!(stub.contains(r#"s.name = "thing".freeze"#), "{stub}");
+        assert!(
+            stub.contains(r#"s.require_paths = ["lib".freeze, "lib/thing".freeze]"#),
+            "{stub}"
+        );
         assert!(!seen.join("real.gemspec").exists());
-        // Everything else is still reachable through it.
+        // Everything else is still reachable through it, except the probe's
+        // own stamps, which describe the cache and not the gem.
         assert!(seen.join("lib/thing.rb").exists());
+        assert!(!seen.join(".zeo-probe-spec").exists());
+        assert!(!seen.join(".zeo-probe-version").exists());
 
         // The cache: untouched.
         assert!(src.join("real.gemspec").exists());
