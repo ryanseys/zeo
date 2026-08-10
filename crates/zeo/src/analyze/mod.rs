@@ -685,7 +685,7 @@ fn process_top_stmt_inner(
         // that must tell a constant the guarded branch itself would define from
         // one the rest of the program defines.
         let guarded: Vec<NodeId> = then_body.iter().chain(&else_body).copied().collect();
-        let taken = match static_top_cond(compiler, cond, &guarded) {
+        let taken = match static_top_cond(compiler, cond, &guarded, &[], 0, false) {
             Some(true) => {
                 tracing::debug!(
                     guard = cond_kind(compiler, cond),
@@ -723,9 +723,12 @@ fn process_top_stmt_inner(
                     "top-level conditional def: guard UNDECIDABLE -- compile error"
                 );
                 return Err(
-                    "class/module definition inside a top-level `if` is only supported when \
-                     the condition is compile-time decidable (e.g. `defined?(SomeConstant)`), \
-                     or a reopening of an already-defined class that only adds methods"
+                    "a NEW class/module or a mixin (`include`/`prepend`) inside a top-level \
+                     `if` needs a compile-time-decidable condition (a `defined?` probe, a \
+                     version/platform/engine gate, a feature test). A guarded REOPENING of an \
+                     existing class, and a guarded `def`/`alias`/visibility change, compile \
+                     with the guard deciding at runtime -- only a conditionally-EXISTING class \
+                     or ancestry has no answer under a compile-time MRO"
                         .into(),
                 );
             }
@@ -1256,16 +1259,18 @@ fn const_node_class(
 }
 
 /// Inline a class-body `if`/`unless` whose guard is compile-time decidable
-/// (`guard_fold::static_cond`, resolved in this class body's `cref`) AND whose
-/// taken branch holds a nested `class`/`module`/`include`/`prepend` definition
-/// -- the class-body analogue of `process_top_stmt`'s top-level conditional-def
-/// handling. Only the taken branch's statements survive, registered exactly as
-/// if written directly in the class body; codegen's own `static_cond` drops the
-/// same guard, so emission agrees. A `def`-only branch is left alone (its
-/// runtime `define_method` handles it via `register_conditional_defs`), and an
-/// UNDECIDABLE guard over a definition is left to fail loudly downstream rather
-/// than silently mis-registered. This is what lets a target-version /
-/// feature-probe gate wrapping a module def (bundler's `ForkTracker`) register.
+/// (`static_top_cond` -- the same superset the top level folds with,
+/// resolved in this class body's `cref`) AND whose taken branch holds a
+/// nested `class`/`module`/`include`/`prepend` definition -- the class-body
+/// analogue of `process_top_stmt`'s top-level conditional-def handling. Only
+/// the taken branch's statements survive, registered exactly as if written
+/// directly in the class body; the folded `If` never reaches the site's
+/// statement list, so emission reads the same spliced body and cannot
+/// disagree. A `def`-only branch is left alone (its runtime `define_method`
+/// handles it via `register_conditional_defs`), and an UNDECIDABLE guard
+/// over a definition is left to fail loudly downstream rather than silently
+/// mis-registered. This is what lets a target-version / feature-probe gate
+/// wrapping a module def (bundler's `ForkTracker`) register.
 fn splice_decidable_ifs(
     compiler: &Compiler,
     stmts: &[NodeId],
@@ -1281,13 +1286,23 @@ fn splice_decidable_ifs(
         } = &compiler.hir[s]
         {
             let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
-            if (branch_has_top_defs(compiler, &then_body)
-                || branch_has_top_defs(compiler, &else_body))
-                && let Some(taken) = crate::guard_fold::static_cond(compiler, cref, box_id, cond)
+            if branch_has_top_defs(compiler, &then_body)
+                || branch_has_top_defs(compiler, &else_body)
             {
-                let branch = if taken { then_body } else { else_body };
-                out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
-                continue;
+                // The SAME superset the top level folds with
+                // (`static_top_cond`), in this body's cref -- a gem writing
+                // the identical `defined?` guard one nesting level in used
+                // to fold strictly less. Sound here because the folded `If`
+                // never reaches the site's statement list, so registration
+                // and emission read the same spliced body.
+                let guarded: Vec<NodeId> =
+                    then_body.iter().chain(&else_body).copied().collect();
+                if let Some(taken) = static_top_cond(compiler, cond, &guarded, cref, box_id, true)
+                {
+                    let branch = if taken { then_body } else { else_body };
+                    out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
+                    continue;
+                }
             }
         }
         out.push(s);
@@ -1391,56 +1406,95 @@ fn try_conditional_reopen(
 ) -> Option<Vec<NodeId>> {
     let mut guards = Vec::new();
     let defs = peel_one_sided_guards(compiler, cond, then_body, else_body, &mut guards)?;
-    // Clone each ClassDef's parts so the `&compiler.hir` borrow ends before the
-    // `resolve_class` read and the `hir.push` writes below. Every statement
-    // must qualify: a partial rewrite would drop the rest of the branch.
+    // What one guarded statement becomes. Cloned parts, so the
+    // `&compiler.hir` borrow ends before the `resolve_class` read and the
+    // `hir.push` writes below. Every statement must qualify: a partial
+    // rewrite would drop the rest of the branch.
+    enum Guarded {
+        /// A reopening of an already-registered class: the guard pushes into
+        /// its body.
+        Reopen(String, Option<String>, Vec<NodeId>, bool),
+        /// A definition-level directive whose runtime self-send spelling the
+        /// class-body machinery already provides (`alias_method`, `private`,
+        /// a conditional `def`): the guard rides into a synthesized `Object`
+        /// reopen, which is the class a top-level directive targets. NOT
+        /// `include`/`prepend`: a runtime mixin is invisible to the static
+        /// MRO, and compiling one would miss at statically-resolved sites.
+        Directive(NodeId),
+    }
     let mut parts = Vec::with_capacity(defs.len());
     for &def_stmt in &defs {
-        let HirNode::ClassDef {
-            name,
-            superclass,
-            body,
-            is_module,
-        } = &compiler.hir[def_stmt]
-        else {
-            return None;
-        };
-        parts.push((name.clone(), superclass.clone(), body.clone(), *is_module));
+        match &compiler.hir[def_stmt] {
+            HirNode::ClassDef {
+                name,
+                superclass,
+                body,
+                is_module,
+            } => parts.push(Guarded::Reopen(
+                name.clone(),
+                superclass.clone(),
+                body.clone(),
+                *is_module,
+            )),
+            HirNode::DefMethod { .. }
+            | HirNode::AliasMethod { .. }
+            | HirNode::MethodVisibility { .. }
+            | HirNode::ClassMethodVisibility { .. }
+            | HirNode::ModuleFunction { .. }
+            | HirNode::Undef { .. }
+            | HirNode::ClassMethodUndef { .. } => parts.push(Guarded::Directive(def_stmt)),
+            _ => return None,
+        }
     }
-    // Each must REOPEN an already-registered class (top-level cref/box). A new
-    // class can't be defined conditionally -- codegen has no runtime create
-    // form here.
-    if !parts
-        .iter()
-        .all(|(name, ..)| compiler.resolve_class(name, &[], 0).is_some())
-    {
+    // A reopening must name an already-registered class (top-level
+    // cref/box). A new class can't be defined conditionally -- codegen has
+    // no runtime create form here.
+    if !parts.iter().all(|p| match p {
+        Guarded::Reopen(name, ..) => compiler.resolve_class(name, &[], 0).is_some(),
+        Guarded::Directive(_) => true,
+    }) {
         return None;
     }
+    let wrap_guards = |compiler: &mut Compiler, body: Vec<NodeId>| {
+        // Innermost guard first, so the chain comes back out in the order it
+        // was written: `if outer; if inner; <body>; end; end`.
+        let mut body = body;
+        for &(cond, on_then) in guards.iter().rev() {
+            let (then_body, else_body) = if on_then {
+                (body, Vec::new())
+            } else {
+                (Vec::new(), body)
+            };
+            body = vec![compiler.hir.push(HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            })];
+        }
+        body
+    };
     Some(
         parts
             .into_iter()
-            .map(|(name, superclass, body, is_module)| {
-                // Innermost guard first, so the chain comes back out in the
-                // order it was written: `if outer; if inner; <body>; end; end`.
-                let mut body = body;
-                for &(cond, on_then) in guards.iter().rev() {
-                    let (then_body, else_body) = if on_then {
-                        (body, Vec::new())
-                    } else {
-                        (Vec::new(), body)
-                    };
-                    body = vec![compiler.hir.push(HirNode::If {
-                        cond,
-                        then_body,
-                        else_body,
-                    })];
+            .map(|part| match part {
+                Guarded::Reopen(name, superclass, body, is_module) => {
+                    let body = wrap_guards(compiler, body);
+                    compiler.hir.push(HirNode::ClassDef {
+                        name,
+                        superclass,
+                        body,
+                        is_module,
+                    })
                 }
-                compiler.hir.push(HirNode::ClassDef {
-                    name,
-                    superclass,
-                    body,
-                    is_module,
-                })
+                Guarded::Directive(stmt) => {
+                    let body = wrap_guards(compiler, vec![stmt]);
+                    compiler.hir.push(HirNode::ClassDef {
+                        name: "Object".to_string(),
+                        superclass: None,
+                        body,
+                        is_module: false,
+                    })
+                }
             })
             .collect(),
     )
@@ -1831,11 +1885,39 @@ fn nodes_under(compiler: &Compiler, roots: &[NodeId]) -> std::collections::HashS
 /// statement the two branches hold -- what this guard, and only this guard,
 /// decides -- so an arm can tell a constant the rest of the program defines
 /// from one only the guarded branch would (see `const_defined_outside`).
-fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Option<bool> {
-    // A build-time target-constant guard folds the same way here (deciding what
-    // a top-level conditional REGISTERS) as it does at emission. Top-level, so
-    // an empty cref -- see `crate::guard_fold` and `codegen::constfold::static_cond`.
-    if let Some(b) = crate::guard_fold::static_cond(compiler, &[], 0, id) {
+/// Whether `name` is defined as a `class`/`module` anywhere in the program
+/// (any branch, any file) -- `shell_kinds`' whole-program sweep, matched by
+/// leaf or path suffix like `guard_fold`'s `defined_const_fold`.
+fn class_shaped_anywhere(compiler: &Compiler, box_id: u32, name: &str) -> bool {
+    let suffix = format!("::{name}");
+    compiler
+        .shell_kinds
+        .keys()
+        .any(|(bx, k)| *bx == box_id && (k == name || k.ends_with(&suffix)))
+}
+
+fn static_top_cond(
+    compiler: &Compiler,
+    id: NodeId,
+    guarded: &[NodeId],
+    cref: &[ClassId],
+    box_id: u32,
+    // The CLASS-BODY splice folds before the walk registers this body's own
+    // statements, so its "registered so far" view LAGS its siblings: a
+    // `defined?` probe of a class the body defines two lines up would
+    // misfold false. In that mode a "not defined" claim declines whenever
+    // the name is class-shaped anywhere. The top-level walk registers
+    // statement by statement -- execution order exactly -- and keeps its
+    // sharper claims.
+    sibling_lag: bool,
+) -> Option<bool> {
+    // A build-time target-constant guard folds the same way here (deciding
+    // what a conditional REGISTERS) as it does at emission -- see
+    // `crate::guard_fold` and `codegen::constfold::static_cond`. The cref is
+    // the guard's lexical position: empty at top level, the enclosing chain
+    // for a class-body guard, so a bare constant resolves exactly as it
+    // would at that source position.
+    if let Some(b) = crate::guard_fold::static_cond(compiler, cref, box_id, id) {
         return Some(b);
     }
     match &compiler.hir[id] {
@@ -1875,23 +1957,25 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
         }
         HirNode::Defined(inner) => match &compiler.hir[*inner] {
             HirNode::ClassRef(name) => {
-                if compiler.resolve_class(name, &[], 0).is_some() {
+                if compiler.resolve_class(name, cref, box_id).is_some() {
                     Some(true)
-                } else if const_ever_written(compiler, name) {
+                } else if const_ever_written(compiler, name)
+                    || (sibling_lag && class_shaped_anywhere(compiler, box_id, name))
+                {
                     None
                 } else {
                     Some(false)
                 }
             }
             HirNode::QualifiedConstRead(scope, name) => {
-                match compiler.resolve_class(scope, &[], 0) {
+                match compiler.resolve_class(scope, cref, box_id) {
                     Some(sid) => {
                         // Same probe order as `constfold::class_const_in`:
                         // a class nested in `scope`, else (const lookup
-                        // inherits through Object) a top-level class.
+                        // inherits through Object) a lexically-visible one.
                         let fq = format!("{}::{name}", compiler.fq_name(sid));
                         if compiler.resolve_class(&fq, &[], 0).is_some()
-                            || compiler.resolve_class(name, &[], 0).is_some()
+                            || compiler.resolve_class(name, cref, box_id).is_some()
                             // A VALUE constant `scope` assigns in its OWN body
                             // (`module Psych; VERSION = "5.4.0"`) IS defined here,
                             // even though value constants aren't fully resolved
@@ -1901,7 +1985,9 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
                             || mro::directly_defines_const(compiler, sid, name)
                         {
                             Some(true)
-                        } else if const_written_into(compiler, guarded, sid, name) {
+                        } else if const_written_into(compiler, guarded, sid, name)
+                            || (sibling_lag && class_shaped_anywhere(compiler, box_id, name))
+                        {
                             // Could name a VALUE constant on `scope` assigned
                             // elsewhere/at runtime -- not decidable here.
                             None
@@ -1912,7 +1998,11 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
                             Some(false)
                         }
                     }
-                    None if const_ever_written(compiler, scope) => None,
+                    None if const_ever_written(compiler, scope)
+                        || (sibling_lag && class_shaped_anywhere(compiler, box_id, scope)) =>
+                    {
+                        None
+                    }
                     None => Some(false),
                 }
             }
@@ -1955,7 +2045,7 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
             block,
             ..
         } if name == "!" && args.is_empty() && kwargs.is_empty() && block.is_none() => {
-            static_top_cond(compiler, *recv, guarded).map(|b| !b)
+            static_top_cond(compiler, *recv, guarded, cref, box_id, sibling_lag).map(|b| !b)
         }
         // `if __FILE__ == $0` -- the self-test block every second script ends
         // with. In a file some other file REQUIRED, this is false no matter what
@@ -1978,14 +2068,14 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
                 .or_else(|| literal_class_name_is(compiler, *recv, *arg))
                 .or_else(|| literal_class_name_is(compiler, *arg, *recv))
         }
-        HirNode::And(l, r) => match static_top_cond(compiler, *l, guarded) {
+        HirNode::And(l, r) => match static_top_cond(compiler, *l, guarded, cref, box_id, sibling_lag) {
             Some(false) => Some(false),
-            Some(true) => static_top_cond(compiler, *r, guarded),
+            Some(true) => static_top_cond(compiler, *r, guarded, cref, box_id, sibling_lag),
             None => None,
         },
-        HirNode::Or(l, r) => match static_top_cond(compiler, *l, guarded) {
+        HirNode::Or(l, r) => match static_top_cond(compiler, *l, guarded, cref, box_id, sibling_lag) {
             Some(true) => Some(true),
-            Some(false) => static_top_cond(compiler, *r, guarded),
+            Some(false) => static_top_cond(compiler, *r, guarded, cref, box_id, sibling_lag),
             None => None,
         },
         _ => None,
@@ -3298,6 +3388,15 @@ fn register_class(
     // inline any decidable-guard `if` wrapping a nested definition (a
     // target-version / feature-probe compat gate) into its taken branch.
     let body = splice_dead_rescues(compiler, body);
+    if compiler.fq_name(class_id) == "O" {
+        for &s in &body {
+            eprintln!(
+                "SPLICE-DEBUG: O body stmt is If={} ClassDef={}",
+                matches!(&compiler.hir[s], HirNode::If { .. }),
+                matches!(&compiler.hir[s], HirNode::ClassDef { .. }),
+            );
+        }
+    }
     let body = splice_decidable_ifs(compiler, &body, &child_cref, box_id);
     // Whatever `if` is LEFT has a condition no compile-time fold can decide, so
     // both branches survive to run at this site -- and a directive in one has no
