@@ -90,6 +90,16 @@ struct OverlayEntry {
     /// while the wide one reports it. Every own-definition write clears the
     /// name, so re-defining over a mixin makes it own again.
     extended_class_methods: FSet<Symbol>,
+    /// Class methods a `singleton_class.prepend(M)` copied in -- the
+    /// class-method twin of `prepended` below, and apart from `class_methods`
+    /// for the same reason: ruby puts a prepended module in its own layer
+    /// ahead of the singleton's table, so these must outrank an own
+    /// `def self.x` and survive one defined later. Probed first.
+    prepended_class_methods: FMap<Symbol, RProc>,
+    /// The modules behind `prepended_class_methods`, in mix-in order.
+    /// `send_super_class_from` reads this to resume a prepended method's
+    /// `super` AT this class's own table rather than past it.
+    singleton_prepends: Vec<ClassId>,
     constructor: Option<ConstructorFn>,
     /// Methods a PREPENDED module supplies, kept apart from `methods` so a
     /// later definition on the target cannot displace them -- ruby puts a
@@ -149,6 +159,8 @@ impl Default for OverlayEntry {
             class_methods: FMap::default(),
             value_bodies: FMap::default(),
             extended_class_methods: FSet::default(),
+            prepended_class_methods: FMap::default(),
+            singleton_prepends: Vec::new(),
             constructor: None,
             undefs: FSet::default(),
             class_undefs: FSet::default(),
@@ -2225,6 +2237,60 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
     Ok(())
 }
 
+/// `K.singleton_class.prepend(M)` -- M's instance methods become K's CLASS
+/// methods at HIGHER priority than K's own `def self.x`, with `super` from one
+/// resuming at the shadowed definition (the ForkTracker / fork-hook shape,
+/// reached at runtime when K itself is a runtime-minted class the compile-time
+/// ancestry edit could not name). The copies live in their own layer
+/// (`prepended_class_methods`), probed before everything by
+/// [`overlay_class_method`] and skipped when a prepended method's own `super`
+/// resumes the walk (`send_super_class_from`).
+///
+/// Reflection nuances, written down rather than papered over (the posture of
+/// the singleton-include note in [`mix_in`]): the module is recorded via the
+/// extended list, so `K.singleton_class.ancestors` reports it AFTER the
+/// singleton head where CRuby puts it before; and of two modules prepending
+/// the SAME method name, `super` from the outer skips the inner copy.
+fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Result<(), Signal> {
+    let RubyValue::Class(mid) = module_val else {
+        return Err(type_error!(
+            "wrong argument type {} (expected Module)",
+            crate::builtins::class_name_of(module_val)
+        ));
+    };
+    if crate::dispatch::class_frozen(owner) {
+        return Err(crate::dispatch::frozen_class_error(owner));
+    }
+    // Built before the write lock, like `extend_object_default`'s Class arm:
+    // `extended_class_method` reads the overlay.
+    let installs: Vec<(Symbol, RProc)> = module_extendable_method_names(*mid)
+        .into_iter()
+        .filter_map(|name| extended_class_method(*mid, name).map(|p| (name, p)))
+        .collect();
+    let owner_val = RubyValue::Class(owner);
+    {
+        let mut w = maps().classes.write().unwrap();
+        let entry = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
+        for (name, proc_) in installs {
+            // A later prepend layers ABOVE an earlier one (CRuby ancestry), so
+            // it wins a name collision -- the extend table's rule.
+            entry.prepended_class_methods.insert(name, proc_);
+        }
+        if !entry.singleton_prepends.contains(mid) {
+            entry.singleton_prepends.push(*mid);
+        }
+    }
+    // The method copies make the module ANSWER on the owner; the extended
+    // record is what makes the owner BE one (`is_a?`, `===`,
+    // `singleton_class.ancestors` -- see `extend_object_default`).
+    record_extended(&owner_val, *mid);
+    refresh_singleton_ancestors(&owner_val);
+    mark_singletons();
+    mark_ancestry_mutated();
+    mark_live();
+    Ok(())
+}
+
 /// `Module#include(M, ...)` reached AT RUNTIME on a Class/Module receiver --
 /// e.g. `Class.new { include M }`. Splices each module (and its own ancestors
 /// not already present) into the receiver's overlay ancestry right after the
@@ -2276,13 +2342,24 @@ fn mix_in(
     // rdoc's `class << self; prepend Git`, spreadsheet's
     // `class << self; include Compatibility` and treetop's are all this shape.
     //
-    // `prepend` and `include` land in the same table here, which is only
-    // observable against the object's OWN `def obj.x` -- CRuby would let a
-    // prepended module win over that, and this does not. Written down rather
-    // than papered over; no gem in the corpus depends on the difference.
+    // `prepend` into a CLASS's singleton has machinery of its own: the module
+    // must outrank the owner's `def self.x`, which the extend table (own
+    // definitions win there) cannot express. On a plain OBJECT's singleton,
+    // `prepend` still lands in the extend table, which is only observable
+    // against the object's OWN `def obj.x` -- CRuby would let the module win
+    // over that, and this does not. Written down rather than papered over; no
+    // gem in the corpus depends on the difference.
     if let Some(owner) = singleton_owner_value(*cid) {
         for module_val in modules {
-            runtime_extend(&owner, module_val)?;
+            match (&owner, placement) {
+                (RubyValue::Class(owner_id), Placement::Before) => {
+                    prepend_into_class_singleton(*owner_id, module_val)?;
+                    fire_mixin_hook(module_val, "prepended", recv)?;
+                }
+                _ => {
+                    runtime_extend(&owner, module_val)?;
+                }
+            }
         }
         return Ok(recv.clone());
     }
@@ -2907,11 +2984,26 @@ pub fn overlay_class_method_names(id: ClassId, own_only: bool) -> Vec<Symbol> {
         .unwrap()
         .get(&id.0)
         .map(|e| {
-            e.class_methods
+            let own = e
+                .class_methods
                 .keys()
                 .copied()
-                .filter(|n| !own_only || !e.extended_class_methods.contains(n))
-                .collect()
+                .filter(|n| !own_only || !e.extended_class_methods.contains(n));
+            // A singleton-prepend copy dispatches on the class, so the WIDE
+            // list reports it; like an extend it lives in the singleton's
+            // chain, not on the class itself, so the narrow list skips it.
+            match own_only {
+                true => own.collect(),
+                false => {
+                    let mut names: Vec<Symbol> = own.collect();
+                    for n in e.prepended_class_methods.keys() {
+                        if !names.contains(n) {
+                            names.push(*n);
+                        }
+                    }
+                    names
+                }
+            }
         })
         .unwrap_or_default()
 }
@@ -3660,9 +3752,36 @@ pub(crate) fn runtime_class_method(id: ClassId, name: Symbol) -> Option<MethodIm
 
 /// A class-level method (`def self.x` / `define_singleton_method` on a class)
 /// for a `RubyValue::Class` receiver -- the raw block, invoked under the class.
+/// A `singleton_class.prepend(M)` copy outranks everything else, ruby's own
+/// layering (see [`OverlayEntry::prepended_class_methods`]).
 pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
     let c = maps().classes.read().unwrap();
+    let e = c.get(&id.0)?;
+    e.prepended_class_methods
+        .get(&name)
+        .or_else(|| e.class_methods.get(&name))
+        .cloned()
+}
+
+/// [`overlay_class_method`] with the singleton-PREPEND layer skipped -- the
+/// resume point for a prepended module method's own `super`, which must reach
+/// the shadowed `def self.x` rather than the copy of itself.
+pub fn overlay_class_method_below_prepends(id: ClassId, name: Symbol) -> Option<RProc> {
+    let c = maps().classes.read().unwrap();
     c.get(&id.0)?.class_methods.get(&name).cloned()
+}
+
+/// Whether `mid` was prepended into `id`'s singleton class
+/// (`id.singleton_class.prepend(mid)`) -- how `send_super_class_from` learns
+/// that a `defining_class` missing from the ancestry sits in the prepend
+/// layer, whose `super` resumes AT `id` rather than past it.
+pub fn has_singleton_prepend(id: ClassId, mid: ClassId) -> bool {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.singleton_prepends.contains(&mid))
 }
 
 /// The instance method THIS class's OWN overlay delta defines -- no ancestor

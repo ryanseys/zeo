@@ -3042,6 +3042,14 @@ pub fn send_super_from(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    // A CLASS object in the OBJECT channel means the defining body ran with a
+    // class as `self` -- a module instance method serving as a class method
+    // through a runtime extend/singleton-prepend wrapper. Its `super` walks
+    // the receiver's CLASS-method chain; the object channel would walk
+    // `Class`'s own instance ancestry and miss.
+    if let RubyValue::Class(cid) = recv {
+        return send_super_class_from(*cid, defining_class, name, args, block);
+    }
     // Resume AFTER the class this `super` is written in; an unrecognized
     // `defining_class` (never expected) degrades to a full walk from the top.
     let ancestors = ancestors_of_value(recv.class_id());
@@ -3187,11 +3195,13 @@ fn send_walking(
 /// non-module ancestor's winner IS the correct super target), then that
 /// ancestor's builtin class-method table. `include`d modules never join a
 /// singleton chain, so module ancestors are skipped. A `defining_class`
-/// missing from the chain (a `super` inside an `extend`ed module's method)
-/// starts right past the receiver's own entry -- the nearest runtime
-/// approximation of "after the extended module" (sibling extends of the
-/// same receiver are not modeled at runtime; the registry records no
-/// per-class extends list).
+/// missing from the chain is a module serving through a singleton: one
+/// PREPENDED there sits ABOVE its host's own table, so its `super` resumes
+/// AT the host (own `def self.x` first, the prepend layer skipped -- or it
+/// would call itself); an `extend`ed one starts right past the receiver's
+/// own entry -- the nearest runtime approximation of "after the extended
+/// module" (sibling extends of the same receiver are not modeled at
+/// runtime; the registry records no per-class extends list).
 pub fn send_super_class_from(
     recv_class: ClassId,
     defining_class: ClassId,
@@ -3199,11 +3209,17 @@ pub fn send_super_class_from(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let start = ancestors_of_value(recv_class)
+    let ancestors = ancestors_of_value(recv_class);
+    if let Some(pos) = ancestors.iter().position(|&a| a == defining_class) {
+        return send_class_walking(recv_class, pos + 1, name, args, block);
+    }
+    if let Some(pos) = ancestors
         .iter()
-        .position(|&a| a == defining_class)
-        .map_or(1, |p| p + 1);
-    send_class_walking(recv_class, start, name, args, block)
+        .position(|&a| crate::runtime_meta::has_singleton_prepend(a, defining_class))
+    {
+        return send_class_walking_inner(recv_class, pos, true, name, args, block);
+    }
+    send_class_walking(recv_class, 1, name, args, block)
 }
 
 /// Invoke the CLASS method `name` starting the walk AT `from` -- the
@@ -3233,16 +3249,35 @@ fn send_class_walking(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    send_class_walking_inner(recv_class, start, false, name, args, block)
+}
+
+/// `first_below_prepends` resumes a singleton-PREPENDED module method's
+/// `super`: at the entry position the overlay probe skips the prepend layer
+/// (the walk got here THROUGH it -- probing it again would re-enter the same
+/// copy forever) so the host's shadowed `def self.<name>` answers instead.
+fn send_class_walking_inner(
+    recv_class: ClassId,
+    start: usize,
+    first_below_prepends: bool,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let recv = RubyValue::Class(recv_class);
     let method_name = name.to_string();
-    for &anc in ancestors_of_value(recv_class).iter().skip(start) {
+    for (i, &anc) in ancestors_of_value(recv_class).iter().enumerate().skip(start) {
         if registry().entries.get(&anc.0).is_some_and(|e| e.is_module) {
             continue;
         }
-        if crate::runtime_meta::is_live()
-            && let Some(p) = crate::runtime_meta::overlay_class_method(anc, name)
-        {
-            return p.call_with_self_and_block(&recv, args, block);
+        if crate::runtime_meta::is_live() {
+            let overlay = match first_below_prepends && i == start {
+                true => crate::runtime_meta::overlay_class_method_below_prepends(anc, name),
+                false => crate::runtime_meta::overlay_class_method(anc, name),
+            };
+            if let Some(p) = overlay {
+                return p.call_with_self_and_block(&recv, args, block);
+            }
         }
         if let Some(f) = registry()
             .entries

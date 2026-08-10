@@ -748,7 +748,7 @@ fn process_top_stmt_inner(
         // A reachable `C.prepend(M)` -- recorded as a compile-time ancestry edit
         // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
         // class-body `prepend M` produces no runtime statement.
-    } else if declines_a_singleton_prepend(compiler, stmt) {
+    } else if declines_a_singleton_prepend(compiler, stmt, &[], 0) {
         return Err(UNHONOURED_SINGLETON_PREPEND.into());
     } else {
         register_nested_class_defs(compiler, stmt, &[], 0)?;
@@ -1194,27 +1194,35 @@ fn try_prepend_call_edit(
 /// The class/module a bare-constant expression names (resolved in `cref`), or
 /// `None` for anything that isn't a compile-time-resolvable class reference.
 /// Used to statically resolve a `prepend` call's receiver and module arguments.
-const UNHONOURED_SINGLETON_PREPEND: &str = "`prepend` onto a singleton class needs modules zeo can name at compile time \
-     (constants), and a receiver that resolves to a known class -- a runtime one \
-     writes a singleton method table that statically resolved calls never consult, \
-     so it would compile and then override nothing (zeo limitation)";
+const UNHONOURED_SINGLETON_PREPEND: &str = "`prepend` onto the singleton class of a statically-compiled class needs \
+     modules zeo can name at compile time (constants) -- a runtime module \
+     writes a singleton method table that statically resolved calls never \
+     consult, so it would compile and then override nothing (zeo limitation)";
 
 /// A `<expr>.singleton_class.prepend(...)` that [`try_prepend_call_edit`] just
-/// DECLINED -- because the receiver or an argument isn't a module zeo can name
-/// at compile time.
+/// DECLINED, where letting it run as an ordinary send would come out WRONG --
+/// because the receiver names a STATICALLY-REGISTERED class. Statically
+/// resolved `X.m` call sites on such a class never consult the runtime
+/// singleton tables the send would write, so the prepend would compile and
+/// then override nothing. The whole point of `prepend` is to override a method
+/// that already exists, which is exactly the case that would come out wrong.
+/// Refused for the same reason `lower::defs` refuses `undef :close` in a
+/// singleton body: a silent wrong answer is worse than a rejection.
 ///
-/// Left to run as an ordinary send it reaches `runtime_extend`, which writes
-/// the object's singleton METHOD TABLE; a statically resolved `X.m` call site
-/// never consults that table, so the prepend compiles and then does nothing at
-/// all. The whole point of `prepend` is to override a method that already
-/// exists, which is exactly the case that would come out wrong. Refused for the
-/// same reason `lower::defs` refuses `undef :close` in a singleton body: a
-/// silent wrong answer is worse than a rejection.
-///
-/// activerecord-jdbc-adapter is the corpus case -- `class << Base; m =
-/// Module.new do ... end; self.prepend(m); end`, with ten adapter gems behind
-/// it.
-fn declines_a_singleton_prepend(compiler: &Compiler, stmt: NodeId) -> bool {
+/// A constant-shaped receiver that does NOT resolve to a static class is the
+/// mirror image: the class only ever exists at runtime (an autoloaded rails
+/// class behind a computed feature name, a `K = Class.new` minting), so every
+/// call site on it is already dynamic and the runtime singleton-prepend
+/// machinery (`prepend_into_class_singleton`) is exactly what CRuby does.
+/// Those pass through as the ordinary send they are -- the
+/// `SomeRailsClass.singleton_class.prepend(TheirPatch)` shape behind most of
+/// the rails-plugin band, activerecord-jdbc-adapter and friends.
+fn declines_a_singleton_prepend(
+    compiler: &Compiler,
+    stmt: NodeId,
+    cref: &[ClassId],
+    box_id: u32,
+) -> bool {
     let HirNode::Call {
         receiver: Some(recv),
         name,
@@ -1226,10 +1234,31 @@ fn declines_a_singleton_prepend(compiler: &Compiler, stmt: NodeId) -> bool {
     if name != "prepend" {
         return false;
     }
-    matches!(
-        &compiler.hir[*recv],
-        HirNode::Call { name, args, .. } if name == "singleton_class" && args.is_empty()
-    )
+    let HirNode::Call {
+        receiver: inner,
+        name,
+        args,
+        ..
+    } = &compiler.hir[*recv]
+    else {
+        return false;
+    };
+    if name != "singleton_class" || !args.is_empty() {
+        return false;
+    }
+    match inner {
+        // A bare `singleton_class` names the enclosing class -- statically
+        // known by construction.
+        None => true,
+        Some(n) => match &compiler.hir[*n] {
+            HirNode::ClassRef(_) | HirNode::QualifiedConstRead(..) => {
+                const_node_class(compiler, *n, cref, box_id).is_some()
+            }
+            // An arbitrary expression's value may still be a static class
+            // (whose call sites bypass runtime tables) -- keep declining.
+            _ => true,
+        },
+    }
 }
 
 fn const_node_class(
@@ -3708,7 +3737,7 @@ fn register_class(
                 if try_prepend_call_edit(compiler, stmt, &child_cref, box_id) {
                     continue;
                 }
-                if declines_a_singleton_prepend(compiler, stmt) {
+                if declines_a_singleton_prepend(compiler, stmt, &child_cref, box_id) {
                     return Err(UNHONOURED_SINGLETON_PREPEND.into());
                 }
                 // A `def` nested in an `if`/`case` branch also runs at document
