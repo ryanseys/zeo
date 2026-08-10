@@ -322,8 +322,96 @@ fn static_string(
             }
             _ => None,
         },
+        // `RUBY_PLATFORM.to_s` -- `String#to_s` returns self, and gems write it
+        // where the value might have been a symbol under some other engine.
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            ..
+        } if name == "to_s" && args.is_empty() => static_string(compiler, cref, box_id, *r),
         _ => None,
     }
+}
+
+/// Reduce a node to a compile-time INTEGER. A version gate is as often written
+/// against the number as against the string -- `Rails::VERSION::MAJOR == 8`,
+/// `ActiveRecord::VERSION::MINOR >= 2`, `Chef::VERSION.to_i >= 12` -- and a
+/// gem's `VERSION` module is as fixed for a whole-program target as the strings
+/// beside it.
+fn static_integer(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+    depth: u32,
+) -> Option<i64> {
+    if depth >= MAX_FOLD_DEPTH {
+        return None;
+    }
+    let depth = depth + 1;
+    let through = |owner: ClassId, value: NodeId| {
+        static_integer(
+            compiler,
+            &compiler.cref_of(Some(owner)),
+            box_id,
+            value,
+            depth,
+        )
+    };
+    match &compiler.hir[node] {
+        HirNode::IntegerLit(n) => Some(*n),
+        HirNode::ClassRef(name) => {
+            let (scope, base) = match name.rsplit_once("::") {
+                Some((s, b)) => (Some(s), b),
+                None => (None, name.as_str()),
+            };
+            let (owner, value) = const_init(compiler, cref, box_id, scope, base)?;
+            through(owner, value)
+        }
+        HirNode::QualifiedConstRead(scope, name) => {
+            let (owner, value) = const_init(compiler, cref, box_id, Some(scope), name)?;
+            through(owner, value)
+        }
+        // `Chef::VERSION.to_i` is 12: ruby reads the leading integer and stops.
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            ..
+        } if name == "to_i" && args.is_empty() => {
+            leading_integer(&static_string(compiler, cref, box_id, *r)?)
+        }
+        _ => None,
+    }
+}
+
+/// `String#to_i`: optional leading whitespace, an optional sign, then digits,
+/// stopping at the first character that is not one. A single `_` BETWEEN digits
+/// is part of the number; anything else ends it, and a string with no leading
+/// digits at all is `0`.
+///
+/// `None` only where the value would not fit -- a bignum ruby would still
+/// compare exactly, so the guard stays undecided rather than wrap.
+fn leading_integer(s: &str) -> Option<i64> {
+    let s = s.trim_start();
+    let (negative, digits) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let mut chars = digits.chars().peekable();
+    let mut value: i64 = 0;
+    let mut any = false;
+    while let Some(&c) = chars.peek() {
+        if let Some(d) = c.to_digit(10) {
+            value = value.checked_mul(10)?.checked_add(d as i64)?;
+            any = true;
+        } else if !(c == '_' && any && chars.clone().nth(1).is_some_and(|n| n.is_ascii_digit())) {
+            break;
+        }
+        chars.next();
+    }
+    Some(if negative { -value } else { value })
 }
 
 /// Reduce a node to a compile-time `Gem::Version` string (for version-segment
@@ -373,9 +461,9 @@ fn static_gem_version(
     }
 }
 
-/// A comparison guard whose operands both reduce to build-time version
-/// constants: `Gem::Version` (version-segment) semantics when EITHER side is
-/// one, then plain `String` (lexicographic) semantics for the rest.
+/// A comparison guard whose operands both reduce to build-time constants:
+/// `Gem::Version` (version-segment) semantics when EITHER side is one, then
+/// plain `String` (lexicographic) semantics, then `Integer`.
 ///
 /// A `Gem::Version` compared against a plain string is version semantics, not
 /// lexicographic: rubygems' `<=>` runs `Gem::Version.create` over a `String`
@@ -383,6 +471,9 @@ fn static_gem_version(
 /// stays undecided here). `Gem::Version.new(RUBY_VERSION) <= "3.4"` is the
 /// spelling gems reach for most often -- unparser gates its two `Builder`
 /// definitions on it.
+///
+/// The three readings cannot collide: a node reduces to at most one of them,
+/// because each starts from a literal of its own kind.
 fn cmp_fold(
     compiler: &Compiler,
     cref: &[ClassId],
@@ -390,6 +481,7 @@ fn cmp_fold(
     op: &str,
     l: NodeId,
     r: NodeId,
+    depth: u32,
 ) -> Option<bool> {
     let lv = static_gem_version(compiler, cref, box_id, l);
     let rv = static_gem_version(compiler, cref, box_id, r);
@@ -423,66 +515,132 @@ fn cmp_fold(
     ) {
         return apply(op, ls.as_bytes().cmp(rs.as_bytes()));
     }
+    if let (Some(li), Some(ri)) = (
+        static_integer(compiler, cref, box_id, l, depth),
+        static_integer(compiler, cref, box_id, r, depth),
+    ) {
+        return apply(op, li.cmp(&ri));
+    }
     None
 }
 
-/// A Regexp literal that is nothing but `|`-separated LITERAL text, split into
-/// its alternatives -- `/mswin|mingw|windows/` -> `["mswin", "mingw", "windows"]`.
-/// Matching one is then a substring test, which needs no regexp engine and
-/// cannot disagree with one.
+/// One position of an alternative.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Elem {
+    /// A character that means itself -- including `\.`, the escape a version
+    /// test spells the dot with (`/^1\.8/`).
+    Lit(char),
+    /// `.` -- exactly one character, and never a newline. The one regexp
+    /// METAcharacter this reduction admits, admitted because it is exact:
+    /// nothing here approximates it. A quantifier is still refused, so a `.`
+    /// can never stand for more or less than one character.
+    AnyChar,
+}
+
+/// One `|`-alternative, position by position.
+struct Alternative(Vec<Elem>);
+
+impl Alternative {
+    /// How many BYTES of `subject` this alternative consumes from its start, or
+    /// `None` if it does not match there.
+    fn match_at(&self, subject: &str, ignore_case: bool) -> Option<usize> {
+        let mut chars = subject.chars();
+        let mut consumed = 0;
+        for elem in &self.0 {
+            let c = chars.next()?;
+            let ok = match elem {
+                Elem::Lit(l) => {
+                    c == *l || (ignore_case && c.eq_ignore_ascii_case(l) && c.is_ascii())
+                }
+                Elem::AnyChar => c != '\n',
+            };
+            if !ok {
+                return None;
+            }
+            consumed += c.len_utf8();
+        }
+        Some(consumed)
+    }
+}
+
+/// A regexp whose whole meaning is a plain character test -- so folding it here
+/// cannot disagree with a real regexp engine. Either `|`-separated alternatives
+/// matched anywhere in the subject, or ONE alternative anchored at the start
+/// and/or end. Half the corpus writes its platform gate this way
+/// (`/mswin|mingw|windows/`), and a version gate its prefix
+/// (`/^1.8/`).
 ///
-/// `None` for anything carrying regexp syntax (anchors, classes, quantifiers,
-/// groups, escapes), an interpolated pattern, or a flag that changes matching
-/// (`/i`, `/x`). Those stay undecided rather than being answered by an
-/// approximation of a regexp.
-/// A regexp whose whole meaning is a plain string test -- so folding it here
-/// cannot disagree with a real regexp engine. Either `|`-separated literal
-/// alternatives matched as substrings, or ONE literal anchored at the start
-/// and/or end.
+/// `None` for anything carrying regexp syntax beyond `.` (classes, quantifiers,
+/// groups, other escapes), an interpolated pattern, or a flag that changes what
+/// the pattern MEANS (`/x`, `/m`). Those stay undecided rather than being
+/// answered by an approximation.
 struct LiteralPattern {
     anchored_start: bool,
     anchored_end: bool,
-    alts: Vec<String>,
+    /// `/i`. ASCII-folded here, so [`LiteralPattern::matches`] declines a
+    /// subject that isn't ASCII -- ruby folds the full Unicode case table, and
+    /// a narrower rule must not answer where the two could part.
+    ignore_case: bool,
+    alts: Vec<Alternative>,
 }
 
 impl LiteralPattern {
-    fn matches(&self, subject: &str) -> bool {
-        self.alts
-            .iter()
-            .any(|a| match (self.anchored_start, self.anchored_end) {
-                (false, false) => subject.contains(a.as_str()),
-                (true, false) => subject.starts_with(a.as_str()),
-                (false, true) => subject.ends_with(a.as_str()),
-                (true, true) => subject == a,
+    fn matches(&self, subject: &str) -> Option<bool> {
+        if self.ignore_case && !subject.is_ascii() {
+            return None;
+        }
+        // `^`/`$` are LINE anchors, and this treats them as string anchors. The
+        // two agree on a subject with no newline in it, which every build-time
+        // string here is; anything else declines rather than pick a reading.
+        if (self.anchored_start || self.anchored_end) && subject.contains('\n') {
+            return None;
+        }
+        Some(self.alts.iter().any(|alt| self.matches_alt(alt, subject)))
+    }
+
+    fn matches_alt(&self, alt: &Alternative, subject: &str) -> bool {
+        let starts: Box<dyn Iterator<Item = usize>> = if self.anchored_start {
+            Box::new(std::iter::once(0))
+        } else {
+            Box::new((0..=subject.len()).filter(|&i| subject.is_char_boundary(i)))
+        };
+        starts
+            .into_iter()
+            .any(|i| match alt.match_at(&subject[i..], self.ignore_case) {
+                Some(n) if self.anchored_end => i + n == subject.len(),
+                Some(_) => true,
+                None => false,
             })
     }
 }
 
-/// One alternative's literal text, or `None` if it uses any regexp syntax.
-/// `\.` is the one escape allowed through -- it is how a version test spells
-/// the dot (`/^1\.8/`), and it means exactly the character.
-fn literal_alternative(src: &str) -> Option<String> {
-    const SYNTAX: &[char] = &['^', '$', '.', '[', ']', '(', ')', '*', '+', '?', '{', '}'];
-    let mut out = String::new();
+/// One alternative parsed into its positions, or `None` if it uses regexp
+/// syntax this reduction does not admit.
+fn literal_alternative(src: &str) -> Option<Alternative> {
+    // `.` is deliberately absent: it is handled below, exactly. Every
+    // quantifier stays here, which is what keeps a `.` bound to one character.
+    const SYNTAX: &[char] = &['^', '$', '[', ']', '(', ')', '*', '+', '?', '{', '}', '|'];
+    let mut out = Vec::new();
     let mut chars = src.chars();
     while let Some(c) = chars.next() {
-        match c {
+        out.push(match c {
             '\\' => match chars.next() {
-                Some('.') => out.push('.'),
+                Some('.') => Elem::Lit('.'),
                 _ => return None,
             },
+            '.' => Elem::AnyChar,
             c if SYNTAX.contains(&c) => return None,
-            c => out.push(c),
-        }
+            c => Elem::Lit(c),
+        });
     }
-    (!out.is_empty()).then_some(out)
+    (!out.is_empty()).then_some(Alternative(out))
 }
 
 fn literal_pattern(compiler: &Compiler, node: NodeId) -> Option<LiteralPattern> {
     let HirNode::RegexpLit(parts, flags) = &compiler.hir[node] else {
         return None;
     };
-    if flags.ignore_case || flags.extended || flags.multiline {
+    if flags.extended || flags.multiline {
         return None;
     }
     let [StrPart::Lit(src)] = parts.as_slice() else {
@@ -508,13 +666,23 @@ fn literal_pattern(compiler: &Compiler, node: NodeId) -> Option<LiteralPattern> 
     if (anchored_start || anchored_end) && src.contains('|') {
         return None;
     }
-    let alts: Vec<String> = src
+    let alts: Vec<Alternative> = src
         .split('|')
         .map(literal_alternative)
         .collect::<Option<_>>()?;
+    // ASCII case folding is only ruby's answer for an ASCII pattern.
+    if flags.ignore_case
+        && !alts.iter().all(|a| {
+            a.0.iter()
+                .all(|e| !matches!(e, Elem::Lit(c) if !c.is_ascii()))
+        })
+    {
+        return None;
+    }
     Some(LiteralPattern {
         anchored_start,
         anchored_end,
+        ignore_case: flags.ignore_case,
         alts,
     })
 }
@@ -684,10 +852,67 @@ fn method_defined_fold(
         },
         None => *cref.last()?,
     };
-    Some(match compiler.method_in_chain(cls, &m) {
-        Some((_, sid)) => compiler.scope(sid).visibility != Visibility::Private,
-        None => false,
-    })
+    match compiler.method_in_chain(cls, &m) {
+        Some((_, sid)) => Some(compiler.scope(sid).visibility != Visibility::Private),
+        // `method_in_chain` holds COMPILED ruby methods, so a builtin's native
+        // rows are not in it -- the same split `respond_to_fold` handles, and
+        // without this `Regexp.method_defined?(:match?)` answered a confident
+        // false about a method Regexp has.
+        None if compiler.class(cls).is_builtin => {
+            builtin_provides_instance_method(compiler, cls, &m)
+        }
+        None => Some(false),
+    }
+}
+
+/// Compile-time truth of a membership test -- the same questions the arms above
+/// answer, asked through a list.
+///
+/// Two receivers answer. A LITERAL array of strings tested against a build-time
+/// string is just that comparison (`['opal', 'rubymotion'].include?(RUBY_ENGINE)`,
+/// which array.rb gates a whole reopen on). And `X.instance_methods.include?(:m)`
+/// is `X.method_defined?(:m)` spelled the long way -- both ask for the public
+/// and protected instance methods of `X` and its ancestors.
+fn include_fold(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    receiver: NodeId,
+    args: &[ArrayElem],
+) -> Option<bool> {
+    let [ArrayElem::Single(wanted)] = args else {
+        return None;
+    };
+    match &compiler.hir[receiver] {
+        HirNode::ArrayLit(elems) => {
+            let wanted = static_string(compiler, cref, box_id, *wanted)?;
+            let mut hit = false;
+            for elem in elems {
+                // A splat could hold anything, so it takes the whole list with
+                // it rather than being skipped.
+                let ArrayElem::Single(e) = elem else {
+                    return None;
+                };
+                hit |= static_string(compiler, cref, box_id, *e)? == wanted;
+            }
+            Some(hit)
+        }
+        HirNode::Call {
+            receiver: Some(cls),
+            name,
+            args: inner,
+            block: None,
+            ..
+        } if inner.is_empty()
+            && matches!(
+                name.as_str(),
+                "instance_methods" | "public_instance_methods"
+            ) =>
+        {
+            method_defined_fold(compiler, cref, box_id, Some(*cls), args)
+        }
+        _ => None,
+    }
 }
 
 /// A call-shaped guard: a version/string comparison, a feature probe
@@ -708,7 +933,7 @@ fn call_fold(
             let [ArrayElem::Single(r)] = args else {
                 return None;
             };
-            cmp_fold(compiler, cref, box_id, name, l, *r)
+            cmp_fold(compiler, cref, box_id, name, l, *r, depth)
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.
@@ -731,7 +956,7 @@ fn call_fold(
                 None => (*arg, literal_pattern(compiler, recv)?),
             };
             let subject = static_string(compiler, cref, box_id, subject)?;
-            Some(pattern.matches(&subject))
+            pattern.matches(&subject)
         }
         // `if RUBY_VERSION.start_with?('1.9')` -- the same build-time question
         // the comparison operators above answer, asked by prefix. Ruby takes any
@@ -753,6 +978,19 @@ fn call_fold(
             }
             Some(hit)
         }
+        // `if RUBY_PLATFORM['linux']` -- `String#[]` hands back the match or
+        // nil, so AS A CONDITION it is a containment test. Only reached when
+        // both sides reduce to strings, so an Array or Hash `[]` never lands
+        // here.
+        "[]" => {
+            let [ArrayElem::Single(a)] = args else {
+                return None;
+            };
+            let s = static_string(compiler, cref, box_id, receiver?)?;
+            let part = static_string(compiler, cref, box_id, *a)?;
+            Some(s.contains(&part))
+        }
+        "include?" => include_fold(compiler, cref, box_id, receiver?, args),
         "respond_to?" => respond_to_fold(compiler, cref, box_id, receiver, args),
         "const_defined?" => const_defined_fold(compiler, cref, box_id, receiver, args),
         "method_defined?" | "public_method_defined?" => {
@@ -1241,21 +1479,32 @@ mod tests {
     /// reads wrongly picks the wrong half. Every expectation checked against
     /// ruby 4.0.6.
     #[test]
-    fn a_literal_alternative_is_the_text_it_spells() {
-        // `\.` is the one escape allowed through, and it means a real dot.
-        assert_eq!(literal_alternative(r"1\.8").as_deref(), Some("1.8"));
-        assert_eq!(literal_alternative("mingw").as_deref(), Some("mingw"));
-        // Anything with real regexp meaning must not reduce to text.
+    fn an_alternative_is_the_positions_it_spells() {
+        let elems = |src| literal_alternative(src).map(|a| a.0);
+        // `\.` is an escape that means a real dot; a bare `.` is any character.
+        assert_eq!(
+            elems(r"1\.8"),
+            Some(vec![Elem::Lit('1'), Elem::Lit('.'), Elem::Lit('8')])
+        );
+        assert_eq!(
+            elems("1.8"),
+            Some(vec![Elem::Lit('1'), Elem::AnyChar, Elem::Lit('8')])
+        );
+        assert_eq!(
+            elems("mingw"),
+            Some("mingw".chars().map(Elem::Lit).collect::<Vec<_>>())
+        );
+        // Anything with regexp meaning this cannot spell exactly must decline.
         for src in [
-            "1.8",   // an unescaped dot matches any character
             "a+",    // repetition
+            ".*",    // a quantified `.` is any NUMBER of characters
             "[0-9]", // a class
             "(a)",   // a group
             r"\d",   // an escape that is not `\.`
             r"a\",   // a dangling backslash
             "",      // nothing to match
         ] {
-            assert_eq!(literal_alternative(src), None, "{src:?} is not literal");
+            assert!(elems(src).is_none(), "{src:?} is not spellable");
         }
     }
 
@@ -1264,18 +1513,95 @@ mod tests {
         let p = |anchored_start, anchored_end, alts: &[&str]| LiteralPattern {
             anchored_start,
             anchored_end,
-            alts: alts.iter().map(|s| s.to_string()).collect(),
+            ignore_case: false,
+            alts: alts
+                .iter()
+                .map(|s| literal_alternative(s).unwrap())
+                .collect(),
         };
         // `RUBY_VERSION =~ /^1\.8/` on 4.0.6 -- the ipaddress guard.
-        assert!(!p(true, false, &["1.8"]).matches("4.0.6"));
-        assert!(p(true, false, &["1.8"]).matches("1.8.7"));
+        assert_eq!(p(true, false, &[r"1\.8"]).matches("4.0.6"), Some(false));
+        assert_eq!(p(true, false, &[r"1\.8"]).matches("1.8.7"), Some(true));
         // Unanchored is a substring test, which is how the platform gates read.
-        assert!(p(false, false, &["mingw", "mswin"]).matches("x64-mingw32"));
-        assert!(!p(false, false, &["mingw", "mswin"]).matches("arm64-darwin24"));
+        assert_eq!(
+            p(false, false, &["mingw", "mswin"]).matches("x64-mingw32"),
+            Some(true)
+        );
+        assert_eq!(
+            p(false, false, &["mingw", "mswin"]).matches("arm64-darwin24"),
+            Some(false)
+        );
         // A `$` anchor is a suffix, and both anchors together are equality.
-        assert!(p(false, true, &["darwin24"]).matches("arm64-darwin24"));
-        assert!(!p(true, true, &["ruby"]).matches("ruby3"));
-        assert!(p(true, true, &["ruby"]).matches("ruby"));
+        assert_eq!(
+            p(false, true, &["darwin24"]).matches("arm64-darwin24"),
+            Some(true)
+        );
+        assert_eq!(p(true, true, &["ruby"]).matches("ruby3"), Some(false));
+        assert_eq!(p(true, true, &["ruby"]).matches("ruby"), Some(true));
+    }
+
+    /// `.` is ONE character, wherever it sits. gmp's `unless RUBY_VERSION =~
+    /// /^1.8/` is the shape, and it reads the same as `/^1\.8/` on every real
+    /// version string -- but not on one where the dot is something else, which
+    /// is why it is matched rather than assumed.
+    #[test]
+    fn any_char_consumes_exactly_one_character() {
+        let p = |anchored_start, src: &str| LiteralPattern {
+            anchored_start,
+            anchored_end: false,
+            ignore_case: false,
+            alts: vec![literal_alternative(src).unwrap()],
+        };
+        assert_eq!(p(true, "1.8").matches("1.8.7"), Some(true));
+        assert_eq!(p(true, "1.8").matches("108"), Some(true));
+        assert_eq!(p(true, "1.8").matches("4.0.6"), Some(false));
+        // One character, so a subject one short cannot match.
+        assert_eq!(p(true, "1.8").matches("18"), Some(false));
+        // `.` never matches a newline, even unanchored.
+        assert_eq!(p(false, "a.b").matches("a\nb"), Some(false));
+        assert_eq!(p(false, "a.b").matches("xaybz"), Some(true));
+    }
+
+    /// `/i` is ASCII folding here. ruby's is the full Unicode case table, so a
+    /// subject that is not ASCII gets no answer rather than the narrower one.
+    #[test]
+    fn ignore_case_answers_only_for_ascii() {
+        let p = |src: &str| LiteralPattern {
+            anchored_start: false,
+            anchored_end: false,
+            ignore_case: true,
+            alts: vec![literal_alternative(src).unwrap()],
+        };
+        // `RUBY_PLATFORM =~ /java/i`, the shape jruby gates on.
+        assert_eq!(p("java").matches("Java-1.7"), Some(true));
+        assert_eq!(p("JAVA").matches("x86_64-java"), Some(true));
+        assert_eq!(p("java").matches("arm64-darwin24"), Some(false));
+        assert_eq!(p("java").matches("\u{212a}elvin"), None);
+    }
+
+    /// Every case checked against `String#to_i` under ruby 4.0.6.
+    #[test]
+    fn leading_integer_matches_string_to_i() {
+        for (s, want) in [
+            ("12.0.0", 12),
+            ("8", 8),
+            ("  -42abc", -42),
+            ("+7", 7),
+            // A single `_` between digits is part of the number; a second one
+            // ends it.
+            ("1_2", 12),
+            ("1__2", 1),
+            ("007", 7),
+            ("3.9", 3),
+            // No leading digits at all is zero, which is what ruby answers.
+            ("x9", 0),
+            ("", 0),
+        ] {
+            assert_eq!(leading_integer(s), Some(want), "{s:?}.to_i");
+        }
+        // A value no `i64` holds stays undecided rather than wrapping: ruby
+        // would compare it exactly.
+        assert_eq!(leading_integer(&"9".repeat(30)), None);
     }
 
     #[test]
