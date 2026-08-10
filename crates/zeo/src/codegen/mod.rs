@@ -539,10 +539,12 @@ pub(crate) fn source_end_line(compiler: &Compiler, node: crate::hir::NodeId) -> 
         return 0;
     };
     let upto = (span.end as usize).min(file.source.len());
-    1 + file.source.as_bytes()[..upto]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count() as u32
+    // `line_at`, not a newline count from byte 0 -- the same quadratic its
+    // own docs describe, left behind here when `source_location` was
+    // converted. Every emitted method asks this once, and the file it scans
+    // is the whole SPLICED require graph: 96% of a gem-scale compile's
+    // samples landed in this one `filter().count()`.
+    file.line_at(upto as u32)
 }
 
 /// The backtrace-frame push for one method scope: `Class#method` /
