@@ -3244,6 +3244,7 @@ fn dispatch(
     // cheap, and overflow promotes instead of panicking.
     if no_kwargs
         && args.len() == 1
+        && !cx.compiler.redefined_int_ops.contains(name)
         && let Some(&(_, rt_fn, kind)) = ops::INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
     {
         let recv_ty = infer(cx, recv_id);
@@ -3275,6 +3276,7 @@ fn dispatch(
     // (all three return `RubyValue` -- negation can promote `-i64::MIN`).
     if no_kwargs
         && args.is_empty()
+        && !cx.compiler.redefined_int_ops.contains(name)
         && let Some(&(_, rt_fn)) = ops::INT_UNARY_OPS.iter().find(|(op, _)| *op == name)
         && infer(cx, recv_id) == TyKind::Int
     {
@@ -3297,7 +3299,14 @@ fn dispatch(
                 | (TyKind::Float, TyKind::Int)
                 | (TyKind::Int, TyKind::Float)
         );
-        if is_float_op {
+        // A mixed pair dispatches on the RECEIVER's class (`1 + 2.0` is
+        // `Integer#+`), so the receiver's lane decides whether a user
+        // redefinition suppressed this path.
+        let suppressed = match recv_ty {
+            TyKind::Float => cx.compiler.redefined_float_ops.contains(name),
+            _ => cx.compiler.redefined_int_ops.contains(name),
+        };
+        if is_float_op && !suppressed {
             let arg_expr = emit_expr(cx, args[0]);
             let recv_f = match recv_ty {
                 TyKind::Float => quote! { (#recv_expr).as_float_unchecked() },
@@ -3349,6 +3358,7 @@ fn dispatch(
     // `Float` has none), same eligibility rule.
     if no_kwargs
         && args.is_empty()
+        && !cx.compiler.redefined_float_ops.contains(name)
         && let Some(&(_, rt_fn)) = ops::FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name)
         && infer(cx, recv_id) == TyKind::Float
     {
@@ -3688,7 +3698,11 @@ fn dispatch(
                 // Bignum/Rational/Complex lanes, user operator methods,
                 // builtin rows -- resolves through `send_value`'s MRO walk,
                 // whose Integer/Float operator rows drive the same one
-                // tower matrix.
+                // tower matrix. A user redefinition suppressed a lane's
+                // fast path: its arm stays out and the shape rides the MRO
+                // walk, which reads the reopened row.
+                let int_entry =
+                    int_entry.filter(|_| !cx.compiler.redefined_int_ops.contains(name));
                 let int_arm = int_entry.map(|&(_, rt_fn, kind)| {
                     let func = format_ident!("{rt_fn}");
                     let call = match kind {
@@ -3728,20 +3742,32 @@ fn dispatch(
                     .map(|&(_, rt_fn, result_ty)| {
                         let func = format_ident!("{rt_fn}");
                         let wrapper = format_ident!("{result_ty}");
-                        quote! {
-                            (
-                                zeo_rt::RubyValue::Float(__r),
-                                zeo_rt::RubyValue::Float(__a),
-                            ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r, *__a)),
-                            (
-                                zeo_rt::RubyValue::Float(__r),
-                                zeo_rt::RubyValue::Int(__a),
-                            ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r, *__a as f64)),
-                            (
-                                zeo_rt::RubyValue::Int(__r),
-                                zeo_rt::RubyValue::Float(__a),
-                            ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r as f64, *__a)),
-                        }
+                        // A mixed pair dispatches on the receiver, so each
+                        // arm belongs to ITS receiver's lane: `(Float, _)`
+                        // is `Float#op`, `(Int, Float)` is `Integer#op`.
+                        let float_recv = (!cx.compiler.redefined_float_ops.contains(name))
+                            .then(|| {
+                                quote! {
+                                    (
+                                        zeo_rt::RubyValue::Float(__r),
+                                        zeo_rt::RubyValue::Float(__a),
+                                    ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r, *__a)),
+                                    (
+                                        zeo_rt::RubyValue::Float(__r),
+                                        zeo_rt::RubyValue::Int(__a),
+                                    ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r, *__a as f64)),
+                                }
+                            });
+                        let int_recv = (!cx.compiler.redefined_int_ops.contains(name))
+                            .then(|| {
+                                quote! {
+                                    (
+                                        zeo_rt::RubyValue::Int(__r),
+                                        zeo_rt::RubyValue::Float(__a),
+                                    ) => zeo_rt::RubyValue::#wrapper(zeo_rt::#func(*__r as f64, *__a)),
+                                }
+                            });
+                        quote! { #float_recv #int_recv }
                     });
                 let name_sym = super::pooled_sym(name);
                 return quote! {
@@ -3759,8 +3785,14 @@ fn dispatch(
             }
         }
         if args.is_empty() {
-            let int_entry = ops::INT_UNARY_OPS.iter().find(|(op, _)| *op == name);
-            let float_entry = ops::FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name);
+            let int_entry = ops::INT_UNARY_OPS
+                .iter()
+                .find(|(op, _)| *op == name)
+                .filter(|_| !cx.compiler.redefined_int_ops.contains(name));
+            let float_entry = ops::FLOAT_UNARY_OPS
+                .iter()
+                .find(|(op, _)| *op == name)
+                .filter(|_| !cx.compiler.redefined_float_ops.contains(name));
             if int_entry.is_some() || float_entry.is_some() {
                 // Same shape as the binary fallback: inline Int and Float
                 // fast arms, everything else through the MRO walk's unary

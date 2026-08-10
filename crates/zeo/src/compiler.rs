@@ -725,6 +725,14 @@ pub struct Compiler {
     /// Every `refine Target do ... end` the program wrote, in registration
     /// order. See [`Refinement`].
     pub(crate) refinements: Vec<Refinement>,
+    /// Operator names a user reopen redefines on `Integer`'s (fast-path) MRO
+    /// (`class Integer; def +` -- or on `Numeric`/`Object`/... above it).
+    /// Codegen's `Int` operator fast paths consult this and stand down so
+    /// the redefinition is honored at every call site; see
+    /// `analyze::register_body_def_method`.
+    pub(crate) redefined_int_ops: std::collections::HashSet<String>,
+    /// The `Float` lane of [`Compiler::redefined_int_ops`].
+    pub(crate) redefined_float_ops: std::collections::HashSet<String>,
     /// Every `using M`, as the LEXICAL byte range it covers. See
     /// [`Activation`] and [`Compiler::refinements_active_at`].
     pub(crate) activations: Vec<Activation>,
@@ -967,6 +975,8 @@ impl Compiler {
             doc_order: HashMap::new(),
             const_def_order: HashMap::new(),
             refinements: Vec::new(),
+            redefined_int_ops: std::collections::HashSet::new(),
+            redefined_float_ops: std::collections::HashSet::new(),
             activations: Vec::new(),
             inline_iter_sites: HashMap::new(),
             times_literal_suppressed: false,

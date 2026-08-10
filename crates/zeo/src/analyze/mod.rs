@@ -3904,45 +3904,46 @@ fn register_body_def_method(
         *is_class_method,
         *visibility,
     );
-    // An OPERATOR definition on a builtin reopen (`class Integer; def +`) is
-    // rejected outright (zeo limitation): a native operator fast path is
-    // emitted at the static call site AHEAD of the reopened-builtin arm, so
-    // the user operator would be silently bypassed there -- a loud rejection
-    // beats dispatch that only sometimes honors the override.
+    // An OPERATOR definition on a builtin reopen (`class Integer; def +`)
+    // STANDS DOWN the native operator fast paths for that operator: a fast
+    // path is emitted at static call sites AHEAD of the reopened-builtin
+    // arm, so leaving it in place would silently bypass the user operator.
+    // The suppression is whole-program per (numeric lane, operator) --
+    // recorded here at registration, consulted by `codegen::call::dispatch`
+    // when it emits the four `ops::{INT,FLOAT}_{BINARY,UNARY}_OPS` arms and
+    // the poly runtime-checked fallback's inline `Int`/`Float` arms. A
+    // suppressed call site falls through to the reopened-builtin arm (a
+    // statically-typed receiver) or `send_value_in`'s MRO walk (a dynamic
+    // one), both of which read the reopened row -- the user operator wins
+    // everywhere, at the price of that operator's fast path, paid only by
+    // programs that redefine it.
     //
-    // Only `Int` and `Float` have such a path. `codegen::call::dispatch`
-    // emits the four `ops::{INT,FLOAT}_{BINARY,UNARY}_OPS` arms and then the
-    // reopened-builtin arm, which is placed deliberately BEFORE the
-    // collection, Proc, Regexp and String fast paths precisely so a user
-    // redefinition wins there. The poly runtime-checked fallback below it
-    // matches the same two `RubyValue::Int`/`Float` shapes and sends
-    // everything else through `send_value_in`'s MRO walk, which reads the
-    // reopened row. So every OTHER builtin is safe to reopen, and the list
-    // here is the MRO of `Integer` and `Float` -- the classes a statically
-    // `Int`- or `Float`-typed receiver would consult.
+    // Only `Int` and `Float` have such paths, so only their MRO feeds the
+    // sets: a definition on `Numeric`/`Comparable`/`Object`/`Kernel`/
+    // `BasicObject` sits under both lanes. Every OTHER builtin's operator
+    // reopen already won via the reopened-builtin arm's placement.
     //
-    // A CLASS-method operator is exempt whatever the class: `JSON[str]` is
-    // `def self.[]` on a module, and no fast path exists for a call whose
-    // receiver is a class object -- those dispatch through the ordinary
-    // class-method tables.
-    const NUMERIC_FAST_PATH_MRO: &[&str] = &[
-        "Integer",
-        "Float",
-        "Numeric",
-        "Comparable",
-        "Object",
-        "Kernel",
-        "BasicObject",
-    ];
+    // A CLASS-method operator needs none of this whatever the class:
+    // `JSON[str]` is `def self.[]` on a module, and no fast path exists for
+    // a call whose receiver is a class object -- those dispatch through the
+    // ordinary class-method tables.
     if compiler.class(class_id).is_builtin
         && !is_class_method
-        && NUMERIC_FAST_PATH_MRO.contains(&compiler.class(class_id).name.as_str())
         && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
     {
-        return Err(format!(
-            "defining operator `{name}` on the built-in class `{}` isn't supported yet (zeo limitation: static operator fast paths would bypass it)",
-            compiler.class(class_id).name
-        ));
+        match compiler.class(class_id).name.as_str() {
+            "Integer" => {
+                compiler.redefined_int_ops.insert(name.clone());
+            }
+            "Float" => {
+                compiler.redefined_float_ops.insert(name.clone());
+            }
+            "Numeric" | "Comparable" | "Object" | "Kernel" | "BasicObject" => {
+                compiler.redefined_int_ops.insert(name.clone());
+                compiler.redefined_float_ops.insert(name.clone());
+            }
+            _ => {}
+        }
     }
     let sid = register_method(
         compiler,
@@ -5355,19 +5356,22 @@ mod builtin_reopen_tests {
 
     /// Only a receiver a call site can type `Int` or `Float` has an operator
     /// fast path ahead of the reopened-builtin dispatch arm, so only those
-    /// classes -- and the rest of their MRO -- refuse the definition.
+    /// classes -- and the rest of their MRO -- suppress that operator's fast
+    /// path when reopened. Other builtins' operator reopens already win via
+    /// the reopened-builtin arm and record nothing.
     #[test]
-    fn operator_definitions_are_rejected_on_the_numeric_mro_only() {
-        assert!(
-            analyze_err("class Integer\n  def +(other)\n    0\n  end\nend\n")
-                .contains("defining operator `+`")
-        );
-        assert!(
-            analyze_err("module Comparable\n  def <(other)\n    true\n  end\nend\n")
-                .contains("defining operator `<`")
-        );
-        analyze_src("class String\n  def %(other)\n    self\n  end\nend\n");
-        analyze_src("class Set\n  def <<(other)\n    self\n  end\nend\n");
+    fn operator_definitions_on_the_numeric_mro_suppress_the_fast_path() {
+        let a = analyze_src("class Integer\n  def +(other)\n    0\n  end\nend\n");
+        assert!(a.compiler.redefined_int_ops.contains("+"));
+        assert!(!a.compiler.redefined_float_ops.contains("+"));
+        // `Comparable` sits on BOTH numeric MROs.
+        let a = analyze_src("module Comparable\n  def <(other)\n    true\n  end\nend\n");
+        assert!(a.compiler.redefined_int_ops.contains("<"));
+        assert!(a.compiler.redefined_float_ops.contains("<"));
+        let a = analyze_src("class String\n  def %(other)\n    self\n  end\nend\n");
+        assert!(a.compiler.redefined_int_ops.is_empty());
+        let a = analyze_src("class Set\n  def <<(other)\n    self\n  end\nend\n");
+        assert!(a.compiler.redefined_int_ops.is_empty());
     }
 
     /// A reopened builtin has no generated struct, but `@x` in one of its
