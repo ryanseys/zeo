@@ -326,18 +326,18 @@ below on every probe, and `cargo xtask gem-probe --check` fails when they
 disagree with the ledger — so this block cannot go stale.
 
 <!-- gem-probe-stats:begin -->
-**168,710 of 195,778 probed gems compile to Rust (86.2%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
+**168,720 of 195,778 probed gems compile to Rust (86.2%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
 
 | Verdict | Gems | Share of probed |
 |---|---|---|
-| Compile to Rust (`ok`) | 168,710 | 86.2% |
-| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 4,087 | 2.1% |
+| Compile to Rust (`ok`) | 168,720 | 86.2% |
+| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 4,075 | 2.1% |
 | Unresolved dependency in the probe's view (`missing-dependency`) | 1,774 | 0.9% |
-| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 20,236 | 10.3% |
+| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`) | 20,238 | 10.3% |
 | Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`) | 953 | 0.5% |
 | No verdict reached (`timeout`, `out-of-memory`) | 18 | 0.0% |
 
-Of the 174,589 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **168,710 compile (96.6%)**.
+Of the 174,587 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **168,720 compile (96.6%)**.
 <!-- gem-probe-stats:end -->
 
 Read [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for
