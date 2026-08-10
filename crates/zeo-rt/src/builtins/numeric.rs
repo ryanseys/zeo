@@ -208,7 +208,12 @@ tower_binop!(
             Ok(RubyValue::Float(crate::float_mod(x, y)))
         }
     },
-    cpx(_x, _y) => panic!("Complex has no modulo (NoMethodError in real Ruby; zeo limitation: raised as a panic)"),
+    // Complex has no modulo -- the same NoMethodError real Ruby raises, and
+    // rescuable, where a panic was not.
+    cpx(_x, _y) => Err(crate::dispatch::raise_error(
+        "NoMethodError",
+        "undefined method '%' for an instance of Complex".to_string(),
+    )),
 );
 
 tower_binop!(

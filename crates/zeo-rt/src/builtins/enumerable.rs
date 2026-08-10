@@ -871,9 +871,15 @@ impl SumAcc {
         Ok(match (self, v) {
             (SumAcc::Int(a), RubyValue::Int(b)) => match a.checked_add(b) {
                 Some(n) => SumAcc::Int(n),
-                None => panic!(
-                    "integer overflow in Enumerable#sum (zeo limitation: no Bignum promotion here)"
-                ),
+                // Bignum promotion, through the same `+` every other
+                // overflow takes -- the accumulator just stops being the
+                // fast i64 lane from here on.
+                None => SumAcc::Generic(send_value(
+                    &RubyValue::Int(a),
+                    Symbol::intern("+"),
+                    &[RubyValue::Int(b)],
+                    None,
+                )?),
             },
             (SumAcc::Int(a), RubyValue::Float(b)) => SumAcc::Float {
                 sum: a as f64 + b,

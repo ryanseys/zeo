@@ -1076,8 +1076,36 @@ ruby_class! {
             return crate::builtins::lazy::lazy_each(recv, block);
         }
         let e = recv_enum(recv);
+        // `each(*extra)` appends the extras to the captured args on a DUP --
+        // `enumerator.c`'s `enumerator_each`. Only a method-backed source
+        // has captured args to extend; every other source raises the same
+        // way CRuby's underlying call would on surplus arguments.
         if !args.is_empty() {
-            panic!("Enumerator#each with extra arguments isn't supported yet (zeo limitation; CRuby appends them to the captured args on a dup)");
+            let src = match e.source() {
+                EnumSource::Method {
+                    recv,
+                    meth,
+                    args: captured,
+                } => {
+                    let mut all = captured;
+                    all.extend(args.iter().cloned());
+                    EnumSource::Method {
+                        recv,
+                        meth,
+                        args: all,
+                    }
+                }
+                _ => {
+                    return Err(arg_error!(
+                        "wrong number of arguments (given {}, expected 0)",
+                        args.len()
+                    ));
+                }
+            };
+            return match block {
+                Some(b) => internal_each(&src, b),
+                None => Ok(recv.clone()),
+            };
         }
         match block {
             // Re-invoke the captured method with the caller's block; the
