@@ -618,6 +618,32 @@ pub(crate) fn scope_frame_guard(
     }
 }
 
+/// [`scope_frame_guard`] for a scope named by id, memoized.
+///
+/// Same tokens, and the memo is sound because the guard is a function of the
+/// scope and `class_method` only -- no caller passes anything else in. What it
+/// buys is that the per-class dispatch tables stop re-deriving one answer per
+/// inheriting class.
+pub(crate) fn cached_frame_guard(
+    compiler: &Compiler,
+    sid: crate::compiler::ScopeId,
+    class_method: bool,
+) -> TokenStream {
+    if let Some(hit) = FRAME_GUARDS.with_borrow(|c| c.get(&(sid, class_method)).cloned()) {
+        return hit;
+    }
+    let guard = scope_frame_guard(compiler, compiler.scope(sid), class_method);
+    FRAME_GUARDS.with_borrow_mut(|c| c.insert((sid, class_method), guard.clone()));
+    guard
+}
+
+thread_local! {
+    /// Cleared with the pools at the head of each `codegen` -- see `take_pools`.
+    static FRAME_GUARDS: std::cell::RefCell<
+        std::collections::HashMap<(crate::compiler::ScopeId, bool), TokenStream>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Whether `scope`'s body (nested blocks included -- they share the method's
 /// svar scope) touches the `$~` family: a `LastMatchRef` read, a `$~` write,
 /// or a `Regexp.last_match` call. Decides `scope_frame_guard`'s svar-scope
@@ -1000,6 +1026,10 @@ pub(crate) fn pooled_proc_params(key: String, entries: &[TokenStream]) -> TokenS
 }
 
 fn take_pools() -> PoolBuilder {
+    // The frame-guard memo is keyed by `ScopeId`, which only means anything
+    // within one compile -- so it is dropped on the same boundary the pools
+    // are, and for the same reason.
+    FRAME_GUARDS.with_borrow_mut(|c| c.clear());
     POOLS.with_borrow_mut(std::mem::take)
 }
 
@@ -4203,7 +4233,13 @@ fn emit_class(compiler: &Compiler, shared: &share::SharedBodies, cid: ClassId) -
     });
     let dispatch_entries = ci.methods.iter().map(|entry| {
         let scope = compiler.scope(entry.def);
-        let frame = scope_frame_guard(compiler, scope, false);
+        // `ci.methods` is the FLATTENED ancestry, so this runs once per
+        // (class x visible method) -- and the guard depends on the scope
+        // alone, never on `cid`. Uncached, every class that inherited a
+        // method re-walked its whole body for the svar question;
+        // `analyze::share` records 152 classes behind a single `Prism::Node`
+        // method, which is 152 walks for one answer.
+        let frame = cached_frame_guard(compiler, entry.def, false);
         let tramp = match compiler.accessor_shape(cid, scope) {
             Some(shape) => {
                 let slot = expr::slot_of(compiler, cid, &shape.ivar)

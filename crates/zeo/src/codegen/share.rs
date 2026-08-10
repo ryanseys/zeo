@@ -45,6 +45,43 @@ use std::collections::HashMap;
 /// this size are 85-98% of all duplicated bytes.
 const SIZE_GATE: usize = 500;
 
+/// Whether `body` renders to fewer than `limit` bytes -- the same answer
+/// `body.to_string().len() < limit` gives, without the string.
+///
+/// This is asked of EVERY candidate shared body, and the bodies it is asked
+/// about are the large ones by construction, so materializing each one just to
+/// measure it and then dropping it was megabytes of pure allocation churn per
+/// compile. Formatting into a counter is exact rather than an estimate --
+/// which matters, because an estimate that disagreed near the threshold would
+/// silently move sharing decisions.
+///
+/// The counter refuses once it passes `limit`, which aborts the formatting:
+/// nothing after that can change the answer, and a body far over the gate is
+/// the case worth not rendering.
+fn shorter_than(body: &TokenStream, limit: usize) -> bool {
+    use std::fmt::Write as _;
+
+    struct Counter {
+        len: usize,
+        limit: usize,
+    }
+    impl std::fmt::Write for Counter {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.len += s.len();
+            // `Err` is how a `fmt::Write` sink says "stop"; the caller reads
+            // `len`, not the result.
+            if self.len >= self.limit {
+                return Err(std::fmt::Error);
+            }
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter { len: 0, limit };
+    let _ = write!(counter, "{body}");
+    counter.len < limit
+}
+
 pub(crate) struct SharedBodies {
     /// Which shared function serves a given class's copy of a definition.
     ///
@@ -116,7 +153,7 @@ impl SharedBodies {
                     stats.alone += 1;
                     continue;
                 }
-                if bucket.body.to_string().len() < SIZE_GATE {
+                if shorter_than(&bucket.body, SIZE_GATE) {
                     stats.too_small += 1;
                     continue;
                 }
@@ -341,4 +378,40 @@ fn first_divergence(a: &str, b: &str) -> String {
         .position(|(x, y)| x != y)
         .unwrap_or(av.len().min(bv.len()));
     av[at.saturating_sub(8)..(at + 8).min(av.len())].join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of `shorter_than` is that it is not an estimate: a
+    /// disagreement with the string it replaced would silently move which
+    /// bodies get shared, and nothing downstream would say so.
+    #[test]
+    fn the_counter_agrees_with_the_string_it_replaced() {
+        let bodies = [
+            quote! {},
+            quote! { 1 },
+            quote! { let x = 1; x + 2 },
+            quote! {
+                fn f(a: RubyValue, b: RubyValue) -> Result<RubyValue, Signal> {
+                    let mut acc = zeo_rt::RubyValue::Int(0);
+                    for _ in 0..10 { acc = zeo_rt::add(acc, a.clone())?; }
+                    Ok(acc)
+                }
+            },
+        ];
+        for body in bodies {
+            let rendered = body.to_string().len();
+            // Sweep the threshold across and past the real length, so the
+            // boundary itself is covered rather than assumed.
+            for limit in 0..rendered + 4 {
+                assert_eq!(
+                    shorter_than(&body, limit),
+                    rendered < limit,
+                    "limit {limit} on a {rendered}-byte body: {body}"
+                );
+            }
+        }
+    }
 }
