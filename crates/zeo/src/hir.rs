@@ -2211,9 +2211,15 @@ pub enum HirNode {
     /// this node names the class those methods refine. Deliberately not an
     /// `Include`: a refinement edits no ancestry at all -- it is consulted
     /// only at the call sites a `using` scope covers.
+    ///
+    /// `singleton` is `refine Target.singleton_class do ... end`: the holder's
+    /// methods refine Target's CLASS methods (its singleton class), so a
+    /// covered `Target.m` consults them where the plain form covers
+    /// `instance.m`.
     Refine {
         target: String,
         holder: String,
+        singleton: bool,
     },
     /// `using M` -- activates every refinement `M` holds for the code
     /// lexically AFTER this point, to the end of the enclosing body (the
@@ -3075,10 +3081,7 @@ impl HirNode {
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
             | HirNode::ClassMethodPrepend(_)
-            | HirNode::Refine {
-                target: _,
-                holder: _,
-            }
+            | HirNode::Refine { .. }
             | HirNode::Using(_)
             | HirNode::DefHook { .. }
             | HirNode::MethodRedefine { .. }

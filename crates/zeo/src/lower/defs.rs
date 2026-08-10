@@ -2450,6 +2450,33 @@ pub(crate) fn refinement_holder_name(target: &str) -> String {
     format!("#refinement:{}", target.replace("::", "."))
 }
 
+/// The `(target constant, refines-the-singleton)` a `refine` argument names,
+/// or `None` for a genuinely computed one. Three spellings resolve:
+/// a constant path (`String`, `CR::Season`, `::Array`), a constant's
+/// `.singleton_class` (aixm's `refine Range.singleton_class` -- the holder
+/// refines Range's CLASS methods), and a constant's `.class`, which for a
+/// class-valued constant IS `Class` (acpc_table_manager's
+/// `refine Time.class()`).
+fn refine_target(node: &Node<'_>) -> Option<(String, bool)> {
+    if let Ok(path) = constant_path_name(node) {
+        return Some((path, false));
+    }
+    let call = node.as_call_node()?;
+    if call.arguments().is_some() || call.block().is_some() {
+        return None;
+    }
+    let recv = call.receiver()?;
+    let target = constant_path_name(&recv).ok()?;
+    match call.name().as_slice() {
+        b"singleton_class" => Some((target, true)),
+        // `Time.class` reads as Class only because `Time` is itself a class;
+        // the constant requirement keeps an arbitrary value's `.class` (a
+        // genuinely runtime question) out.
+        b"class" => Some(("Class".to_string(), false)),
+        _ => None,
+    }
+}
+
 /// `using M` in any position: `Some(node)` once the shape matched -- no
 /// receiver, one bare constant argument. Anything else answers `None` and
 /// falls through to an ordinary call, which is a clean rejection later if
@@ -3160,17 +3187,26 @@ fn lower_class_body_statement(
             let arg_list: Vec<_> = args.arguments().iter().collect();
             if let (1, Some(block)) = (arg_list.len(), block.as_block_node()) {
                 // A refinement is resolved and installed at COMPILE time, so
-                // its target has to be a constant zeo can name. A computed one
-                // (acpc_table_manager's `refine Time.class()`) is a real
-                // limitation rather than a syntax question, and saying so beats
-                // "expected a constant name or path", which reads as though the
-                // argument were misspelled.
-                let target = constant_path_name(&arg_list[0]).map_err(|_| {
-                    "`refine` needs a class or module zeo can name at compile time (a constant), \
-                     not a computed one -- refinements are resolved and installed at compile time \
-                     (zeo limitation)"
-                })?;
-                let holder = refinement_holder_name(&target);
+                // its target has to be one zeo can name: a constant, a
+                // constant's `.singleton_class` (aixm refines
+                // `Range.singleton_class` -- class methods), or a constant's
+                // `.class` (acpc_table_manager's `refine Time.class()`, which
+                // IS `refine Class`). A genuinely computed one is a real
+                // limitation rather than a syntax question, and saying so
+                // beats "expected a constant name or path", which reads as
+                // though the argument were misspelled.
+                let (target, singleton) = refine_target(&arg_list[0]).ok_or(
+                    "`refine` needs a class or module zeo can name at compile time (a constant, \
+                     or a constant's `.singleton_class`), not a computed one -- refinements are \
+                     resolved and installed at compile time (zeo limitation)",
+                )?;
+                let holder = match singleton {
+                    false => refinement_holder_name(&target),
+                    // CRuby prints `#<refinement:#<Class:Range>>` for the
+                    // singleton form; the dot-joined spelling keeps the holder
+                    // apart from the same class's instance refinement.
+                    true => refinement_holder_name(&format!("#<Class:{target}>")),
+                };
                 let body = lower_class_body(result, hir, block.body(), None, Some(&holder))?;
                 hir.push_span(crate::lower::span_of(hir, node));
                 out.push(hir.push(HirNode::ClassDef {
@@ -3179,7 +3215,11 @@ fn lower_class_body_statement(
                     body,
                     is_module: true,
                 }));
-                out.push(hir.push(HirNode::Refine { target, holder }));
+                out.push(hir.push(HirNode::Refine {
+                    target,
+                    holder,
+                    singleton,
+                }));
                 hir.pop_span();
                 return Ok(());
             }

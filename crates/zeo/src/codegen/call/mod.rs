@@ -1248,7 +1248,7 @@ pub fn emit_call(
                 .compiler
                 .refinements_beside(holder)
                 .into_iter()
-                .filter(|&(_, h)| cx.compiler.refinement_defines(h, name))
+                .filter(|&(_, h, _)| cx.compiler.refinement_defines(h, name))
                 .collect();
             if !candidates.is_empty() {
                 let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
@@ -1259,9 +1259,9 @@ pub fn emit_call(
                 arg_exprs.extend(emit_kwargs_trailing_hash(cx, kwargs));
                 let blk = emit_block_option(cx, block, block_arg);
                 let name_sym = super::pooled_sym(name);
-                let pairs = candidates.iter().map(|&(target, holder)| {
+                let pairs = candidates.iter().map(|&(target, holder, singleton)| {
                     let (target, holder) = (target.0, holder.0);
-                    quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+                    quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder), #singleton) }
                 });
                 return wrap_dynamic_result(
                     block.is_some() || block_arg.is_some(),
@@ -1726,6 +1726,23 @@ pub fn emit_call(
         HirNode::QualifiedConstRead(scope, n) if scope == "Object" => Some(n.as_str()),
         _ => None,
     };
+    // A refined name on the CLASS itself, at a site some `using` covers --
+    // `refine Range.singleton_class` makes `Range.from(...)` a refined call,
+    // and `refine Time.class()` (= `refine Class`) refines every class
+    // receiver. Checked before every class-method special case and the static
+    // resolution below, which would otherwise devirtualize straight past the
+    // runtime match (the same reason `dispatch` asks first). The receiver
+    // emits as a first-class `RubyValue::Class`, so the ordinary refined
+    // entry point serves unchanged, and a candidate that doesn't match at
+    // runtime falls back to an ordinary (dynamic) class-method send.
+    if class_target.is_some() {
+        let recv_expr = emit_expr(cx, recv_id);
+        if let Some(tokens) =
+            emit_refined_call(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr)
+        {
+            return tokens;
+        }
+    }
     // `Ractor.new(*args, name: ...) { |*params| }` -- handled AHEAD of the
     // kwargs-empty class-target block so the `name:` keyword reaches it.
     // Block ISOLATION is enforced HERE, at compile time (the capture set is
@@ -2101,7 +2118,7 @@ fn emit_refined_call(
     }
     let candidates: Vec<_> = active
         .into_iter()
-        .filter(|&(_, holder)| cx.compiler.refinement_defines(holder, name))
+        .filter(|&(_, holder, _)| cx.compiler.refinement_defines(holder, name))
         .collect();
     if candidates.is_empty() {
         return None;
@@ -2115,9 +2132,9 @@ fn emit_refined_call(
     arg_exprs.extend(emit_kwargs_trailing_hash(cx, kwargs));
     let blk = emit_block_option(cx, block, block_arg);
     let name_sym = super::pooled_sym(name);
-    let pairs = candidates.iter().map(|&(target, holder)| {
+    let pairs = candidates.iter().map(|&(target, holder, singleton)| {
         let (target, holder) = (target.0, holder.0);
-        quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+        quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder), #singleton) }
     });
     Some(wrap_dynamic_result(
         block.is_some() || block_arg.is_some(),
@@ -2148,7 +2165,7 @@ fn emit_refined_reflection(
     kwargs: &[KwArg],
     block: Option<NodeId>,
     recv_expr: &TokenStream,
-    active: &[(crate::compiler::ClassId, crate::compiler::ClassId)],
+    active: &[(crate::compiler::ClassId, crate::compiler::ClassId, bool)],
 ) -> Option<TokenStream> {
     if !kwargs.is_empty() || args.is_empty() {
         return None;
@@ -2165,9 +2182,9 @@ fn emit_refined_reflection(
     let name_expr = emit_symbol_expr(cx, args[0]);
     let pairs: Vec<_> = active
         .iter()
-        .map(|&(target, holder)| {
+        .map(|&(target, holder, singleton)| {
             let (target, holder) = (target.0, holder.0);
-            quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+            quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder), #singleton) }
         })
         .collect();
     match name {
@@ -2256,9 +2273,9 @@ fn emit_reflect_dispatch(
         .compiler
         .refinements_active_at(recv_id)
         .into_iter()
-        .map(|(target, holder)| {
+        .map(|(target, holder, singleton)| {
             let (target, holder) = (target.0, holder.0);
-            quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder)) }
+            quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder), #singleton) }
         });
     Some(wrap_dynamic_result(
         !no_block,

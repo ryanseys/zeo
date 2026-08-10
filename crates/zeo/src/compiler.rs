@@ -816,6 +816,10 @@ pub(crate) struct Refinement {
     pub target: ClassId,
     /// The hidden module holding the refined methods.
     pub holder: ClassId,
+    /// `refine Target.singleton_class` -- the holder refines Target's CLASS
+    /// methods, so a covered site matches a CLASS receiver descending from
+    /// `target` where the plain form matches an instance of it.
+    pub singleton: bool,
     /// The [`crate::hir::HirNode::Refine`] marker this came from. A
     /// refinement runs nothing where it was written, so codegen drops the
     /// marker -- but only one it can prove reached registration here.
@@ -1218,7 +1222,7 @@ impl Compiler {
     pub(crate) fn refinements_active_at(
         &self,
         node: crate::hir::NodeId,
-    ) -> Vec<(ClassId, ClassId)> {
+    ) -> Vec<(ClassId, ClassId, bool)> {
         if self.activations.is_empty() {
             return Vec::new();
         }
@@ -1234,7 +1238,7 @@ impl Compiler {
                 self.refinements
                     .iter()
                     .filter(|r| r.module == a.module)
-                    .map(|r| (r.target, r.holder)),
+                    .map(|r| (r.target, r.holder, r.singleton)),
             );
         }
         out
@@ -1266,10 +1270,10 @@ impl Compiler {
             .map(|r| r.target)
     }
 
-    /// Every `(target, holder)` written by the SAME module as `holder`'s own
-    /// `refine` block, itself included -- what a bare name inside that block
-    /// can reach. Empty when `holder` is an ordinary module.
-    pub(crate) fn refinements_beside(&self, holder: ClassId) -> Vec<(ClassId, ClassId)> {
+    /// Every `(target, holder, singleton)` written by the SAME module as
+    /// `holder`'s own `refine` block, itself included -- what a bare name
+    /// inside that block can reach. Empty when `holder` is an ordinary module.
+    pub(crate) fn refinements_beside(&self, holder: ClassId) -> Vec<(ClassId, ClassId, bool)> {
         let Some(module) = self
             .refinements
             .iter()
@@ -1281,7 +1285,7 @@ impl Compiler {
         self.refinements
             .iter()
             .filter(|r| r.module == module)
-            .map(|r| (r.target, r.holder))
+            .map(|r| (r.target, r.holder, r.singleton))
             .collect()
     }
 

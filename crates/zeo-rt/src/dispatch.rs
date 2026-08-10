@@ -3418,7 +3418,7 @@ pub fn reflect_dispatch_in(
     entry: Reflect,
     args: &[RubyValue],
     block: Option<RubyValue>,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
 ) -> Result<RubyValue, Signal> {
     let written = entry.symbol();
     let shadowed = !matches!(
@@ -4558,24 +4558,31 @@ pub fn send_value_in(
 
 /// The holder module whose refined `name` answers for `recv`, or `None` to
 /// fall through to ordinary dispatch. `candidates` is `(refined class,
-/// holder)` in most-recently-activated-first order, decided at compile time
-/// from the `using` scopes covering the call site; the only runtime
-/// question left is whether the receiver is actually of the refined class.
+/// holder, singleton)` in most-recently-activated-first order, decided at
+/// compile time from the `using` scopes covering the call site; the only
+/// runtime question left is whether the receiver is actually of the refined
+/// class. A SINGLETON candidate (`refine Range.singleton_class`) refines
+/// CLASS methods, so it matches a Class receiver descending from the target
+/// where a plain one matches an instance of it.
 pub fn refinement_home(
     recv: &RubyValue,
     name: Symbol,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
 ) -> Option<ClassId> {
     let cls = recv.class_id();
-    candidates.iter().find_map(|&(target, holder)| {
-        (is_a(cls, target) && value_method(holder, 0, name).is_some()).then_some(holder)
+    candidates.iter().find_map(|&(target, holder, singleton)| {
+        let applies = match singleton {
+            false => is_a(cls, target),
+            true => matches!(recv, RubyValue::Class(c) if is_a(*c, target)),
+        };
+        (applies && value_method(holder, 0, name).is_some()).then_some(holder)
     })
 }
 
 fn refinement_for(
     recv: &RubyValue,
     name: Symbol,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
 ) -> Option<ValueMethodFn> {
     let holder = refinement_home(recv, name, candidates)?;
     value_method(holder, 0, name)
@@ -4591,7 +4598,7 @@ pub fn refined_send_in(
     name: Symbol,
     args: &[RubyValue],
     block: Option<RubyValue>,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
 ) -> Result<RubyValue, Signal> {
     match refinement_for(recv, name, candidates) {
         Some(f) => f(recv, args, block),
@@ -4608,7 +4615,7 @@ pub fn refined_send_dynamic(
     name: Symbol,
     args: &[RubyValue],
     block: Option<RubyValue>,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
     public: bool,
 ) -> Result<RubyValue, Signal> {
     if let Some(f) = refinement_for(recv, name, candidates) {
@@ -4627,7 +4634,7 @@ pub fn refined_responds_to(
     recv: &RubyValue,
     name: Symbol,
     include_all: bool,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
 ) -> Result<bool, Signal> {
     if refinement_home(recv, name, candidates).is_some() {
         return Ok(true);
@@ -4640,7 +4647,7 @@ pub fn refined_responds_to(
 pub fn refined_method(
     recv: &RubyValue,
     name: Symbol,
-    candidates: &[(ClassId, ClassId)],
+    candidates: &[(ClassId, ClassId, bool)],
 ) -> Result<RubyValue, Signal> {
     match refinement_home(recv, name, candidates) {
         Some(holder) => Ok(crate::builtins::method::method_value(

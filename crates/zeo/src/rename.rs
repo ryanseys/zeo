@@ -502,10 +502,7 @@ impl Walker {
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
             | HirNode::ClassMethodPrepend(_)
-            | HirNode::Refine {
-                target: _,
-                holder: _,
-            }
+            | HirNode::Refine { .. }
             | HirNode::Using(_)
             | HirNode::DefHook { .. }
             | HirNode::MethodRedefine { .. }

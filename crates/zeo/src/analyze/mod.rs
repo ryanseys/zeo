@@ -909,10 +909,15 @@ fn register_refinement(
     cref: &[ClassId],
     box_id: u32,
 ) {
-    let HirNode::Refine { target, holder } = &compiler.hir[stmt] else {
+    let HirNode::Refine {
+        target,
+        holder,
+        singleton,
+    } = &compiler.hir[stmt]
+    else {
         return;
     };
-    let (target, holder) = (target.clone(), holder.clone());
+    let (target, holder, singleton) = (target.clone(), holder.clone(), *singleton);
     let target = compiler.resolve_class(&target, cref, box_id);
     let holder = compiler.class_in_scope(Some(class_id), &holder, box_id);
     let (Some(target), Some(holder)) = (target, holder) else {
@@ -922,6 +927,7 @@ fn register_refinement(
         module: class_id,
         target,
         holder,
+        singleton,
         marker: stmt,
     });
     // A refinement is active inside its OWN block, so an explicit-receiver
