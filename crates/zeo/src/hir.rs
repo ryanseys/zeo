@@ -265,6 +265,19 @@ pub struct Hir {
     /// plain unresolvable `require`s do; every other missing
     /// `require_relative` stays a loud compile error.
     pub optional_require_sites: std::collections::HashSet<(FileId, u32)>,
+    /// `require`/`require_relative` CALLS under a runtime-UNDECIDABLE guard
+    /// (`require_relative "hell" if ENV["MT_HELL"]`). CRuby loads the target
+    /// only when the guard is true; an eager splice ran it unconditionally --
+    /// a recorded divergence (minitest's hell.rb fired its LoadError warn in
+    /// every compile). These sites keep their CALL, and the target is
+    /// compiled in as a feature unit the runtime require loads when the
+    /// guard actually passes. Keyed like `optional_require_sites`.
+    pub conditional_require_sites: std::collections::HashSet<(FileId, u32)>,
+    /// Single files to compile as feature units: (owning package, path,
+    /// feature name as required). The per-file companion to `unit_demand`'s
+    /// per-directory walk, for a conditional require whose one target is
+    /// known.
+    pub single_unit_demand: std::collections::BTreeSet<(Option<String>, std::path::PathBuf, String)>,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot
@@ -390,6 +403,12 @@ pub struct LoadedFile {
     pub package: Option<String>,
     /// Always 0 (the root box) for now -- see `Hir::loaded_files`.
     pub box_id: u32,
+    /// Compiled in as a FEATURE UNIT (`materialize_units`), not spliced at a
+    /// fixed position. A unit has NOT run at program start, so it must not be
+    /// seeded into `$LOADED_FEATURES` -- the runtime `require` that loads it
+    /// consults that table first, and a seeded unit would answer `false`
+    /// without ever running.
+    pub is_unit: bool,
 }
 
 impl Hir {

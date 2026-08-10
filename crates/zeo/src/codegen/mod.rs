@@ -2701,6 +2701,8 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         .hir
         .loaded_files
         .iter()
+        // A unit runs only when required, so it is not loaded at start.
+        .filter(|f| !f.is_unit)
         .map(|f| f.canonical.to_string_lossy().into_owned())
         .collect();
     // `ruby` preloads rbconfig (via rubygems) before the first program line,

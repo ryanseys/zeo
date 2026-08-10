@@ -17,10 +17,12 @@
 # where it is written, and a method-body `require_relative` at the end of the
 # file it is written in -- never before the definitions around it.
 #
-# The committed `.err.expected` records a DIVERGENCE, not the oracle: CRuby
-# never loads hell.rb at all (`MT_HELL` is unset), where zeo compiles in every
-# branch of a runtime conditional and runs it. hell.rb's optional
-# `require "minitest/proveit"` therefore raises LoadError here and warns.
+# hell.rb sits behind a runtime-undecidable guard (`if ENV["MT_HELL"]`), so
+# it is compiled in as a GATED unit and never executes here -- CRuby's order
+# of events. There used to be an `.err.expected` recording the divergence
+# when zeo ran every branch of a runtime conditional: hell.rb's optional
+# `require "minitest/proveit"` raised LoadError in every compile and warned.
+# Its absence now asserts stderr is empty, as CRuby's is.
 require "minitest/autorun"
 
 class TinyTest < Minitest::Test

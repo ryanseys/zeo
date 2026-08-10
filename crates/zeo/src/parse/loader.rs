@@ -285,6 +285,11 @@ pub(super) fn lower_main_file(
         hir.main_file = Some(main_file);
     }
     let prev_file = hir.lowering_file.replace(main_file);
+    // The main file's own directory, so a dynamic require HERE demands units
+    // the same way one in a spliced file does (`splice_file` sets these for
+    // every other file). A pathless `-e` source has no directory and demands
+    // only the `-I` roots.
+    let prev_dir = std::mem::replace(&mut hir.lowering_dir, dir.clone());
     let lowered = loader
         .lower_file_statements(
             hir,
@@ -311,13 +316,14 @@ pub(super) fn lower_main_file(
             Ok(all)
         });
     hir.lowering_file = prev_file;
+    hir.lowering_dir = prev_dir;
     let lowered = lowered?;
     // AFTER every splice: the demanded load paths are compiled in as units,
     // and `required` now holds every file that runs at a fixed position, so
     // nothing is compiled in twice. A unit lowered here may itself demand more
     // (a gem whose lazily-loaded files compute targets of their own), so this
     // runs to fixpoint.
-    while !hir.unit_demand.is_empty() {
+    while !hir.unit_demand.is_empty() || !hir.single_unit_demand.is_empty() {
         loader.materialize_units(hir)?;
     }
     // Disclose the libraries no position outside a method body required, so
@@ -449,6 +455,48 @@ impl Loader {
             {
                 hir.optional_require_sites
                     .insert((file, call.location().start_offset() as u32));
+            }
+        }
+        // A require under an UNDECIDED guard runs only when the guard
+        // passes. CRuby's order of events is restored by compiling the
+        // target in as a GATED unit and keeping the CALL: the guard decides
+        // at runtime whether the unit ever executes. Eagerly splicing these
+        // ran them unconditionally -- minitest's `require_relative "hell" if
+        // ENV["MT_HELL"]` fired its side effects in every compile. A builtin
+        // needs no unit, and an unresolvable target is already a runtime
+        // LoadError through the pre-scan above.
+        for call in &requires.conditional {
+            let Some(feature) = literal_feature(result, hir, call)? else {
+                continue;
+            };
+            let relative = call.name().as_slice() == b"require_relative";
+            if !relative && is_builtin_feature(&feature) {
+                continue;
+            }
+            let resolved = if relative {
+                resolve_require_relative(&feature, dir).ok().map(|p| (p, None))
+            } else {
+                self.resolve_require(&feature).ok().flatten()
+            };
+            let Some((path, package)) = resolved else {
+                // Unresolvable: the call stays and raises at runtime; for a
+                // plain require the resolvability pre-scan already recorded
+                // it. A missing require_relative under a guard defers the
+                // same way (the guard may never pass).
+                if relative && let Some(file) = hir.lowering_file {
+                    hir.optional_require_sites
+                        .insert((file, call.location().start_offset() as u32));
+                }
+                continue;
+            };
+            if let Some(file) = hir.lowering_file {
+                hir.conditional_require_sites
+                    .insert((file, call.location().start_offset() as u32));
+                hir.single_unit_demand.insert((
+                    package.or_else(|| hir.lowering_package.clone()),
+                    path,
+                    feature,
+                ));
             }
         }
 
@@ -768,14 +816,15 @@ impl Loader {
         }
         // The optional-native-half idiom: this exact call site was recorded
         // as missing-but-rescued, so it keeps its CALL and raises a runtime
-        // `LoadError` for the rescue to catch.
-        if name == "require_relative"
-            && let Some(file) = hir.lowering_file
-            && hir
-                .optional_require_sites
-                .contains(&(file, call.location().start_offset() as u32))
-        {
-            return Ok(None);
+        // `LoadError` for the rescue to catch. A guard-gated site keeps its
+        // call the same way -- its target is a unit the guard may load.
+        if let Some(file) = hir.lowering_file {
+            let key = (file, call.location().start_offset() as u32);
+            if (name == "require_relative" && hir.optional_require_sites.contains(&key))
+                || hir.conditional_require_sites.contains(&key)
+            {
+                return Ok(None);
+            }
         }
         Ok(Some(self.splice_feature(
             hir,
@@ -1039,6 +1088,38 @@ impl Loader {
     /// walk is bounded to the DEMANDING package's own roots, so a gem that
     /// resolves its own targets dynamically pays for itself and nothing else.
     fn materialize_units(&mut self, hir: &mut Hir) -> PResult<()> {
+        // Single-file demands first: a conditional require names exactly one
+        // target, and registering it under the feature AS REQUIRED is what
+        // lets the runtime call find it.
+        for (package, path, feature) in std::mem::take(&mut hir.single_unit_demand) {
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+            if !self.required.insert((0, canonical.clone())) {
+                continue; // already spliced: it runs at its own position
+            }
+            let absolute = canonical.with_extension("").to_string_lossy().into_owned();
+            match self.splice_file(hir, &canonical, None, package.clone(), 0) {
+                Ok(body) => {
+                    for lf in hir
+                        .loaded_files
+                        .iter_mut()
+                        .filter(|lf| lf.canonical == canonical)
+                    {
+                        lf.is_unit = true;
+                    }
+                    hir.feature_units.push(crate::hir::FeatureUnit {
+                        feature,
+                        absolute,
+                        body,
+                    })
+                }
+                Err(e) => {
+                    hir.declined_units
+                        .push((feature, absolute, e.message().to_string()))
+                }
+            }
+        }
         for (package, dir) in std::mem::take(&mut hir.unit_demand) {
             let roots: Vec<PathBuf> = match &package {
                 // No package: the `-I` roots the program was given, plus the
@@ -1072,11 +1153,23 @@ impl Loader {
                     };
                     let absolute = canonical.with_extension("").to_string_lossy().into_owned();
                     match self.splice_file(hir, &canonical, None, package.clone(), 0) {
-                        Ok(body) => hir.feature_units.push(crate::hir::FeatureUnit {
-                            feature,
-                            absolute,
-                            body,
-                        }),
+                        Ok(body) => {
+                            // The file was lowered through the splice path,
+                            // but it RUNS only when required -- mark it so
+                            // `$LOADED_FEATURES` is not seeded with it.
+                            for lf in hir
+                                .loaded_files
+                                .iter_mut()
+                                .filter(|lf| lf.canonical == canonical)
+                            {
+                                lf.is_unit = true;
+                            }
+                            hir.feature_units.push(crate::hir::FeatureUnit {
+                                feature,
+                                absolute,
+                                body,
+                            })
+                        }
                         // Never reached by a require -> never observed. Reached
                         // by one -> a LoadError naming the gap, at the require.
                         Err(e) => {
@@ -1127,6 +1220,7 @@ impl Loader {
             required_from,
             package,
             box_id,
+            is_unit: false,
         });
         let result = ruby_prism::parse(source.as_bytes());
         if let Some(err) = result.errors().next() {
@@ -1663,11 +1757,18 @@ struct RequireCollector<'a> {
     /// catches `LoadError` -- candidates for `Hir::optional_require_sites`
     /// when their target turns out not to exist.
     optional_rel: Vec<ruby_prism::CallNode<'a>>,
+    /// Requires under a runtime-UNDECIDABLE `if`/`unless`/`case` branch --
+    /// CRuby runs these only when the guard passes, so they become gated
+    /// feature units rather than eager splices.
+    conditional: Vec<ruby_prism::CallNode<'a>>,
     /// Enclosing `def`s. Nonzero means a `require` here is deferred.
     defs: u32,
     /// Enclosing `begin` bodies whose rescue catches `LoadError`. Nonzero
     /// means a `require_relative` here is allowed to be missing.
     load_error_rescues: u32,
+    /// Enclosing branches whose guard `eval_static_guard` could NOT decide.
+    /// Nonzero means a `require` here may or may not run.
+    runtime_cond: u32,
 }
 
 /// Whether one of this begin's rescue clauses catches `LoadError`. Named
@@ -1817,6 +1918,12 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             {
                 self.optional_rel.push(again);
             }
+            if self.defs == 0
+                && self.runtime_cond > 0
+                && let Some(again) = node.as_call_node()
+            {
+                self.conditional.push(again);
+            }
             if self.defs == 0 {
                 self.calls.push(call);
             } else if call.name().as_slice() == b"require_relative" {
@@ -1872,15 +1979,23 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     fn visit_if_node(&mut self, node: &ruby_prism::IfNode<'pr>) {
         self.visit(&node.predicate());
         let guard = eval_static_guard(&node.predicate());
+        // An UNDECIDED guard means either branch may or may not run: its
+        // requires are collected as conditional so they load only when the
+        // guard actually passes, the way CRuby runs them.
+        let bump = (guard.is_none()) as u32;
         if guard != Some(false)
             && let Some(stmts) = node.statements()
         {
+            self.runtime_cond += bump;
             self.visit(&stmts.as_node());
+            self.runtime_cond -= bump;
         }
         if guard != Some(true)
             && let Some(sub) = node.subsequent()
         {
+            self.runtime_cond += bump;
             self.visit(&sub);
+            self.runtime_cond -= bump;
         }
     }
 
@@ -1889,15 +2004,20 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     fn visit_unless_node(&mut self, node: &ruby_prism::UnlessNode<'pr>) {
         self.visit(&node.predicate());
         let guard = eval_static_guard(&node.predicate());
+        let bump = (guard.is_none()) as u32;
         if guard != Some(true)
             && let Some(stmts) = node.statements()
         {
+            self.runtime_cond += bump;
             self.visit(&stmts.as_node());
+            self.runtime_cond -= bump;
         }
         if guard != Some(false)
             && let Some(els) = node.else_clause()
         {
+            self.runtime_cond += bump;
             self.visit(&els.as_node());
+            self.runtime_cond -= bump;
         }
     }
 
@@ -1912,7 +2032,10 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     fn visit_case_node(&mut self, node: &ruby_prism::CaseNode<'pr>) {
         let subject = node.predicate().as_ref().and_then(baked_subject);
         let Some(subject) = subject else {
+            // An undecided subject: every arm may or may not run.
+            self.runtime_cond += 1;
             ruby_prism::visit_case_node(self, node);
+            self.runtime_cond -= 1;
             return;
         };
         if let Some(pred) = node.predicate() {
@@ -1942,7 +2065,9 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
                 Some(false) => continue,
                 None => {
                     if let Some(stmts) = when.statements() {
+                        self.runtime_cond += 1;
                         self.visit(&stmts.as_node());
+                        self.runtime_cond -= 1;
                     }
                 }
                 Some(true) => {

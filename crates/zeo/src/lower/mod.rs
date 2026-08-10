@@ -2108,39 +2108,50 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // method body reaches (`Hir::deferred_requires`). Both fall through
             // to the runtime `Kernel#require`, which answers `false` for an
             // already-loaded feature and raises `LoadError` otherwise.
-            if matches!(name.as_str(), "require" | "require_relative")
-                && let Some(feature) = single_literal_string_arg(result, hir, &call)?
-            {
-                if name == "require" && features::is_builtin_feature(&feature) {
-                    let newly_loaded = hir
-                        .activated_features
-                        .insert(features::canonical_ext_feature(&feature).to_string());
-                    let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
-                    return Ok(hir.push(HirNode::BoolLit(first)));
-                }
-                let unresolvable =
-                    name == "require" && hir.unresolvable_requires.contains(&feature);
-                // A rescued-and-missing `require_relative` site keeps its
-                // call: it exists to raise the LoadError its rescue catches.
-                let optional_rel = name == "require_relative"
-                    && hir.lowering_file.is_some_and(|file| {
-                        hir.optional_require_sites
-                            .contains(&(file, call.location().start_offset() as u32))
+            if matches!(name.as_str(), "require" | "require_relative") {
+                if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
+                    if name == "require" && features::is_builtin_feature(&feature) {
+                        let newly_loaded = hir
+                            .activated_features
+                            .insert(features::canonical_ext_feature(&feature).to_string());
+                        let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
+                        return Ok(hir.push(HirNode::BoolLit(first)));
+                    }
+                    let unresolvable =
+                        name == "require" && hir.unresolvable_requires.contains(&feature);
+                    // A rescued-and-missing `require_relative` keeps its call
+                    // to raise the LoadError its rescue catches; a
+                    // guard-gated site keeps its call to load its unit only
+                    // when the guard passes.
+                    let site_kept = hir.lowering_file.is_some_and(|file| {
+                        let key = (file, call.location().start_offset() as u32);
+                        (name == "require_relative"
+                            && hir.optional_require_sites.contains(&key))
+                            || hir.conditional_require_sites.contains(&key)
                     });
-                if !unresolvable && !optional_rel && !hir.deferred_requires.contains(&feature) {
-                    return Ok(hir.push(HirNode::BoolLit(true)));
+                    if !unresolvable && !site_kept && !hir.deferred_requires.contains(&feature) {
+                        return Ok(hir.push(HirNode::BoolLit(true)));
+                    }
+                } else {
+                    // A COMPUTED target can name any file of the demanding
+                    // package -- `Dir[...].each { |t| require t }` is how a
+                    // test suite or a plugin registry loads itself. The
+                    // honest AOT answer is the one a dynamic `autoload`
+                    // already gets: compile the package's files in as
+                    // callable units, and let the runtime require resolve
+                    // the string the program actually builds.
+                    hir.demand_feature_units();
                 }
             }
-            // `load`, or a `require` of a NON-literal (runtime-computed) target:
-            // whole-program AOT can't splice a path it only learns at runtime.
-            // Rather than fail the whole compile, FALL THROUGH to the ordinary
-            // implicit-self `Call` lowering below (the same trick a non-literal
-            // `eval` uses), which dispatches to the runtime `Kernel#{require,
-            // require_relative,load}` -- raising CRuby's `LoadError` if and when
-            // the call actually executes (zeo has no runtime Ruby loader). This
-            // lets a guarded dynamic load -- `load ENV["X"] if ENV["X"]` -- and
-            // the `begin; require dyn; rescue LoadError` idiom COMPILE, with the
-            // guard/rescue behaving at runtime.
+            // `load`, or the computed `require` above: whole-program AOT
+            // can't splice a path it only learns at runtime. FALL THROUGH to
+            // the ordinary implicit-self `Call` lowering below (the same
+            // trick a non-literal `eval` uses), which dispatches to the
+            // runtime `Kernel#{require,require_relative,load}` -- answering
+            // from the compiled-in units, and raising CRuby's `LoadError`
+            // otherwise. This lets a guarded dynamic load -- `load ENV["X"]
+            // if ENV["X"]` -- and the `begin; require dyn; rescue LoadError`
+            // idiom COMPILE, with the guard/rescue behaving at runtime.
         }
         // `autoload :Const, "feature"` -- the loader's eager pre-pass
         // (`Loader::lower_file_statements`) has already SPLICED the feature
