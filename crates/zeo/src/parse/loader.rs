@@ -433,6 +433,24 @@ impl Loader {
                 hir.deferred_requires.insert(feature);
             }
         }
+        // A `require_relative` under a `rescue LoadError` is the pure-Ruby
+        // fallback idiom: the gem ships an optional native half and CATCHES
+        // its absence. When the target is missing, the call site is recorded
+        // so it lowers to a runtime `Kernel#require_relative` raising the
+        // catchable `LoadError` -- CRuby's behaviour -- instead of failing
+        // the whole compile. A missing `require_relative` OUTSIDE that
+        // protection stays the loud error it always was.
+        for call in &requires.optional_rel {
+            let Some(feature) = literal_feature(result, hir, call)? else {
+                continue;
+            };
+            if resolve_require_relative(&feature, dir).is_err()
+                && let Some(file) = hir.lowering_file
+            {
+                hir.optional_require_sites
+                    .insert((file, call.location().start_offset() as u32));
+            }
+        }
 
         for n in body.iter() {
             if let Some(call) = n.as_call_node() {
@@ -746,6 +764,17 @@ impl Loader {
         // missing `require_relative` is NOT in that set and still fails loudly
         // in `splice_feature` below (a missing project file is a real error).
         if name == "require" && hir.unresolvable_requires.contains(&feature) {
+            return Ok(None);
+        }
+        // The optional-native-half idiom: this exact call site was recorded
+        // as missing-but-rescued, so it keeps its CALL and raises a runtime
+        // `LoadError` for the rescue to catch.
+        if name == "require_relative"
+            && let Some(file) = hir.lowering_file
+            && hir
+                .optional_require_sites
+                .contains(&(file, call.location().start_offset() as u32))
+        {
             return Ok(None);
         }
         Ok(Some(self.splice_feature(
@@ -1630,8 +1659,41 @@ struct RequireCollector<'a> {
     /// A plain `require` only a method BODY reaches. These are not spliced, but
     /// their names are still wanted (see `Hir::deferred_requires`).
     deferred: Vec<ruby_prism::CallNode<'a>>,
+    /// `require_relative`s lexically inside a `begin` body whose rescue
+    /// catches `LoadError` -- candidates for `Hir::optional_require_sites`
+    /// when their target turns out not to exist.
+    optional_rel: Vec<ruby_prism::CallNode<'a>>,
     /// Enclosing `def`s. Nonzero means a `require` here is deferred.
     defs: u32,
+    /// Enclosing `begin` bodies whose rescue catches `LoadError`. Nonzero
+    /// means a `require_relative` here is allowed to be missing.
+    load_error_rescues: u32,
+}
+
+/// Whether one of this begin's rescue clauses catches `LoadError`. Named
+/// classes only: a BARE `rescue` catches `StandardError`, and `LoadError <
+/// ScriptError < Exception` sits outside that tree.
+fn rescues_load_error(node: &ruby_prism::BeginNode<'_>) -> bool {
+    let mut clause = node.rescue_clause();
+    while let Some(rescue) = clause {
+        for ex in rescue.exceptions().iter() {
+            let name = match (ex.as_constant_read_node(), ex.as_constant_path_node()) {
+                (Some(read), _) => Some(read.name().as_slice().to_vec()),
+                // `::LoadError`: root-anchored, no parent.
+                (None, Some(path)) if path.parent().is_none() => {
+                    path.name().map(|n| n.as_slice().to_vec())
+                }
+                _ => None,
+            };
+            if name.is_some_and(|n| {
+                matches!(n.as_slice(), b"LoadError" | b"ScriptError" | b"Exception")
+            }) {
+                return true;
+            }
+        }
+        clause = rescue.subsequent();
+    }
+    false
 }
 
 /// A build-time-decidable platform guard's answer, or `None` for every other
@@ -1749,6 +1811,12 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             && call.receiver().is_none()
             && matches!(call.name().as_slice(), b"require" | b"require_relative")
         {
+            if call.name().as_slice() == b"require_relative"
+                && self.load_error_rescues > 0
+                && let Some(again) = node.as_call_node()
+            {
+                self.optional_rel.push(again);
+            }
             if self.defs == 0 {
                 self.calls.push(call);
             } else if call.name().as_slice() == b"require_relative" {
@@ -1756,6 +1824,26 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             } else {
                 self.deferred.push(call);
             }
+        }
+    }
+
+    // Only the `begin` BODY is protected by its rescues; the rescue, else and
+    // ensure clauses run outside that protection and visit at the old depth.
+    fn visit_begin_node(&mut self, node: &ruby_prism::BeginNode<'pr>) {
+        let optional = rescues_load_error(node) as u32;
+        if let Some(stmts) = node.statements() {
+            self.load_error_rescues += optional;
+            self.visit(&stmts.as_node());
+            self.load_error_rescues -= optional;
+        }
+        if let Some(r) = node.rescue_clause() {
+            self.visit(&r.as_node());
+        }
+        if let Some(e) = node.else_clause() {
+            self.visit(&e.as_node());
+        }
+        if let Some(en) = node.ensure_clause() {
+            self.visit(&en.as_node());
         }
     }
 

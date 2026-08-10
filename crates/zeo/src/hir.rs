@@ -255,6 +255,16 @@ pub struct Hir {
     /// (`begin; require "x"; rescue LoadError`) is caught at runtime -- exactly
     /// CRuby's semantics. (A missing `require_relative` stays a compile error.)
     pub unresolvable_requires: std::collections::HashSet<String>,
+    /// `require_relative` CALLS that are lexically inside a `begin` whose
+    /// rescue catches `LoadError`, and whose target does not exist -- the
+    /// optional-native-half idiom (`begin; require_relative 'geos_c_impl';
+    /// rescue LoadError; end`). Keyed by (file, call start offset): a feature
+    /// NAME collides across directories (`require_relative "version"` is
+    /// everywhere), a call site cannot. These lower to a runtime
+    /// `Kernel#require_relative` raising a catchable `LoadError`, exactly as
+    /// plain unresolvable `require`s do; every other missing
+    /// `require_relative` stays a loud compile error.
+    pub optional_require_sites: std::collections::HashSet<(FileId, u32)>,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot

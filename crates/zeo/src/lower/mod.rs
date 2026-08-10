@@ -2120,7 +2120,14 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 }
                 let unresolvable =
                     name == "require" && hir.unresolvable_requires.contains(&feature);
-                if !unresolvable && !hir.deferred_requires.contains(&feature) {
+                // A rescued-and-missing `require_relative` site keeps its
+                // call: it exists to raise the LoadError its rescue catches.
+                let optional_rel = name == "require_relative"
+                    && hir.lowering_file.is_some_and(|file| {
+                        hir.optional_require_sites
+                            .contains(&(file, call.location().start_offset() as u32))
+                    });
+                if !unresolvable && !optional_rel && !hir.deferred_requires.contains(&feature) {
                     return Ok(hir.push(HirNode::BoolLit(true)));
                 }
             }
