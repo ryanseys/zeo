@@ -285,11 +285,14 @@ pub(super) fn lower_main_file(
         hir.main_file = Some(main_file);
     }
     let prev_file = hir.lowering_file.replace(main_file);
-    // The main file's own directory, so a dynamic require HERE demands units
-    // the same way one in a spliced file does (`splice_file` sets these for
-    // every other file). A pathless `-e` source has no directory and demands
-    // only the `-I` roots.
-    let prev_dir = std::mem::replace(&mut hir.lowering_dir, dir.clone());
+    // The MAIN file deliberately sets no `lowering_dir`: a dynamic require
+    // here demands only the `-I` roots, not the file's own directory. A main
+    // file sits wherever the user ran from -- a scratch dir, a checkout root
+    // -- and a recursive walk under it compiles in whatever else lives
+    // there. A loader that globs its own tree is a REQUIRED file (tzinfo's
+    // ts_all.rb, this repo's tests/glob_require_units/loader.rb), and
+    // `splice_file` gives those their directory.
+    let prev_dir = std::mem::replace(&mut hir.lowering_dir, None);
     let lowered = loader
         .lower_file_statements(
             hir,
