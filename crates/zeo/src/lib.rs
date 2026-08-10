@@ -253,7 +253,18 @@ fn compile_on_this_thread(
             // Buffered: the writer is handed one token at a time, and an
             // unbuffered `File` would make each of those a syscall.
             let mut out = std::io::BufWriter::with_capacity(256 * 1024, file);
-            Produced::File(codegen::codegen_to_writer(&analyzed, &mut out)?)
+            match codegen::codegen_to_writer(&analyzed, &mut out) {
+                Ok(stats) => Produced::File(stats),
+                Err(e) => {
+                    // Emission STREAMS, so a construct codegen refuses is only
+                    // reported once a partial program is already on disk. Half
+                    // a program still parses as a whole one, and whatever ran
+                    // next would blame rustc for a file zeo knew was wrong.
+                    drop(out);
+                    let _ = std::fs::remove_file(path);
+                    return Err(e);
+                }
+            }
         }
     };
     if timings_enabled() {
