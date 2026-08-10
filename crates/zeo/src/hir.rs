@@ -277,7 +277,8 @@ pub struct Hir {
     /// feature name as required). The per-file companion to `unit_demand`'s
     /// per-directory walk, for a conditional require whose one target is
     /// known.
-    pub single_unit_demand: std::collections::BTreeSet<(Option<String>, std::path::PathBuf, String)>,
+    pub single_unit_demand:
+        std::collections::BTreeSet<(Option<String>, std::path::PathBuf, String)>,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot

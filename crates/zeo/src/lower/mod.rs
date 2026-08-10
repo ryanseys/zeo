@@ -2125,8 +2125,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     // when the guard passes.
                     let site_kept = hir.lowering_file.is_some_and(|file| {
                         let key = (file, call.location().start_offset() as u32);
-                        (name == "require_relative"
-                            && hir.optional_require_sites.contains(&key))
+                        (name == "require_relative" && hir.optional_require_sites.contains(&key))
                             || hir.conditional_require_sites.contains(&key)
                     });
                     if !unresolvable && !site_kept && !hir.deferred_requires.contains(&feature) {

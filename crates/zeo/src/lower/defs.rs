@@ -2521,8 +2521,10 @@ pub(crate) fn lower_class_body(
     // `FFI::MemoryPointer` ivar -- see `synthesize_ffi_struct`.
     // `FFI::Union` is the same synthesis with every field at offset 0 -- see
     // `synthesize_ffi_struct`. sassc's `SassValue < FFI::Union` is the case.
-    let is_ffi_union = superclass == Some("FFI::Union");
-    let is_ffi_struct = is_ffi_union || superclass == Some("FFI::Struct");
+    // Both anchorings: `consts::constant_path_name` keeps a leading `::` for
+    // a root-anchored path, and `class T < ::FFI::Struct` is the same class.
+    let is_ffi_union = matches!(superclass, Some("FFI::Union" | "::FFI::Union"));
+    let is_ffi_struct = is_ffi_union || matches!(superclass, Some("FFI::Struct" | "::FFI::Struct"));
     let mut out = Vec::new();
     // The DEFAULT visibility for every subsequent `def` in this class body,
     // switched by a bare `private`/`public`/`protected` (no arguments) --
@@ -2541,6 +2543,20 @@ pub(crate) fn lower_class_body(
         || ffi_path.as_deref().is_some_and(|p| hir.is_ffi_library(p));
     if is_ffi && let Some(p) = &ffi_path {
         hir.mark_ffi_library(p);
+    }
+    // `extend FFI::DataConverter` + `native_type T`: the class stands for T
+    // in every later type position, keyed by its leaf name like the rest of
+    // the FFI type table.
+    if stmts
+        .iter()
+        .any(crate::lower::ffi::is_extend_ffi_data_converter)
+        && let Some(ty) = stmts
+            .iter()
+            .find_map(|s| crate::lower::ffi::native_type_of(s))
+        && let Some(name) = cref
+    {
+        let leaf = name.rsplit("::").next().unwrap_or(name);
+        hir.declare_ffi_type(leaf, &ty);
     }
     let mut ffi_lib: Option<String> = None;
     // `typedef :existing, :alias` names accumulated in source order, so a later

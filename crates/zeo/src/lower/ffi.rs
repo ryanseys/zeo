@@ -28,6 +28,69 @@ pub(crate) fn is_extend_ffi_library(node: &Node<'_>) -> bool {
     }
 }
 
+/// `extend FFI::DataConverter` -- the class converts to/from a native FFI
+/// type it names with `native_type`. Recognized so the CLASS NAME itself
+/// works in later type positions (google-protobuf's `Internal::Arena` is
+/// `native_type ::FFI::Type::POINTER`, then appears in `attach_function`
+/// argument lists 104 corpus rows deep).
+pub(crate) fn is_extend_ffi_data_converter(node: &Node<'_>) -> bool {
+    let Some(call) = node.as_call_node() else {
+        return false;
+    };
+    if call.receiver().is_some() || call.name().as_slice() != b"extend" {
+        return false;
+    }
+    let Some(args) = call.arguments() else {
+        return false;
+    };
+    let mut it = args.arguments().iter();
+    match (it.next(), it.next()) {
+        (Some(arg), None) => const_path_string(&arg).as_deref() == Some("FFI::DataConverter"),
+        _ => false,
+    }
+}
+
+/// The native type a `native_type <T>` statement declares, spelled as a
+/// symbol (`native_type :pointer`) or an `FFI::Type::X` constant.
+pub(crate) fn native_type_of(node: &Node<'_>) -> Option<crate::hir::FfiType> {
+    let call = node.as_call_node()?;
+    if call.receiver().is_some() || call.name().as_slice() != b"native_type" {
+        return None;
+    }
+    let mut it = call.arguments()?.arguments().iter();
+    let (arg, None) = (it.next()?, it.next()) else {
+        return None;
+    };
+    if let Some(sym) = arg.as_symbol_node() {
+        let empty = std::collections::HashMap::new();
+        return ffi_type_of(&String::from_utf8_lossy(sym.unescaped()), &empty).ok();
+    }
+    let path = const_path_string(&arg)?;
+    ffi_type_constant(path.trim_start_matches("::").strip_prefix("FFI::Type::")?)
+}
+
+/// The `FFI::Type::X` constants, LP64 like `ffi_type_of`.
+fn ffi_type_constant(leaf: &str) -> Option<crate::hir::FfiType> {
+    use crate::hir::FfiType::*;
+    Some(match leaf {
+        "POINTER" => Pointer,
+        "STRING" => Str,
+        "BOOL" => Bool,
+        "VOID" => Void,
+        "CHAR" | "INT8" => Int(8),
+        "UCHAR" | "UINT8" => Uint(8),
+        "SHORT" | "INT16" => Int(16),
+        "USHORT" | "UINT16" => Uint(16),
+        "INT" | "INT32" => Int(32),
+        "UINT" | "UINT32" => Uint(32),
+        "LONG" | "LONG_LONG" | "INT64" => Int(64),
+        "ULONG" | "ULONG_LONG" | "UINT64" => Uint(64),
+        "FLOAT" | "FLOAT32" => Float(32),
+        "DOUBLE" | "FLOAT64" => Float(64),
+        _ => return None,
+    })
+}
+
 /// Flatten a constant reference (`FFI`, `FFI::Library`, `FFI::Library::LIBC`) to
 /// its `::`-joined spelling, or `None` if it isn't a plain constant path.
 fn const_path_string(node: &Node<'_>) -> Option<String> {
@@ -113,7 +176,14 @@ pub(crate) fn lower_ffi_directive(
             // The most-recently declared library links every subsequent
             // `attach_function`.
             if !args.is_empty() {
-                *ffi_lib = Some(ffi_lib_name(&args)?);
+                // `ffi_lib FFI::CURRENT_PROCESS`: the symbols come from the
+                // already-linked image, which is exactly what a `lib` of
+                // `None` emits -- an extern block with no `#[link]`.
+                if names_current_process(&args) {
+                    *ffi_lib = None;
+                } else {
+                    *ffi_lib = Some(ffi_lib_name(&args)?);
+                }
             }
             Ok(true)
         }
@@ -144,12 +214,19 @@ pub(crate) fn lower_ffi_directive(
                     ffi_symbol_str(n)?,
                     parse_enum_members(std::slice::from_ref(l))?,
                 ),
+                // A NAMELESS `enum [:a, :b]` statement registers no type
+                // name, so nothing later can reference it in a type
+                // position; its one effect -- symbol/int conversion for
+                // arguments typed with THAT enum -- is unreachable without
+                // a name. Validate the members and consume the statement.
+                (Some(l), None) if l.as_array_node().is_some() => {
+                    parse_enum_members(std::slice::from_ref(l))?;
+                    return Ok(true);
+                }
                 _ => {
-                    return Err(
-                        "enum expects `:tag, [members]` (a nameless `enum [...]` is a follow-on)"
-                            .to_string()
-                            .into(),
-                    );
+                    return Err("enum expects `:tag, [members]` or `[members]`"
+                        .to_string()
+                        .into());
                 }
             };
             let ty = crate::hir::FfiType::Enum(members);
@@ -265,6 +342,22 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
         .arguments()
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
+    // `::FFI::Type::LONG.size` -- a scalar's byte width, a constant of the
+    // target. dcu-typhoeus sizes its fd_set inline array with it.
+    if call.name().as_slice() == b"size"
+        && args.is_empty()
+        && let Some(path) = const_path_string(&recv)
+        && let Some(leaf) = path.trim_start_matches("::").strip_prefix("FFI::Type::")
+        && let Some(ty) = ffi_type_constant(leaf)
+    {
+        use crate::hir::FfiType::*;
+        return Some(match ty {
+            Int(w) | Uint(w) | Float(w) => i64::from(w / 8),
+            Pointer | Str => 8,
+            Bool => 1,
+            _ => return None,
+        });
+    }
     let lhs = enum_int_literal(&recv)?;
     match (call.name().as_slice(), args.as_slice()) {
         (b"-@", []) => lhs.checked_neg(),
@@ -280,6 +373,7 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
                 b"+" => lhs.checked_add(rhs),
                 b"-" => lhs.checked_sub(rhs),
                 b"*" => lhs.checked_mul(rhs),
+                b"/" if rhs != 0 => lhs.checked_div(rhs),
                 _ => None,
             }
         }
@@ -306,6 +400,27 @@ pub(crate) fn as_ffi_layout(
         .arguments()
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
+    let field =
+        |name_node: &Node<'_>, ty_node: &Node<'_>| -> PResult<(String, crate::hir::FfiType)> {
+            let name = ffi_symbol_str(name_node)?;
+            let ty = match layout_array_type(ty_node, aliases, hir, body_so_far)? {
+                Some(t) => t,
+                None => ffi_type_node(ty_node, aliases)?,
+            };
+            Ok((name, ty))
+        };
+    // The gem's documented alternative spellings: one hash instead of a flat
+    // pair list -- `layout(magic: :uint32)` (a trailing keyword hash) and
+    // `layout({ :dwId => :uint })` (a braced one).
+    if args.len() == 1
+        && let Some(pairs) = hash_pairs(&args[0])
+    {
+        let mut fields = Vec::new();
+        for (k, v) in &pairs {
+            fields.push(field(k, v)?);
+        }
+        return Ok(Some(fields));
+    }
     if args.is_empty() || !args.len().is_multiple_of(2) {
         return Err("FFI::Struct `layout` expects `:name, :type` pairs"
             .to_string()
@@ -314,15 +429,26 @@ pub(crate) fn as_ffi_layout(
     let mut fields = Vec::new();
     let mut i = 0;
     while i < args.len() {
-        let name = ffi_symbol_str(&args[i])?;
-        let ty = match layout_array_type(&args[i + 1], aliases, hir, body_so_far)? {
-            Some(t) => t,
-            None => ffi_type_node(&args[i + 1], aliases)?,
-        };
-        fields.push((name, ty));
+        fields.push(field(&args[i], &args[i + 1])?);
         i += 2;
     }
     Ok(Some(fields))
+}
+
+/// A hash literal's `(key, value)` node pairs -- braced or keyword form. Any
+/// non-pair element (a `**splat`) declines the whole hash.
+fn hash_pairs<'a>(node: &Node<'a>) -> Option<Vec<(Node<'a>, Node<'a>)>> {
+    let elements: Vec<Node<'a>> = if let Some(h) = node.as_hash_node() {
+        h.elements().iter().collect()
+    } else if let Some(h) = node.as_keyword_hash_node() {
+        h.elements().iter().collect()
+    } else {
+        return None;
+    };
+    elements
+        .into_iter()
+        .map(|e| e.as_assoc_node().map(|a| (a.key(), a.value())))
+        .collect()
 }
 
 /// `[:uint8, 384]` in a layout TYPE position -- an inline array of 384 bytes
@@ -724,6 +850,22 @@ fn ffi_lib_candidate(node: &Node<'_>) -> Option<String> {
     }
 }
 
+/// Whether any `ffi_lib` argument names the process itself.
+fn names_current_process(args: &[Node<'_>]) -> bool {
+    let is_marker = |n: &Node<'_>| {
+        const_path_string(n).is_some_and(|p| {
+            matches!(
+                p.trim_start_matches("::"),
+                "FFI::CURRENT_PROCESS" | "FFI::USE_THIS_PROCESS_AS_LIBRARY"
+            )
+        })
+    };
+    args.iter().any(|a| match a.as_array_node() {
+        Some(arr) => arr.elements().iter().any(|e| is_marker(&e)),
+        None => is_marker(a),
+    })
+}
+
 /// `libm.so.6` / `libssl.dylib` / `m` -> the bare rustc link name (`m`/`ssl`).
 fn strip_lib_name(raw: &str) -> String {
     let base = raw.rsplit('/').next().unwrap_or(raw);
@@ -887,9 +1029,15 @@ fn attach_function_options(node: &Node<'_>) -> PResult<bool> {
 /// A Symbol node's name (`:abs` -> `"abs"`). FFI names/types are always literal
 /// symbols; anything else is a clean rejection.
 fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
+    // A string literal names the same thing: the ffi gem calls `.to_sym` on
+    // its name arguments, and `attach_function 'rados_seek', ...` is common.
     node.as_symbol_node()
         .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
-        .ok_or_else(|| "expected a literal symbol in an FFI declaration".into())
+        .or_else(|| {
+            node.as_string_node()
+                .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+        })
+        .ok_or_else(|| "expected a literal symbol or string in an FFI declaration".into())
 }
 
 /// One FFI type as WRITTEN in a declaration. Three spellings reach a type

@@ -519,3 +519,74 @@ fn exception_in_callback_is_reraised_after_the_c_call() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "rescued: boom from callback\n");
 }
+
+/// The declaration spellings the corpus writes that the strict forms missed:
+/// a String function name (the gem calls `.to_sym` on it), and
+/// `ffi_lib FFI::CURRENT_PROCESS` (symbols from the already-linked image --
+/// what a `lib` of `None` emits).
+#[test]
+fn ffi_string_names_and_current_process() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        module L
+          extend FFI::Library
+          ffi_lib FFI::CURRENT_PROCESS
+          attach_function "abs", [:int], :int
+        end
+        puts L.abs(-9)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "9\n");
+}
+
+/// `layout` written as one hash (the gem's documented alternative), a
+/// root-anchored `::FFI::Struct` superclass, and an inline-array count
+/// computed from `FFI::Type::X.size` -- three corpus spellings in one layout.
+#[test]
+fn ffi_struct_hash_layout_and_type_size_count() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        class Pt < ::FFI::Struct
+          layout x: :int32, y: :int32, pad: [:uint8, 16 / ::FFI::Type::LONG.size]
+        end
+        p = Pt.new
+        p[:x] = 7
+        p[:y] = 35
+        puts p[:x] + p[:y]
+        puts Pt.size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    // 4 + 4 + 2 bytes, rounded up to the 4-byte alignment.
+    assert_eq!(result.stdout, "42\n12\n");
+}
+
+/// A NAMELESS `enum [...]` registers no type name and is consumed; a class
+/// that `extend FFI::DataConverter` with a `native_type` stands for that
+/// native type in later declarations (google-protobuf's Internal::Arena).
+#[test]
+fn ffi_nameless_enum_and_data_converter() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        module Internal
+          class Arena
+            extend ::FFI::DataConverter
+            native_type ::FFI::Type::POINTER
+          end
+        end
+        module L
+          extend FFI::Library
+          ffi_lib FFI::CURRENT_PROCESS
+          enum [:small, :medium, :large]
+          attach_function :my_memchr, :memchr, [Internal::Arena, :int, :size_t], :pointer
+        end
+        puts "compiled"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "compiled\n");
+}

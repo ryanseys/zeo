@@ -477,7 +477,9 @@ impl Loader {
                 continue;
             }
             let resolved = if relative {
-                resolve_require_relative(&feature, dir).ok().map(|p| (p, None))
+                resolve_require_relative(&feature, dir)
+                    .ok()
+                    .map(|p| (p, None))
             } else {
                 self.resolve_require(&feature).ok().flatten()
             };
@@ -1117,10 +1119,9 @@ impl Loader {
                         body,
                     })
                 }
-                Err(e) => {
-                    hir.declined_units
-                        .push((feature, absolute, e.message().to_string()))
-                }
+                Err(e) => hir
+                    .declined_units
+                    .push((feature, absolute, e.message().to_string())),
             }
         }
         for (package, dir) in std::mem::take(&mut hir.unit_demand) {
