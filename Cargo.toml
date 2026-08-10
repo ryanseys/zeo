@@ -136,7 +136,16 @@ unused = "warn"
 [workspace.lints.clippy]
 all = "warn"
 
-[profile.dev.package.zeo-rt]
+# `line-tables-only` everywhere, not just for dependencies.
+#
+# `[profile.dev.package."*"]` covers DEPENDENCIES only, so the workspace's own
+# crates -- `zeo` and `zeo-tests`, both large -- kept building at full DWARF.
+# That debug info is the memory-hungry part of a rustc process and the bulk of
+# what makes `target/` reach tens of gigabytes; `zeo-rt` was demoted for
+# exactly that reason and the compiler crates were missed. A line table is
+# still enough for a backtrace with file and line, which is what anything here
+# is read for.
+[profile.dev]
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
