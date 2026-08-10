@@ -1003,7 +1003,12 @@ fn static_guard(node: &Node<'_>) -> Option<bool> {
     if let Some(defined) = node.as_defined_node() {
         let name = defined.value().as_constant_read_node()?.name();
         let name = String::from_utf8_lossy(name.as_slice());
-        return Some(ALWAYS_DEFINED_CONSTS.contains(&name.as_ref()));
+        // Only the runtime-provided constants decide here; any OTHER name is
+        // UNDECIDABLE at lowering, not false -- the program may well define
+        // it, and `analyze`'s `splice_decidable_ifs` folds the surviving
+        // `if` with the whole-program view. Answering false here dropped
+        // live branches (`if defined?(SomeDep)` with SomeDep loaded).
+        return ALWAYS_DEFINED_CONSTS.contains(&name.as_ref()).then_some(true);
     }
     let call = node.as_call_node()?;
     let recv = call.receiver()?;
@@ -1041,7 +1046,12 @@ fn eval_static_class_self_guard(hir: &Hir, cond: NodeId) -> Option<bool> {
         HirNode::BoolLit(b) => Some(*b),
         HirNode::NilLit => Some(false),
         HirNode::Defined(inner) => match &hir[*inner] {
-            HirNode::ClassRef(name) => Some(ALWAYS_DEFINED_CONSTS.contains(&name.as_str())),
+            // Same three-valued honesty as `static_guard`: only a
+            // runtime-provided constant decides; an unknown name keeps the
+            // runtime `if` rather than dropping a live branch.
+            HirNode::ClassRef(name) => {
+                ALWAYS_DEFINED_CONSTS.contains(&name.as_str()).then_some(true)
+            }
             _ => None,
         },
         HirNode::Call {
