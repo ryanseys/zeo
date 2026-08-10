@@ -1775,6 +1775,22 @@ pub enum FfiType {
     Array(Box<FfiType>, usize),
 }
 
+/// Where an `attach_function`'s symbol comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FfiLib {
+    /// A name rustc can link at build time: `#[link(name = ..)]` plus a
+    /// direct `extern "C"` call -- the zero-overhead tier.
+    Static(String),
+    /// Library candidates only a RUNNING process can open: a bundled `.so`
+    /// path built from `__dir__`, a versioned soname, a candidate list. The
+    /// call site `dlopen`s the first that opens and `dlsym`s once -- which is
+    /// when and how CRuby's ffi gem binds every symbol. See
+    /// `zeo_rt::ffi::FfiSymSite`.
+    Runtime(Vec<String>),
+    /// No `ffi_lib` (or `FFI::CURRENT_PROCESS`): the always-linked image.
+    None,
+}
+
 /// One C function a module `attach_function`'d. The synthesized wrapper
 /// method's whole body IS this node -- see `codegen`'s `emit_ffi_call`, which
 /// declares the `extern "C"` symbol fn-locally (with `#[link(name = ..)]`, so no
@@ -1784,9 +1800,8 @@ pub struct FfiCall {
     /// The C symbol to declare and call (the `attach_function` C name, which may
     /// differ from the Ruby method name in the 4-arg rename form).
     pub symbol: String,
-    /// The library to `#[link(name = ..)]`; `None` relies on the always-linked
-    /// libc/libSystem.
-    pub lib: Option<String>,
+    /// The library the symbol lives in.
+    pub lib: FfiLib,
     /// Each FIXED argument: the wrapper param to read (`LocalRead`) and its C
     /// type. For a variadic function these are only the declared leading
     /// arguments (the ones before `:varargs`).

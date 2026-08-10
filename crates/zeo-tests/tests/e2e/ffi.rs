@@ -590,3 +590,48 @@ fn ffi_nameless_enum_and_data_converter() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "compiled\n");
 }
+
+/// An `ffi_lib` whose name only a RUNNING process can resolve -- a path built
+/// by interpolation -- takes the dlopen/dlsym tier: the first candidate that
+/// opens wins, exactly as the gem tries its alternatives. The list spans both
+/// platforms' libm spellings; the leading candidate never exists.
+#[test]
+fn ffi_runtime_dlopen_resolves_a_path_candidate_list() {
+    let result = run_ruby(
+        r##"
+        require "ffi"
+        module M
+          extend FFI::Library
+          ffi_lib ["#{'/no'}/such/dir/libnothing.so", "/usr/lib/libm.dylib", "libm.so.6"]
+          attach_function :pow, [:double, :double], :double
+        end
+        puts M.pow(2.0, 8.0)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "256.0\n");
+}
+
+/// Every candidate failing to open is the gem's own `LoadError`, raised at
+/// the CALL -- a binary whose optional native half is absent still starts.
+#[test]
+fn ffi_runtime_dlopen_failure_is_a_loaderror_at_the_call() {
+    let result = run_ruby(
+        r##"
+        require "ffi"
+        module M
+          extend FFI::Library
+          ffi_lib "#{'/no'}/such/dir/libnothing.so"
+          attach_function :nope, [], :int
+        end
+        puts "started"
+        begin
+          M.nope
+        rescue LoadError => e
+          puts e.message.start_with?("Could not open library")
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "started\ntrue\n");
+}

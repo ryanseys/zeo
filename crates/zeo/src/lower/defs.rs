@@ -2558,7 +2558,7 @@ pub(crate) fn lower_class_body(
         let leaf = name.rsplit("::").next().unwrap_or(name);
         hir.declare_ffi_type(leaf, &ty);
     }
-    let mut ffi_lib: Option<String> = None;
+    let mut ffi_lib = crate::hir::FfiLib::None;
     // `typedef :existing, :alias` names accumulated in source order, so a later
     // `attach_function` can name an alias the gem requires be declared first.
     // Seeded with what enclosing/earlier FFI libraries declared, so a struct
@@ -2637,7 +2637,7 @@ struct LowerBodyStmt<'a> {
     is_ffi: bool,
     is_ffi_struct: bool,
     is_ffi_union: bool,
-    ffi_lib: &'a mut Option<String>,
+    ffi_lib: &'a mut crate::hir::FfiLib,
     ffi_aliases: &'a mut std::collections::HashMap<String, crate::hir::FfiType>,
     visibility: &'a mut Visibility,
     module_function: &'a mut bool,

@@ -112,7 +112,7 @@ pub(crate) fn lower_ffi_directive(
     result: &ParseResult,
     hir: &mut Hir,
     node: &Node<'_>,
-    ffi_lib: &mut Option<String>,
+    ffi_lib: &mut crate::hir::FfiLib,
     aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
 ) -> PResult<bool> {
@@ -180,9 +180,9 @@ pub(crate) fn lower_ffi_directive(
                 // already-linked image, which is exactly what a `lib` of
                 // `None` emits -- an extern block with no `#[link]`.
                 if names_current_process(&args) {
-                    *ffi_lib = None;
+                    *ffi_lib = crate::hir::FfiLib::None;
                 } else {
-                    *ffi_lib = Some(ffi_lib_name(&args)?);
+                    *ffi_lib = ffi_lib_name(&args, hir)?;
                 }
             }
             Ok(true)
@@ -809,45 +809,163 @@ end
 /// with two locals holding bundled paths and then names the system library.
 /// Only a list where nothing at all is decidable is an error -- and if the
 /// chosen name has no library to link against, the build says so, loudly.
-fn ffi_lib_name(args: &[Node<'_>]) -> PResult<String> {
-    args.iter()
-        .find_map(|a| match a.as_array_node() {
-            Some(arr) => arr.elements().iter().find_map(|e| ffi_lib_candidate(&e)),
-            None => ffi_lib_candidate(a),
-        })
-        .ok_or_else(|| {
+fn ffi_lib_name(args: &[Node<'_>], hir: &Hir) -> PResult<crate::hir::FfiLib> {
+    // Every candidate this can NAME, in the gem's try-in-order semantics. An
+    // unfoldable candidate (a local, an ENV read, a helper call) is SKIPPED,
+    // exactly as before: only an all-unfoldable list errors.
+    let mut folded: Vec<String> = Vec::new();
+    for a in args {
+        match a.as_array_node() {
+            Some(arr) => {
+                for e in arr.elements().iter() {
+                    if let Some(s) = fold_lib_string(&e, hir) {
+                        folded.push(s);
+                    }
+                }
+            }
+            None => {
+                if let Some(s) = fold_lib_string(a, hir) {
+                    folded.push(s);
+                }
+            }
+        }
+    }
+    let Some(first) = folded.first() else {
+        return Err(
             "ffi_lib expects a library name zeo can decide at compile time: a string, a symbol, \
-             or `FFI::Library::LIBC` -- alone, or as one alternative of an array"
+             `FFI::Library::LIBC`, or a `__dir__`/`File.expand_path`-built path -- alone, or as \
+             one alternative of an array"
                 .to_string()
-                .into()
-        })
+                .into(),
+        );
+    };
+    // A plain name links at BUILD time -- the zero-overhead tier, and what
+    // every `ffi_lib "m"` always got. A PATH only a running process can
+    // resolve (a bundled `.so` beside the gem's own files) goes to the
+    // runtime dlopen tier, which is when and where CRuby's ffi gem opens
+    // every library.
+    if !first.contains('/') {
+        return Ok(crate::hir::FfiLib::Static(strip_lib_name(first)));
+    }
+    Ok(crate::hir::FfiLib::Runtime(folded))
 }
 
-/// One `ffi_lib` candidate's link name, or `None` when it is only decidable at
-/// run time (a local, a method call, an interpolated path).
-fn ffi_lib_candidate(node: &Node<'_>) -> Option<String> {
+/// A candidate's compile-time STRING value, or `None` when it is only
+/// decidable at run time (a local, an ENV read, a helper call).
+///
+/// NOT special-cased: `ffi_lib FFI.library_name("vips", 42)` (ruby-vips).
+/// `library_name` is not an `ffi` API -- ruby-vips reopens `module FFI` and
+/// defines it -- so folding it by name would hard-code one gem's helper into
+/// the compiler and miscompile the next gem to pick the same name.
+fn fold_lib_string(node: &Node<'_>, hir: &Hir) -> Option<String> {
     if let Some(s) = node.as_string_node() {
-        return Some(strip_lib_name(&String::from_utf8_lossy(s.unescaped())));
+        return Some(String::from_utf8_lossy(s.unescaped()).into_owned());
     }
     // `ffi_lib :kernel32, :user32` -- windows gems name their DLLs as symbols.
     if let Some(s) = node.as_symbol_node() {
-        return Some(strip_lib_name(&String::from_utf8_lossy(s.unescaped())));
+        return Some(String::from_utf8_lossy(s.unescaped()).into_owned());
     }
-    // NOT special-cased: `ffi_lib FFI.library_name("vips", 42)` (ruby-vips, 24
-    // corpus rows). `library_name` is not an `ffi` API -- ruby-vips reopens
-    // `module FFI` and defines it -- so folding it by name would hard-code one
-    // gem's helper into the compiler and miscompile the next gem to pick the
-    // same name. It needs general compile-time folding of a same-file
-    // `def self.x`, which is its own piece of work.
-    //
-    // `FFI::Library::LIBC` names the platform C library (`c`, which resolves to
-    // libSystem on macOS). `FFI::Platform::LIBC` is the same constant by its
-    // other path, and either may be written `::`-anchored.
+    // `"#{__dir__}/../ext/libfoo.so"` -- parts fold independently.
+    if let Some(interp) = node.as_interpolated_string_node() {
+        let mut out = String::new();
+        for part in interp.parts().iter() {
+            if let Some(s) = part.as_string_node() {
+                out.push_str(&String::from_utf8_lossy(s.unescaped()));
+            } else if let Some(embedded) = part.as_embedded_statements_node() {
+                let stmts: Vec<Node<'_>> = embedded
+                    .statements()
+                    .map(|s| s.body().iter().collect())
+                    .unwrap_or_default();
+                let [only] = stmts.as_slice() else {
+                    return None;
+                };
+                out.push_str(&fold_lib_string(only, hir)?);
+            } else {
+                return None;
+            }
+        }
+        return Some(out);
+    }
+    if let Some(call) = node.as_call_node() {
+        let name = call.name().as_slice();
+        let args: Vec<Node<'_>> = call
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        // The requiring file's directory -- how a gem roots its bundled
+        // native half.
+        if name == b"__dir__" && call.receiver().is_none() && args.is_empty() {
+            return Some(hir.lowering_dir.as_ref()?.display().to_string());
+        }
+        if name == b"+"
+            && let Some(recv) = call.receiver()
+            && let [rhs] = args.as_slice()
+        {
+            return Some(format!(
+                "{}{}",
+                fold_lib_string(&recv, hir)?,
+                fold_lib_string(rhs, hir)?
+            ));
+        }
+        let on_file = call
+            .receiver()
+            .and_then(|r| const_path_string(&r))
+            .is_some_and(|p| p.trim_start_matches("::") == "File");
+        if on_file {
+            match (name, args.as_slice()) {
+                (b"join", parts) if !parts.is_empty() => {
+                    let folded: Option<Vec<String>> =
+                        parts.iter().map(|p| fold_lib_string(p, hir)).collect();
+                    return Some(folded?.join("/"));
+                }
+                (b"dirname", [p]) => {
+                    let s = fold_lib_string(p, hir)?;
+                    let parent = std::path::Path::new(&s).parent()?;
+                    return Some(parent.display().to_string());
+                }
+                (b"expand_path", [p]) => {
+                    return Some(lexical_join(
+                        &hir.lowering_dir.clone()?,
+                        &fold_lib_string(p, hir)?,
+                    ));
+                }
+                (b"expand_path", [p, base]) => {
+                    let base = fold_lib_string(base, hir)?;
+                    return Some(lexical_join(
+                        std::path::Path::new(&base),
+                        &fold_lib_string(p, hir)?,
+                    ));
+                }
+                _ => return None,
+            }
+        }
+        return None;
+    }
+    // `FFI::Library::LIBC` names the platform C library (`c`, which resolves
+    // to libSystem on macOS). `FFI::Platform::LIBC` is the same constant by
+    // its other path, and either may be written `::`-anchored.
     let path = const_path_string(node)?;
     match path.trim_start_matches("::") {
         "FFI::Library::LIBC" | "FFI::Platform::LIBC" => Some("c".to_string()),
         _ => None,
     }
+}
+
+/// `base` joined with `rel`, `.`/`..` collapsed LEXICALLY -- the same rule as
+/// `File.expand_path`, which never consults the filesystem.
+fn lexical_join(base: &std::path::Path, rel: &str) -> String {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in base.join(rel).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out.display().to_string()
 }
 
 /// Whether any `ffi_lib` argument names the process itself.
@@ -880,7 +998,7 @@ fn lower_attach_function(
     result: &ParseResult,
     hir: &mut Hir,
     args: &[Node<'_>],
-    lib: Option<String>,
+    lib: crate::hir::FfiLib,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<NodeId> {
     let _ = result;

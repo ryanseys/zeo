@@ -390,6 +390,118 @@ pub unsafe fn call_fixed(
     Ok(unsafe { call_and_wrap(&cif, code, &args, ret) })
 }
 
+/// A `VaVal` carrying a raw code/data pointer -- how generated code hands a
+/// libffi closure's `code_ptr` (or any raw address) into `call_fixed` without
+/// allocating an `FFI::Pointer` around it first.
+#[cfg(feature = "ext-ffi")]
+pub fn va_raw_pointer(p: *const c_void) -> VaVal {
+    VaVal {
+        inner: VaInner::Ptr(p as *mut c_void),
+        _owner: None,
+    }
+}
+
+/// One `attach_function` call site whose library is only decidable at RUN
+/// time: a bundled `.so` path built from `__dir__`, a versioned soname, a
+/// candidate list. Resolved once per site with `dlopen`/`dlsym` -- which is
+/// when and how CRuby's ffi gem binds every symbol -- and cached on success.
+/// A resolution FAILURE is not cached: it re-raises on every call, exactly as
+/// retrying a failed `require` re-raises.
+///
+/// Emission mirrors `zeo_rt::ConstSite`: a `static` in the call-site block,
+/// `const fn new`, an inner `OnceLock`.
+#[cfg(feature = "ext-ffi")]
+pub struct FfiSymSite {
+    addr: std::sync::OnceLock<usize>,
+}
+
+#[cfg(feature = "ext-ffi")]
+impl FfiSymSite {
+    #[must_use]
+    pub const fn new() -> FfiSymSite {
+        FfiSymSite {
+            addr: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The symbol's address, resolving on first call. `candidates` are the
+    /// `ffi_lib` alternatives IN ORDER, each tried as written and then
+    /// through the gem's name manglings (`lib<x>.<ext>`, `<x>.<ext>`).
+    pub fn get(&self, candidates: &[&str], sym: &str) -> Result<*const c_void, Signal> {
+        if let Some(&a) = self.addr.get() {
+            return Ok(a as *const c_void);
+        }
+        let handle = dlopen_first(candidates)?;
+        let cname = std::ffi::CString::new(sym)
+            .map_err(|_| arg_error!("FFI symbol name contains a null byte"))?;
+        let addr = unsafe { libc::dlsym(handle, cname.as_ptr()) };
+        if addr.is_null() {
+            // The gem's own class for a symbol the library doesn't export.
+            return Err(crate::raise_error(
+                "FFI::NotFoundError",
+                format!("Function '{sym}' not found in [{}]", candidates.join(", ")),
+            ));
+        }
+        let _ = self.addr.set(addr as usize);
+        Ok(addr)
+    }
+}
+
+#[cfg(feature = "ext-ffi")]
+impl Default for FfiSymSite {
+    fn default() -> FfiSymSite {
+        FfiSymSite::new()
+    }
+}
+
+/// `dlopen` the first candidate that opens, trying each name as written and
+/// then with the platform's `lib` prefix and shared-library suffix -- the
+/// mangling `FFI.map_library_name` applies. Handles are never `dlclose`d,
+/// matching `FFI::DynamicLibrary`. All candidates failing is a `LoadError`
+/// carrying the accumulated `dlerror` text.
+#[cfg(feature = "ext-ffi")]
+fn dlopen_first(candidates: &[&str]) -> Result<*mut c_void, Signal> {
+    #[cfg(target_os = "macos")]
+    const DYLIB_EXT: &str = "dylib";
+    #[cfg(not(target_os = "macos"))]
+    const DYLIB_EXT: &str = "so";
+    let mut errors = Vec::new();
+    for cand in candidates {
+        let mut names = vec![(*cand).to_string()];
+        // A bare name (no path, no extension) gets the mangled spellings.
+        if !cand.contains('/') && !cand.contains('.') {
+            names.push(format!("lib{cand}.{DYLIB_EXT}"));
+            names.push(format!("{cand}.{DYLIB_EXT}"));
+        }
+        for name in names {
+            let Ok(cname) = std::ffi::CString::new(name.as_str()) else {
+                continue;
+            };
+            let handle = unsafe { libc::dlopen(cname.as_ptr(), libc::RTLD_LAZY) };
+            if !handle.is_null() {
+                return Ok(handle);
+            }
+        }
+        let err = unsafe { libc::dlerror() };
+        if !err.is_null() {
+            errors.push(
+                unsafe { std::ffi::CStr::from_ptr(err) }
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    let detail = if errors.is_empty() {
+        candidates.join(", ")
+    } else {
+        errors.join("; ")
+    };
+    Err(crate::raise_error(
+        "LoadError",
+        format!("Could not open library: {detail}"),
+    ))
+}
+
 /// Parse the trailing `*rest` of a variadic call -- a flat Array of alternating
 /// `type_symbol, value` pairs -- into promoted variadic arguments.
 #[cfg(feature = "ext-ffi")]

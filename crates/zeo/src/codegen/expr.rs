@@ -2762,8 +2762,15 @@ pub(super) fn emit_const_write_stmt(
 
 fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
     let link = match &call.lib {
-        Some(lib) => quote! { #[link(name = #lib)] },
-        None => quote! {},
+        crate::hir::FfiLib::Static(lib) => quote! { #[link(name = #lib)] },
+        crate::hir::FfiLib::None => quote! {},
+        // Only a running process can open the library (a bundled `.so` path,
+        // a versioned soname): resolve with dlopen/dlsym at the call site --
+        // which is when and how CRuby's ffi gem binds every symbol -- and
+        // call through libffi.
+        crate::hir::FfiLib::Runtime(candidates) => {
+            return emit_ffi_runtime_call(cx, call, candidates);
+        }
     };
     // A variadic function's argument list is shaped at runtime, so it goes
     // through libffi rather than a fixed `extern "C"` signature.
@@ -2812,6 +2819,97 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
             let __ffi_ret = #invoke;
             #cb_check
             #wrap
+        }
+    }
+}
+
+/// An `attach_function` whose library resolves at RUN time (`FfiLib::
+/// Runtime`): a per-site `FfiSymSite` dlopens the first candidate that opens
+/// and dlsyms once, then the call goes through libffi (`call_fixed`) with
+/// arguments marshaled to `VaVal`s. Slower than the `extern "C"` tier by one
+/// indirect call and the marshal -- and the only tier that can open a
+/// library the BUILD machine never saw.
+fn emit_ffi_runtime_call(
+    cx: &Ctx,
+    call: &crate::hir::FfiCall,
+    candidates: &[String],
+) -> TokenStream {
+    use crate::hir::FfiType;
+    if let Some(rest_id) = call.variadic {
+        return crate::codegen::unsupported_at(
+            cx.compiler,
+            rest_id,
+            "a variadic `attach_function` with a runtime-resolved `ffi_lib` isn't supported yet \
+             (zeo limitation) -- name the library statically or drop `:varargs`",
+        );
+    }
+    let sym = &call.symbol;
+    let cands = candidates.iter();
+    let mut pushes = Vec::new();
+    let mut has_callback = false;
+    for (i, (arg_id, ty)) in call.args.iter().enumerate() {
+        let val = emit_expr(cx, *arg_id);
+        pushes.push(match ty {
+            // The symbol/int conversion the extern tier does inline.
+            FfiType::Enum(members) => {
+                let table = ffi_enum_members(members);
+                quote! {
+                    __vals.push(zeo_rt::ffi::marshal_fixed(
+                        zeo_rt::ffi::FfiKind::I32,
+                        &zeo_rt::RubyValue::Int(zeo_rt::ffi::enum_to_int(&(#val), #table)?),
+                    )?);
+                }
+            }
+            FfiType::Callback(cb_args, cb_ret) => {
+                has_callback = true;
+                let handle = quote::format_ident!("__ffi_cb{}", i);
+                let arg_kinds: Vec<TokenStream> = cb_args.iter().map(ffi_kind_tokens).collect();
+                let ret_kind = ffi_kind_tokens(cb_ret);
+                quote! {
+                    let #handle = zeo_rt::ffi::make_callback(&(#val), &[#(#arg_kinds),*], #ret_kind)?;
+                    __vals.push(zeo_rt::ffi::va_raw_pointer(#handle.code_ptr()));
+                }
+            }
+            other => {
+                let kind = ffi_kind_tokens(other);
+                quote! { __vals.push(zeo_rt::ffi::marshal_fixed(#kind, &(#val))?); }
+            }
+        });
+    }
+    let ret_kind = ffi_kind_tokens(&call.ret);
+    let cb_check = if has_callback {
+        quote! { zeo_rt::ffi::take_callback_error()?; }
+    } else {
+        quote! {}
+    };
+    let invoke = if call.blocking {
+        quote! { zeo_rt::gvl::without_gvl(|| unsafe { zeo_rt::ffi::call_fixed(__addr, __vals, #ret_kind) })? }
+    } else {
+        quote! { unsafe { zeo_rt::ffi::call_fixed(__addr, __vals, #ret_kind) }? }
+    };
+    // The extern tier's `int_to_enum` wrap, applied after the generic
+    // integer wrap `call_fixed` already did.
+    let post = match &call.ret {
+        FfiType::Enum(members) => {
+            let table = ffi_enum_members(members);
+            quote! {
+                match __ffi_ret {
+                    zeo_rt::RubyValue::Int(__n) => zeo_rt::ffi::int_to_enum(__n, #table),
+                    __other => __other,
+                }
+            }
+        }
+        _ => quote! { __ffi_ret },
+    };
+    quote! {
+        {
+            static __FFI_SYM: zeo_rt::ffi::FfiSymSite = zeo_rt::ffi::FfiSymSite::new();
+            let __addr = __FFI_SYM.get(&[#(#cands),*], #sym)?;
+            let mut __vals: Vec<zeo_rt::ffi::VaVal> = Vec::new();
+            #(#pushes)*
+            let __ffi_ret = #invoke;
+            #cb_check
+            #post
         }
     }
 }
