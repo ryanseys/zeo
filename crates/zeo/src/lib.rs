@@ -236,6 +236,13 @@ fn compile_on_this_thread(
     // fact (does any eval site survive lowering?), so it belongs here rather
     // than downstream where the arena is already owned by `Analyzed`.
     let needs_prism_runtime = hir.needs_prism_runtime();
+    // Reported with the timings because the arena is a first-class term in the
+    // compiler's peak: one `HirNode` is as wide as the largest variant, so the
+    // count times that width is a floor on what the front end holds.
+    let (node_count, node_bytes) = (
+        hir.all_nodes().len(),
+        std::mem::size_of_val(hir.all_nodes()),
+    );
     let t_analyze_start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::Analyze);
     let analyzed = analyze::analyze(hir, root)?;
@@ -273,7 +280,7 @@ fn compile_on_this_thread(
             Produced::File(stats) => stats.bytes,
         };
         eprintln!(
-            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={bytes} lines={} peak_rss={}",
+            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={bytes} lines={} nodes={node_count} node_bytes={} peak_rss={}",
             t_parse_lower.as_millis(),
             t_analyze.as_millis(),
             t_codegen_start.elapsed().as_millis(),
@@ -284,6 +291,7 @@ fn compile_on_this_thread(
             },
             // `0` for a compile that finished inside the poller's first
             // interval -- absent, not zero. `compile-bench` reads it as such.
+            node_bytes,
             memguard::peak_bytes().unwrap_or(0),
         );
     }
