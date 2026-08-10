@@ -8,34 +8,32 @@
 //! megabytes, far past the pipe buffer, so a child writing it would block
 //! forever against a parent that never read.
 //!
-//! What is kept is bounded, though. The generated Rust for one gem has been
-//! measured near a gigabyte, and a sweep runs several children at once, so an
-//! unbounded `Vec<u8>` per stream put the SWEEP's own memory in the same class
-//! as the compiles it was measuring. Past [`MAX_CAPTURE`] the reader keeps
-//! draining -- backpressuring the child would turn a big-output gem into a
-//! bogus timeout -- but discards, and records the true byte count so a caller
-//! can tell a truncated capture from a short one. The golden harness has had
-//! this bound since a miscompiled `.rb` first took the machine down
-//! (`zeo-tests/tests/support/golden.rs`); this is the same rule for xtask.
+//! **stdout is drained and discarded.** Draining is not optional -- a child
+//! that fills the pipe blocks forever against a parent that never reads -- but
+//! KEEPING it was: the generated Rust for one gem has been measured near a
+//! gigabyte, and with several children in flight the sweep's own memory was in
+//! the same class as the compiles it was measuring. Nothing needs those bytes
+//! any more. A caller that wants a child's program output asks the child to
+//! write it to a file (`zeo --emit-rust`), which is both cheaper and the only
+//! shape that works at gem scale.
+//!
+//! stderr IS kept, bounded at [`MAX_CAPTURE`] -- every caller classifies a
+//! failure from it, and a diagnostic that runs past 64 MiB is already past
+//! being read. The golden harness has had this bound since a miscompiled `.rb`
+//! first took the machine down (`zeo-tests/tests/support/golden.rs`).
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The most of each stream `run_with_timeout` KEEPS. Matches the golden
-/// harness's bound.
-pub const MAX_CAPTURE: usize = 64 << 20; // 64 MiB per stream
+/// The most of stderr `run_with_timeout` keeps. Matches the golden harness's
+/// bound.
+pub const MAX_CAPTURE: usize = 64 << 20;
 
 pub struct Execution {
-    /// The first [`MAX_CAPTURE`] bytes of the child's stdout.
-    pub stdout: Vec<u8>,
-    /// The first [`MAX_CAPTURE`] bytes of the child's stderr.
+    /// The first [`MAX_CAPTURE`] bytes of the child's stderr. stdout is
+    /// discarded -- see the module docs.
     pub stderr: Vec<u8>,
-    /// How many bytes the child actually wrote to stdout -- more than
-    /// `stdout.len()` when the capture was truncated. stderr is bounded the
-    /// same way but has no counterpart: nothing measures it, and a diagnostic
-    /// that runs past 64 MiB is already past being read.
-    pub stdout_bytes: u64,
     /// `None` when the child was killed on timeout.
     pub status: Option<std::process::ExitStatus>,
     pub timed_out: bool,
@@ -44,12 +42,6 @@ pub struct Execution {
 impl Execution {
     pub fn success(&self) -> bool {
         self.status.is_some_and(|s| s.success())
-    }
-
-    /// Whether `stdout` holds less than the child wrote. A caller that treats
-    /// the capture as the whole output must check this rather than assume.
-    pub fn stdout_truncated(&self) -> bool {
-        self.stdout_bytes > self.stdout.len() as u64
     }
 }
 
@@ -77,8 +69,8 @@ pub fn run_with_timeout(
             let _ = stdin.write_all(&bytes);
         })
     });
-    let stdout_reader = drain(child.stdout.take().unwrap());
-    let stderr_reader = drain(child.stderr.take().unwrap());
+    let stdout_reader = drain(child.stdout.take().unwrap(), 0);
+    let stderr_reader = drain(child.stderr.take().unwrap(), MAX_CAPTURE);
 
     let mut timed_out = false;
     let status = loop {
@@ -97,37 +89,33 @@ pub fn run_with_timeout(
     if let Some(w) = stdin_writer {
         let _ = w.join();
     }
-    let (stdout, stdout_bytes) = stdout_reader.join().unwrap_or_default();
-    let (stderr, _) = stderr_reader.join().unwrap_or_default();
+    let _ = stdout_reader.join();
     Ok(Execution {
-        stdout,
-        stderr,
-        stdout_bytes,
+        stderr: stderr_reader.join().unwrap_or_default(),
         status,
         timed_out,
     })
 }
 
-/// Drains one pipe to EOF, keeping at most [`MAX_CAPTURE`] bytes. Returns what
-/// was kept and how much was written -- see the module docs for why draining
-/// continues past the cap instead of backpressuring the child.
-fn drain<R: Read + Send + 'static>(mut r: R) -> std::thread::JoinHandle<(Vec<u8>, u64)> {
+/// Drains one pipe to EOF, keeping at most `keep` bytes of it.
+///
+/// Draining continues past `keep` rather than stopping: a reader that stops
+/// backpressures the child, which would turn a big-output program into a bogus
+/// timeout. `keep = 0` reads and discards, which is what stdout gets.
+fn drain<R: Read + Send + 'static>(mut r: R, keep: usize) -> std::thread::JoinHandle<Vec<u8>> {
     std::thread::spawn(move || {
         let mut buf = Vec::new();
-        let mut total = 0u64;
         let mut chunk = [0u8; 64 * 1024];
         loop {
             match r.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    total += n as u64;
-                    if buf.len() < MAX_CAPTURE {
-                        let room = MAX_CAPTURE - buf.len();
-                        buf.extend_from_slice(&chunk[..n.min(room)]);
-                    }
+                Ok(n) if buf.len() < keep => {
+                    let room = keep - buf.len();
+                    buf.extend_from_slice(&chunk[..n.min(room)]);
                 }
+                Ok(_) => {}
             }
         }
-        (buf, total)
+        buf
     })
 }

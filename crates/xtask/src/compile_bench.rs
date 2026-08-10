@@ -4,9 +4,9 @@
 //! generated binaries, this measures what the COMPILER produces and costs on a
 //! fixed program set spanning hello-world to bundler scale. Per program:
 //!
-//! - `frontend_ms` -- best-of-N wall time of `zeo <file> --dump=rust` (parse -> lower ->
+//! - `frontend_ms` -- best-of-N wall time of `zeo <file> --emit-rust` (parse -> lower ->
 //!   analyze -> codegen -> emit, no rustc)
-//! - `rust_lines`  -- line count of the `--dump=rust` (pretty) output
+//! - `rust_lines`  -- line count of the emitted (compact) output
 //! - `rust_bytes`  -- byte length of the build-path source (the `bytes=` field
 //!   of the compile's `zeo-timings:` line)
 //! - `peak_rss`    -- the front-end run's own peak resident memory
@@ -197,13 +197,17 @@ fn report(row: &Row, base: Option<&Row>) {
 }
 
 fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, String> {
-    // Frontend: best-of-N `--dump=rust` wall time; the last run's stdout
-    // supplies the pretty line count.
+    // Frontend: best-of-N `--emit-rust` wall time, which is the renderer the
+    // BUILD path uses. It measured `--dump=rust` until the peak-memory work
+    // showed what that was costing -- a `syn` re-parse, a prettyplease pass
+    // and the whole program held as a `String`, none of which any build does.
+    // `rust_lines` and `peak_rss` moved with it, so both re-baselined.
     //
     // `peak_rss` takes the WORST run rather than the best: time is a
     // best-of-N measurement because the fastest run is the one least
     // disturbed by the machine, but memory is a ceiling question, and the
     // most a compile ever held is the number that decides whether it fits.
+    let emitted = std::env::temp_dir().join(format!("zeo-compile-bench-{name}.rs"));
     let mut best_ms: Option<u64> = None;
     let mut rust_lines = 0u64;
     let mut peak_rss = 0u64;
@@ -211,26 +215,28 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         let started = Instant::now();
         let out = Command::new(zeo_bin)
             .arg(rb)
-            .arg("--dump=rust")
+            .arg("--emit-rust")
+            .arg(&emitted)
             .arg("-W0")
             .env("ZEO_TIMINGS", "1")
             .output()
-            .map_err(|e| format!("invoking zeo --dump=rust: {e}"))?;
+            .map_err(|e| format!("invoking zeo --emit-rust: {e}"))?;
         let ms = started.elapsed().as_millis() as u64;
         if !out.status.success() {
             return Err(format!(
-                "zeo --dump=rust failed: {}",
+                "zeo --emit-rust failed: {}",
                 String::from_utf8_lossy(&out.stderr)
                     .lines()
                     .next()
                     .unwrap_or("")
             ));
         }
-        rust_lines = out.stdout.iter().filter(|&&b| b == b'\n').count() as u64;
-        peak_rss = peak_rss
-            .max(timing_field(&String::from_utf8_lossy(&out.stderr), "peak_rss=").unwrap_or(0));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        rust_lines = timing_field(&stderr, "lines=").unwrap_or(0);
+        peak_rss = peak_rss.max(timing_field(&stderr, "peak_rss=").unwrap_or(0));
         best_ms = Some(best_ms.map_or(ms, |b| b.min(ms)));
     }
+    let _ = std::fs::remove_file(&emitted);
 
     // Build: one `-o` under cache bypass; `zeo-timings:` lines carry the
     // build-path source bytes, the rustc wall time, and the binary size.

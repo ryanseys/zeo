@@ -35,6 +35,10 @@ struct Args {
     output: Option<PathBuf>,
     /// `--dump=rust`: print the generated Rust source instead of building.
     dump_rust: bool,
+    /// `--emit-rust <path>`: stream the generated Rust there instead of
+    /// building. Distinct from `dump_rust` in more than destination -- it is
+    /// the compact renderer, and nothing holds the program as text.
+    emit_rust: Option<PathBuf>,
     /// `-I` roots, then RUBYOPT's `-I` roots, then RUBYLIB -- ruby's order.
     load_roots: Vec<PathBuf>,
     /// `--gems <dir>`: vendored-gem directories (repeatable).
@@ -158,7 +162,12 @@ options:
   -W0                   suppress all zeo warnings
   -W:no-<category>      suppress one warning category; `-W:<category>`
                         re-enables it. Categories: zeo-builtin-substitute
-  --dump=rust           print the generated Rust source and exit (no build)
+  --dump=rust           print the generated Rust source and exit (no build).
+                        Formatted for a person to read, which costs a `syn`
+                        re-parse and a second copy of the whole program
+  --emit-rust <path>    write the generated Rust to <path> and exit (no build).
+                        Unformatted and streamed, so nothing holds the program
+                        as text -- what a sweep or a build harness wants
   --log-level <level>   log the compiler's internals to stderr at this level:
                         off|error|warn|info|debug|trace (overrides ZEO_LOG)
   -v, --version         print the version and exit
@@ -198,6 +207,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut eval: Option<String> = None;
     let mut output = None;
     let mut dump_rust = false;
+    let mut emit_rust: Option<PathBuf> = None;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
     let mut report = Report::Off;
@@ -295,6 +305,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                         }
                     }
                 }
+                "emit-rust" => emit_rust = Some(PathBuf::from(value("--emit-rust")?)),
                 // The pre-CRuby-convention spellings, kept as pointed errors
                 // so an old script fails with the fix in hand.
                 "packages" => return Err("--packages was renamed; use --gems <dir>".into()),
@@ -430,6 +441,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         output,
         run,
         dump_rust,
+        emit_rust,
         load_roots: {
             let mut roots = load_roots;
             roots.extend(rubyopt_roots);
@@ -613,6 +625,14 @@ fn run() -> Result<(), MainError> {
         lockfile: args.lockfile.clone(),
         pretty: args.dump_rust,
     };
+    // Ahead of the ordinary compile because it is a DIFFERENT one: nothing
+    // holds the program as text, so there is no `CompileOutput` to branch on
+    // afterwards.
+    if let Some(path) = &args.emit_rust {
+        zeo::compile_to_file(&source, &opts, path)?;
+        return Ok(());
+    }
+
     let compiled = zeo::compile_to_rust_with(&source, &opts)?;
 
     if args.dump_rust {

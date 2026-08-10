@@ -351,6 +351,14 @@ struct Row {
     /// Bytes of Rust zeo emitted. Deterministic for a given gem and compiler,
     /// so it belongs in the committed ledger: it diffs when codegen changes
     /// and is silent otherwise. Absent when the front end never got there.
+    ///
+    /// UNITS CHANGED when the probe moved from `--dump=rust` to `--emit-rust`.
+    /// Every row written before that measured PRETTYPLEASE output, which no
+    /// build ever compiles and which runs about 2.5x the real thing
+    /// (actionmailer: 305 MB pretty, 125 MB compact). The new number is what
+    /// rustc is actually handed. Rows re-probed since carry it; the rest still
+    /// carry the old one, so a cross-row byte comparison is only meaningful
+    /// within one sweep until the corpus is swept through.
     rust_bytes: Option<u64>,
     /// Bytes of the linked binary, when `--build` ran. Deterministic for a
     /// given toolchain; a rustc upgrade moves every row at once, which is
@@ -821,6 +829,9 @@ fn probe(
         return Verdict::stopped(Stage::Unpack, Outcome::NoEntryPoint);
     };
     let program = format!("require {feature:?}\n");
+    // Per-gem, so concurrent workers never share one. Removed on every exit
+    // path below except the one that stores it.
+    let emitted_path = std::env::temp_dir().join(format!("zeo-gem-probe-{name}-{version}.rs"));
 
     let mut cmd = std::process::Command::new(zeo);
     cmd.arg("-e")
@@ -833,64 +844,71 @@ fn probe(
         .arg(&view)
         .arg("--gems")
         .arg(root.join("gems"))
-        .arg("--dump=rust");
+        // `--emit-rust`, not `--dump=rust`. The two compile the same program;
+        // what differs is who holds it. `--dump=rust` renders through `syn`
+        // and prettyplease for a person to read -- two more whole-program
+        // copies in the child -- and then writes it to a pipe this process
+        // reads into memory, which for the largest gems was a gigabyte in each
+        // of them. Streamed to a file, the child's peak drops by a third and
+        // this side holds nothing.
+        .arg("--emit-rust")
+        .arg(&emitted_path);
     budget.apply(&mut cmd);
     let started = std::time::Instant::now();
     let emitted = crate::exec::run_with_timeout(cmd, None, timeout);
     let codegen_ms = started.elapsed().as_millis();
 
-    let rust = match emitted {
+    // Every early return below abandons the emitted file, so it is cleaned up
+    // once here rather than at each of them.
+    let discard = |v: Verdict| {
+        let _ = std::fs::remove_file(&emitted_path);
+        v
+    };
+    match emitted {
         Err(e) => {
-            return Verdict::stopped(
+            return discard(Verdict::stopped(
                 Stage::Fetch,
                 Outcome::FetchFailed(format!("running zeo: {e}")),
-            );
+            ));
         }
         Ok(ex) if ex.timed_out => {
             // A stall names no pass -- it never got to say one -- so it is
             // recorded at the first front-end rung rather than a guessed one.
-            return Verdict::stopped(Stage::Parse, Outcome::Timeout).timed(codegen_ms);
+            return discard(Verdict::stopped(Stage::Parse, Outcome::Timeout).timed(codegen_ms));
         }
         // The ceiling exits with its own status so this needs no stderr
         // parsing, and the phase it names is the one useful thing to keep.
         Ok(ex) if hit_memory_limit(&ex) => {
-            return Verdict::stopped(Stage::Parse, Outcome::OutOfMemory(memory_phase(&ex.stderr)))
-                .timed(codegen_ms);
+            return discard(
+                Verdict::stopped(Stage::Parse, Outcome::OutOfMemory(memory_phase(&ex.stderr)))
+                    .timed(codegen_ms),
+            );
         }
         // A successful compile still writes to stderr -- every builtin
         // substitution warns there -- so the exit status is the verdict and
         // stderr is only read once it is non-zero.
-        Ok(ex) if ex.success() => ex,
+        Ok(ex) if ex.success() => {}
         Ok(ex) => {
             let text = String::from_utf8_lossy(&ex.stderr);
             let mut v = Verdict::stopped(front_end_stage(&text), classify_stderr(&ex.stderr, root));
             v.site = site_of(&text, root);
-            return v.timed(codegen_ms);
+            return discard(v.timed(codegen_ms));
         }
-    };
+    }
 
     let mut verdict = Verdict::stopped(Stage::Codegen, Outcome::Ok).timed(codegen_ms);
-    // The bytes the child WROTE, not the bytes the capture kept -- `exec`
-    // bounds what it holds, so the two differ for the largest gems.
-    verdict.rust_bytes = Some(rust.stdout_bytes);
+    // From the filesystem, not from a capture: the child streamed the program
+    // to a file and neither process ever held it whole.
+    verdict.rust_bytes = std::fs::metadata(&emitted_path).ok().map(|m| m.len());
     // The Rust is kept so a later sweep can climb the next rung without paying
     // for codegen again -- emit once for the whole corpus, then build. gzip
     // because the uncompressed corpus does not fit: the generated source is
     // large and repetitive, and a disk that cannot hold the store is a store
     // nobody keeps.
-    //
-    // A truncated capture is not stored: half a program looks exactly like a
-    // whole one to the next rung, and it would fail at rustc with a syntax
-    // error attributed to codegen. Say so and keep the ledger row honest.
-    if rust.stdout_truncated() {
-        eprintln!(
-            "gem-probe: {name}: not keeping the generated Rust -- {} bytes exceeds the {} byte capture bound",
-            rust.stdout_bytes,
-            crate::exec::MAX_CAPTURE,
-        );
-    } else if let Err(e) = store_rust(root, name, version, &rust.stdout) {
+    if let Err(e) = store_rust(root, name, version, &emitted_path) {
         eprintln!("gem-probe: {name}: keeping the generated Rust: {e}");
     }
+    let _ = std::fs::remove_file(&emitted_path);
     if !tiers.build {
         return verdict;
     }
@@ -1292,13 +1310,18 @@ fn rust_store(root: &Path) -> PathBuf {
 /// large and extremely repetitive, and a store that fills the disk is a store
 /// that gets deleted before it is ever used. `.rs.gz` is read back by the
 /// build tier and by hand with `gunzip -c`.
-fn store_rust(root: &Path, name: &str, version: &str, rust: &[u8]) -> Result<(), String> {
+///
+/// Copied from `emitted` a block at a time rather than from a `&[u8]`: the
+/// program is up to a gigabyte, and the point of streaming it to a file was
+/// that no process has to hold it whole.
+fn store_rust(root: &Path, name: &str, version: &str, emitted: &Path) -> Result<(), String> {
     let dir = rust_store(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut src = std::fs::File::open(emitted).map_err(|e| e.to_string())?;
     let file = std::fs::File::create(dir.join(format!("{name}-{version}.rs.gz")))
         .map_err(|e| e.to_string())?;
     let mut gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-    gz.write_all(rust).map_err(|e| e.to_string())?;
+    std::io::copy(&mut src, &mut gz).map_err(|e| e.to_string())?;
     gz.finish().map_err(|e| e.to_string())?;
     Ok(())
 }

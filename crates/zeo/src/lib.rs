@@ -115,11 +115,59 @@ pub fn compile_to_rust_with(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<CompileOutput, CompileError> {
+    let (produced, needs_prism_runtime) = compile_with_emit(source, opts, Emit::Memory)?;
+    let Produced::Memory(rust_source) = produced else {
+        unreachable!("Emit::Memory produces Produced::Memory")
+    };
+    Ok(CompileOutput {
+        rust_source,
+        needs_prism_runtime,
+    })
+}
+
+/// `compile_to_rust_with`, streamed straight to `path` instead of returned.
+///
+/// For a caller that wants the Rust as a FILE -- the CLI's `--emit-rust`, and
+/// every sweep behind it. Nothing holds the program as text, so the peak drops
+/// by one whole copy of the output; at gem scale that copy is the difference
+/// between a compile that fits and one that does not. Always the compact
+/// renderer: `--dump=rust`'s `syn` round-trip and prettyplease exist to make
+/// output a PERSON reads, and add two more whole-program copies to do it.
+pub fn compile_to_file(
+    source: &str,
+    opts: &CompileOptions,
+    path: &std::path::Path,
+) -> Result<EmitOutput, CompileError> {
+    let (produced, needs_prism_runtime) = compile_with_emit(source, opts, Emit::File(path))?;
+    let Produced::File(stats) = produced else {
+        unreachable!("Emit::File produces Produced::File")
+    };
+    Ok(EmitOutput {
+        bytes: stats.bytes,
+        lines: stats.lines,
+        needs_prism_runtime,
+    })
+}
+
+/// What `compile_to_file` wrote.
+#[derive(Debug)]
+pub struct EmitOutput {
+    pub bytes: u64,
+    pub lines: u64,
+    /// As [`CompileOutput::needs_prism_runtime`].
+    pub needs_prism_runtime: bool,
+}
+
+fn compile_with_emit(
+    source: &str,
+    opts: &CompileOptions,
+    emit: Emit<'_>,
+) -> Result<(Produced, bool), CompileError> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
-            .spawn_scoped(scope, || compile_on_this_thread(source, opts))
+            .spawn_scoped(scope, || compile_on_this_thread(source, opts, emit))
             .expect("spawning the compiler thread")
             .join()
             .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
@@ -140,10 +188,29 @@ pub fn timings_enabled() -> bool {
     std::env::var_os("ZEO_TIMINGS").is_some()
 }
 
+/// Where a compile's generated Rust goes.
+///
+/// The distinction is the whole point of `compile_to_file`: a program held as
+/// a `String` is a second whole-program copy in memory beside the tokens it
+/// was rendered from, and at gem scale that copy is hundreds of megabytes.
+/// A caller that only wants the FILE never has to pay for it.
+#[derive(Clone, Copy)]
+enum Emit<'a> {
+    Memory,
+    File(&'a std::path::Path),
+}
+
+/// What a compile produced, matching the `Emit` it was given.
+enum Produced {
+    Memory(String),
+    File(codegen::EmitStats),
+}
+
 fn compile_on_this_thread(
     source: &str,
     opts: &CompileOptions,
-) -> Result<CompileOutput, CompileError> {
+    emit: Emit<'_>,
+) -> Result<(Produced, bool), CompileError> {
     let t_start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
     let (hir, root, gem_records) = parse::parse_and_lower_with(
@@ -175,26 +242,39 @@ fn compile_on_this_thread(
     let t_analyze = t_analyze_start.elapsed();
     let t_codegen_start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::Codegen);
-    let rust_source = if opts.pretty {
-        codegen::codegen_to_string_pretty(&analyzed)?
-    } else {
-        codegen::codegen_to_string(&analyzed)?
+    let produced = match emit {
+        Emit::Memory if opts.pretty => {
+            Produced::Memory(codegen::codegen_to_string_pretty(&analyzed)?)
+        }
+        Emit::Memory => Produced::Memory(codegen::codegen_to_string(&analyzed)?),
+        Emit::File(path) => {
+            let file = std::fs::File::create(path)
+                .map_err(|e| CompileError::codegen(format!("creating {}: {e}", path.display())))?;
+            // Buffered: the writer is handed one token at a time, and an
+            // unbuffered `File` would make each of those a syscall.
+            let mut out = std::io::BufWriter::with_capacity(256 * 1024, file);
+            Produced::File(codegen::codegen_to_writer(&analyzed, &mut out)?)
+        }
     };
     if timings_enabled() {
+        let bytes = match &produced {
+            Produced::Memory(s) => s.len() as u64,
+            Produced::File(stats) => stats.bytes,
+        };
         eprintln!(
-            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={} peak_rss={}",
+            "zeo-timings: parse_lower={}ms analyze={}ms codegen={}ms total={}ms bytes={bytes} lines={} peak_rss={}",
             t_parse_lower.as_millis(),
             t_analyze.as_millis(),
             t_codegen_start.elapsed().as_millis(),
             t_start.elapsed().as_millis(),
-            rust_source.len(),
+            match &produced {
+                Produced::Memory(_) => 0,
+                Produced::File(stats) => stats.lines,
+            },
             // `0` for a compile that finished inside the poller's first
             // interval -- absent, not zero. `compile-bench` reads it as such.
             memguard::peak_bytes().unwrap_or(0),
         );
     }
-    Ok(CompileOutput {
-        rust_source,
-        needs_prism_runtime,
-    })
+    Ok((produced, needs_prism_runtime))
 }
