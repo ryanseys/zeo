@@ -105,7 +105,10 @@ recorded at the pass that made it):
                           the second half of --run's consent
 
 options:
-  --check                 exit non-zero if any probed gem regressed
+  --check                 exit non-zero if any probed gem regressed, or if the
+                          README stats block disagrees with the ledger
+  --sync-readme           rewrite gem-probe.md and the README stats block from
+                          the ledger on disk, probing nothing
   --refresh               re-probe even names already in the ledger
   --refresh-index         fetch a fresh copy of the rubygems index
   --seed-index            record every gem in the index that has no row yet,
@@ -1586,6 +1589,227 @@ fn write_timings(
     std::fs::write(&path, out).map_err(|e| e.to_string())
 }
 
+/// The corpus counts every published number derives from, computed once per
+/// ledger write so the TSV, `gem-probe.md` and the README block cannot drift
+/// from each other.
+///
+/// The buckets partition the probed rows. Each one answers a different
+/// question, and the split keeps the headline honest: `no-entry-point` is a
+/// fact about the HARNESS, `invalid-ruby` is a fact about the GEM, and only
+/// `lowering-gap`/`compiler-panic`/`rustc-error` count against zeo.
+struct LedgerStats {
+    /// Every name the ledger knows, frontier included.
+    names: usize,
+    /// Rows with a verdict -- everything but `unprobed`.
+    probed: usize,
+    ok: usize,
+    /// The harness never reached the compiler: `no-lib-dir`,
+    /// `no-entry-point`, `fetch-failed`, `view-failed`.
+    harness: usize,
+    /// No Ruby release loads these: `invalid-ruby`, `native-extension`.
+    not_ruby: usize,
+    /// zeo's to fix: `lowering-gap`, `compiler-panic`, `rustc-error`.
+    compiler: usize,
+    /// A `require` the probe's view did not satisfy.
+    missing_dep: usize,
+    /// No verdict was reached: `timeout`, `out-of-memory`.
+    no_verdict: usize,
+    /// `run-failed` -- the opt-in build/run tier.
+    run_failed: usize,
+    /// `(stage tag, outcome tag) -> count` over the probed rows.
+    by_stage_outcome: BTreeMap<(&'static str, &'static str), usize>,
+}
+
+impl LedgerStats {
+    fn from_rows(rows: &BTreeMap<String, Row>) -> LedgerStats {
+        let mut s = LedgerStats {
+            names: rows.len(),
+            probed: 0,
+            ok: 0,
+            harness: 0,
+            not_ruby: 0,
+            compiler: 0,
+            missing_dep: 0,
+            no_verdict: 0,
+            run_failed: 0,
+            by_stage_outcome: BTreeMap::new(),
+        };
+        for r in rows.values() {
+            match &r.outcome {
+                Outcome::Unprobed => continue,
+                Outcome::Ok => s.ok += 1,
+                Outcome::NoLibDir
+                | Outcome::NoEntryPoint
+                | Outcome::FetchFailed(_)
+                | Outcome::ViewFailed(_) => s.harness += 1,
+                Outcome::InvalidRuby(_) | Outcome::NativeExtension => s.not_ruby += 1,
+                Outcome::LoweringGap(_) | Outcome::CompilerPanic(_) | Outcome::RustcError(_) => {
+                    s.compiler += 1
+                }
+                Outcome::MissingDependency(_) => s.missing_dep += 1,
+                Outcome::Timeout | Outcome::OutOfMemory(_) => s.no_verdict += 1,
+                Outcome::RunFailed(_) => s.run_failed += 1,
+            }
+            s.probed += 1;
+            *s.by_stage_outcome
+                .entry((r.stage.tag(), r.outcome.tag()))
+                .or_default() += 1;
+        }
+        s
+    }
+
+    /// The rows zeo could attempt: probed, minus the rows the harness never
+    /// carried to the compiler, minus the gems no Ruby loads.
+    fn attempted(&self) -> usize {
+        self.probed - self.harness - self.not_ruby
+    }
+}
+
+/// `1234567` -> `1,234,567`. The README quotes corpus-scale numbers, and six
+/// undelimited digits misread by a factor of ten.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn percent(part: usize, whole: usize) -> String {
+    if whole == 0 {
+        return "\u{2014}".to_string();
+    }
+    format!("{:.1}%", part as f64 * 100.0 / whole as f64)
+}
+
+/// The markdown the published numbers live in. One renderer serves the README
+/// block and `gem-probe.md`, so the two files always agree.
+fn render_stats_block(s: &LedgerStats) -> String {
+    let row = |label: &str, n: usize, share: String| {
+        format!("| {label} | {} | {share} |\n", thousands(n))
+    };
+    let mut md = String::new();
+    md.push_str(&format!(
+        "**{} of {} probed gems compile to Rust ({}).** The probe runs zeo's full \
+         front end (parse, lower, analyze, codegen) on the newest release of every gem \
+         on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem \
+         in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).\n\n",
+        thousands(s.ok),
+        thousands(s.probed),
+        percent(s.ok, s.probed),
+    ));
+    md.push_str("| Verdict | Gems | Share of probed |\n|---|---|---|\n");
+    md.push_str(&row(
+        "Compile to Rust (`ok`)",
+        s.ok,
+        percent(s.ok, s.probed),
+    ));
+    md.push_str(&row(
+        "Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`)",
+        s.compiler,
+        percent(s.compiler, s.probed),
+    ));
+    md.push_str(&row(
+        "Unresolved dependency in the probe's view (`missing-dependency`)",
+        s.missing_dep,
+        percent(s.missing_dep, s.probed),
+    ));
+    md.push_str(&row(
+        "Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`)",
+        s.harness,
+        percent(s.harness, s.probed),
+    ));
+    md.push_str(&row(
+        "Not loadable by any Ruby (`invalid-ruby`, `native-extension`)",
+        s.not_ruby,
+        percent(s.not_ruby, s.probed),
+    ));
+    md.push_str(&row(
+        "No verdict reached (`timeout`, `out-of-memory`)",
+        s.no_verdict,
+        percent(s.no_verdict, s.probed),
+    ));
+    if s.run_failed > 0 {
+        md.push_str(&row(
+            "Built but did not run (`run-failed`)",
+            s.run_failed,
+            percent(s.run_failed, s.probed),
+        ));
+    }
+    md.push_str(&format!(
+        "\nOf the {} gems zeo can attempt -- the probed set minus the harness limits and \
+         the gems no Ruby loads -- **{} compile ({})**.\n",
+        thousands(s.attempted()),
+        thousands(s.ok),
+        percent(s.ok, s.attempted()),
+    ));
+    md
+}
+
+const README_STATS_BEGIN: &str = "<!-- gem-probe-stats:begin -->";
+const README_STATS_END: &str = "<!-- gem-probe-stats:end -->";
+
+/// Replaces the marked block in `text` with `block`, or answers `None` when
+/// the markers are absent or out of order. Pure, so the tests can pin it.
+fn splice_readme_stats(text: &str, block: &str) -> Option<String> {
+    let begin = text.find(README_STATS_BEGIN)?;
+    let end_at = text[begin..].find(README_STATS_END)? + begin;
+    let mut out = String::with_capacity(text.len() + block.len());
+    out.push_str(&text[..begin + README_STATS_BEGIN.len()]);
+    out.push('\n');
+    out.push_str(block);
+    out.push_str(&text[end_at..]);
+    Some(out)
+}
+
+/// The `--check` half of the README contract: fails when the stats block and
+/// the ledger disagree -- a hand-edit, or a README that lost its markers. The
+/// rows are filtered the same way `write_ledger` filters them, so the two
+/// sides compare the same corpus.
+fn check_readme_fresh(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
+    let ignored = read_ignored(root);
+    let published: BTreeMap<String, Row> = rows
+        .iter()
+        .filter(|(name, _)| !ignored.contains_key(*name))
+        .map(|(n, r)| (n.clone(), r.clone()))
+        .collect();
+    let block = render_stats_block(&LedgerStats::from_rows(&published));
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap_or_default();
+    match splice_readme_stats(&readme, &block) {
+        None => Err(format!(
+            "README.md has no `{README_STATS_BEGIN}` block to carry the ledger's numbers"
+        )),
+        Some(updated) if updated != readme => {
+            Err("the README stats block disagrees with the ledger -- run \
+             `cargo xtask gem-probe --sync-readme` to regenerate it"
+                .to_string())
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+/// Rewrites the README's stats block from the rows just written. A README
+/// without the markers is left alone -- the block is opt-in per checkout, and
+/// a scratch root in the tests has no README at all.
+fn write_readme_stats(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
+    let path = root.join("README.md");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let block = render_stats_block(&LedgerStats::from_rows(rows));
+    let Some(updated) = splice_readme_stats(&text, &block) else {
+        return Ok(());
+    };
+    if updated != text {
+        std::fs::write(&path, updated).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String> {
     // An ignored gem has no verdict, so it has no row -- adding a name to
     // `gem-probe-ignored.tsv` prunes it here on the next run rather than
@@ -1638,10 +1862,7 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
         let _ = std::fs::remove_file(root.join("conformance").join(old));
     }
 
-    let mut counts: BTreeMap<(&str, &str), usize> = BTreeMap::new();
-    for r in rows.values() {
-        *counts.entry((r.stage.tag(), r.outcome.tag())).or_default() += 1;
-    }
+    let stats = LedgerStats::from_rows(rows);
     let mut md = String::from("# Gem probe results\n\nGenerated by `cargo xtask gem-probe`.\n\n");
     md.push_str(
         "`gem-probe.tsv` beside this file holds ONE row per gem. Two columns carry the \
@@ -1675,17 +1896,14 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
          rubygems gains a gem, and it keeps every ratio here honest -- the denominators \
          below count gems with a verdict, never the frontier.\n\n",
     );
-    let measured = rows
-        .values()
-        .filter(|r| r.outcome != Outcome::Unprobed)
-        .count();
     md.push_str(&format!(
-        "{measured} gems probed, {} of {} names known.\n\n",
-        measured,
-        rows.len()
+        "{} of {} names known have a verdict.\n\n",
+        thousands(stats.probed),
+        thousands(stats.names)
     ));
-    md.push_str("| Stage | Outcome | Gems |\n|---|---|---|\n");
-    for ((stage, tag), n) in &counts {
+    md.push_str(&render_stats_block(&stats));
+    md.push_str("\n| Stage | Outcome | Gems |\n|---|---|---|\n");
+    for ((stage, tag), n) in &stats.by_stage_outcome {
         md.push_str(&format!("| {stage} | {tag} | {n} |\n"));
     }
     let mut table = |title: &str, selected: &mut dyn Iterator<Item = (&String, &Row)>| {
@@ -1706,7 +1924,8 @@ fn write_ledger(root: &Path, rows: &BTreeMap<String, Row>) -> Result<(), String>
     };
     table("Reached its stage", &mut compiles());
     table("Did not", &mut fails());
-    std::fs::write(root.join("conformance/gem-probe.md"), md).map_err(|e| e.to_string())
+    std::fs::write(root.join("conformance/gem-probe.md"), md).map_err(|e| e.to_string())?;
+    write_readme_stats(root, rows)
 }
 
 const NAMES_URL: &str = "https://index.rubygems.org/names";
@@ -1917,6 +2136,7 @@ fn report(name: &str, row: &Row) {
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut names: Vec<(String, Option<String>)> = Vec::new();
     let (mut corpus, mut all, mut check, mut no_deps) = (false, false, false, false);
+    let mut sync_readme = false;
     let (mut index, mut refresh, mut refresh_index) = (false, false, false);
     let (mut limit, mut popular): (Option<usize>, Option<usize>) = (None, None);
     let mut matching: Option<String> = None;
@@ -1938,6 +2158,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             "--corpus" => corpus = true,
             "--all" => all = true,
             "--check" => check = true,
+            "--sync-readme" => sync_readme = true,
             "--no-deps" => no_deps = true,
             "--index" => index = true,
             "--unprobed" => unprobed = true,
@@ -2052,6 +2273,16 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Rewrites every file the ledger derives -- `gem-probe.md` and the README
+    // stats block -- from the rows already on disk, probing nothing. This is
+    // how the derived files catch up after a generator change.
+    if sync_readme {
+        if let Err(e) = write_ledger(root, &before) {
+            eprintln!("gem-probe: syncing the derived files: {e}");
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
+    }
     if corpus {
         names.extend(read_corpus(root));
     }
@@ -2190,6 +2421,17 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         }
     }
     if names.is_empty() {
+        // A bare `--check` still gates the derived files: nothing probed
+        // means the ledger is exactly what `before` read.
+        if check {
+            return match check_readme_fresh(root, &before) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("gem-probe --check: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         eprintln!(
             "gem-probe: nothing to probe (give a gem name, --corpus, --popular N, --failing, --unprobed, --matching <detail>, --matching-name <name>, --index, --seed-index or --all)"
         );
@@ -2411,6 +2653,12 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             for (n, what) in lost {
                 eprintln!("  {n}: {what}");
             }
+            return ExitCode::FAILURE;
+        }
+        // The README quotes the ledger's numbers from a generated block, and a
+        // number quoted by hand goes stale the day after it is written.
+        if let Err(e) = check_readme_fresh(root, &rows) {
+            eprintln!("gem-probe --check: {e}");
             return ExitCode::FAILURE;
         }
     }
@@ -3448,6 +3696,114 @@ mod tests {
         // A different version must not be served from the 1.0.0 tree; with no
         // network in a test this surfaces as an error rather than a stale hit.
         assert!(fetch(&root, "moving", "2.0.0", None).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn row_with(stage: Stage, outcome: Outcome) -> Row {
+        Row {
+            version: "1.0.0".into(),
+            stage,
+            outcome,
+            rust_bytes: None,
+            binary_bytes: None,
+            site: None,
+            digest: None,
+        }
+    }
+
+    fn stats_fixture() -> BTreeMap<String, Row> {
+        let mut rows = BTreeMap::new();
+        let mut put = |name: &str, stage, outcome| {
+            rows.insert(name.to_string(), row_with(stage, outcome));
+        };
+        put("a", Stage::Codegen, Outcome::Ok);
+        put("b", Stage::Codegen, Outcome::Ok);
+        put("c", Stage::Lower, Outcome::LoweringGap("x".into()));
+        put("d", Stage::Unpack, Outcome::NoEntryPoint);
+        put("e", Stage::Parse, Outcome::InvalidRuby("y".into()));
+        put("f", Stage::Lower, Outcome::MissingDependency("z".into()));
+        put("g", Stage::Parse, Outcome::Timeout);
+        put("h", Stage::Queued, Outcome::Unprobed);
+        rows
+    }
+
+    /// The buckets partition the probed rows: every verdict lands in exactly
+    /// one, and the frontier lands in none.
+    #[test]
+    fn the_stats_buckets_partition_the_probed_rows() {
+        let s = LedgerStats::from_rows(&stats_fixture());
+        assert_eq!(s.names, 8);
+        assert_eq!(s.probed, 7);
+        assert_eq!(
+            s.ok + s.compiler
+                + s.harness
+                + s.not_ruby
+                + s.missing_dep
+                + s.no_verdict
+                + s.run_failed,
+            s.probed
+        );
+        // `attempted` excludes what the harness never carried to the compiler
+        // and what no Ruby loads: 7 - 1 (no-entry-point) - 1 (invalid-ruby).
+        assert_eq!(s.attempted(), 5);
+    }
+
+    #[test]
+    fn the_stats_block_quotes_the_headline_ratio() {
+        let block = render_stats_block(&LedgerStats::from_rows(&stats_fixture()));
+        assert!(block.starts_with("**2 of 7 probed gems compile to Rust (28.6%).**"));
+        assert!(block.contains("| Compile to Rust (`ok`) | 2 | 28.6% |"));
+        // 2 of 5 attempted.
+        assert!(block.contains("**2 compile (40.0%)**"));
+    }
+
+    #[test]
+    fn thousands_delimits_from_four_digits_up() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1000), "1,000");
+        assert_eq!(thousands(195_778), "195,778");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+    }
+
+    /// The splice replaces only what sits between the markers, keeps the
+    /// markers, and is idempotent -- so every ledger write may run it.
+    #[test]
+    fn the_readme_splice_replaces_only_the_marked_block() {
+        let readme = format!(
+            "# Title\n\nprose above\n\n{README_STATS_BEGIN}\nold numbers\n{README_STATS_END}\n\nprose below\n"
+        );
+        let once = splice_readme_stats(&readme, "new numbers\n").unwrap();
+        assert!(once.contains("prose above"));
+        assert!(once.contains("prose below"));
+        assert!(once.contains("new numbers"));
+        assert!(!once.contains("old numbers"));
+        let twice = splice_readme_stats(&once, "new numbers\n").unwrap();
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn a_readme_without_markers_is_left_alone() {
+        assert!(splice_readme_stats("# Title\n\nno markers here\n", "block").is_none());
+        // End before begin is malformed, not a partial match.
+        let backwards = format!("{README_STATS_END}\n{README_STATS_BEGIN}\n");
+        assert!(splice_readme_stats(&backwards, "block").is_none());
+    }
+
+    /// `write_ledger` carries the ledger's numbers into a README that opts in
+    /// with the markers, and leaves a scratch root without one untouched.
+    #[test]
+    fn writing_the_ledger_refreshes_the_readme_block() {
+        let root = scratch("readme");
+        std::fs::write(
+            root.join("README.md"),
+            format!("intro\n\n{README_STATS_BEGIN}\nstale\n{README_STATS_END}\nend\n"),
+        )
+        .unwrap();
+        write_ledger(&root, &stats_fixture()).unwrap();
+        let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+        assert!(readme.contains("**2 of 7 probed gems compile to Rust (28.6%).**"));
+        assert!(!readme.contains("stale"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

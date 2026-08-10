@@ -319,19 +319,29 @@ $ cargo xtask gem-probe --all --check     # re-probe; fail if one regressed
 
 This measures something the gem table above does not. A gem can be pure Ruby,
 resolve correctly, and still use a construct Zeo cannot lower. `gem-probe`
-runs the front end, so `compiles` means the compiler succeeded.
+runs the front end, so an `ok` row means the compiler succeeded.
 
-The ledger holds 1,272 gems: the 1,000 most downloaded, plus the dependency
-closure of the top 200. **396 compile.** 451 of those rows are the `aws-sdk-*`
-family, which is machine-generated from one template and fails identically
-almost every time — excluding it, **392 of 821 compile**, and compiling gems
-outnumber lowering gaps.
+The ledger covers the full rubygems.org index. The harness writes the numbers
+below on every probe, and `cargo xtask gem-probe --check` fails when they
+disagree with the ledger — so this block cannot go stale.
 
-Failures concentrate hard: `autoload`, `class << self` and constant paths
-account for two in five of the remaining gaps, so a single fix moves many gems
-at once. Read
-[`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for what a
-`compiles` row does and does not claim, and
+<!-- gem-probe-stats:begin -->
+**168,369 of 195,778 probed gems compile to Rust (86.0%).** The probe runs zeo's full front end (parse, lower, analyze, codegen) on the newest release of every gem on rubygems.org. `ok` means zeo produced Rust; no rustc ran. One row per gem in [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv).
+
+| Verdict | Gems | Share of probed |
+|---|---|---|
+| Compile to Rust (`ok`) | 168,369 | 86.0% |
+| Compiler gaps, zeo's to fix (`lowering-gap`, `compiler-panic`, `rustc-error`) | 4,111 | 2.1% |
+| Unresolved dependency in the probe's view (`missing-dependency`) | 1,967 | 1.0% |
+| Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`) | 20,470 | 10.5% |
+| Not loadable by any Ruby (`invalid-ruby`, `native-extension`) | 843 | 0.4% |
+| No verdict reached (`timeout`, `out-of-memory`) | 18 | 0.0% |
+
+Of the 174,465 gems zeo can attempt -- the probed set minus the harness limits and the gems no Ruby loads -- **168,369 compile (96.5%)**.
+<!-- gem-probe-stats:end -->
+
+Read [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for the workflow and for
+what an `ok` row does and does not claim, and
 [Does it support Rails?](#does-it-support-rails) for that closure in
 particular.
 
@@ -406,37 +416,27 @@ classification, and not a compile.
 
 ### Does it support Rails?
 
-**No, not yet**, and the gap is measured rather than guessed.
+**The framework compiles. An application does not run yet.** The gap is
+measured rather than guessed: `cargo xtask gem-probe` compiles each gem in
+the Rails closure, and the ledger holds the verdicts.
 
-`cargo xtask gem-probe` compiles each gem in the Rails 8.1 closure. One of the
-ten framework gems reaches code generation today:
+Every framework gem reaches code generation today: `activesupport`,
+`activemodel`, `activerecord`, `actionpack`, `actionview`, `actionmailer`,
+`actioncable`, `activejob`, `activestorage` and `railties`, and the view and
+mail closure with them (`loofah`, `rails-dom-testing`,
+`rails-html-sanitizer`, `mail`, `globalid`, `erubi`, `builder`). The `rails`
+gem itself ships no `lib/` — a meta-gem that only names dependencies.
 
-| Gem | Result |
-|---|---|
-| `actionpack` | compiles — but its entry file is one line that requires a version constant, so this proves little |
-| `activesupport` | fails: an unsupported statement in a `class << self` body |
-| `activemodel`, `activerecord`, `actionview`, `actionmailer`, `actioncable`, `activejob`, `activestorage`, `railties` | fail: `autoload` |
-| `rails` | no `lib/` — a meta-gem that only names dependencies |
-
-**One blocker accounts for eight of them.** Rails defines its own `autoload`
-in `ActiveSupport::Autoload`, taking the path as an optional second argument
-and deriving it when absent. Zeo folds `autoload` as a built-in even where the
-enclosing class defines its own, so a one-argument call is rejected against
-`Kernel#autoload`'s signature. The bug is the shadowing, not the arity.
-
-Beyond the framework, a Rails **application** needs more than these gems:
+`codegen ok` means Zeo produced Rust, and nothing more. Between that and a
+running application:
 
 - **A database adapter.** `sqlite3`, `pg` and `mysql2` are C extensions. Zeo
   cannot build them, and there is no pure-Ruby substitute.
-- **The view and mail closure.** `nokogiri` (native), plus `loofah`,
-  `rails-dom-testing`, `rails-html-sanitizer`, `mail` and `globalid`, which
-  each hit their own lowering gap.
 - **Boot itself.** No Rails application has been compiled and run under Zeo.
   Everything above measures code generation, not a booting server.
 
-So Rails is a useful target to measure against, and a clear statement of what
-is missing — not a supported configuration. Follow
-[`conformance/gem-probe.tsv`](conformance/gem-probe.tsv) for the
+So Rails is a target Zeo measures against — not a supported configuration.
+Follow [`conformance/gem-probe.tsv`](conformance/gem-probe.tsv) for the
 current state, and [`docs/GEM_TESTING.md`](docs/GEM_TESTING.md) for how to
 reproduce it.
 
