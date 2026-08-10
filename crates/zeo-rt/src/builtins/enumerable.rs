@@ -39,8 +39,9 @@
 //! iteration behind `#next`/`#peek`.
 //!
 //! Documented divergences beyond the block-splat note above: `find`'s
-//! optional `if_none` callable, `any?`/`all?`/`none?`/`one?`'s pattern-arg
-//! (`===`) forms, and `min`/`max`'s `n`-largest forms are rejected loudly;
+//! optional `if_none` callable and `any?`/`all?`/`none?`/`one?`'s
+//! pattern-arg (`===`) forms are rejected loudly (`min(n)`/`max(n)` ARE
+//! handled -- see `min_max`'s collect-then-sort);
 //! blockless `min`/`max` compare via a native Int/Float/String `<=>` only
 //! (no user-defined `<=>` dispatch); `sum`'s float path IS
 //! Kahan-Babuska-compensated like CRuby's, but the Rational leg of its

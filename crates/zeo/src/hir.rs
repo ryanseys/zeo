@@ -2123,9 +2123,10 @@ pub enum HirNode {
     /// registration target (`ClassInfo::class_methods`, not `::methods`; no
     /// `self: Arc<Self>` receiver at codegen time at all, see
     /// `compiler::ClassInfo`'s docs) even though the body shape is
-    /// identical. Any OTHER explicit receiver (`def SomeConst.name`) is a
-    /// clean lowering rejection (zeo limitation -- reopening a class from
-    /// outside its own body isn't supported).
+    /// identical. Any OTHER explicit receiver: one that `names_enclosing_
+    /// class` (net/smtp's `def SMTP.default_port`) is also a class method,
+    /// and the rest desugar to `RECV.define_singleton_method` -- see
+    /// `lower/mod.rs`'s def-receiver arms.
     DefMethod {
         name: String,
         params: Params,

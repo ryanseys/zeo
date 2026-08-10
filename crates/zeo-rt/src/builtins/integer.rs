@@ -713,9 +713,6 @@ ruby_class! {
     def "pred" (recv) {
         Ok(int_sub(recv, &RubyValue::Int(1)))
     }
-    // ASCII only: our strings are UTF-8, so a 128..=255 chr would change
-    // byte representation -- rejected loudly (zeo limitation), not silently
-    // re-encoded. Out of byte range is real Ruby's RangeError.
     // `chr` -> the one-character String for a codepoint. No argument: a single
     // byte, US-ASCII for 0..=127 and ASCII-8BIT for 128..=255. With an
     // Encoding: the codepoint encoded in it (UTF-8 multibyte, or a single byte

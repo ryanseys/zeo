@@ -2967,26 +2967,17 @@ fn register_class(
         // predates the `zeo_abi::BUILTINS` placeholders -- see
         // `Compiler::new`), so it's checked by id alongside them.
         if ci.is_builtin || cid == OBJECT_CLASS {
-            use crate::compiler::{CLASS_CLASS, MODULE_CLASS};
             // A KIND mismatch (`module String`) falls through to the
             // ordinary reopen guard below instead, which produces real
             // Ruby's own TypeError message shape ("String is not a module").
-            // `Object` is NOT in this reject list (since top-level `def`
-            // support): reopening it merges into arena slot 0 exactly like
-            // any builtin-class reopen -- an Object reopen is top-level
-            // `def` by another name.
-            // `Class`/`Module` themselves have no per-value dispatch to hang a
-            // reopen method on, so they stay unsupported. Every OTHER builtin
-            // module (`Enumerable`/`Comparable`/`Kernel`/`Math`) now accepts a
-            // reopen: its added methods register as value methods on the
-            // module id, found by the MRO walk for every includer.
-            // `Class`/`Module` reopen like any other builtin: the added
-            // methods register as VALUE methods on their id, and a
+            // `Object` merges into arena slot 0 exactly like any
+            // builtin-class reopen -- an Object reopen is top-level `def` by
+            // another name. `Class`/`Module` reopen like any other builtin:
+            // the added methods register as VALUE methods on their id, and a
             // `RubyValue::Class` receiver's own ancestry runs
             // `Class -> Module -> Object`, so the MRO walk finds them for
             // every class and module in the program. minitest defines
             // `Module#infect_an_assertion` this way.
-            let _ = (CLASS_CLASS, MODULE_CLASS);
             // A reopen may RESTATE the builtin's superclass (`class String <
             // Object`); CRuby accepts a matching clause and raises `superclass
             // mismatch` on a wrong one. Mirrors the user-class reopen guard.
