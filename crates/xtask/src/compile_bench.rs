@@ -9,6 +9,12 @@
 //! - `rust_lines`  -- line count of the `--dump=rust` (pretty) output
 //! - `rust_bytes`  -- byte length of the build-path source (the `bytes=` field
 //!   of the compile's `zeo-timings:` line)
+//! - `peak_rss`    -- the front-end run's own peak resident memory
+//!   (`zeo::memguard`'s poller, via the `peak_rss=` field). The metric the
+//!   compiler-memory work is measured by: one gem-scale compile reached
+//!   9.8 GB and panicked a 16 GB machine's kernel, so how much the compiler
+//!   HOLDS is a first-class number here, not a footnote to how long it takes.
+//!   `0` for a compile that finished inside the poller's first interval.
 //! - `rustc_ms` / `bin_bytes` -- one `zeo -o` build under `ZEO_CACHE=bypass`
 //!   (release runtime, static linkage: the shipped configuration)
 //! - `warnings` -- rustc warnings emitted while compiling the generated
@@ -45,6 +51,7 @@ struct Row {
     frontend_ms: u64,
     rust_lines: u64,
     rust_bytes: u64,
+    peak_rss: u64,
     rustc_ms: u64,
     bin_bytes: u64,
     warnings: u64,
@@ -161,32 +168,52 @@ fn report(row: &Row, base: Option<&Row>) {
         }
         format!(" ({:+.1}%)", (now as f64 / then as f64 - 1.0) * 100.0)
     };
-    let (fd, ld, rd, bd) = match base {
+    let (fd, ld, pd, rd, bd) = match base {
         Some(b) => (
             delta(row.frontend_ms, b.frontend_ms),
             delta(row.rust_lines, b.rust_lines),
+            delta(row.peak_rss, b.peak_rss),
             delta(row.rustc_ms, b.rustc_ms),
             delta(row.bin_bytes, b.bin_bytes),
         ),
-        None => (String::new(), String::new(), String::new(), String::new()),
+        None => (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
     };
     progress(&format!(
-        "{:<22} frontend {:>6}ms{fd}  lines {:>8}{ld}  rustc {:>7}ms{rd}  bin {:>9}B{bd}  warnings {}",
-        row.name, row.frontend_ms, row.rust_lines, row.rustc_ms, row.bin_bytes, row.warnings
+        "{:<22} frontend {:>6}ms{fd}  lines {:>8}{ld}  peak {:>7}MiB{pd}  rustc {:>7}ms{rd}  bin {:>9}B{bd}  warnings {}",
+        row.name,
+        row.frontend_ms,
+        row.rust_lines,
+        row.peak_rss / (1024 * 1024),
+        row.rustc_ms,
+        row.bin_bytes,
+        row.warnings
     ));
 }
 
 fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, String> {
     // Frontend: best-of-N `--dump=rust` wall time; the last run's stdout
     // supplies the pretty line count.
+    //
+    // `peak_rss` takes the WORST run rather than the best: time is a
+    // best-of-N measurement because the fastest run is the one least
+    // disturbed by the machine, but memory is a ceiling question, and the
+    // most a compile ever held is the number that decides whether it fits.
     let mut best_ms: Option<u64> = None;
     let mut rust_lines = 0u64;
+    let mut peak_rss = 0u64;
     for _ in 0..runs {
         let started = Instant::now();
         let out = Command::new(zeo_bin)
             .arg(rb)
             .arg("--dump=rust")
             .arg("-W0")
+            .env("ZEO_TIMINGS", "1")
             .output()
             .map_err(|e| format!("invoking zeo --dump=rust: {e}"))?;
         let ms = started.elapsed().as_millis() as u64;
@@ -200,6 +227,8 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
             ));
         }
         rust_lines = out.stdout.iter().filter(|&&b| b == b'\n').count() as u64;
+        peak_rss = peak_rss
+            .max(timing_field(&String::from_utf8_lossy(&out.stderr), "peak_rss=").unwrap_or(0));
         best_ms = Some(best_ms.map_or(ms, |b| b.min(ms)));
     }
 
@@ -224,17 +253,7 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         return Err(format!("zeo -o failed: {msg}"));
     }
     let _ = std::fs::remove_file(&bin_path);
-    let field = |key: &str| -> Option<u64> {
-        stderr
-            .lines()
-            .rev()
-            .filter(|l| l.starts_with("zeo-timings:"))
-            .find_map(|l| {
-                l.split_whitespace()
-                    .find_map(|tok| tok.strip_prefix(key))
-                    .and_then(|v| v.trim_end_matches("ms").parse().ok())
-            })
-    };
+    let field = |key: &str| timing_field(&stderr, key);
     let rust_bytes = field("bytes=").ok_or("no bytes= in zeo-timings output")?;
     let rustc_ms = field("rustc=").ok_or("no rustc= in zeo-timings output")?;
     let bin_bytes = field("bin_bytes=").ok_or("no bin_bytes= in zeo-timings output")?;
@@ -245,10 +264,26 @@ fn run_one(zeo_bin: &Path, name: &str, rb: &Path, runs: usize) -> Result<Row, St
         frontend_ms: best_ms.unwrap(),
         rust_lines,
         rust_bytes,
+        peak_rss,
         rustc_ms,
         bin_bytes,
         warnings,
     })
+}
+
+/// One `key=value` field off the last `zeo-timings:` line that carries it.
+/// `bytes=` and `rustc=ms` share a shape; the `ms` suffix is trimmed so both
+/// parse as a number.
+fn timing_field(stderr: &str, key: &str) -> Option<u64> {
+    stderr
+        .lines()
+        .rev()
+        .filter(|l| l.starts_with("zeo-timings:"))
+        .find_map(|l| {
+            l.split_whitespace()
+                .find_map(|tok| tok.strip_prefix(key))
+                .and_then(|v| v.trim_end_matches("ms").parse().ok())
+        })
 }
 
 fn progress(line: &str) {
@@ -272,6 +307,12 @@ fn read_baseline(path: &Path) -> Vec<Row> {
                 rustc_ms: f.next()?.parse().ok()?,
                 bin_bytes: f.next()?.parse().ok()?,
                 warnings: f.next()?.parse().ok()?,
+                // Appended, never inserted: a baseline banked before this
+                // column existed has to keep parsing as itself, and a new
+                // field anywhere but the end would silently shift every
+                // column after it onto the wrong name. Missing reads as 0,
+                // which `report`'s delta already treats as "no comparison".
+                peak_rss: f.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             })
         })
         .collect()
@@ -280,12 +321,19 @@ fn read_baseline(path: &Path) -> Vec<Row> {
 fn write_baseline(path: &Path, rows: &[Row]) {
     let mut out = String::from(
         "# bench/compile-baseline.tsv -- xtask compile-bench --update-baseline\n\
-         # name\tfrontend_ms\trust_lines\trust_bytes\trustc_ms\tbin_bytes\twarnings\n",
+         # name\tfrontend_ms\trust_lines\trust_bytes\trustc_ms\tbin_bytes\twarnings\tpeak_rss\n",
     );
     for r in rows {
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            r.name, r.frontend_ms, r.rust_lines, r.rust_bytes, r.rustc_ms, r.bin_bytes, r.warnings
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            r.name,
+            r.frontend_ms,
+            r.rust_lines,
+            r.rust_bytes,
+            r.rustc_ms,
+            r.bin_bytes,
+            r.warnings,
+            r.peak_rss
         ));
     }
     std::fs::write(path, out).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
