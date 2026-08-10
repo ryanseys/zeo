@@ -1413,6 +1413,47 @@ impl ItemSink<'_> {
             ItemSink::Writer(_) => TokenStream::new(),
         }
     }
+
+    /// [`Self::push`], but in a module of its own so rustc's partitioner can
+    /// put it somewhere.
+    ///
+    /// rustc assigns codegen units per MODULE and never splits one, so a
+    /// generated program that puts everything at the crate root compiles as
+    /// one huge unit however many `-C codegen-units` it is given: measured on
+    /// `uri`, `cgu.00` is 3.6 MB of 7.5 MB of object code and the machine runs
+    /// at 1.79x on twelve cores. A module per class gives the partitioner
+    /// hundreds of candidates to merge down to sixteen and balance.
+    ///
+    /// The glob re-export is what makes this invisible to everything else:
+    /// `pub use` lifts the module's names back to the crate root, so every
+    /// path the rest of the program already emits still resolves.
+    ///
+    /// One module per item rather than fixed-size buckets, so this stays
+    /// compatible with streaming -- no item has to be held back to decide
+    /// which bucket it belongs to.
+    fn push_partitioned(&mut self, item: TokenStream, n: usize) -> std::io::Result<()> {
+        if !partition_modules() {
+            return self.push(item);
+        }
+        let m = format_ident!("__cgu{n}");
+        self.push(quote! {
+            #[allow(unused_imports, non_snake_case, unused_braces)]
+            pub mod #m {
+                use super::*;
+                #item
+            }
+            #[allow(unused_imports)]
+            pub use #m::*;
+        })
+    }
+}
+
+/// Whether to give each emitted class its own module -- see
+/// [`ItemSink::push_partitioned`]. `ZEO_CGU_MODULES=0` restores the flat crate
+/// root, the one-line field diagnosis for anything this is blamed for.
+fn partition_modules() -> bool {
+    static P: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *P.get_or_init(|| !std::env::var("ZEO_CGU_MODULES").is_ok_and(|v| v == "0"))
 }
 
 fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> {
@@ -1470,9 +1511,11 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     // the pools and the coverage collector, which are drained at the tail. So
     // these run to completion here rather than lazily inside the tail's
     // `quote!`.
+    let mut cgu = 0usize;
     for (idx, _) in compiler.classes.iter().enumerate() {
         if compiler.has_generated_struct(ClassId(idx as u32)) {
-            sink.push(emit_class(compiler, &shared, ClassId(idx as u32)))?;
+            sink.push_partitioned(emit_class(compiler, &shared, ClassId(idx as u32)), cgu)?;
+            cgu += 1;
         }
     }
 
@@ -1485,7 +1528,8 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
     // `class_methods` of its own too -- "module functions", e.g. `Math.sqrt`).
     for (idx, class) in compiler.classes.iter().enumerate() {
         if idx != 0 && !class.is_builtin && !class.is_bootstrap && !class.class_methods.is_empty() {
-            sink.push(emit_class_methods(compiler, ClassId(idx as u32)))?;
+            sink.push_partitioned(emit_class_methods(compiler, ClassId(idx as u32)), cgu)?;
+            cgu += 1;
         }
     }
 
@@ -1502,7 +1546,11 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
         if (class.is_builtin || idx == 0)
             && (!class.methods.is_empty() || !class.class_methods.is_empty())
         {
-            sink.push(emit_builtin_reopen(compiler, &shared, ClassId(idx as u32)))?;
+            sink.push_partitioned(
+                emit_builtin_reopen(compiler, &shared, ClassId(idx as u32)),
+                cgu,
+            )?;
+            cgu += 1;
         }
     }
 
