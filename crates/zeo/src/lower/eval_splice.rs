@@ -157,10 +157,10 @@ pub(crate) fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
     for &id in body {
         if matches!(
             hir[id],
-            HirNode::ClassDef { .. } | HirNode::DefMethod { .. }
+            HirNode::DefMethod { .. }
         ) {
             return Err(
-                "`eval` containing a top-level `class`/`def` isn't supported yet (zeo limitation)"
+                "`eval` containing a top-level `def` isn't supported yet (zeo limitation)"
                     .to_string()
                     .into(),
             );
