@@ -718,6 +718,21 @@ fn process_top_stmt_inner(
                     }
                     return Ok(());
                 }
+                // A guard whose only definitions are `def self.x` needs no
+                // registration at all -- a top-level `def self.x` desugars to
+                // a runtime `define_singleton_method` on `main` (the
+                // `DefMethod` arm above) -- so both branches, plain
+                // statements included, run as the ordinary `if` they are.
+                // rack's test helper gates two variants of
+                // `def self.separate_testing` on `ENV['SEPARATE']`.
+                if rewrite_guarded_main_singleton_defs(compiler, stmt) {
+                    tracing::debug!(
+                        guard = cond_kind(compiler, cond),
+                        "top-level conditional def: undecidable guard over `def self.x` only -- runtime define_singleton_method"
+                    );
+                    main_statements.push(stmt);
+                    return Ok(());
+                }
                 tracing::debug!(
                     guard = cond_kind(compiler, cond),
                     "top-level conditional def: guard UNDECIDABLE -- compile error"
@@ -1533,6 +1548,97 @@ fn try_conditional_reopen(
             })
             .collect(),
     )
+}
+
+/// An undecidable-guard top-level `if` whose only DEFINITIONS are
+/// `def self.x`: rewrite each such def, in place, to the same runtime
+/// `self.define_singleton_method(:x, lambda)` the unguarded top-level
+/// `def self.x` arm desugars to, and report `true` so the caller keeps the
+/// whole `if` as ordinary runtime code. `main`-singleton methods register
+/// nothing at compile time, so both branches -- interleaved plain statements
+/// and all -- keep their written order and semantics. Any OTHER definition
+/// shape in a branch answers `false` (those DO need registration).
+fn rewrite_guarded_main_singleton_defs(compiler: &mut Compiler, stmt: NodeId) -> bool {
+    fn qualifies(compiler: &Compiler, body: &[NodeId]) -> bool {
+        body.iter().all(|&s| match &compiler.hir[s] {
+            HirNode::DefMethod {
+                is_class_method, ..
+            } => *is_class_method,
+            HirNode::If {
+                then_body,
+                else_body,
+                ..
+            } => qualifies(compiler, then_body) && qualifies(compiler, else_body),
+            _ => !branch_has_top_defs(compiler, std::slice::from_ref(&s)),
+        })
+    }
+    fn rewrite_body(compiler: &mut Compiler, body: Vec<NodeId>) -> Vec<NodeId> {
+        body.into_iter()
+            .map(|s| match &compiler.hir[s] {
+                HirNode::DefMethod {
+                    name,
+                    params,
+                    body,
+                    is_class_method: true,
+                    ..
+                } => {
+                    let (name, params, body) = (name.clone(), params.clone(), body.clone());
+                    let self_ref = compiler.hir.push(HirNode::SelfRef);
+                    let lambda = compiler.hir.push(HirNode::Lambda {
+                        params,
+                        body,
+                        method_body: true,
+                    });
+                    let sym = compiler.hir.push(HirNode::SymbolLit(name));
+                    compiler.hir.push(HirNode::Call {
+                        receiver: Some(self_ref),
+                        name: "define_singleton_method".to_string(),
+                        args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+                        kwargs: vec![],
+                        block: None,
+                        block_arg: None,
+                        safe: false,
+                    })
+                }
+                HirNode::If { .. } => {
+                    rewrite_if(compiler, s);
+                    s
+                }
+                _ => s,
+            })
+            .collect()
+    }
+    fn rewrite_if(compiler: &mut Compiler, stmt: NodeId) {
+        let HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } = &compiler.hir[stmt]
+        else {
+            return;
+        };
+        let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
+        let then_body = rewrite_body(compiler, then_body);
+        let else_body = rewrite_body(compiler, else_body);
+        compiler.hir[stmt] = HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        };
+    }
+    let HirNode::If {
+        then_body,
+        else_body,
+        ..
+    } = &compiler.hir[stmt]
+    else {
+        return false;
+    };
+    if !qualifies(compiler, then_body) || !qualifies(compiler, else_body) {
+        return false;
+    }
+    rewrite_if(compiler, stmt);
+    true
 }
 
 /// Walk down a chain of ONE-SIDED `if`s to the statements at the bottom,

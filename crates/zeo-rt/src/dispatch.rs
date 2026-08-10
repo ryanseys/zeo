@@ -4803,9 +4803,27 @@ fn send_value_in_reason(
                 .get()
                 .is_some_and(|r| !r.entries.contains_key(&cid.0))
             && !(matches!(name.name_str(), "new" | "allocate") && constructor_of(*cid).is_some())
-            && let Some(f) = class_method_fn(*cid, name)
         {
-            return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
+            // The first REGISTERED class ancestor's flattened row first, not
+            // the owner's own: materialization re-resolves a class method's
+            // self-sends per class, so the nearest ancestor's copy is the one
+            // whose overrides the receiver inherits. Asking the OWNER's row
+            // (as reflection rightly does) ran `Class.new(Spec).run_suite`
+            // with `Runnable`'s viewpoint, whose `runnable_methods` raises
+            // "subclass responsibility" -- `Test`'s override never dispatched.
+            let flattened = ancestors_of_value(*cid).iter().skip(1).find_map(|&anc| {
+                let e = registry().entries.get(&anc.0)?;
+                match e.is_module {
+                    true => None,
+                    false => e.class_methods.get(&name).copied().map(|f| (anc, f)),
+                }
+            });
+            if let Some((anc, f)) = flattened {
+                return with_c_frame(c_frame_label(anc, name, '.'), || f(recv, args, block));
+            }
+            if let Some(f) = class_method_fn(*cid, name) {
+                return with_c_frame(c_frame_label(*cid, name, '.'), || f(recv, args, block));
+            }
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid)
             && let Some(f) = lookup(name.name_str())

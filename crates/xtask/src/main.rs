@@ -40,6 +40,7 @@ mod exec;
 mod gem;
 mod gem_compat;
 mod gem_probe;
+mod gemtests;
 mod jobs;
 mod method_census;
 mod prebuild;
@@ -74,6 +75,7 @@ fn main() -> ExitCode {
         Some("gem-compat") => gem_compat::main(&root, &args),
         Some("gem-probe") => gem_probe::main(&root, &args),
         Some("gem") => gem::main(&root, &args),
+        Some("gemtests") => gemtests::main(&root, &args),
         Some("arity-oracle") => arity_oracle::main(&root, &args),
         Some("method-census") => method_census::main(&root, &args),
         Some("stage-publish") => stage_publish::main(&root, &args),

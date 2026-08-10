@@ -1899,7 +1899,12 @@ pub fn runtime_define_method_from_method(
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
-    if !ancestors_of_value(id).contains(&owner) {
+    // A MODULE-owned method binds anywhere (CRuby's rule -- rack installs
+    // `ERB::Escape.instance_method(:html_escape)` into `Rack::Utils`, which
+    // never includes it); only a CLASS-owned one requires the target to be
+    // the owner or a descendant, so `self` is a valid instance.
+    let owner_is_module = crate::dispatch::class_is_module(owner).unwrap_or(false);
+    if !owner_is_module && !ancestors_of_value(id).contains(&owner) {
         return Err(type_error!(
             "bind argument must be a subclass of {}",
             crate::dispatch::class_name(owner).unwrap_or_default()
@@ -1911,13 +1916,21 @@ pub fn runtime_define_method_from_method(
     // subclass-layout receiver. (For the common case where the target doesn't
     // override the name, this is the same behavior; a target that DOES
     // override it binds its own version -- a documented AOT divergence.)
-    let m = snapshot_instance_method(id, src_name).ok_or_else(|| {
-        name_error!(
-            "undefined method '{}' for class '{}'",
-            src_name.name(),
-            crate::dispatch::class_name(owner).unwrap_or_default()
-        )
-    })?;
+    // A module owner outside the target's chain resolves nothing on the
+    // target, so the module's own receiver-generic body answers instead.
+    let m = snapshot_instance_method(id, src_name)
+        .or_else(|| {
+            owner_is_module
+                .then(|| module_own_method_impl(owner, src_name))
+                .flatten()
+        })
+        .ok_or_else(|| {
+            name_error!(
+                "undefined method '{}' for class '{}'",
+                src_name.name(),
+                crate::dispatch::class_name(owner).unwrap_or_default()
+            )
+        })?;
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
@@ -1941,7 +1954,10 @@ pub fn runtime_define_singleton_from_method(
     src_name: Symbol,
 ) -> Result<RubyValue, Signal> {
     let recv_class = recv.class_id();
-    if !ancestors_of_value(recv_class).contains(&owner) {
+    // Module-owned sources bind anywhere -- see
+    // `runtime_define_method_from_method`.
+    let owner_is_module = crate::dispatch::class_is_module(owner).unwrap_or(false);
+    if !owner_is_module && !ancestors_of_value(recv_class).contains(&owner) {
         return Err(type_error!(
             "bind argument must be a subclass of {}",
             crate::dispatch::class_name(owner).unwrap_or_default()
@@ -1949,13 +1965,19 @@ pub fn runtime_define_singleton_from_method(
     }
     // Snapshot as resolved for the RECEIVER's class (layout-correct copy) --
     // see the note in `runtime_define_method_from_method`.
-    let m = snapshot_instance_method(recv_class, src_name).ok_or_else(|| {
-        name_error!(
-            "undefined method '{}' for class '{}'",
-            src_name.name(),
-            crate::dispatch::class_name(owner).unwrap_or_default()
-        )
-    })?;
+    let m = snapshot_instance_method(recv_class, src_name)
+        .or_else(|| {
+            owner_is_module
+                .then(|| module_own_method_impl(owner, src_name))
+                .flatten()
+        })
+        .ok_or_else(|| {
+            name_error!(
+                "undefined method '{}' for class '{}'",
+                src_name.name(),
+                crate::dispatch::class_name(owner).unwrap_or_default()
+            )
+        })?;
     match recv {
         RubyValue::Class(cid) => {
             if crate::dispatch::class_frozen(*cid) {
@@ -3512,6 +3534,17 @@ pub fn runtime_class_new(
     mark_live();
 
     let class_val = RubyValue::Class(new_id);
+    // CRuby fires `inherited` on the superclass at creation -- before the
+    // body block runs and before any constant names the class (the hook sees
+    // `name == nil`). minitest's whole Runnable registry IS this hook, fired
+    // by every `describe` block's `Class.new(Minitest::Spec)`. The default
+    // `Class#inherited` is a no-op row, so an unconditional send is safe.
+    crate::dispatch::send_value(
+        &RubyValue::Class(super_id),
+        Symbol::intern("inherited"),
+        std::slice::from_ref(&class_val),
+        None,
+    )?;
     if let Some(b) = body {
         // The body runs two C frames deep in CRuby (`Class.new` calls
         // `Class#initialize`, which yields), and a raise from inside it shows

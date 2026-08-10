@@ -1,0 +1,9 @@
+# Gems whose TEST SUITES run end-to-end under zeo (the gemtests golden suite).
+# Same block format + fetch machinery as gems.toml; the vendor copies the FULL
+# checkout (lib/ + test/ + fixtures) into gitignored vendor/gemtests/<name>/.
+# Managed by `cargo run -p xtask -- gemtests sync`.
+
+[gems.rack]
+github = "rack/rack"
+tag    = "v3.2.6"
+rev    = "e1f22fdbe99afd2126b6fbf05bb12399359574b7"

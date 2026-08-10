@@ -38,6 +38,11 @@ path = "tests/examples.rs"
 harness = false
 
 [[test]]
+name = "gemtests"
+path = "tests/gemtests.rs"
+harness = false
+
+[[test]]
 name = "spinel"
 path = "tests/spinel.rs"
 harness = false

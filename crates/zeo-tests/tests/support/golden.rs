@@ -36,6 +36,21 @@ use std::time::{Duration, Instant};
 const MAX_CAPTURE: usize = 64 << 20; // 64 MiB per stream
 const RUN_DEADLINE: Duration = Duration::from_secs(60);
 
+/// [`RUN_DEADLINE`], with an env override (`ZEO_GOLDEN_RUN_DEADLINE`, in
+/// seconds) for suites whose cases legitimately run longer -- a vendored
+/// gem's whole test file is one case in the `gemtests` suite. The deadline
+/// also bounds the ruby oracle during bless, so both sides stretch together.
+fn run_deadline() -> Duration {
+    static D: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *D.get_or_init(|| {
+        std::env::var("ZEO_GOLDEN_RUN_DEADLINE")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(RUN_DEADLINE)
+    })
+}
+
 /// Run `cmd` to completion, capturing at most [`MAX_CAPTURE`] per stream and
 /// killing it after [`RUN_DEADLINE`].
 ///
@@ -113,8 +128,8 @@ fn run_bounded(
         }
         if overflowed.load(Ordering::SeqCst) {
             limit = Some(format!("wrote more than {} MiB", MAX_CAPTURE >> 20));
-        } else if started.elapsed() > RUN_DEADLINE {
-            limit = Some(format!("ran longer than {}s", RUN_DEADLINE.as_secs()));
+        } else if started.elapsed() > run_deadline() {
+            limit = Some(format!("ran longer than {}s", run_deadline().as_secs()));
         }
         if limit.is_some() {
             let _ = child.kill();
@@ -306,9 +321,12 @@ fn compile_and_run(
     args: &[String],
     stdin: Option<&[u8]>,
     run_cwd: &Path,
+    env: &SuiteEnv,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let opts = zeo::CompileOptions {
         input_path: Some(rb.to_path_buf()),
+        package_dirs: env.package_dirs.clone(),
+        load_roots: env.load_roots.clone(),
         ..Default::default()
     };
     let compiled = zeo::compile_to_rust_with(source, &opts).map_err(String::from)?;
@@ -369,11 +387,15 @@ fn run_oracle(
     args: &[String],
     stdin: Option<&[u8]>,
     run_cwd: &Path,
+    env: &SuiteEnv,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let ruby = resolve_ruby(run_cwd);
     let mut cmd = Command::new(&ruby);
     cmd.arg("--disable-error_highlight")
         .arg("--disable-did_you_mean");
+    for inc in &env.oracle_includes {
+        cmd.arg("-I").arg(inc);
+    }
     // `Ruby::Box` examples need the experimental namespace flag + env.
     if source.contains("Ruby::Box") {
         cmd.arg("-W:no-experimental").env("RUBY_BOX", "1");
@@ -393,8 +415,9 @@ fn bless(
     sc: &Sidecars,
     run_cwd: &Path,
     check_stderr: bool,
+    env: &SuiteEnv,
 ) -> datatest_stable::Result<()> {
-    let (stdout, stderr) = run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd)?;
+    let (stdout, stderr) = run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?;
     let out = norm(&stdout, rb, run_cwd);
     std::fs::write(format!("{}.expected", rb.display()), &out)?;
     let err_path = format!("{}.err.expected", rb.display());
@@ -409,6 +432,23 @@ fn bless(
 
 // ---- the entry point ----
 
+/// Per-suite compile/oracle environment beyond the shared defaults. The
+/// `gemtests` suite points `package_dirs` at `vendor/gemtests/` (each fetched
+/// gem is a package there) and `oracle_includes` at each gem's `lib/`, so the
+/// zeo build and the CRuby oracle resolve the same `require "rack"`.
+#[derive(Default)]
+pub struct SuiteEnv {
+    pub package_dirs: Vec<PathBuf>,
+    /// Extra `-I` roots for the zeo compile (`CompileOptions::load_roots`).
+    pub load_roots: Vec<PathBuf>,
+    pub oracle_includes: Vec<PathBuf>,
+}
+
+fn suite_env_default() -> &'static SuiteEnv {
+    static ENV: std::sync::OnceLock<SuiteEnv> = std::sync::OnceLock::new();
+    ENV.get_or_init(SuiteEnv::default)
+}
+
 /// Run one golden case. See the module docs for the per-`Mode` contract.
 /// `check_stderr` is false for the stdout-only examples suite, true for the
 /// corpus/gaps (full stdout+stderr fidelity).
@@ -417,6 +457,17 @@ pub fn run_golden(
     mode: Mode,
     run_cwd: &Path,
     check_stderr: bool,
+) -> datatest_stable::Result<()> {
+    run_golden_env(rb, mode, run_cwd, check_stderr, suite_env_default())
+}
+
+/// [`run_golden`] with a per-suite [`SuiteEnv`].
+pub fn run_golden_env(
+    rb: &Path,
+    mode: Mode,
+    run_cwd: &Path,
+    check_stderr: bool,
+    env: &SuiteEnv,
 ) -> datatest_stable::Result<()> {
     // datatest-stable hands us a path relative to the crate manifest dir (the
     // test process's cwd); absolutize it so ruby/the binary find it after we
@@ -438,7 +489,7 @@ pub fn run_golden(
     let sc = sidecars(rb)?;
 
     if std::env::var_os("ZEO_BLESS_FROM_XTASK").is_some() && mode != Mode::CompileFail {
-        return bless(rb, &source, &sc, run_cwd, check_stderr);
+        return bless(rb, &source, &sc, run_cwd, check_stderr, env);
     }
 
     if mode == Mode::CompileFail {
@@ -448,7 +499,7 @@ pub fn run_golden(
         // either stage, as the rejection). `compile_and_run` returns `Err`
         // exactly when compile or link fails (a program that builds and then
         // crashes at runtime returns `Ok`, so it does NOT count as rejected).
-        return match compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd) {
+        return match compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env) {
             Err(_) => Ok(()),
             Ok(_) => Err(format!(
                 "{}: expected zeo to REJECT this program, but it built and ran",
@@ -459,7 +510,7 @@ pub fn run_golden(
     }
 
     // Pass / Xfail: build + run, then diff against the golden.
-    let actual = compile_and_run_contained(rb, &source, &sc, run_cwd);
+    let actual = compile_and_run_contained(rb, &source, &sc, run_cwd, env);
 
     // The reference: committed `.expected` (+ optional `.err.expected`), else a
     // live ruby-oracle run (a test without a committed stdout snapshot).
@@ -472,7 +523,7 @@ pub fn run_golden(
             };
             (out, err)
         }
-        None => run_oracle(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd)?,
+        None => run_oracle(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
     };
 
     let matched = match &actual {
@@ -514,9 +565,10 @@ fn compile_and_run_contained(
     source: &str,
     sc: &Sidecars,
     run_cwd: &Path,
+    env: &SuiteEnv,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd)
+        compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
     }));
     caught.unwrap_or_else(|payload| {
         let msg = payload

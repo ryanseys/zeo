@@ -50,16 +50,16 @@ struct ParsedArgs {
 
 /// One git-sourced gem in `gems.toml`.
 #[derive(Debug)]
-struct GemEntry {
-    name: String,
-    github: String,
-    tag: String,
+pub(crate) struct GemEntry {
+    pub(crate) name: String,
+    pub(crate) github: String,
+    pub(crate) tag: String,
     /// The resolved commit SHA -- the reproducible pin. `None` until first sync.
-    rev: Option<String>,
+    pub(crate) rev: Option<String>,
     /// The directory INSIDE the checkout holding the gem's `lib/`, for a repo
     /// that ships more than one gem (`rubygems/rubygems` carries bundler under
     /// `bundler/`). `None` means the repo root, which is the usual shape.
-    subdir: Option<String>,
+    pub(crate) subdir: Option<String>,
 }
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
@@ -393,7 +393,7 @@ fn version_lt(a: &str, b: &str) -> bool {
 /// Resolve `refs/tags/<tag>` on `url` to a commit SHA via `git ls-remote`,
 /// preferring the peeled (`^{}`) object so annotated tags yield the commit,
 /// not the tag object.
-fn resolve_tag(url: &str, tag: &str) -> Result<String, String> {
+pub(crate) fn resolve_tag(url: &str, tag: &str) -> Result<String, String> {
     let out = git(
         None,
         &[
@@ -420,7 +420,7 @@ fn resolve_tag(url: &str, tag: &str) -> Result<String, String> {
 
 /// Fetch `<rev>` (via its tag) into a SHA-stamped cache dir and return the
 /// checkout path. A stamped cache hit short-circuits the network.
-fn fetch_checkout(name: &str, url: &str, tag: &str, rev: &str) -> Result<PathBuf, String> {
+pub(crate) fn fetch_checkout(name: &str, url: &str, tag: &str, rev: &str) -> Result<PathBuf, String> {
     let cache = cache_dir().join(format!("{name}-{rev}"));
     let stamp = cache.join(".zeo-vendor-stamp");
     if stamp.is_file() {
@@ -672,7 +672,7 @@ fn git_free_command(bin: &str, args: &[&str]) -> Result<String, String> {
 
 // --- fs helpers -------------------------------------------------------------
 
-fn copy_tree(src: &Path, dest: &Path) -> Result<(), String> {
+pub(crate) fn copy_tree(src: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("creating {}: {e}", dest.display()))?;
     for entry in std::fs::read_dir(src).map_err(|e| format!("reading {}: {e}", src.display()))? {
         let entry = entry.map_err(|e| format!("reading dir entry: {e}"))?;
@@ -749,7 +749,7 @@ fn list_files(dir: &Path) -> Vec<PathBuf> {
 
 // --- gems.toml (a tiny reader/writer; the schema is fixed and we own it) -----
 
-fn read_manifest(path: &Path) -> Result<Vec<GemEntry>, String> {
+pub(crate) fn read_manifest(path: &Path) -> Result<Vec<GemEntry>, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
