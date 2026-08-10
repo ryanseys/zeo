@@ -40,6 +40,7 @@ mod exec;
 mod gem;
 mod gem_compat;
 mod gem_probe;
+mod jobs;
 mod method_census;
 mod prebuild;
 mod stage_publish;

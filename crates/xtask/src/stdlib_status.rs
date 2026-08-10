@@ -40,6 +40,10 @@ enum Status {
     Fail(String),
     /// The compiler didn't finish within `COMPILE_TIMEOUT`.
     Timeout,
+    /// The compiler reached its memory ceiling. A fact about this machine and
+    /// how many compiles were in flight, not about the file -- kept apart from
+    /// `Fail` so a re-sweep with fewer jobs can tell the two apart.
+    OutOfMemory,
     /// The harness itself couldn't run `zeo` on this file.
     HarnessError(String),
 }
@@ -50,6 +54,7 @@ impl Status {
             Status::Pass => "pass",
             Status::Fail(_) => "fail",
             Status::Timeout => "timeout",
+            Status::OutOfMemory => "out-of-memory",
             Status::HarnessError(_) => "harness-error",
         }
     }
@@ -57,7 +62,7 @@ impl Status {
     /// The `reason` column: empty for a pass, the bucket/detail otherwise.
     fn reason(&self) -> &str {
         match self {
-            Status::Pass | Status::Timeout => "",
+            Status::Pass | Status::Timeout | Status::OutOfMemory => "",
             Status::Fail(r) | Status::HarnessError(r) => r,
         }
     }
@@ -111,16 +116,21 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let queue = Mutex::new(files.into_iter().collect::<VecDeque<_>>());
     let results: Mutex<Vec<(String, Status)>> = Mutex::new(Vec::with_capacity(total));
     let done = AtomicUsize::new(0);
-    let jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // Each job is a whole `zeo` compile, so the width comes from RAM rather
+    // than the core count -- see `crate::jobs`. This swept at
+    // `available_parallelism()` until the same fan-out at gem scale panicked
+    // the machine's kernel.
+    let budget = crate::jobs::Budget::derive(None);
+    eprintln!("stdlib-status: {}", budget.describe());
 
     std::thread::scope(|scope| {
-        for _ in 0..jobs {
+        for _ in 0..budget.jobs {
             scope.spawn(|| {
                 loop {
                     let Some(file) = queue.lock().unwrap().pop_front() else {
                         break;
                     };
-                    let status = classify(&zeo, &lib_dir, &file);
+                    let status = classify(&zeo, &lib_dir, &file, budget);
                     let rel = file
                         .strip_prefix(&lib_dir)
                         .unwrap_or(&file)
@@ -159,13 +169,19 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 /// only) and maps the outcome to a [`Status`]. Exit 0 = codegen succeeded; a
 /// non-zero exit (a clean rejection or a compiler panic) = a failure,
 /// bucketed by its message.
-fn classify(zeo: &Path, lib_dir: &Path, file: &Path) -> Status {
+fn classify(zeo: &Path, lib_dir: &Path, file: &Path, budget: crate::jobs::Budget) -> Status {
     let mut cmd = Command::new(zeo);
     cmd.arg(file).arg("-I").arg(lib_dir).arg("--dump=rust");
+    budget.apply(&mut cmd);
     match run_with_timeout(cmd, None, COMPILE_TIMEOUT) {
         Err(e) => Status::HarnessError(e),
         Ok(ex) if ex.timed_out => Status::Timeout,
         Ok(ex) if ex.success() => Status::Pass,
+        // A compile that outran its share of memory says nothing about the
+        // file -- only about how many were in flight beside it.
+        Ok(ex) if ex.status.and_then(|s| s.code()) == Some(zeo::memguard::EXIT_MEMORY_LIMIT) => {
+            Status::OutOfMemory
+        }
         Ok(ex) => Status::Fail(reason_bucket(&ex.stderr)),
     }
 }

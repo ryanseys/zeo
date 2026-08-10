@@ -38,9 +38,13 @@
 //! panic `parser` raised: an abort, a stack overflow and a run that never
 //! finishes all end the same way, the last of them via `--timeout`.
 //!
-//! A panic and a timeout are each recorded as their own outcome rather than
-//! folded into `lowering-gap`: a gap is a limit zeo reported, a panic is a bug
-//! it did not, and a timeout is no verdict at all.
+//! A panic, a timeout and a memory kill are each recorded as their own outcome
+//! rather than folded into `lowering-gap`: a gap is a limit zeo reported, a
+//! panic is a bug it did not, a timeout is no verdict at all, and an
+//! out-of-memory says what this MACHINE could hold rather than anything about
+//! the gem. How wide the sweep runs and how much each compile may hold are one
+//! decision, made in `crate::jobs` -- see there for why it is a memory budget
+//! and not a job count.
 //!
 //! Only the recorder thread inserts and writes, so the ledger on disk stays the
 //! truth so far and an interrupted sweep keeps its work. Verdicts arrive out of
@@ -109,19 +113,12 @@ options:
                           left to measure, not just what has been
   --no-deps               don't resolve or fetch the gem's dependencies
   --limit <n>             stop after n gems
-  --jobs <n>              gems in flight at once (default: 4 -- each one is a
-                          whole compile, and memory is the limit, not cores)
+  --jobs <n>              gems in flight at once (default: derived from RAM,
+                          not cores -- each one is a whole compile). More jobs
+                          split the same memory budget, they do not add to it
   --timeout <seconds>     kill a gem that outruns it (default: 600)
   -h, --help              this message
 ";
-
-/// Gems in flight at once. A FIXED small number, not the cpu count: the limit
-/// here is memory, not cores. Each job is a whole `zeo` compile, and a
-/// rails-scale require graph takes gigabytes in the front end alone -- twelve
-/// of those at once exhausted a 16GB machine's memory and swap and panicked
-/// the kernel with a watchdog timeout. Raise it with `--jobs` on a machine
-/// with the headroom to spare.
-const DEFAULT_JOBS: usize = 4;
 
 /// Long enough that a rails-scale require graph finishes -- those take minutes
 /// in the front end alone -- and short enough that a gem which will never
@@ -238,6 +235,14 @@ enum Outcome {
     /// verdict, and recording it as one would put a diagnosis in the ledger
     /// that zeo never made.
     Timeout,
+    /// The compiler reached the memory ceiling this sweep handed it
+    /// (`zeo::memguard`) and gave up. Kept apart from `Timeout` for the same
+    /// reason `Timeout` is kept apart from a gap, one step further out: a
+    /// stall says zeo never reached a verdict, and this says the MACHINE never
+    /// let it -- the row is a fact about the host and the sweep's width, and a
+    /// narrower sweep or a leaner compiler flips it back without anything
+    /// about the gem changing. The payload is the phase it died in.
+    OutOfMemory(String),
     /// Named by the registry and never probed. Not a failure and not a
     /// verdict -- it is the FRONTIER, the work still to do, and it is in the
     /// ledger so that "how much of rubygems have we measured" is a question
@@ -271,6 +276,7 @@ impl Outcome {
             Outcome::NoEntryPoint => "no-entry-point",
             Outcome::CompilerPanic(_) => "compiler-panic",
             Outcome::Timeout => "timeout",
+            Outcome::OutOfMemory(_) => "out-of-memory",
             Outcome::Unprobed => "unprobed",
             Outcome::FetchFailed(_) => "fetch-failed",
             Outcome::ViewFailed(_) => "view-failed",
@@ -288,7 +294,8 @@ impl Outcome {
             | Outcome::ViewFailed(d)
             | Outcome::CompilerPanic(d)
             | Outcome::RustcError(d)
-            | Outcome::RunFailed(d) => d,
+            | Outcome::RunFailed(d)
+            | Outcome::OutOfMemory(d) => d,
             _ => "",
         }
     }
@@ -303,6 +310,7 @@ impl Outcome {
             "no-lib-dir" => Outcome::NoLibDir,
             "no-entry-point" => Outcome::NoEntryPoint,
             "timeout" => Outcome::Timeout,
+            "out-of-memory" => Outcome::OutOfMemory(detail.to_string()),
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
             "unprobed" => Outcome::Unprobed,
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
@@ -779,7 +787,14 @@ fn isolate(root: &Path, name: &str, deps: &[String]) -> Result<PathBuf, String> 
 /// The verdict is unchanged by the move: `--dump=rust` is the CLI spelling of
 /// `compile_to_rust_with`, and `message_of` already accepted either the plain
 /// `CompileError` text or the CLI's boxed rendering.
-fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) -> Verdict {
+fn probe(
+    root: &Path,
+    zeo: &Path,
+    gem: &Ready,
+    timeout: Duration,
+    tiers: Tiers,
+    budget: crate::jobs::Budget,
+) -> Verdict {
     let Ready {
         name,
         version,
@@ -819,6 +834,7 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
         .arg("--gems")
         .arg(root.join("gems"))
         .arg("--dump=rust");
+    budget.apply(&mut cmd);
     let started = std::time::Instant::now();
     let emitted = crate::exec::run_with_timeout(cmd, None, timeout);
     let codegen_ms = started.elapsed().as_millis();
@@ -835,10 +851,16 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
             // recorded at the first front-end rung rather than a guessed one.
             return Verdict::stopped(Stage::Parse, Outcome::Timeout).timed(codegen_ms);
         }
+        // The ceiling exits with its own status so this needs no stderr
+        // parsing, and the phase it names is the one useful thing to keep.
+        Ok(ex) if hit_memory_limit(&ex) => {
+            return Verdict::stopped(Stage::Parse, Outcome::OutOfMemory(memory_phase(&ex.stderr)))
+                .timed(codegen_ms);
+        }
         // A successful compile still writes to stderr -- every builtin
         // substitution warns there -- so the exit status is the verdict and
         // stderr is only read once it is non-zero.
-        Ok(ex) if ex.success() => ex.stdout,
+        Ok(ex) if ex.success() => ex,
         Ok(ex) => {
             let text = String::from_utf8_lossy(&ex.stderr);
             let mut v = Verdict::stopped(front_end_stage(&text), classify_stderr(&ex.stderr, root));
@@ -848,13 +870,25 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
     };
 
     let mut verdict = Verdict::stopped(Stage::Codegen, Outcome::Ok).timed(codegen_ms);
-    verdict.rust_bytes = Some(rust.len() as u64);
+    // The bytes the child WROTE, not the bytes the capture kept -- `exec`
+    // bounds what it holds, so the two differ for the largest gems.
+    verdict.rust_bytes = Some(rust.stdout_bytes);
     // The Rust is kept so a later sweep can climb the next rung without paying
     // for codegen again -- emit once for the whole corpus, then build. gzip
     // because the uncompressed corpus does not fit: the generated source is
     // large and repetitive, and a disk that cannot hold the store is a store
     // nobody keeps.
-    if let Err(e) = store_rust(root, name, version, &rust) {
+    //
+    // A truncated capture is not stored: half a program looks exactly like a
+    // whole one to the next rung, and it would fail at rustc with a syntax
+    // error attributed to codegen. Say so and keep the ledger row honest.
+    if rust.stdout_truncated() {
+        eprintln!(
+            "gem-probe: {name}: not keeping the generated Rust -- {} bytes exceeds the {} byte capture bound",
+            rust.stdout_bytes,
+            crate::exec::MAX_CAPTURE,
+        );
+    } else if let Err(e) = store_rust(root, name, version, &rust.stdout) {
         eprintln!("gem-probe: {name}: keeping the generated Rust: {e}");
     }
     if !tiers.build {
@@ -875,6 +909,7 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
         .arg(root.join("gems"))
         .arg("-o")
         .arg(&out);
+    budget.apply(&mut cmd);
     let started = std::time::Instant::now();
     let built = crate::exec::run_with_timeout(cmd, None, timeout);
     verdict.build_ms = Some(started.elapsed().as_millis());
@@ -887,6 +922,14 @@ fn probe(root: &Path, zeo: &Path, gem: &Ready, timeout: Duration, tiers: Tiers) 
         Ok(ex) if ex.timed_out => {
             verdict.stage = Stage::BuildsBin;
             verdict.outcome = Outcome::Timeout;
+            return verdict;
+        }
+        // Checked ahead of the generic failure arm: a ceiling breach is not
+        // rustc rejecting the emitted Rust, and calling it one would put a
+        // zeo bug in the ledger that nobody can reproduce.
+        Ok(ex) if hit_memory_limit(&ex) => {
+            verdict.stage = Stage::BuildsBin;
+            verdict.outcome = Outcome::OutOfMemory(memory_phase(&ex.stderr));
             return verdict;
         }
         Ok(ex) if !ex.success() => {
@@ -987,6 +1030,37 @@ fn site_of(stderr: &str, root: &Path) -> Option<String> {
     let prefix = format!("{}/", root.display());
     let path = path.strip_prefix(&prefix)?;
     Some(format!("{path}:{line}"))
+}
+
+/// Whether the compiler gave up on its memory ceiling rather than on the gem.
+///
+/// The exit status is the signal, not the message: a child killed by the OS
+/// reports no status of its own, so a status that IS reported and IS
+/// `EXIT_MEMORY_LIMIT` can only have come from zeo saying so deliberately.
+fn hit_memory_limit(ex: &crate::exec::Execution) -> bool {
+    ex.status.and_then(|s| s.code()) == Some(zeo::memguard::EXIT_MEMORY_LIMIT)
+}
+
+/// The compile phase a ceiling breach named, for the ledger's detail column.
+/// `"unknown"` if the marker line is not there -- the verdict stands on the
+/// exit status either way.
+fn memory_phase(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let Some(line) = text
+        .lines()
+        .find(|l| l.contains(zeo::memguard::BREACH_MARKER))
+    else {
+        return "unknown".to_string();
+    };
+    // `... reached <n> MiB in <phase>, over the ...`
+    let Some(rest) = line.split(" in ").nth(1) else {
+        return "unknown".to_string();
+    };
+    rest.split(',')
+        .next()
+        .unwrap_or("unknown")
+        .trim()
+        .to_string()
 }
 
 fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
@@ -1827,7 +1901,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut failing = false;
     let (mut unprobed, mut seed_index) = (false, false);
     let mut positional: Vec<String> = Vec::new();
-    let mut jobs = DEFAULT_JOBS;
+    let mut jobs: Option<usize> = None;
     let mut timeout = DEFAULT_TIMEOUT;
     let (mut build, mut run, mut allow_run) = (false, false, false);
 
@@ -1859,7 +1933,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             "--run" => run = true,
             "--allow-running-untrusted-gem-code" => allow_run = true,
             "--jobs" => match it.next().and_then(|v| v.parse().ok()) {
-                Some(n) if n >= 1 => jobs = n,
+                Some(n) if n >= 1 => jobs = Some(n),
                 _ => {
                     eprintln!("gem-probe: --jobs needs a number of 1 or more");
                     return ExitCode::FAILURE;
@@ -2163,7 +2237,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         println!("{skipped} gem(s) already recorded; --refresh re-probes them");
     }
     let total = names.len();
-    println!("probing {total} gem(s) with {jobs} job(s):");
+    let budget = crate::jobs::Budget::derive(jobs);
+    println!("probing {total} gem(s) with {}:", budget.describe());
 
     // Three roles, so the network and the compiles overlap without ever
     // sharing a writer:
@@ -2202,7 +2277,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             }
         });
 
-        for _ in 0..jobs {
+        for _ in 0..budget.jobs {
             let done = done_tx.clone();
             let work_rx = &work_rx;
             let zeo = &zeo;
@@ -2213,7 +2288,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     let Ok(ready) = work_rx.lock().unwrap().recv() else {
                         break;
                     };
-                    let verdict = probe(root, zeo, &ready, timeout, tiers);
+                    let verdict = probe(root, zeo, &ready, timeout, tiers, budget);
                     let row = Row::from_verdict(ready.version, ready.digest, &verdict);
                     if done.send((ready.name, row, Some(verdict))).is_err() {
                         break;
@@ -2485,6 +2560,7 @@ mod tests {
             Outcome::CompilerPanic("boom".into()),
             Outcome::NativeExtension,
             Outcome::Timeout,
+            Outcome::OutOfMemory("codegen".into()),
             Outcome::FetchFailed("404".into()),
         ] {
             assert!(
@@ -2766,6 +2842,27 @@ mod tests {
             Outcome::from_ledger(Outcome::Timeout.tag(), Outcome::Timeout.detail()),
             Outcome::Timeout
         );
+    }
+
+    /// The same rule one step out: a memory kill is a fact about the host, and
+    /// decaying it into `LoweringGap` would put a diagnosis zeo never made in
+    /// the ledger AND hide that the row is re-probeable on a leaner compiler.
+    #[test]
+    fn an_out_of_memory_round_trips_as_itself() {
+        let it = Outcome::OutOfMemory("codegen".into());
+        assert_eq!(Outcome::from_ledger(it.tag(), it.detail()), it);
+    }
+
+    /// The phase comes off the compiler's own marker line, so a change to
+    /// either side is caught here rather than in a sweep's detail column.
+    #[test]
+    fn the_memory_phase_comes_from_the_breach_line() {
+        let line = format!(
+            "{} -e: reached 9812.0 MiB in codegen, over the 8192.0 MiB ceiling\n",
+            zeo::memguard::BREACH_MARKER
+        );
+        assert_eq!(memory_phase(line.as_bytes()), "codegen");
+        assert_eq!(memory_phase(b"something else entirely\n"), "unknown");
     }
 
     fn lib_with(root: &Path, name: &str, files: &[&str]) -> PathBuf {
