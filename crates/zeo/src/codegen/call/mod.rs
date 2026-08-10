@@ -1837,15 +1837,29 @@ pub fn emit_call(
                 return procs::emit_proc_value(cx, block.expect("checked is_some"));
             }
             ("Fiber", "new") => {
-                let Some(block_id) = block else {
-                    if block_arg.is_some() {
-                        return crate::codegen::unsupported(
-                            "`Fiber.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)",
+                // `&proc` is the same conversion every other call site's
+                // block argument goes through (the Thread.new arm below is
+                // the model); `&nil` is "no block", which raises exactly as
+                // a missing literal one does.
+                let proc = match (block, block_arg) {
+                    (Some(block_id), _) => procs::emit_proc_value(cx, block_id),
+                    (None, Some(arg)) => {
+                        let v = emit_expr(cx, arg);
+                        let v = box_if_object_typed(cx, arg, v);
+                        let missing = raise::emit_simple_error(
+                            cx,
+                            "ArgumentError",
+                            "tried to create Proc object without a block",
                         );
+                        quote! {
+                            match zeo_rt::block_arg_to_proc(#v)? {
+                                Some(__p) => __p,
+                                None => Err(zeo_rt::Signal::Raise(#missing))?,
+                            }
+                        }
                     }
-                    return raise::emit_missing_block_raise(cx, "Fiber");
+                    (None, None) => return raise::emit_missing_block_raise(cx, "Fiber"),
                 };
-                let proc = procs::emit_proc_value(cx, block_id);
                 return quote! { zeo_rt::fiber_new(#proc) };
             }
             ("Fiber", "yield") if block.is_none() && block_arg.is_none() => {
