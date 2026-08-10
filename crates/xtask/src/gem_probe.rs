@@ -226,6 +226,11 @@ enum Outcome {
     NativeExtension,
     /// A `require` reached outside the gem and its fetched dependencies.
     MissingDependency(String),
+    /// A `require` that MORE than one gem on the probe's load path provides
+    /// -- usually the subject gem vendoring a file a bundled gem also ships
+    /// (`openssl`, `English`). A fact about the probe's view, not the gem: no
+    /// Bundler resolution puts both copies on one load path.
+    AmbiguousRequire(String),
     /// None of the gem's declared `require_paths` exists in the archive, and
     /// Ruby files sit outside every one of them. The gem's own load path is
     /// empty as packaged, so no Ruby can require what it ships either.
@@ -263,11 +268,19 @@ enum Outcome {
     /// the file answers rather than one that needs the index beside it.
     Unprobed,
     FetchFailed(String),
-    /// The gem's source is on disk, but building its isolated load-path view
-    /// failed. NOT a `fetch-failed`: nothing was downloaded, the registry was
-    /// never asked, and re-running the fetch cannot help. Its own outcome so a
-    /// sweep's fetch column keeps meaning "the registry or the network", which
-    /// is what anyone reading it goes on to check.
+    /// The registry carries this version only as prebuilt PLATFORM artifacts
+    /// (`x86_64-linux`, `java`, ...) -- there is no `ruby` platform gem to
+    /// compile. The payload names the platforms. A fact about the release:
+    /// zeo needs the pure-Ruby artifact, the same rule as Bundler's
+    /// `force_ruby_platform`.
+    PlatformGem(String),
+    /// The gem's source is on disk, but the HARNESS could not carry out the
+    /// probe on this machine: building the isolated load-path view failed, or
+    /// the zeo process could not even be spawned. NOT a `fetch-failed`:
+    /// nothing was downloaded, the registry was never asked, and re-running
+    /// the fetch cannot help. Its own outcome so a sweep's fetch column keeps
+    /// meaning "the registry or the network", which is what anyone reading it
+    /// goes on to check.
     ViewFailed(String),
     /// rustc rejected the Rust zeo emitted. zeo's to fix, and a sharper bug
     /// than a lowering gap: the front end believed it had produced a program.
@@ -286,6 +299,7 @@ impl Outcome {
             Outcome::InvalidRuby(_) => "invalid-ruby",
             Outcome::NativeExtension => "native-extension",
             Outcome::MissingDependency(_) => "missing-dependency",
+            Outcome::AmbiguousRequire(_) => "ambiguous-require",
             Outcome::NoLibDir => "no-lib-dir",
             Outcome::NoEntryPoint => "no-entry-point",
             Outcome::MetaGem => "meta-gem",
@@ -295,6 +309,7 @@ impl Outcome {
             Outcome::OutOfMemory(_) => "out-of-memory",
             Outcome::Unprobed => "unprobed",
             Outcome::FetchFailed(_) => "fetch-failed",
+            Outcome::PlatformGem(_) => "platform-gem",
             Outcome::ViewFailed(_) => "view-failed",
             Outcome::RustcError(_) => "rustc-error",
             Outcome::RunFailed(_) => "run-failed",
@@ -306,11 +321,13 @@ impl Outcome {
             Outcome::LoweringGap(d)
             | Outcome::InvalidRuby(d)
             | Outcome::MissingDependency(d)
+            | Outcome::AmbiguousRequire(d)
             | Outcome::FetchFailed(d)
             | Outcome::ViewFailed(d)
             | Outcome::CompilerPanic(d)
             | Outcome::RustcError(d)
             | Outcome::RunFailed(d)
+            | Outcome::PlatformGem(d)
             | Outcome::OutOfMemory(d) => d,
             _ => "",
         }
@@ -330,8 +347,10 @@ impl Outcome {
             "timeout" => Outcome::Timeout,
             "out-of-memory" => Outcome::OutOfMemory(detail.to_string()),
             "missing-dependency" => Outcome::MissingDependency(detail.to_string()),
+            "ambiguous-require" => Outcome::AmbiguousRequire(detail.to_string()),
             "unprobed" => Outcome::Unprobed,
             "fetch-failed" => Outcome::FetchFailed(detail.to_string()),
+            "platform-gem" => Outcome::PlatformGem(detail.to_string()),
             "view-failed" => Outcome::ViewFailed(detail.to_string()),
             "compiler-panic" => Outcome::CompilerPanic(detail.to_string()),
             "rustc-error" => Outcome::RustcError(detail.to_string()),
@@ -346,7 +365,7 @@ impl Outcome {
     fn implied_stage(&self) -> Stage {
         match self {
             Outcome::Unprobed => Stage::Queued,
-            Outcome::FetchFailed(_) => Stage::Fetch,
+            Outcome::FetchFailed(_) | Outcome::PlatformGem(_) => Stage::Fetch,
             Outcome::ViewFailed(_)
             | Outcome::NoLibDir
             | Outcome::NoEntryPoint
@@ -1121,10 +1140,13 @@ fn probe(
         v
     };
     match emitted {
+        // A spawn failure is a fact about this machine, not the registry:
+        // recording it as `fetch-failed` sent readers to check the network
+        // for a binary that would not start.
         Err(e) => {
             return discard(Verdict::stopped(
-                Stage::Fetch,
-                Outcome::FetchFailed(format!("running zeo: {e}")),
+                Stage::Unpack,
+                Outcome::ViewFailed(format!("running zeo: {e}")),
             ));
         }
         Ok(ex) if ex.timed_out => {
@@ -1365,7 +1387,11 @@ fn classify_stderr(stderr: &[u8], root: &Path) -> Outcome {
 fn terminal_for_a_compiler_change(row: &Row) -> bool {
     matches!(
         row.outcome,
-        Outcome::NoLibDir | Outcome::NoEntryPoint | Outcome::MetaGem | Outcome::ExtOnly
+        Outcome::NoLibDir
+            | Outcome::NoEntryPoint
+            | Outcome::MetaGem
+            | Outcome::ExtOnly
+            | Outcome::PlatformGem(_)
     ) || (matches!(row.outcome, Outcome::InvalidRuby(_)) && row.stage == Stage::Parse)
 }
 
@@ -1468,6 +1494,13 @@ fn classify(err: &str, root: &Path) -> Outcome {
     if let Some(rest) = msg.split("cannot load such file -- ").nth(1) {
         let feature = rest.split_whitespace().next().unwrap_or(rest);
         return Outcome::MissingDependency(feature.trim_matches(['`', ':', '.']).to_string());
+    }
+    // An ambiguity is the probe's own artifact -- the subject gem vendors a
+    // file a bundled gem also provides, and only the probe puts both on one
+    // load path. Counting it as a lowering gap overstated the backlog by 642
+    // rows.
+    if msg.contains("is ambiguous: found in multiple gems") {
+        return Outcome::AmbiguousRequire(truncate(&msg));
     }
     // zeo parses with prism, which IS CRuby's parser, so its parse errors are
     // the ones `ruby -c` gives. Those gems do not load under any current ruby
@@ -1860,8 +1893,9 @@ struct LedgerStats {
     /// Rows with a verdict -- everything but `unprobed`.
     probed: usize,
     ok: usize,
-    /// The harness never reached the compiler: `no-lib-dir`,
-    /// `no-entry-point`, `fetch-failed`, `view-failed`.
+    /// The harness never carried the gem to a compiler verdict:
+    /// `no-lib-dir`, `no-entry-point`, `fetch-failed`, `view-failed`,
+    /// `ambiguous-require`.
     harness: usize,
     /// Nothing a Ruby compiler can compile: `invalid-ruby`,
     /// `native-extension`, `ext-only`, `meta-gem`.
@@ -1899,11 +1933,13 @@ impl LedgerStats {
                 Outcome::NoLibDir
                 | Outcome::NoEntryPoint
                 | Outcome::FetchFailed(_)
-                | Outcome::ViewFailed(_) => s.harness += 1,
+                | Outcome::ViewFailed(_)
+                | Outcome::AmbiguousRequire(_) => s.harness += 1,
                 Outcome::InvalidRuby(_)
                 | Outcome::NativeExtension
                 | Outcome::MetaGem
-                | Outcome::ExtOnly => s.not_ruby += 1,
+                | Outcome::ExtOnly
+                | Outcome::PlatformGem(_) => s.not_ruby += 1,
                 Outcome::LoweringGap(_) | Outcome::CompilerPanic(_) | Outcome::RustcError(_) => {
                     s.compiler += 1
                 }
@@ -1980,12 +2016,12 @@ fn render_stats_block(s: &LedgerStats) -> String {
         percent(s.missing_dep, s.probed),
     ));
     md.push_str(&row(
-        "Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`)",
+        "Harness limits, not compiler verdicts (`no-entry-point`, `no-lib-dir`, `fetch-failed`, `view-failed`, `ambiguous-require`)",
         s.harness,
         percent(s.harness, s.probed),
     ));
     md.push_str(&row(
-        "Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`)",
+        "Nothing to compile (`invalid-ruby`, `native-extension`, `ext-only`, `meta-gem`, `platform-gem`)",
         s.not_ruby,
         percent(s.not_ruby, s.probed),
     ));
@@ -2368,13 +2404,49 @@ fn prepare(root: &Path, name: &str, want: Option<&str>, no_deps: bool) -> Result
             deps,
             digest,
         }),
-        Err(e) => Err(Box::new(Row::stopped(
-            &version,
-            Stage::Fetch,
-            Outcome::FetchFailed(e),
-            digest,
-        ))),
+        Err(e) => {
+            // The CDN refuses `<name>-<version>.gem` with a 403 when that
+            // version shipped only prebuilt platform artifacts -- there is no
+            // pure-Ruby gem behind the plain name at all. Ask the versions
+            // list before writing `fetch-failed`, so the row names the real
+            // fact about the release rather than sending readers to check the
+            // network.
+            let outcome = match e.contains("status: 403") {
+                true => match ruby_platform_absent(name, &version) {
+                    Some(platforms) => Outcome::PlatformGem(platforms),
+                    None => Outcome::FetchFailed(e),
+                },
+                false => Outcome::FetchFailed(e),
+            };
+            Err(Box::new(Row::stopped(
+                &version,
+                Stage::Fetch,
+                outcome,
+                digest,
+            )))
+        }
     }
+}
+
+/// When rubygems carries `version` only under non-`ruby` platforms, answers
+/// the platform list; otherwise `None` (including on any network failure, so
+/// a flaky request never upgrades a `fetch-failed` into a claim).
+fn ruby_platform_absent(name: &str, version: &str) -> Option<String> {
+    let v = json(&format!("{REGISTRY}/api/v1/versions/{name}.json")).ok()?;
+    let platforms: Vec<String> = v
+        .as_array()?
+        .iter()
+        .filter(|e| e.get("number").and_then(|n| n.as_str()) == Some(version))
+        .filter_map(|e| e.get("platform").and_then(|p| p.as_str()))
+        .map(String::from)
+        .collect();
+    if platforms.is_empty() || platforms.iter().any(|p| p == "ruby") {
+        return None;
+    }
+    let mut platforms = platforms;
+    platforms.sort();
+    platforms.dedup();
+    Some(platforms.join(", "))
 }
 
 fn report(name: &str, row: &Row) {
@@ -3090,6 +3162,7 @@ mod tests {
             Outcome::NoEntryPoint,
             Outcome::MetaGem,
             Outcome::ExtOnly,
+            Outcome::PlatformGem("x86_64-linux".into()),
         ] {
             assert!(terminal_for_a_compiler_change(&row_with(
                 Stage::Unpack,
@@ -3110,6 +3183,7 @@ mod tests {
             Outcome::Timeout,
             Outcome::OutOfMemory("codegen".into()),
             Outcome::FetchFailed("404".into()),
+            Outcome::AmbiguousRequire("`require \"x\"` is ambiguous".into()),
         ] {
             assert!(
                 !terminal_for_a_compiler_change(&row_with(Stage::Codegen, movable.clone())),
@@ -3228,6 +3302,20 @@ mod tests {
             Outcome::from_ledger("view-failed", "boom"),
             Outcome::ViewFailed("boom".into())
         );
+    }
+
+    /// An ambiguity is the probe's own artifact -- the subject vendors a file
+    /// a bundled gem also ships, and only the probe's view holds both.
+    /// Filing it as a lowering gap put 642 harness rows in zeo's backlog.
+    #[test]
+    fn an_ambiguous_require_is_not_a_lowering_gap() {
+        let root = Path::new("/tmp/none");
+        let msg = "`require \"openssl\"` is ambiguous: found in multiple gems \
+                   (jruby-openssl, openssl)";
+        match classify(msg, root) {
+            Outcome::AmbiguousRequire(d) => assert!(d.contains("jruby-openssl"), "{d}"),
+            other => panic!("expected an ambiguity, got {other:?}"),
+        }
     }
 
     /// A panic reaches stderr with its message on the line AFTER `panicked at`,
