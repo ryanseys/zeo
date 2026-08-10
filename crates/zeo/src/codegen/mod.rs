@@ -521,11 +521,15 @@ fn wrap_method_return(needs_return_catch: bool, inner: TokenStream) -> TokenStre
 pub(crate) fn source_location(
     compiler: &Compiler,
     node: crate::hir::NodeId,
-) -> Option<(String, u32)> {
+) -> Option<(&str, u32)> {
     let span = compiler.hir.span(node)?;
     let file = compiler.hir.files.get(span.file.0 as usize)?;
     let upto = (span.start as usize).min(file.source.len());
-    Some((file.name.clone(), file.line_at(upto as u32)))
+    // Borrowed, not cloned. This is asked once per emitted statement and once
+    // per call site, and `pooled_file` dedups the answer anyway -- so a clone
+    // here was a fresh allocation per statement for a string that already
+    // lives in the arena and outlives every caller.
+    Some((file.name.as_str(), file.line_at(upto as u32)))
 }
 
 /// The line `node`'s span ENDS on -- a `def`/`class` node's `end` keyword
@@ -609,7 +613,7 @@ pub(crate) fn scope_frame_guard(
     // every compiled method checks its depth against the execution context's
     // floor, making runaway recursion a rescuable SystemStackError instead
     // of a native stack-overflow abort.
-    let file = pooled_file(&file);
+    let file = pooled_file(file);
     quote! {
         let __frame = {
             zeo_rt::stack_check()?;
@@ -737,7 +741,7 @@ fn push_method_meta_row(
         .def_node
         .and_then(|n| source_location(compiler, n))
         .map(|(file, line)| {
-            let file = pooled_file(&file);
+            let file = pooled_file(file);
             quote! { .at(#file, #line) }
         });
     let alias = scope
@@ -1085,7 +1089,7 @@ fn coverage_def_lines(
             match &compiler.hir[s] {
                 crate::hir::HirNode::DefMethod { .. } => {
                     if let Some((file, line)) = source_location(compiler, s) {
-                        out.entry(file).or_default().insert(line);
+                        out.entry(file.to_string()).or_default().insert(line);
                     }
                 }
                 crate::hir::HirNode::ClassDef { body, .. } => {
@@ -3148,7 +3152,7 @@ pub(crate) fn emit_class_body_site_lifted(
             let label = body_frame_label(compiler, cid);
             // The body's `end` line, `TracePoint`'s `:end` lineno.
             let end_line = site.def_node.map_or(0, |n| source_end_line(compiler, n));
-            let file = pooled_file(&file);
+            let file = pooled_file(file);
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line, #end_line); }
         }
         None => quote! {},

@@ -123,9 +123,8 @@ fn emit_eval_in_scope(cx: &Ctx, scope: TokenStream, args: &[NodeId]) -> TokenStr
 /// shadow that is in scope here. Such a block's own parameters are absent from
 /// the Binding rather than wrongly bound -- see `docs/COMPATIBILITY.md`.
 pub(crate) fn emit_binding(cx: &Ctx, id: NodeId) -> TokenStream {
-    let (file, line) =
-        super::source_location(cx.compiler, id).unwrap_or_else(|| ("(eval)".to_string(), 0));
-    emit_binding_value(cx, &file, line)
+    let (file, line) = super::source_location(cx.compiler, id).unwrap_or(("(eval)", 0));
+    emit_binding_value(cx, file, line)
 }
 
 /// [`emit_binding`] with the source location supplied -- `TOPLEVEL_BINDING`,

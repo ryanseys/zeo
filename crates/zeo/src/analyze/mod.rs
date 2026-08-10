@@ -789,7 +789,9 @@ fn previous_definition_of(
         .find(|s| s.class == cid)
         .and_then(|s| s.def_node)
         .and_then(|n| crate::codegen::source_location(compiler, n))
-        .map_or((String::new(), String::new()), |(f, l)| (f, l.to_string()));
+        .map_or((String::new(), String::new()), |(f, l)| {
+            (f.to_string(), l.to_string())
+        });
     format!("\n{file}:{line}: previous definition of {name} was here")
 }
 

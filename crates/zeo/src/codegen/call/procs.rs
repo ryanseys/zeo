@@ -64,7 +64,10 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
         panic!("internal error: expected a Block node at block_id")
     };
-    let loc = crate::codegen::source_location(cx.compiler, block_id);
+    // Owned here: a block is emitted once, and the downstream emitters keep
+    // the location across a `quote!` boundary a borrow would not survive.
+    let loc =
+        crate::codegen::source_location(cx.compiler, block_id).map(|(f, l)| (f.to_string(), l));
     // A re-homed block (`recv.instance_eval { }`) always captures `self`,
     // even when its body never mentions one: `instance_eval` rebinding needs
     // the self slot, and the block's call sites read the runtime `self`'s
@@ -460,7 +463,7 @@ fn emit_proc_or_lambda_value_with(
             // The stack probe rides in the guard's initializer as in
             // `scope_frame_guard`: a lambda recursing through a captured
             // local never re-enters a method prologue.
-            let file = crate::codegen::pooled_file(&file);
+            let file = crate::codegen::pooled_file(file);
             quote! {
                 let __frame = {
                     zeo_rt::stack_check()?;
