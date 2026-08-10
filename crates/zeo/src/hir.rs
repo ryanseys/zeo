@@ -279,6 +279,11 @@ pub struct Hir {
     /// known.
     pub single_unit_demand:
         std::collections::BTreeSet<(Option<String>, std::path::PathBuf, String)>,
+    /// Every `FFI::Struct` subclass's computed layout, keyed by LEAF class
+    /// name like `ffi_types` -- how a later `attach_function` resolves a
+    /// struct passed by value. Source-order like the rest of the FFI table:
+    /// the struct's body must lower before the declaration that names it.
+    pub ffi_struct_layouts: std::collections::HashMap<String, FfiStructLayout>,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot
@@ -431,10 +436,21 @@ impl Hir {
     /// by an enclosing (or earlier) FFI library. Bodies lower in source order,
     /// so a nested struct sees what the module above it declared.
     pub fn inherited_ffi_types(&self) -> std::collections::HashMap<String, FfiType> {
-        self.ffi_types
+        let mut types: std::collections::HashMap<String, FfiType> = self
+            .ffi_types
             .iter()
             .filter_map(|(k, v)| v.clone().map(|t| (k.clone(), t)))
-            .collect()
+            .collect();
+        // Struct layouts join the same table as `Struct` entries, so a bare
+        // struct name in a type list means BY VALUE -- the gem's semantics
+        // (`.by_ref` is the pointer spelling). An explicit typedef of the
+        // same name wins.
+        for (k, layout) in &self.ffi_struct_layouts {
+            types
+                .entry(k.clone())
+                .or_insert_with(|| FfiType::Struct(layout.clone()));
+        }
+        types
     }
 
     /// Records that an in-tree `ext/` feature's `require` fired -- exposes
@@ -1773,6 +1789,26 @@ pub enum FfiType {
     /// Only legal in a layout; the gem has no inline array in a function
     /// signature either.
     Array(Box<FfiType>, usize),
+    /// A struct passed or stored BY VALUE -- what a BARE `FFI::Struct`
+    /// subclass means in a type list (`.by_ref` is the pointer spelling).
+    /// Carries the full layout: the ABI needs every field's real type, not
+    /// just the byte count (a `{float, float}` classifies differently from
+    /// `[u8; 8]` on SysV/AArch64).
+    Struct(FfiStructLayout),
+}
+
+/// An `FFI::Struct` subclass's computed C layout, recorded when its `layout`
+/// directive lowers so later declarations can pass it by value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FfiStructLayout {
+    /// The class name as written -- for diagnostics and a future by-value
+    /// RETURN wrap (which must construct this class).
+    pub class_path: String,
+    /// `(field, type, byte offset)` in declaration order.
+    pub fields: Vec<(String, FfiType, usize)>,
+    pub size: usize,
+    pub align: usize,
+    pub union: bool,
 }
 
 /// Where an `attach_function`'s symbol comes from.

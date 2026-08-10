@@ -2587,6 +2587,7 @@ pub(crate) fn lower_class_body(
                     is_ffi,
                     is_ffi_struct,
                     is_ffi_union,
+                    cref,
                     ffi_lib: &mut ffi_lib,
                     ffi_aliases: &mut ffi_aliases,
                     visibility: &mut visibility,
@@ -2637,6 +2638,9 @@ struct LowerBodyStmt<'a> {
     is_ffi: bool,
     is_ffi_struct: bool,
     is_ffi_union: bool,
+    /// The enclosing class's name as written -- what a recorded struct
+    /// layout is keyed and reported by.
+    cref: Option<&'a str>,
     ffi_lib: &'a mut crate::hir::FfiLib,
     ffi_aliases: &'a mut std::collections::HashMap<String, crate::hir::FfiType>,
     visibility: &'a mut Visibility,
@@ -2670,6 +2674,14 @@ fn lower_one_class_body_stmt(
         // `claim_ffi_inline_array_classes`.
         let classes = crate::lower::ffi::needs_inline_array_classes(&fields)
             && hir.claim_ffi_inline_array_classes();
+        // The computed layout is also RECORDED, keyed by leaf name like the
+        // rest of the FFI type table, so a later `attach_function` can pass
+        // this struct by value.
+        if let Some(name) = st.cref {
+            let layout = crate::lower::ffi::ffi_struct_layout(name, &fields, st.is_ffi_union)?;
+            let leaf = name.rsplit("::").next().unwrap_or(name);
+            hir.ffi_struct_layouts.insert(leaf.to_string(), layout);
+        }
         let source = synthesize_ffi_struct(&fields, st.is_ffi_union, classes)?;
         out.extend(parse_and_lower_into(hir, &source)?);
         return Ok(());

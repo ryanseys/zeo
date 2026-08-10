@@ -2779,12 +2779,30 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
     }
 
     let sym = quote::format_ident!("{}", call.symbol);
+    let mut struct_defs = Vec::new();
     let mut extern_params = Vec::new();
     let mut bindings = Vec::new();
     let mut call_idents = Vec::new();
     let mut has_callback = false;
     for (i, (arg_id, ty)) in call.args.iter().enumerate() {
         let pname = quote::format_ident!("__ffi_arg{}", i);
+        // A by-value struct: a `#[repr(C)]` mirror of the recorded layout,
+        // read out of the ruby object's backing `MemoryPointer`. rustc owns
+        // the ABI classification, which is why the mirror carries the REAL
+        // field types -- a byte blob classifies differently on SysV/AArch64.
+        if let crate::hir::FfiType::Struct(layout) = ty {
+            let sid = quote::format_ident!("__FfiS{}", i);
+            struct_defs.push(emit_repr_c_struct(&sid, layout));
+            extern_params.push(quote! { #pname: #sid });
+            let val = emit_expr(cx, *arg_id);
+            bindings.push(quote! {
+                let #pname: #sid = unsafe {
+                    ::std::ptr::read_unaligned(zeo_rt::ffi::to_pointer(&#val)? as *const #sid)
+                };
+            });
+            call_idents.push(quote! { #pname });
+            continue;
+        }
         let cty = ffi_c_type(ty);
         extern_params.push(quote! { #pname: #cty });
         let val = emit_expr(cx, *arg_id);
@@ -2811,6 +2829,7 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
     };
     quote! {
         {
+            #(#struct_defs)*
             #link
             extern "C" {
                 fn #sym(#(#extern_params),*) -> #ret_cty;
@@ -2820,6 +2839,71 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
             #cb_check
             #wrap
         }
+    }
+}
+
+/// The `#[repr(C)]` mirror of a recorded struct layout, with explicit
+/// `__padN` fillers where the C layout has gaps, and compile-time asserts
+/// that rustc placed every field where the accessor synthesis did -- a
+/// mismatch is a build error, never silent corruption.
+fn emit_repr_c_struct(
+    ident: &proc_macro2::Ident,
+    layout: &crate::hir::FfiStructLayout,
+) -> TokenStream {
+    let mut fields = Vec::new();
+    let mut asserts = Vec::new();
+    let mut cursor = 0usize;
+    for (i, (name, ty, off)) in layout.fields.iter().enumerate() {
+        if *off > cursor {
+            let pad = quote::format_ident!("__pad{}", i);
+            let width = proc_macro2::Literal::usize_unsuffixed(*off - cursor);
+            fields.push(quote! { #pad: [u8; #width] });
+        }
+        let fname = quote::format_ident!("f{}", i);
+        let fty = match ty {
+            crate::hir::FfiType::Array(elem, count) => {
+                let ecty = ffi_c_type(elem);
+                let count = proc_macro2::Literal::usize_unsuffixed(*count);
+                quote! { [#ecty; #count] }
+            }
+            other => ffi_c_type(other),
+        };
+        fields.push(quote! { #fname: #fty });
+        let off_lit = proc_macro2::Literal::usize_unsuffixed(*off);
+        let msg = format!("FFI layout drift on field `{name}`");
+        asserts.push(quote! {
+            assert!(::std::mem::offset_of!(#ident, #fname) == #off_lit, #msg);
+        });
+        cursor = *off + ffi_field_size(ty);
+    }
+    if layout.size > cursor {
+        let width = proc_macro2::Literal::usize_unsuffixed(layout.size - cursor);
+        fields.push(quote! { __tail: [u8; #width] });
+    }
+    let size = proc_macro2::Literal::usize_unsuffixed(layout.size);
+    quote! {
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct #ident { #(#fields),* }
+        const _: () = {
+            #(#asserts)*
+            assert!(::std::mem::size_of::<#ident>() == #size, "FFI layout drift on struct size");
+        };
+    }
+}
+
+/// A layout field's byte width -- must agree with `lower::ffi`'s
+/// `ffi_field_accessor`, which the layout's offsets came from.
+fn ffi_field_size(ty: &crate::hir::FfiType) -> usize {
+    use crate::hir::FfiType::*;
+    match ty {
+        Int(w) | Uint(w) | Float(w) => usize::from(*w) / 8,
+        Bool => 1,
+        Str | Pointer | Callback(..) => 8,
+        Enum(_) => 4,
+        Array(elem, count) => ffi_field_size(elem) * count,
+        Struct(l) => l.size,
+        Void => 0,
     }
 }
 
@@ -2973,6 +3057,9 @@ fn ffi_kind_tokens(ty: &crate::hir::FfiType) -> TokenStream {
         // inline array in a function signature either, so `as_ffi_layout` is
         // the sole producer and it never reaches a call site.
         Array(..) => unreachable!("an inline array type is confined to a struct layout"),
+        // `lower_attach_function` rejects a by-value struct in every position
+        // that marshals through kinds (variadic, callback, runtime lib).
+        Struct(_) => unreachable!("a by-value struct never reaches a kind position"),
     };
     quote! { zeo_rt::ffi::FfiKind::#variant }
 }
@@ -3004,6 +3091,9 @@ fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
         Callback(..) => quote! { *const ::std::os::raw::c_void },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
+        // `emit_ffi_call` intercepts a by-value struct before asking for a
+        // scalar C type -- it emits the `#[repr(C)]` mirror instead.
+        Struct(_) => unreachable!("a by-value struct is emitted as its repr(C) mirror"),
     }
 }
 
@@ -3057,6 +3147,8 @@ fn ffi_marshal_in(
         Void => quote! { compile_error!("`:void` is not a valid FFI argument type"); },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
+        // Intercepted by `emit_ffi_call` before marshaling -- see above.
+        Struct(_) => unreachable!("a by-value struct is marshaled by its repr(C) mirror"),
     }
 }
 
@@ -3077,6 +3169,8 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
         Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
+        // `lower_attach_function` rejects a by-value struct RETURN.
+        Struct(_) => unreachable!("a by-value struct return is rejected at the declaration"),
     }
 }
 

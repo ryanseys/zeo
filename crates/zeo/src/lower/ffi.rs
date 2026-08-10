@@ -116,6 +116,13 @@ pub(crate) fn lower_ffi_directive(
     aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
 ) -> PResult<bool> {
+    // Catch up on types declared since this body's snapshot: a struct or
+    // typedef declared by a NESTED class body mid-module (sha3 nests its
+    // state struct inside the library module, above the `attach_function`s
+    // that pass it).
+    for (k, v) in hir.inherited_ffi_types() {
+        aliases.entry(k).or_insert(v);
+    }
     // `SassTag = enum(:sass_boolean, :sass_number, ...)` -- the ANONYMOUS enum,
     // named by the constant it is assigned to rather than by a `:tag` argument.
     // sassc and google-protobuf both declare every one of their enums this way,
@@ -251,6 +258,18 @@ pub(crate) fn lower_ffi_directive(
             };
             let arg_types = ffi_type_array(params, aliases)?;
             let ret_ty = ffi_type_node(ret, aliases)?;
+            if arg_types
+                .iter()
+                .chain(std::iter::once(&ret_ty))
+                .any(|t| matches!(t, crate::hir::FfiType::Struct(_)))
+            {
+                return Err(
+                    "a callback signature can't pass a struct BY VALUE (zeo limitation) -- \
+                     use `.by_ref`"
+                        .to_string()
+                        .into(),
+                );
+            }
             let ty = crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty));
             hir.declare_ffi_type(&tag, &ty);
             aliases.insert(tag, ty);
@@ -631,6 +650,39 @@ pub(crate) fn needs_inline_array_classes(fields: &[(String, crate::hir::FfiType)
     fields
         .iter()
         .any(|(_, t)| matches!(t, crate::hir::FfiType::Array(..)))
+}
+
+/// The one place field offsets, total size and alignment are computed --
+/// consumed by the accessor synthesis below AND recorded as
+/// `Hir::ffi_struct_layouts` for by-value passing, so the two views of the
+/// same struct cannot disagree.
+pub(crate) fn ffi_struct_layout(
+    class_path: &str,
+    fields: &[(String, crate::hir::FfiType)],
+    union: bool,
+) -> PResult<crate::hir::FfiStructLayout> {
+    let round_up = |n: usize, a: usize| -> usize { n.div_ceil(a) * a };
+    let mut offset = 0usize;
+    let mut max_align = 1usize;
+    // A union's members all start at offset 0 and it is as wide as its
+    // widest member.
+    let mut widest = 0usize;
+    let mut placed = Vec::new();
+    for (name, ty) in fields {
+        let (_, _, size, align) = ffi_field_accessor(ty)?;
+        let off = if union { 0 } else { round_up(offset, align) };
+        placed.push((name.clone(), ty.clone(), off));
+        offset = off + size;
+        widest = widest.max(size);
+        max_align = max_align.max(align);
+    }
+    Ok(crate::hir::FfiStructLayout {
+        class_path: class_path.to_string(),
+        fields: placed,
+        size: round_up(if union { widest } else { offset }, max_align),
+        align: max_align,
+        union,
+    })
 }
 
 pub(crate) fn synthesize_ffi_struct(
@@ -1033,6 +1085,36 @@ fn lower_attach_function(
         Some(opts) => attach_function_options(opts)?,
         None => false,
     };
+    // By-value structs ride the fixed `extern "C"` tier, where rustc owns the
+    // ABI. The three positions that tier cannot express are clean rejections
+    // at the declaration -- never a wrong call.
+    let passes_struct = arg_types
+        .iter()
+        .any(|t| matches!(t, crate::hir::FfiType::Struct(_)));
+    if matches!(ret, crate::hir::FfiType::Struct(_)) {
+        return Err(
+            "returning an FFI struct BY VALUE isn't supported yet (zeo limitation) -- return \
+             `.by_ref` (a pointer) and wrap it"
+                .to_string()
+                .into(),
+        );
+    }
+    if passes_struct && variadic {
+        return Err(
+            "a variadic `attach_function` can't pass a struct BY VALUE (zeo limitation) -- \
+             use `.by_ref`"
+                .to_string()
+                .into(),
+        );
+    }
+    if passes_struct && matches!(lib, crate::hir::FfiLib::Runtime(_)) {
+        return Err(
+            "a runtime-resolved `ffi_lib` can't pass a struct BY VALUE (zeo limitation) -- \
+             name the library statically or use `.by_ref`"
+                .to_string()
+                .into(),
+        );
+    }
     // A `blocking: true` call releases the GVL, and the C function may not call
     // back into ruby while it is released. ffi says the same; here it would be
     // a callback trampolining into a Proc with no GVL held.
@@ -1175,18 +1257,24 @@ fn ffi_type_node(
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<crate::hir::FfiType> {
     if let Some(call) = node.as_call_node()
-        && call.receiver().is_some()
+        && let Some(recv) = call.receiver()
         && call.arguments().is_none()
     {
         match call.name().as_slice() {
             b"by_ref" | b"ptr" => return Ok(crate::hir::FfiType::Pointer),
             b"by_value" | b"val" => {
-                return Err(
-                    "an FFI struct passed BY VALUE isn't supported yet (zeo limitation) \
-                            -- `.by_ref` (a pointer) is"
-                        .to_string()
-                        .into(),
-                );
+                // The receiver must be a struct whose `layout` already
+                // lowered -- the by-value ABI needs the full field list.
+                let path = const_path_string(&recv).unwrap_or_default();
+                let leaf = path.rsplit("::").next().unwrap_or(&path);
+                return match aliases.get(leaf) {
+                    Some(t @ crate::hir::FfiType::Struct(_)) => Ok(t.clone()),
+                    _ => Err(format!(
+                        "`{path}.by_value` needs an `FFI::Struct` whose `layout` lowered earlier \
+                         in this program"
+                    )
+                    .into()),
+                };
             }
             _ => {}
         }
@@ -1338,6 +1426,30 @@ fn c_typedef(name: &str) -> Option<crate::hir::FfiType> {
         "caddr_t" => Pointer,
         // NOT here on purpose: `int_fast16_t`/`int_fast32_t`, which are 16/32
         // bits on macOS and 64 on glibc.
+        _ => return win32_typedef(name),
+    })
+}
+
+/// The Win32 typedef vocabulary windows-only gem files declare with. Their
+/// widths are fixed by the Win32 API's own definitions on EVERY platform --
+/// `DWORD` is 32 bits wherever the word is written -- so resolving them here
+/// is not a platform guess. The declarations usually sit in files a platform
+/// guard should have pruned; where one is still reached, the honest widths
+/// beat a rejection. Ambiguous Win32 names (`LONG` is 32 there, but plain
+/// `long` here) are NOT included -- only the spellings that exist solely in
+/// the Win32 vocabulary.
+fn win32_typedef(name: &str) -> Option<crate::hir::FfiType> {
+    use crate::hir::FfiType::*;
+    Some(match name {
+        "BYTE" | "BOOLEAN" | "UCHAR" => Uint(8),
+        "WORD" | "USHORT" => Uint(16),
+        "DWORD" | "dword" | "ULONG32" | "UINT32" => Uint(32),
+        "DWORD64" | "ULONGLONG" | "DWORDLONG" | "ULONG64" => Uint(64),
+        "LARGE_INTEGER" | "LONGLONG" | "LONG64" => Int(64),
+        "HANDLE" | "HWND" | "HINSTANCE" | "HMODULE" | "LPVOID" | "PVOID" | "FARPROC" => Pointer,
+        "LPCSTR" | "LPSTR" | "LPCWSTR" | "LPWSTR" => Pointer,
+        "WPARAM" | "SIZE_T" => Uint(64),
+        "LPARAM" | "SSIZE_T" => Int(64),
         _ => return None,
     })
 }
