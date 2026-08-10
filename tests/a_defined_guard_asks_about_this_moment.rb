@@ -43,6 +43,40 @@ if defined?(HTTP) && defined?(HTTP::VERSION)
 end
 p defined?(Adapter)
 
+# A `const_set` that pins down NEITHER the constant it names nor the module it
+# sets it on is evidence about no constant in particular. webmock's
+# `@webMockNetHTTP.const_set(c[0], c[1])` is one of these, and reading it as a
+# possible `HTTP::VERSION` left every scoped guard below it undecidable.
+class Registry; end
+into = Registry
+[["Alpha", 1]].each { |pair| into.const_set(pair[0], pair[1]) }
+p Registry::Alpha
+
+module HTTP; end
+if defined?(HTTP::VERSION)
+  module Versioned
+    NOPE = 1
+  end
+end
+p defined?(Versioned)
+
+# `Module.constants` names the same list at the top level, and a `map` that
+# only respells each entry still holds the same names -- andand asks
+# `Module.constants.map { |c| c.to_s }.include?('BlankSlate')`.
+unless Module.constants.map { |c| c.to_s }.include?('BlankSlate')
+  class BlankSlate
+    def tag = "blank"
+  end
+end
+p BlankSlate.new.tag
+
+if Module.constants.map(&:to_s).include?('String')
+  module Stringy
+    SEEN = true
+  end
+end
+p Stringy::SEEN
+
 # `Object.constants.include?` is the same question through the list -- for an
 # `Object` receiver its own constants ARE the top-level ones.
 if !Object.constants.include?(:Concurrent)
@@ -61,13 +95,17 @@ end
 p Present::SEEN
 
 # A global nothing in the program assigns is not defined -- lockfile opens
-# with exactly this pair.
+# with exactly this pair, and stamps the global on its last line. That stamp
+# is INSIDE the branch the guard controls, so at the guard it has not run:
+# same moment rule the constants above follow.
 unless(defined?($__lockfile__) or defined?(Lockfile))
   class Lockfile
     def tag = "lock"
   end
+  $__lockfile__ = __FILE__
 end
 p Lockfile.new.tag
+p $__lockfile__.nil?
 
 # `defined?` of a LITERAL is the string "expression", so the branch always
 # runs. faraday-stack's `if defined?("Faraday::Env")` means this, whatever

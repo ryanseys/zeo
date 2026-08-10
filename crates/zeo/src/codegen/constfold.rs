@@ -318,4 +318,53 @@ mod tests {
         let fx = fixture("x = 1\nif x\n  1\nend\n");
         assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), None);
     }
+
+    /// A build-time question a gem gave a NAME is still a build-time question.
+    /// `RUBY_ENGINE` is `"ruby"` for every target zeo builds, so each of these
+    /// is a decided `false`.
+    #[test]
+    fn a_named_zero_arg_predicate_folds_through_its_body() {
+        for module in [
+            // The memoized spelling, verbatim from sass' `Sass::Util.rbx?`.
+            "module E\n  extend self\n  def rbx?\n    return @rbx if defined?(@rbx)\n    \
+             @rbx = RUBY_ENGINE == \"rbx\"\n  end\nend\n",
+            // The same, as a class method -- lutaml-model's `.opal?`.
+            "module E\n  def self.rbx?\n    return @rbx if defined?(@rbx)\n    \
+             @rbx = RUBY_ENGINE == \"rbx\"\n  end\nend\n",
+            // No memo at all.
+            "module E\n  def self.rbx? = RUBY_ENGINE == \"rbx\"\nend\n",
+        ] {
+            let fx = fixture(&format!("{module}if E.rbx?\n  1\nend\n"));
+            assert_eq!(
+                static_cond(&fx.ctx(), fx.first_if_cond()),
+                Some(false),
+                "{module}"
+            );
+        }
+    }
+
+    /// The fold reads a predicate's body, so a body it cannot decide leaves the
+    /// guard alone -- and so does one that takes an argument, whose answer is
+    /// the caller's rather than the target's.
+    #[test]
+    fn a_predicate_zeo_cannot_decide_leaves_its_guard_alone() {
+        for (module, guard) in [
+            (
+                "module E\n  def self.on? = ENV[\"X\"] == \"1\"\nend\n",
+                "E.on?",
+            ),
+            // An argument the caller chose is not a build-time fact.
+            ("module E\n  def self.on?(flag) = flag\nend\n", "E.on?(1)"),
+            // Two definitions that disagree: which one a call reaches is
+            // exactly what this fold declines to model.
+            (
+                "module E\n  extend self\n  def on? = RUBY_ENGINE == \"ruby\"\n  \
+                 def self.on? = RUBY_ENGINE == \"rbx\"\nend\n",
+                "E.on?",
+            ),
+        ] {
+            let fx = fixture(&format!("{module}if {guard}\n  1\nend\n"));
+            assert_eq!(static_cond(&fx.ctx(), fx.first_if_cond()), None, "{module}");
+        }
+    }
 }

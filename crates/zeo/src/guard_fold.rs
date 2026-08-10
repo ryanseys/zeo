@@ -30,9 +30,16 @@
 //! guard site (empty at the top level) so a bare `Specification`/const resolves
 //! in its enclosing namespace, exactly as it would at that source position.
 
-use crate::compiler::{ClassId, Compiler};
-use crate::hir::{ArrayElem, HirNode, NodeId, StrPart, Visibility};
+use crate::compiler::{ClassId, Compiler, ScopeId};
+use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart, Visibility};
 use std::cmp::Ordering;
+
+/// How far a fold may chase one guard through the definitions behind it -- a
+/// constant's initializer, a predicate method's body, another constant inside
+/// that. Deep enough that no real guard reaches it, and the reason it exists at
+/// all is that the chase can CYCLE: `A = B` beside `B = A`, or a predicate that
+/// calls itself, would otherwise recur until the stack ran out.
+const MAX_FOLD_DEPTH: u32 = 32;
 
 /// One `Gem::Version` segment. rubygems splits a version string into maximal
 /// digit / letter runs (`/[0-9]+|[a-z]+/i`); an all-digit run compares
@@ -642,23 +649,7 @@ fn respond_to_fold(
         }
         return Some(false);
     }
-    // A class receiver: a bare `Process` (`ClassRef`) or a top-anchored
-    // `::Process` (which reads as `QualifiedConstRead("Object", "Process")` --
-    // a top-level constant lives on `Object`), both resolved at the root scope.
-    let resolved = match &compiler.hir[receiver] {
-        HirNode::ClassRef(name) => match name.strip_prefix("::") {
-            Some(rooted) => compiler.resolve_class(rooted, &[], box_id),
-            None => compiler.resolve_class(name, cref, box_id),
-        },
-        HirNode::QualifiedConstRead(scope, name) if scope == "Object" => {
-            compiler.resolve_class(name, &[], box_id)
-        }
-        HirNode::QualifiedConstRead(scope, name) => {
-            compiler.resolve_class(&format!("{scope}::{name}"), cref, box_id)
-        }
-        _ => None,
-    };
-    if let Some(cls) = resolved {
+    if let Some(cls) = const_receiver_class(compiler, cref, box_id, receiver) {
         // A user-defined class method (compiled `class_methods`) OR a native
         // builtin class method the class declares in its `ruby_class!`/
         // `ruby_module!` (projected into `CLASS_SURFACE` -- e.g.
@@ -709,6 +700,7 @@ fn call_fold(
     receiver: Option<NodeId>,
     name: &str,
     args: &[ArrayElem],
+    depth: u32,
 ) -> Option<bool> {
     match name {
         "<" | "<=" | ">" | ">=" | "==" | "!=" => {
@@ -720,8 +712,8 @@ fn call_fold(
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.
-        "!" if args.is_empty() => Some(!static_bool(compiler, cref, box_id, receiver?)?),
-        "freeze" if args.is_empty() => static_bool(compiler, cref, box_id, receiver?),
+        "!" if args.is_empty() => Some(!static_bool(compiler, cref, box_id, receiver?, depth)?),
+        "freeze" if args.is_empty() => static_bool(compiler, cref, box_id, receiver?, depth),
         // `if RUBY_PLATFORM =~ /mswin|mingw|windows/` -- the platform gate half
         // the corpus writes, and the reason a windows-only file gets compiled
         // at all. Only a pattern that is literal alternatives folds (see
@@ -766,8 +758,200 @@ fn call_fold(
         "method_defined?" | "public_method_defined?" => {
             method_defined_fold(compiler, cref, box_id, receiver, args)
         }
+        _ => predicate_fold(compiler, cref, box_id, receiver, name, args, depth),
+    }
+}
+
+/// The class or module a CONSTANT-PATH receiver names: a bare `Process`
+/// (`ClassRef`) or a top-anchored `::Process`, which reads as
+/// `QualifiedConstRead("Object", "Process")` because a top-level constant lives
+/// on `Object`. Both resolve at the root scope; everything else resolves at the
+/// guard's own cref. `None` for any receiver that isn't a constant.
+fn const_receiver_class(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    receiver: NodeId,
+) -> Option<ClassId> {
+    match &compiler.hir[receiver] {
+        HirNode::ClassRef(name) => match name.strip_prefix("::") {
+            Some(rooted) => compiler.resolve_class(rooted, &[], box_id),
+            None => compiler.resolve_class(name, cref, box_id),
+        },
+        HirNode::QualifiedConstRead(scope, name) if scope == "Object" => {
+            compiler.resolve_class(name, &[], box_id)
+        }
+        HirNode::QualifiedConstRead(scope, name) => {
+            compiler.resolve_class(&format!("{scope}::{name}"), cref, box_id)
+        }
         _ => None,
     }
+}
+
+/// Whether a method takes nothing at all, so a bare `Recv.name` runs its body
+/// with no argument to have changed the answer.
+fn takes_no_arguments(params: &Params) -> bool {
+    params.required.is_empty()
+        && params.destructures.is_empty()
+        && params.optional.is_empty()
+        && params.rest.is_none()
+        && params.post.is_empty()
+        && params.keywords.is_empty()
+        && params.keyword_rest.is_none()
+        && params.block.is_none()
+}
+
+/// Every definition of `name` that a `Recv.name` on this module could reach and
+/// that this file can read: the module's own class methods (`def self.name`),
+/// its own instance methods, and those of the modules it extends.
+///
+/// Instance methods belong here because `extend self` and `module_function` are
+/// the usual way a module makes its predicates callable on itself, and both
+/// stay runtime calls in zeo -- the method lands in `own_methods` and nothing
+/// static ever moves it. Rather than model the singleton ancestry to work out
+/// which definition wins, [`predicate_fold`] reads them all and insists they
+/// agree, which answers the question without needing to know.
+fn predicate_definitions(compiler: &Compiler, owner: ClassId, name: &str) -> Vec<ScopeId> {
+    let info = compiler.class(owner);
+    let mut out: Vec<ScopeId> = Vec::new();
+    let tables = info
+        .own_class_methods
+        .iter()
+        .chain(&info.own_methods)
+        .chain(
+            info.extends
+                .iter()
+                .filter(|m| **m != owner)
+                .flat_map(|m| &compiler.class(*m).own_methods),
+        );
+    for &sid in tables {
+        if compiler.scope(sid).name == name && !out.contains(&sid) {
+            out.push(sid);
+        }
+    }
+    out
+}
+
+/// Compile-time value of a zero-argument predicate on a module -- the shape a
+/// compat gate takes once a gem gives its build-time question a name:
+/// `if Sass::Util.rbx?`, `if Lutaml::Model::RuntimeCompatibility.opal?`. What
+/// those predicates test is what the folders above already decide
+/// (`RUBY_ENGINE == "rbx"`); naming it is the only thing that hid it.
+///
+/// EVERY definition the module carries has to fold, and to the SAME value --
+/// see [`predicate_definitions`] for why reading all of them is what makes it
+/// safe not to know which one a call reaches.
+///
+/// Only the VALUE folds. The method is still compiled and still callable, so
+/// what a folded guard drops is one call whose whole effect was to compute a
+/// constant -- including, for the memoized spelling, the caching of it (see
+/// [`method_value_bool`]).
+fn predicate_fold(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    receiver: Option<NodeId>,
+    name: &str,
+    args: &[ArrayElem],
+    depth: u32,
+) -> Option<bool> {
+    if !args.is_empty() {
+        return None;
+    }
+    let owner = const_receiver_class(compiler, cref, box_id, receiver?)?;
+    let definitions = predicate_definitions(compiler, owner, name);
+    if definitions.is_empty() {
+        return None;
+    }
+    let mut answer: Option<bool> = None;
+    for sid in definitions {
+        let scope = compiler.scope(sid);
+        if !takes_no_arguments(&scope.params) {
+            return None;
+        }
+        // Folded where the method was WRITTEN: a bare constant in its body
+        // resolves in its own lexical scope, not at the guard's.
+        let home = compiler.cref_of(Some(scope.defining_class));
+        let value = method_value_bool(compiler, &home, box_id, &scope.body, depth)?;
+        if answer.is_some_and(|a| a != value) {
+            return None;
+        }
+        answer = Some(value);
+    }
+    answer
+}
+
+/// The value a zero-argument method body produces on EVERY call, when that is
+/// one of the decidable forms.
+///
+/// Either the body is a single expression that folds, or it is the memoized
+/// spelling gems write a build-time predicate in:
+///
+/// ```ruby
+/// def rbx?
+///   return @rbx if defined?(@rbx)
+///   @rbx = RUBY_ENGINE == "rbx"
+/// end
+/// ```
+///
+/// A memo over a constant expression answers that constant on every call, first
+/// or later, so the guard reads the same either way -- and the cached ivar is
+/// unobservable outside the memo that wrote it, which is why a guard that folds
+/// may skip writing it.
+fn method_value_bool(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    body: &[NodeId],
+    depth: u32,
+) -> Option<bool> {
+    let (&last, leading) = body.split_last()?;
+    let memo = match leading {
+        [] => None,
+        [guard] => Some(memo_guard_ivar(compiler, *guard)?),
+        _ => return None,
+    };
+    let value = match (&compiler.hir[last], memo) {
+        // An assignment's value is the value assigned. Allowed only for the
+        // ivar the memo guard read -- that pairing is what makes the write the
+        // cache rather than an effect.
+        (HirNode::IvarWrite(n, v), Some(memo)) if n == memo => *v,
+        (_, None) => last,
+        _ => return None,
+    };
+    static_bool(compiler, cref, box_id, value, depth).or_else(|| literal_truth(compiler, value))
+}
+
+/// The ivar a `return @x if defined?(@x)` memo guard reads, or `None` for any
+/// other statement.
+fn memo_guard_ivar(compiler: &Compiler, stmt: NodeId) -> Option<&str> {
+    let HirNode::If {
+        cond,
+        then_body,
+        else_body,
+    } = &compiler.hir[stmt]
+    else {
+        return None;
+    };
+    if !else_body.is_empty() {
+        return None;
+    }
+    let HirNode::Defined(probe) = &compiler.hir[*cond] else {
+        return None;
+    };
+    let HirNode::IvarRead(probed) = &compiler.hir[*probe] else {
+        return None;
+    };
+    let [returned] = then_body.as_slice() else {
+        return None;
+    };
+    let HirNode::Return(Some(value)) = &compiler.hir[*returned] else {
+        return None;
+    };
+    let HirNode::IvarRead(read) = &compiler.hir[*value] else {
+        return None;
+    };
+    (read == probed).then_some(probed.as_str())
 }
 
 /// Compile-time truth of `defined?(Const)` -- the OTHER whole-definition gate
@@ -861,6 +1045,7 @@ fn rescued_require_fold(
     box_id: u32,
     body: &[NodeId],
     rescues: &[crate::hir::RescueClause],
+    depth: u32,
 ) -> Option<bool> {
     let (&value, leading) = body.split_last()?;
     let mut raises = false;
@@ -881,7 +1066,7 @@ fn rescued_require_fold(
         }
     }
     if !raises {
-        return static_bool(compiler, cref, box_id, value)
+        return static_bool(compiler, cref, box_id, value, depth)
             .or_else(|| literal_truth(compiler, value));
     }
     // The raise happened, so the answer is the first clause that catches
@@ -898,7 +1083,9 @@ fn rescued_require_fold(
     }
     // An empty rescue body is `nil`, which is exactly what the idiom leans on.
     match clause.body.last() {
-        Some(&v) => static_bool(compiler, cref, box_id, v).or_else(|| literal_truth(compiler, v)),
+        Some(&v) => {
+            static_bool(compiler, cref, box_id, v, depth).or_else(|| literal_truth(compiler, v))
+        }
         None => Some(false),
     }
 }
@@ -925,31 +1112,53 @@ fn literal_truth(compiler: &Compiler, node: NodeId) -> Option<bool> {
 
 /// Compile-time truth of a guard expression, or `None` when it isn't one of the
 /// decidable target-constant forms (leave the condition to run normally).
-fn static_bool(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId) -> Option<bool> {
+fn static_bool(
+    compiler: &Compiler,
+    cref: &[ClassId],
+    box_id: u32,
+    node: NodeId,
+    depth: u32,
+) -> Option<bool> {
+    if depth >= MAX_FOLD_DEPTH {
+        return None;
+    }
+    let depth = depth + 1;
     match &compiler.hir[node] {
         HirNode::Defined(inner) => defined_const_fold(compiler, cref, box_id, *inner),
         // A plain `true`/`false` literal is deliberately NOT folded here: literal
         // conditions have their own (if-expression-aware) codegen path, and
         // hijacking it drops leading side-effect statements from a folded branch.
-        HirNode::And(l, r) => match static_bool(compiler, cref, box_id, *l) {
+        HirNode::And(l, r) => match static_bool(compiler, cref, box_id, *l, depth) {
             Some(false) => Some(false),
-            Some(true) => static_bool(compiler, cref, box_id, *r),
+            Some(true) => static_bool(compiler, cref, box_id, *r, depth),
             None => None,
         },
-        HirNode::Or(l, r) => match static_bool(compiler, cref, box_id, *l) {
+        HirNode::Or(l, r) => match static_bool(compiler, cref, box_id, *l, depth) {
             Some(true) => Some(true),
-            Some(false) => static_bool(compiler, cref, box_id, *r),
+            Some(false) => static_bool(compiler, cref, box_id, *r, depth),
             None => None,
         },
         // A boolean value constant (`VALIDATES_FOR_RESOLUTION`) folds through
         // its own initializer, evaluated in the owning class's lexical scope.
         HirNode::ClassRef(name) if !name.contains("::") => {
             let (owner, value) = const_init(compiler, cref, box_id, None, name)?;
-            static_bool(compiler, &compiler.cref_of(Some(owner)), box_id, value)
+            static_bool(
+                compiler,
+                &compiler.cref_of(Some(owner)),
+                box_id,
+                value,
+                depth,
+            )
         }
         HirNode::QualifiedConstRead(scope, name) => {
             let (owner, value) = const_init(compiler, cref, box_id, Some(scope), name)?;
-            static_bool(compiler, &compiler.cref_of(Some(owner)), box_id, value)
+            static_bool(
+                compiler,
+                &compiler.cref_of(Some(owner)),
+                box_id,
+                value,
+                depth,
+            )
         }
         // `CONST = begin; require "x"; true; rescue LoadError; end` -- the
         // have-I-got-this-library idiom, and its value is decided at compile
@@ -962,7 +1171,7 @@ fn static_bool(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId)
             rescues,
             else_body: None,
             ensure_body: None,
-        } => rescued_require_fold(compiler, cref, box_id, body, rescues),
+        } => rescued_require_fold(compiler, cref, box_id, body, rescues, depth),
         HirNode::Call {
             receiver,
             name,
@@ -971,7 +1180,7 @@ fn static_bool(compiler: &Compiler, cref: &[ClassId], box_id: u32, node: NodeId)
             block,
             ..
         } if kwargs.is_empty() && block.is_none() => {
-            call_fold(compiler, cref, box_id, *receiver, name, args)
+            call_fold(compiler, cref, box_id, *receiver, name, args, depth)
         }
         _ => None,
     }
@@ -986,7 +1195,7 @@ pub(crate) fn static_cond(
     box_id: u32,
     cond: NodeId,
 ) -> Option<bool> {
-    static_bool(compiler, cref, box_id, cond)
+    static_bool(compiler, cref, box_id, cond, 0)
 }
 
 #[cfg(test)]

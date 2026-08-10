@@ -1600,6 +1600,105 @@ fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) ->
     })
 }
 
+/// Whether a chain still yields the TOP-LEVEL constant names, so asking it for
+/// membership is asking `Object.const_defined?`.
+///
+/// `Object.constants` is one spelling; `Module.constants` is the other, and at
+/// the top level -- the only place this runs, `static_top_cond` being the
+/// top-level walk's own folder -- the two are the same list. `Module.constants`
+/// is "the constants accessible from the point of call", and that point is the
+/// top level, so it is Object's set exactly (oracle-verified on ruby 4.0.6).
+/// Inside a class body the two would part, which is why this must not migrate
+/// to `guard_fold`, where a guard carries a cref.
+///
+/// No other receiver answers: for a `constants` that does NOT inherit, "its own
+/// constants" and "the constants visible here" are different sets, and the arm
+/// declines rather than guess.
+///
+/// A `map` that only renames each entry passes through, because
+/// `static_const_defined_in` matches by NAME and takes a symbol or a string
+/// either way -- andand asks
+/// `Module.constants.map { |c| c.to_s }.include?('BlankSlate')`.
+fn top_level_constants_list(compiler: &Compiler, node: NodeId) -> bool {
+    let HirNode::Call {
+        receiver: Some(recv),
+        name,
+        args,
+        kwargs,
+        block,
+        block_arg,
+        ..
+    } = &compiler.hir[node]
+    else {
+        return false;
+    };
+    if !kwargs.is_empty() || !args.is_empty() {
+        return false;
+    }
+    match name.as_str() {
+        "constants" => {
+            block.is_none()
+                && block_arg.is_none()
+                && matches!(&compiler.hir[*recv], HirNode::ClassRef(n)
+                    if matches!(n.trim_start_matches("::"), "Object" | "Module"))
+        }
+        "map" | "collect" => {
+            renames_each_entry(compiler, *block, *block_arg)
+                && top_level_constants_list(compiler, *recv)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a `map` block only respells each entry -- `{ |c| c.to_s }`, or the
+/// `&:to_s` shorthand. A constant name reads the same as a symbol or a string,
+/// so a list mapped this way holds the same names it did before.
+fn renames_each_entry(
+    compiler: &Compiler,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> bool {
+    const RESPELLINGS: &[&str] = &["to_s", "to_sym", "name"];
+    if let Some(arg) = block_arg {
+        return matches!(&compiler.hir[arg], HirNode::SymbolLit(s)
+            if RESPELLINGS.contains(&s.as_str()));
+    }
+    let Some(block) = block else {
+        return false;
+    };
+    let HirNode::Block { params, body } = &compiler.hir[block] else {
+        return false;
+    };
+    let ([param], [stmt]) = (params.required.as_slice(), body.as_slice()) else {
+        return false;
+    };
+    let HirNode::Call {
+        receiver: Some(entry),
+        name,
+        args,
+        block: None,
+        block_arg: None,
+        ..
+    } = &compiler.hir[*stmt]
+    else {
+        return false;
+    };
+    RESPELLINGS.contains(&name.as_str())
+        && args.is_empty()
+        && matches!(&compiler.hir[*entry], HirNode::LocalRead(n) if n == param)
+}
+
+/// [`const_defined_outside`] for a GLOBAL -- whether anything outside the
+/// branches this guard decides assigns `$name`. Globals have one flat
+/// namespace, so the name alone is the whole question.
+fn global_assigned_outside(compiler: &Compiler, guarded: &[NodeId], name: &str) -> bool {
+    let inside = nodes_under(compiler, guarded);
+    compiler.hir.iter_with_ids().any(|(id, node)| {
+        !inside.contains(&id)
+            && matches!(node, HirNode::GlobalWrite(w, _) | HirNode::AliasGlobal(w, _) if w == name)
+    })
+}
+
 /// [`const_defined_outside`] for a SCOPED name -- `defined?(HTTP::VERSION)`.
 ///
 /// The unscoped form matches by leaf name over the whole arena, which for
@@ -1608,8 +1707,8 @@ fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) ->
 /// can be asked properly: is there a write that lands in THIS class?
 ///
 /// Two shapes can, and only two. An explicitly scoped `Scope::NAME = v`, and a
-/// `const_set` naming the leaf (whose receiver may be computed, so any of them
-/// is enough to decline). A bare `NAME = v` inside the scope's own body is not
+/// `const_set` that could name the leaf on this class (see the arm below for
+/// what "could" takes). A bare `NAME = v` inside the scope's own body is not
 /// one of them: the caller already asked `directly_defines_const`, and a body
 /// the walk has not reached yet has not run -- the same moment rule the class
 /// arm applies.
@@ -1630,18 +1729,49 @@ fn const_written_into(
                 name,
                 ..
             } => name == leaf && compiler.resolve_class(scope, &[], 0) == Some(target),
-            HirNode::Call { name, args, .. } if name == "const_set" => {
-                args.iter().any(|a| match a {
-                    ArrayElem::Single(v) => match &compiler.hir[*v] {
-                        HirNode::SymbolLit(s) => s == leaf,
-                        HirNode::StringLit(parts) => {
-                            matches!(parts.as_slice(), [StrPart::Lit(s)] if s == leaf)
-                        }
-                        // A computed name could be anything, including this one.
-                        _ => true,
+            // `const_set` writes at run time, so it counts whenever it COULD
+            // create `target::leaf` -- but that takes BOTH halves: the name it
+            // sets could be `leaf`, AND the receiver it sets it on could be
+            // `target`. Each half is `Some(_)` when the source pins it down and
+            // `None` when it is computed.
+            //
+            // A call that pins NEITHER is evidence about no constant in
+            // particular, and treating it as evidence about this one is what
+            // made the whole fold unusable: webmock's
+            // `@webMockNetHTTP.const_set(c[0], c[1])` -- an ivar receiver
+            // nothing ties to `HTTP`, under a computed name -- declined every
+            // scoped `defined?` in every program that reached it.
+            HirNode::Call {
+                receiver,
+                name,
+                args,
+                ..
+            } if name == "const_set" => {
+                let names_leaf = match args.first() {
+                    Some(ArrayElem::Single(v)) => match &compiler.hir[*v] {
+                        HirNode::SymbolLit(s) => Some(s == leaf),
+                        HirNode::StringLit(parts) => match parts.as_slice() {
+                            [StrPart::Lit(s)] => Some(s == leaf),
+                            _ => None,
+                        },
+                        _ => None,
                     },
-                    _ => true,
-                })
+                    // No argument at all, or a splat that hides the name.
+                    _ => None,
+                };
+                // A bare `const_set` is `self`, which this arena-wide scan has
+                // no lexical position to resolve -- unknown, not "not target".
+                let on_target = receiver.and_then(|r| match &compiler.hir[r] {
+                    HirNode::ClassRef(n) => Some(compiler.resolve_class(n, &[], 0)? == target),
+                    HirNode::QualifiedConstRead(s, n) => {
+                        Some(compiler.resolve_class(&format!("{s}::{n}"), &[], 0)? == target)
+                    }
+                    _ => None,
+                });
+                !matches!(
+                    (names_leaf, on_target),
+                    (Some(false), _) | (_, Some(false)) | (None, None)
+                )
             }
             _ => false,
         }
@@ -1688,10 +1818,8 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
         }
         // `Object.constants.include?(:Concurrent)` -- the same question as
         // `const_defined?`, spelled through the list. glimmer's concurrent
-        // shim asks it this way. Answered only for an `Object` receiver, where
-        // "its own constants" and "the top-level constants" are the same set;
-        // for any other module the two readings part (`constants` does not
-        // inherit) and the arm declines rather than guess.
+        // shim asks it this way. See `top_level_constants_list` for which
+        // spellings of the list answer it.
         HirNode::Call {
             receiver: Some(recv),
             name,
@@ -1700,23 +1828,7 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
             block,
             ..
         } if name == "include?" && kwargs.is_empty() && block.is_none() => {
-            let HirNode::Call {
-                receiver: Some(inner),
-                name: inner_name,
-                args: inner_args,
-                block: None,
-                ..
-            } = &compiler.hir[*recv]
-            else {
-                return None;
-            };
-            if inner_name != "constants" || !inner_args.is_empty() {
-                return None;
-            }
-            let HirNode::ClassRef(recv_name) = &compiler.hir[*inner] else {
-                return None;
-            };
-            if recv_name != "Object" && recv_name != "::Object" {
+            if !top_level_constants_list(compiler, *recv) {
                 return None;
             }
             let [ArrayElem::Single(arg)] = args.as_slice() else {
@@ -1768,13 +1880,17 @@ fn static_top_cond(compiler: &Compiler, id: NodeId, guarded: &[NodeId]) -> Optio
                 }
             }
             // `defined?($gvar)` -- nil unless something assigned it, and a
-            // global nothing in the program writes is never assigned. lockfile
-            // opens with `unless(defined?($__lockfile__) or defined?(Lockfile))`.
+            // global nothing in the program writes is never assigned.
+            //
+            // A write inside the guarded branch doesn't count, for the reason
+            // `const_defined_outside` spells out: the branch this very guard
+            // controls has not run yet. lockfile opens with
+            // `unless(defined?($__lockfile__) or defined?(Lockfile))` and sets
+            // `$__lockfile__` on its last line -- the whole file IS the branch,
+            // so reading its own reload stamp as already-set left the guard
+            // undecidable and the file uncompilable.
             HirNode::GlobalRead(name) => {
-                let written = compiler.hir.iter().any(
-                    |n| matches!(n, HirNode::GlobalWrite(w, _) | HirNode::AliasGlobal(w, _) if w == name),
-                );
-                (!written).then_some(false)
+                (!global_assigned_outside(compiler, guarded, name)).then_some(false)
             }
             // `defined?` of a LITERAL is the string "expression" -- truthy, and
             // never nil. faraday-stack's `if defined?("Faraday::Env")` means
