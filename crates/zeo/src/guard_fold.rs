@@ -1131,11 +1131,15 @@ fn compiled_method_in_chain(compiler: &Compiler, class: ClassId, name: &str) -> 
         }
         seen.push(c);
         let info = compiler.class(c);
-        if let Some(&sid) = info
-            .own_methods
-            .iter()
-            .find(|&&s| compiler.scope(s).name == name)
-        {
+        // A runtime-conditional def is registered but NOT promised -- its
+        // presence is often the very question the guard asks (`def added;
+        // end unless respond_to? :added`: the def is in `own_methods` by the
+        // time its own guard folds). Invisible here; the materialized path
+        // above governs at codegen time.
+        if let Some(&sid) = info.own_methods.iter().find(|&&s| {
+            let sc = compiler.scope(s);
+            sc.name == name && !sc.runtime_conditional
+        }) {
             return Some(sid);
         }
         queue.extend(info.includes.iter().copied());
