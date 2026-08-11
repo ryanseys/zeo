@@ -60,6 +60,7 @@ pub use builtins::BuiltinMethodFn;
 pub use builtins::binding::{LocalCell, RBinding, binding_new};
 pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, complex_new};
 pub use builtins::enumerable::each_values;
+pub use builtins::method::method_capture_inherited;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::exception::{
     apply_custom_backtrace, attach_backtrace, backtrace_lines, pattern_fail_case_eq,

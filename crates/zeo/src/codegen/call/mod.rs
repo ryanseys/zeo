@@ -1132,6 +1132,46 @@ pub(super) fn emit_block_option(
 // nav), not incidental duplication a struct would meaningfully collapse --
 // bundling them would just move the same count behind one more layer.
 #[allow(clippy::too_many_arguments)]
+/// Whether EVERY own class-method definition on `target` of the symbol at
+/// `sym_node` sits later in the document than the capture at `at` -- the
+/// position gate for the `K.method(:name)` intercept below. `false` on any
+/// missing position (no static answer, so the normal by-name capture stays)
+/// and when no own def exists at all (nothing to bypass).
+fn class_method_defined_only_later(
+    cx: &Ctx,
+    target: crate::compiler::ClassId,
+    sym_node: NodeId,
+    at: NodeId,
+) -> bool {
+    let HirNode::SymbolLit(sym) = &cx.compiler.hir[sym_node] else {
+        return false;
+    };
+    // SPANS, not `doc_order`: a plain `def` is registration rather than an
+    // executable site statement, so the position index never records it --
+    // but source offsets order a SAME-FILE body just as well, and the
+    // capture-before-own-def shape is a same-file one (a cross-file reopen
+    // stays on the normal capture).
+    let Some(at) = cx.compiler.hir.span(at) else {
+        return false;
+    };
+    let mut any = false;
+    for (n, is_cm, _seq, sid) in &cx.compiler.class(target).method_history {
+        if *is_cm && n == sym {
+            let Some(def_node) = cx.compiler.scope(*sid).def_node else {
+                return false;
+            };
+            let Some(def) = cx.compiler.hir.span(def_node) else {
+                return false;
+            };
+            if def.file != at.file || def.start < at.start {
+                return false;
+            }
+            any = true;
+        }
+    }
+    any
+}
+
 pub fn emit_call(
     cx: &Ctx,
     receiver: Option<NodeId>,
@@ -2033,6 +2073,28 @@ pub fn emit_call(
     if let Some(target_path) = super::expr::const_path_of(cx, recv_id)
         && let Some(target) = cx.resolve_class(&target_path)
     {
+        // `K.method(:name)` where every own `def self.name` sits LATER in
+        // the document than this capture: CRuby's capture-time resolution
+        // sees only the inherited entry, so the Method must bind it -- the
+        // by-name capture would find the later override and, for
+        // rspec-support's `NEW_MUTEX_METHOD = Mutex.method(:new)` /
+        // `def self.new = NEW_MUTEX_METHOD.call` pair, recurse forever.
+        if name == "method"
+            && args.len() == 1
+            && kwargs.is_empty()
+            && block.is_none()
+            && matches!(&cx.compiler.hir[args[0]], HirNode::SymbolLit(_))
+            && class_method_defined_only_later(cx, target, args[0], recv_id)
+        {
+            let sym = super::expr::emit_expr(cx, args[0]);
+            let tid = target.0;
+            return quote! {
+                zeo_rt::method_capture_inherited(
+                    &zeo_rt::RubyValue::Class(zeo_rt::ClassId(#tid)),
+                    &(#sym),
+                )?
+            };
+        }
         // `const_get`/`const_defined?` with a literal name fold against
         // the compile-time registry (a literal-constant receiver has no
         // side effects to preserve).

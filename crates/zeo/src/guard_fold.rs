@@ -1537,6 +1537,17 @@ fn defined_const_fold(
     if zeo_abi::SEEDED_OBJECT_CONSTANTS.contains(&top_level) && !top_level.contains("::") {
         return Some(true);
     }
+    // A top-anchored CLASS spelling (`::Mutex`, `Object::Mutex`): the joined
+    // path "Object::Mutex" is not a registered name, but the stripped one is
+    // -- resolve it top-anchored (empty cref). rspec-support gates its whole
+    // Mutex strategy on `defined? ::Mutex`, and the confident false here
+    // spliced the 1.8.7 fallback branch instead.
+    if top_level != joined
+        && !top_level.contains("::")
+        && compiler.resolve_class(top_level, &[], box_id).is_some()
+    {
+        return Some(true);
+    }
     const_name_fold(compiler, cref, box_id, &joined)
 }
 

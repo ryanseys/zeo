@@ -278,6 +278,50 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
     Ok(method_at_home(recv, name))
 }
 
+/// `K.method(:name)` captured BEFORE `def self.name` runs in document order:
+/// CRuby's capture-time resolution sees only the INHERITED entry, so the
+/// Method must bind it -- rspec-support's
+/// `NEW_MUTEX_METHOD = Mutex.method(:new)` captures `Class#new` and the
+/// `def self.new` below it delegates through the capture; a by-name capture
+/// finds the override and recurses forever. The COMPILER proves the position
+/// (every own def of the name sits later in the document) and emits this
+/// instead of the by-name capture. `home` = the first ancestor position that
+/// can answer, so `Method#call`'s seat logic resumes the walk there, above
+/// the override.
+pub fn method_capture_inherited(
+    recv: &RubyValue,
+    name_arg: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let name = resolve_method_name(name_arg)?;
+    if let RubyValue::Class(cid) = recv {
+        let ancestors = crate::dispatch::ancestors_of_value(*cid);
+        let seat = ancestors
+            .iter()
+            .skip(1)
+            .copied()
+            .find(|&anc| {
+                crate::dispatch::class_defines_own_class_method(anc, name)
+                    || crate::builtins::class_method_table(anc)
+                        .is_some_and(|t| t(name.name().as_str()).is_some())
+            })
+            // No ancestor DECLARES it (a universal like `new` lives in the
+            // dispatch fallback, not a table row): seat at the direct super
+            // position and let the class-send walk resolve from there.
+            .or_else(|| ancestors.get(1).copied());
+        if let Some(seat) = seat {
+            return Ok(method_value_with(
+                recv.clone(),
+                name,
+                seat,
+                MethodKind::Singleton,
+                None,
+                None,
+            ));
+        }
+    }
+    method_new(recv, name_arg)
+}
+
 /// `Object#singleton_method(:name)` -- a `Method` bound to the receiver, but
 /// ONLY for a per-object singleton method (`def obj.name` /
 /// `define_singleton_method`). A name that resolves to an ordinary class
