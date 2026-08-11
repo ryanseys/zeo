@@ -45,13 +45,26 @@ fn a_bare_file_runs_with_argv_and_exit_status() {
     let dir = scratch("bare-run");
     let rb = write(&dir, "t.rb", "p ARGV\nexit 7\n");
 
-    let out = zeo().arg(&rb).args(["a", "-x"]).output().expect("spawn zeo");
-    assert_eq!(stdout_of(&out), "[\"a\", \"-x\"]\n", "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = zeo()
+        .arg(&rb)
+        .args(["a", "-x"])
+        .output()
+        .expect("spawn zeo");
+    assert_eq!(
+        stdout_of(&out),
+        "[\"a\", \"-x\"]\n",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(out.status.code(), Some(7));
 
     // Option-looking ARGV goes after `--` (before any positional, `-n` would
     // otherwise be parsed as a zeo option and rejected).
-    let out = zeo().arg(&rb).args(["--", "-n", "x"]).output().expect("spawn zeo");
+    let out = zeo()
+        .arg(&rb)
+        .args(["--", "-n", "x"])
+        .output()
+        .expect("spawn zeo");
     assert_eq!(stdout_of(&out), "[\"-n\", \"x\"]\n");
     assert_eq!(out.status.code(), Some(7));
 }
@@ -70,7 +83,12 @@ fn dash_i_adds_a_require_root_like_ruby() {
         .arg(&rb)
         .output()
         .expect("spawn zeo");
-    assert_eq!(stdout_of(&out), "42\n", "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout_of(&out),
+        "42\n",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(out.status.code(), Some(0));
 }
 
@@ -80,7 +98,11 @@ fn compile_writes_the_default_binary_and_runs_nothing() {
     let rb = write(&dir, "hello.rb", "puts \"ran\"\n");
 
     let out = zeo().arg("--compile").arg(&rb).output().expect("spawn zeo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // Compiling must not execute the program...
     assert_eq!(stdout_of(&out), "");
     // ...and the artifact lands at the input path minus its extension.
@@ -95,11 +117,20 @@ fn a_warm_rerun_serves_the_binary_from_the_cache() {
     let rb = write(&dir, "t.rb", "puts :ok\n");
 
     let out = zeo().arg(&rb).output().expect("spawn zeo");
-    assert_eq!(stdout_of(&out), "ok\n", "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        stdout_of(&out),
+        "ok\n",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // The rerun of an unchanged program must skip rustc entirely -- the
     // timings line names the cache instead of a rustc wall time.
-    let out = zeo().arg(&rb).env("ZEO_TIMINGS", "1").output().expect("spawn zeo");
+    let out = zeo()
+        .arg(&rb)
+        .env("ZEO_TIMINGS", "1")
+        .output()
+        .expect("spawn zeo");
     assert_eq!(stdout_of(&out), "ok\n");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("rustc=cached"), "stderr: {stderr}");
@@ -122,7 +153,11 @@ fn a_failing_minitest_run_exits_nonzero() {
          end\n",
     );
 
-    let out = zeo().arg(&rb).args(["--", "--seed", "42"]).output().expect("spawn zeo");
+    let out = zeo()
+        .arg(&rb)
+        .args(["--", "--seed", "42"])
+        .output()
+        .expect("spawn zeo");
     let stdout = stdout_of(&out);
     assert!(
         stdout.contains("1 runs, 1 assertions, 1 failures"),
