@@ -1021,10 +1021,11 @@ fn builtin_provides_instance_method(
         match crate::builtin_surface::surface_for(c) {
             Some(s) if s.instance_methods.contains(&name) => return Some(true),
             Some(_) => {}
-            // `Object` has no projected surface and needs none: it is where
-            // COMPILED top-level `def`s land, and `method_in_chain` -- which
-            // the caller already asked -- is the table that holds them.
-            None if c == zeo_abi::OBJECT_CLASS => {}
+            // `Object` and compiled user classes have no projected surface and
+            // need none: their methods are COMPILED `def`s, and
+            // `method_in_chain` -- which the caller already asked -- is the
+            // table that holds them.
+            None if c == zeo_abi::OBJECT_CLASS || !compiler.class(c).is_builtin => {}
             None => all_projected = false,
         }
         let info = compiler.class(c);
@@ -1054,12 +1055,11 @@ fn respond_to_fold(
         if let Some((_, sid)) = compiler.method_in_chain(cls, &m) {
             return Some(compiler.scope(sid).visibility == Visibility::Public);
         }
-        // A builtin's NATIVE rows are not in `method_in_chain` -- that table
-        // holds compiled Ruby methods. Ask the projected surface instead.
-        if compiler.class(cls).is_builtin {
-            return builtin_provides_instance_method(compiler, cls, &m);
-        }
-        return Some(false);
+        // NATIVE rows are not in `method_in_chain` -- that table holds
+        // compiled Ruby methods. Ask the projected surface for the rest,
+        // whether `cls` is itself a builtin or a user class inheriting the
+        // method from Object/Kernel.
+        return builtin_provides_instance_method(compiler, cls, &m);
     }
     if let Some(cls) = const_receiver_class(compiler, cref, box_id, receiver) {
         // A user-defined class method (compiled `class_methods`) OR a native
@@ -1098,14 +1098,13 @@ fn method_defined_fold(
     };
     match compiler.method_in_chain(cls, &m) {
         Some((_, sid)) => Some(compiler.scope(sid).visibility != Visibility::Private),
-        // `method_in_chain` holds COMPILED ruby methods, so a builtin's native
-        // rows are not in it -- the same split `respond_to_fold` handles, and
-        // without this `Regexp.method_defined?(:match?)` answered a confident
-        // false about a method Regexp has.
-        None if compiler.class(cls).is_builtin => {
-            builtin_provides_instance_method(compiler, cls, &m)
-        }
-        None => Some(false),
+        // `method_in_chain` holds COMPILED ruby methods, so native rows are not
+        // in it -- neither a builtin's own nor the ones a USER class inherits
+        // from Object/Kernel. Without the ancestor walk,
+        // `Regexp.method_defined?(:match?)` -- and a user class asked about
+        // `:singleton_class` (rspec's 1.8.7 shim guard) -- answered a
+        // confident false about methods the class has.
+        None => builtin_provides_instance_method(compiler, cls, &m),
     }
 }
 
