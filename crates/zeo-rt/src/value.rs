@@ -722,8 +722,17 @@ impl RubyValue {
     /// Unwraps an `Array` payload -- the runtime counterpart to codegen's
     /// static `TyKind::Array` check, same posture as `as_int_unchecked`.
     pub fn as_array_unchecked(&self) -> RArray {
+        self.as_array_ref().clone()
+    }
+
+    /// Borrowing form of [`Self::as_array_unchecked`]: most emission sites
+    /// pass the handle straight to a `&RArray` parameter, and the owned form
+    /// paid an atomic refcount round-trip per element access for a value
+    /// that was never kept.
+    #[inline]
+    pub fn as_array_ref(&self) -> &RArray {
         match self {
-            RubyValue::Array(a) => a.clone(),
+            RubyValue::Array(a) => a,
             // The ruby frames name the site the wrong static type was
             // inferred FOR -- without them a violation in a large program is
             // undiagnosable (the rust backtrace only shows generated code).
@@ -737,24 +746,42 @@ impl RubyValue {
 
     /// Unwraps a `Hash` payload -- see `as_array_unchecked`'s docs.
     pub fn as_hash_unchecked(&self) -> RHash {
+        self.as_hash_ref().clone()
+    }
+
+    /// Borrowing form of [`Self::as_hash_unchecked`] -- see `as_array_ref`.
+    #[inline]
+    pub fn as_hash_ref(&self) -> &RHash {
         match self {
-            RubyValue::Hash(h) => h.clone(),
+            RubyValue::Hash(h) => h,
             other => panic!("expected a Hash, got {}", other.to_display_string()),
         }
     }
 
     /// Unwraps a `Str` payload -- see `as_array_unchecked`'s docs.
     pub fn as_str_unchecked(&self) -> RStr {
+        self.as_str_ref().clone()
+    }
+
+    /// Borrowing form of [`Self::as_str_unchecked`] -- see `as_array_ref`.
+    #[inline]
+    pub fn as_str_ref(&self) -> &RStr {
         match self {
-            RubyValue::Str(s) => s.clone(),
+            RubyValue::Str(s) => s,
             other => panic!("expected a String, got {}", other.to_display_string()),
         }
     }
 
     /// Unwraps a `Proc` payload -- see `as_array_unchecked`'s docs.
     pub fn as_proc_unchecked(&self) -> RProc {
+        self.as_proc_ref().clone()
+    }
+
+    /// Borrowing form of [`Self::as_proc_unchecked`] -- see `as_array_ref`.
+    #[inline]
+    pub fn as_proc_ref(&self) -> &RProc {
         match self {
-            RubyValue::Proc(p) => p.clone(),
+            RubyValue::Proc(p) => p,
             other => panic!("expected a Proc, got {}", other.to_display_string()),
         }
     }

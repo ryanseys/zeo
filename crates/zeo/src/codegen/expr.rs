@@ -1435,7 +1435,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 let e = emit_expr(cx, n);
                 quote! {
                     let __kw = #e;
-                    if !__kw.as_hash_unchecked().lock().is_empty() {
+                    if !__kw.as_hash_ref().lock().is_empty() {
                         __args.push(__kw);
                     }
                 }

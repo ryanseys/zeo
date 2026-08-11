@@ -605,7 +605,7 @@ fn emit_runtime_super_args(
             // The `*rest` local is a `RubyValue::Array` post-prologue -- splat
             // its elements (the same idiom `ArrayElem::Splat` uses at call sites).
             pushes.push(quote! {
-                __super_args.extend((#v).as_array_unchecked().lock().iter().cloned());
+                __super_args.extend((#v).as_array_ref().lock().iter().cloned());
             });
         }
         for name in &current_params.post {
@@ -638,7 +638,7 @@ fn emit_runtime_super_args(
             if let Some(Some(krest)) = &current_params.keyword_rest {
                 let v = read(krest);
                 kw_pushes.push(quote! {
-                    for (__k, __v) in (#v).as_hash_unchecked().lock().values().cloned().collect::<Vec<_>>() {
+                    for (__k, __v) in (#v).as_hash_ref().lock().values().cloned().collect::<Vec<_>>() {
                         zeo_rt::hash_set(&__kw, __k, __v);
                     }
                 });
@@ -670,7 +670,7 @@ fn emit_runtime_super_args(
                 ArrayElem::Splat(n) => {
                     let e = emit_expr(cx, *n);
                     pushes.push(quote! {
-                        __super_args.extend((#e).as_array_unchecked().lock().iter().cloned());
+                        __super_args.extend((#e).as_array_ref().lock().iter().cloned());
                     });
                 }
             }

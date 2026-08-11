@@ -58,9 +58,9 @@ pub(super) fn try_collection_dispatch(
         (TyKind::Array, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             if moved {
-                quote! { zeo_rt::array_get_checked(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked())? }
+                quote! { zeo_rt::array_get_checked((#recv_expr).as_array_ref(), (#idx).as_int_unchecked())? }
             } else {
-                quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
+                quote! { zeo_rt::array_get((#recv_expr).as_array_ref(), (#idx).as_int_unchecked()) }
             }
         }
         // Only for a statically-Int index -- a Range index is a SPLICE with
@@ -123,9 +123,9 @@ pub(super) fn try_collection_dispatch(
         }
         (TyKind::Array, "length" | "size", 0) => {
             if moved {
-                quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len_checked(&(#recv_expr).as_array_unchecked())?) }
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len_checked((#recv_expr).as_array_ref())?) }
             } else {
-                quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len(&(#recv_expr).as_array_unchecked())) }
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::array_len((#recv_expr).as_array_ref())) }
             }
         }
         // The bare single-value/no-arg Array mutators and probes -- the
@@ -136,51 +136,63 @@ pub(super) fn try_collection_dispatch(
         (TyKind::Array, "push" | "append" | "<<", 1) => {
             let val = emit_expr(cx, args[0]);
             let val = box_if_object_typed(cx, args[0], val);
-            quote! {
-                {
-                    let __recv = (#recv_expr).as_array_unchecked();
-                    #moved_guard
-                    zeo_rt::array_push_checked(&__recv, #val)?
+            if moved {
+                quote! {
+                    {
+                        let __recv = (#recv_expr).as_array_unchecked();
+                        #moved_guard
+                        zeo_rt::array_push_checked(&__recv, #val)?
+                    }
                 }
+            } else {
+                quote! { zeo_rt::array_push_checked((#recv_expr).as_array_ref(), #val)? }
             }
         }
         (TyKind::Array, "pop", 0) => {
-            quote! {
-                {
-                    let __recv = (#recv_expr).as_array_unchecked();
-                    #moved_guard
-                    zeo_rt::array_pop_checked(&__recv)?
+            if moved {
+                quote! {
+                    {
+                        let __recv = (#recv_expr).as_array_unchecked();
+                        #moved_guard
+                        zeo_rt::array_pop_checked(&__recv)?
+                    }
                 }
+            } else {
+                quote! { zeo_rt::array_pop_checked((#recv_expr).as_array_ref())? }
             }
         }
         (TyKind::Array, "shift", 0) => {
-            quote! {
-                {
-                    let __recv = (#recv_expr).as_array_unchecked();
-                    #moved_guard
-                    zeo_rt::array_shift_checked(&__recv)?
+            if moved {
+                quote! {
+                    {
+                        let __recv = (#recv_expr).as_array_unchecked();
+                        #moved_guard
+                        zeo_rt::array_shift_checked(&__recv)?
+                    }
                 }
+            } else {
+                quote! { zeo_rt::array_shift_checked((#recv_expr).as_array_ref())? }
             }
         }
         (TyKind::Array, "empty?", 0) => {
             if moved {
-                quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len_checked(&(#recv_expr).as_array_unchecked())? == 0) }
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len_checked((#recv_expr).as_array_ref())? == 0) }
             } else {
-                quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len(&(#recv_expr).as_array_unchecked()) == 0) }
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::array_len((#recv_expr).as_array_ref()) == 0) }
             }
         }
         (TyKind::Array, "first", 0) => {
             if moved {
-                quote! { zeo_rt::array_get_checked(&(#recv_expr).as_array_unchecked(), 0)? }
+                quote! { zeo_rt::array_get_checked((#recv_expr).as_array_ref(), 0)? }
             } else {
-                quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), 0) }
+                quote! { zeo_rt::array_get((#recv_expr).as_array_ref(), 0) }
             }
         }
         (TyKind::Array, "last", 0) => {
             if moved {
-                quote! { zeo_rt::array_get_checked(&(#recv_expr).as_array_unchecked(), -1)? }
+                quote! { zeo_rt::array_get_checked((#recv_expr).as_array_ref(), -1)? }
             } else {
-                quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), -1) }
+                quote! { zeo_rt::array_get((#recv_expr).as_array_ref(), -1) }
             }
         }
         (TyKind::Hash, "[]", 1) => {
@@ -197,7 +209,7 @@ pub(super) fn try_collection_dispatch(
                     }
                 }
             } else {
-                quote! { zeo_rt::hash_index(&(#recv_expr).as_hash_unchecked(), &(#key))? }
+                quote! { zeo_rt::hash_index((#recv_expr).as_hash_ref(), &(#key))? }
             }
         }
         (TyKind::Hash, "[]=", 2) => {
@@ -229,38 +241,38 @@ pub(super) fn try_collection_dispatch(
         }
         (TyKind::Hash, "length" | "size", 0) => {
             if moved {
-                quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len_checked(&(#recv_expr).as_hash_unchecked())?) }
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len_checked((#recv_expr).as_hash_ref())?) }
             } else {
-                quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::hash_len((#recv_expr).as_hash_ref())) }
             }
         }
         (TyKind::Hash, "empty?", 0) => {
             if moved {
-                quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len_checked(&(#recv_expr).as_hash_unchecked())? == 0) }
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len_checked((#recv_expr).as_hash_ref())? == 0) }
             } else {
-                quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len(&(#recv_expr).as_hash_unchecked()) == 0) }
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::hash_len((#recv_expr).as_hash_ref()) == 0) }
             }
         }
         (TyKind::Str, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             if moved {
-                quote! { zeo_rt::string_get_checked(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked())? }
+                quote! { zeo_rt::string_get_checked((#recv_expr).as_str_ref(), (#idx).as_int_unchecked())? }
             } else {
-                quote! { zeo_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
+                quote! { zeo_rt::string_get((#recv_expr).as_str_ref(), (#idx).as_int_unchecked()) }
             }
         }
         (TyKind::Str, "length" | "size", 0) => {
             if moved {
-                quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len_checked(&(#recv_expr).as_str_unchecked())?) }
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len_checked((#recv_expr).as_str_ref())?) }
             } else {
-                quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len(&(#recv_expr).as_str_unchecked())) }
+                quote! { zeo_rt::RubyValue::Int(zeo_rt::string_len((#recv_expr).as_str_ref())) }
             }
         }
         (TyKind::Str, "empty?", 0) => {
             if moved {
-                quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len_checked(&(#recv_expr).as_str_unchecked())? == 0) }
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len_checked((#recv_expr).as_str_ref())? == 0) }
             } else {
-                quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len(&(#recv_expr).as_str_unchecked()) == 0) }
+                quote! { zeo_rt::RubyValue::Bool(zeo_rt::string_len((#recv_expr).as_str_ref()) == 0) }
             }
         }
         (TyKind::Range, "first", 0) => quote! { (#recv_expr).range_first_checked()? },
@@ -445,7 +457,7 @@ pub(super) fn try_regexp_dispatch(
                             {
                                 let __recv = (#recv_expr).as_str_unchecked();
                                 let __hs = { let __g = __recv.lock(); __g.to_utf8_lossy().into_owned() };
-                                zeo_rt::regexp_scan_block(&(#re_expr).as_regexp_unchecked(), &__hs, &(#blk_expr).as_proc_unchecked())?;
+                                zeo_rt::regexp_scan_block(&(#re_expr).as_regexp_unchecked(), &__hs, (#blk_expr).as_proc_ref())?;
                                 zeo_rt::RubyValue::Str(__recv)
                             }
                         });
@@ -478,7 +490,7 @@ pub(super) fn try_regexp_dispatch(
                     let blk_expr = super::procs::emit_proc_value(cx, block_id);
                     return Some(quote! {
                         { #haystack_guard
-                          zeo_rt::regexp_sub_block(&(#re_expr).as_regexp_unchecked(), &__h, &(#blk_expr).as_proc_unchecked())? }
+                          zeo_rt::regexp_sub_block(&(#re_expr).as_regexp_unchecked(), &__h, (#blk_expr).as_proc_ref())? }
                     });
                 }
                 ("gsub", 1) => {
@@ -486,7 +498,7 @@ pub(super) fn try_regexp_dispatch(
                     let blk_expr = super::procs::emit_proc_value(cx, block_id);
                     return Some(quote! {
                         { #haystack_guard
-                          zeo_rt::regexp_gsub_block(&(#re_expr).as_regexp_unchecked(), &__h, &(#blk_expr).as_proc_unchecked())? }
+                          zeo_rt::regexp_gsub_block(&(#re_expr).as_regexp_unchecked(), &__h, (#blk_expr).as_proc_ref())? }
                     });
                 }
                 _ => {}

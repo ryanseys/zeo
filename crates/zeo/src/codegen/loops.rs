@@ -200,7 +200,7 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
         TyKind::Array => quote! {
             {
                 let __coll = #iter_expr;
-                let __iter = __coll.as_array_unchecked().lock().to_vec();
+                let __iter = __coll.as_array_ref().lock().to_vec();
                 let mut __idx: usize = 0;
                 // The step is at the TOP so `next` (a `continue #outer`) still
                 // advances -- a bottom step is skipped by `next`, spinning
@@ -241,7 +241,7 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
             {
                 let __coll = #iter_expr;
                 let __iter: Vec<zeo_rt::RubyValue> = __coll
-                    .as_hash_unchecked()
+                    .as_hash_ref()
                     .lock()
                     .values()
                     .map(|(__k, __v)| {
@@ -450,7 +450,7 @@ pub fn emit_multi_target_group(
 
     quote! {
         {
-            let __elems = (#value_expr).as_array_unchecked().lock().to_vec();
+            let __elems = (#value_expr).as_array_ref().lock().to_vec();
             let (__before, __splat, __after) = zeo_rt::multi_assign(&__elems, #n_before, #has_splat, #n_after);
             #(#bind_before)*
             #bind_splat
