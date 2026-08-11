@@ -572,6 +572,47 @@ mod imp {
             let e = node.as_else_node().unwrap();
             return eval_opt_stmts(e.statements(), env);
         }
+        // `case`/`when`, both forms: with a subject each `when` value asks
+        // `value === subject` (a real dispatch -- Class#===, Regexp#===,
+        // custom overrides); the subjectless form takes the first truthy
+        // condition. minitest's `infect_an_assertion` template (the body
+        // behind every `must_*` expectation) is a subjectless case, which is
+        // what put this node in reach of eval'd code at all.
+        if let Some(case_node) = node.as_case_node() {
+            let subject = match case_node.predicate() {
+                Some(p) => Some(eval_node(&p, env)?),
+                None => None,
+            };
+            for cond in case_node.conditions().iter() {
+                let Some(when) = cond.as_when_node() else {
+                    return Err(internal(
+                        "eval: unsupported clause in a case expression",
+                    ));
+                };
+                for c in when.conditions().iter() {
+                    let v = eval_node(&c, env)?;
+                    let hit = match &subject {
+                        Some(s) => {
+                            let answer = crate::dispatch::send_value(
+                                &v,
+                                Symbol::intern("==="),
+                                std::slice::from_ref(s),
+                                None,
+                            )?;
+                            truthy(&answer)
+                        }
+                        None => truthy(&v),
+                    };
+                    if hit {
+                        return eval_opt_stmts(when.statements(), env);
+                    }
+                }
+            }
+            return match case_node.else_clause() {
+                Some(e) => eval_opt_stmts(e.statements(), env),
+                None => Ok(RubyValue::Nil),
+            };
+        }
         if let Some(while_node) = node.as_while_node() {
             while {
                 let c = eval_node(&while_node.predicate(), env)?;
