@@ -20,21 +20,20 @@ mod literals;
 mod pattern;
 
 use crate::hir::{
-    ArrayElem, Hir, HirNode, KwArg, LastMatch, NodeId, Params, PatternArm, RaiseCause,
-    RescueClause, Span, StrPart, Visibility,
+    ArrayElem, Hir, HirNode, KwArg, LastMatch, NodeId, Params, RaiseCause, Span, StrPart,
+    Visibility,
 };
 use crate::lower_error::LowerError;
 use ruby_prism::{CallNode, Node, ParseResult};
 
 use assign::{
     Storage, bind_dynamic_const_scope, lower_and_write, lower_compound_op_write,
-    lower_multi_target, lower_or_write,
+    lower_or_write,
 };
 use calls::{lower_block, lower_block_like_params, lower_call_args};
 use consts::{
     box_rooted_path, constant_path_name, constant_path_scope_and_name, dynamic_const_scope,
 };
-use control::{lower_begin, lower_if_chain, lower_single_optional_argument};
 use defs::{
     const_holds_runtime_class, const_is_assigned, const_is_class_def, desugar_singleton_class_defs,
     lower_class_body, lower_params, lower_runtime_class, lower_runtime_class_reopen,
@@ -43,7 +42,6 @@ use defs::{
 use eval_splice::{lower_box_eval, reject_top_level_defs, single_literal_string_arg};
 pub use literals::encoding_const_name;
 use literals::line_of;
-use pattern::{lower_in_pattern_and_guard, lower_pattern};
 
 pub type PResult<T> = Result<T, crate::lower_error::LowerError>;
 
@@ -205,6 +203,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // Variable reads/writes, compound assignment, and multi-assignment live
     // in `assign.rs` -- see its `try_lower`.
     if let Some(id) = assign::try_lower(result, hir, node)? {
+        return Ok(id);
+    }
+
+    // Control flow (branches, loops, begin/rescue, break/next/return,
+    // defined?, pattern-match one-liners) lives in `control.rs` -- see its
+    // `try_lower`.
+    if let Some(id) = control::try_lower(result, hir, node)? {
         return Ok(id);
     }
 
@@ -546,36 +551,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
     }
 
-    // `obj.attr += rhs` / `obj.attr ||= rhs` / `obj.attr &&= rhs` -- evaluates
-    // `obj` exactly ONCE (bound to a hidden local via `HirNode::Seq`), since
-    // a receiver expression may have side effects (e.g. `get_obj().attr +=
-    // 1`) -- naively re-lowering the SAME prism receiver node twice (once
-    // for the getter call, once for the setter call) would silently
-    // double-evaluate it, a real correctness bug real Ruby doesn't have. See
-    // `bind_call_target_once`'s docs.
-    if let Some(and) = node.as_and_node() {
-        let left = lower_node(result, hir, &and.left())?;
-        let right = lower_node(result, hir, &and.right())?;
-        return Ok(hir.push(HirNode::And(left, right)));
-    }
-
-    if let Some(or) = node.as_or_node() {
-        let left = lower_node(result, hir, &or.left())?;
-        let right = lower_node(result, hir, &or.right())?;
-        return Ok(hir.push(HirNode::Or(left, right)));
-    }
-
-    if let Some(defined) = node.as_defined_node() {
-        // `defined?(@@x)` outside any class body answers nil rather than
-        // raising -- `defined?` never evaluates its operand, so the raise
-        // `cvar_read` would otherwise put there must not be lowered at all.
-        if defined.value().as_class_variable_read_node().is_some() && hir.cvar_is_toplevel() {
-            return Ok(hir.push(HirNode::NilLit));
-        }
-        let value = lower_node(result, hir, &defined.value())?;
-        return Ok(hir.push(HirNode::Defined(value)));
-    }
-
     // `yield` / `yield(args)` -- a real, distinct `ruby-prism` node (not an
     // ordinary call), unlike `block_given?` below. Reuses `lower_call_args`
     // (not a bare per-argument `lower_node` map) so a trailing keyword hash
@@ -602,119 +577,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             args.push(ArrayElem::Single(hash));
         }
         return Ok(hir.push(HirNode::Yield(args)));
-    }
-
-    if let Some(if_node) = node.as_if_node() {
-        return lower_if_chain(
-            result,
-            hir,
-            &if_node.predicate(),
-            if_node.statements(),
-            if_node.subsequent(),
-        );
-    }
-
-    // `unless` has no `elsif` chain (only an optional `else`), and swaps
-    // which body is which relative to `HirNode::If`: Ruby runs `unless`'s
-    // primary statements when the predicate is FALSY, its `else` (if any)
-    // when truthy -- the opposite of `if`.
-    if let Some(unless_node) = node.as_unless_node() {
-        let cond = lower_node(result, hir, &unless_node.predicate())?;
-        let falsy_body = lower_body(result, hir, unless_node.statements().map(|s| s.as_node()))?;
-        let truthy_body = match unless_node.else_clause() {
-            None => Vec::new(),
-            Some(e) => lower_body(result, hir, e.statements().map(|s| s.as_node()))?,
-        };
-        return Ok(hir.push(HirNode::If {
-            cond,
-            then_body: truthy_body,
-            else_body: falsy_body,
-        }));
-    }
-
-    // `case subject; when ...; else ...; end` -- value matching only.
-    // `case/in` pattern matching (`CaseMatchNode`) is a distinct prism node,
-    // not handled here (see the `as_case_match_node` arm below).
-    if let Some(case_node) = node.as_case_node() {
-        let subject = match case_node.predicate() {
-            None => None,
-            Some(p) => Some(lower_node(result, hir, &p)?),
-        };
-        let mut arms = Vec::new();
-        for cond in case_node.conditions().iter() {
-            let when = cond
-                .as_when_node()
-                .ok_or("expected a `when` clause inside `case` (zeo limitation)")?;
-            // `lower_array_elem`, not a bare `lower_node`: `when *a` is a
-            // SplatNode, structurally identical to `[*a]`'s element.
-            let values = when
-                .conditions()
-                .iter()
-                .map(|n| lower_array_elem(result, hir, &n))
-                .collect::<PResult<Vec<_>>>()?;
-            let body = lower_body(result, hir, when.statements().map(|s| s.as_node()))?;
-            arms.push((values, body));
-        }
-        let else_body = match case_node.else_clause() {
-            None => Vec::new(),
-            Some(e) => lower_body(result, hir, e.statements().map(|s| s.as_node()))?,
-        };
-        return Ok(hir.push(HirNode::CaseWhen {
-            subject,
-            arms,
-            else_body,
-        }));
-    }
-
-    // `case subject; in PATTERN ... end` -- real pattern matching, a
-    // distinct prism node (`CaseMatchNode`) from value-matching `case/when`
-    // above. See `Pattern`/`PatternArm`'s docs.
-    if let Some(case_match) = node.as_case_match_node() {
-        let subject = case_match
-            .predicate()
-            .ok_or("`case/in` requires a subject (zeo limitation)")?;
-        let subject = lower_node(result, hir, &subject)?;
-        let mut arms = Vec::new();
-        for cond in case_match.conditions().iter() {
-            let in_node = cond
-                .as_in_node()
-                .ok_or("expected an `in` clause inside `case/in` (zeo limitation)")?;
-            let (pattern, guard) = lower_in_pattern_and_guard(result, hir, &in_node.pattern())?;
-            let body = lower_body(result, hir, in_node.statements().map(|s| s.as_node()))?;
-            arms.push(PatternArm {
-                pattern,
-                guard,
-                body,
-            });
-        }
-        let else_body = match case_match.else_clause() {
-            None => None,
-            Some(e) => Some(lower_body(
-                result,
-                hir,
-                e.statements().map(|s| s.as_node()),
-            )?),
-        };
-        return Ok(hir.push(HirNode::CaseIn {
-            subject,
-            arms,
-            else_body,
-        }));
-    }
-
-    // `expr in pattern` -- boolean one-liner, never raises.
-    if let Some(mp) = node.as_match_predicate_node() {
-        let subject = lower_node(result, hir, &mp.value())?;
-        let pattern = lower_pattern(result, hir, &mp.pattern())?;
-        return Ok(hir.push(HirNode::MatchPredicate { subject, pattern }));
-    }
-
-    // `expr => pattern` -- rightward assignment, raises `NoMatchingPatternError`
-    // on failure.
-    if let Some(mr) = node.as_match_required_node() {
-        let subject = lower_node(result, hir, &mr.value())?;
-        let pattern = lower_pattern(result, hir, &mr.pattern())?;
-        return Ok(hir.push(HirNode::MatchRequired { subject, pattern }));
     }
 
     if let Some(sup) = node.as_super_node() {
@@ -1970,105 +1832,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // the parser can only declare the locals when it can see the names.
     if let Some(mw) = node.as_match_write_node() {
         return lower_named_capture_match(result, hir, &mw);
-    }
-
-    // `while`/`until`, both statement and modifier form -- `until` is `While`
-    // with `negate: true`, exactly like `unless` swaps `If`'s branches above.
-    // The do-while form (`begin...end while cond`) is prism's begin-modifier
-    // flag on the same node -- carried through as `post` so codegen runs the
-    // body once before the first condition test.
-    if let Some(while_node) = node.as_while_node() {
-        let cond = lower_node(result, hir, &while_node.predicate())?;
-        let body = lower_body(result, hir, while_node.statements().map(|s| s.as_node()))?;
-        return Ok(hir.push(HirNode::While {
-            cond,
-            body,
-            negate: false,
-            post: while_node.is_begin_modifier(),
-        }));
-    }
-    if let Some(until_node) = node.as_until_node() {
-        let cond = lower_node(result, hir, &until_node.predicate())?;
-        let body = lower_body(result, hir, until_node.statements().map(|s| s.as_node()))?;
-        return Ok(hir.push(HirNode::While {
-            cond,
-            body,
-            negate: true,
-            post: until_node.is_begin_modifier(),
-        }));
-    }
-
-    // `for var in iterable ... end` / `for a, b in pairs ... end` -- see
-    // `lower_multi_target`'s docs for the full generalized target shape.
-    if let Some(for_node) = node.as_for_node() {
-        let target = lower_multi_target(result, hir, &for_node.index())?;
-        let iterable = lower_node(result, hir, &for_node.collection())?;
-        let body = lower_body(result, hir, for_node.statements().map(|s| s.as_node()))?;
-        return Ok(hir.push(HirNode::For {
-            target,
-            iterable,
-            body,
-        }));
-    }
-
-    // `break`/`next` (with an optional single value) and `redo` -- `ruby-prism`
-    // itself already guarantees these only ever appear inside a loop or block
-    // (a bare one anywhere else is a parse error caught before lowering even
-    // starts), so there's no context to re-validate here; `codegen::loops`
-    // is what actually resolves which native loop they target.
-    if let Some(brk) = node.as_break_node() {
-        let value = lower_single_optional_argument(result, hir, brk.arguments(), "break")?;
-        return Ok(hir.push(HirNode::Break(value)));
-    }
-    if let Some(nxt) = node.as_next_node() {
-        let value = lower_single_optional_argument(result, hir, nxt.arguments(), "next")?;
-        return Ok(hir.push(HirNode::Next(value)));
-    }
-    if node.as_redo_node().is_some() {
-        return Ok(hir.push(HirNode::Redo));
-    }
-
-    // `return` / `return value` -- see `HirNode::Return`'s docs.
-    if let Some(ret) = node.as_return_node() {
-        let value = lower_single_optional_argument(result, hir, ret.arguments(), "return")?;
-        return Ok(hir.push(HirNode::Return(value)));
-    }
-
-    // `begin ... rescue ... else ... ensure ... end` -- also reached for a
-    // method body that's implicitly a `BeginNode` (no explicit `begin`/`end`,
-    // just a bare `rescue`/`ensure` directly inside `def`), since
-    // `DefNode::body()` is that SAME node shape in that case (confirmed
-    // empirically via `Prism.parse`) and flows through this same `lower_node`
-    // call from `lower_body`.
-    if let Some(begin) = node.as_begin_node() {
-        return lower_begin(result, hir, &begin);
-    }
-
-    // `expr rescue fallback` -- the modifier form (also how an endless
-    // method's `def foo = risky rescue 1` and an assignment's `x = risky
-    // rescue 1` both surface: `RescueModifierNode` sits directly in the
-    // value/body position). Desugars to the same `HirNode::Begin` shape as
-    // an explicit `begin/rescue` with one bare (`classes: []`, matching
-    // `StandardError` and below) rescue clause and no `else`/`ensure`.
-    if let Some(rm) = node.as_rescue_modifier_node() {
-        let body = vec![lower_node(result, hir, &rm.expression())?];
-        let fallback = vec![lower_node(result, hir, &rm.rescue_expression())?];
-        return Ok(hir.push(HirNode::Begin {
-            body,
-            rescues: vec![RescueClause {
-                classes: Vec::new(),
-                splats: Vec::new(),
-                binding: None,
-                body: fallback,
-            }],
-            else_body: None,
-            ensure_body: None,
-        }));
-    }
-
-    // `retry` -- see `HirNode::Retry`'s docs.
-    if node.as_retry_node().is_some() {
-        return Ok(hir.push(HirNode::Retry));
     }
 
     // `alias new old` reached in a GENERAL context -- inside a `class_eval`/
