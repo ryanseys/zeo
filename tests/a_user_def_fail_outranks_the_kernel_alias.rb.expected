@@ -1,0 +1,5 @@
+FAIL addition: 1 != 2 (math.rb:3)
+reported
+plain kernel fail
+typed kernel fail
+from a quiet method

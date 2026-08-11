@@ -72,6 +72,23 @@ pub(crate) fn lower_pattern(
         let name = String::from_utf8_lossy(cap.target().name().as_slice()).into_owned();
         return Ok(Pattern::Capture(Box::new(inner), name));
     }
+    // A parenthesized pattern -- `in (Integer | String) => n`, `in [("@" |
+    // "$"), *rest]`. prism wraps the inner pattern in a `ParenthesesNode`;
+    // the body is the pattern node itself, or a single-statement
+    // `StatementsNode` around it. Without this unwrap it fell through to
+    // `Value` and died in the generic expression lowering.
+    if let Some(parens) = node.as_parentheses_node()
+        && let Some(body) = parens.body()
+    {
+        if let Some(stmts) = body.as_statements_node() {
+            let inner: Vec<_> = stmts.body().iter().collect();
+            if let [only] = inner.as_slice() {
+                return lower_pattern(result, hir, only);
+            }
+        } else {
+            return lower_pattern(result, hir, &body);
+        }
+    }
     if node.as_alternation_pattern_node().is_some() {
         let mut parts = Vec::new();
         flatten_alternation(result, hir, node, &mut parts)?;

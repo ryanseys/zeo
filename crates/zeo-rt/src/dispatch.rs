@@ -5387,6 +5387,20 @@ fn send_in_reason(
             let n = name.name_str();
             for &anc in ancestors_of_value(id) {
                 if let Some(f) = value_method(anc, box_id, name) {
+                    // The same payload bridge the `class_table` arm below
+                    // runs: an ext builtin's rows register as VALUE methods
+                    // (zlib, strscan), and handing one the boxed subclass
+                    // instead of its payload panicked the row's receiver
+                    // downcast (`TaggedInflate#inflate` died in `zs_of`).
+                    if payload_root
+                        .is_some_and(|r| crate::builtins::value_subclass::payload_owns(r, anc))
+                        && let Some(ref p) = payload
+                    {
+                        let result = f(p, args, block)?;
+                        return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                            result, p, recv, n,
+                        ));
+                    }
                     return f(&boxed, args, block);
                 }
                 // `include Math` reaches its module functions here as an

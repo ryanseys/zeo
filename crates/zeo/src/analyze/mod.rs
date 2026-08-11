@@ -145,8 +145,12 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         )?;
     }
     // Every `BEGIN` body runs first, ahead of the main program -- see
-    // `pre_exec`'s declaration.
+    // `pre_exec`'s declaration. The prepend moves every already-recorded
+    // top-level def, so their `at` indices move with it.
     if !pre_exec.is_empty() {
+        for d in &mut compiler.top_level_defs {
+            d.at += pre_exec.len();
+        }
         pre_exec.append(&mut main_statements);
         main_statements = pre_exec;
     }
@@ -174,6 +178,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         let mut unit_pre_exec = Vec::new();
         let mut failed = None;
         let sites_before = compiler.class_body_sites.len();
+        let defs_before = compiler.top_level_defs.len();
         for stmt in unit.body {
             if let Err(e) = process_top_stmt(compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
             {
@@ -183,6 +188,15 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         }
         match failed {
             None => {
+                // This unit's top-level defs recorded their `at` against
+                // `stmts`; resolve the stream sentinel to the unit's final
+                // index and shift past the prepended pre_exec (see the main
+                // list's own prepend above).
+                let uidx = feature_units.len() as u32;
+                for d in &mut compiler.top_level_defs[defs_before..] {
+                    d.unit = Some(uidx);
+                    d.at += unit_pre_exec.len();
+                }
                 unit_pre_exec.append(&mut stmts);
                 feature_units.push((unit.feature, unit.absolute, unit_pre_exec));
             }
@@ -202,6 +216,10 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
             // statements never run, so its class bodies never run either.
             Some(e) => {
                 compiler.class_body_sites.truncate(sites_before);
+                // ...and its top-level defs roll back with its sites: their
+                // `at` indices point into a statement list that was just
+                // dropped, and a declined unit's defs never announce.
+                compiler.top_level_defs.truncate(defs_before);
                 tracing::warn!(
                     feature = unit.feature,
                     reason = e.message,
@@ -255,7 +273,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // Which compiled definitions announce themselves. Runs here because it
     // needs `class_methods` flattened over the ancestry to see the hook, and
     // before `mark_inline_iter_sites` because it feeds `runtime_patches`.
-    def_hooks::resolve(compiler, &mut main_statements);
+    def_hooks::resolve(compiler, &mut main_statements, &mut feature_units);
 
     let main_local_types = locals::infer_locals(compiler, None, 0, &main_statements);
 
@@ -609,6 +627,10 @@ fn process_top_stmt_inner(
             compiler.top_level_defs.push(crate::compiler::SiteDef {
                 seq,
                 at: main_statements.len(),
+                // A unit-walk def's real stream index is assigned when the
+                // unit SURVIVES (`analyze_impl`'s unit loop); the sentinel
+                // only marks it as not-main until then.
+                unit: compiler.unit_walk.then_some(u32::MAX),
                 node: stmt,
                 name: name.clone(),
                 event: crate::compiler::DefEvent::Added,
@@ -1035,12 +1057,16 @@ fn collect_nested_bodies(compiler: &Compiler, node: NodeId, out: &mut Vec<NodeId
         // class right where it is written, exactly as the statement form does,
         // so the only difference is that something reads the body's value.
         //
-        // The three stops are the nodes that register their OWN bodies:
-        // `register_class` recurses into a `ClassDef`, a `DefMethod` body is a
-        // separate function that waits to be called (and ruby rejects a
-        // `class` written in one), and a `Lambda` likewise runs later, maybe
-        // never -- a definition there stays the clean error it is today.
-        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } | HirNode::Lambda { .. } => return,
+        // The two stops are the nodes that register their OWN bodies or
+        // reject one: `register_class` recurses into a `ClassDef`, and a
+        // `DefMethod` body is a separate function that waits to be called
+        // (ruby rejects a `class` written in one). A `Lambda` descends like
+        // a `Block` does -- both run later, maybe never, and the class a
+        // body defines is a registration fact either way (`define_method`
+        // bodies and `-> { class Object; ... }` reopens both live here;
+        // the marker still executes only when the lambda runs).
+        HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
+        HirNode::Lambda { body, .. } => body.clone(),
         other => {
             let mut children = Vec::new();
             other.for_each_child(&mut |c| children.push(c));
@@ -2818,39 +2844,52 @@ fn collect_shell_kinds(
     out: &mut HashMap<(u32, String), bool>,
 ) {
     for &id in stmts {
-        match &hir[id] {
-            HirNode::ClassDef {
-                name,
-                body,
-                is_module,
-                ..
-            } => {
-                let fq = if scope.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}::{}", scope.join("::"), name)
-                };
-                out.insert((box_id, fq), *is_module);
-                let mut inner = scope.to_vec();
-                inner.push(name.clone());
-                collect_shell_kinds(hir, body, &inner, box_id, out);
-            }
-            HirNode::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_shell_kinds(hir, then_body, scope, box_id, out);
-                collect_shell_kinds(hir, else_body, scope, box_id, out);
-            }
-            // A box's body is a fresh top-level scope under the box's id.
-            HirNode::BoxScope { box_id: bx, body } => {
-                collect_shell_kinds(hir, body, &[], *bx, out);
-            }
-            HirNode::Seq(body) | HirNode::PreExec(body) | HirNode::Eval(body) => {
-                collect_shell_kinds(hir, body, scope, box_id, out);
-            }
-            _ => {}
+        collect_shell_kinds_node(hir, id, scope, box_id, out);
+    }
+}
+
+/// One node of [`collect_shell_kinds`]'s walk. The descent MUST cover every
+/// position the registration walk ([`collect_nested_bodies`]) reaches, and it
+/// makes the same stops: this pre-pass and that walk answer the same "where
+/// can a definition hide" question, and any position only the registration
+/// walk descended produced a class that registered but could never be
+/// forward-referenced (a `class` inside `begin/rescue` or a block was
+/// "unknown superclass" to every earlier file). Hence the generic
+/// `for_each_child` default rather than an allowlist of container nodes.
+fn collect_shell_kinds_node(
+    hir: &Hir,
+    id: NodeId,
+    scope: &[String],
+    box_id: u32,
+    out: &mut HashMap<(u32, String), bool>,
+) {
+    match &hir[id] {
+        HirNode::ClassDef {
+            name,
+            body,
+            is_module,
+            ..
+        } => {
+            let fq = if scope.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", scope.join("::"), name)
+            };
+            out.insert((box_id, fq), *is_module);
+            let mut inner = scope.to_vec();
+            inner.push(name.clone());
+            collect_shell_kinds(hir, body, &inner, box_id, out);
+        }
+        // A box's body is a fresh top-level scope under the box's id.
+        HirNode::BoxScope { box_id: bx, body } => {
+            collect_shell_kinds(hir, body, &[], *bx, out);
+        }
+        // The registration walk's own stop: a method body is a separate
+        // function ruby rejects a `class` inside. A `Lambda` descends via
+        // the generic default, same as the registration walk descends it.
+        HirNode::DefMethod { .. } => {}
+        other => {
+            other.for_each_child(&mut |c| collect_shell_kinds_node(hir, c, scope, box_id, out));
         }
     }
 }
@@ -3091,6 +3130,18 @@ fn register_class(
             } else {
                 const_alias_target(compiler, &leaf, box_id)
             }
+        })
+        // A definition whose KIND disagrees with a still-GATED builtin slot
+        // is no collision at all: without the require, CRuby has no such
+        // constant, so `class JSON` in a program that never requires json
+        // mints a fresh user class that shadows the dormant slot. A
+        // MATCHING kind still attaches and materializes the slot (the
+        // reopen arm below clears the gate) -- only the mismatch, which
+        // that arm would reject with a TypeError CRuby never raises, is
+        // exempted here.
+        .filter(|&cid| {
+            let ci = compiler.class(cid);
+            compiler.feature_active(cid) || ci.is_module == is_module
         });
     // A top-level `class String ... end` INSIDE a box with no
     // same-box definition to attach to: when the name reaches a builtin
@@ -3277,11 +3328,19 @@ fn register_class(
                         // Still rejected: `Class`/`Module` (no per-value
                         // dispatch to hang a payload on).
                         use crate::compiler::{
-                            ARRAY_CLASS, BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS,
-                            FFI_STRUCT_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, NIL_CLASS,
-                            NUMERIC_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+                            BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS, FFI_STRUCT_CLASS,
+                            FLOAT_CLASS, INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRUCT_CLASS,
+                            SYMBOL_CLASS, TRUE_CLASS,
                         };
-                        let subclassable = matches!(
+                        // An instantiable value builtin compiles via the
+                        // generic `ValueSubclass` payload bridge; that list
+                        // is `zeo_abi::PAYLOAD_ROOTS` -- ONE list, shared
+                        // with the runtime (see its docs for the recipe for
+                        // adding a root). The `matches!` below is the rest
+                        // of the gate: builtins whose subclasses are NOT
+                        // payload objects.
+                        let subclassable = zeo_abi::is_payload_root(cid)
+                            || matches!(
                             cid,
                             // `BasicObject`: the blank-slate root. Its subclass
                             // is a plain ivar-carrying object with NO payload,
@@ -3311,120 +3370,12 @@ fn register_class(
                                 | zeo_abi::FFI_UNION_CLASS
                                 | DATA_CLASS
                                 | NUMERIC_CLASS
-                                | ARRAY_CLASS
-                                | STRING_CLASS
-                                | HASH_CLASS
                                 | INTEGER_CLASS
                                 | FLOAT_CLASS
                                 | SYMBOL_CLASS
                                 | NIL_CLASS
                                 | TRUE_CLASS
                                 | FALSE_CLASS
-                                // `StringScanner`: the same `ValueSubclass`
-                                // payload shape as the collection roots, its
-                                // payload being the native scanner object --
-                                // csv's `class Scanner < StringScanner` adds
-                                // ivars on top of the inherited behaviour.
-                                | zeo_abi::STRING_SCANNER_CLASS
-                                // `StringIO`/`File`: same payload shape again.
-                                // puma's `IOBuffer < StringIO` and aws-sdk's
-                                // `ManagedFile < File` are the whole aws-sdk-*
-                                // family's blocker between them.
-                                | zeo_abi::STRINGIO_CLASS
-                                // `Pathname`: the payload is the path value.
-                                // `Pathname.new("")` is a real empty form, so
-                                // a subclass without its own `initialize`
-                                // seeds straight from the root -- and one WITH
-                                // an `initialize` re-seats through `super`,
-                                // which replaces the stored path in place.
-                                | zeo_abi::PATHNAME_CLASS
-                                | zeo_abi::FILE_CLASS
-                                | zeo_abi::SET_CLASS
-                                // `Enumerator`: the payload is the
-                                // `RubyValue::Enumerator` handle. Like `File`
-                                // it has no empty form -- the block IS the
-                                // sequence -- so a subclass seats one through
-                                // `super() { |y| ... }`. cucumber-messages'
-                                // `NdjsonToMessageEnumerator` does exactly
-                                // that; the aws-sdk `EventStream` classes just
-                                // add a method to the inherited behaviour.
-                                | zeo_abi::ENUMERATOR_CLASS
-                                // `Time`: the payload is the time value, and
-                                // `Time.new` with no arguments is a real empty
-                                // form (`now`). rubyzip's `DOSTime < Time`
-                                // reaches the ledger through four gems.
-                                | zeo_abi::TIME_CLASS
-                                // `Thread`: the `File` shape -- a blockless
-                                // thread cannot be built, so a subclass seats
-                                // the real one through `super`, which is
-                                // exactly why these gems subclass it.
-                                | zeo_abi::THREAD_CLASS
-                                // `Mutex`/`Monitor`: the payload is the lock,
-                                // and both constructors take no arguments, so
-                                // the empty form is real. A gem subclasses
-                                // these to bolt a lock onto state of its own,
-                                // which is exactly the payload shape.
-                                | zeo_abi::MUTEX_CLASS
-                                | zeo_abi::MONITOR_CLASS
-                                // `Dir`: the `File` shape -- a directory that
-                                // exists is needed, so a subclass opens the
-                                // real one through `super(path)`.
-                                | zeo_abi::DIR_CLASS
-                                // `SizedQueue`: the `File` shape -- a maximum
-                                // cannot be invented, so a subclass seats the
-                                // real queue through `super(max)`.
-                                | zeo_abi::SIZED_QUEUE_CLASS
-                                // `Queue`: the payload is the
-                                // `RubyValue::Queue` handle, and `Queue.new`
-                                // takes no arguments, so the empty form is a
-                                // real one. actionpool's `Queue < ::Queue`
-                                // adds a `@pool` on top of the inherited
-                                // behaviour and reaches the ledger through
-                                // four gems.
-                                | zeo_abi::QUEUE_CLASS
-                                // The IO family, `File`'s shape one level up:
-                                // no descriptor can be conjured, so a subclass
-                                // seats the real one through `super`, which is
-                                // the whole reason these are subclassed.
-                                // kgio's `Kgio::Pipe < IO` and serialport's
-                                // `SerialPort < IO`; dalli's `TCP < TCPSocket`
-                                // and `UNIX < UNIXSocket`.
-                                | zeo_abi::IO_CLASS
-                                | zeo_abi::BASIC_SOCKET_CLASS
-                                | zeo_abi::IP_SOCKET_CLASS
-                                | zeo_abi::SOCKET_CLASS
-                                | zeo_abi::TCPSOCKET_CLASS
-                                | zeo_abi::UDP_SOCKET_CLASS
-                                | zeo_abi::UNIX_SOCKET_CLASS
-                                // `OpenSSL::SSL::SSLSocket`: the same shape --
-                                // it wraps an existing socket, so `super` is
-                                // the only way to build one. Nine ledger rows
-                                // go through bunny's, dalli's and mongo's
-                                // `SSLSocket` between them, the single biggest
-                                // subclassing bucket.
-                                | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
-                                // `OpenSSL::Cipher`: a cipher is named at
-                                // construction, so there is no empty form
-                                // either. openssl's OWN `AES`/`DES`/... are
-                                // `Class.new(Cipher)` subclasses.
-                                | zeo_abi::OPENSSL_CIPHER_CLASS
-                                // `OpenSSL::Digest`: same again -- the
-                                // algorithm is the argument. openssl's own
-                                // deprecated `Digest::Digest` alias class is
-                                // one, and hits two gems.
-                                | zeo_abi::OPENSSL_DIGEST_CLASS
-                                // `Fiber`: the `Thread` shape -- the block IS
-                                // the body, so a blockless fiber cannot be
-                                // built and a subclass seats the real one
-                                // through `super(&block)`. hexapdf's
-                                // `FiberWithLength` adds the length it knows
-                                // up front.
-                                | zeo_abi::FIBER_CLASS
-                                // `Range`: chronic's `Span < Range`. Its
-                                // class-method table had no `new` row until
-                                // one was added for exactly this path -- the
-                                // same prerequisite `Enumerator` needed.
-                                | zeo_abi::RANGE_CLASS
                                 // `Module`: NOT a payload root -- a wrapper
                                 // holding a module is not a module. A user
                                 // `class X < Module` is a module FACTORY whose
@@ -3452,13 +3403,13 @@ fn register_class(
                                 // `RubyValue::Proc` and every call-site fast
                                 // path keeps working on it.
                                 | crate::compiler::PROC_CLASS
-                                // `Regexp`: a value-backed payload root, like
-                                // String and Array. Ruby has no `to_regexp`
-                                // conversion protocol, so unlike those two the
-                                // husk cannot be unwrapped by the conversion
-                                // path -- every site that takes a pattern
-                                // reads it through `regexp::as_regexp`.
-                                | crate::compiler::REGEXP_CLASS
+                                // `BigDecimal`/`Method`: allocator-undefined
+                                // in CRuby too -- the DEFINITION is legal
+                                // (`is_a?` tagging, class methods) but no
+                                // instance can be built, the immediates'
+                                // shape (`is_immediate_subclass`).
+                                | zeo_abi::BIGDECIMAL_CLASS
+                                | zeo_abi::METHOD_CLASS
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(
@@ -3564,6 +3515,7 @@ fn register_class(
                 let def = crate::compiler::SiteDef {
                     seq: next_def_seq(compiler),
                     at: compiler.class_body_sites[site_idx].stmts.len(),
+                    unit: None,
                     node: stmt,
                     name,
                     event: crate::compiler::DefEvent::Added,
@@ -3665,6 +3617,7 @@ fn register_class(
                     let def = crate::compiler::SiteDef {
                         seq: next_def_seq(compiler),
                         at,
+                        unit: None,
                         node: stmt,
                         name: name.clone(),
                         event: crate::compiler::DefEvent::Undefined,
@@ -3704,6 +3657,7 @@ fn register_class(
                 let def = crate::compiler::SiteDef {
                     seq,
                     at: compiler.class_body_sites[site_idx].stmts.len(),
+                    unit: None,
                     node: stmt,
                     name: new_name_owned,
                     event: crate::compiler::DefEvent::Added,

@@ -152,38 +152,11 @@ impl RubyObject for ValueSubclass {
 /// bridge is Array/String/Hash-specific -- the payload is just a `RubyValue`,
 /// and here it is the `RubyValue::Object` holding the native scanner.
 pub fn is_payload_root(id: ClassId) -> bool {
-    matches!(
-        id,
-        ARRAY_CLASS
-            | STRING_CLASS
-            | HASH_CLASS
-            | zeo_abi::STRING_SCANNER_CLASS
-            | zeo_abi::STRINGIO_CLASS
-            | zeo_abi::PATHNAME_CLASS
-            | zeo_abi::FILE_CLASS
-            | zeo_abi::SET_CLASS
-            | zeo_abi::ENUMERATOR_CLASS
-            | zeo_abi::TIME_CLASS
-            | zeo_abi::THREAD_CLASS
-            | zeo_abi::QUEUE_CLASS
-            | zeo_abi::SIZED_QUEUE_CLASS
-            | zeo_abi::MUTEX_CLASS
-            | zeo_abi::MONITOR_CLASS
-            | zeo_abi::TCPSOCKET_CLASS
-            | zeo_abi::UDP_SOCKET_CLASS
-            | zeo_abi::UNIX_SOCKET_CLASS
-            | zeo_abi::IP_SOCKET_CLASS
-            | zeo_abi::SOCKET_CLASS
-            | zeo_abi::BASIC_SOCKET_CLASS
-            | zeo_abi::IO_CLASS
-            | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
-            | zeo_abi::OPENSSL_CIPHER_CLASS
-            | zeo_abi::OPENSSL_DIGEST_CLASS
-            | zeo_abi::FIBER_CLASS
-            | zeo_abi::RANGE_CLASS
-            | zeo_abi::DIR_CLASS
-            | zeo_abi::REGEXP_CLASS
-    )
+    // The list lives in `zeo_abi::PAYLOAD_ROOTS` -- ONE list, shared with
+    // the compiler's subclassable gate, because two hand-maintained copies
+    // had already drifted. Adding a root means an `empty_payload` arm below
+    // too; the `payload_roots_are_constructible` test holds the two together.
+    zeo_abi::is_payload_root(id)
 }
 
 /// Whether a builtin method found on `anc` belongs to the PAYLOAD of a value
@@ -457,6 +430,15 @@ fn empty_payload(root: ClassId) -> RubyValue {
         // `Range.new` demands both endpoints, so there is no empty form here
         // either -- the `File` shape again.
         zeo_abi::RANGE_CLASS => RubyValue::Nil,
+        // `Zlib::Inflate.new` with no arguments is a real empty form (a
+        // stream with the default window bits).
+        zeo_abi::ZLIB_INFLATE_CLASS => {
+            construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil)
+        }
+        // `Zlib::GzipReader` needs an IO underneath and `TCPServer` an
+        // address to bind -- the `File` shape: the subclass's own
+        // `initialize` seats the real payload through `super`.
+        zeo_abi::ZLIB_GZIP_READER_CLASS | zeo_abi::TCPSERVER_CLASS => RubyValue::Nil,
         zeo_abi::SET_CLASS => construct_root_payload(root, &[], None).unwrap_or(RubyValue::Nil),
         // `Regexp.new("")` is a real regexp -- `//`, which matches everywhere --
         // so the empty form exists and a subclass that never calls `super`
@@ -592,5 +574,41 @@ fn value_identity(v: &RubyValue) -> Option<usize> {
         RubyValue::Hash(h) => Some(Arc::as_ptr(h) as usize),
         RubyValue::Str(s) => Some(Arc::as_ptr(s) as *const () as usize),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every payload root must be CONSTRUCTIBLE: `construct_root_payload`
+    /// panics on a root with neither a `new` class-method row nor a
+    /// `ConstructorFn`, and that panic fires at a user program's first
+    /// `Sub.new` -- far from the list that caused it. Membership in
+    /// `zeo_abi::PAYLOAD_ROOTS` is a claim about BOTH crates, so this is
+    /// where a root added without its runtime half fails loudly instead
+    /// (`OpenSSL::X509::Certificate` is the standing example: implemented,
+    /// but constructorless, so it must not be listed until it gains one).
+    #[test]
+    fn payload_roots_are_constructible() {
+        // `Pathname.new` is deliberately a `ConstructorFn`, not a table row
+        // (the row would appear in `singleton_methods(false)` where CRuby
+        // has nothing) -- and a bare-library test cannot consult the
+        // generated program's constructor registry, so it is allowlisted.
+        let constructor_fn_roots = [zeo_abi::PATHNAME_CLASS];
+        // `BasicSocket`/`IPSocket` are ABSTRACT in CRuby too -- programs
+        // construct `TCPSocket`/`UDPSocket`, and a subclass of these always
+        // seats through `super` into a concrete child's constructor. The
+        // only path that would want their own `new` is a shape CRuby also
+        // rejects.
+        let abstract_roots = [zeo_abi::BASIC_SOCKET_CLASS, zeo_abi::IP_SOCKET_CLASS];
+        for &root in zeo_abi::PAYLOAD_ROOTS {
+            let has_new = crate::builtins::class_method_table(root)
+                .and_then(|t| t("new"))
+                .is_some();
+            assert!(
+                has_new || constructor_fn_roots.contains(&root) || abstract_roots.contains(&root),
+                "payload root {root:?} has no `new` class-method row -- \
+                 add the constructor before listing it in zeo_abi::PAYLOAD_ROOTS"
+            );
+        }
     }
 }

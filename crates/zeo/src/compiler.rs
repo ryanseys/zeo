@@ -886,6 +886,15 @@ pub struct SiteDef {
     pub seq: u32,
     /// The index in the site's `stmts` the report belongs BEFORE.
     pub at: usize,
+    /// Which STATEMENT STREAM `at` indexes, for a top-level def: `None` is
+    /// the main list, `Some(k)` is `feature_units[k]`'s body. The walk runs
+    /// the main stream and then every unit through the same
+    /// `process_top_stmt`, all pushing into the one `top_level_defs` -- and
+    /// splicing a unit's index into the main list panicked the compiler
+    /// (autosub: "insertion index (is 58) should be <= len (is 18)").
+    /// Class-body defs live in their site's own `defs` list and leave this
+    /// `None`.
+    pub unit: Option<u32>,
     /// The definition's own node, whose span decides whether a hook installed
     /// later in the same file ever saw it.
     pub node: crate::hir::NodeId,
@@ -1719,46 +1728,17 @@ impl Compiler {
             return None;
         }
         // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
-        // Kept in step with `zeo_rt::value_subclass::is_payload_root`, which
-        // makes the same call at runtime.
-        self.superclass_chain(cid).find(|a| {
-            matches!(
-                *a,
-                ARRAY_CLASS
-                    | STRING_CLASS
-                    | HASH_CLASS
-                    | zeo_abi::STRING_SCANNER_CLASS
-                    | zeo_abi::STRINGIO_CLASS
-                    | zeo_abi::PATHNAME_CLASS
-                    | zeo_abi::FILE_CLASS
-                    | zeo_abi::SET_CLASS
-                    | zeo_abi::ENUMERATOR_CLASS
-                    | zeo_abi::TIME_CLASS
-                    | zeo_abi::THREAD_CLASS
-                    | zeo_abi::QUEUE_CLASS
-                    | zeo_abi::SIZED_QUEUE_CLASS
-                    | zeo_abi::MUTEX_CLASS
-                    | zeo_abi::MONITOR_CLASS
-                    // The IO family. Several roots sit on one chain, and the
-                    // walk above picks the NEAREST -- so `class TCP <
-                    // TCPSocket` seeds its payload from `TCPSocket.new`, not
-                    // from the `IO.new` four links further up.
-                    | zeo_abi::TCPSOCKET_CLASS
-                    | zeo_abi::UDP_SOCKET_CLASS
-                    | zeo_abi::UNIX_SOCKET_CLASS
-                    | zeo_abi::IP_SOCKET_CLASS
-                    | zeo_abi::SOCKET_CLASS
-                    | zeo_abi::BASIC_SOCKET_CLASS
-                    | zeo_abi::IO_CLASS
-                    | zeo_abi::OPENSSL_SSL_SOCKET_CLASS
-                    | zeo_abi::OPENSSL_CIPHER_CLASS
-                    | zeo_abi::OPENSSL_DIGEST_CLASS
-                    | zeo_abi::FIBER_CLASS
-                    | zeo_abi::RANGE_CLASS
-                    | zeo_abi::DIR_CLASS
-                    | REGEXP_CLASS
-            )
-        })
+        // The list is `zeo_abi::PAYLOAD_ROOTS`, shared with the runtime and
+        // analyze's subclassable gate. This function was the THIRD
+        // hand-synced copy, and it was the one that drifted: a root the
+        // other two knew and this one didn't made codegen emit direct
+        // builtin-table calls with the BOXED subclass, panicking the row's
+        // receiver downcast at runtime.
+        //
+        // Several roots can sit on one chain (the IO family); the walk
+        // picks the NEAREST -- `class TCP < TCPSocket` seeds its payload
+        // from `TCPSocket.new`, not from the `IO.new` four links further up.
+        self.superclass_chain(cid).find(|a| zeo_abi::is_payload_root(*a))
     }
 
     /// Whether `cid`'s instances are the native `ValueSubclass`: a user
@@ -1894,12 +1874,15 @@ impl Compiler {
             || self.is_proc_subclass(cid)
     }
 
-    /// Whether `cid` is a user subclass of an IMMEDIATE builtin -- `Integer`/
-    /// `Float`/`Symbol`/`NilClass`/`TrueClass`/`FalseClass`. CRuby allows
-    /// the class DEFINITION (`MyInt.superclass == Integer`, `is_a?` queries
-    /// resolve) but has no instances: `MyInt.new` raises `NoMethodError`. So
-    /// codegen emits a registry entry ONLY -- no struct, no constructor -- and
-    /// `.new` dynamically resolves to that NoMethodError.
+    /// Whether `cid` is a user subclass of an INSTANCE-LESS builtin -- an
+    /// immediate (`Integer`/`Float`/`Symbol`/`NilClass`/`TrueClass`/
+    /// `FalseClass`), or one whose allocator CRuby itself undefines
+    /// (`BigDecimal`, `Method`). CRuby allows the class DEFINITION
+    /// (`MyInt.superclass == Integer`, `is_a?` queries resolve) but has no
+    /// instances: `MyInt.new` raises. So codegen emits a registry entry
+    /// ONLY -- no struct, no constructor -- and `.new` dynamically resolves
+    /// to a raise (`NoMethodError` here; CRuby raises `TypeError` for the
+    /// allocator-undefined pair, a documented message-class divergence).
     pub fn is_immediate_subclass(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         if ci.is_module || ci.is_builtin || ci.is_bootstrap || cid == OBJECT_CLASS {
@@ -1909,7 +1892,14 @@ impl Compiler {
         self.superclass_chain(cid).any(|a| {
             matches!(
                 a,
-                INTEGER_CLASS | FLOAT_CLASS | SYMBOL_CLASS | NIL_CLASS | TRUE_CLASS | FALSE_CLASS
+                INTEGER_CLASS
+                    | FLOAT_CLASS
+                    | SYMBOL_CLASS
+                    | NIL_CLASS
+                    | TRUE_CLASS
+                    | FALSE_CLASS
+                    | zeo_abi::BIGDECIMAL_CLASS
+                    | zeo_abi::METHOD_CLASS
             )
         })
     }

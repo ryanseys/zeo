@@ -27,6 +27,30 @@ pub(super) fn emit_universal_implicit_form(
     if let Some(tokens) = emit_kernel_function(cx, name, args, kwargs, block, block_arg) {
         return Some(tokens);
     }
+    // `fail` -- Kernel#raise's exact synonym. `raise` itself desugars in
+    // parse to `HirNode::Raise`, but `fail` is a popular USER method name
+    // (riot's reporter takes four arguments), so it lowers as an ordinary
+    // call and gains its raise meaning only HERE, after sibling method
+    // resolution -- a user `def fail` wins, real Ruby's rule. Shapes this
+    // static form can't carry (a block, more than 3 positionals, a keyword
+    // other than a lone `cause:`) fall through to the dynamic Kernel row,
+    // which shares `emit_raise`'s semantics.
+    if name == "fail" && block.is_none() && block_arg.is_none() && args.len() <= 3 {
+        let cause = match kwargs {
+            [] => Some(crate::hir::RaiseCause::Absent),
+            [KwArg::Pair(k, v)]
+                if !args.is_empty()
+                    && matches!(&cx.compiler.hir[*k],
+                                crate::hir::HirNode::SymbolLit(s) if s == "cause") =>
+            {
+                Some(crate::hir::RaiseCause::Explicit(*v))
+            }
+            _ => None,
+        };
+        if let Some(cause) = cause {
+            return Some(crate::codegen::expr::emit_raise(cx, args, &cause));
+        }
+    }
     // `proc { ... }` -- Kernel#proc: the literal block AS a Proc value
     // (`lambda { ... }` desugars in parse to `HirNode::Lambda` already;
     // `proc`'s non-lambda semantics are exactly `emit_proc_value`'s).

@@ -33,7 +33,21 @@ const HOOKS: [&str; 7] = [
     "singleton_method_undefined",
 ];
 
-pub fn resolve(compiler: &mut Compiler, main_statements: &mut Vec<NodeId>) {
+/// Where a group of defs splices: the main list, a feature unit's body, or a
+/// class-body site's statements. A [`SiteDef::at`] is an index into exactly
+/// one of these vectors, and splicing it into any other is the panic the
+/// `unit` tag exists to prevent.
+enum Target {
+    Main,
+    Unit(usize),
+    Site(usize),
+}
+
+pub fn resolve(
+    compiler: &mut Compiler,
+    main_statements: &mut Vec<NodeId>,
+    feature_units: &mut [(String, String, Vec<NodeId>)],
+) {
     for hook in global_hooks(compiler) {
         compiler.global_def_hooks.insert(hook.to_string());
     }
@@ -44,28 +58,43 @@ pub fn resolve(compiler: &mut Compiler, main_statements: &mut Vec<NodeId>) {
 
     // Take every class's definitions out first, so the watermark below can see
     // a class's WHOLE program-wide sequence -- a reopen adds methods the hook
-    // in the first body has not seen yet.
-    let mut taken: Vec<(ClassId, Vec<SiteDef>, Option<usize>)> = Vec::new();
-    taken.push((
-        crate::compiler::OBJECT_CLASS,
-        std::mem::take(&mut compiler.top_level_defs),
-        None,
-    ));
+    // in the first body has not seen yet. Top-level defs group by STREAM
+    // (main vs each unit) -- `future_names` merges the groups back per class,
+    // so the watermark still spans the whole program. A BTreeMap keeps the
+    // group order deterministic (node ids and patch sets follow it).
+    let mut taken: Vec<(ClassId, Vec<SiteDef>, Target)> = Vec::new();
+    let mut by_stream: std::collections::BTreeMap<Option<u32>, Vec<SiteDef>> =
+        std::collections::BTreeMap::new();
+    for d in std::mem::take(&mut compiler.top_level_defs) {
+        by_stream.entry(d.unit).or_default().push(d);
+    }
+    for (stream, defs) in by_stream {
+        let target = match stream {
+            None => Target::Main,
+            Some(k) => Target::Unit(k as usize),
+        };
+        taken.push((crate::compiler::OBJECT_CLASS, defs, target));
+    }
     for i in 0..compiler.class_body_sites.len() {
         let class = compiler.class_body_sites[i].class;
         let defs = std::mem::take(&mut compiler.class_body_sites[i].defs);
-        taken.push((class, defs, Some(i)));
+        taken.push((class, defs, Target::Site(i)));
     }
     let future = future_names(&taken);
 
-    for (class, defs, site) in taken {
+    for (class, defs, target) in taken {
         let sends = surviving(compiler, class, &defs, &global, &future);
         if sends.is_empty() {
             continue;
         }
-        match site {
-            None => splice(compiler, main_statements, class, sends),
-            Some(i) => {
+        match target {
+            Target::Main => splice(compiler, main_statements, class, sends),
+            Target::Unit(k) => {
+                let mut stmts = std::mem::take(&mut feature_units[k].2);
+                splice(compiler, &mut stmts, class, sends);
+                feature_units[k].2 = stmts;
+            }
+            Target::Site(i) => {
                 let mut stmts = std::mem::take(&mut compiler.class_body_sites[i].stmts);
                 splice(compiler, &mut stmts, class, sends);
                 compiler.class_body_sites[i].stmts = stmts;
@@ -94,7 +123,7 @@ struct Send {
 /// Keyed on FIRST definition: `def x; end; def x; end` announces twice, and at
 /// the first announcement `x` already exists, so a later redefinition must not
 /// hide it.
-fn future_names(taken: &[(ClassId, Vec<SiteDef>, Option<usize>)]) -> HashMap<u32, Vec<String>> {
+fn future_names(taken: &[(ClassId, Vec<SiteDef>, Target)]) -> HashMap<u32, Vec<String>> {
     let mut by_class: HashMap<ClassId, Vec<&SiteDef>> = HashMap::new();
     for (class, defs, _) in taken {
         by_class.entry(*class).or_default().extend(defs.iter());

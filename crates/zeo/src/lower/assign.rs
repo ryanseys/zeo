@@ -285,6 +285,25 @@ pub(crate) fn build_call_target_write(
     )
 }
 
+/// One evaluate-once index binding of `arr[...] op= rhs` -- the hidden
+/// local's name, and whether the source spelled it as a SPLAT (`self[*mask]
+/// += x`, where the bound value is the ARRAY and both `[]`/`[]=` re-splat
+/// it).
+pub(crate) struct IdxTmp {
+    name: String,
+    splat: bool,
+}
+
+impl IdxTmp {
+    fn read(&self, hir: &mut Hir) -> ArrayElem {
+        let read = hir.push(HirNode::LocalRead(self.name.clone()));
+        match self.splat {
+            true => ArrayElem::Splat(read),
+            false => ArrayElem::Single(read),
+        }
+    }
+}
+
 /// Same reasoning as `bind_call_target_once`, extended to BOTH the receiver
 /// AND the (single) index argument of `arr[i] op= rhs`/`||=`/`&&=`
 /// (`arr[compute_idx()] += 1` must call `compute_idx()` exactly once too,
@@ -295,25 +314,34 @@ pub(crate) fn bind_index_target_once(
     hir: &mut Hir,
     receiver: &Node<'_>,
     index_args: &ruby_prism::ArgumentsNode<'_>,
-) -> PResult<(Vec<NodeId>, NodeId, String, Vec<String>)> {
+) -> PResult<(Vec<NodeId>, NodeId, String, Vec<IdxTmp>)> {
     let recv_expr = lower_node(result, hir, receiver)?;
     let recv_tmp = hir.gensym("__recv");
     let mut binds = vec![hir.push(HirNode::LocalWrite(recv_tmp.clone(), recv_expr))];
     // EVERY index gets its own binding, for the same reason the receiver does:
     // `h[i(), j()] += 1` must call each index expression exactly once, not once
-    // per `[]`/`[]=` call.
+    // per `[]`/`[]=` call. A splat index binds its INNER expression (the
+    // array) and re-splats it on both calls.
     let mut idx_tmps = Vec::new();
     for index_node in index_args.arguments().iter() {
-        let idx_expr = lower_node(result, hir, &index_node)?;
+        let (splat, idx_expr) = match index_node.as_splat_node() {
+            Some(s) => {
+                let inner = s
+                    .expression()
+                    .ok_or("a bare `*` has no index expression to bind")?;
+                (true, lower_node(result, hir, &inner)?)
+            }
+            None => (false, lower_node(result, hir, &index_node)?),
+        };
         let idx_tmp = hir.gensym("__idx");
         binds.push(hir.push(HirNode::LocalWrite(idx_tmp.clone(), idx_expr)));
-        idx_tmps.push(idx_tmp);
+        idx_tmps.push(IdxTmp {
+            name: idx_tmp,
+            splat,
+        });
     }
     let read_recv = hir.push(HirNode::LocalRead(recv_tmp.clone()));
-    let args = idx_tmps
-        .iter()
-        .map(|t| ArrayElem::Single(hir.push(HirNode::LocalRead(t.clone()))))
-        .collect();
+    let args = idx_tmps.iter().map(|t| t.read(hir)).collect();
     let read_call = hir.push(HirNode::Call {
         receiver: Some(read_recv),
         name: "[]".to_string(),
@@ -331,14 +359,11 @@ pub(crate) fn bind_index_target_once(
 pub(crate) fn build_index_target_write(
     hir: &mut Hir,
     recv_tmp: &str,
-    idx_tmps: &[String],
+    idx_tmps: &[IdxTmp],
     value: NodeId,
 ) -> NodeId {
     let write_recv = hir.push(HirNode::LocalRead(recv_tmp.to_string()));
-    let mut args: Vec<ArrayElem> = idx_tmps
-        .iter()
-        .map(|t| ArrayElem::Single(hir.push(HirNode::LocalRead(t.clone()))))
-        .collect();
+    let mut args: Vec<ArrayElem> = idx_tmps.iter().map(|t| t.read(hir)).collect();
     args.push(ArrayElem::Single(value));
     push_assignment_call(
         hir,
@@ -472,16 +497,32 @@ pub(crate) fn lower_multi_target(
             .arguments()
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
-        if arg_list.len() != 1 {
-            return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (zeo limitation)".to_string().into());
+        if arg_list.is_empty() {
+            return Err("`arr[] = ...` as a multi-assignment target needs an index".into());
         }
-        let index = lower_node(result, hir, &arg_list[0])?;
+        // ANY index count: `[]=` is an ordinary method, so `grid[x, y], b =
+        // ...` is a three-argument `[]=` -- the same rule `index_arguments`
+        // states for compound assignment. A splat index rides along as the
+        // splat it is.
+        let mut args: Vec<ArrayElem> = Vec::new();
+        for a in &arg_list {
+            args.push(match a.as_splat_node() {
+                Some(s) => {
+                    let inner = s
+                        .expression()
+                        .ok_or("a bare `*` has no index expression to bind")?;
+                    ArrayElem::Splat(lower_node(result, hir, &inner)?)
+                }
+                None => ArrayElem::Single(lower_node(result, hir, a)?),
+            });
+        }
         let tmp_name = hir.gensym("__mval");
         let tmp_read = hir.push(HirNode::LocalRead(tmp_name.clone()));
+        args.push(ArrayElem::Single(tmp_read));
         let write_call = hir.push(HirNode::Call {
             receiver: Some(receiver),
             name: "[]=".to_string(),
-            args: vec![ArrayElem::Single(index), ArrayElem::Single(tmp_read)],
+            args,
             kwargs: Vec::new(),
             block: None,
             block_arg: None,

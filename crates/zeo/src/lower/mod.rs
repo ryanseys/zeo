@@ -1792,7 +1792,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     // cleanly with the enumeration's result and a
                     // manual `raise StopIteration` returns nil.
                     let native_loop = hir.push(HirNode::Loop { body });
-                    let exc_read = hir.push(HirNode::LocalRead("__loop_stop".to_string()));
+                    // A FRESH binding per `loop`: a fixed name aliased every
+                    // `loop` in the program to one local, so a scope's own
+                    // desugar looked like a capture of the enclosing scope's
+                    // -- `Ractor.new { loop { ... } }` inside a method that
+                    // also used `loop` refused isolation over it.
+                    let stop_name = hir.gensym("__loop");
+                    let exc_read = hir.push(HirNode::LocalRead(stop_name.clone()));
                     let result_call = hir.push(HirNode::Call {
                         receiver: Some(exc_read),
                         name: "result".to_string(),
@@ -1807,7 +1813,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         rescues: vec![crate::hir::RescueClause {
                             classes: vec!["StopIteration".to_string()],
                             splats: Vec::new(),
-                            binding: Some("__loop_stop".to_string()),
+                            binding: Some(stop_name),
                             body: vec![result_call],
                         }],
                         else_body: None,
@@ -1982,21 +1988,34 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             }
         }
 
-        // `raise`/`fail` (exact synonyms) -- a zero/one/two positional-arg
-        // call-shape desugar, same posture as `block_given?` above. The
-        // `cause:` keyword form isn't lowered yet (see `HirNode::Raise`'s
-        // docs) -- rejected here rather than silently dropped, matching
-        // this project's "clean rejection over silent wrongness" rule.
+        // `raise` -- a zero/one/two positional-arg call-shape desugar, same
+        // posture as `block_given?` above. The `cause:` keyword form isn't
+        // lowered yet (see `HirNode::Raise`'s docs) -- rejected here rather
+        // than silently dropped, matching this project's "clean rejection
+        // over silent wrongness" rule.
+        // `fail` is NOT desugared here even though it is `raise`'s exact
+        // synonym: it is also a popular USER method name (riot's reporter
+        // takes four arguments), and a parse-time desugar binds the Kernel
+        // meaning before method resolution can see the user's `def fail`.
+        // It lowers as an ordinary call and gains its raise meaning in
+        // codegen's universal implicit forms, after sibling resolution.
         // `raise(*exc)` -- a splat arg has no static positional shape (its count
         // is a runtime value), so the special static-form lowering can't build
         // `HirNode::Raise`'s fixed 0..3 args. Skip it here; the general call
         // lowering handles it via `emit_splat_call` over the runtime
         // `Kernel#raise` builtin (`optparse.rb`'s `{|*exc| raise(*exc)}`).
+        // `raise(...)` -- argument forwarding is the same no-static-shape
+        // case as the splat (sus forwards a matcher's whole failure into
+        // `raise`); the general call lowering expands `...` into
+        // `*rest, **kw, &blk` and reaches the runtime row.
         let raise_has_splat = || {
-            call.arguments()
-                .is_some_and(|a| a.arguments().iter().any(|n| n.as_splat_node().is_some()))
+            call.arguments().is_some_and(|a| {
+                a.arguments().iter().any(|n| {
+                    n.as_splat_node().is_some() || n.as_forwarding_arguments_node().is_some()
+                })
+            })
         };
-        if (name == "raise" || name == "fail") && receiver.is_none() && !raise_has_splat() {
+        if name == "raise" && receiver.is_none() && !raise_has_splat() {
             let arg_list: Vec<_> = call
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
@@ -2656,12 +2675,19 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // receiver). Desugared to the internal `__zeo_alias_keyword` marker call
     // that `codegen::call` emits as `zeo_rt::alias_in_default_definee`.
     if let Some(alias) = node.as_alias_method_node() {
-        let new_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(
-            &alias.new_name(),
-        )?));
-        let old_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(
-            &alias.old_name(),
-        )?));
+        // An interpolated name lowers as the runtime EXPRESSION it is --
+        // the marker call reads both operands at runtime either way.
+        let operand = |hir: &mut Hir, n: &Node<'_>| -> PResult<NodeId> {
+            match n.as_interpolated_symbol_node() {
+                Some(_) => lower_node(result, hir, n),
+                None => {
+                    let name = defs::alias_target_name(n)?;
+                    Ok(hir.push(HirNode::SymbolLit(name)))
+                }
+            }
+        };
+        let new_sym = operand(hir, &alias.new_name())?;
+        let old_sym = operand(hir, &alias.old_name())?;
         let send = hir.push(HirNode::Call {
             receiver: None,
             name: "__zeo_alias_keyword".to_string(),

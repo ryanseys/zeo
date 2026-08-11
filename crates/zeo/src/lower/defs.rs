@@ -2788,6 +2788,31 @@ fn lower_class_body_statement(
     }
 
     if let Some(alias) = node.as_alias_method_node() {
+        // An INTERPOLATED name (`alias :"#{kind}_attr" :"#{kind}_attrs"`,
+        // formal_wear building its DSL in a loop) has no compile-time
+        // spelling to register, but the `alias` keyword is still just a
+        // runtime install on the default definee -- the same
+        // `__zeo_alias_keyword` desugar the general-context arm uses, as a
+        // body statement executing in class-body order. Call sites for a
+        // computed name have no static row to bind, so they reach the
+        // runtime alias through the dynamic fallback on their own.
+        let interpolated = alias.new_name().as_interpolated_symbol_node().is_some()
+            || alias.old_name().as_interpolated_symbol_node().is_some();
+        if interpolated {
+            let new_id = lower_node(result, hir, &alias.new_name())?;
+            let old_id = lower_node(result, hir, &alias.old_name())?;
+            let send = hir.push(HirNode::Call {
+                receiver: None,
+                name: "__zeo_alias_keyword".to_string(),
+                args: vec![ArrayElem::Single(new_id), ArrayElem::Single(old_id)],
+                kwargs: Vec::new(),
+                block: None,
+                block_arg: None,
+                safe: false,
+            });
+            out.push(send);
+            return Ok(());
+        }
         let new_name = alias_target_name(&alias.new_name())?;
         let old_name = alias_target_name(&alias.old_name())?;
         push_alias(hir, out, new_name, old_name);

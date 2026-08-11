@@ -1,0 +1,1 @@
+each_loop_binds_its_own_stop.rb:13: warning: Ractor API is experimental and may change in future versions of Ruby.

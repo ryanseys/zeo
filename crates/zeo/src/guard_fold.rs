@@ -1116,10 +1116,33 @@ fn method_defined_fold(
 ) -> Option<bool> {
     let m = probe_name(compiler, args)?;
     let cls = match receiver {
-        Some(r) => match &compiler.hir[r] {
-            HirNode::ClassRef(name) => compiler.resolve_class(name, cref, box_id)?,
-            _ => return None,
-        },
+        Some(r) => {
+            // `X.singleton_class.method_defined?(:m)` asks about X's CLASS
+            // methods -- `X.respond_to?(:m)` spelled through the singleton
+            // (rbs gates its TypeName parser this way). Presence answers;
+            // absence stays undecided, same posture as `respond_to_fold`.
+            if let HirNode::Call {
+                receiver: Some(inner),
+                name,
+                args: sc_args,
+                block: None,
+                ..
+            } = &compiler.hir[r]
+                && name == "singleton_class"
+                && sc_args.is_empty()
+                && let Some(cls) = const_receiver_class(compiler, cref, box_id, *inner)
+            {
+                if compiler.class_method_in_chain(cls, &m).is_some()
+                    || crate::builtin_surface::provides_class_method(cls, &m)
+                {
+                    return Some(true);
+                }
+                return None;
+            }
+            // Any constant-shaped receiver, not just a bare `ClassRef` --
+            // `RBS::TypeName.method_defined?` is a qualified path.
+            const_receiver_class(compiler, cref, box_id, r)?
+        }
         None => *cref.last()?,
     };
     match compiler.method_in_chain(cls, &m) {
@@ -1181,7 +1204,14 @@ fn include_fold(
         {
             method_defined_fold(compiler, cref, box_id, Some(*cls), args)
         }
-        _ => None,
+        // A build-time STRING receiver: substring containment
+        // (`RUBY_PLATFORM.include?('java')`, the JRuby gate spelled without
+        // a regexp -- log4r and friends).
+        _ => {
+            let hay = static_string(compiler, cref, box_id, receiver, depth)?;
+            let needle = static_string(compiler, cref, box_id, *wanted, depth)?;
+            Some(hay.contains(&needle))
+        }
     }
 }
 
@@ -1204,6 +1234,22 @@ fn call_fold(
                 return None;
             };
             cmp_fold(compiler, cref, box_id, name, l, *r, depth)
+        }
+        // `Gem.win_platform?` / `Gem.java_platform?` -- platform facts
+        // derived from the baked `RUBY_PLATFORM` / seeded `RUBY_ENGINE`,
+        // the same way rubygems derives them at runtime (chef and
+        // isomorfeus gate whole class trees on these).
+        "win_platform?" | "java_platform?" if args.is_empty() => {
+            match &compiler.hir[receiver?] {
+                HirNode::ClassRef(rn) if rn == "Gem" => {}
+                _ => return None,
+            }
+            if name == "java_platform?" {
+                // zeo reports MRI's identity: `RUBY_ENGINE` is "ruby".
+                return Some(false);
+            }
+            let platform = seeded_string_const("RUBY_PLATFORM")?;
+            Some(["mswin", "mingw", "cygwin"].iter().any(|w| platform.contains(w)))
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.

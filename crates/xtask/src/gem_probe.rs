@@ -121,6 +121,14 @@ options:
                           not cores -- each one is a whole compile). More jobs
                           split the same memory budget, they do not add to it
   --timeout <seconds>     kill a gem that outruns it (default: 600)
+  --zeo <path>            probe with exactly this binary (build nothing)
+  --rebuild-zeo           force a fresh build + snapshot for HEAD; the default
+                          reuses target/probe-bin/zeo-<sha> when it exists, so
+                          a sweep never touches cargo while you keep building.
+                          Run a side-by-side sweep at --jobs 3: concurrent
+                          probe + dev rustc is the memory-pressure pattern
+                          that froze this machine, and the spare slot is the
+                          headroom
   -h, --help              this message
 ";
 
@@ -1491,6 +1499,15 @@ fn classify(err: &str, root: &Path) -> Outcome {
     if msg.contains("native (C) extension") {
         return Outcome::NativeExtension;
     }
+    // The `require_relative "x.so"` spelling of the same verdict: an
+    // UNPROTECTED native require (no `rescue LoadError`), i.e. a gem whose
+    // pure-Ruby half insists on its native half. The rescued spelling never
+    // errors (it defers to a catchable runtime LoadError), so every gem that
+    // reaches this line is one zeo cannot run until an ext exists -- a fact
+    // about the gem, not a lowering gap.
+    if msg.contains("native (.so/.bundle) features aren't supported") {
+        return Outcome::NativeExtension;
+    }
     if let Some(rest) = msg.split("cannot load such file -- ").nth(1) {
         let feature = rest.split_whitespace().next().unwrap_or(rest);
         return Outcome::MissingDependency(feature.trim_matches(['`', ':', '.']).to_string());
@@ -2449,6 +2466,17 @@ fn ruby_platform_absent(name: &str, version: &str) -> Option<String> {
     Some(platforms.join(", "))
 }
 
+/// `95` -> `"1m35s"`, `4230` -> `"1h10m"` -- the sweep's remaining-time
+/// estimate, coarse on purpose (it is an average over gems whose individual
+/// compile times spread across three orders of magnitude).
+fn human_duration(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m{:02}s", secs / 60, secs % 60),
+        _ => format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60),
+    }
+}
+
 fn report(name: &str, row: &Row) {
     let detail = row.outcome.detail();
     // The stage rides on every line, including the successes. A sweep's
@@ -2480,6 +2508,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut jobs: Option<usize> = None;
     let mut timeout = DEFAULT_TIMEOUT;
     let (mut build, mut run, mut allow_run) = (false, false, false);
+    let mut zeo_override: Option<PathBuf> = None;
+    let mut rebuild_zeo = false;
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -2544,6 +2574,14 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             },
+            "--zeo" => match it.next() {
+                Some(v) => zeo_override = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("gem-probe: --zeo needs a path to a zeo binary");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--rebuild-zeo" => rebuild_zeo = true,
             other if other.starts_with("--") => {
                 eprintln!("gem-probe: unknown option {other:?}");
                 return ExitCode::FAILURE;
@@ -2815,20 +2853,73 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // The classifier is the `zeo` BINARY (see `probe`). Build it once up front
-    // so the workers below don't race each other into cargo.
-    eprintln!("gem-probe: building zeo...");
-    let built = std::process::Command::new("cargo")
-        .args(["build", "--quiet", "-p", "zeo"])
-        .current_dir(root)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !built {
-        eprintln!("gem-probe: `cargo build -p zeo` failed");
-        return ExitCode::FAILURE;
-    }
-    let zeo = root.join("target").join("debug").join("zeo");
+    // The classifier is a SNAPSHOT of the `zeo` binary, not the live
+    // `target/debug/zeo`: a dev rebuild mid-sweep would otherwise hand later
+    // verdicts to a different compiler than earlier ones, and the cargo
+    // invocation itself contended with dev builds. Every verdict in a sweep
+    // comes from ONE binary, and the sweep says which.
+    //
+    //   --zeo <path>     probe with exactly that binary, build nothing
+    //   (default)        reuse target/probe-bin/zeo-<HEAD sha> if present;
+    //                    build + snapshot it if not
+    //   --rebuild-zeo    force a fresh build + snapshot for HEAD
+    //
+    // A sweep started mid-implementation therefore reuses the last snapshot
+    // and never touches cargo at all.
+    let zeo = match zeo_override {
+        Some(path) => {
+            if !path.is_file() {
+                eprintln!("gem-probe: --zeo {}: no such binary", path.display());
+                return ExitCode::FAILURE;
+            }
+            path
+        }
+        None => {
+            let sha = std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .current_dir(root)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_else(|| "unversioned".to_string());
+            let bin_dir = root.join("target").join("probe-bin");
+            let snapshot = bin_dir.join(format!("zeo-{sha}"));
+            if rebuild_zeo || !snapshot.is_file() {
+                eprintln!("gem-probe: building zeo for snapshot {}...", snapshot.display());
+                let built = std::process::Command::new("cargo")
+                    .args(["build", "--quiet", "-p", "zeo"])
+                    .current_dir(root)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if !built {
+                    eprintln!("gem-probe: `cargo build -p zeo` failed");
+                    return ExitCode::FAILURE;
+                }
+                if let Err(e) = std::fs::create_dir_all(&bin_dir) {
+                    eprintln!("gem-probe: creating {}: {e}", bin_dir.display());
+                    return ExitCode::FAILURE;
+                }
+                // Prune older snapshots first (a debug zeo is large, and the
+                // target/ tree is already on a wipe cadence) -- then copy.
+                if let Ok(entries) = std::fs::read_dir(&bin_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path() != snapshot {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+                let live = root.join("target").join("debug").join("zeo");
+                if let Err(e) = std::fs::copy(&live, &snapshot) {
+                    eprintln!("gem-probe: snapshotting {}: {e}", snapshot.display());
+                    return ExitCode::FAILURE;
+                }
+            }
+            snapshot
+        }
+    };
+    eprintln!("gem-probe: probing with {}", zeo.display());
 
     let mut rows = before.clone();
     if skipped > 0 {
@@ -2899,9 +2990,22 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         drop(done_tx);
 
         let mut seen = 0usize;
+        let started = std::time::Instant::now();
         while let Ok((name, row, verdict)) = done_rx.recv() {
             seen += 1;
-            print!("[{seen}/{total}]");
+            // Rate and remaining-time estimate ride on every line. The
+            // first few verdicts land in a burst (the prep thread's head
+            // start), so the estimate holds back until the rate means
+            // something.
+            let eta = match seen {
+                0..=9 => String::new(),
+                _ => {
+                    let per = started.elapsed().as_secs_f64() / seen as f64;
+                    let left = (per * (total - seen) as f64) as u64;
+                    format!(" ~{} left", human_duration(left))
+                }
+            };
+            print!("[{seen}/{total}{eta}]");
             report(&name, &row);
             if let Some(v) = verdict {
                 timings.insert(name.clone(), v);

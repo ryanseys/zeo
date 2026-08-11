@@ -819,6 +819,72 @@ pub const REFINEMENT_CLASS: ClassId = ClassId(145);
 /// which `BasicSocket#getsockopt` answers.
 pub const SOCKET_OPTION_CLASS: ClassId = ClassId(142);
 
+/// Value-builtin PAYLOAD ROOTS: the builtins a user subclass wraps as a
+/// generic `ValueSubclass` payload (one native type, many class ids). This
+/// is the ONE list -- the compiler's subclassable gate (`analyze`) and the
+/// runtime bridge (`zeo-rt`'s `value_subclass`) both read it, because the
+/// two copies it replaced had already drifted. Membership means BOTH sides
+/// are ready: the compiler admits `class Sub < Root`, and the runtime can
+/// seat a payload -- an empty form where the root has one (`Array`, `Time`,
+/// `Queue`), or `super`-seated by the subclass's own `initialize` where it
+/// doesn't (`File`, `Thread`, the sockets). Subclassable builtins that are
+/// NOT payload roots (immediates, `Struct`, `Module`, the
+/// receiver-honouring constructors like `WeakRef`) stay in the compiler's
+/// own gate: their subclasses are not `ValueSubclass` objects.
+///
+/// Adding one: (1) the id here; (2) an `empty_payload` arm in
+/// `zeo-rt/src/builtins/value_subclass.rs` (a real empty form, or
+/// `RubyValue::Nil` for the `super`-seated shape); (3) a `new` row on the
+/// root's class-method table (or a `ConstructorFn`), which
+/// `construct_root_payload` asserts.
+pub const PAYLOAD_ROOTS: &[ClassId] = &[
+    ARRAY_CLASS,
+    STRING_CLASS,
+    HASH_CLASS,
+    STRING_SCANNER_CLASS,
+    STRINGIO_CLASS,
+    PATHNAME_CLASS,
+    FILE_CLASS,
+    SET_CLASS,
+    ENUMERATOR_CLASS,
+    TIME_CLASS,
+    THREAD_CLASS,
+    QUEUE_CLASS,
+    SIZED_QUEUE_CLASS,
+    MUTEX_CLASS,
+    MONITOR_CLASS,
+    TCPSOCKET_CLASS,
+    // `TCPServer`: seats through `super(host, port)` into its `TCPSocket`
+    // parent's payload chain -- unicorn and puma both subclass it.
+    TCPSERVER_CLASS,
+    UDP_SOCKET_CLASS,
+    UNIX_SOCKET_CLASS,
+    IP_SOCKET_CLASS,
+    SOCKET_CLASS,
+    BASIC_SOCKET_CLASS,
+    IO_CLASS,
+    OPENSSL_SSL_SOCKET_CLASS,
+    OPENSSL_CIPHER_CLASS,
+    OPENSSL_DIGEST_CLASS,
+    FIBER_CLASS,
+    RANGE_CLASS,
+    DIR_CLASS,
+    REGEXP_CLASS,
+    // `Zlib::Inflate`: `Inflate.new` with no arguments is a real empty
+    // form (default window bits) -- the biggest single subclassing ask in
+    // the gem-probe ledger (35 gems).
+    ZLIB_INFLATE_CLASS,
+    // `Zlib::GzipReader`: the `File` shape -- a reader needs an IO, so a
+    // subclass seats the real one through `super(io)`.
+    ZLIB_GZIP_READER_CLASS,
+];
+
+/// Whether `id` is an instantiable value-builtin payload root -- see
+/// [`PAYLOAD_ROOTS`].
+pub fn is_payload_root(id: ClassId) -> bool {
+    PAYLOAD_ROOTS.contains(&id)
+}
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the

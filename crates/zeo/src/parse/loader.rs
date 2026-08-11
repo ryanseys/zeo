@@ -442,7 +442,14 @@ impl Loader {
             let Some(feature) = literal_feature(result, hir, call)? else {
                 continue;
             };
-            if !self.require_resolvable(&feature) {
+            // A cwd-shaped feature that the requiring file's directory
+            // resolves (the `require "./lib/foo"` analogue below in
+            // `lower_require_statement`) is resolvable, just not through
+            // `resolve_require`'s dir-less search.
+            let cwd_shape = feature.starts_with("./") || feature.starts_with("../");
+            if !self.require_resolvable(&feature)
+                && !(cwd_shape && resolve_require_relative(&feature, dir).is_ok())
+            {
                 hir.unresolvable_requires.insert(feature);
             }
         }
@@ -677,7 +684,13 @@ impl Loader {
                 own.push(id);
                 continue;
             }
-            if let Some(alias) = n.as_alias_method_node() {
+            if let Some(alias) = n.as_alias_method_node()
+                // An INTERPOLATED name has no compile-time spelling to defer
+                // on -- fall through to `lower_node`, whose general-context
+                // alias arm installs it at runtime on the default definee.
+                && alias.new_name().as_interpolated_symbol_node().is_none()
+                && alias.old_name().as_interpolated_symbol_node().is_none()
+            {
                 // Deferred rather than resolved to a second `DefMethod` here:
                 // at top level the target may be an inherited Kernel method,
                 // which only `mro::resolve_aliases` can see.
@@ -910,6 +923,16 @@ impl Loader {
         if arg_list.len() != 1 {
             return Ok(None);
         }
+        // A splat or `...` is the same non-resolvable shape with an arg
+        // count of one -- `require(*args)` (wagons' optional-require helper,
+        // always under a `rescue LoadError`) has no compile-time feature
+        // name, and lowering the splat node itself dies in the generic
+        // rejection. Leave the call for the runtime `Kernel#require`.
+        if arg_list[0].as_splat_node().is_some()
+            || arg_list[0].as_forwarding_arguments_node().is_some()
+        {
+            return Ok(None);
+        }
         // Lower the argument through the ordinary path first (same trick as
         // `eval`'s recognizer): prism's adjacent-literal folding is picked
         // up for free, and the one throwaway node on the accepted path is
@@ -937,6 +960,22 @@ impl Loader {
             {
                 return Ok(None);
             }
+        }
+        // `require "./x"` / `require "../x"`: CRuby resolves these against
+        // the runtime cwd. The compile-time analogue is the requiring
+        // file's directory (`resolve_load`'s documented divergence -- the
+        // shape only ever worked run from where the two coincide), so a
+        // hit splices exactly as the `require_relative` spelling would --
+        // same lexical normalization, same absolute-path dedup. A miss was
+        // already recorded by the pre-scan and deferred to a runtime
+        // `LoadError` before reaching here.
+        if name == "require"
+            && (feature.starts_with("./") || feature.starts_with("../"))
+            && resolve_require_relative(&feature, dir).is_ok()
+        {
+            return self
+                .splice_feature(hir, &feature, "require_relative", dir, file_idx, current_box)
+                .map(Some);
         }
         // Inside `materialize_units`, a require whose target is a real file
         // stays LIVE: the target registers as its own unit and the call loads
@@ -1485,10 +1524,16 @@ impl Loader {
         &self,
         feature: &str,
     ) -> PResult<Option<(PathBuf, Option<String>)>> {
+        // `./`/`../`/`~` paths resolve against the runtime working directory
+        // in real Ruby, which doesn't exist at compile time. No VERDICT here
+        // (`Ok(None)`, not `Err`): `lower_require_statement` first tries the
+        // requiring file's directory (`resolve_load`'s documented cwd
+        // analogue -- the dominant `require "./lib/foo"` shape only ever
+        // worked run from the gem root, where the two coincide), and a miss
+        // defers to a catchable runtime `LoadError` via the resolvability
+        // pre-scan instead of failing the whole compile.
         if feature.starts_with("./") || feature.starts_with("../") || feature.starts_with('~') {
-            return Err(format!(
-                "`require \"{feature}\"`: `./`/`../`/`~` paths resolve against the runtime working directory in real Ruby, which doesn't exist at compile time -- use `require_relative` instead"
-            ).into());
+            return Ok(None);
         }
         // A `.so`/`.bundle` feature never has a file on disk here -- it names
         // a STATICALLY LINKED extension, so it belongs to the caller's
