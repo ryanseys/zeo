@@ -1227,6 +1227,35 @@ pub fn emit_call(
         };
     }
 
+    // A DEFERRED `ffi_lib`'s desugar (see `lower::ffi`'s `ffi_lib` arm): the
+    // candidate expressions evaluate here, in class-body order, as (splat?,
+    // expr) pairs -- a splatted array spreads back into separate values,
+    // matching ruby's own splat. The runtime then dlopens EVERY value (an
+    // Array value lists alternatives for one library) -- eagerly, so an
+    // unopenable library is CRuby's require-time `LoadError` at this exact
+    // statement -- and stores the handles in the slot every following
+    // `attach_function` site reads.
+    if name == "__zeo_ffi_lib"
+        && receiver.is_none()
+        && let [slot_id, pair_ids @ ..] = args
+        && let HirNode::IntegerLit(slot) = &cx.compiler.hir[*slot_id]
+        && pair_ids.len().is_multiple_of(2)
+    {
+        let slot = *slot as usize;
+        let pushes = pair_ids.chunks_exact(2).map(|pair| {
+            let splatted = matches!(cx.compiler.hir[pair[0]], HirNode::IntegerLit(1));
+            let val = emit_expr(cx, pair[1]);
+            quote! { zeo_rt::ffi::ffi_lib_spread(&mut __libs, #val, #splatted); }
+        });
+        return quote! {
+            {
+                let mut __libs: Vec<zeo_rt::RubyValue> = Vec::new();
+                #(#pushes)*
+                zeo_rt::ffi::ffi_lib_store(#slot, &__libs)?
+            }
+        };
+    }
+
     // `send(:eval, src, ...)` -- the reflective spelling, with a receiver or
     // without. CRuby routes it to the same private `Kernel#eval`, which reads
     // its LOCALS from the caller's frame either way and takes `self` from the

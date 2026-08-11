@@ -419,6 +419,42 @@ impl FfiSymSite {
         let _ = self.addr.set(addr as usize);
         Ok(addr)
     }
+
+    /// The symbol's address from a DEFERRED library slot -- searched across
+    /// the handles `ffi_lib_store` dlopened when the class body executed,
+    /// in declaration order, exactly as the gem's `attach_function` searches
+    /// its module's libraries. The class body always runs before its methods
+    /// are callable, so an empty slot means the `ffi_lib` statement itself
+    /// was skipped.
+    pub fn get_slot(&self, slot: usize, sym: &str) -> Result<*const c_void, Signal> {
+        if let Some(&a) = self.addr.get() {
+            return Ok(a as *const c_void);
+        }
+        let handles = lib_slots()
+            .read()
+            .expect("no poisoned slot writers")
+            .get(&slot)
+            .cloned()
+            .ok_or_else(|| {
+                crate::raise_error(
+                    "LoadError",
+                    format!("`ffi_lib` did not run before `{sym}` was called"),
+                )
+            })?;
+        let cname = std::ffi::CString::new(sym)
+            .map_err(|_| arg_error!("FFI symbol name contains a null byte"))?;
+        for handle in handles {
+            let addr = unsafe { libc::dlsym(handle as *mut c_void, cname.as_ptr()) };
+            if !addr.is_null() {
+                let _ = self.addr.set(addr as usize);
+                return Ok(addr);
+            }
+        }
+        Err(crate::raise_error(
+            "FFI::NotFoundError",
+            format!("Function '{sym}' not found"),
+        ))
+    }
 }
 
 #[cfg(feature = "ext-ffi")]
@@ -426,6 +462,84 @@ impl Default for FfiSymSite {
     fn default() -> FfiSymSite {
         FfiSymSite::new()
     }
+}
+
+/// The DEFERRED tier's library handles, one Vec per `ffi_lib` statement
+/// whose candidates only a running process can evaluate (an ENV read, a
+/// local, a helper call). `ffi_lib_store` fills a slot when the class body
+/// executes; every `attach_function` lowered under that statement reads it
+/// back through [`FfiSymSite::get_slot`].
+#[cfg(feature = "ext-ffi")]
+static LIB_SLOTS: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<usize, Vec<usize>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "ext-ffi")]
+fn lib_slots() -> &'static std::sync::RwLock<std::collections::HashMap<usize, Vec<usize>>> {
+    LIB_SLOTS.get_or_init(Default::default)
+}
+
+/// One evaluated `ffi_lib` argument into the value list: a SPLATTED array
+/// spreads into separate values (each its own required library), exactly as
+/// ruby's own splat would have passed them; anything else -- including a
+/// plain Array, which lists ALTERNATIVES for one library -- rides whole.
+#[cfg(feature = "ext-ffi")]
+pub fn ffi_lib_spread(out: &mut Vec<RubyValue>, v: RubyValue, splatted: bool) {
+    match v {
+        RubyValue::Array(a) if splatted => out.extend(a.lock().iter().cloned()),
+        other => out.push(other),
+    }
+}
+
+/// `ffi_lib <exprs>` whose candidates resolve at RUN time, with the gem's
+/// exact shape: every top-level VALUE is a separate required library (ALL
+/// are opened), and an Array value lists ALTERNATIVE names for one library
+/// (the first that opens wins). The dlopens are EAGER -- a library that
+/// can't open raises `LoadError` here, at class-body time, exactly when
+/// CRuby's own `ffi_lib` raises it. The handles land under `slot`, and a
+/// symbol lookup searches them in order.
+#[cfg(feature = "ext-ffi")]
+pub fn ffi_lib_store(slot: usize, vals: &[RubyValue]) -> Result<RubyValue, Signal> {
+    fn names_of(v: &RubyValue, out: &mut Vec<String>) -> Result<(), Signal> {
+        match v {
+            RubyValue::Str(s) => {
+                out.push(String::from_utf8_lossy(s.lock().bytes()).into_owned());
+            }
+            RubyValue::Symbol(s) => out.push(s.name()),
+            RubyValue::Array(a) => {
+                let elems: Vec<RubyValue> = a.lock().iter().cloned().collect();
+                for e in &elems {
+                    names_of(e, out)?;
+                }
+            }
+            other => {
+                return Err(type_error!(
+                    "ffi_lib expects a library name (String/Symbol), got {}",
+                    crate::builtins::class_name_of(other)
+                ));
+            }
+        }
+        Ok(())
+    }
+    if vals.is_empty() {
+        // The gem's own message for `ffi_lib []`.
+        return Err(arg_error!("library names list must not be empty"));
+    }
+    let mut handles = Vec::with_capacity(vals.len());
+    for v in vals {
+        let mut alternatives = Vec::new();
+        names_of(v, &mut alternatives)?;
+        if alternatives.is_empty() {
+            return Err(arg_error!("library names list must not be empty"));
+        }
+        let names: Vec<&str> = alternatives.iter().map(String::as_str).collect();
+        handles.push(dlopen_first(&names)? as usize);
+    }
+    lib_slots()
+        .write()
+        .expect("no poisoned slot writers")
+        .insert(slot, handles);
+    Ok(RubyValue::Nil)
 }
 
 /// `dlopen` the first candidate that opens, trying each name as written and

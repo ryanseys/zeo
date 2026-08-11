@@ -187,8 +187,50 @@ pub(crate) fn lower_ffi_directive(
                 // `None` emits -- an extern block with no `#[link]`.
                 if names_current_process(&args) {
                     *ffi_lib = crate::hir::FfiLib::None;
+                } else if let Some(lib) = ffi_lib_name(&args, hir) {
+                    *ffi_lib = lib;
                 } else {
-                    *ffi_lib = ffi_lib_name(&args, hir)?;
+                    // NOTHING folds (an ENV read, a local, a helper call):
+                    // evaluate the candidate expressions when the class body
+                    // EXECUTES -- `__zeo_ffi_lib` flattens the values and
+                    // dlopens eagerly, so an unopenable library is CRuby's
+                    // require-time `LoadError` at this very statement -- and
+                    // every following `attach_function` resolves its symbol
+                    // from the slot's handle.
+                    let slot = hir.ffi_lib_slots;
+                    hir.ffi_lib_slots += 1;
+                    let slot_lit = hir.push(HirNode::IntegerLit(slot as i64));
+                    let mut call_args = vec![crate::hir::ArrayElem::Single(slot_lit)];
+                    // Each argument rides as a (splat?, expr) pair: the gem
+                    // loads EVERY top-level argument as its own library (an
+                    // Array value lists alternatives for one), so a splat
+                    // must expand back into separate values -- codegen reads
+                    // the flag and spreads the evaluated array.
+                    for a in &args {
+                        let (splatted, id) = match a.as_splat_node() {
+                            Some(s) => {
+                                let inner = s.expression().ok_or_else(|| {
+                                    "ffi_lib can't forward a bare `*` splat (zeo limitation)"
+                                        .to_string()
+                                })?;
+                                (1, super::lower_node(result, hir, &inner)?)
+                            }
+                            None => (0, super::lower_node(result, hir, a)?),
+                        };
+                        let flag = hir.push(HirNode::IntegerLit(splatted));
+                        call_args.push(crate::hir::ArrayElem::Single(flag));
+                        call_args.push(crate::hir::ArrayElem::Single(id));
+                    }
+                    out.push(hir.push(HirNode::Call {
+                        receiver: None,
+                        name: "__zeo_ffi_lib".to_string(),
+                        args: call_args,
+                        kwargs: Vec::new(),
+                        block: None,
+                        block_arg: None,
+                        safe: false,
+                    }));
+                    *ffi_lib = crate::hir::FfiLib::Deferred { slot };
                 }
             }
             Ok(true)
@@ -854,9 +896,11 @@ end
 ///
 /// A candidate it cannot decide is SKIPPED rather than refused: libusb leads
 /// with two locals holding bundled paths and then names the system library.
-/// Only a list where nothing at all is decidable is an error -- and if the
-/// chosen name has no library to link against, the build says so, loudly.
-fn ffi_lib_name(args: &[Node<'_>], hir: &Hir) -> PResult<crate::hir::FfiLib> {
+/// A list where nothing at all is decidable answers `None`, and the caller
+/// DEFERS the whole statement to runtime evaluation (`FfiLib::Deferred`) --
+/// and if a folded name has no library to link against, the build says so,
+/// loudly.
+fn ffi_lib_name(args: &[Node<'_>], hir: &Hir) -> Option<crate::hir::FfiLib> {
     // Every candidate this can NAME, in the gem's try-in-order semantics. An
     // unfoldable candidate (a local, an ENV read, a helper call) is SKIPPED,
     // exactly as before: only an all-unfoldable list errors.
@@ -877,24 +921,16 @@ fn ffi_lib_name(args: &[Node<'_>], hir: &Hir) -> PResult<crate::hir::FfiLib> {
             }
         }
     }
-    let Some(first) = folded.first() else {
-        return Err(
-            "ffi_lib expects a library name zeo can decide at compile time: a string, a symbol, \
-             `FFI::Library::LIBC`, or a `__dir__`/`File.expand_path`-built path -- alone, or as \
-             one alternative of an array"
-                .to_string()
-                .into(),
-        );
-    };
+    let first = folded.first()?;
     // A plain name links at BUILD time -- the zero-overhead tier, and what
     // every `ffi_lib "m"` always got. A PATH only a running process can
     // resolve (a bundled `.so` beside the gem's own files) goes to the
     // runtime dlopen tier, which is when and where CRuby's ffi gem opens
     // every library.
     if !first.contains('/') {
-        return Ok(crate::hir::FfiLib::Static(strip_lib_name(first)));
+        return Some(crate::hir::FfiLib::Static(strip_lib_name(first)));
     }
-    Ok(crate::hir::FfiLib::Runtime(folded))
+    Some(crate::hir::FfiLib::Runtime(folded))
 }
 
 /// A candidate's compile-time STRING value, or `None` when it is only
@@ -1102,7 +1138,12 @@ fn lower_attach_function(
                 .into(),
         );
     }
-    if passes_struct && matches!(lib, crate::hir::FfiLib::Runtime(_)) {
+    if passes_struct
+        && matches!(
+            lib,
+            crate::hir::FfiLib::Runtime(_) | crate::hir::FfiLib::Deferred { .. }
+        )
+    {
         return Err(
             "a runtime-resolved `ffi_lib` can't pass a struct BY VALUE (zeo limitation) -- \
              name the library statically or use `.by_ref`"

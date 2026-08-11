@@ -289,6 +289,12 @@ pub struct Hir {
     /// struct passed by value. Source-order like the rest of the FFI table:
     /// the struct's body must lower before the declaration that names it.
     pub ffi_struct_layouts: std::collections::HashMap<String, FfiStructLayout>,
+    /// How many DEFERRED `ffi_lib` slots the program has minted -- one per
+    /// `ffi_lib` statement whose candidates only the running process can
+    /// evaluate. The slot number ties that statement's runtime store
+    /// (`zeo_rt::ffi::ffi_lib_store`) to every `attach_function` site
+    /// lowered under it. See `FfiLib::Deferred`.
+    pub ffi_lib_slots: usize,
     /// Load paths to compile in WHOLE, as callable units rather than splices --
     /// keyed by owning package name, `None` for the `-I`/main roots. A file
     /// lands here when it computes a `require`/`autoload` target zeo cannot
@@ -1882,6 +1888,13 @@ pub enum FfiLib {
     /// when and how CRuby's ffi gem binds every symbol. See
     /// `zeo_rt::ffi::FfiSymSite`.
     Runtime(Vec<String>),
+    /// An `ffi_lib` whose candidates NO compile-time fold can name (an ENV
+    /// read, a local, a helper call like `FFI.map_library_name`): the
+    /// expressions evaluate when the class body EXECUTES, dlopen eagerly
+    /// there (CRuby's require-time `LoadError`, to the statement), and the
+    /// handle lands in this slot for every `attach_function` under it. The
+    /// call site resolves through the same dlopen/libffi tier as `Runtime`.
+    Deferred { slot: usize },
     /// No `ffi_lib` (or `FFI::CURRENT_PROCESS`): the always-linked image.
     None,
 }

@@ -2841,7 +2841,17 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
         // which is when and how CRuby's ffi gem binds every symbol -- and
         // call through libffi.
         crate::hir::FfiLib::Runtime(candidates) => {
-            return emit_ffi_runtime_call(cx, call, candidates);
+            let sym = &call.symbol;
+            let cands = candidates.iter();
+            let addr = quote! { __FFI_SYM.get(&[#(#cands),*], #sym)? };
+            return emit_ffi_runtime_call(cx, call, addr);
+        }
+        // The library was dlopened when the class body executed (`ffi_lib`
+        // with runtime-only candidates); the handle sits in the slot.
+        crate::hir::FfiLib::Deferred { slot } => {
+            let sym = &call.symbol;
+            let addr = quote! { __FFI_SYM.get_slot(#slot, #sym)? };
+            return emit_ffi_runtime_call(cx, call, addr);
         }
     };
     // A variadic function's argument list is shaped at runtime, so it goes
@@ -2980,15 +2990,16 @@ fn ffi_field_size(ty: &crate::hir::FfiType) -> usize {
 }
 
 /// An `attach_function` whose library resolves at RUN time (`FfiLib::
-/// Runtime`): a per-site `FfiSymSite` dlopens the first candidate that opens
-/// and dlsyms once, then the call goes through libffi (`call_fixed`) with
+/// Runtime` and `FfiLib::Deferred`): a per-site `FfiSymSite` resolves the
+/// symbol once through `addr` (dlopen the candidates, or read a deferred
+/// slot's handle), then the call goes through libffi (`call_fixed`) with
 /// arguments marshaled to `VaVal`s. Slower than the `extern "C"` tier by one
 /// indirect call and the marshal -- and the only tier that can open a
 /// library the BUILD machine never saw.
 fn emit_ffi_runtime_call(
     cx: &Ctx,
     call: &crate::hir::FfiCall,
-    candidates: &[String],
+    addr: TokenStream,
 ) -> TokenStream {
     use crate::hir::FfiType;
     if let Some(rest_id) = call.variadic {
@@ -2999,8 +3010,6 @@ fn emit_ffi_runtime_call(
              (zeo limitation) -- name the library statically or drop `:varargs`",
         );
     }
-    let sym = &call.symbol;
-    let cands = candidates.iter();
     let mut pushes = Vec::new();
     let mut has_callback = false;
     for (i, (arg_id, ty)) in call.args.iter().enumerate() {
@@ -3060,7 +3069,7 @@ fn emit_ffi_runtime_call(
     quote! {
         {
             static __FFI_SYM: zeo_rt::ffi::FfiSymSite = zeo_rt::ffi::FfiSymSite::new();
-            let __addr = __FFI_SYM.get(&[#(#cands),*], #sym)?;
+            let __addr = #addr;
             let mut __vals: Vec<zeo_rt::ffi::VaVal> = Vec::new();
             #(#pushes)*
             let __ffi_ret = #invoke;
