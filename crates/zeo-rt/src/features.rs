@@ -34,6 +34,11 @@ static UNITS: std::sync::OnceLock<HashMap<&'static str, UnitFn>> = std::sync::On
 struct LoadState {
     loaded: HashSet<String>,
     loading: HashSet<String>,
+    /// How many unit loads are on the stack right now.
+    depth: u32,
+    /// Autoload targets declared DURING a unit load, run when the outermost
+    /// load returns -- see [`defer_autoload_target`].
+    autoload_queue: Vec<String>,
 }
 
 fn state() -> &'static parking_lot::Mutex<LoadState> {
@@ -67,19 +72,87 @@ pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
         if st.loaded.contains(name) || !st.loading.insert(name.to_string()) {
             return Some(Ok(false));
         }
+        st.depth += 1;
     }
     let result = unit();
+    let outermost;
+    let outcome = {
+        let mut st = state().lock();
+        st.loading.remove(name);
+        st.depth -= 1;
+        outermost = st.depth == 0;
+        match result {
+            // A unit that raised is NOT loaded: CRuby leaves the feature out
+            // of `$LOADED_FEATURES` so a later require retries it.
+            Err(e) => Some(Err(e)),
+            Ok(_) => {
+                st.loaded.insert(name.to_string());
+                Some(Ok(true))
+            }
+        }
+        // The guard drops HERE, before the drain below re-locks the state --
+        // holding it across `drain_autoload_queue` was a self-deadlock.
+    };
+    if matches!(outcome, Some(Ok(true))) {
+        crate::globals::append_loaded_feature(name);
+    }
+    if outermost {
+        drain_autoload_queue();
+    }
+    outcome
+}
+
+/// Queues an autoload target declared while a unit load is on the stack; the
+/// queue drains when the OUTERMOST load returns. An autoload's declarer (and
+/// everything up its require chain) must finish executing before the target
+/// runs -- rspec-expectations' `built_in.rb` declares `autoload :Has` while
+/// `matchers.rb` (which defines the `HAS_REGEX` the target reads) is still
+/// mid-execution. CRuby loads at first constant ACCESS, which is always after
+/// the declaring require graph completes; end-of-outermost-load is the closest
+/// point this eager model has. Answers whether the target was queued -- at
+/// depth 0 (eager main-line code) the caller keeps its immediate load.
+pub fn defer_autoload_target(feature: &str) -> bool {
     let mut st = state().lock();
-    st.loading.remove(name);
-    match result {
-        // A unit that raised is NOT loaded: CRuby leaves the feature out of
-        // `$LOADED_FEATURES` so a later require retries it.
-        Err(e) => Some(Err(e)),
-        Ok(_) => {
-            st.loaded.insert(name.to_string());
-            drop(st);
-            crate::globals::append_loaded_feature(name);
-            Some(Ok(true))
+    if st.depth == 0 {
+        return false;
+    }
+    st.autoload_queue.push(feature.to_string());
+    true
+}
+
+/// Loads everything [`defer_autoload_target`] queued. Runs at outermost-load
+/// return, looping because a drained target's own unit may declare more
+/// autoloads. A target whose load raises follows the autoload row's
+/// declaration-time policy: `LoadError` leaves the registration pending and
+/// retryable (CRuby runs nothing at declaration, so an optional dependency's
+/// absence is not an error here); any other exception aborts the process
+/// loudly -- it is a real bug in code this program does load, and there is no
+/// caller left to catch it as a `Signal`.
+fn drain_autoload_queue() {
+    loop {
+        let next = {
+            let mut st = state().lock();
+            if st.autoload_queue.is_empty() {
+                return;
+            }
+            st.autoload_queue.remove(0)
+        };
+        match load_feature(&next).transpose() {
+            Ok(_) => {}
+            Err(sig) => {
+                let is_load_error = match &sig {
+                    Signal::Raise(RubyValue::Object(o)) => {
+                        crate::dispatch::is_a(o.class_id(), zeo_abi::LOAD_ERROR_CLASS)
+                    }
+                    _ => false,
+                };
+                if !is_load_error {
+                    if let Signal::Raise(exc) = &sig {
+                        crate::report_uncaught(exc);
+                    }
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }

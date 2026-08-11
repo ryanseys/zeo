@@ -993,6 +993,14 @@ ruby_class! {
         // `crate::features` -- and it is what makes an `autoload` DSL written
         // in plain Ruby work: the path it computed lands on a real load.
         if crate::features::has_feature(&path) {
+            // Declared while a unit load is on the stack: the declarer (and
+            // its whole require chain) must finish before the target runs --
+            // it may read constants they define below the declaration point.
+            // The queue drains at outermost-load return; eager main-line
+            // declarations keep the immediate load below.
+            if crate::features::defer_autoload_target(&path) {
+                return Ok(RubyValue::Nil);
+            }
             match crate::features::load_feature(&path).transpose() {
                 Ok(_) => {
                     pending_autoloads()
