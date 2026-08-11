@@ -70,26 +70,10 @@ pub(crate) fn native_type_of(node: &Node<'_>) -> Option<crate::hir::FfiType> {
     ffi_type_constant(path.trim_start_matches("::").strip_prefix("FFI::Type::")?)
 }
 
-/// The `FFI::Type::X` constants, LP64 like `ffi_type_of`.
+/// The `FFI::Type::X` constants -- `zeo_abi::ffi::CScalar`'s table, which the
+/// runtime's `FFI::Type` objects also answer to.
 fn ffi_type_constant(leaf: &str) -> Option<crate::hir::FfiType> {
-    use crate::hir::FfiType::*;
-    Some(match leaf {
-        "POINTER" => Pointer,
-        "STRING" => Str,
-        "BOOL" => Bool,
-        "VOID" => Void,
-        "CHAR" | "INT8" => Int(8),
-        "UCHAR" | "UINT8" => Uint(8),
-        "SHORT" | "INT16" => Int(16),
-        "USHORT" | "UINT16" => Uint(16),
-        "INT" | "INT32" => Int(32),
-        "UINT" | "UINT32" => Uint(32),
-        "LONG" | "LONG_LONG" | "INT64" => Int(64),
-        "ULONG" | "ULONG_LONG" | "UINT64" => Uint(64),
-        "FLOAT" | "FLOAT32" => Float(32),
-        "DOUBLE" | "FLOAT64" => Float(64),
-        _ => return None,
-    })
+    zeo_abi::ffi::CScalar::from_type_constant(leaf).map(Into::into)
 }
 
 /// Flatten a constant reference (`FFI`, `FFI::Library`, `FFI::Library::LIBC`) to
@@ -127,7 +111,10 @@ pub(crate) fn lower_ffi_directive(
     // `SassTag = enum(:sass_boolean, :sass_number, ...)` -- the ANONYMOUS enum,
     // named by the constant it is assigned to rather than by a `:tag` argument.
     // sassc and google-protobuf both declare every one of their enums this way,
-    // and then use the constant as a field/argument type.
+    // and then use the constant as a field/argument type. The gem's own
+    // disambiguation: a leading symbol FOLLOWED BY an array is the NAMED form
+    // (`Tag = enum :tag, [members]`), registered under the tag AND the
+    // constant; any other shape reads every argument as a member.
     if let Some(write) = node.as_constant_write_node()
         && let Some(call) = write.value().as_call_node()
         && call.receiver().is_none()
@@ -138,7 +125,18 @@ pub(crate) fn lower_ffi_directive(
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
         let name = String::from_utf8_lossy(write.name().as_slice()).into_owned();
-        let ty = crate::hir::FfiType::Enum(parse_enum_members(&args)?);
+        let (tag, members) = match (args.first(), args.get(1)) {
+            (Some(t), Some(l)) if t.as_symbol_node().is_some() && l.as_array_node().is_some() => (
+                Some(ffi_symbol_str(t)?),
+                parse_enum_members(std::slice::from_ref(l), hir, out)?,
+            ),
+            _ => (None, parse_enum_members(&args, hir, out)?),
+        };
+        let ty = crate::hir::FfiType::Enum(members);
+        if let Some(tag) = tag {
+            hir.declare_ffi_type(&tag, &ty);
+            aliases.insert(tag, ty.clone());
+        }
         hir.declare_ffi_type(&name, &ty);
         aliases.insert(name, ty);
         // Consumed, like every other declaration here: the enum is a TYPE, and
@@ -220,7 +218,7 @@ pub(crate) fn lower_ffi_directive(
             let (tag, members) = match (args.first(), args.get(1)) {
                 (Some(n), Some(l)) if n.as_symbol_node().is_some() => (
                     ffi_symbol_str(n)?,
-                    parse_enum_members(std::slice::from_ref(l))?,
+                    parse_enum_members(std::slice::from_ref(l), hir, out)?,
                 ),
                 // A NAMELESS `enum [:a, :b]` statement registers no type
                 // name, so nothing later can reference it in a type
@@ -228,7 +226,7 @@ pub(crate) fn lower_ffi_directive(
                 // arguments typed with THAT enum -- is unreachable without
                 // a name. Validate the members and consume the statement.
                 (Some(l), None) if l.as_array_node().is_some() => {
-                    parse_enum_members(std::slice::from_ref(l))?;
+                    parse_enum_members(std::slice::from_ref(l), hir, out)?;
                     return Ok(true);
                 }
                 _ => {
@@ -293,8 +291,13 @@ pub(crate) fn lower_ffi_directive(
 /// `[:ok, 0, :busy, 3, :error]` -> `[("ok",0),("busy",3),("error",4)]`. Members
 /// are symbols, each optionally followed by an explicit integer value; an
 /// omitted value auto-increments from the previous (starting at 0), exactly as
-/// the `ffi` gem's `enum` does.
-fn parse_enum_members(args: &[Node<'_>]) -> PResult<Vec<(String, i64)>> {
+/// the `ffi` gem's `enum` does. A value may also be a constant this class body
+/// already set to an integer (`ffi_const_int`).
+fn parse_enum_members(
+    args: &[Node<'_>],
+    hir: &Hir,
+    body_so_far: &[NodeId],
+) -> PResult<Vec<(String, i64)>> {
     // The members are either one literal array or the argument list itself --
     // `enum :tag, [:a, :b]` and `enum(:a, :b)` both reach here.
     let unwrapped: Vec<Node<'_>>;
@@ -319,7 +322,7 @@ fn parse_enum_members(args: &[Node<'_>]) -> PResult<Vec<(String, i64)>> {
     while i < elems.len() {
         let name = ffi_symbol_str(&elems[i])?;
         i += 1;
-        let value = match elems.get(i).and_then(enum_int_literal) {
+        let value = match elems.get(i).and_then(|n| ffi_const_int(n, hir, body_so_far)) {
             Some(v) => {
                 i += 1;
                 v
@@ -332,9 +335,21 @@ fn parse_enum_members(args: &[Node<'_>]) -> PResult<Vec<(String, i64)>> {
     Ok(out)
 }
 
-/// An explicit integer enum member value (`0`, `100`), or `None` if the node is
-/// not an integer literal (i.e. the next member symbol, or the list's end).
-fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
+/// A compile-time INTEGER in an FFI declaration position (`0`, `(1 << 5)`,
+/// `FFI::Type::LONG.size`, a constant this class body already set to one), or
+/// `None` if the node isn't one (i.e. the next member symbol, or the list's
+/// end). Enum member values and inline-array counts both fold through here:
+/// an FFI declaration's integers decide marshaling tables and field offsets,
+/// so they are needed at LOWERING time -- this is deliberately not a general
+/// constant folder.
+fn ffi_const_int(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Option<i64> {
+    if let Some(n) = body_const_int(hir, body_so_far, node) {
+        return Some(n);
+    }
+    enum_int_literal(node, hir, body_so_far)
+}
+
+fn enum_int_literal(node: &Node<'_>, hir: &Hir, body_so_far: &[NodeId]) -> Option<i64> {
     if let Some(int) = node.as_integer_node() {
         let value = int.value();
         let (negative, digits) = value.to_u32_digits();
@@ -352,7 +367,7 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
     {
         let only: Vec<Node<'_>> = stmts.body().iter().collect();
         if let [inner] = only.as_slice() {
-            return enum_int_literal(inner);
+            return ffi_const_int(inner, hir, body_so_far);
         }
         return None;
     }
@@ -368,22 +383,17 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
         && args.is_empty()
         && let Some(path) = const_path_string(&recv)
         && let Some(leaf) = path.trim_start_matches("::").strip_prefix("FFI::Type::")
-        && let Some(ty) = ffi_type_constant(leaf)
+        && let Some(s) = zeo_abi::ffi::CScalar::from_type_constant(leaf)
+        && !matches!(s, zeo_abi::ffi::CScalar::Void)
     {
-        use crate::hir::FfiType::*;
-        return Some(match ty {
-            Int(w) | Uint(w) | Float(w) => i64::from(w / 8),
-            Pointer | Str => 8,
-            Bool => 1,
-            _ => return None,
-        });
+        return Some(s.size() as i64);
     }
-    let lhs = enum_int_literal(&recv)?;
+    let lhs = ffi_const_int(&recv, hir, body_so_far)?;
     match (call.name().as_slice(), args.as_slice()) {
         (b"-@", []) => lhs.checked_neg(),
         (b"~", []) => Some(!lhs),
         (op, [rhs]) => {
-            let rhs = enum_int_literal(rhs)?;
+            let rhs = ffi_const_int(rhs, hir, body_so_far)?;
             match op {
                 b"<<" => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shl(s)),
                 b">>" => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shr(s)),
@@ -498,8 +508,7 @@ fn layout_array_type(
         );
     }
     let elem = ffi_type_node(&elems[0], aliases)?;
-    let count = enum_int_literal(&elems[1])
-        .or_else(|| body_const_int(hir, body_so_far, &elems[1]))
+    let count = ffi_const_int(&elems[1], hir, body_so_far)
         .ok_or_else(|| {
             "an inline array field's element COUNT must be an integer literal, or a constant this \
              class body already set to one -- it decides where every following field starts (zeo \
@@ -538,44 +547,38 @@ fn body_const_int(hir: &Hir, body_so_far: &[NodeId], node: &Node<'_>) -> Option<
 /// nested-struct field is a clean, greppable rejection (follow-on).
 fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usize, usize)> {
     use crate::hir::FfiType::*;
-    Ok(match ty {
-        Int(w) => (
-            format!("get_int{w}"),
-            format!("put_int{w}"),
-            (*w / 8) as usize,
-            (*w / 8) as usize,
-        ),
-        Uint(w) => (
-            format!("get_uint{w}"),
-            format!("put_uint{w}"),
-            (*w / 8) as usize,
-            (*w / 8) as usize,
-        ),
-        Float(32) => ("get_float32".into(), "put_float32".into(), 4, 4),
-        Float(64) => ("get_float64".into(), "put_float64".into(), 8, 8),
-        Pointer => ("get_pointer".into(), "put_pointer".into(), 8, 8),
+    // An inline array occupies `count` elements IN PLACE, and aligns to one
+    // element -- so it is the field that decides where the next one starts.
+    // The getter/putter named here are the ELEMENT's, which is what the
+    // synthesized proxy indexes with.
+    if let Array(elem, count) = ty {
+        let (get, put, esize, ealign) = ffi_field_accessor(elem)?;
+        return Ok((get, put, esize * count, ealign));
+    }
+    let (get, put) = match ty {
+        Int(w) => (format!("get_int{w}"), format!("put_int{w}")),
+        Uint(w) => (format!("get_uint{w}"), format!("put_uint{w}")),
+        Float(w) => (format!("get_float{w}"), format!("put_float{w}")),
         // An enum field is a C `int` in memory, a bool a one-byte `_Bool`.
         // Neither reads back as the number it stores; the generated accessor
         // converts -- see `synthesize_ffi_struct`.
-        Enum(_) => ("get_int32".into(), "put_int32".into(), 4, 4),
-        Bool => ("get_int8".into(), "put_int8".into(), 1, 1),
+        Enum(_) => ("get_int32".into(), "put_int32".into()),
+        Bool => ("get_int8".into(), "put_int8".into()),
         // A `:string` field is a `char *`: read through the pointer, and NOT
         // writable -- CRuby's ffi raises `Cannot set :string fields`, because
         // storing one would need somewhere to keep the bytes alive.
-        Str => ("get_pointer".into(), "put_pointer".into(), 8, 8),
-        // An inline array occupies `count` elements IN PLACE, and aligns to one
-        // element -- so it is the field that decides where the next one starts.
-        // The getter/putter named here are the ELEMENT's, which is what the
-        // synthesized proxy indexes with.
-        Array(elem, count) => {
-            let (get, put, esize, ealign) = ffi_field_accessor(elem)?;
-            (get, put, esize * count, ealign)
+        Str | Pointer => ("get_pointer".into(), "put_pointer".into()),
+        other => {
+            return Err(format!(
+                "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
+            )
+            .into());
         }
-        other => return Err(format!(
-            "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
-        )
-        .into()),
-    })
+    };
+    // Width and alignment come from the one shared table -- the same widths
+    // codegen's `#[repr(C)]` mirror asserts against.
+    let s = ty.c_scalar().expect("the unsupported arms returned above");
+    Ok((get, put, s.size(), s.align()))
 }
 
 /// Synthesize the Ruby methods for a `class < FFI::Struct` from its `layout`:
@@ -687,16 +690,9 @@ pub(crate) fn ffi_struct_layout(
 }
 
 pub(crate) fn synthesize_ffi_struct(
-    fields: &[(String, crate::hir::FfiType)],
-    union: bool,
+    layout: &crate::hir::FfiStructLayout,
     with_inline_array_classes: bool,
 ) -> PResult<String> {
-    let round_up = |n: usize, a: usize| -> usize { n.div_ceil(a) * a };
-    let mut offset = 0usize;
-    let mut max_align = 1usize;
-    // A union's members all start at offset 0 and it is as wide as its widest
-    // member -- the only two places its layout differs from a struct's.
-    let mut widest = 0usize;
     // How a field's stored bytes become a ruby value and back. Most fields are
     // the number itself.
     enum Conv {
@@ -710,11 +706,12 @@ pub(crate) fn synthesize_ffi_struct(
         /// otherwise, matching the gem.
         Array(&'static str, usize, usize),
     }
-    // (field, getter, putter, offset, conversion)
+    // (field, getter, putter, offset, conversion) -- offsets come off the
+    // recorded layout, whose walk (`ffi_struct_layout`) is the ONE place they
+    // are computed.
     let mut placed: Vec<(String, String, String, usize, Conv)> = Vec::new();
-    for (name, ty) in fields {
-        let (getter, putter, size, align) = ffi_field_accessor(ty)?;
-        let off = if union { 0 } else { round_up(offset, align) };
+    for (name, ty, off) in &layout.fields {
+        let (getter, putter, _, _) = ffi_field_accessor(ty)?;
         let conv = match ty {
             crate::hir::FfiType::Enum(m) => Conv::Enum(m.clone()),
             crate::hir::FfiType::Bool => Conv::Bool,
@@ -730,12 +727,9 @@ pub(crate) fn synthesize_ffi_struct(
             }
             _ => Conv::Plain,
         };
-        placed.push((name.clone(), getter, putter, off, conv));
-        offset = off + size;
-        widest = widest.max(size);
-        max_align = max_align.max(align);
+        placed.push((name.clone(), getter, putter, *off, conv));
     }
-    let total = round_up(if union { widest } else { offset }, max_align);
+    let total = layout.size;
 
     // An enum field reads back as its member SYMBOL and accepts either a symbol
     // or the raw integer, which is `Enum#from_native`/`#to_native`. A value with
@@ -1342,115 +1336,26 @@ fn ffi_type_array(
         .collect()
 }
 
-/// Map a real `ffi`-gem type keyword to our `FfiType`. Covers the scalar
-/// surface plus the gem's spellings (`:string`, `:pointer`, the fixed-width
-/// `:intN`/`:uintN`, `:size_t`). LP64 (`:long`/`:ulong` = 64), matching macOS
-/// and Linux. Unknown -> a clean, greppable error naming the type.
+/// Map a real `ffi`-gem type keyword to our `FfiType` -- the scalar keyword
+/// table lives in `zeo_abi::ffi::CScalar`, shared with the runtime's own
+/// varargs/`FFI::Type` resolution so the two sides cannot drift. A keyword
+/// misses to the declared aliases, then to the portable C/Win32 typedef
+/// table (also `CScalar`'s; the doc comments there say why several POSIX
+/// names are deliberately absent). Unknown -> a clean, greppable error.
 fn ffi_type_of(
     sym: &str,
     aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<crate::hir::FfiType> {
-    use crate::hir::FfiType::*;
-    Ok(match sym {
-        "void" => Void,
-        "char" | "int8" => Int(8),
-        "short" | "int16" => Int(16),
-        "int" | "int32" => Int(32),
-        "long" | "long_long" | "int64" | "ssize_t" => Int(64),
-        "uchar" | "uint8" => Uint(8),
-        "ushort" | "uint16" => Uint(16),
-        "uint" | "uint32" => Uint(32),
-        "ulong" | "ulong_long" | "uint64" | "size_t" => Uint(64),
-        "float" => Float(32),
-        "double" => Float(64),
-        "bool" => Bool,
-        "string" => Str,
-        "pointer" | "buffer_in" | "buffer_out" | "buffer_inout" => Pointer,
-        other => match aliases.get(other) {
-            Some(t) => t.clone(),
-            None => match c_typedef(other) {
-                Some(t) => t,
-                None => {
-                    return Err(format!(
-                        "unsupported FFI type `:{other}` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback` name)"
-                    ).into())
-                }
-            }
-        },
-    })
-}
-
-/// The C typedefs the real `ffi` gem resolves natively, restricted to those
-/// whose width and signedness are the SAME on every target zeo builds for.
-///
-/// The gem's table is derived from the headers of the machine it runs on, so
-/// copying it wholesale would bake this machine's platform into the compiler --
-/// and several POSIX typedefs genuinely differ between macOS and glibc:
-/// `mode_t` (uint16 vs uint32), `dev_t` (int32 vs uint64), `nlink_t` (uint16 vs
-/// uint64), `sa_family_t` (uint8 vs uint16), `blksize_t` and `suseconds_t`
-/// (int32 vs int64), `clock_t` (unsigned vs signed). Those stay a clean
-/// rejection: resolving one here would silently shift every field after it in a
-/// struct layout, which is a wrong answer rather than a missing one.
-///
-/// What is left is safe by definition rather than by observation: the C99
-/// exact-width names are exact everywhere, the pointer-width names follow the
-/// LP64 assumption `:long` already makes, and the handful of POSIX types below
-/// agree on both targets.
-fn c_typedef(name: &str) -> Option<crate::hir::FfiType> {
-    use crate::hir::FfiType::*;
-    // `__int32_t` and `u_int32_t` are the BSD and glibc spellings of the same
-    // exact-width type; gems reach for whichever their headers showed them.
-    let bare = name
-        .strip_prefix("__")
-        .or_else(|| name.strip_prefix("u_"))
-        .unwrap_or(name);
-    Some(match bare {
-        "int8_t" | "int_least8_t" => Int(8),
-        "int16_t" | "int_least16_t" => Int(16),
-        "int32_t" | "int_least32_t" => Int(32),
-        "int64_t" | "int_least64_t" => Int(64),
-        "uint8_t" | "uint_least8_t" => Uint(8),
-        "uint16_t" | "uint_least16_t" => Uint(16),
-        "uint32_t" | "uint_least32_t" => Uint(32),
-        "uint64_t" | "uint_least64_t" => Uint(64),
-        // Pointer-width, on the LP64 assumption `:long` already makes.
-        "intptr_t" | "ptrdiff_t" | "intmax_t" => Int(64),
-        "uintptr_t" | "uintmax_t" => Uint(64),
-        // POSIX types that are the same on macOS and 64-bit glibc. `off_t` is
-        // 64-bit on both (the gem builds with large-file support); `time_t` is
-        // the 64-bit signed one on every 64-bit target.
-        "off_t" | "time_t" | "blkcnt_t" | "register_t" => Int(64),
-        "pid_t" | "key_t" => Int(32),
-        "uid_t" | "gid_t" | "id_t" | "socklen_t" | "in_addr_t" | "useconds_t" => Uint(32),
-        "in_port_t" => Uint(16),
-        "ino_t" | "rlim_t" => Uint(64),
-        "caddr_t" => Pointer,
-        // NOT here on purpose: `int_fast16_t`/`int_fast32_t`, which are 16/32
-        // bits on macOS and 64 on glibc.
-        _ => return win32_typedef(name),
-    })
-}
-
-/// The Win32 typedef vocabulary windows-only gem files declare with. Their
-/// widths are fixed by the Win32 API's own definitions on EVERY platform --
-/// `DWORD` is 32 bits wherever the word is written -- so resolving them here
-/// is not a platform guess. The declarations usually sit in files a platform
-/// guard should have pruned; where one is still reached, the honest widths
-/// beat a rejection. Ambiguous Win32 names (`LONG` is 32 there, but plain
-/// `long` here) are NOT included -- only the spellings that exist solely in
-/// the Win32 vocabulary.
-fn win32_typedef(name: &str) -> Option<crate::hir::FfiType> {
-    use crate::hir::FfiType::*;
-    Some(match name {
-        "BYTE" | "BOOLEAN" | "UCHAR" => Uint(8),
-        "WORD" | "USHORT" => Uint(16),
-        "DWORD" | "dword" | "ULONG32" | "UINT32" => Uint(32),
-        "DWORD64" | "ULONGLONG" | "DWORDLONG" | "ULONG64" => Uint(64),
-        "LARGE_INTEGER" | "LONGLONG" | "LONG64" => Int(64),
-        "HANDLE" | "HWND" | "HINSTANCE" | "HMODULE" | "LPVOID" | "PVOID" | "FARPROC" => Pointer,
-        "LPCSTR" | "LPSTR" | "LPCWSTR" | "LPWSTR" => Pointer,
-        "WPARAM" | "SIZE_T" => Uint(64),
-        "LPARAM" | "SSIZE_T" => Int(64),
-        _ => return None,
-    })
+    if let Some(s) = zeo_abi::ffi::CScalar::from_keyword(sym) {
+        return Ok(s.into());
+    }
+    if let Some(t) = aliases.get(sym) {
+        return Ok(t.clone());
+    }
+    match zeo_abi::ffi::CScalar::from_c_typedef(sym) {
+        Some(s) => Ok(s.into()),
+        None => Err(format!(
+            "unsupported FFI type `:{sym}` (expected a scalar keyword, `:pointer`, `:string`, a C typedef whose width is the same on every target zeo builds for, or a declared `typedef`/`enum`/`callback` name)"
+        ).into()),
+    }
 }

@@ -2964,18 +2964,18 @@ fn emit_repr_c_struct(
     }
 }
 
-/// A layout field's byte width -- must agree with `lower::ffi`'s
-/// `ffi_field_accessor`, which the layout's offsets came from.
+/// A layout field's byte width -- the shared `CScalar` table's widths, which
+/// are also what `lower::ffi::ffi_field_accessor` computed the layout's
+/// offsets from.
 fn ffi_field_size(ty: &crate::hir::FfiType) -> usize {
     use crate::hir::FfiType::*;
     match ty {
-        Int(w) | Uint(w) | Float(w) => usize::from(*w) / 8,
-        Bool => 1,
-        Str | Pointer | Callback(..) => 8,
-        Enum(_) => 4,
         Array(elem, count) => ffi_field_size(elem) * count,
         Struct(l) => l.size,
-        Void => 0,
+        scalar => scalar
+            .c_scalar()
+            .expect("every non-aggregate FfiType has a C scalar")
+            .size(),
     }
 }
 
@@ -3106,33 +3106,17 @@ fn emit_ffi_variadic(
 
 /// The `zeo_rt::ffi::FfiKind` variant for a scalar C type -- the runtime tag
 /// codegen emits for variadic-argument marshaling and callback signatures.
+/// `FfiKind` IS the shared `CScalar` (re-exported), so the variant name is
+/// the scalar's own.
 fn ffi_kind_tokens(ty: &crate::hir::FfiType) -> TokenStream {
-    use crate::hir::FfiType::*;
-    let variant = match ty {
-        Void => quote! { Void },
-        Int(8) => quote! { I8 },
-        Int(16) => quote! { I16 },
-        Int(64) => quote! { I64 },
-        Uint(8) => quote! { U8 },
-        Uint(16) => quote! { U16 },
-        Uint(32) => quote! { U32 },
-        Uint(64) => quote! { U64 },
-        Float(32) => quote! { F32 },
-        Float(64) => quote! { F64 },
-        Bool => quote! { Bool },
-        Str => quote! { Str },
-        Pointer | Callback(..) => quote! { Pointer },
-        // Enums are C `int`; `Int(32)` and any residual width default the same.
-        Enum(_) | Int(_) => quote! { I32 },
-        Uint(_) | Float(_) => quote! { I32 },
-        // An inline array is a struct-layout field only; the gem has no
-        // inline array in a function signature either, so `as_ffi_layout` is
-        // the sole producer and it never reaches a call site.
-        Array(..) => unreachable!("an inline array type is confined to a struct layout"),
-        // `lower_attach_function` rejects a by-value struct in every position
-        // that marshals through kinds (variadic, callback, runtime lib).
-        Struct(_) => unreachable!("a by-value struct never reaches a kind position"),
-    };
+    // An inline array is a struct-layout field only (`as_ffi_layout` is the
+    // sole producer), and `lower_attach_function` rejects a by-value struct
+    // in every position that marshals through kinds (variadic, callback,
+    // runtime lib) -- so a kind position always has a scalar.
+    let scalar = ty
+        .c_scalar()
+        .expect("an inline array or by-value struct never reaches a kind position");
+    let variant = quote::format_ident!("{}", scalar.name());
     quote! { zeo_rt::ffi::FfiKind::#variant }
 }
 
@@ -3140,32 +3124,28 @@ fn ffi_kind_tokens(ty: &crate::hir::FfiType) -> TokenStream {
 /// `long`, `u64`==`size_t`). `Void` is `()` -- only valid as a return.
 fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
     use crate::hir::FfiType::*;
+    use zeo_abi::ffi::CScalar as S;
     match ty {
-        Void => quote! { () },
-        Int(w) => {
-            let t = quote::format_ident!("i{}", w);
-            quote! { #t }
-        }
-        Uint(w) => {
-            let t = quote::format_ident!("u{}", w);
-            quote! { #t }
-        }
-        Float(w) => {
-            let t = quote::format_ident!("f{}", w);
-            quote! { #t }
-        }
-        Bool => quote! { bool },
-        Str => quote! { *const ::std::os::raw::c_char },
-        Pointer => quote! { *mut ::std::os::raw::c_void },
         // An enum's underlying C type is `int`, the gem's default.
         Enum(_) => quote! { ::std::os::raw::c_int },
-        // A callback is a C function pointer -- passed as an opaque address.
+        // A callback is a C function pointer -- passed as an opaque address
+        // (`*const`, matching what `CallbackHandle::code_ptr` hands over).
         Callback(..) => quote! { *const ::std::os::raw::c_void },
         // Confined to a struct layout -- see `FfiType::Array`.
         Array(..) => unreachable!("an inline array type never reaches a call site"),
         // `emit_ffi_call` intercepts a by-value struct before asking for a
         // scalar C type -- it emits the `#[repr(C)]` mirror instead.
         Struct(_) => unreachable!("a by-value struct is emitted as its repr(C) mirror"),
+        scalar => match scalar.c_scalar().expect("matched the scalar arms") {
+            S::Void => quote! { () },
+            S::Bool => quote! { bool },
+            S::Str => quote! { *const ::std::os::raw::c_char },
+            S::Pointer => quote! { *mut ::std::os::raw::c_void },
+            s => {
+                let t = quote::format_ident!("{}", s.name().to_ascii_lowercase());
+                quote! { #t }
+            }
+        },
     }
 }
 

@@ -29,20 +29,14 @@ pub enum TypeKind {
 }
 
 impl RType {
-    /// (size, alignment) of the C type, LP64. `VOID` reports 1/1 as libffi's
-    /// `ffi_type_void` does; `VARARGS` is never asked (0/0 if it were).
+    /// (size, alignment) of the C type, LP64 -- the shared `CScalar` widths.
+    /// `VOID` reports 1/1 as libffi's `ffi_type_void` does; `VARARGS` is
+    /// never asked (0/0 if it were).
     fn layout(&self) -> (usize, usize) {
-        use FfiKind::*;
         match self.kind {
             TypeKind::Varargs => (0, 0),
-            TypeKind::Scalar(k) => match k {
-                Void => (1, 1),
-                I8 | U8 | Bool => (1, 1),
-                I16 | U16 => (2, 2),
-                I32 | U32 => (4, 4),
-                F32 => (4, 4),
-                I64 | U64 | F64 | Str | Pointer => (8, 8),
-            },
+            TypeKind::Scalar(FfiKind::Void) => (1, 1),
+            TypeKind::Scalar(k) => (k.size(), k.align()),
         }
     }
 }

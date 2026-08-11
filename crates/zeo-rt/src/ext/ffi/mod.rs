@@ -458,17 +458,14 @@ fn memptr_elem_size(v: &RubyValue) -> Result<usize, Signal> {
     }
 }
 
-/// The byte size of an `ffi` scalar type keyword (LP64). Shared by
-/// `MemoryPointer.new(:int, ...)` and any type-sized computation.
+/// The byte size of an `ffi` scalar type keyword (LP64) -- the shared
+/// `CScalar` table. Shared by `MemoryPointer.new(:int, ...)` and any
+/// type-sized computation. `:string`/`:buffer_*` size as the pointers they
+/// are, matching the gem's own `FFI.type_size`; `:void` has no element size.
 pub fn type_size(sym: &str) -> Option<usize> {
-    Some(match sym {
-        "char" | "uchar" | "int8" | "uint8" | "bool" => 1,
-        "short" | "ushort" | "int16" | "uint16" => 2,
-        "int" | "uint" | "int32" | "uint32" | "float" => 4,
-        "long" | "ulong" | "int64" | "uint64" | "long_long" | "ulong_long" | "size_t"
-        | "ssize_t" | "double" | "pointer" => 8,
-        _ => return None,
-    })
+    zeo_abi::ffi::CScalar::from_keyword(sym)
+        .filter(|s| !matches!(s, zeo_abi::ffi::CScalar::Void))
+        .map(|s| s.size())
 }
 
 use crate::errno_ptr;

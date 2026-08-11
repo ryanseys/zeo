@@ -1802,6 +1802,60 @@ pub enum FfiType {
     Struct(FfiStructLayout),
 }
 
+impl From<zeo_abi::ffi::CScalar> for FfiType {
+    fn from(s: zeo_abi::ffi::CScalar) -> FfiType {
+        use zeo_abi::ffi::CScalar as S;
+        match s {
+            S::Void => FfiType::Void,
+            S::I8 => FfiType::Int(8),
+            S::I16 => FfiType::Int(16),
+            S::I32 => FfiType::Int(32),
+            S::I64 => FfiType::Int(64),
+            S::U8 => FfiType::Uint(8),
+            S::U16 => FfiType::Uint(16),
+            S::U32 => FfiType::Uint(32),
+            S::U64 => FfiType::Uint(64),
+            S::F32 => FfiType::Float(32),
+            S::F64 => FfiType::Float(64),
+            S::Bool => FfiType::Bool,
+            S::Str => FfiType::Str,
+            S::Pointer => FfiType::Pointer,
+        }
+    }
+}
+
+impl FfiType {
+    /// The C ABI scalar this type marshals AS: an enum is a C `int`, a
+    /// callback passes as its code pointer. `None` for the two types with no
+    /// scalar representation at a call site (an inline array lives only in a
+    /// struct layout; a by-value struct is its own aggregate).
+    pub fn c_scalar(&self) -> Option<zeo_abi::ffi::CScalar> {
+        use zeo_abi::ffi::CScalar as S;
+        Some(match self {
+            FfiType::Void => S::Void,
+            FfiType::Int(w) => match w {
+                8 => S::I8,
+                16 => S::I16,
+                64 => S::I64,
+                _ => S::I32,
+            },
+            FfiType::Uint(w) => match w {
+                8 => S::U8,
+                16 => S::U16,
+                64 => S::U64,
+                _ => S::U32,
+            },
+            FfiType::Float(64) => S::F64,
+            FfiType::Float(_) => S::F32,
+            FfiType::Bool => S::Bool,
+            FfiType::Str => S::Str,
+            FfiType::Pointer | FfiType::Callback(..) => S::Pointer,
+            FfiType::Enum(_) => S::I32,
+            FfiType::Array(..) | FfiType::Struct(_) => return None,
+        })
+    }
+}
+
 /// An `FFI::Struct` subclass's computed C layout, recorded when its `layout`
 /// directive lowers so later declarations can pass it by value.
 #[derive(Debug, Clone, PartialEq, Eq)]

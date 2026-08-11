@@ -19,6 +19,7 @@
 //! every compiler build -- a dependency-free leaf has no such cost.
 
 mod errno;
+pub mod ffi;
 
 pub use errno::{ERRNO_ALIASES, ERRNO_CLASSES, ErrnoClass};
 

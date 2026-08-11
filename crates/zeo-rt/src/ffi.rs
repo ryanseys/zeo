@@ -153,25 +153,11 @@ pub unsafe fn from_cstr(p: *const c_char) -> RubyValue {
 
 /// A resolved FFI scalar kind. Codegen emits one for each fixed variadic
 /// argument and for a callback's argument/return types; the runtime also
-/// resolves a `:type` Symbol in a varargs `(type, value)` pair to one of these.
+/// resolves a `:type` Symbol in a varargs `(type, value)` pair to one of
+/// these. It IS the compiler's scalar table (`zeo_abi::ffi::CScalar`), so
+/// the two sides answer every width question from one place.
 #[cfg(feature = "ext-ffi")]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FfiKind {
-    Void,
-    I8,
-    I16,
-    I32,
-    I64,
-    U8,
-    U16,
-    U32,
-    U64,
-    F32,
-    F64,
-    Bool,
-    Str,
-    Pointer,
-}
+pub use zeo_abi::ffi::CScalar as FfiKind;
 
 #[cfg(feature = "ext-ffi")]
 fn kind_type(k: FfiKind) -> libffi::middle::Type {
@@ -207,27 +193,15 @@ fn promote(k: FfiKind) -> FfiKind {
     }
 }
 
-/// Map a varargs `:type` Symbol name to its kind, mirroring the compile-time
-/// `ffi_type_of` table in `zeo`'s `lower/ffi.rs`.
+/// Map a varargs `:type` Symbol name to its kind -- the shared keyword table
+/// the compile-time `ffi_type_of` in `zeo`'s `lower/ffi.rs` also reads.
+/// `:void` stays an error here: it is a return type, never a value's.
 #[cfg(feature = "ext-ffi")]
 pub fn kind_from_symbol(name: &str) -> Result<FfiKind, Signal> {
-    use FfiKind::*;
-    Ok(match name {
-        "char" | "int8" => I8,
-        "short" | "int16" => I16,
-        "int" | "int32" => I32,
-        "long" | "long_long" | "int64" | "ssize_t" => I64,
-        "uchar" | "uint8" => U8,
-        "ushort" | "uint16" => U16,
-        "uint" | "uint32" => U32,
-        "ulong" | "ulong_long" | "uint64" | "size_t" => U64,
-        "float" => F32,
-        "double" => F64,
-        "bool" => Bool,
-        "string" => Str,
-        "pointer" | "buffer_in" | "buffer_out" | "buffer_inout" => Pointer,
-        other => return Err(arg_error!("unknown FFI varargs type :{other}")),
-    })
+    match FfiKind::from_keyword(name) {
+        Some(FfiKind::Void) | None => Err(arg_error!("unknown FFI varargs type :{name}")),
+        Some(kind) => Ok(kind),
+    }
 }
 
 /// One marshaled variadic argument. It OWNS its storage (a `CString` for a

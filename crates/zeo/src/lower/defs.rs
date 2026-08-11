@@ -2715,15 +2715,16 @@ fn lower_one_class_body_stmt(
         // `claim_ffi_inline_array_classes`.
         let classes = crate::lower::ffi::needs_inline_array_classes(&fields)
             && hir.claim_ffi_inline_array_classes();
-        // The computed layout is also RECORDED, keyed by leaf name like the
-        // rest of the FFI type table, so a later `attach_function` can pass
-        // this struct by value.
+        // ONE layout walk: the accessor synthesis reads the same offsets that
+        // get RECORDED (keyed by leaf name like the rest of the FFI type
+        // table) for a later `attach_function` to pass this struct by value.
+        let layout =
+            crate::lower::ffi::ffi_struct_layout(st.cref.unwrap_or(""), &fields, st.is_ffi_union)?;
+        let source = synthesize_ffi_struct(&layout, classes)?;
         if let Some(name) = st.cref {
-            let layout = crate::lower::ffi::ffi_struct_layout(name, &fields, st.is_ffi_union)?;
             let leaf = name.rsplit("::").next().unwrap_or(name);
             hir.ffi_struct_layouts.insert(leaf.to_string(), layout);
         }
-        let source = synthesize_ffi_struct(&fields, st.is_ffi_union, classes)?;
         out.extend(parse_and_lower_into(hir, &source)?);
         return Ok(());
     }
