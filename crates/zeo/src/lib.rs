@@ -78,12 +78,40 @@ pub struct CompileOptions {
     /// derives it from `--bundle-gemfile`/`BUNDLE_GEMFILE`). Only meaningful
     /// together with a non-empty `gem_paths`.
     pub lockfile: Option<std::path::PathBuf>,
+    /// The distinguished ROOT package (`--root-gem`): the named gem outranks
+    /// every other provider for an ambiguous feature -- Bundler's root
+    /// semantics, where the app's own gem is the first activated. The gem
+    /// probe passes its subject here so a squatted feature resolves to the
+    /// gem actually under test.
+    pub root_gem: Option<Gem>,
     /// Render the generated Rust through prettyplease (the `--dump=rust`
     /// human view).
     /// Off by default: the build path feeds rustc, which is insensitive to
     /// formatting, and the re-parse + pretty-print pair dominated emission
     /// at gem scale.
     pub pretty: bool,
+}
+
+/// A gem named by the caller -- the public identity type `CompileOptions`
+/// speaks, distinct from the loader's internal resolved model (which carries
+/// roots, version, and provenance the caller doesn't have). A struct rather
+/// than a bare `String` so a gem's name can't be confused with any other
+/// string option, and so identity can grow fields (a version pin) without an
+/// API break.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gem {
+    name: String,
+}
+
+impl Gem {
+    /// Identify a gem by its RubyGems name (`"rack"`, `"activesupport"`).
+    pub fn named(name: impl Into<String>) -> Gem {
+        Gem { name: name.into() }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// A compiled program: the generated Rust source, ready for
@@ -220,6 +248,7 @@ fn compile_on_this_thread(
         &opts.package_dirs,
         &opts.gem_paths,
         opts.lockfile.as_deref(),
+        opts.root_gem.as_ref(),
     )?;
     let t_parse_lower = t_start.elapsed();
     // The disclosure record is fully known once lowering resolved

@@ -43,6 +43,10 @@ struct Args {
     load_roots: Vec<PathBuf>,
     /// `--gems <dir>`: vendored-gem directories (repeatable).
     package_dirs: Vec<PathBuf>,
+    /// `--root-gem <name>`: the distinguished root package -- it outranks
+    /// every other provider for an ambiguous feature (Bundler-root
+    /// semantics). The gem probe names its subject here.
+    root_gem: Option<String>,
     /// `--report[=<path>]`: the `zeo-gems.json` disclosure record, opt-in.
     report: Report,
     /// Warning categories suppressed via `-W0`/`-W:no-<category>`.
@@ -156,6 +160,9 @@ options:
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   --gems <dir>          add a directory of vendored gems: every subdirectory
                         with a `.gemspec` is discovered as a gem (repeatable)
+  --root-gem <name>     treat the named gem as the root package: it outranks
+                        every other provider when a feature is found in
+                        multiple gems (Bundler-root semantics)
   --gem-path <dir>      an installed RubyGems store (`gem env gemdir`) to
                         resolve locked gems against (repeatable; defaults to
                         GEM_PATH); needs a Gemfile via --bundle-gemfile
@@ -217,6 +224,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut emit_rust: Option<PathBuf> = None;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
+    let mut root_gem: Option<String> = None;
     let mut report = Report::Off;
     let mut nowarn = HashSet::new();
     let mut gem_paths: Vec<PathBuf> = Vec::new();
@@ -295,6 +303,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "run" => run = true,
                 "compile" => compile = true,
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
+                "root-gem" => root_gem = Some(value("--root-gem")?),
                 "gem-path" => gem_paths.push(PathBuf::from(value("--gem-path")?)),
                 "bundle-gemfile" => {
                     gemfile = Some(PathBuf::from(value("--bundle-gemfile")?));
@@ -484,6 +493,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             roots
         },
         package_dirs,
+        root_gem,
         report,
         nowarn,
         store_from_flags: gem_paths_from_flag || gemfile_from_flag,
@@ -655,6 +665,7 @@ fn run() -> Result<(), MainError> {
         nowarn: args.nowarn.clone(),
         gem_paths: args.gem_paths.clone(),
         lockfile: args.lockfile.clone(),
+        root_gem: args.root_gem.clone().map(zeo::Gem::named),
         pretty: args.dump_rust,
     };
     // Ahead of the ordinary compile because it is a DIFFERENT one: nothing

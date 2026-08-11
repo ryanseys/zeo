@@ -253,6 +253,7 @@ pub(super) fn lower_main_file(
     package_dirs: &[PathBuf],
     gem_paths: &[PathBuf],
     lockfile: Option<&Path>,
+    root_gem: Option<&crate::Gem>,
 ) -> PResult<(Vec<NodeId>, Vec<crate::gem_report::GemRecord>)> {
     // The requiring-file directory for the main file's own require_relative
     // calls -- canonicalized so require_relative composes with the dedup
@@ -352,6 +353,17 @@ pub(super) fn lower_main_file(
         // so the version-descending half of RubyGems' `_resort!` never
         // reaches a comparison.
         loader.packages.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+    // The distinguished ROOT package outranks everything: Bundler's root
+    // semantics, where the app's own gem is activated first. The gem probe
+    // names its subject here, so a feature the subject squats resolves to
+    // the gem actually under test rather than to an alphabetically earlier
+    // dependency.
+    if let Some(root) = root_gem
+        && let Some(pos) = loader.packages.iter().position(|g| g.name == root.name())
+    {
+        let subject = loader.packages.remove(pos);
+        loader.packages.insert(0, subject);
     }
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {

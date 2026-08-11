@@ -146,7 +146,7 @@ end
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> Result<(Hir, NodeId), CompileError> {
-    let (hir, root, _gem_records) = parse_and_lower_with(source, None, &[], &[], &[], None)?;
+    let (hir, root, _gem_records) = parse_and_lower_with(source, None, &[], &[], &[], None, None)?;
     Ok((hir, root))
 }
 
@@ -223,6 +223,7 @@ pub fn parse_and_lower_with(
     package_dirs: &[std::path::PathBuf],
     gem_paths: &[std::path::PathBuf],
     lockfile: Option<&std::path::Path>,
+    root_gem: Option<&crate::Gem>,
 ) -> Result<(Hir, NodeId, Vec<crate::gem_report::GemRecord>), CompileError> {
     let mut hir = Hir::default();
     if let Some(name) = magic_encoding_comment(source) {
@@ -258,6 +259,7 @@ pub fn parse_and_lower_with(
         package_dirs,
         gem_paths,
         lockfile,
+        root_gem,
     ) {
         Ok(v) => v,
         Err(e) => return Err(CompileError::lower(e, &hir.files)),

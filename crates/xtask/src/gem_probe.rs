@@ -1128,6 +1128,11 @@ fn probe(
         .arg(&view)
         .arg("--gems")
         .arg(root.join("gems"))
+        // The subject is the distinguished root (Bundler-root semantics): a
+        // feature it provides resolves to IT, never to an alphabetically
+        // earlier dependency or bundled copy squatting the same path.
+        .arg("--root-gem")
+        .arg(name)
         // `--emit-rust`, not `--dump=rust`. The two compile the same program;
         // what differs is who holds it. `--dump=rust` renders through `syn`
         // and prettyplease for a person to read -- two more whole-program
@@ -1212,6 +1217,8 @@ fn probe(
         .arg(&view)
         .arg("--gems")
         .arg(root.join("gems"))
+        .arg("--root-gem")
+        .arg(name)
         .arg("-o")
         .arg(&out);
     budget.apply(&mut cmd);

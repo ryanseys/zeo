@@ -578,6 +578,46 @@ fn a_feature_provided_by_two_packages_resolves_to_the_first_and_warns() {
 }
 
 #[test]
+fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
+    // `CompileOptions::root_gem` (the CLI's `--root-gem`, the gem probe's
+    // subject): Bundler-root semantics. Without it, `alpha` would win the
+    // squatted feature by RubyGems' name-ascending order; the root hint puts
+    // `zeta` first. Asserted on the generated Rust's string literals -- the
+    // spliced file's own text is the provider's identity.
+    let dir = std::env::temp_dir().join("zeo-test-root-gem");
+    for (rel, source) in [
+        (
+            "packages/alpha/alpha.gemspec",
+            "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n",
+        ),
+        ("packages/alpha/lib/common.rb", "puts \"from-alpha\"\n"),
+        (
+            "packages/zeta/zeta.gemspec",
+            "Gem::Specification.new do |s|\n  s.name = \"zeta\"\n  s.version = \"1.0.0\"\nend\n",
+        ),
+        ("packages/zeta/lib/common.rb", "puts \"from-zeta\"\n"),
+        ("main.rb", "require \"common\"\n"),
+    ] {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, source).unwrap();
+    }
+    let opts = zeo::CompileOptions {
+        input_path: Some(dir.join("main.rb")),
+        package_dirs: vec![dir.join("packages")],
+        root_gem: Some(zeo::Gem::named("zeta")),
+        ..Default::default()
+    };
+    let compiled = zeo::compile_to_rust_with("require \"common\"\n", &opts)
+        .unwrap_or_else(|e| panic!("compile failed: {}", String::from(e)));
+    assert!(
+        compiled.rust_source.contains("from-zeta")
+            && !compiled.rust_source.contains("from-alpha"),
+        "the root gem's copy should have been spliced"
+    );
+}
+
+#[test]
 fn strict_mode_restores_the_ambiguity_error() {
     // `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` keeps the old hard error for callers
     // who want squatting surfaced loudly. Safe to set here: nextest runs each
