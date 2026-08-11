@@ -91,7 +91,11 @@ pub(super) fn emit_splat_call(
         }
         ArrayElem::Splat(n) => {
             let e = emit_expr(cx, *n);
-            quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
+            let e = box_if_object_typed(cx, *n, e);
+            // `array_splat_into`, never a bare Array unwrap: a splatted value
+            // is coerced the way ruby coerces it (`to_a` when it responds --
+            // rspec splats its own Set -- wrap otherwise, nil to nothing).
+            quote! { zeo_rt::array_splat_into(&mut __args, &(#e))?; }
         }
     });
     // Keyword args (literal pairs INTERLEAVED with `**h` double-splats, in

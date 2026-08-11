@@ -724,7 +724,14 @@ impl RubyValue {
     pub fn as_array_unchecked(&self) -> RArray {
         match self {
             RubyValue::Array(a) => a.clone(),
-            other => panic!("expected an Array, got {}", other.to_display_string()),
+            // The ruby frames name the site the wrong static type was
+            // inferred FOR -- without them a violation in a large program is
+            // undiagnosable (the rust backtrace only shows generated code).
+            other => panic!(
+                "expected an Array, got {}\nruby backtrace:\n{}",
+                other.to_display_string(),
+                crate::frames::capture_backtrace().join("\n")
+            ),
         }
     }
 

@@ -661,10 +661,14 @@ fn emit_case_when(
                     } else {
                         // A subject-less `case` tests truthiness, so a
                         // splatted candidate list is "is any of them
-                        // truthy".
+                        // truthy" -- coerced like every splat, not unwrapped
+                        // as a bare Array.
                         quote! {
-                            (#v_expr).as_array_unchecked().lock().iter()
-                                .any(|__c| __c.truthy())
+                            {
+                                let mut __sp = Vec::new();
+                                zeo_rt::array_splat_into(&mut __sp, &(#v_expr))?;
+                                __sp.iter().any(|__c| __c.truthy())
+                            }
                         }
                     }
                 }
@@ -1400,8 +1404,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                     quote! { __args.push(#e); }
                 }
                 ArrayElem::Splat(n) => {
-                    let e = emit_expr(cx, *n);
-                    quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
+                    let e = box_if_object_typed(cx, *n, emit_expr(cx, *n));
+                    // Coerced like every splat (`to_a`/wrap/nil-drops), not
+                    // unwrapped as a bare Array -- see `call::splat`.
+                    quote! { zeo_rt::array_splat_into(&mut __args, &(#e))?; }
                 }
             });
             // The same rule `emit_splat_call` applies on the call side: a `**h`
