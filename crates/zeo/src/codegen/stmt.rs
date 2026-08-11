@@ -134,6 +134,32 @@ pub fn emit_body_boxed(cx: &Ctx, body: &[NodeId]) -> TokenStream {
     quote! { #(#init_stmts)* #tail }
 }
 
+/// A statement-position `if`: no value, arms in discard mode. Mirrors
+/// `expr::emit_if`'s dead-branch elision (a provably-false `defined?` guard's
+/// branch is never emitted) without its arm boxing -- there is nothing to box.
+fn emit_if_statement(
+    cx: &Ctx,
+    cond: NodeId,
+    then_body: &[NodeId],
+    else_body: &[NodeId],
+) -> TokenStream {
+    match super::constfold::static_cond(cx, cond) {
+        Some(true) => return emit_body_discard(cx, then_body),
+        Some(false) => return emit_body_discard(cx, else_body),
+        None => {}
+    }
+    let cond_expr =
+        super::expr::box_if_object_typed(cx, cond, emit_expr(cx, cond));
+    let then_stmts = emit_body_discard(cx, then_body);
+    if else_body.is_empty() {
+        return quote! { if (#cond_expr).truthy() { #then_stmts } };
+    }
+    let else_stmts = emit_body_discard(cx, else_body);
+    quote! {
+        if (#cond_expr).truthy() { #then_stmts } else { #else_stmts }
+    }
+}
+
 fn tail_nil(wrap_ok: bool) -> TokenStream {
     if wrap_ok {
         quote! { Ok(zeo_rt::RubyValue::Nil) }
@@ -365,6 +391,21 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
                     .map(|&n| emit_statement(cx, n, false, false))
                     .collect::<Vec<_>>();
                 return quote! { #(#stmts)* };
+            }
+            // A statement-position `if` discards its value, so its ARMS emit in
+            // discard mode too -- through the expression form, an arm tail
+            // built by `push_assignment_call` kept its read-back and left an
+            // unused `Clone::clone(&__asgn..)` for rustc's `unused_must_use`
+            // (the shape feature-unit bodies hit at rspec scale).
+            if let HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            } = &cx.compiler.hir[stmt]
+            {
+                let (cond, then_body, else_body) =
+                    (*cond, then_body.clone(), else_body.clone());
+                return emit_if_statement(cx, cond, &then_body, &else_body);
             }
         }
         let e = emit_expr(cx, stmt);
