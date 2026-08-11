@@ -3238,6 +3238,21 @@ fn register_class(
                 }
                 compiler.classes[cid.0 as usize].explicit_superclass = true;
             }
+            // A NESTED reopen carries the full lexical chain a compact or
+            // shell first sighting lacked (`module RSpec::Core::Formatters`
+            // in one file, `module RSpec; module Core; module Formatters;
+            // class BaseFormatter` in another): upgrade the class's cref so
+            // bare-name resolution inside every body -- and inside every
+            // class registered UNDER it -- walks the real enclosing scopes.
+            // CRuby's nesting is per definition SITE; zeo's is per class,
+            // and nested-wins is the approximation that keeps working code
+            // working: the compact site's body then resolves MORE names than
+            // CRuby's cut allows, never fewer.
+            if !qualified_def && compiler.class(cid).qualified_def {
+                let ci = &mut compiler.classes[cid.0 as usize];
+                ci.qualified_def = false;
+                ci.cref_parent = lexical_parent;
+            }
             cid
         }
         None => {

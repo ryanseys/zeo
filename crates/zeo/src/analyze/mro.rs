@@ -318,8 +318,8 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         // A class-method alias (`class << self; alias split shellsplit`)
         // resolves against `own_class_methods`; an ordinary alias against
         // `own_methods`.
-        let source = ancestors.iter().find_map(|&anc| {
-            let anc = compiler.class(anc);
+        let source = ancestors.iter().find_map(|&anc_id| {
+            let anc = compiler.class(anc_id);
             let historical = anc
                 .method_history
                 .iter()
@@ -329,6 +329,24 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
                 .max_by_key(|(_, _, seq, _)| *seq)
                 .map(|&(_, _, _, sid)| sid);
             historical.or_else(|| {
+                // The seq-blind fallback must not bind a def the ALIASING
+                // class only registers AFTER the alias: `alias find_items_for
+                // items_for` written BEFORE an `items_for` override aliases
+                // the INHERITED body (rspec's `QueryOptimized` memoizes
+                // through exactly this, and binding the override made the
+                // memo call itself forever). History records every
+                // registration, so a name present there but not in the
+                // seq-filtered search above exists only LATER -- resolution
+                // moves on to the ancestors, where document order is the
+                // order their bodies already ran in.
+                if anc_id == class_id
+                    && anc
+                        .method_history
+                        .iter()
+                        .any(|(n, cm, _, _)| *cm == is_class_method && *n == old_name)
+                {
+                    return None;
+                }
                 let list = if is_class_method {
                     &anc.own_class_methods
                 } else {
