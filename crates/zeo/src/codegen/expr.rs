@@ -2069,6 +2069,23 @@ pub(super) fn emit_boxed_new(
         let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs, None);
         return quote! { zeo_rt::stamp_backtrace(#ctor) };
     }
+    // A feature unit may redefine this class's `initialize` at LOAD time
+    // (registered-but-not-promised), so a struct-backed exception built at a
+    // raise site routes through the runtime exactly as `emit_new`'s own gate
+    // does -- the compile-time class identity stays, only construction goes
+    // dynamic. Without this the two raise-site callers bypassed the gate.
+    if cx.compiler.may_be_patched_at_runtime("initialize")
+        || cx.compiler.may_be_patched_at_runtime("new")
+    {
+        let id = cid.0;
+        let new_sym = super::pooled_sym("new");
+        return quote! {
+            zeo_rt::stamp_backtrace({
+                let __rtclass = zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id));
+                zeo_rt::send_value(&__rtclass, #new_sym, &[#(#arg_exprs),*], None)?
+            })
+        };
+    }
     let class_ident = super::ident::class_ident(cx.compiler, cid);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs, None);
     quote! { zeo_rt::stamp_backtrace(zeo_rt::RubyValue::Object(#class_ident::new_handle(#ctor))) }
