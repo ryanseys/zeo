@@ -1604,18 +1604,24 @@ fn rand_below(random: &Option<RubyValue>, bound: usize) -> Result<usize, crate::
 
 /// Raise `FrozenError` if `recv` (an Array) is frozen -- the guard every
 /// mutating method runs before touching its storage.
+#[inline]
 fn check_frozen(
     handle: &crate::collections::RArray,
     recv: &RubyValue,
 ) -> Result<(), crate::Signal> {
     if handle.is_frozen() {
-        return Err(crate::dispatch::raise_error_details(
-            "FrozenError",
-            format!("can't modify frozen Array: {}", recv.inspect_string()),
-            &[("receiver", recv.clone())],
-        ));
+        return Err(frozen_array_error(recv));
     }
     Ok(())
+}
+
+#[cold]
+fn frozen_array_error(recv: &RubyValue) -> crate::Signal {
+    crate::dispatch::raise_error_details(
+        "FrozenError",
+        format!("can't modify frozen Array: {}", recv.inspect_string()),
+        &[("receiver", recv.clone())],
+    )
 }
 
 /// The typed-receiver fast-path cores for the bare mutators
@@ -1626,18 +1632,30 @@ pub fn array_push_checked(
     arr: &crate::collections::RArray,
     value: RubyValue,
 ) -> Result<RubyValue, crate::Signal> {
-    check_frozen(arr, &RubyValue::Array(arr.clone()))?;
+    check_frozen_handle(arr)?;
     Ok(crate::array_push(arr, value))
 }
 
 pub fn array_pop_checked(arr: &crate::collections::RArray) -> Result<RubyValue, crate::Signal> {
-    check_frozen(arr, &RubyValue::Array(arr.clone()))?;
+    check_frozen_handle(arr)?;
     Ok(arr.lock().pop().unwrap_or(RubyValue::Nil))
 }
 
 pub fn array_shift_checked(arr: &crate::collections::RArray) -> Result<RubyValue, crate::Signal> {
-    check_frozen(arr, &RubyValue::Array(arr.clone()))?;
+    check_frozen_handle(arr)?;
     Ok(arr.lock().shift().unwrap_or(RubyValue::Nil))
+}
+
+/// [`check_frozen`] for callers that hold only the handle: the receiver
+/// `RubyValue` (an `Arc` clone) is materialized in the COLD arm only --
+/// building it eagerly put an atomic refcount round-trip on every push/pop/
+/// shift fast path, which is exactly the traffic `bm_so_lists` drowns in.
+#[inline]
+fn check_frozen_handle(arr: &crate::collections::RArray) -> Result<(), crate::Signal> {
+    if arr.is_frozen() {
+        return Err(frozen_array_error(&RubyValue::Array(arr.clone())));
+    }
+    Ok(())
 }
 
 /// `Array#join`'s body: appends each element's bytes to `out`, separated by
