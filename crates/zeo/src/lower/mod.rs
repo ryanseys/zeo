@@ -20,7 +20,7 @@ mod literals;
 mod pattern;
 
 use crate::hir::{
-    ArrayElem, Hir, HirNode, KwArg, LastMatch, NodeId, Params, PatternArm, RaiseCause, RegexpFlags,
+    ArrayElem, Hir, HirNode, KwArg, LastMatch, NodeId, Params, PatternArm, RaiseCause,
     RescueClause, Span, StrPart, Visibility,
 };
 use crate::lower_error::LowerError;
@@ -43,7 +43,7 @@ use defs::{
 };
 use eval_splice::{lower_box_eval, reject_top_level_defs, single_literal_string_arg};
 pub use literals::encoding_const_name;
-use literals::{line_of, lower_string_parts, string_literal_part};
+use literals::line_of;
 use pattern::{lower_in_pattern_and_guard, lower_pattern};
 
 pub type PResult<T> = Result<T, crate::lower_error::LowerError>;
@@ -90,30 +90,6 @@ fn lower_body(result: &ParseResult, hir: &mut Hir, body: Option<Node<'_>>) -> PR
                 Ok(vec![lower_node(result, hir, &n)?])
             }
         }
-    }
-}
-
-/// Assembles prism's `(negative, LSB-first u32 digits)` integer shape into
-/// an `i64` when it fits (`None` = a bignum literal).
-fn assemble_i64(negative: bool, digits: &[u32]) -> Option<i64> {
-    let mut magnitude: u64 = 0;
-    for (i, &d) in digits.iter().enumerate() {
-        if i >= 2 {
-            if d != 0 {
-                return None;
-            }
-            continue;
-        }
-        magnitude |= u64::from(d) << (32 * i);
-    }
-    if negative {
-        // i64::MIN's magnitude is representable; anything larger isn't.
-        if magnitude > (i64::MAX as u64) + 1 {
-            return None;
-        }
-        Some((magnitude as i128).wrapping_neg() as i64)
-    } else {
-        i64::try_from(magnitude).ok()
     }
 }
 
@@ -184,38 +160,6 @@ pub(crate) fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
     consts::constant_path_name(recv).is_ok_and(|name| name == enclosing)
 }
 
-/// Which encoding a Regexp literal's flag letter forces, from prism's four
-/// mutually exclusive flags. See [`zeo_abi::RegexpEncoding`] for what the answer
-/// is observable through.
-///
-/// `/n`, `/e` and `/s` name an encoding that is not the source's, which is only
-/// answerable for an ASCII-only pattern: every byte then means the same thing in
-/// ASCII-8BIT, EUC-JP, Windows-31J and UTF-8 alike, so the flag changes nothing
-/// but what the regexp REPORTS about itself. One non-ASCII byte and the readings
-/// genuinely differ -- and ruby refuses to guess which was meant, in the PARSER
-/// (`regexp encoding option 'e' differs from source encoding 'UTF-8'`, a
-/// `SyntaxError`). prism is that parser, so `parse_and_lower_into` has already
-/// turned those away by the time this runs; there is nothing left here to
-/// reject, and re-deriving the rule would only be a second, worse copy of it.
-///
-/// ruby2ruby and ruby_parser both open with `ENC_EUC = /x/e.options` -- a
-/// throwaway ASCII pattern whose only purpose is the flag bits.
-fn forced_regexp_encoding(
-    ascii_8bit: bool,
-    euc_jp: bool,
-    windows_31j: bool,
-    utf_8: bool,
-) -> zeo_abi::RegexpEncoding {
-    use zeo_abi::RegexpEncoding;
-    match (ascii_8bit, euc_jp, windows_31j, utf_8) {
-        (true, ..) => RegexpEncoding::None,
-        (_, true, ..) => RegexpEncoding::EucJp,
-        (_, _, true, _) => RegexpEncoding::Windows31j,
-        (.., true) => RegexpEncoding::Utf8,
-        _ => RegexpEncoding::Source,
-    }
-}
-
 /// The class a `class Sub < ... end` header names as its superclass.
 ///
 /// `< self` inside a class body is the ENCLOSING class -- a compile-time fact,
@@ -252,45 +196,11 @@ pub(crate) fn span_of(hir: &Hir, node: &Node<'_>) -> Span {
 }
 
 fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
-    if let Some(int) = node.as_integer_node() {
-        // prism's own arbitrary-precision value (LSB-first u32 digits) --
-        // which also handles `0xff`/`0b101`/`1_000` uniformly, unlike the
-        // old source-text `parse::<i64>()`. Values that fit stay the
-        // ordinary `IntegerLit(i64)`; anything bigger is a bignum literal
-        //.
-        let value = int.value();
-        let (negative, digits) = value.to_u32_digits();
-        return Ok(hir.push(match assemble_i64(negative, digits) {
-            Some(v) => HirNode::IntegerLit(v),
-            None => HirNode::BigIntegerLit {
-                negative,
-                digits: digits.to_vec(),
-            },
-        }));
-    }
-
-    if let Some(float) = node.as_float_node() {
-        return Ok(hir.push(HirNode::FloatLit(float.value())));
-    }
-
-    if let Some(rat) = node.as_rational_node() {
-        // prism pre-rationalizes: `1.5r` arrives numerator 3, denominator
-        // 2. The numerator carries the sign; the denominator is positive
-        // and non-zero by syntax.
-        let numerator = rat.numerator();
-        let denominator = rat.denominator();
-        let (negative, num_digits) = numerator.to_u32_digits();
-        let (_, den_digits) = denominator.to_u32_digits();
-        return Ok(hir.push(HirNode::RationalLit {
-            negative,
-            num_digits: num_digits.to_vec(),
-            den_digits: den_digits.to_vec(),
-        }));
-    }
-
-    if let Some(im) = node.as_imaginary_node() {
-        let inner = lower_node(result, hir, &im.numeric())?;
-        return Ok(hir.push(HirNode::ImaginaryLit(inner)));
+    // The literal/collection family lives in `literals.rs` -- see its
+    // `try_lower`. First in the chain because literals dominate any real
+    // program's node count.
+    if let Some(id) = literals::try_lower(result, hir, node)? {
+        return Ok(id);
     }
 
     // `-> (x) { ... }` -- a real `ruby-prism` node (unlike `lambda { }`
@@ -304,24 +214,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             body,
             method_body: false,
         }));
-    }
-
-    if let Some(sym) = node.as_symbol_node() {
-        let name = String::from_utf8_lossy(sym.unescaped()).into_owned();
-        return Ok(hir.push(HirNode::SymbolLit(name)));
-    }
-
-    if node.as_nil_node().is_some() {
-        return Ok(hir.push(HirNode::NilLit));
-    }
-    if node.as_true_node().is_some() {
-        return Ok(hir.push(HirNode::BoolLit(true)));
-    }
-    if node.as_false_node().is_some() {
-        return Ok(hir.push(HirNode::BoolLit(false)));
-    }
-    if node.as_self_node().is_some() {
-        return Ok(hir.push(HirNode::SelfRef));
     }
 
     // `(expr)` -- prism wraps a parenthesized expression in its own node
@@ -2356,125 +2248,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         return Ok(node);
     }
 
-    if let Some(s) = node.as_string_node() {
-        return Ok(hir.push(HirNode::StringLit(vec![string_literal_part(s.unescaped())])));
-    }
-
-    // `:"hello_#{x}"` -- an interpolated symbol is exactly its interpolated
-    // STRING, interned. Lowered as that string plus a `to_sym` call rather
-    // than given its own HIR node: the parts are the same shape, and the
-    // name isn't known until runtime anyway, so there is nothing a
-    // dedicated node could do that this doesn't.
-    if let Some(isym) = node.as_interpolated_symbol_node() {
-        let parts = lower_string_parts(result, hir, isym.parts().iter())?;
-        let text = hir.push(HirNode::StringLit(parts));
-        return Ok(hir.push(HirNode::Call {
-            receiver: Some(text),
-            name: "to_sym".to_string(),
-            args: Vec::new(),
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        }));
-    }
-
-    if let Some(istr) = node.as_interpolated_string_node() {
-        let parts = lower_string_parts(result, hir, istr.parts().iter())?;
-        return Ok(hir.push(HirNode::StringLit(parts)));
-    }
-
-    // `` `cmd` `` / `%x{cmd}` (and the interpolated form) -- CRuby compiles
-    // both to `putself` + an ordinary send of `` :` `` with the command
-    // String as its one argument (compile.c), so they are the exact
-    // string-literal shapes above wrapped in an implicit-self fcall to the
-    // overridable `Kernel#\``. Not a direct syscall: a user who reopens
-    // `Kernel#\`` (or defines `` def `(cmd) ``) wins, real Ruby's rule.
-    if let Some(xs) = node.as_x_string_node() {
-        let cmd = hir.push(HirNode::StringLit(vec![string_literal_part(
-            xs.unescaped(),
-        )]));
-        return Ok(hir.push(HirNode::Call {
-            receiver: None,
-            name: "`".to_string(),
-            args: vec![ArrayElem::Single(cmd)],
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        }));
-    }
-
-    if let Some(xs) = node.as_interpolated_x_string_node() {
-        let parts = lower_string_parts(result, hir, xs.parts().iter())?;
-        let cmd = hir.push(HirNode::StringLit(parts));
-        return Ok(hir.push(HirNode::Call {
-            receiver: None,
-            name: "`".to_string(),
-            args: vec![ArrayElem::Single(cmd)],
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        }));
-    }
-
-    // `/pattern/flags` / `%r{pattern}flags` (`RegularExpressionNode` covers
-    // BOTH delimiter spellings -- prism only distinguishes opening/closing
-    // `Location`s, not a separate node kind). `o` is the one genuinely
-    // ignorable flag: "only interpolate once" has no effect when every regexp
-    // literal is freshly constructed anyway.
-    if let Some(re) = node.as_regular_expression_node() {
-        let content = String::from_utf8_lossy(re.unescaped()).into_owned();
-        let encoding = forced_regexp_encoding(
-            re.is_ascii_8bit(),
-            re.is_euc_jp(),
-            re.is_windows_31j(),
-            re.is_utf_8(),
-        );
-        return Ok(hir.push(HirNode::RegexpLit(
-            vec![StrPart::Lit(content)],
-            RegexpFlags {
-                ignore_case: re.is_ignore_case(),
-                extended: re.is_extended(),
-                multiline: re.is_multi_line(),
-                encoding,
-            },
-        )));
-    }
-
-    if let Some(re) = node.as_interpolated_regular_expression_node() {
-        let parts = lower_string_parts(result, hir, re.parts().iter())?;
-        let encoding = forced_regexp_encoding(
-            re.is_ascii_8bit(),
-            re.is_euc_jp(),
-            re.is_windows_31j(),
-            re.is_utf_8(),
-        );
-        return Ok(hir.push(HirNode::RegexpLit(
-            parts,
-            RegexpFlags {
-                ignore_case: re.is_ignore_case(),
-                extended: re.is_extended(),
-                multiline: re.is_multi_line(),
-                encoding,
-            },
-        )));
-    }
-
-    // A bare regex literal used directly as an implicit condition against
-    // `$_` (`if /foo/` -- `MatchLastLineNode`/its interpolated counterpart)
-    // -- `$_`/the "last read line" concept isn't modeled at all, a clean
-    // rejection rather than silently matching against an always-empty
-    // string.
-    if node.as_match_last_line_node().is_some()
-        || node.as_interpolated_match_last_line_node().is_some()
-    {
-        return Err(
-            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (zeo limitation) -- write an explicit `=~`/`match?` against a real receiver instead".to_string().into(),
-        );
-    }
-
     // `/(?<name>...)/ =~ str` -- named-capture AUTO-BINDING: real Ruby
     // assigns each named group to a LOCAL of that name. prism hands this
     // over as its own `MatchWriteNode`, having already worked out both the
@@ -2487,71 +2260,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // the parser can only declare the locals when it can see the names.
     if let Some(mw) = node.as_match_write_node() {
         return lower_named_capture_match(result, hir, &mw);
-    }
-
-    if let Some(arr) = node.as_array_node() {
-        let elements = arr
-            .elements()
-            .iter()
-            .map(|el| lower_array_elem(result, hir, &el))
-            .collect::<PResult<Vec<_>>>()?;
-        return Ok(hir.push(HirNode::ArrayLit(elements)));
-    }
-
-    if let Some(h) = node.as_hash_node() {
-        let elements: Vec<Node<'_>> = h.elements().iter().collect();
-        let kwargs = lower_kwargs(result, hir, &elements)?;
-        return Ok(hir.push(HirNode::HashLit(kwargs)));
-    }
-
-    // The BRACE-LESS hash as the last element of an ARRAY literal
-    // (`[a, b, from: x, to: y]`). Ruby collapses it into one ordinary Hash
-    // there -- `[1, k: 2]` has two elements, not three -- so it lowers exactly
-    // like the braced form above; prism just spells it differently.
-    //
-    // A CALL's trailing hash never reaches here: `lower_call_args` peels it
-    // off first, because in that position it is keyword arguments rather than
-    // a value, and the two bind differently.
-    if let Some(kw) = node.as_keyword_hash_node() {
-        let elements: Vec<Node<'_>> = kw.elements().iter().collect();
-        let kwargs = lower_kwargs(result, hir, &elements)?;
-        return Ok(hir.push(HirNode::HashLit(kwargs)));
-    }
-
-    // A `..`/`...` prism decided is a CONDITION, not a Range -- see
-    // `HirNode::FlipFlop`. An omitted side lowers to nil, which is falsy, and
-    // that is exactly Ruby's behaviour for a one-sided flip-flop.
-    if let Some(ff) = node.as_flip_flop_node() {
-        let mut side = |n: Option<Node<'_>>| match n {
-            None => Ok(hir.push(HirNode::NilLit)),
-            Some(n) => lower_node(result, hir, &n),
-        };
-        let left = side(ff.left())?;
-        let right = side(ff.right())?;
-        let state = hir.flip_flops;
-        hir.flip_flops += 1;
-        return Ok(hir.push(HirNode::FlipFlop {
-            state,
-            left,
-            right,
-            exclusive: ff.is_exclude_end(),
-        }));
-    }
-
-    if let Some(range) = node.as_range_node() {
-        let start = match range.left() {
-            None => None,
-            Some(n) => Some(lower_node(result, hir, &n)?),
-        };
-        let end = match range.right() {
-            None => None,
-            Some(n) => Some(lower_node(result, hir, &n)?),
-        };
-        return Ok(hir.push(HirNode::RangeLit {
-            start,
-            end,
-            exclusive: range.is_exclude_end(),
-        }));
     }
 
     // `while`/`until`, both statement and modifier form -- `until` is `While`
