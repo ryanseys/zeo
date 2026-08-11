@@ -155,15 +155,24 @@ fn tail_nil(wrap_ok: bool) -> TokenStream {
 /// so carries a value only an expression position would use -- the shape
 /// `lower::assign::push_assignment_call` builds. Answers the statements
 /// worth emitting without it.
-fn statement_without_value_readback<'a>(cx: &'a Ctx, stmt: NodeId) -> Option<&'a [NodeId]> {
+fn statement_without_value_readback(cx: &Ctx, stmt: NodeId) -> Option<Vec<NodeId>> {
     let HirNode::Seq(body) = &cx.compiler.hir[stmt] else {
         return None;
     };
     let (&last, rest) = body.split_last()?;
-    let HirNode::LocalRead(name) = &cx.compiler.hir[last] else {
-        return None;
-    };
-    crate::hir::is_internal_local(name).then_some(rest)
+    match &cx.compiler.hir[last] {
+        HirNode::LocalRead(name) if crate::hir::is_internal_local(name) => Some(rest.to_vec()),
+        // A receiver-binding desugar nests the setter's own Seq as its tail
+        // (`obj.attr += 1` -> Seq([recv bind, Seq([write call, read])])), so
+        // the droppable read sits one level down. Without the recursion the
+        // read-back survived in a discarded position -- `Clone::clone` is
+        // `#[must_use]`, so rustc warned on the generated program.
+        HirNode::Seq(_) => {
+            let inner = statement_without_value_readback(cx, last)?;
+            Some(rest.iter().copied().chain(inner).collect())
+        }
+        _ => None,
+    }
 }
 
 fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> TokenStream {
