@@ -394,6 +394,32 @@ fn static_string(
             args,
             ..
         } if name == "to_s" && args.is_empty() => static_string(compiler, cref, box_id, *r, depth),
+        // `RUBY_VERSION[0, 3]` -- the 1.8/1.9-era prefix probe
+        // (rspec-expectations gates its whole 1.9 `append_features` on it).
+        // Only the two-integer-argument slice; a Range or regexp index stays
+        // undecided. Char-counted like `String#[]`, though every fed string
+        // here is ASCII.
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            ..
+        } if name == "[]" && args.len() == 2 => {
+            let [crate::hir::ArrayElem::Single(a0), crate::hir::ArrayElem::Single(a1)] = args[..]
+            else {
+                return None;
+            };
+            let start = static_integer(compiler, cref, box_id, a0, depth)?;
+            let len = static_integer(compiler, cref, box_id, a1, depth)?;
+            let s = static_string(compiler, cref, box_id, *r, depth)?;
+            let chars: Vec<char> = s.chars().collect();
+            let start = usize::try_from(start).ok()?;
+            let len = usize::try_from(len).ok()?;
+            if start > chars.len() {
+                return None; // nil in ruby -- not a string
+            }
+            Some(chars[start..(start + len).min(chars.len())].iter().collect())
+        }
         _ => None,
     }
 }
@@ -1675,12 +1701,25 @@ fn static_bool(
         HirNode::And(l, r) => match static_bool(compiler, cref, box_id, *l, depth) {
             Some(false) => Some(false),
             Some(true) => static_bool(compiler, cref, box_id, *r, depth),
-            None => None,
+            // `<undecidable> && false` is falsy whichever way the left goes --
+            // `Ruby.mri? && RUBY_VERSION[0, 3] == '1.9'` (rspec-expectations'
+            // 1.9-only append_features) folds on the version half alone. Same
+            // pure-guard posture every fold here takes: the left's evaluation
+            // is dropped with the branch.
+            None => match static_bool(compiler, cref, box_id, *r, depth) {
+                Some(false) => Some(false),
+                _ => None,
+            },
         },
         HirNode::Or(l, r) => match static_bool(compiler, cref, box_id, *l, depth) {
             Some(true) => Some(true),
             Some(false) => static_bool(compiler, cref, box_id, *r, depth),
-            None => None,
+            // The mirror of `And`'s undecidable-left arm: `<undecidable> ||
+            // true` is truthy whichever way the left goes.
+            None => match static_bool(compiler, cref, box_id, *r, depth) {
+                Some(true) => Some(true),
+                _ => None,
+            },
         },
         // A boolean value constant (`VALIDATES_FOR_RESOLUTION`) folds through
         // its own initializer, evaluated in the owning class's lexical scope.
