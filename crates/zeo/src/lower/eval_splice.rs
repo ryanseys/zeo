@@ -119,6 +119,15 @@ pub(crate) fn single_literal_string_arg(
     let [arg] = args.as_slice() else {
         return Ok(None);
     };
+    // A splat/forwarding argument (`require(*names)`, `require(...)`) is one
+    // argument syntactically but has no compile-time text -- and a bare
+    // `SplatNode` doesn't lower as an expression, so it must be answered
+    // (not lowered) here. The call stays live and the runtime
+    // `Kernel#require` raises the catchable LoadError; every corpus hit
+    // sits inside a `rescue LoadError` optional-dependency helper.
+    if arg.as_splat_node().is_some() || arg.as_forwarding_arguments_node().is_some() {
+        return Ok(None);
+    }
     let id = lower_node(result, hir, arg)?;
     Ok(literal_string_text(hir, id))
 }

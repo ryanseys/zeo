@@ -1936,6 +1936,12 @@ fn literal_feature(
     let [arg] = arg_list.as_slice() else {
         return Ok(None);
     };
+    // One argument syntactically, but no compile-time text -- and a bare
+    // `SplatNode`/`...` doesn't lower as an expression, so it must be
+    // answered here (`require(*names)` in an optional-dependency helper).
+    if arg.as_splat_node().is_some() || arg.as_forwarding_arguments_node().is_some() {
+        return Ok(None);
+    }
     let arg_id = lower_node(result, hir, arg)?;
     Ok(crate::lower::eval_splice::literal_string_text(hir, arg_id))
 }
