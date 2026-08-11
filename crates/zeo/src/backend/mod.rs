@@ -290,7 +290,14 @@ fn reap_stale_cache_keys(cache: &Path, current_key: &str) {
 fn variant_target_dir(runtime: Runtime, linkage: Linkage) -> PathBuf {
     let base = target_dir();
     match (linkage, runtime) {
-        (Linkage::Static, Runtime::Lean) => base,
+        // Its own dir like every other variant, NOT the shared `target/`:
+        // sharing meant `zeo`'s runtime rebuild took cargo's flock on the
+        // whole build dir, and a concurrent suite/dev build held it -- a
+        // bare `zeo file.rb` after a runtime edit sat blocked for the other
+        // build's full duration (measured at two minutes mid-suite). The
+        // stat gate (`ensure_runtime_built`) keeps the fresh path
+        // cargo-free either way; this makes the STALE path private too.
+        (Linkage::Static, Runtime::Lean) => base.join("zeo-rt-static"),
         (Linkage::Static, Runtime::Eval) => base.join("zeo-rt-eval"),
         (Linkage::Dynamic, Runtime::Lean) => base.join("zeo-rt-dyn"),
         (Linkage::Dynamic, Runtime::Eval) => base.join("zeo-rt-dyn-eval"),
@@ -482,14 +489,14 @@ pub fn build_runtime(profile: Profile, runtime: Runtime, linkage: Linkage) -> Re
             if runtime == Runtime::Eval {
                 cmd.arg("--features").arg("eval-vm");
             }
-            // The eval variant always needs its own dir; outside the dev tree
-            // the redirect is needed for EVERY variant -- without it cargo
-            // would write into the payload's own `target/`, and the prefix
-            // may be read-only (a Homebrew Cellar).
-            if runtime == Runtime::Eval || !in_dev_tree() {
-                cmd.arg("--target-dir")
-                    .arg(variant_target_dir(runtime, linkage));
-            }
+            // Every variant redirects now -- see `variant_target_dir`: the
+            // static in-dev-tree build sharing `target/` made a stale-runtime
+            // `zeo` call block on the suite's cargo flock. (Outside the dev
+            // tree the redirect was always required: cargo would write into
+            // the payload's own `target/`, and the prefix may be read-only,
+            // a Homebrew Cellar.)
+            cmd.arg("--target-dir")
+                .arg(variant_target_dir(runtime, linkage));
         }
         Linkage::Dynamic => {
             // `cargo rustc` so we can force the dylib crate-type and pass
@@ -781,10 +788,10 @@ fn build_label(profile: Profile, runtime: Runtime, linkage: Linkage) -> String {
     if linkage == Linkage::Dynamic {
         label.push_str(" --crate-type dylib");
     }
-    if runtime == Runtime::Eval || linkage == Linkage::Dynamic {
-        label.push_str(" --target-dir ");
-        label.push_str(&variant_target_dir(runtime, linkage).display().to_string());
-    }
+    // Every variant builds into its own dir now (see `variant_target_dir`),
+    // so the hint always names it.
+    label.push_str(" --target-dir ");
+    label.push_str(&variant_target_dir(runtime, linkage).display().to_string());
     if linkage == Linkage::Dynamic {
         label.push_str(" -- -C prefer-dynamic");
     }
