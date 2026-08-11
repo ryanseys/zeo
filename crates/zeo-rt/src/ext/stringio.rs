@@ -458,19 +458,49 @@ ruby_class! {
         Ok(RubyValue::Int(0))
     }
 
-    // `mode` is ignored for now.
-    def self."new" | "open" allocs (_recv, string?, _mode?) {
-        // An empty `StringIO.new` is UTF-8, as the `""` it stands in for is.
-        let (bytes, enc) = match string {
-            None | Some(RubyValue::Nil) => (Vec::new(), crate::encoding::UTF_8),
-            Some(v) => {
-                let s = crate::builtins::convert::to_rstr(v)?;
-                let s = s.lock();
-                (s.bytes().to_vec(), s.encoding())
+    // `mode` is ignored for now. A block is not `new`'s to run -- CRuby
+    // warns and ignores it, naming the caller's line (`rb_warn`'s shape).
+    def self."new" allocs (_recv, string?, _mode?, &block) {
+        if block.is_some() {
+            let mut buf = Vec::new();
+            if let Some(&(file, line, _)) = crate::frames::caller_frames(0).first() {
+                buf.extend_from_slice(format!("{file}:{line}: ").as_bytes());
             }
-        };
-        Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes, enc))))
+            buf.extend_from_slice(
+                b"warning: StringIO::new() does not take block; use StringIO::open() instead\n",
+            );
+            crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), &buf)?;
+        }
+        new_stringio(string)
     }
+    // `File.open`'s contract: with a block, yield the new io, answer the
+    // BLOCK's value, and close the io on every exit path -- run, stash,
+    // close, then propagate.
+    def self."open" allocs (_recv, string?, _mode?, &block) {
+        let io = new_stringio(string)?;
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(io);
+        };
+        let out = p.call(std::slice::from_ref(&io));
+        let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
+        out
+    }
+}
+
+/// The shared `StringIO.new`/`.open` constructor: an empty `StringIO.new` is
+/// UTF-8, as the `""` it stands in for is.
+fn new_stringio(string: Option<&RubyValue>) -> Result<RubyValue, crate::Signal> {
+    let (bytes, enc) = match string {
+        None | Some(RubyValue::Nil) => (Vec::new(), crate::encoding::UTF_8),
+        Some(v) => {
+            let s = crate::builtins::convert::to_rstr(v)?;
+            let s = s.lock();
+            (s.bytes().to_vec(), s.encoding())
+        }
+    };
+    Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(
+        bytes, enc,
+    ))))
 }
 
 /// How many bytes the character starting with `lead` occupies in `enc`. Only
