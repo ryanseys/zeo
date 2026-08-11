@@ -237,9 +237,9 @@ fn needs_prism_runtime_selects_the_runtime_variant() {
 
     // A dynamic (non-literal) eval reaches the runtime VM -> needs it.
     assert!(needs("s = \"1 + 2\"\neval(s)\n"));
-    // A literal the inline path can't express (top-level class) falls through
-    // to the runtime VM -> needs it.
-    assert!(needs(r#"eval("class Foo; end")"#));
+    // A literal eval defining a top-level class used to fall through to the
+    // VM; the registration walk descends the splice now, so it stays lean.
+    assert!(!needs(r#"eval("class Foo; end")"#));
     // A string-form `instance_eval` reaches the VM -> needs it.
     assert!(needs("o = Object.new\no.instance_eval(\"@x = 1\")\n"));
     // A string-form `class_eval`/`module_eval` reaches it the same way -- the

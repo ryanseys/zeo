@@ -895,13 +895,16 @@ fn box_globals_are_fully_separate() {
 }
 
 /// The clean rejections: an expression-position `Ruby::Box.new` (a box
-/// nothing could reference), box operations outside their recognized
-/// positions, and expression-position eval defining classes.
-/// (`.current`/`.enabled?` are ordinary runtime calls now that the class
-/// carries real rows; a non-literal `box.eval` source is NOT rejected
-/// here -- it routes to the runtime eval VM, so a non-string source is a
-/// catchable runtime `TypeError`, exactly like `Kernel#eval`; see
-/// `box_eval_dynamic_source_routes_through_the_vm`.)
+/// nothing could reference) and box operations outside their recognized
+/// positions. (`.current`/`.enabled?` are ordinary runtime calls now that
+/// the class carries real rows; a non-literal `box.eval` source is NOT
+/// rejected here -- it routes to the runtime eval VM, so a non-string
+/// source is a catchable runtime `TypeError`, exactly like `Kernel#eval`;
+/// see `box_eval_dynamic_source_routes_through_the_vm`. An
+/// expression-position literal `box.eval` defining a class used to be
+/// rejected too -- the registration walk couldn't see into the splice --
+/// but the walk descends every container now, so it registers and
+/// compiles.)
 #[test]
 fn ruby_box_rejections_are_clean_errors() {
     // An expression-position `.new` compiles to a dynamic send and raises
@@ -915,9 +918,9 @@ fn ruby_box_rejections_are_clean_errors() {
     );
     let err = zeo::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
     assert!(err.contains("top-level statement"), "{err}");
-    let err =
-        zeo::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n").unwrap_err();
-    assert!(err.contains("class"), "{err}");
+    // The once-rejected expression-position class-defining eval splice.
+    zeo::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
+        .expect("a literal box.eval defining a class registers and compiles now");
 }
 
 /// A main-only class/constant is INVISIBLE inside a box (boxes dup from
@@ -1225,32 +1228,30 @@ fn require_works_in_non_top_level_positions() {
     assert_eq!(result.stdout, "2\n3\n{\"k\":1}\n");
 }
 
-// A library ONLY a method body requires is not compiled in: CRuby would load
-// it when the method runs, and zeo has no runtime loader. The call becomes a
-// runtime `Kernel#require`, so the omission surfaces as a rescuable `LoadError`
-// at the require site -- never as silently wrong output. Requiring the same
-// library from any load-time position brings it back (the test above).
-//
-// This is a deliberate divergence from CRuby, taken because eager loading put
-// the file ahead of the requires its own file makes at top level, and drew
-// every lazy dependency into the binary: `require "rubygems"` dropped from
-// 2.69M generated lines to 779K once `Gem.use_gemdeps`'s `require "bundler"`
-// stopped dragging bundler, thor, net/http, uri and pub_grub along.
+// A library ONLY a method body requires compiles in as a LAZY UNIT: the call
+// stays a runtime `Kernel#require` and loads the unit at first execution,
+// which is CRuby's order exactly. (It used to be omitted outright -- a
+// deliberate divergence surfacing as LoadError -- because EAGER loading both
+// reordered the program and dragged every lazy dependency into the binary;
+// units keep the size win AND the semantics: `require "rubygems"` stays far
+// below the 2.69M generated lines eager bundler-dragging produced.)
 #[test]
-fn a_library_only_a_method_body_requires_is_not_compiled_in() {
+fn a_library_only_a_method_body_requires_loads_lazily() {
     let result = run_ruby(
         r#"
         def lazy
           require "ostruct"
-          "loaded"
+          o = OpenStruct.new(x: 1)
+          o.x
         rescue LoadError => e
           e.message
         end
         puts lazy
+        puts defined?(OpenStruct) ? "visible after load" : "invisible"
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "cannot load such file -- ostruct\n");
+    assert_eq!(result.stdout, "1\nvisible after load\n");
 }
 
 // A dynamic `load`/`require` (a runtime-computed target) does not fail the

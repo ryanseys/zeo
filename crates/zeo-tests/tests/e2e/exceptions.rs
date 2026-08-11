@@ -1414,13 +1414,14 @@ fn unset_constant_raises_a_name_error() {
 
 #[test]
 fn subclassing_an_unsupported_built_in_type_is_a_clean_error() {
-    // The payload-root list has grown well past Array/String/Hash -- Range and
-    // Regexp among them now. `Method` is one of the long tail still outside
-    // it: a `Method` object binds a receiver AND a definition, so a subclass
-    // would need a payload the runtime has no way to re-seat through `super`.
+    // The payload-root list has grown well past Array/String/Hash, and even
+    // `Method`/`BigDecimal` now accept a DEFINITION (allocator-undefined in
+    // CRuby too, so no instance is ever built). `Binding` is one of the long
+    // tail still outside all of it: a binding captures a live frame, which no
+    // payload can re-seat through `super`.
     let err = zeo::compile_to_rust(
         r#"
-        class MyMethod < Method
+        class MyBinding < Binding
         end
         "#,
     )
