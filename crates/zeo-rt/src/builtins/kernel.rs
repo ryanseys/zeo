@@ -150,8 +150,13 @@ ruby_module! {
     module_function def "load" cfunc (recv, arg1, _arg2?) {
         require_feature(recv, std::slice::from_ref(arg1), None)
     }
-    module_function def "require" | "require_relative" as require_feature (_recv, arg1) {
+    module_function def "require" as require_feature (_recv, arg1) {
         dynamic_require(arg1)
+    }
+    // Resolved against the CALLING file's directory, which a compiled binary
+    // still knows -- see `dynamic_require_relative`.
+    module_function def "require_relative" (_recv, arg1) {
+        dynamic_require_relative(arg1)
     }
     private def "pp"(_recv, *args, &_block) {
         kernel_pp(args)
@@ -1600,6 +1605,68 @@ pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Sign
     // wording. Shared with the compiler's loader through the ABI, the only
     // thing the two sides agree on.
     Err(missing_feature_error(&path))
+}
+
+/// The `require_relative` runtime body: CRuby resolves the path against the
+/// CALLING file's directory (`rb_f_require_relative`), and so does zeo -- the
+/// innermost compiled frame carries the spliced file's canonical path, and
+/// the compiled-in units register under exactly that absolutized spelling.
+/// That is what makes an `autoload`-DSL helper's `require_relative.call(f)`
+/// land on the unit for the file `f` names (rspec-support's
+/// `define_optimized_require_for_rspec` is the corpus case). An argument that
+/// cannot be absolutized (already absolute, or no compiled frame below)
+/// resolves exactly like `require`; a miss raises with the ABSOLUTIZED path,
+/// which is the message shape CRuby's `require_relative` has.
+pub(crate) fn dynamic_require_relative(arg1: &RubyValue) -> Result<RubyValue, crate::Signal> {
+    let path = crate::builtins::convert::to_rstr(arg1)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    let absolutized = (!path.starts_with('/'))
+        .then(crate::frames::current_location)
+        .flatten()
+        .filter(|(file, _)| file.starts_with('/'))
+        .and_then(|(file, _)| Some(lexical_join(std::path::Path::new(file).parent()?, &path)));
+    let Some(abs) = absolutized else {
+        return dynamic_require(arg1);
+    };
+    if feature_already_loaded(&abs) {
+        return Ok(RubyValue::Bool(false));
+    }
+    if let Some(result) = crate::features::load_feature(&abs) {
+        return result.map(RubyValue::Bool);
+    }
+    // The as-written spelling second: a unit registered under its bare
+    // feature name (`require_relative "version"` next to a load-path root)
+    // still resolves, matching the compiler's own root-relative fallback.
+    if feature_already_loaded(&path) {
+        return Ok(RubyValue::Bool(false));
+    }
+    if let Some(result) = crate::features::load_feature(&path) {
+        return result.map(RubyValue::Bool);
+    }
+    Err(missing_feature_error(&abs))
+}
+
+/// `dir` + `rel`, normalized LEXICALLY (`.`/`..` folded without touching the
+/// filesystem -- the file need not exist on the machine the binary runs on).
+fn lexical_join(dir: &std::path::Path, rel: &str) -> String {
+    let mut parts: Vec<&str> = dir
+        .to_str()
+        .unwrap_or_default()
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
+    for c in rel.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            c => parts.push(c),
+        }
+    }
+    format!("/{}", parts.join("/"))
 }
 
 /// The `LoadError` a feature that is not compiled in raises, carrying `#path`

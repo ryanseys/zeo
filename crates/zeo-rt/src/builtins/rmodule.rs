@@ -963,16 +963,15 @@ ruby_class! {
 
     // --- autoload -------------------------------------------------------
     //
-    // zeo resolves a literal `autoload :C, "feature"` at COMPILE time:
-    // `parse::loader` eagerly splices the feature and lowers the call itself
-    // to a no-op, so that form never reaches this row and its constant is
-    // already defined -- which is why `autoload?` then answers nil, exactly as
-    // CRuby's does for a feature that has finished loading.
+    // zeo compiles a literal `autoload :C, "feature"` target in as a LAZY
+    // unit (`parse::loader`'s pre-pass) and keeps the call, so this row runs
+    // at the declaration's document position and loads the unit right here
+    // -- after every statement that precedes the `autoload`, which is what
+    // lets a file's earlier definitions be visible to the target's body.
     //
-    // What DOES reach here is the residue the structural collector cannot
-    // see: an explicit-receiver or computed call. Its feature never loads,
-    // so recording the path is the whole honest behavior -- and it is enough
-    // to make `autoload?` answer what CRuby answers.
+    // Also reached by the residue the structural collector cannot see: an
+    // explicit-receiver or computed call, whose feature resolves out of the
+    // demanded units the same way.
     def "autoload" (recv, sym, path) {
         let name = const_name_arg(sym)?;
         let path = crate::builtins::convert::to_rstr(path)?
@@ -994,10 +993,32 @@ ruby_class! {
         // `crate::features` -- and it is what makes an `autoload` DSL written
         // in plain Ruby work: the path it computed lands on a real load.
         if crate::features::has_feature(&path) {
-            crate::features::load_feature(&path).transpose()?;
-            pending_autoloads()
-                .lock()
-                .remove(&(recv_cid(recv).0, name.clone()));
+            match crate::features::load_feature(&path).transpose() {
+                Ok(_) => {
+                    pending_autoloads()
+                        .lock()
+                        .remove(&(recv_cid(recv).0, name.clone()));
+                }
+                // CRuby runs NOTHING at declaration, so a target whose load
+                // raises `LoadError` (a dependency the program does not ship,
+                // e.g. an optional differ requiring an absent gem) must not
+                // fail here either: the registration stays pending -- exactly
+                // the state CRuby is in -- and the error surfaces if the
+                // feature is ever actually required (`load_feature` leaves a
+                // failed unit retryable). Every other exception class stays
+                // loud: it is a real bug in code this program does load.
+                Err(sig) => {
+                    let is_load_error = match &sig {
+                        crate::Signal::Raise(RubyValue::Object(o)) => {
+                            crate::dispatch::is_a(o.class_id(), zeo_abi::LOAD_ERROR_CLASS)
+                        }
+                        _ => false,
+                    };
+                    if !is_load_error {
+                        return Err(sig);
+                    }
+                }
+            }
         } else if crate::builtins::kernel::feature_already_loaded(&path) {
             // Spliced at compile time: the constant is already defined, and
             // CRuby answers `nil` from `autoload?` once a feature has loaded.

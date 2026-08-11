@@ -120,6 +120,15 @@ pub(super) struct Loader {
     /// cycle is the one shape with no natural termination (require's dedup
     /// terminates require cycles), so it's detected here and rejected.
     splicing: Vec<PathBuf>,
+    /// Whether the loader is inside `materialize_units`. A static require in
+    /// a UNIT body must not splice its target inline: the target becomes its
+    /// own unit and the call stays live, so it loads when the unit body
+    /// actually EXECUTES -- CRuby's order. Splicing inline wove one unit's
+    /// body into another's, and the `required` dedup then handed a shared
+    /// dependency to whichever unit the sweep reached first, leaving every
+    /// later requirer with nothing (`rbconfig` inside rspec-support's
+    /// `ruby_features.rb` was the corpus case).
+    in_unit_sweep: bool,
     /// External-store gems zeo can't provide, `name -> reason`:
     /// a `require` of one fails with the store's precise reason (which native
     /// layout, why) instead of the generic "cannot load such file".
@@ -230,6 +239,7 @@ pub(super) fn lower_main_file(
         )?,
         required: HashSet::new(),
         splicing: Vec::new(),
+        in_unit_sweep: false,
         store_exclusions: HashMap::new(),
         gem_records: Vec::new(),
         require_memo: std::cell::RefCell::new(HashMap::new()),
@@ -430,17 +440,46 @@ impl Loader {
                 hir.unresolvable_requires.insert(feature);
             }
         }
-        // A plain `require` only a METHOD BODY reaches is not loaded (see
-        // `Hir::deferred_requires`). Record the feature so its CALL stays a
-        // runtime `Kernel#require`. A builtin is exempt: it needs no splice, so
-        // deferring it would turn a working require into a `LoadError`.
+        // A plain `require` only a METHOD BODY reaches: its target, when it
+        // resolves to a file, is compiled in as a LAZY unit -- the call stays
+        // a runtime `Kernel#require` and loads the unit at first execution,
+        // which is CRuby's order exactly (the same treatment a unit body's
+        // own requires get, and the same reason: whether the method ever
+        // runs is a runtime fact). `deferred_requires` keeps the call from
+        // folding to `true` either way; a target that does NOT resolve stays
+        // the honest runtime `LoadError` (rspec's optional `simplecov`).
+        // A builtin is exempt: it needs no splice, so deferring it would
+        // turn a working require into a `LoadError`.
         for call in &requires.deferred {
             let Some(feature) = literal_feature(result, hir, call)? else {
                 continue;
             };
-            if !is_builtin_feature(&feature) {
-                hir.deferred_requires.insert(feature);
+            if is_builtin_feature(&feature) {
+                continue;
             }
+            if let Ok(Some((path, package))) = self.resolve_require(&feature) {
+                // Disclosed as satisfied (first-wins preempts the
+                // "not compiled in" record the deferred set would
+                // otherwise produce at the end of the load).
+                let by = match &package {
+                    Some(_) => crate::gem_report::SatisfiedBy::BundledGem {
+                        path: display_path(&path),
+                    },
+                    None => crate::gem_report::SatisfiedBy::StdlibRoot {
+                        path: display_path(&path),
+                    },
+                };
+                self.record_gem(crate::gem_report::GemRecord {
+                    name: feature.clone(),
+                    by,
+                });
+                hir.single_unit_demand.insert((
+                    package.or_else(|| hir.lowering_package.clone()),
+                    path,
+                    feature.clone(),
+                ));
+            }
+            hir.deferred_requires.insert(feature);
         }
         // A `require_relative` under a `rescue LoadError` is the pure-Ruby
         // fallback idiom: the gem ships an optional native half and CATCHES
@@ -733,32 +772,30 @@ impl Loader {
                     false => combined.extend(rescued_spliced),
                 }
             }
-            // Eager `autoload` (at any structural nesting): every `autoload :C,
-            // path` names a file that PROVIDES `C`, so each is spliced like a
-            // `require` and the call itself lowers to a no-op (see
-            // `lower::autoload_feature`). This is the compile-time stand-in for
-            // CRuby's lazy first-access trigger; the divergence is that the
-            // file loads here rather than at first access, and even if `C` is
-            // never referenced.
+            // `autoload` (at any structural nesting): every `autoload :C,
+            // path` names a file that PROVIDES `C`. A target that resolves to
+            // a load-path file is compiled in as a LAZY unit; the call itself
+            // stays a real runtime call whose `Module#autoload` row loads the
+            // unit at declaration time (see `builtins::rmodule`). The
+            // remaining divergence from CRuby is that the file runs at the
+            // `autoload` statement rather than at first constant access, and
+            // even if `C` is never referenced.
             //
-            // At the position of the statement holding the autoload, for the
-            // same reason a nested require is: splicing the whole file's
-            // autoloads at the END ran the target's BODY after the statements
-            // that use it, so `autoload :Widget, ...` followed by
-            // `Widget::NAME` raised NameError while the module's constants were
-            // still unwritten. Method bodies survived that, which is why only
-            // constant and other executed-body reads showed it.
-            //
-            // Deduped through the shared `required` table, so two constants
-            // autoloaded from one file splice it once.
+            // It must NOT be spliced eagerly here: that ran the target's body
+            // before the very statements preceding the `autoload` itself.
+            // rspec-support's differ.rb is the case -- its first line calls a
+            // singleton method that `module Support`'s body installs a few
+            // statements BEFORE its `autoload :Differ`, and the eager splice
+            // hoisted differ.rb ahead of the whole module statement.
             let mut autoloads = Vec::new();
             collect_autoloads(&n, &mut autoloads);
             for call in &autoloads {
-                // Only a target this pass can NAME is spliced. A computed one
-                // -- including the one-argument form an `autoload` DSL defines
-                // over `Module#autoload` -- is left to run: its lowering
-                // demands the load path as units, and the runtime row resolves
-                // the string the program actually builds (`zeo_rt::features`).
+                // Only a target this pass can NAME is registered. A computed
+                // one -- including the one-argument form an `autoload` DSL
+                // defines over `Module#autoload` -- is left to run: its
+                // lowering demands the load path as units, and the runtime row
+                // resolves the string the program actually builds
+                // (`zeo_rt::features`).
                 let Ok(feature) = crate::lower::autoload_feature(call) else {
                     continue;
                 };
@@ -773,6 +810,17 @@ impl Loader {
                 if !self.require_resolvable(&feature) {
                     continue;
                 }
+                if let Ok(Some((path, package))) = self.resolve_require(&feature) {
+                    hir.single_unit_demand.insert((
+                        package.or_else(|| hir.lowering_package.clone()),
+                        path,
+                        feature,
+                    ));
+                    continue;
+                }
+                // The non-file verdicts keep the eager path: a built-in
+                // feature/shim is pure activation with no body to mis-order,
+                // and a store-excluded gem stays the loud error it always was.
                 let spliced =
                     self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
                 combined.extend(spliced);
@@ -881,6 +929,46 @@ impl Loader {
             if (name == "require_relative" && hir.optional_require_sites.contains(&key))
                 || hir.conditional_require_sites.contains(&key)
             {
+                return Ok(None);
+            }
+        }
+        // Inside `materialize_units`, a require whose target is a real file
+        // stays LIVE: the target registers as its own unit and the call loads
+        // it when the unit body actually executes -- CRuby's order. See
+        // `Loader::in_unit_sweep` for the inline-splice hazard this replaces.
+        // Non-file verdicts (builtin activation, a synthesized shim, a static
+        // ext) fall through to the eager path: activation is registration,
+        // and a shim body is spliced per requiring unit (see
+        // `splice_synthetic_shim`).
+        if self.in_unit_sweep && name != "load" {
+            let resolved = if name == "require_relative" {
+                resolve_require_relative(&feature, dir).ok().map(|p| {
+                    // Registered under its ABSOLUTE spelling (extension
+                    // stripped, matching `materialize_units`): a bare
+                    // relative name like "version" recurs in every gem, and
+                    // the runtime `require_relative` absolutizes before it
+                    // asks (`zeo_rt`'s `dynamic_require_relative`).
+                    let abs = p.with_extension("").to_string_lossy().into_owned();
+                    (p, hir.lowering_package.clone(), abs)
+                })
+            } else {
+                self.resolve_require(&feature)
+                    .ok()
+                    .flatten()
+                    .map(|(p, pkg)| {
+                        (
+                            p,
+                            pkg.or_else(|| hir.lowering_package.clone()),
+                            feature.clone(),
+                        )
+                    })
+            };
+            if let Some((path, package, unit_feature)) = resolved {
+                if let Some(file) = hir.lowering_file {
+                    hir.conditional_require_sites
+                        .insert((file, call.location().start_offset() as u32));
+                }
+                hir.single_unit_demand.insert((package, path, unit_feature));
                 return Ok(None);
             }
         }
@@ -1062,7 +1150,13 @@ impl Loader {
         };
         // A virtual path (no file on disk) standing in for `__FILE__`/provenance.
         let canonical = PathBuf::from(format!("<zeo-shim>/{feature}.rb"));
-        if !self.required.insert((box_id, canonical.clone())) {
+        // Inside the unit sweep, EVERY requiring unit carries its own copy of
+        // the shim body rather than deduping to the first: which unit runs
+        // first (if at all) is a runtime fact, and a shim is zeo-authored,
+        // self-contained, and idempotent to re-run -- the cheap way to keep
+        // `require "rbconfig"` meaning "RbConfig is defined after this line"
+        // in whichever unit executes it.
+        if !self.required.insert((box_id, canonical.clone())) && !self.in_unit_sweep {
             return Ok(Some(Vec::new()));
         }
         self.record_gem(crate::gem_report::GemRecord {
@@ -1146,6 +1240,13 @@ impl Loader {
     /// walk is bounded to the DEMANDING package's own roots, so a gem that
     /// resolves its own targets dynamically pays for itself and nothing else.
     fn materialize_units(&mut self, hir: &mut Hir) -> PResult<()> {
+        self.in_unit_sweep = true;
+        let result = self.materialize_units_inner(hir);
+        self.in_unit_sweep = false;
+        result
+    }
+
+    fn materialize_units_inner(&mut self, hir: &mut Hir) -> PResult<()> {
         // Single-file demands first: a conditional require names exactly one
         // target, and registering it under the feature AS REQUIRED is what
         // lets the runtime call find it.

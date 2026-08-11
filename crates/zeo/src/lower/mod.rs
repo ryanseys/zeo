@@ -2152,20 +2152,15 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // if ENV["X"]` -- and the `begin; require dyn; rescue LoadError`
             // idiom COMPILE, with the guard/rescue behaving at runtime.
         }
-        // `autoload :Const, "feature"` -- the loader's eager pre-pass
-        // (`Loader::lower_file_statements`) has already SPLICED the feature
-        // file so `Const` is defined, treating autoload as a compile-time
-        // require. The call itself is therefore a runtime no-op. We still
-        // validate the target resolves at compile time here (`autoload_feature`
-        // errors on a dynamic path/symbol, exactly like a non-top-level
-        // `require`), so a genuinely dynamic autoload is a clean rejection
-        // rather than a silently-undefined constant.
+        // `autoload :Const, "feature"` -- the loader's pre-pass
+        // (`Loader::lower_file_statements`) has already compiled the feature
+        // file in as a LAZY unit; the runtime `autoload` row loads it when
+        // the declaration executes, at its document position.
         if name == "autoload" && receiver.is_none() {
-            // Always a real call. A target the pre-pass could name is already
-            // spliced, so the runtime row finds it in `$LOADED_FEATURES` and
-            // does nothing; a computed one -- including the one-argument form
-            // every `autoload` DSL defines over `Module#autoload` -- computes
-            // its string there and loads the unit compiled in for it.
+            // Always a real call. A computed target -- including the
+            // one-argument form every `autoload` DSL defines over
+            // `Module#autoload` -- computes its string at runtime, so its
+            // lowering demands the whole load path as units instead.
             //
             // Lowering it to a no-op on the strength of `autoload_feature`
             // alone was a false pass: the pre-pass walks class/module bodies,
