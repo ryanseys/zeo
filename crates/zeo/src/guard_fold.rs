@@ -1078,7 +1078,10 @@ fn respond_to_fold(
     let receiver = receiver?;
     let m = probe_name(compiler, args)?;
     if let Some(cls) = instance_class(compiler, cref, box_id, receiver) {
-        if let Some((_, sid)) = compiler.method_in_chain(cls, &m) {
+        // Walk-time safe: see `compiled_method_in_chain` -- the materialized
+        // table this used to read directly is empty while analyze's own
+        // guard folds still run.
+        if let Some(sid) = compiled_method_in_chain(compiler, cls, &m) {
             return Some(compiler.scope(sid).visibility == Visibility::Public);
         }
         // NATIVE rows are not in `method_in_chain` -- that table holds
@@ -1107,6 +1110,40 @@ fn respond_to_fold(
 /// (implicit self = the enclosing class): whether the class has a non-private
 /// instance method `m` (`method_defined?`'s rule). `None` if the class doesn't
 /// resolve.
+/// A compiled instance method visible on `class`'s chain, safe at WALK time.
+///
+/// `method_in_chain` reads the materialized per-class tables, which
+/// `mro::materialize` fills only after the whole statement walk -- so a guard
+/// folding DURING the walk (analyze's `static_top_cond`) saw an empty table
+/// for a user method registered three statements up, and answered a confident
+/// false through `builtin_provides_instance_method`'s all-projected tail. The
+/// materialized lookup still goes first: at codegen time it also carries
+/// alias/`module_function` copies the own-list walk can't see.
+fn compiled_method_in_chain(compiler: &Compiler, class: ClassId, name: &str) -> Option<ScopeId> {
+    if let Some((_, sid)) = compiler.method_in_chain(class, name) {
+        return Some(sid);
+    }
+    let mut seen = Vec::new();
+    let mut queue = vec![class];
+    while let Some(c) = queue.pop() {
+        if seen.contains(&c) {
+            continue;
+        }
+        seen.push(c);
+        let info = compiler.class(c);
+        if let Some(&sid) = info
+            .own_methods
+            .iter()
+            .find(|&&s| compiler.scope(s).name == name)
+        {
+            return Some(sid);
+        }
+        queue.extend(info.includes.iter().copied());
+        queue.extend(info.parent);
+    }
+    None
+}
+
 fn method_defined_fold(
     compiler: &Compiler,
     cref: &[ClassId],
@@ -1158,8 +1195,8 @@ fn method_defined_fold(
         }
         None => *cref.last()?,
     };
-    match compiler.method_in_chain(cls, &m) {
-        Some((_, sid)) => Some(compiler.scope(sid).visibility != Visibility::Private),
+    match compiled_method_in_chain(compiler, cls, &m) {
+        Some(sid) => Some(compiler.scope(sid).visibility != Visibility::Private),
         // `method_in_chain` holds COMPILED ruby methods, so native rows are not
         // in it -- neither a builtin's own nor the ones a USER class inherits
         // from Object/Kernel. Without the ancestor walk,
