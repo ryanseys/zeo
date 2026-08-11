@@ -637,7 +637,9 @@ pub(crate) fn try_lower(
 
     if let Some(ivr) = node.as_instance_variable_read_node() {
         let name = String::from_utf8_lossy(ivr.name().as_slice()).into_owned();
-        return Ok(Some(hir.push(HirNode::IvarRead(name.trim_start_matches('@').to_string()))));
+        return Ok(Some(hir.push(HirNode::IvarRead(
+            name.trim_start_matches('@').to_string(),
+        ))));
     }
 
     if let Some(ivw) = node.as_instance_variable_write_node() {
@@ -758,7 +760,7 @@ pub(crate) fn try_lower(
     }
     if let Some(nref) = node.as_numbered_reference_read_node() {
         return Ok(Some(hir.push(HirNode::LastMatchRef(LastMatch::Group(
-            nref.number() as usize
+            nref.number() as usize,
         )))));
     }
     // `` $` ``, `$&`, `$'` -- one node kind for all three, told apart by

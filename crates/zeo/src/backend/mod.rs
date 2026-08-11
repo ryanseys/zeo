@@ -1060,7 +1060,15 @@ pub fn build_binary(
     linkage: Linkage,
     gen_opt: GenOpt,
 ) -> Result<(), String> {
-    build_binary_incremental(rust_source, output, profile, runtime, linkage, gen_opt, None)
+    build_binary_incremental(
+        rust_source,
+        output,
+        profile,
+        runtime,
+        linkage,
+        gen_opt,
+        None,
+    )
 }
 
 /// [`build_binary`] with rustc INCREMENTAL state keyed by a stable program
@@ -1151,8 +1159,7 @@ pub fn build_binary_incremental(
     cmd.args(gen_opt.rustc_flags(profile));
     if let Some(key) = incremental_key {
         let dir = cache::incremental_dir(profile, runtime, linkage, gen_opt, key)?;
-        cmd.arg("-C")
-            .arg(format!("incremental={}", dir.display()));
+        cmd.arg("-C").arg(format!("incremental={}", dir.display()));
     }
     if linkage == Linkage::Static {
         // Arms the generated crate's mimalloc `#[global_allocator]` (see

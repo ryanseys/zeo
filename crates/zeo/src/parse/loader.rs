@@ -974,7 +974,14 @@ impl Loader {
             && resolve_require_relative(&feature, dir).is_ok()
         {
             return self
-                .splice_feature(hir, &feature, "require_relative", dir, file_idx, current_box)
+                .splice_feature(
+                    hir,
+                    &feature,
+                    "require_relative",
+                    dir,
+                    file_idx,
+                    current_box,
+                )
                 .map(Some);
         }
         // Inside `materialize_units`, a require whose target is a real file
@@ -1998,7 +2005,9 @@ fn spliced_may_raise_load_error(hir: &Hir, stmts: &[crate::hir::NodeId]) -> bool
     use crate::hir::HirNode;
     fn mentions(hir: &Hir, id: crate::hir::NodeId) -> bool {
         match &hir[id] {
-            HirNode::ClassRef(n) if matches!(n.as_str(), "LoadError" | "ScriptError" | "Exception") => {
+            HirNode::ClassRef(n)
+                if matches!(n.as_str(), "LoadError" | "ScriptError" | "Exception") =>
+            {
                 return true;
             }
             HirNode::QualifiedConstRead(_, n)

@@ -76,9 +76,9 @@ pub(crate) fn try_lower(
     }
 
     if let Some(s) = node.as_string_node() {
-        return Ok(Some(hir.push(HirNode::StringLit(vec![string_literal_part(
-            s.unescaped(),
-        )]))));
+        return Ok(Some(hir.push(HirNode::StringLit(vec![
+            string_literal_part(s.unescaped()),
+        ]))));
     }
 
     // `:"hello_#{x}"` -- an interpolated symbol is exactly its interpolated

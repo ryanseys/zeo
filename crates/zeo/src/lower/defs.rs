@@ -1010,7 +1010,9 @@ fn static_guard(node: &Node<'_>) -> Option<bool> {
         // it, and `analyze`'s `splice_decidable_ifs` folds the surviving
         // `if` with the whole-program view. Answering false here dropped
         // live branches (`if defined?(SomeDep)` with SomeDep loaded).
-        return ALWAYS_DEFINED_CONSTS.contains(&name.as_ref()).then_some(true);
+        return ALWAYS_DEFINED_CONSTS
+            .contains(&name.as_ref())
+            .then_some(true);
     }
     let call = node.as_call_node()?;
     let recv = call.receiver()?;
@@ -1051,9 +1053,9 @@ fn eval_static_class_self_guard(hir: &Hir, cond: NodeId) -> Option<bool> {
             // Same three-valued honesty as `static_guard`: only a
             // runtime-provided constant decides; an unknown name keeps the
             // runtime `if` rather than dropping a live branch.
-            HirNode::ClassRef(name) => {
-                ALWAYS_DEFINED_CONSTS.contains(&name.as_str()).then_some(true)
-            }
+            HirNode::ClassRef(name) => ALWAYS_DEFINED_CONSTS
+                .contains(&name.as_str())
+                .then_some(true),
             _ => None,
         },
         HirNode::Call {
@@ -3410,14 +3412,19 @@ fn apply_body_defaults_in_branches(
                 (*then_body, *else_body) = (t, e);
             }
         }
-        HirNode::CaseWhen { arms, else_body, .. } => {
+        HirNode::CaseWhen {
+            arms, else_body, ..
+        } => {
             let mut arms_bodies: Vec<Vec<NodeId>> = arms.iter().map(|(_, b)| b.clone()).collect();
             let mut e = else_body.clone();
             for b in &mut arms_bodies {
                 rewrite(hir, b);
             }
             rewrite(hir, &mut e);
-            if let HirNode::CaseWhen { arms, else_body, .. } = &mut hir[id] {
+            if let HirNode::CaseWhen {
+                arms, else_body, ..
+            } = &mut hir[id]
+            {
                 for (arm, b) in arms.iter_mut().zip(arms_bodies) {
                     arm.1 = b;
                 }

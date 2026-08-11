@@ -246,7 +246,11 @@ pub(crate) fn try_lower(
         if let Some((parent, name)) = dynamic_const_scope(&target)? {
             let scope = lower_node(result, hir, &parent)?;
             let value = lower_node(result, hir, &cpw.value())?;
-            return Ok(Some(hir.push(HirNode::DynConstWrite { scope, name, value })));
+            return Ok(Some(hir.push(HirNode::DynConstWrite {
+                scope,
+                name,
+                value,
+            })));
         }
         let (scope, name) = constant_path_scope_and_name(&target)?;
         let value = lower_node(result, hir, &cpw.value())?;

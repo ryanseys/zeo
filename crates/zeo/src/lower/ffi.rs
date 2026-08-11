@@ -4,8 +4,8 @@
 //! accessor-method synthesis, and the C type-name mapping shared by both.
 //! Split out of `parse/mod.rs`.
 
-use super::literals::assemble_i64;
 use super::PResult;
+use super::literals::assemble_i64;
 use crate::hir::{Hir, HirNode, NodeId, Params, Visibility};
 use ruby_prism::{Node, ParseResult};
 

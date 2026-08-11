@@ -1216,10 +1216,7 @@ pub fn emit_call(
         && let [new_id, old_id] = args
     {
         let cref_definee = {
-            let cid = cx
-                .defining_class
-                .unwrap_or(crate::compiler::OBJECT_CLASS)
-                .0;
+            let cid = cx.defining_class.unwrap_or(crate::compiler::OBJECT_CLASS).0;
             quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
         };
         let slf = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
@@ -1813,9 +1810,9 @@ pub fn emit_call(
     // runtime falls back to an ordinary (dynamic) class-method send.
     if class_target.is_some() {
         let recv_expr = emit_expr(cx, recv_id);
-        if let Some(tokens) =
-            emit_refined_call(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr)
-        {
+        if let Some(tokens) = emit_refined_call(
+            cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr,
+        ) {
             return tokens;
         }
     }
@@ -2377,14 +2374,12 @@ fn emit_reflect_dispatch(
         .iter()
         .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)));
     let blk = emit_block_option(cx, block, block_arg);
-    let pairs = cx
-        .compiler
-        .refinements_active_at(recv_id)
-        .into_iter()
-        .map(|(target, holder, singleton)| {
+    let pairs = cx.compiler.refinements_active_at(recv_id).into_iter().map(
+        |(target, holder, singleton)| {
             let (target, holder) = (target.0, holder.0);
             quote! { (zeo_rt::ClassId(#target), zeo_rt::ClassId(#holder), #singleton) }
-        });
+        },
+    );
     Some(wrap_dynamic_result(
         !no_block,
         quote! {
@@ -3815,8 +3810,7 @@ fn dispatch(
                 // tower matrix. A user redefinition suppressed a lane's
                 // fast path: its arm stays out and the shape rides the MRO
                 // walk, which reads the reopened row.
-                let int_entry =
-                    int_entry.filter(|_| !cx.compiler.redefined_int_ops.contains(name));
+                let int_entry = int_entry.filter(|_| !cx.compiler.redefined_int_ops.contains(name));
                 let int_arm = int_entry.map(|&(_, rt_fn, kind)| {
                     let func = format_ident!("{rt_fn}");
                     let call = match kind {

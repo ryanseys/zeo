@@ -1375,10 +1375,8 @@ fn splice_decidable_ifs(
                 // to fold strictly less. Sound here because the folded `If`
                 // never reaches the site's statement list, so registration
                 // and emission read the same spliced body.
-                let guarded: Vec<NodeId> =
-                    then_body.iter().chain(&else_body).copied().collect();
-                if let Some(taken) = static_top_cond(compiler, cond, &guarded, cref, box_id, true)
-                {
+                let guarded: Vec<NodeId> = then_body.iter().chain(&else_body).copied().collect();
+                if let Some(taken) = static_top_cond(compiler, cond, &guarded, cref, box_id, true) {
                     let branch = if taken { then_body } else { else_body };
                     out.extend(splice_decidable_ifs(compiler, &branch, cref, box_id));
                     continue;
@@ -2239,16 +2237,20 @@ fn static_top_cond(
                 .or_else(|| literal_class_name_is(compiler, *recv, *arg))
                 .or_else(|| literal_class_name_is(compiler, *arg, *recv))
         }
-        HirNode::And(l, r) => match static_top_cond(compiler, *l, guarded, cref, box_id, sibling_lag) {
-            Some(false) => Some(false),
-            Some(true) => static_top_cond(compiler, *r, guarded, cref, box_id, sibling_lag),
-            None => None,
-        },
-        HirNode::Or(l, r) => match static_top_cond(compiler, *l, guarded, cref, box_id, sibling_lag) {
-            Some(true) => Some(true),
-            Some(false) => static_top_cond(compiler, *r, guarded, cref, box_id, sibling_lag),
-            None => None,
-        },
+        HirNode::And(l, r) => {
+            match static_top_cond(compiler, *l, guarded, cref, box_id, sibling_lag) {
+                Some(false) => Some(false),
+                Some(true) => static_top_cond(compiler, *r, guarded, cref, box_id, sibling_lag),
+                None => None,
+            }
+        }
+        HirNode::Or(l, r) => {
+            match static_top_cond(compiler, *l, guarded, cref, box_id, sibling_lag) {
+                Some(true) => Some(true),
+                Some(false) => static_top_cond(compiler, *r, guarded, cref, box_id, sibling_lag),
+                None => None,
+            }
+        }
         _ => None,
     }
 }
@@ -3341,17 +3343,17 @@ fn register_class(
                         // payload objects.
                         let subclassable = zeo_abi::is_payload_root(cid)
                             || matches!(
-                            cid,
-                            // `BasicObject`: the blank-slate root. Its subclass
-                            // is a plain ivar-carrying object with NO payload,
-                            // and the blank slate needs no special gate -- it
-                            // falls out of chain position alone, since CRuby
-                            // splices Kernel in as an ICLASS BETWEEN Object and
-                            // BasicObject (object.c:4550 -> class.c:1853) and
-                            // MRO walks only go up. So `[BO, BasicObject]` is
-                            // the whole ancestry and the Object/Kernel surface
-                            // is simply absent.
-                            BASIC_OBJECT_CLASS
+                                cid,
+                                // `BasicObject`: the blank-slate root. Its subclass
+                                // is a plain ivar-carrying object with NO payload,
+                                // and the blank slate needs no special gate -- it
+                                // falls out of chain position alone, since CRuby
+                                // splices Kernel in as an ICLASS BETWEEN Object and
+                                // BasicObject (object.c:4550 -> class.c:1853) and
+                                // MRO walks only go up. So `[BO, BasicObject]` is
+                                // the whole ancestry and the Object/Kernel surface
+                                // is simply absent.
+                                BASIC_OBJECT_CLASS
                                 // `CGI`: a plain `Object` subclass with no
                                 // payload of its own -- the escape methods are
                                 // all class methods -- so a subclass is an
@@ -3410,7 +3412,7 @@ fn register_class(
                                 // shape (`is_immediate_subclass`).
                                 | zeo_abi::BIGDECIMAL_CLASS
                                 | zeo_abi::METHOD_CLASS
-                        );
+                            );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(
                                 "subclassing the built-in type `{s}` isn't supported yet (zeo limitation, no generated Rust struct exists for it)"
@@ -3710,9 +3712,7 @@ fn register_class(
                 // Same unit rule as the instance half. `Protected` has no
                 // runtime class-method application path and no corpus case,
                 // so it keeps the static row even in a unit.
-                if compiler.unit_walk
-                    && !matches!(visibility, crate::hir::Visibility::Protected)
-                {
+                if compiler.unit_walk && !matches!(visibility, crate::hir::Visibility::Protected) {
                     compiler.runtime_patches.insert(name.clone());
                     compiler.class_body_sites[site_idx].stmts.push(stmt);
                 } else {

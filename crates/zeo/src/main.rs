@@ -413,7 +413,9 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         return Err("--run executes the program instead of writing a binary; drop -o".to_string());
     }
     if run && compile {
-        return Err("--run executes the program instead of writing a binary; drop --compile".into());
+        return Err(
+            "--run executes the program instead of writing a binary; drop --compile".into(),
+        );
     }
     // `--compile` names the binary after the input file, which `-e` lacks.
     if compile && matches!(source, Source::Eval(_)) {

@@ -405,7 +405,10 @@ fn static_string(
             args,
             ..
         } if name == "[]" && args.len() == 2 => {
-            let [crate::hir::ArrayElem::Single(a0), crate::hir::ArrayElem::Single(a1)] = args[..]
+            let [
+                crate::hir::ArrayElem::Single(a0),
+                crate::hir::ArrayElem::Single(a1),
+            ] = args[..]
             else {
                 return None;
             };
@@ -418,7 +421,11 @@ fn static_string(
             if start > chars.len() {
                 return None; // nil in ruby -- not a string
             }
-            Some(chars[start..(start + len).min(chars.len())].iter().collect())
+            Some(
+                chars[start..(start + len).min(chars.len())]
+                    .iter()
+                    .collect(),
+            )
         }
         _ => None,
     }
@@ -1303,7 +1310,11 @@ fn call_fold(
                 return Some(false);
             }
             let platform = seeded_string_const("RUBY_PLATFORM")?;
-            Some(["mswin", "mingw", "cygwin"].iter().any(|w| platform.contains(w)))
+            Some(
+                ["mswin", "mingw", "cygwin"]
+                    .iter()
+                    .any(|w| platform.contains(w)),
+            )
         }
         // `unless !defined?(X::VERSION)` -- the pervasive reload guard. Only a
         // condition that folds on its own negates; anything else stays `None`.

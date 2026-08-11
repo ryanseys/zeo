@@ -164,10 +164,7 @@ pub fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
 /// way to trigger an old one).
 pub(crate) fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
     for &id in body {
-        if matches!(
-            hir[id],
-            HirNode::DefMethod { .. }
-        ) {
+        if matches!(hir[id], HirNode::DefMethod { .. }) {
             return Err(
                 "`eval` containing a top-level `def` isn't supported yet (zeo limitation)"
                     .to_string()

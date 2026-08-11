@@ -148,8 +148,7 @@ fn emit_if_statement(
         Some(false) => return emit_body_discard(cx, else_body),
         None => {}
     }
-    let cond_expr =
-        super::expr::box_if_object_typed(cx, cond, emit_expr(cx, cond));
+    let cond_expr = super::expr::box_if_object_typed(cx, cond, emit_expr(cx, cond));
     let then_stmts = emit_body_discard(cx, then_body);
     if else_body.is_empty() {
         return quote! { if (#cond_expr).truthy() { #then_stmts } };
@@ -403,8 +402,7 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
                 else_body,
             } = &cx.compiler.hir[stmt]
             {
-                let (cond, then_body, else_body) =
-                    (*cond, then_body.clone(), else_body.clone());
+                let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
                 return emit_if_statement(cx, cond, &then_body, &else_body);
             }
         }

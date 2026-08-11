@@ -1738,7 +1738,8 @@ impl Compiler {
         // Several roots can sit on one chain (the IO family); the walk
         // picks the NEAREST -- `class TCP < TCPSocket` seeds its payload
         // from `TCPSocket.new`, not from the `IO.new` four links further up.
-        self.superclass_chain(cid).find(|a| zeo_abi::is_payload_root(*a))
+        self.superclass_chain(cid)
+            .find(|a| zeo_abi::is_payload_root(*a))
     }
 
     /// Whether `cid`'s instances are the native `ValueSubclass`: a user
