@@ -339,7 +339,16 @@ pub fn const_set_at(
         .lock()
         .get(&owner_class_id)
         .is_some_and(|m| m.contains_key(name));
-    if already {
+    // A zeo-authored shim re-executing IS CRuby's `$LOADED_FEATURES` no-op:
+    // the loader gives every requiring unit its own copy of the shim body
+    // (rbconfig inside two lazily-loaded units), so the same virtual-path
+    // assignment can run twice. CRuby prints nothing there -- the second
+    // require never runs -- so neither does this. A redefinition from REAL
+    // code (different location) still warns.
+    let shim_rerun = file.starts_with("<zeo-shim>")
+        && const_location(owner_class_id, name, true)
+            .is_some_and(|(prev_file, prev_line)| prev_file == file && prev_line == line);
+    if already && !shim_rerun {
         // Line 1 carries the qualified name, line 2 the bare one, exactly as
         // CRuby prints them; the OLD location is read before the new record
         // overwrites it. A binding with no recorded location (a builtin) gets
