@@ -30,11 +30,7 @@ use calls::{lower_block, lower_block_like_params, lower_call_args};
 use consts::{
     box_rooted_path, constant_path_name,
 };
-use defs::{
-    const_holds_runtime_class, const_is_assigned, const_is_class_def, desugar_singleton_class_defs,
-    lower_class_body, lower_params, lower_runtime_class, lower_runtime_class_reopen,
-    runtime_class_body_is_expressible,
-};
+use defs::{const_is_assigned, lower_params};
 use eval_splice::{lower_box_eval, reject_top_level_defs, single_literal_string_arg};
 pub use literals::encoding_const_name;
 use literals::line_of;
@@ -160,7 +156,7 @@ pub(crate) fn names_enclosing_class(hir: &Hir, recv: &Node<'_>) -> bool {
 /// self` inside `class Switch`). Read as a dynamic superclass instead, the
 /// subclass is minted at runtime over a compiled parent, and its instances are
 /// name-keyed `DynObject`s the parent's own methods cannot run against.
-fn superclass_name(hir: &Hir, sc: &Node<'_>) -> PResult<String> {
+pub(crate) fn superclass_name(hir: &Hir, sc: &Node<'_>) -> PResult<String> {
     if sc.as_self_node().is_some() {
         return hir
             .enclosing_class()
@@ -212,6 +208,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // Constant reads/writes (bare, qualified paths, compound forms) live in
     // `consts.rs` -- see its `try_lower`.
     if let Some(id) = consts::try_lower(result, hir, node)? {
+        return Ok(id);
+    }
+
+    // `class`/`module`/`def`/`undef`/`class << obj` definitions live in
+    // `defs.rs` -- see its `try_lower_definition`.
+    if let Some(id) = defs::try_lower_definition(result, hir, node)? {
         return Ok(id);
     }
 
@@ -452,203 +454,6 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             block,
             block_arg: None,
         }));
-    }
-
-    if let Some(class) = node.as_class_node() {
-        let name = constant_path_name(&class.constant_path())?;
-        // A superclass that isn't a constant path (`class Point <
-        // Struct.new(:x, :y)`) names a class that only comes into existence at
-        // RUN time, so the subclass can't be one of the statically emitted
-        // Rust structs -- it has to be minted at runtime too. See
-        // `lower_runtime_class`.
-        if let Some(sc) = class.superclass() {
-            let runtime_parent = match superclass_name(hir, &sc) {
-                // Not a constant path at all (`< Struct.new(:x)`).
-                Err(_) => true,
-                // A constant path that holds a runtime class VALUE (`Base =
-                // Class.new` earlier in the file) rather than naming a
-                // compile-time one -- the subclass has to be built at runtime
-                // for the same reason. A name that is also a `class`
-                // definition stays on the static path.
-                Ok(n) => {
-                    (const_is_assigned(hir, &n)
-                        || crate::lower::defs::qualified_const_mints_runtime_class(hir, &n))
-                        && !const_is_class_def(hir, &n)
-                }
-            };
-            if runtime_parent {
-                return lower_runtime_class(result, hir, &name, &sc, class.body());
-            }
-        } else if const_holds_runtime_class(hir, &name)
-            && !const_is_class_def(hir, &name)
-            && runtime_class_body_is_expressible(class.body())
-        {
-            // No superclass clause, and the name holds a runtime class value
-            // (`D = Data.define(:x)`) -- this REOPENS that class rather than
-            // defining a new one, so it lowers to a runtime reopen instead of
-            // a `ClassDef` the static path would register as a fresh
-            // (memberless) class.
-            //
-            // A body the runtime form can't express falls back to the STATIC
-            // path rather than erroring: a constant alias to a builtin
-            // (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`) is a
-            // real Ruby shape the static path at least compiles, and turning
-            // a program that ran into one that won't build is a worse
-            // failure than the one it already had.
-            return lower_runtime_class_reopen(result, hir, &name, class.body());
-        }
-        let superclass = match class.superclass() {
-            None => None,
-            Some(sc) => Some(superclass_name(hir, &sc)?),
-        };
-        let body = lower_class_body(
-            result,
-            hir,
-            class.body(),
-            superclass.as_deref(),
-            Some(&name),
-        )?;
-        hir.record_class_def(&name);
-        return Ok(hir.push(HirNode::ClassDef {
-            name,
-            superclass,
-            body,
-            is_module: false,
-        }));
-    }
-
-    // `module Name ... end` -- see `HirNode::ClassDef`'s docs for why this
-    // shares the same node as `class`. Nested modules/namespaced constant
-    // paths (`module Foo::Bar`) aren't supported yet (zeo limitation, matching
-    // today's existing top-level-only class restriction) -- `constant_name`
-    // already rejects anything but a plain `ConstantReadNode`.
-    if let Some(module) = node.as_module_node() {
-        let name = constant_path_name(&module.constant_path())?;
-        let body = lower_class_body(result, hir, module.body(), None, Some(&name))?;
-        hir.record_class_def(&name);
-        return Ok(hir.push(HirNode::ClassDef {
-            name,
-            superclass: None,
-            body,
-            is_module: true,
-        }));
-    }
-
-    // `undef :a, :b` in EXPRESSION position -- reached when a class-body
-    // `undef` sits under a guard zeo can't decide at compile time
-    // (`undef :to_a if respond_to?(:to_a)`, drb). `HirNode::Undef` records a
-    // compile-time fact and has no value form, so this becomes the runtime
-    // send the guard can actually gate: `undef_method` on the class body's
-    // `self`, whose overlay tombstone terminates lookup exactly as the static
-    // form's does. The unguarded statement form still takes the static path
-    // (`lower::defs::lower_class_body_statement`).
-    if let Some(undef) = node.as_undef_node() {
-        let args = undef
-            .names()
-            .iter()
-            .map(|n| {
-                let name = defs::alias_target_name(&n)?;
-                Ok(ArrayElem::Single(hir.push(HirNode::SymbolLit(name))))
-            })
-            .collect::<PResult<Vec<_>>>()?;
-        let send = hir.push(HirNode::Call {
-            receiver: None,
-            name: "undef_method".to_string(),
-            args,
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        });
-        // `Module#undef_method` answers the module; the `undef` KEYWORD answers
-        // nil. The send is the mechanism, not the value -- so the value is
-        // written back to the keyword's own.
-        let nil = hir.push(HirNode::NilLit);
-        return Ok(hir.push(HirNode::Seq(vec![send, nil])));
-    }
-
-    if let Some(def) = node.as_def_node() {
-        let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
-        // `def self.name` (`DefNode::receiver()` is `Some(SelfNode)`) is a
-        // class method; any OTHER explicit receiver (`def SomeConst.name`,
-        // reopening a class from outside its own body) is a clean rejection
-        // -- see `HirNode::DefMethod`'s docs.
-        let is_class_method = match def.receiver() {
-            None => false,
-            Some(r) if r.as_self_node().is_some() => true,
-            // `def SMTP.default_port` written INSIDE `class SMTP` is the older
-            // spelling of `def self.default_port` -- net/smtp uses it
-            // throughout -- so it has to register as a class method, not as a
-            // runtime per-object singleton the compile-time tables never see
-            // (a `class << self; alias a b` naming one couldn't resolve `b`).
-            Some(r) if names_enclosing_class(hir, &r) => true,
-            Some(r) => {
-                // `def obj.name` on a NON-`self` receiver -- a
-                // per-object singleton method. Desugar to a runtime install:
-                //   RECV.define_singleton_method(:name, ->(params) { body })
-                // A lambda body gives method-like strict arity and
-                // `return`-exits-the-method semantics; `define_singleton_method`
-                // rebinds `self` to RECV when the method runs (see
-                // `runtime_meta::dynamic_from_proc`). Documented divergence: a
-                // real `def` opens a FRESH scope, but the lambda closes over
-                // enclosing locals -- so a body referencing an enclosing local
-                // reads it here rather than raising `NameError` (rare; the
-                // common `@ivar`/param/`self` uses are exact).
-                let recv = lower_node(result, hir, &r)?;
-                let params = lower_params(result, hir, def.parameters())?;
-                let body = lower_body(result, hir, def.body())?;
-                // A method-body lambda: its `yield`/`block_given?`/`&block`
-                // reach the block the METHOD is called with, threaded through
-                // `ProcData`'s call-site block slot (see `HirNode::Lambda`'s
-                // `method_body`).
-                let lambda = hir.push(HirNode::Lambda {
-                    params,
-                    body,
-                    method_body: true,
-                });
-                let sym = hir.push(HirNode::SymbolLit(name));
-                return Ok(hir.push(HirNode::Call {
-                    receiver: Some(recv),
-                    name: "define_singleton_method".to_string(),
-                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
-                    kwargs: vec![],
-                    block: None,
-                    block_arg: None,
-                    safe: false,
-                }));
-            }
-        };
-        let params = lower_params(result, hir, def.parameters())?;
-        let body = lower_body(result, hir, def.body())?;
-        return Ok(hir.push(HirNode::DefMethod {
-            name,
-            params,
-            body,
-            is_class_method,
-            // Only `lower_class_body_statement`'s own class-body-scoped
-            // default-visibility tracking ever produces non-`Public` --
-            // this generic path is reached for a top-level/nested `def`, or
-            // one appearing as an ARGUMENT expression (`private def foo;
-            // end` lowers its inner `def` through here, then
-            // `lower_class_body_statement` retroactively mutates this same
-            // node's `visibility` field once it sees the enclosing call).
-            visibility: Visibility::Public,
-            is_def: true,
-        }));
-    }
-
-    // `class << obj` at expression/statement position -- top level or
-    // inside a method body. Desugars to a sequence of per-object
-    // `define_singleton_method` installs on the receiver; its value is the last
-    // (Ruby's own rule, the last `def`'s symbol). `class << self` takes the
-    // same route: the receiver lowers to `self` -- `main` at the top level, or
-    // a method's own receiver inside a body -- and the runtime install attaches
-    // the singleton to whatever object that is. (A `class << self` inside a
-    // CLASS body is handled earlier by `lower_class_body`, defining class
-    // methods; this generic path is only top-level/method-body.)
-    if let Some(singleton) = node.as_singleton_class_node() {
-        let stmts = desugar_singleton_class_defs(result, hir, &singleton)?;
-        return Ok(hir.push(HirNode::Seq(stmts)));
     }
 
     if let Some(call) = node.as_call_node() {
