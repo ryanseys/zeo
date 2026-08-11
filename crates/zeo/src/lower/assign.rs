@@ -5,8 +5,8 @@
 //! generalized multi-assignment target shape. Split out of `parse/mod.rs`.
 
 use super::consts::constant_path_name;
-use super::{PResult, lower_node};
-use crate::hir::{ArrayElem, Hir, HirNode, NodeId};
+use super::{PResult, cvar_read, cvar_write, lower_node};
+use crate::hir::{ArrayElem, Hir, HirNode, LastMatch, NodeId};
 use ruby_prism::{Node, ParseResult};
 
 /// The lvalue "storage kind" a compound-assignment (`+=`)/`||=`/`&&=`
@@ -604,4 +604,321 @@ pub(crate) fn lower_multi_target_group(
         splat,
         after,
     })
+}
+
+/// The assignment family of [`super::lower_node_inner`]'s recognizer chain:
+/// variable reads/writes for every storage kind (local, `it`, ivar, cvar,
+/// gvar, the `$1`/`` $` `` match references), the compound-assignment forms
+/// (`+=`/`||=`/`&&=`) over each of them plus `obj.attr`/`arr[i]` targets,
+/// and multi-assignment. `Ok(None)` = not this family's node.
+pub(crate) fn try_lower(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+) -> PResult<Option<NodeId>> {
+    if let Some(lvr) = node.as_local_variable_read_node() {
+        let name = String::from_utf8_lossy(lvr.name().as_slice()).into_owned();
+        return Ok(Some(hir.push(HirNode::LocalRead(name))));
+    }
+
+    // A bare `it` inside a block body (implicit-parameter sugar, distinct
+    // from an ordinary local read at the `ruby-prism` level) -- matches the
+    // synthesized `it` required-param name `lower_block` binds for
+    // `ItParametersNode` blocks.
+    if node.as_it_local_variable_read_node().is_some() {
+        return Ok(Some(hir.push(HirNode::LocalRead("it".to_string()))));
+    }
+
+    if let Some(lvw) = node.as_local_variable_write_node() {
+        let name = String::from_utf8_lossy(lvw.name().as_slice()).into_owned();
+        let value = lower_node(result, hir, &lvw.value())?;
+        return Ok(Some(hir.push(HirNode::LocalWrite(name, value))));
+    }
+
+    if let Some(ivr) = node.as_instance_variable_read_node() {
+        let name = String::from_utf8_lossy(ivr.name().as_slice()).into_owned();
+        return Ok(Some(hir.push(HirNode::IvarRead(name.trim_start_matches('@').to_string()))));
+    }
+
+    if let Some(ivw) = node.as_instance_variable_write_node() {
+        let name = String::from_utf8_lossy(ivw.name().as_slice()).into_owned();
+        let value = lower_node(result, hir, &ivw.value())?;
+        return Ok(Some(hir.push(HirNode::IvarWrite(
+            name.trim_start_matches('@').to_string(),
+            value,
+        ))));
+    }
+
+    // `x += 1` / `@x += 1` / `@@x += 1` / `$x += 1` / `X += 1` -- desugars to
+    // a plain read-operator-write, e.g. `x = x + 1`, reusing the existing
+    // `*Read`/`*Write` + operator `Call` dispatch infrastructure entirely (no
+    // new HIR node needed for the operator form itself, exactly like
+    // `unless`/ternary reuse `If`). `||=`/`&&=` desugar to `Or`/`And` over the
+    // same read/write pair (`a ||= b` is `a || (a = b)`, NOT `a = a || b` --
+    // the RHS/assignment must not even be EVALUATED when `a` is already
+    // truthy, which `HirNode::Or`'s existing short-circuit codegen already
+    // gives for free). See `Storage`'s docs for why every one of these five
+    // storage kinds shares this one desugar instead of five near-identical
+    // repetitions.
+    if let Some(op) = node.as_local_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_compound_op_write(
+            hir,
+            Storage::Local(name),
+            op_name,
+            rhs,
+        )));
+    }
+    if let Some(op) = node.as_local_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_and_write(hir, Storage::Local(name), rhs)));
+    }
+    if let Some(op) = node.as_local_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_or_write(hir, Storage::Local(name), rhs)));
+    }
+    if let Some(op) = node.as_instance_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_compound_op_write(
+            hir,
+            Storage::Ivar(name),
+            op_name,
+            rhs,
+        )));
+    }
+    if let Some(op) = node.as_instance_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_and_write(hir, Storage::Ivar(name), rhs)));
+    }
+    if let Some(op) = node.as_instance_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_or_write(hir, Storage::Ivar(name), rhs)));
+    }
+    if let Some(op) = node.as_class_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_compound_op_write(
+            hir,
+            Storage::ClassVar(name),
+            op_name,
+            rhs,
+        )));
+    }
+    if let Some(op) = node.as_class_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_and_write(hir, Storage::ClassVar(name), rhs)));
+    }
+    if let Some(op) = node.as_class_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_or_write(hir, Storage::ClassVar(name), rhs)));
+    }
+    if let Some(op) = node.as_global_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_compound_op_write(
+            hir,
+            Storage::Global(name),
+            op_name,
+            rhs,
+        )));
+    }
+    if let Some(op) = node.as_global_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_and_write(hir, Storage::Global(name), rhs)));
+    }
+    if let Some(op) = node.as_global_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(Some(lower_or_write(hir, Storage::Global(name), rhs)));
+    }
+    if let Some(nref) = node.as_numbered_reference_read_node() {
+        return Ok(Some(hir.push(HirNode::LastMatchRef(LastMatch::Group(
+            nref.number() as usize
+        )))));
+    }
+    // `` $` ``, `$&`, `$'` -- one node kind for all three, told apart by
+    // name. (`$~` itself arrives as an ordinary global read, handled below.)
+    if let Some(bref) = node.as_back_reference_read_node() {
+        let name = String::from_utf8_lossy(bref.name().as_slice()).into_owned();
+        let which = match name.as_str() {
+            "$&" => LastMatch::Group(0),
+            "$`" => LastMatch::Pre,
+            "$'" => LastMatch::Post,
+            "$+" => LastMatch::LastGroup,
+            other => {
+                return Err(format!(
+                    "the `{other}` back-reference global isn't supported yet (zeo limitation)"
+                )
+                .into());
+            }
+        };
+        return Ok(Some(hir.push(HirNode::LastMatchRef(which))));
+    }
+    if let Some(gvr) = node.as_global_variable_read_node() {
+        let name = String::from_utf8_lossy(gvr.name().as_slice()).into_owned();
+        // `$~` reads the last-match slot, not the `$foo` table -- see
+        // `HirNode::LastMatchRef`.
+        if name == "$~" {
+            return Ok(Some(hir.push(HirNode::LastMatchRef(LastMatch::Data))));
+        }
+        return Ok(Some(hir.push(HirNode::GlobalRead(name))));
+    }
+    if let Some(gvw) = node.as_global_variable_write_node() {
+        let name = String::from_utf8_lossy(gvw.name().as_slice()).into_owned();
+        let value = lower_node(result, hir, &gvw.value())?;
+        return Ok(Some(hir.push(HirNode::GlobalWrite(name, value))));
+    }
+    if let Some(op) = node.as_call_operator_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`+=` on a method call with no receiver isn't supported (zeo limitation)")?;
+        let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
+        let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
+        let combined = hir.push(HirNode::Call {
+            receiver: Some(read_call),
+            name: op_name,
+            args: vec![ArrayElem::Single(rhs)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        });
+        let write_call = build_call_target_write(hir, &tmp, &write_name, combined);
+        return Ok(Some(hir.push(HirNode::Seq(vec![bind, write_call]))));
+    }
+    if let Some(op) = node.as_call_and_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`&&=` on a method call with no receiver isn't supported (zeo limitation)")?;
+        let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
+        let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
+        let write_call = build_call_target_write(hir, &tmp, &write_name, rhs);
+        let and_node = hir.push(HirNode::And(read_call, write_call));
+        return Ok(Some(hir.push(HirNode::Seq(vec![bind, and_node]))));
+    }
+    if let Some(op) = node.as_call_or_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`||=` on a method call with no receiver isn't supported (zeo limitation)")?;
+        let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
+        let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
+        let write_call = build_call_target_write(hir, &tmp, &write_name, rhs);
+        let or_node = hir.push(HirNode::Or(read_call, write_call));
+        return Ok(Some(hir.push(HirNode::Seq(vec![bind, or_node]))));
+    }
+
+    // `arr[i] += rhs` / `arr[i] ||= rhs` / `arr[i] &&= rhs` -- same
+    // evaluate-once reasoning as the `obj.attr` forms above, extended to
+    // BOTH the receiver and the (single) index argument (`arr[compute_idx()]
+    // += 1` must call `compute_idx()` exactly once too). See
+    // `bind_index_target_once`'s docs.
+    if let Some(op) = node.as_index_operator_write_node() {
+        let recv = op.receiver().ok_or(
+            "`+=` on an indexing expression with no receiver isn't supported (zeo limitation)",
+        )?;
+        let idx = index_arguments(op.arguments())?;
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (binds, read_call, recv_tmp, idx_tmps) =
+            bind_index_target_once(result, hir, &recv, &idx)?;
+        let combined = hir.push(HirNode::Call {
+            receiver: Some(read_call),
+            name: op_name,
+            args: vec![ArrayElem::Single(rhs)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        });
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, combined);
+        let mut stmts = binds;
+        stmts.push(write_call);
+        return Ok(Some(hir.push(HirNode::Seq(stmts))));
+    }
+    if let Some(op) = node.as_index_and_write_node() {
+        let recv = op.receiver().ok_or(
+            "`&&=` on an indexing expression with no receiver isn't supported (zeo limitation)",
+        )?;
+        let idx = index_arguments(op.arguments())?;
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (binds, read_call, recv_tmp, idx_tmps) =
+            bind_index_target_once(result, hir, &recv, &idx)?;
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, rhs);
+        let and_node = hir.push(HirNode::And(read_call, write_call));
+        let mut stmts = binds;
+        stmts.push(and_node);
+        return Ok(Some(hir.push(HirNode::Seq(stmts))));
+    }
+    if let Some(op) = node.as_index_or_write_node() {
+        let recv = op.receiver().ok_or(
+            "`||=` on an indexing expression with no receiver isn't supported (zeo limitation)",
+        )?;
+        let idx = index_arguments(op.arguments())?;
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (binds, read_call, recv_tmp, idx_tmps) =
+            bind_index_target_once(result, hir, &recv, &idx)?;
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, rhs);
+        let or_node = hir.push(HirNode::Or(read_call, write_call));
+        let mut stmts = binds;
+        stmts.push(or_node);
+        return Ok(Some(hir.push(HirNode::Seq(stmts))));
+    }
+
+    if let Some(cvar) = node.as_class_variable_read_node() {
+        let name = String::from_utf8_lossy(cvar.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        return Ok(Some(cvar_read(hir, name)));
+    }
+
+    if let Some(cvar) = node.as_class_variable_write_node() {
+        let name = String::from_utf8_lossy(cvar.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let value = lower_node(result, hir, &cvar.value())?;
+        return Ok(Some(cvar_write(hir, name, value)));
+    }
+
+    // `a, b = 1, 2` / `a, *b, c = arr` / `(a, b), @x, $y, Z, obj.attr, arr[i]
+    // = ...` -- see `MultiTargetGroup`/`lower_multi_target`'s docs for the
+    // full generalized target shape.
+    if let Some(mw) = node.as_multi_write_node() {
+        let targets = lower_multi_target_group(result, hir, mw.lefts(), mw.rest(), mw.rights())?;
+        let value = lower_node(result, hir, &mw.value())?;
+        return Ok(Some(hir.push(HirNode::MultiWrite { targets, value })));
+    }
+
+    Ok(None)
 }
