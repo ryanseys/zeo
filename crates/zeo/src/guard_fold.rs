@@ -1137,6 +1137,19 @@ fn method_defined_fold(
                 {
                     return Some(true);
                 }
+                // The singleton also inherits every instance method of
+                // `Class` (or `Module` for a module) -- `.method_defined?
+                // (:new)` is TRUE for every class, which is exactly the
+                // probe rbs writes. Presence answers; absence stays
+                // undecided, as above.
+                let meta = if compiler.class(cls).is_module {
+                    crate::compiler::MODULE_CLASS
+                } else {
+                    crate::compiler::CLASS_CLASS
+                };
+                if builtin_provides_instance_method(compiler, meta, &m) == Some(true) {
+                    return Some(true);
+                }
                 return None;
             }
             // Any constant-shaped receiver, not just a bare `ClassRef` --
