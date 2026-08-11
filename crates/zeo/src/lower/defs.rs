@@ -3315,8 +3315,90 @@ fn lower_class_body_statement(
         out.push(id);
         return Ok(());
     }
-    out.push(lower_node(result, hir, node)?);
+    // A `def` nested in a RUNTIME-undecidable `if`/`case` branch still runs
+    // under the body's running visibility default and `module_function` mode
+    // -- CRuby applies both when the branch executes. The statically-foldable
+    // guard was peeled above; here the guard stays, so the promotion rewrites
+    // the lowered branches IN PLACE: under `module_function` the def turns
+    // private and its module-method twin joins it inside the same branch,
+    // making the twin exactly as conditional as the def it copies
+    // (rspec-support's `RubyFeatures.ripper_supported?` is the corpus case).
+    let id = lower_node(result, hir, node)?;
+    if *module_function || *visibility != Visibility::Public {
+        apply_body_defaults_in_branches(hir, id, *visibility, *module_function);
+    }
+    out.push(id);
     Ok(())
+}
+
+/// Applies the class body's running `visibility` default and `module_function`
+/// mode to every instance `def` in `id`'s `if`/`case` branches, recursively --
+/// see the call site above for why. Statements other than branch containers
+/// and defs pass through untouched.
+fn apply_body_defaults_in_branches(
+    hir: &mut Hir,
+    id: NodeId,
+    visibility: Visibility,
+    module_function: bool,
+) {
+    let rewrite = |hir: &mut Hir, stmts: &mut Vec<NodeId>| {
+        let mut out = Vec::with_capacity(stmts.len());
+        for &sid in stmts.iter() {
+            match &hir[sid] {
+                HirNode::DefMethod {
+                    is_class_method: false,
+                    ..
+                } => {
+                    if module_function {
+                        promote_to_module_function(hir, sid, &mut out);
+                        continue;
+                    }
+                    hir.set_method_visibility(sid, visibility);
+                    out.push(sid);
+                }
+                HirNode::If { .. } | HirNode::CaseWhen { .. } => {
+                    apply_body_defaults_in_branches(hir, sid, visibility, module_function);
+                    out.push(sid);
+                }
+                _ => out.push(sid),
+            }
+        }
+        *stmts = out;
+    };
+    match &hir[id] {
+        HirNode::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            let (mut t, mut e) = (then_body.clone(), else_body.clone());
+            rewrite(hir, &mut t);
+            rewrite(hir, &mut e);
+            if let HirNode::If {
+                then_body,
+                else_body,
+                ..
+            } = &mut hir[id]
+            {
+                (*then_body, *else_body) = (t, e);
+            }
+        }
+        HirNode::CaseWhen { arms, else_body, .. } => {
+            let mut arms_bodies: Vec<Vec<NodeId>> = arms.iter().map(|(_, b)| b.clone()).collect();
+            let mut e = else_body.clone();
+            for b in &mut arms_bodies {
+                rewrite(hir, b);
+            }
+            rewrite(hir, &mut e);
+            if let HirNode::CaseWhen { arms, else_body, .. } = &mut hir[id] {
+                for (arm, b) in arms.iter_mut().zip(arms_bodies) {
+                    arm.1 = b;
+                }
+                *else_body = e;
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
