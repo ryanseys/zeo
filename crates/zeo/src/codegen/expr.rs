@@ -448,6 +448,23 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
+    // `defined?(@@x)` is "class variable" only if the cvar is set AT THIS
+    // MOMENT, checked at runtime like `defined?(@iv)` above -- a static
+    // answer breaks every runs-once guard of the shape
+    // `unless defined?(@@configured) ... @@configured = true` (rspec's
+    // `ensure_example_groups_are_configured`, which wires the mock adapter
+    // into ExampleGroup exactly once, on the FIRST `describe`).
+    if let HirNode::ClassVarRead(name) = &cx.compiler.hir[id] {
+        let owner = cvar_owner_id(cx, name);
+        let name = name.as_str();
+        return quote! {
+            if zeo_rt::cvar_defined(#owner, #name) {
+                zeo_rt::RubyValue::Str(zeo_rt::string_new("class variable".to_string()))
+            } else {
+                zeo_rt::RubyValue::Nil
+            }
+        };
+    }
     let classification: Option<&str> = match &cx.compiler.hir[id] {
         HirNode::LocalRead(name) => {
             if cx.local_types.contains_key(name) {
@@ -456,7 +473,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
                 None
             }
         }
-        HirNode::ClassVarRead(_) => Some("class variable"),
+        // Handled by the runtime check above.
+        HirNode::ClassVarRead(_) => unreachable!("defined?(@@x) returned early"),
         // A constant reference classifies as `"constant"` only when it
         // provably resolves at compile time; an unresolvable `Scope::NAME`/
         // bare-`NAME` answers `nil` (CRuby's `defined?` on a missing constant).
