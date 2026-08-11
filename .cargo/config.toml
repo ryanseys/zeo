@@ -5,14 +5,10 @@ xtask = "run --package xtask --"
 # shells out to without a `--jobs` of their own (`dist`, `stage-publish`, and
 # the one-off `cargo build -p zeo` each sweep does before it starts).
 #
-# The same reasoning as `zeo::backend::job_cap`, which caps the nested cargo it
-# drives at `min(cores, 6)`: `[profile.release] codegen-units = 1` makes every
-# crate one whole-crate LLVM module -- the fattest rustc configuration there is
-# -- and the runtime's graph carries `bindgen`, `clang-sys`, `syn`,
-# `regex-automata` and `jiff`. At this machine's full width that is enough
-# concurrent rustc to exhaust 16 GB. `job_cap` only ever governed the builds
-# zeo itself launches; this covers the rest.
-#
-# Raise it on a machine with the headroom (`CARGO_BUILD_JOBS` overrides).
+# Two cores of headroom, same reasoning as `zeo::backend::job_cap`. The old
+# hard cap of 6 existed for `[profile.release] codegen-units = 1`, which made
+# every crate one whole-crate LLVM module; the workspace builds at
+# codegen-units 16 now, so per-rustc memory peaks no longer threaten a 16 GB
+# box at this width. (`CARGO_BUILD_JOBS` overrides either way.)
 [build]
-jobs = 6
+jobs = 10

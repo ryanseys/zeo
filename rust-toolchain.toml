@@ -1,0 +1,4 @@
+# Pinned so an ambient toolchain switch can't silently invalidate the entire
+# target/ tree (mise.toml pins the same version for mise users).
+[toolchain]
+channel = "1.97.1"

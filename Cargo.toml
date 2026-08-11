@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/zeo",
     "crates/zeo-abi",
@@ -152,9 +152,28 @@ debug = "line-tables-only"
 opt-level = 1
 debug = "line-tables-only"
 
+# Package overrides never reach build scripts or proc-macros, so without these
+# `zeo-macros` (240 ruby_class! expansions over the whole runtime), zeo's
+# build.rs (parses and hashes megabytes per rerun), bindgen and openssl-src's
+# driver all ran at -O0 on every rebuild in every target dir.
+[profile.dev.build-override]
+opt-level = 2
+
+[profile.release.build-override]
+opt-level = 2
+
+# codegen-units 16 everywhere: at 1, zeo-rt (114k lines) was a single LLVM
+# module -- one thread for minutes, with a memory peak that forced the 6-job
+# caps in .cargo/config.toml and backend::job_cap. Registry installs already
+# built zeo-rt at 16 (in the anchor workspace it is a dependency, so the
+# package."*" override applied); the dev tree now matches. Shipped binaries
+# get single-unit optimization back through [profile.dist].
 [profile.release]
 strip = "symbols"
-codegen-units = 1
-
-[profile.release.package."*"]
 codegen-units = 16
+
+# `xtask dist` artifacts only: maximum optimization, paid once per release.
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+lto = "thin"

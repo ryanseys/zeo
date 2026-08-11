@@ -165,14 +165,17 @@ fn run(
     }
 
     // -- bin/zeo -----------------------------------------------------------
-    let mut build = vec!["build", "--release", "-p", "zeo"];
+    // The `dist` profile (root Cargo.toml): single-codegen-unit + thin LTO,
+    // the maximum-optimization shape the everyday `release` profile gave up
+    // for build parallelism. Shipped artifacts pay it once per release.
+    let mut build = vec!["build", "--profile", "dist", "-p", "zeo"];
     if let Some(t) = target {
         build.extend(["--target", t]);
     }
-    run_cargo(root, &build, "build --release -p zeo")?;
+    run_cargo(root, &build, "build --profile dist -p zeo")?;
     let built = match target {
-        Some(t) => root.join("target").join(t).join("release/zeo"),
-        None => root.join("target/release/zeo"),
+        Some(t) => root.join("target").join(t).join("dist/zeo"),
+        None => root.join("target/dist/zeo"),
     };
     let bin_dir = stage.join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;

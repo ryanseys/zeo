@@ -68,10 +68,22 @@ fn main() {
              building from a source checkout, the full workspace is required."
         );
     };
-    std::fs::write(out_dir.join("class_surface.rs"), code).expect("writing class_surface.rs");
+    write_if_changed(&out_dir.join("class_surface.rs"), &code);
 
     render_rbconfig(manifest_dir, out_dir);
-    emit_compiler_fingerprint(manifest_dir, dev_tree);
+    emit_compiler_fingerprint(manifest_dir, dev_tree, &code);
+}
+
+/// Write only when the content actually differs. rustc's dep-info tracks the
+/// `include!`d `$OUT_DIR` files by mtime, so an identical rewrite would still
+/// recompile this whole crate every time the script re-runs -- and the script
+/// re-runs on every zeo-rt source edit, most of which don't touch a header.
+fn write_if_changed(path: &Path, content: &str) {
+    if std::fs::read_to_string(path).is_ok_and(|old| old == content) {
+        return;
+    }
+    std::fs::write(path, content)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
 }
 
 /// Project `CLASS_SURFACE` from the sibling zeo-rt sources: the core classes
@@ -171,7 +183,7 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
         !rendered.contains('@') || !rendered.contains("@RUBY"),
         "rbconfig.rb.in has an unsubstituted placeholder"
     );
-    std::fs::write(out_dir.join("rbconfig.rb"), rendered).expect("writing rbconfig.rb");
+    write_if_changed(&out_dir.join("rbconfig.rb"), &rendered);
 }
 
 fn target_os() -> String {
@@ -233,12 +245,17 @@ fn darwin_major() -> String {
 /// while any real compiler change still rolls it.
 ///
 /// Dev tree: this crate's sources (and this script), the shared front-end
-/// crates, the zeo-rt headers the surface projection reads, and the lockfile
-/// (a dep bump can change emission). Packaged crate: the crate's own sources
-/// -- which include the staged pregen surface -- plus the package version;
-/// sound because a published zeo pins its published zeo-rt at `=X.Y.Z`, so
-/// no other runtime-source variation can exist for this compiler.
-fn emit_compiler_fingerprint(manifest_dir: &Path, dev_tree: bool) {
+/// crates, the PROJECTED class surface, and the lockfile (a dep bump can
+/// change emission). The projection -- not the zeo-rt sources it was read
+/// from -- is what the compiler actually consumes, so a builtin BODY edit
+/// leaves the fingerprint (and this crate's rebuild state) untouched; the
+/// bin-cache still rolls for such an edit through the runtime artifact's
+/// len+mtime, which `generation_hash` folds separately. Packaged crate: the
+/// crate's own sources -- which include the staged pregen surface -- plus the
+/// package version; sound because a published zeo pins its published zeo-rt
+/// at `=X.Y.Z`, so no other runtime-source variation can exist for this
+/// compiler.
+fn emit_compiler_fingerprint(manifest_dir: &Path, dev_tree: bool, class_surface: &str) {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut fold = |bytes: &[u8]| {
         for &b in bytes {
@@ -247,14 +264,13 @@ fn emit_compiler_fingerprint(manifest_dir: &Path, dev_tree: bool) {
         }
     };
     fold(env!("CARGO_PKG_VERSION").as_bytes());
+    fold(class_surface.as_bytes());
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     let mut dirs = vec![manifest_dir.join("src")];
     if dev_tree {
         dirs.extend([
             manifest_dir.join("../zeo-dsl/src"),
             manifest_dir.join("../zeo-abi/src"),
-            manifest_dir.join("../zeo-rt/src/builtins"),
-            manifest_dir.join("../zeo-rt/src/ext"),
         ]);
     }
     for dir in dirs {

@@ -85,7 +85,7 @@ fn main() -> ExitCode {
             eprintln!(
                 "usage: cargo run -p xtask -- \
                  <bench|bless|compile-bench|prebuild-runtimes|stdlib-status|gem-compat|gem|\
-                 gem-probe|arity-oracle|method-census|stage-publish|dist|sweep>"
+                 gem-probe|gemtests|arity-oracle|method-census|stage-publish|dist|sweep>"
             );
             ExitCode::FAILURE
         }

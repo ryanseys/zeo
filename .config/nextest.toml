@@ -7,7 +7,7 @@
 # is sixteen. `e2e` is the largest suite by test count and was outside any
 # group until this -- it ran at full width, each test able to launch a rustc.
 [test-groups]
-golden = { max-threads = 8 }
+golden = { max-threads = 10 }
 
 # The default run is the DEV loop and stays fast: everything that compiles a
 # whole gem's require graph (minutes of rustc per case) is opted out here and
