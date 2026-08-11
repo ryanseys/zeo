@@ -9,10 +9,12 @@
 //!
 //! `Kernel#at_exit` handlers run in REVERSE registration order (CRuby's
 //! rule) after the top-level body finishes -- including via `exit` (see
-//! `kernel_exit`) and after an uncaught exception. An exception raised
-//! INSIDE a handler is swallowed after the remaining handlers run (CRuby
-//! reports it; a silent skip is this runtime's approximation --
-//! TODO(plan P-A): report through the exception-message machinery).
+//! `kernel_exit`) and after an uncaught exception. A handler can OVERRIDE
+//! the process exit status: `exit N` inside one sets it to N, an exception
+//! raised inside one is reported immediately and sets it to 1, and either
+//! way the remaining handlers still run -- the last override to happen
+//! wins (all CRuby rules, oracle-verified). Minitest reports test failures
+//! exactly this way (`exit code` inside its autorun handler).
 
 use crate::{RubyValue, Signal};
 
@@ -22,13 +24,25 @@ pub fn at_exit_register(handler: RubyValue) {
     AT_EXIT.lock().push(handler);
 }
 
-pub fn run_at_exit() {
+/// Drain the handlers; the status the last-run overriding handler chose,
+/// or `None` when no handler exited or raised.
+pub fn run_at_exit() -> Option<i32> {
+    let mut status = None;
     loop {
         let Some(h) = AT_EXIT.lock().pop() else { break };
         if let RubyValue::Proc(p) = h {
-            let _ = p.call(&[]);
+            if let Err(Signal::Raise(exc)) = p.call(&[]) {
+                status = Some(match crate::system_exit_status(&exc) {
+                    Some(code) => code,
+                    None => {
+                        crate::report_uncaught(&exc);
+                        1
+                    }
+                });
+            }
         }
     }
+    status
 }
 
 pub fn run_main<F>(body: F) -> Result<RubyValue, Signal>

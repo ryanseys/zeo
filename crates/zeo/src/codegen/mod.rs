@@ -2915,8 +2915,10 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                 });
             // `at_exit` handlers (reverse order), before uncaught-exception
             // reporting -- CRuby runs them on both the normal and the
-            // uncaught path. (`Kernel#exit` runs them itself.)
-            zeo_rt::run_at_exit();
+            // uncaught path. A handler may OVERRIDE the exit status
+            // (`exit N` / a raise inside one -- minitest reports failures
+            // this way); the override outranks whatever the body chose.
+            let __at_exit_status: Option<i32> = zeo_rt::run_at_exit();
             // Then the `ObjectSpace.define_finalizer` sweep: CRuby finalizes
             // every remaining object at exit, after `at_exit`.
             zeo_rt::run_finalizers();
@@ -2933,10 +2935,10 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                     // run above).
                     zeo_rt::Signal::Raise(__exc) => {
                         if let Some(__code) = zeo_rt::system_exit_status(&__exc) {
-                            std::process::exit(__code);
+                            std::process::exit(__at_exit_status.unwrap_or(__code));
                         }
                         zeo_rt::report_uncaught(&__exc);
-                        std::process::exit(1);
+                        std::process::exit(__at_exit_status.unwrap_or(1));
                     }
                     // `return` written at the top level ENDS the program,
                     // silently and successfully -- CRuby's rule. It reaches
@@ -2953,6 +2955,12 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
                         std::process::exit(1);
                     }
                 }
+            }
+            // A clean body still defers to a handler's override (`at_exit
+            // { exit 42 }` after a passing run exits 42 -- and after a
+            // FAILING minitest run, the nonzero code lands here).
+            if let Some(__code) = __at_exit_status {
+                std::process::exit(__code);
             }
         }
     };
