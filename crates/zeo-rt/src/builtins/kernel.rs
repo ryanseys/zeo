@@ -1625,8 +1625,19 @@ pub(crate) fn dynamic_require_relative(arg1: &RubyValue) -> Result<RubyValue, cr
     let absolutized = (!path.starts_with('/'))
         .then(crate::frames::current_location)
         .flatten()
-        .filter(|(file, _)| file.starts_with('/'))
-        .and_then(|(file, _)| Some(lexical_join(std::path::Path::new(file).parent()?, &path)));
+        .and_then(|(file, _)| {
+            // The MAIN file's frames carry its path AS GIVEN (`__FILE__`'s
+            // rule), so a relative one resolves against the process cwd first
+            // -- units register under canonical absolute spellings, and this
+            // is how `zeo tests/foo.rb` finds `tests/foo/…` targets.
+            let file = std::path::Path::new(file);
+            let file = if file.is_absolute() {
+                file.to_path_buf()
+            } else {
+                std::env::current_dir().ok()?.join(file)
+            };
+            Some(lexical_join(file.parent()?, &path))
+        });
     let Some(abs) = absolutized else {
         return dynamic_require(arg1);
     };
