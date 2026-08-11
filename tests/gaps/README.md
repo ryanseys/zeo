@@ -18,7 +18,7 @@ belong here — it belongs in a passing test that documents it.
 
 ## The XFAIL contract
 
-Each gap runs through `crates/zeo/tests/gaps.rs` (a `cargo test`/nextest target)
+Each gap runs through `crates/zeo-tests/tests/gaps.rs` (a `cargo test`/nextest target)
 in **`Mode::Xfail`**:
 
 - A gap that still **diverges** from its golden → the test **PASSES** (the
@@ -34,12 +34,14 @@ in **`Mode::Xfail`**:
   spinel corpus, and a spinel-origin gap re-promotes on its own the next time
   `scripts/import-spinel-corpus.sh` triages it.
 
-  A promoted file's goldens carry its OLD path (`gaps/foo.rb:12`), so re-bless
-  it in its new home right after: `ZEO_BLESS=1 cargo test -p zeo --test
-  examples -- foo`.
+  A promoted file's goldens carry its OLD path (`gaps/foo.rb:12`), and output
+  that embeds the file's own relative path (an rspec backtrace, a seed-driven
+  shuffle over example ids) shifts with the move — so re-bless it in its new
+  home right after: `cargo xtask bless foo`. If the source builds paths from
+  `__dir__`, adjust them for the shallower directory first.
 
 Both stdout **and stderr** are compared, byte-exactly, after the shared
-normalization in `crates/zeo/tests/support/golden.rs` (line endings, the
+normalization in `crates/zeo-tests/tests/support/golden.rs` (line endings, the
 source path, and object addresses — `0x` + 16 hex digits → `0xADDR`, since
 those are process-random on both sides).
 
@@ -49,17 +51,17 @@ The `.expected` is the **ruby 4.0.6 oracle** output (the target zeo must
 eventually produce). Record/refresh it with:
 
 ```sh
-ZEO_BLESS=1 cargo test -p zeo --test gaps          # all gaps
-ZEO_BLESS=1 cargo test -p zeo --test gaps -- foo   # one gap
+cargo xtask bless gap::   # all gaps (the filter is required by design)
+cargo xtask bless foo     # one gap
 ```
 
 ## Adding a gap
 
-Drop in `foo.rb`, then `ZEO_BLESS=1 cargo test -p zeo --test gaps -- foo` to
+Drop in `foo.rb`, then `cargo xtask bless foo` to
 capture its golden. If zeo already matches ruby, the test will tell you it's not
 a gap — put it in the corpus instead. New gaps usually arrive via
 `scripts/import-spinel-corpus.sh` (spinel triage).
 
 Keep at least one gap here: `datatest-stable` panics rather than reporting zero
 cases, so an empty directory breaks the suite. If the last one is ever fixed,
-retire `crates/zeo/tests/gaps.rs` and its `[[test]]` entry along with it.
+retire `crates/zeo-tests/tests/gaps.rs` and its `[[test]]` entry along with it.

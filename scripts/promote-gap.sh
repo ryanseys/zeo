@@ -32,4 +32,4 @@ done
 echo "promoted tests/gaps/$stem.rb -> tests/ (${#moved[@]} files: ${moved[*]})"
 
 echo "verifying it passes in the examples suite ..."
-( cd "$ROOT" && cargo test -p zeo --test examples -- "$stem" )
+( cd "$ROOT" && cargo test -p zeo-tests --test examples -- "$stem" )
