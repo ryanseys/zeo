@@ -159,7 +159,7 @@ pub(crate) fn lower_rescue_clauses(
         let (binding, copy_out) = match r.reference() {
             None => (None, None),
             Some(n) => {
-                let (name, copy) = rescue_binding_target(hir, &n)?;
+                let (name, copy) = rescue_binding_target(result, hir, &n)?;
                 (Some(name), copy)
             }
         };
@@ -233,7 +233,11 @@ pub(crate) fn lower_single_optional_argument(
 /// the target sees the exception before any of the clause's own code.
 ///
 /// Returns `(the local the machinery binds, the copy-out statement)`.
-fn rescue_binding_target(hir: &mut Hir, node: &Node<'_>) -> PResult<(String, Option<NodeId>)> {
+fn rescue_binding_target(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+) -> PResult<(String, Option<NodeId>)> {
     if let Some(t) = node.as_local_variable_target_node() {
         return Ok((
             String::from_utf8_lossy(t.name().as_slice()).into_owned(),
@@ -262,10 +266,57 @@ fn rescue_binding_target(hir: &mut Hir, node: &Node<'_>) -> PResult<(String, Opt
             name: String::from_utf8_lossy(t.name().as_slice()).into_owned(),
             value,
         })
+    } else if let Some(t) = node.as_call_target_node() {
+        // `rescue => obj.attr` -- an ordinary setter send, receiver evaluated
+        // when the clause fires (CRuby's timing; the copy-out runs first in
+        // the rescue body). `CallTargetNode::name()` is ALREADY the setter
+        // name (`:attr=`) -- same fact `lower_multi_target` records.
+        let receiver = lower_node(result, hir, &t.receiver())?;
+        let setter_name = String::from_utf8_lossy(t.name().as_slice()).into_owned();
+        hir.push(HirNode::Call {
+            receiver: Some(receiver),
+            name: setter_name,
+            args: vec![crate::hir::ArrayElem::Single(value)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        })
+    } else if let Some(t) = node.as_index_target_node() {
+        // `rescue => h[k]` -- `[]=` with the exception as the trailing
+        // argument; any index count, splats riding along, exactly as a
+        // multi-assignment index target.
+        let receiver = lower_node(result, hir, &t.receiver())?;
+        let mut args: Vec<crate::hir::ArrayElem> = Vec::new();
+        for a in t
+            .arguments()
+            .map(|a| a.arguments().iter().collect::<Vec<_>>())
+            .unwrap_or_default()
+        {
+            args.push(match a.as_splat_node() {
+                Some(s) => {
+                    let inner = s
+                        .expression()
+                        .ok_or("a bare `*` has no index expression to bind")?;
+                    crate::hir::ArrayElem::Splat(lower_node(result, hir, &inner)?)
+                }
+                None => crate::hir::ArrayElem::Single(lower_node(result, hir, &a)?),
+            });
+        }
+        args.push(crate::hir::ArrayElem::Single(value));
+        hir.push(HirNode::Call {
+            receiver: Some(receiver),
+            name: "[]=".to_string(),
+            args,
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        })
     } else {
         return Err(
-            "`rescue => target` supports a local, `@ivar`, `@@cvar`, `$global` or a constant \
-             (zeo limitation)"
+            "`rescue => target` supports a local, `@ivar`, `@@cvar`, `$global`, a constant, \
+             an `obj.attr` setter, or an `obj[key]` index (zeo limitation)"
                 .to_string()
                 .into(),
         );

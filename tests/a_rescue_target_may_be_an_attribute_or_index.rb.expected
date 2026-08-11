@@ -1,0 +1,6 @@
+rescued into attr
+ArgumentError
+"boom"
+rescued into index
+KeyError
+1
