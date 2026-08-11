@@ -2666,8 +2666,14 @@ fn codegen(analyzed: &Analyzed, sink: &mut ItemSink<'_>) -> std::io::Result<()> 
             ..cx.clone()
         };
         let body = hoisting::emit_hoisted_body_after_decls(&unit_cx, stmts, quote! {}, true);
+        // The unit's own top-level frame, like `main`'s `<main>` guard: its
+        // FILE is the unit's -- backtraces through a lazily-loaded file name
+        // that file (CRuby's shape), and a `require_relative` in its body
+        // absolutizes against ITS directory, not the main file's.
+        let unit_file = pooled_file(&format!("{absolute}.rb"));
         unit_fns.push(quote! {
             fn #ident() -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+                let __frame = zeo_rt::FrameGuard::push(#unit_file, "<top (required)>", 0, 0);
                 #body
             }
         });
