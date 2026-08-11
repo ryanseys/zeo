@@ -108,6 +108,17 @@ pub struct ProcData {
     /// what makes `#inspect` render `#<Proc:0x...(&:upcase) (lambda)>`
     /// instead of a source location. `None` for every other construction.
     origin: Option<crate::Symbol>,
+    /// The first enclosing-scope local this block captures (alphabetically),
+    /// or `None` for a capture-free body -- what `Ractor.new(&proc)` reads to
+    /// raise CRuby's Proc-isolation `ArgumentError` at the moment CRuby
+    /// raises it. The verdict is decided at COMPILE time (the capture set is
+    /// static) but must ride on the VALUE: a dynamic proc's creation site and
+    /// its `Ractor.new` site only meet at runtime. Self/ivar access is NOT
+    /// recorded: CRuby 4.0 isolates such a proc fine and only its ivar READS
+    /// fail inside the ractor (the process-shared divergence `ractor.rs`
+    /// documents). `None` for runtime-internal procs, which capture no Ruby
+    /// locals by construction.
+    outer_capture: Option<&'static str>,
     /// `.frozen?` state -- Procs are freezable ordinary objects in Ruby
     /// (freezing one changes nothing observable beyond the flag: no mutating
     /// methods exist), and `dup`/`clone` follow the standard flag rule via
@@ -161,6 +172,7 @@ impl RProc {
             binding: None,
             location: None,
             origin: None,
+            outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -184,6 +196,7 @@ impl RProc {
             binding: None,
             location: None,
             origin: None,
+            outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -229,6 +242,7 @@ impl RProc {
             binding: None,
             location: None,
             origin: None,
+            outer_capture: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -297,6 +311,21 @@ impl RProc {
             data.origin = Some(name);
         }
         self
+    }
+
+    /// Record the first outer local this block captures (see
+    /// `ProcData::outer_capture`). Appended at construction like `with_home`.
+    pub fn with_outer_capture(mut self, name: &'static str) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.outer_capture = Some(name);
+        }
+        self
+    }
+
+    /// The outer local that makes this proc non-isolable, if codegen found
+    /// one -- `Ractor.new`'s refusal evidence.
+    pub fn outer_capture(&self) -> Option<&'static str> {
+        self.0.outer_capture
     }
 
     /// The Symbol this proc was derived from, if any.
@@ -456,6 +485,7 @@ impl RProc {
             binding: self.0.binding.clone(),
             location: self.0.location,
             origin: self.0.origin,
+            outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -485,6 +515,7 @@ impl RProc {
             binding: self.0.binding.clone(),
             location: self.0.location,
             origin: self.0.origin,
+            outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -501,6 +532,7 @@ impl RProc {
             binding: self.0.binding.clone(),
             location: self.0.location,
             origin: self.0.origin,
+            outer_capture: self.0.outer_capture,
             frozen: std::sync::atomic::AtomicBool::new(frozen),
         }))
     }

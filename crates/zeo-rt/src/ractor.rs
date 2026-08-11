@@ -567,6 +567,17 @@ pub fn ractor_new(
         }
     };
     let body = block.as_proc_unchecked();
+    // A dynamic proc (`Ractor.new(&pred)`) refuses HERE, where CRuby's own
+    // Proc-isolation check runs -- a plain ArgumentError, message verbatim
+    // from ruby 4.0.6 (`proc.c`, `rb_proc_isolate`). A literal block never
+    // arrives with the tag: codegen already rejected it at compile time
+    // (the stricter-earlier check `emit_call`'s Ractor arm documents).
+    if let Some(outer) = body.outer_capture() {
+        return Err(raise_error(
+            "ArgumentError",
+            format!("can not isolate a Proc because it accesses outer variables ({outer})."),
+        ));
+    }
     let crossed: Vec<RubyValue> = args
         .iter()
         .map(|a| cross_graph(a, CrossMode::Copy).map_err(|(cls, msg)| raise_error(cls, msg)))

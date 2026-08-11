@@ -1839,48 +1839,63 @@ pub fn emit_call(
                 }
             }
         }
-        let Some(block_id) = block else {
-            if block_arg.is_some() {
-                return crate::codegen::unsupported(
-                    "`Ractor.new` requires a literal block (zeo limitation)",
-                );
+        let proc = match (block, block_arg) {
+            (Some(block_id), _) => {
+                let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+                    panic!(
+                        "internal error: a Block node should only be reached via the Call that invokes it"
+                    );
+                };
+                let block_caps =
+                    super::captures::block_captures(cx.compiler, params, body, cx.self_class());
+                // `block_captures` reports every referenced non-param
+                // name, INCLUDING the block's own locals (`msg =
+                // Ractor.receive` -- found the hard way). An outer-scope
+                // access is a name that's either a genuine shared
+                // capture (in `cx.captured_locals`) or one this block
+                // never assigns itself (an enclosing param/block-local).
+                let mut assigned_here = Vec::new();
+                for &n in body {
+                    super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
+                }
+                let assigned_here: std::collections::HashSet<&String> =
+                    assigned_here.iter().collect();
+                if let Some(outer) = block_caps
+                    .locals
+                    .iter()
+                    .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
+                    .min()
+                {
+                    return crate::codegen::unsupported(format!(
+                        "can not isolate a Proc because it accesses outer variables ({outer})"
+                    ));
+                }
+                if block_caps.self_captured {
+                    return crate::codegen::unsupported(
+                        "can not isolate a Proc because it accesses instance variables of the enclosing object",
+                    );
+                }
+                procs::emit_proc_value(cx, block_id)
             }
-            return raise::emit_missing_block_raise(cx, "Ractor");
+            // A dynamic proc (`Ractor.new(val, &@predicate)`) carries its own
+            // isolation verdict, recorded at its creation site
+            // (`RProc::with_outer_capture`) -- `zeo_rt::ractor_new` refuses
+            // non-isolable ones at the moment CRuby does. `&nil` is "no
+            // block", CRuby's plain missing-block ArgumentError.
+            (None, Some(arg)) => {
+                let v = emit_expr(cx, arg);
+                let v = super::expr::box_if_object_typed(cx, arg, v);
+                let missing =
+                    raise::emit_simple_error(cx, "ArgumentError", "must be called with a block");
+                quote! {
+                    match zeo_rt::block_arg_to_proc(#v)? {
+                        Some(__p) => __p,
+                        None => Err(zeo_rt::Signal::Raise(#missing))?,
+                    }
+                }
+            }
+            (None, None) => return raise::emit_missing_block_raise(cx, "Ractor"),
         };
-        let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-            panic!(
-                "internal error: a Block node should only be reached via the Call that invokes it"
-            );
-        };
-        let block_caps =
-            super::captures::block_captures(cx.compiler, params, body, cx.self_class());
-        // `block_captures` reports every referenced non-param
-        // name, INCLUDING the block's own locals (`msg =
-        // Ractor.receive` -- found the hard way). An outer-scope
-        // access is a name that's either a genuine shared
-        // capture (in `cx.captured_locals`) or one this block
-        // never assigns itself (an enclosing param/block-local).
-        let mut assigned_here = Vec::new();
-        for &n in body {
-            super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
-        }
-        let assigned_here: std::collections::HashSet<&String> = assigned_here.iter().collect();
-        if let Some(outer) = block_caps
-            .locals
-            .iter()
-            .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
-            .min()
-        {
-            return crate::codegen::unsupported(format!(
-                "can not isolate a Proc because it accesses outer variables ({outer})"
-            ));
-        }
-        if block_caps.self_captured {
-            return crate::codegen::unsupported(
-                "can not isolate a Proc because it accesses instance variables of the enclosing object",
-            );
-        }
-        let proc = procs::emit_proc_value(cx, block_id);
         let arg_exprs: Vec<TokenStream> = args
             .iter()
             .map(|&a| {
@@ -1900,7 +1915,9 @@ pub fn emit_call(
             None => quote! { None },
         };
         // The call site, for `#inspect`'s `#<Ractor:#2 file.rb:4 ...>` slot.
-        let loc_tok = match crate::codegen::source_location(cx.compiler, block_id) {
+        // A dynamic proc passes `None`: `ractor_new` reads the current frame,
+        // which IS the `Ractor.new` call site -- CRuby's slot for that shape.
+        let loc_tok = match block.and_then(|b| crate::codegen::source_location(cx.compiler, b)) {
             Some((file, line)) => quote! { Some(format!("{}:{}", #file, #line)) },
             None => quote! { None },
         };

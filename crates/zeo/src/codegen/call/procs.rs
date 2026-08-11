@@ -532,6 +532,21 @@ fn emit_proc_or_lambda_value_with(
         let file = crate::codegen::pooled_file(file);
         quote! { .with_location(#file, #line) }
     });
+    // `Ractor.new(&this_proc)` refuses exactly when CRuby's Proc-isolation
+    // check does, and that verdict must ride ON THE VALUE: a dynamic proc's
+    // creation site and its `Ractor.new` site only meet at runtime. Outer =
+    // a shared cell from the enclosing scope, or a name this body reads but
+    // never binds (an enclosing param/block-local) -- the same split the
+    // literal-block Ractor arm draws, down to reporting the alphabetically
+    // first name. Self/ivar access is deliberately NOT recorded: ruby 4.0
+    // isolates such a proc fine (its ivar reads fail later, inside the
+    // ractor).
+    let with_outer = block_caps
+        .locals
+        .iter()
+        .filter(|n| cx.captured_locals.contains(*n) || !block_caps.assigned.contains(n.as_str()))
+        .min()
+        .map(|n| quote! { .with_outer_capture(#n) });
     // Three shapes:
     // - `with_self_and_block` whenever the body must see a CALL-SITE block --
     //   a METHOD-BODY lambda (the runtime install rebinds the receiver per
@@ -601,7 +616,7 @@ fn emit_proc_or_lambda_value_with(
             // `Thread.new ...; Thread.pass; t.raise` idiom relies on.
             if __out.is_ok() { zeo_rt::check_ints()?; }
             __out
-        }, #default_arg #arity, #is_lambda)#with_home #with_binding #with_location #with_params)
+        }, #default_arg #arity, #is_lambda)#with_home #with_binding #with_location #with_params #with_outer)
     };
     // Braces exist to scope the capture-clone prelude; a capture-free proc
     // emits bare (a braced function argument draws rustc's
