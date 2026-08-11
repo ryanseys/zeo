@@ -1976,6 +1976,7 @@ dependencies = [
  "foldhash",
  "libc",
  "miette",
+ "mimalloc",
  "prettyplease",
  "proc-macro2",
  "quote",

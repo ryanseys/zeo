@@ -34,6 +34,11 @@ libc.workspace = true
 # Fast non-DoS-resistant hashing for compiler-internal name sets (same
 # policy zeo-rt already uses for its internal maps).
 foldhash.workspace = true
+# The CLI binary's global allocator: the front end is allocation-heavy
+# (arena nodes, interner strings, token streams), and mimalloc reliably
+# beats system malloc on that shape. Declared in main.rs, so the LIBRARY
+# imposes nothing on its embedders (the test harnesses).
+mimalloc.workspace = true
 # The registry install tier (`cargo install zeo`): tar+flate2 unpack the
 # embedded gems archive; serde_json reads cargo's --message-format=json
 # stream to locate the crates.io-built zeo-rt rlib.
