@@ -34,6 +34,14 @@ filter = "binary(gemtests)"
 test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 
+# The rspec end-to-end gap splices the entire rspec stack (core, expectations,
+# mocks, support, diff-lcs) into one program -- a cold compile runs minutes,
+# like a gemtests case. Warm reruns hit the test bin-cache.
+[[profile.default.overrides]]
+filter = "binary(gaps) & test(rspec_end_to_end)"
+test-group = "golden"
+slow-timeout = { period = "360s", terminate-after = 2 }
+
 # Backstop under the harness's own per-child cap (`run_bounded` in
 # tests/support/golden.rs), so a hung case can never wedge the whole run.
 [[profile.default.overrides]]
