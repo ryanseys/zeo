@@ -21,15 +21,19 @@ pub use crate::builtins::numeric::{
 /// overflow/`Bignum` concerns (`f64` saturates to `inf`, matching real
 /// Ruby's own `Float` behavior exactly, unlike `Integer`'s
 /// promote-on-overflow) -- these are plain, unchecked IEEE 754 operations.
+#[inline]
 pub fn float_add(a: f64, b: f64) -> f64 {
     a + b
 }
+#[inline]
 pub fn float_sub(a: f64, b: f64) -> f64 {
     a - b
 }
+#[inline]
 pub fn float_mul(a: f64, b: f64) -> f64 {
     a * b
 }
+#[inline]
 pub fn float_div(a: f64, b: f64) -> f64 {
     a / b
 }
@@ -37,6 +41,7 @@ pub fn float_div(a: f64, b: f64) -> f64 {
 /// Ruby's `Float#%` takes the sign of the divisor (floored modulo), same
 /// rule as `int_mod` -- unlike Rust's `%` (truncated remainder, C `fmod`
 /// semantics).
+#[inline]
 pub fn float_mod(a: f64, b: f64) -> f64 {
     let r = a % b;
     if r != 0.0 && (r < 0.0) != (b < 0.0) {
@@ -60,6 +65,7 @@ pub fn float_mod_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Sign
         Ok(crate::RubyValue::Float(float_mod(a, b)))
     }
 }
+#[inline]
 pub fn float_pow(a: f64, b: f64) -> f64 {
     a.powf(b)
 }
@@ -79,27 +85,35 @@ pub fn float_pow_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Sign
         Ok(crate::RubyValue::Float(a.powf(b)))
     }
 }
+#[inline]
 pub fn float_neg(a: f64) -> f64 {
     -a
 }
+#[inline]
 pub fn float_pos(a: f64) -> f64 {
     a
 }
+#[inline]
 pub fn float_eq(a: f64, b: f64) -> bool {
     a == b
 }
+#[inline]
 pub fn float_neq(a: f64, b: f64) -> bool {
     a != b
 }
+#[inline]
 pub fn float_lt(a: f64, b: f64) -> bool {
     a < b
 }
+#[inline]
 pub fn float_gt(a: f64, b: f64) -> bool {
     a > b
 }
+#[inline]
 pub fn float_le(a: f64, b: f64) -> bool {
     a <= b
 }
+#[inline]
 pub fn float_ge(a: f64, b: f64) -> bool {
     a >= b
 }
@@ -108,6 +122,7 @@ pub fn float_ge(a: f64, b: f64) -> bool {
 /// actual behavior -- `Float::NAN <=> 1.0` is `nil`, not an arbitrary
 /// ordering). Returns `Option<i64>` (unlike `int_cmp`'s infallible `i64`)
 /// for exactly this reason; `codegen::call` maps `None` to `RubyValue::Nil`.
+#[inline]
 pub fn float_cmp(a: f64, b: f64) -> Option<i64> {
     a.partial_cmp(&b).map(|o| match o {
         std::cmp::Ordering::Less => -1,

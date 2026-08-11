@@ -711,10 +711,12 @@ impl RubyValue {
     /// Ruby truthiness: everything is truthy except `nil` and `false` --
     /// unlike Rust's `bool`, arbitrary `RubyValue`s (including `Int(0)` and
     /// `Str("")`) are truthy. Backs `&&`/`||`/`!`/`if` (see `codegen::expr`).
+    #[inline]
     pub fn truthy(&self) -> bool {
         !matches!(self, RubyValue::Nil | RubyValue::Bool(false))
     }
 
+    #[inline]
     pub fn is_nil(&self) -> bool {
         matches!(self, RubyValue::Nil)
     }

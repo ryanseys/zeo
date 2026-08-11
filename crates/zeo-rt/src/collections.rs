@@ -759,6 +759,7 @@ pub type RHash = Arc<Freezable<RHashData>>;
 
 pub type RStr = Arc<Freezable<crate::encoding::StrBuf>>;
 
+#[inline]
 pub fn array_new(elems: Vec<RubyValue>) -> RArray {
     Arc::new(Freezable::new(ArrayStore::from(elems)))
 }
@@ -785,6 +786,7 @@ pub fn array_snapshot(a: &RArray) -> Vec<RubyValue> {
 
 /// Ruby's own `Array#[]`: negative indices count from the end, and an
 /// out-of-range index returns `nil` rather than raising/panicking.
+#[inline]
 pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
     let arr = arr.lock();
     resolve_index(index, arr.len())
@@ -799,6 +801,7 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 /// proper `Signal::Raise(IndexError.new(...))`. The actual message/exception
 /// CONSTRUCTION happens in codegen, not here, since only codegen has the class
 /// registry needed to build an `IndexError` value.
+#[inline]
 pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue> {
     let mut arr = arr.lock();
     let i = if index < 0 {
@@ -814,6 +817,7 @@ pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue
     Some(value)
 }
 
+#[inline]
 pub fn array_len(arr: &RArray) -> i64 {
     arr.lock().len() as i64
 }
@@ -833,11 +837,13 @@ pub fn check_not_moved<T>(c: &Freezable<T>) -> Result<(), crate::Signal> {
 // never move an object; a program that names `Ractor` compiles against these
 // fallible twins instead, so a husk left by `send(obj, move: true)` raises
 // rather than answering from its gutted payload.
+#[inline]
 pub fn array_get_checked(arr: &RArray, index: i64) -> Result<RubyValue, crate::Signal> {
     check_not_moved(arr)?;
     Ok(array_get(arr, index))
 }
 
+#[inline]
 pub fn array_len_checked(arr: &RArray) -> Result<i64, crate::Signal> {
     check_not_moved(arr)?;
     Ok(array_len(arr))
@@ -848,6 +854,7 @@ pub fn hash_len_checked(h: &RHash) -> Result<i64, crate::Signal> {
     Ok(hash_len(h))
 }
 
+#[inline]
 pub fn string_get_checked(s: &RStr, index: i64) -> Result<RubyValue, crate::Signal> {
     check_not_moved(s)?;
     Ok(string_get(s, index))
@@ -913,6 +920,7 @@ fn resolve_index(index: i64, len: usize) -> Option<usize> {
     usize::try_from(i).ok().filter(|&i| i < len)
 }
 
+#[inline]
 pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
     let h: RHash = Arc::new(Freezable::new(RHashData::new()));
     for (k, v) in pairs {
@@ -952,6 +960,7 @@ pub fn copy_hash_meta(src: &RHash, dst: &RHash) {
 /// `merge`/`dig`/keyword extraction/pattern matching, none of which invoke a
 /// hash's default in real Ruby. The default-triggering `Hash#[]` is
 /// `hash_index`.
+#[inline]
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
     let g = h.lock();
     if let RubyValue::Str(s) = key
@@ -1029,6 +1038,7 @@ fn snapshot_key(key: RubyValue, by_identity: bool) -> RubyValue {
 /// The one insertion point every literal, every `[]=`/`store`/`merge` row and
 /// every runtime hash builder funnels through, which is what makes
 /// [`snapshot_key`] a single edit rather than an audit.
+#[inline]
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
     let mut g = h.lock();
     if let RubyValue::Str(s) = &key
@@ -1173,6 +1183,7 @@ pub fn hash_pairs(h: &RHash) -> Vec<(RubyValue, RubyValue)> {
 
 /// `Array#<<`/`#push` -- returns the array itself (Ruby's chaining
 /// contract), as an already-boxed value for dynamic-dispatch callers.
+#[inline]
 pub fn array_push(arr: &RArray, value: RubyValue) -> RubyValue {
     arr.lock().push(value);
     RubyValue::Array(arr.clone())
@@ -1223,6 +1234,7 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
     }))
 }
 
+#[inline]
 pub fn string_new(s: String) -> RStr {
     Arc::new(Freezable::new(crate::encoding::StrBuf::from_utf8(s)))
 }
@@ -1276,6 +1288,7 @@ pub fn string_wrap(buf: crate::encoding::StrBuf) -> RStr {
 /// `nil`. Re-walking `.chars()` on every call is a real inefficiency for long
 /// strings (documented, not fixed -- a byte-offset cache is a
 /// straightforward later optimization, not a blocker).
+#[inline]
 pub fn string_get(s: &RStr, index: i64) -> RubyValue {
     // Encoding-aware: a character is a UTF-8 sequence or a single byte, and
     // the result keeps the receiver's encoding (a BINARY byte stays BINARY).
