@@ -1166,6 +1166,30 @@ pub fn emit_call(
         .collect();
     let args = &args[..];
 
+    // The `alias` KEYWORD's desugar (see `lower`'s AliasMethodNode arm): it
+    // aliases on the frame's DEFAULT DEFINEE -- `define_in_default_definee`'s
+    // rule, resolved from the same two candidates the expression-`def` arm
+    // hands over (the cref's class, and the runtime self an `*_eval`/
+    // `instance_exec` may have re-homed the block onto).
+    if name == "__zeo_alias_keyword"
+        && receiver.is_none()
+        && let [new_id, old_id] = args
+    {
+        let cref_definee = {
+            let cid = cx
+                .defining_class
+                .unwrap_or(crate::compiler::OBJECT_CLASS)
+                .0;
+            quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
+        };
+        let slf = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
+        let new_sym = emit_expr(cx, *new_id);
+        let old_sym = emit_expr(cx, *old_id);
+        return quote! {
+            zeo_rt::alias_in_default_definee(&#cref_definee, &#slf, #new_sym, #old_sym)?
+        };
+    }
+
     // `send(:eval, src, ...)` -- the reflective spelling, with a receiver or
     // without. CRuby routes it to the same private `Kernel#eval`, which reads
     // its LOCALS from the caller's frame either way and takes `self` from the

@@ -4370,6 +4370,30 @@ pub fn define_in_default_definee(
     Ok(out)
 }
 
+/// The `alias` KEYWORD in expression position (inside a block or method
+/// body): it aliases on the frame's DEFAULT DEFINEE, resolved exactly as
+/// [`define_in_default_definee`] resolves a `def`'s -- the receiver's
+/// SINGLETON under `instance_eval`/`instance_exec` (how rspec's top-level DSL
+/// pairs `def shared_examples` with `alias shared_context shared_examples`
+/// on the `RSpec` module object), the module itself under `class_eval`/
+/// `class_exec`/`Class.new`, and the cref's class otherwise. Distinct from
+/// `Module#alias_method`, which always operates on its RECEIVER.
+pub fn alias_in_default_definee(
+    cref: &RubyValue,
+    slf: &RubyValue,
+    new: RubyValue,
+    old: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let definee = if crate::runtime_meta::singleton_definee(slf) {
+        send_value(slf, Symbol::intern("singleton_class"), &[], None)?
+    } else if let Some(cid) = crate::runtime_meta::module_definee(slf) {
+        RubyValue::Class(cid)
+    } else {
+        cref.clone()
+    };
+    send_value(&definee, Symbol::intern("alias_method"), &[new, old], None)
+}
+
 /// `recv.class` for the codegen `.class` fast path on a dynamically-typed
 /// receiver: normally the receiver's class value, but a Struct/Data instance
 /// with a member literally named `class` (`Data.define(:class, :hash)`) has

@@ -2635,15 +2635,17 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
 
     // `alias new old` reached in a GENERAL context -- inside a `class_eval`/
-    // `module_eval` block (delegate.rb's `kernel.class_eval do alias __raise__
-    // raise end`), where `self` is the module being reopened. Class-body and
+    // `module_eval`/`instance_exec` block, or a method body. Class-body and
     // top-level `alias` are intercepted earlier (`defs::lower_class_body`,
-    // `loader`) and never arrive here. Desugar to a runtime `alias_method(:new,
-    // :old)` self-send -- the same runtime path the CALL form already takes
-    // (`zeo_rt::runtime_meta::runtime_alias_method`, as ostruct's dynamic
-    // aliasing does). Correct when the default definee IS `self` (an eval
-    // block); the pathological in-method `alias` (definee = the owner class,
-    // not self) stays unmodeled -- it was a hard error here before too.
+    // `loader`) and never arrive here. The KEYWORD aliases on the frame's
+    // DEFAULT DEFINEE -- the module under `class_eval`, the receiver's
+    // SINGLETON under `instance_eval`/`instance_exec` (rspec's top-level DSL
+    // installs `RSpec.shared_examples` then `alias shared_context
+    // shared_examples` that way), the cref's class in a method body -- which
+    // is `define_in_default_definee`'s rule exactly, and NOT `self` (the
+    // CALL form `alias_method(:new, :old)` is the one that dispatches to its
+    // receiver). Desugared to the internal `__zeo_alias_keyword` marker call
+    // that `codegen::call` emits as `zeo_rt::alias_in_default_definee`.
     if let Some(alias) = node.as_alias_method_node() {
         let new_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(
             &alias.new_name(),
@@ -2653,7 +2655,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         )?));
         let send = hir.push(HirNode::Call {
             receiver: None,
-            name: "alias_method".to_string(),
+            name: "__zeo_alias_keyword".to_string(),
             args: vec![ArrayElem::Single(new_sym), ArrayElem::Single(old_sym)],
             kwargs: Vec::new(),
             block: None,
