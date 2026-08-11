@@ -43,21 +43,140 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub struct Freezable<T> {
     flags: AtomicU8,
     payload: Mutex<T>,
+    /// Debug-only overlap detector for the sole-thread fast path -- see
+    /// [`Freezable::lock`]. Atomic only because `Freezable` must stay `Sync`;
+    /// on the fast path a single thread owns it by construction.
+    #[cfg(debug_assertions)]
+    fast_held: std::sync::atomic::AtomicBool,
 }
 
 const FLAG_FROZEN: u8 = 1;
 const FLAG_MOVED: u8 = 2;
+
+/// What [`Freezable::lock`] hands out: payload access through either the
+/// sole-thread direct pointer or the real mutex guard. Derefs like the
+/// `MutexGuard` every call site was written against.
+pub struct FreezeGuard<'a, T> {
+    inner: GuardInner<'a, T>,
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    /// Debug census of live fast guards on THIS thread, so the thread-spawn
+    /// transition can assert none is held -- see `gvl::note_thread_spawn`.
+    static LIVE_FAST_GUARDS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(debug_assertions)]
+pub fn debug_assert_no_live_fast_guards(context: &str) {
+    LIVE_FAST_GUARDS.with(|c| {
+        assert!(
+            c.get() == 0,
+            "{context} while {} sole-thread container guard(s) are live on \
+             this thread -- in a release build that is an unprotected &mut \
+             once the second thread runs",
+            c.get()
+        );
+    });
+}
+
+enum GuardInner<'a, T> {
+    Fast {
+        payload: &'a mut T,
+        #[cfg(debug_assertions)]
+        held: &'a std::sync::atomic::AtomicBool,
+    },
+    Locked(parking_lot::MutexGuard<'a, T>),
+}
+
+impl<T> std::ops::Deref for FreezeGuard<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        match &self.inner {
+            GuardInner::Fast { payload, .. } => payload,
+            GuardInner::Locked(g) => g,
+        }
+    }
+}
+
+impl<T> std::ops::DerefMut for FreezeGuard<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        match &mut self.inner {
+            GuardInner::Fast { payload, .. } => payload,
+            GuardInner::Locked(g) => g,
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<T> Drop for FreezeGuard<'_, T> {
+    fn drop(&mut self) {
+        if let GuardInner::Fast { held, .. } = &self.inner {
+            held.store(false, Ordering::Relaxed);
+            LIVE_FAST_GUARDS.with(|c| c.set(c.get() - 1));
+        }
+    }
+}
 
 impl<T> Freezable<T> {
     pub fn new(payload: T) -> Freezable<T> {
         Freezable {
             flags: AtomicU8::new(0),
             payload: Mutex::new(payload),
+            #[cfg(debug_assertions)]
+            fast_held: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    pub fn lock(&self) -> parking_lot::MutexGuard<'_, T> {
-        self.payload.lock()
+    /// Lock the payload -- or, while the program is provably single-threaded
+    /// (`gvl::sole_thread`, the same claim `IvarCell`/`CivarSlot` already
+    /// rely on), hand out the payload directly and skip the mutex CAS pair.
+    /// This sits under EVERY array index, hash probe and string byte access,
+    /// once per element inside the fused iteration loops.
+    ///
+    /// SAFETY of the fast arm: `sole_thread()` guarantees no other thread can
+    /// reach this cell, and two OVERLAPPING guards on one cell from the same
+    /// thread cannot exist in a working program -- on the locked path that
+    /// exact shape is a parking_lot self-deadlock, so any code that did it
+    /// would already hang the corpus today. Debug builds (which run the whole
+    /// golden corpus) assert the no-overlap invariant per cell below rather
+    /// than trusting it.
+    #[inline]
+    pub fn lock(&self) -> FreezeGuard<'_, T> {
+        if crate::gvl::sole_thread() {
+            #[cfg(debug_assertions)]
+            {
+                self.assert_unheld();
+                LIVE_FAST_GUARDS.with(|c| c.set(c.get() + 1));
+            }
+            // SAFETY: see above -- sole thread, no live guard on this cell.
+            let payload = unsafe { &mut *self.payload.data_ptr() };
+            return FreezeGuard {
+                inner: GuardInner::Fast {
+                    payload,
+                    #[cfg(debug_assertions)]
+                    held: &self.fast_held,
+                },
+            };
+        }
+        FreezeGuard {
+            inner: GuardInner::Locked(self.payload.lock()),
+        }
+    }
+
+    /// Debug-build half of the fast path's safety argument: a second fast
+    /// guard while one is live means aliased `&mut` in a release build, so
+    /// it must fail HERE, where the whole corpus runs.
+    #[cfg(debug_assertions)]
+    fn assert_unheld(&self) {
+        assert!(
+            !self.fast_held.swap(true, Ordering::Relaxed),
+            "re-entrant container access on the sole-thread fast path: this \
+             thread already holds this container's guard. On the locked path \
+             this is a self-deadlock; on the fast path it would alias &mut."
+        );
     }
 
     pub fn is_frozen(&self) -> bool {

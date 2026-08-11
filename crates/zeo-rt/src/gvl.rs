@@ -87,6 +87,13 @@ pub fn clear_sole_thread() {
 /// exists.
 #[cold]
 pub fn note_thread_spawn() {
+    // A live sole-thread container guard (`Freezable::lock`'s fast arm) at
+    // the moment a second thread comes into being would be a `&mut` no mutex
+    // protects. No corpus program does this -- holding the LOCKED guard
+    // across the same shape would deadlock -- but the invariant is asserted
+    // where the whole golden corpus can test it.
+    #[cfg(debug_assertions)]
+    crate::collections::debug_assert_no_live_fast_guards("Thread/Ractor spawn");
     SOLE.with(|s| s.set(false));
     MULTI_THREADED.store(true, Ordering::Release);
 }
