@@ -89,6 +89,11 @@ opt-in: give `-o <path>`, or `--compile` for the default path. There are no
 subcommands. The command line agrees with Ruby's: `zeo <file>` or
 `zeo -e <code>`.
 
+Repeated runs are fast. The compiled binary is kept in a content-addressed
+cache under `target/`, keyed by the generated Rust and the exact runtime. When
+you run an unchanged program again, only the Ruby front end runs; the `rustc`
+step is skipped.
+
 ## Command-line options
 
 ```

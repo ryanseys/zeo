@@ -41,6 +41,13 @@ filter = "binary(spinel) | binary(examples) | binary(gaps)"
 test-group = "golden"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
+# The CLI suite spawns the real `zeo` binary, which compiles with rustc on a
+# cache miss like every golden -- same group, same reasoning. No terminate:
+# its minitest case legitimately compiles a whole require graph.
+[[profile.default.overrides]]
+filter = "binary(cli)"
+test-group = "golden"
+
 # `e2e` joins the group but keeps the default deadline. Its cases build whole
 # programs and some legitimately run past the goldens' 60s, so bounding its
 # CONCURRENCY is the fix here; borrowing their timeout as well would convert
