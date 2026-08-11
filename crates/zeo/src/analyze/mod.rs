@@ -3989,8 +3989,15 @@ pub(crate) fn add_own_method_at(
     // that body here would leave the name answering nothing whenever the guard
     // is false, and the runtime overlay the conditional `def` writes already
     // outranks the static row when the guard IS true.
+    //
+    // A UNIT's def yields to an EAGER def the same way: the unit walk runs
+    // after the whole eager stream, but the unit's body EXECUTES at its
+    // runtime require -- before any eager statement written below that
+    // require -- so walk order inverts execution order. A spec file's
+    // stub over a lazily-required rspec class is the corpus case.
     let yields = replaced.is_some_and(|i| {
-        compiler.scope(sid).runtime_conditional && !compiler.scope(list[i]).runtime_conditional
+        (compiler.scope(sid).runtime_conditional && !compiler.scope(list[i]).runtime_conditional)
+            || (compiler.unit_walk && !compiler.unit_scopes.contains(&list[i]))
     });
     let ci = &mut compiler.classes[class_id.0 as usize];
     let list = if is_class_method {
@@ -4004,6 +4011,9 @@ pub(crate) fn add_own_method_at(
         None => list.push(sid),
     }
     ci.method_history.push((mname, is_class_method, seq, sid));
+    if compiler.unit_walk {
+        compiler.unit_scopes.insert(sid);
+    }
 }
 
 /// Whether a `def` runs whenever its class body does, or only when a guard zeo

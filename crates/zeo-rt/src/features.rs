@@ -32,8 +32,14 @@ static UNITS: std::sync::OnceLock<HashMap<&'static str, UnitFn>> = std::sync::On
 
 #[derive(Default)]
 struct LoadState {
-    loaded: HashSet<String>,
-    loading: HashSet<String>,
+    /// Keyed by UNIT IDENTITY (the fn pointer), not the feature spelling: one
+    /// unit registers under several spellings (the load-path-relative name AND
+    /// the absolute path), and a per-spelling table ran the same file once per
+    /// spelling -- rspec-core's exception_presenter loaded through both and
+    /// its `PENDING_DETAIL_FORMATTER =` executed twice, warning where CRuby
+    /// (one entry per FILE in `$LOADED_FEATURES`) is silent.
+    loaded: HashSet<usize>,
+    loading: HashSet<usize>,
     /// How many unit loads are on the stack right now.
     depth: u32,
     /// Autoload targets declared DURING a unit load, run when the outermost
@@ -67,9 +73,10 @@ fn key(feature: &str) -> &str {
 pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
     let name = key(feature);
     let unit = *UNITS.get()?.get(name)?;
+    let identity = unit as usize;
     {
         let mut st = state().lock();
-        if st.loaded.contains(name) || !st.loading.insert(name.to_string()) {
+        if st.loaded.contains(&identity) || !st.loading.insert(identity) {
             return Some(Ok(false));
         }
         st.depth += 1;
@@ -78,7 +85,7 @@ pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
     let outermost;
     let outcome = {
         let mut st = state().lock();
-        st.loading.remove(name);
+        st.loading.remove(&identity);
         st.depth -= 1;
         outermost = st.depth == 0;
         match result {
@@ -86,7 +93,7 @@ pub fn load_feature(feature: &str) -> Option<Result<bool, Signal>> {
             // of `$LOADED_FEATURES` so a later require retries it.
             Err(e) => Some(Err(e)),
             Ok(_) => {
-                st.loaded.insert(name.to_string());
+                st.loaded.insert(identity);
                 Some(Ok(true))
             }
         }

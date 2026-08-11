@@ -680,6 +680,15 @@ pub struct Compiler {
     /// but not PROMISED -- see `register_method`'s `runtime_conditional`
     /// marking, which reads this.
     pub unit_walk: bool,
+    /// Scopes registered DURING the unit walk -- consulted by
+    /// `analyze::add_own_method_at`'s last-def-wins replacement: a unit's
+    /// `def` never displaces an EAGER def of the same name. The unit walk
+    /// runs after the whole eager stream, but the unit's body EXECUTES at
+    /// its (runtime) require -- before any eager statement written below
+    /// that require -- so walk order inverts execution order there. The
+    /// corpus case: a spec file's `define_singleton_method` stub over a
+    /// lazily-required rspec class lost to the gem's own later-walked def.
+    pub unit_scopes: std::collections::HashSet<ScopeId>,
     /// Boot-time overlay installs for observable redefinition timelines:
     /// `(class, name, first_scope)`. The static tables carry the FINAL body
     /// (last-`def`-wins, so every compile-time fact -- super inlining,
@@ -971,6 +980,7 @@ impl Compiler {
             const_aliases: HashMap::new(),
             runtime_patches: std::collections::HashSet::new(),
             unit_walk: false,
+            unit_scopes: std::collections::HashSet::new(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
             class_index: std::cell::RefCell::new(HashMap::new()),
