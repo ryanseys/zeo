@@ -122,12 +122,12 @@ pub fn defer_autoload_target(feature: &str) -> bool {
 
 /// Loads everything [`defer_autoload_target`] queued. Runs at outermost-load
 /// return, looping because a drained target's own unit may declare more
-/// autoloads. A target whose load raises follows the autoload row's
-/// declaration-time policy: `LoadError` leaves the registration pending and
-/// retryable (CRuby runs nothing at declaration, so an optional dependency's
-/// absence is not an error here); any other exception aborts the process
-/// loudly -- it is a real bug in code this program does load, and there is no
-/// caller left to catch it as a `Signal`.
+/// autoloads. A target whose load raises -- ANY class, not just `LoadError`
+/// -- rolls back to pending: CRuby runs nothing until the constant's first
+/// ACCESS, so "declared, never loaded" is exactly its state (rspec-core's
+/// bisect formatter drags in drb, and only a `--bisect` run ever touches it).
+/// `load_feature` leaves a failed unit retryable, so a target the program
+/// genuinely reaches still surfaces its error at that reach.
 fn drain_autoload_queue() {
     loop {
         let next = {
@@ -137,23 +137,7 @@ fn drain_autoload_queue() {
             }
             st.autoload_queue.remove(0)
         };
-        match load_feature(&next).transpose() {
-            Ok(_) => {}
-            Err(sig) => {
-                let is_load_error = match &sig {
-                    Signal::Raise(RubyValue::Object(o)) => {
-                        crate::dispatch::is_a(o.class_id(), zeo_abi::LOAD_ERROR_CLASS)
-                    }
-                    _ => false,
-                };
-                if !is_load_error {
-                    if let Signal::Raise(exc) = &sig {
-                        crate::report_uncaught(exc);
-                    }
-                    std::process::exit(1);
-                }
-            }
-        }
+        let _ = load_feature(&next);
     }
 }
 
