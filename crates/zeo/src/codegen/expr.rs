@@ -1492,7 +1492,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             body,
             is_class_method,
             is_def,
-            ..
+            visibility,
         } => {
             // Ruby resolves these two against DIFFERENT things, and conflating
             // them put `def self.x` on the wrong object.
@@ -1595,14 +1595,45 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // frame's -- so a `def` in a top-level block is private too,
                 // while one inside any method body is public.
                 let top_level = cx.defining_class.is_none() && cx.current_method.is_none();
+                // A class body's running visibility default and
+                // `module_function` mode reach a `def` nested in a
+                // RUNTIME-undecidable branch as a visibility stamped on the
+                // node itself (`lower::defs::apply_body_defaults_in_branches`)
+                // -- and the runtime install must carry it, because the
+                // dynamic walk reads the overlay row it writes AHEAD of the
+                // static table's private row ("a runtime-defined method with
+                // no mark is public"). The definee is the class body's own
+                // class, a compile-time fact at these sites.
+                let vis_mark = (*visibility != crate::hir::Visibility::Public
+                    && !cx.self_is_dynamic
+                    && cx.defining_class.is_some())
+                .then(|| {
+                    let cid = cx.defining_class.expect("guarded above").0;
+                    let v = match visibility {
+                        crate::hir::Visibility::Private => quote! { Private },
+                        crate::hir::Visibility::Protected => quote! { Protected },
+                        crate::hir::Visibility::Public => unreachable!("guarded above"),
+                    };
+                    quote! {
+                        zeo_rt::runtime_set_visibility(
+                            zeo_rt::ClassId(#cid),
+                            &[zeo_rt::RubyValue::Symbol(#name_sym)],
+                            zeo_rt::MethodVisibility::#v,
+                        )?;
+                    }
+                });
                 quote! {
-                    zeo_rt::define_in_default_definee(
-                        &#cref_definee,
-                        &#definee,
-                        #name_sym,
-                        #proc,
-                        #top_level,
-                    )?
+                    {
+                        let __defd = zeo_rt::define_in_default_definee(
+                            &#cref_definee,
+                            &#definee,
+                            #name_sym,
+                            #proc,
+                            #top_level,
+                        )?;
+                        #vis_mark
+                        __defd
+                    }
                 }
             } else {
                 // A literal `define_method(:m){...}` call: an ordinary
